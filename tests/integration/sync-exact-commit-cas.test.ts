@@ -3,33 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Issue #759 (2/3) — `akm sync`'s compare-and-swap.
+ * Issue #759 (2/3) — `akm sync` never loses a concurrent commit.
  *
  * `akm sync` commits through `saveGitStash` → `createExactPathCommit`
- * (src/sources/providers/git-stash.ts), which is a SEPARATE publication path
- * from the `ensureGitTransactionCommit` CAS in src/core/write-source.ts that
- * tests/integration/git-source-safety.test.ts already races
- * ("durable publication rejects a predecessor commit created after preflight").
- * This file ports that pattern onto the `akm sync` path.
+ * (src/sources/providers/git-stash.ts), whose `git update-ref <branch> <new>
+ * <old>` swap is the one guard on this path: a commit that lands while the
+ * publication is in flight makes the swap fail instead of being overwritten,
+ * and a commit that lands before the call is simply the new base.
  *
- * Two guards exist on this path, and they are NOT interchangeable:
- *
- *  1. The `options.expectedBaseHead` PREFLIGHT check (git-stash.ts) — used by
- *     the durable-transaction callers, which bind a base commit before they
- *     mutate the worktree.
- *  2. The `git update-ref <branch> <new> <old>` CAS inside
- *     `createExactPathCommit` — the real atomic swap, and the ONLY guard on
- *     the `akm sync` path, because `runSyncBody`
- *     (src/commands/sources/sources-cli.ts) calls
- *     `saveGitStash(name, message, writable, { push })` with no
- *     `expectedBaseHead`. `saveGitStash` reads HEAD itself, so a commit that
- *     lands BEFORE the call is simply adopted as the new base; only a commit
- *     that lands DURING the publication has to be rejected.
- *
- * Guard 2's window is a few microseconds wide between two synchronous `git`
+ * The race window is a few microseconds wide between two synchronous `git`
  * invocations, so the racing commit is injected deterministically through the
  * `_setGitExactCommitHookForTests` seam rather than by wall-clock luck. The
- * racer is a REAL `git commit` in a REAL repository — nothing about the CAS
+ * racer is a REAL `git commit` in a REAL repository — nothing about the swap
  * itself is faked.
  */
 
@@ -133,8 +118,7 @@ describe("akm sync — createExactPathCommit compare-and-swap", () => {
     });
 
     expect(() =>
-      // Exactly what `akm sync` calls: no expectedBaseHead, so guard 1 is inert
-      // and only the update-ref CAS can reject this.
+      // Exactly what `akm sync` calls.
       saveGitStash(undefined, "sync race", undefined, { push: false, paths: ["memories/owned.md"] }),
     ).toThrow(/advanced before its exact commit/);
 
@@ -169,9 +153,8 @@ describe("akm sync — createExactPathCommit compare-and-swap", () => {
   });
 
   test("a commit that lands BEFORE the call is adopted as the new base, not rejected", () => {
-    // Documents why the update-ref CAS is load-bearing for `akm sync`: without
-    // an `expectedBaseHead`, a predecessor that lands before `saveGitStash`
-    // starts is indistinguishable from an ordinary prior commit.
+    // A predecessor that lands before `saveGitStash` starts is an ordinary
+    // prior commit.
     const { repoDir } = seedRepo();
     writeFile(path.join(repoDir, "memories", "owned.md"), "AKM snapshot\n");
     const predecessor = landPredecessorCommit(repoDir, "user.txt");
@@ -183,30 +166,5 @@ describe("akm sync — createExactPathCommit compare-and-swap", () => {
 
     expect(result.committed).toBe(true);
     expect(git(repoDir, ["rev-parse", "HEAD^"])).toBe(predecessor);
-  });
-});
-
-describe("saveGitStash — expectedBaseHead preflight (durable-transaction callers)", () => {
-  test("rejects a predecessor commit created after preflight", () => {
-    const { repoDir } = seedRepo();
-    writeFile(path.join(repoDir, "memories", "owned.md"), "AKM snapshot\n");
-    // Preflight: the caller binds its transaction to this base …
-    const baseHead = git(repoDir, ["rev-parse", "HEAD"]);
-    // … and a concurrent process commits underneath it before publication.
-    const predecessor = landPredecessorCommit(repoDir, "user.txt");
-    expect(predecessor).not.toBe(baseHead);
-
-    expect(() =>
-      saveGitStash(undefined, "predecessor race", undefined, {
-        push: false,
-        paths: ["memories/owned.md"],
-        expectedBaseHead: baseHead,
-      }),
-    ).toThrow(/advanced before its exact-path commit/);
-
-    // HEAD is unchanged by the failed attempt.
-    expect(git(repoDir, ["rev-parse", "HEAD"])).toBe(predecessor);
-    expect(historySubjects(repoDir)).toEqual(["concurrent user.txt", "seed"]);
-    expect(git(repoDir, ["ls-tree", "-r", "--name-only", "HEAD"]).split("\n")).not.toContain("memories/owned.md");
   });
 });

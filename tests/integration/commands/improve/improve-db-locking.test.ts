@@ -18,6 +18,16 @@
  *   two simultaneous writers on the same WAL file ("database is locked"). The
  *   fix reuses eventsCtx.db when present; only the dbPath fallback path opens
  *   (and then owns and closes) its own handle.
+ *
+ * Post-consolidation reindex requires an actual mutation:
+ *   The post-consolidation branch of the same reindex seam used to fire
+ *   whenever `consolidation.processed > 0` (memories the LLM judged), not
+ *   whenever consolidation actually wrote anything. Merge/delete/contradict
+ *   ops are advisory and never auto-applied (consolidate.ts), and the one op
+ *   that does execute — promote — writes a proposal to state.db, not to the
+ *   stash, so `processed > 0` was true on nearly every consolidating run
+ *   while the reindex's own precondition (files on disk changed) almost
+ *   never held.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -27,12 +37,14 @@ import path from "node:path";
 import { akmImprove, runImproveMaintenancePasses } from "../../../../src/commands/improve/improve";
 import { loadConfig, saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
+import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
-import type { GraphExtractionResult } from "../../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
 import { insertEvent } from "../../../../src/storage/repositories/events-repository";
+import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import { getEntryByRef } from "../../../../src/storage/repositories/index-entries-repository";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type IsolatedAkmStorage, makeSandboxDir, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -49,7 +61,17 @@ afterEach(() => {
 });
 
 async function indexStash(stashDir: string): Promise<void> {
-  saveConfig(withImproveAutonomy(withTestImproveLlm({ semanticSearchMode: "off" })));
+  saveConfig(
+    withImproveAutonomy(
+      withTestImproveLlm({
+        semanticSearchMode: "off",
+        // Consolidation is a separate, still-full-reindex trigger (D9) —
+        // disabled so these DB-locking tests exercise exactly the reindex
+        // site each one names, not whichever one consolidation also fires.
+        improve: { strategies: { default: { processes: { consolidate: { enabled: false } } } } },
+      }),
+    ),
+  );
   await akmIndex({ stashDir, full: true });
 }
 
@@ -89,39 +111,30 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
     skippedAborted: 0,
     unaccounted: 0,
     htmlErrorCount: 0,
+    writtenPaths: [],
     ...overrides,
   };
 }
 
-const stubGraphExtractionResult: GraphExtractionResult = {
-  considered: 0,
-  extracted: 0,
-  totalEntities: 0,
-  totalRelations: 0,
-  written: false,
-  quality: {
-    consideredFiles: 0,
-    extractedFiles: 0,
-    entityCount: 0,
-    relationCount: 0,
-    extractionCoverage: 0,
-    density: 0,
-  },
-  telemetry: { cacheHits: 0, cacheMisses: 0, truncationCount: 0, failureCount: 0, retryAttempts: 0 },
-  warnings: [],
-};
-
 describe("#584: index.db handle is closed before reindexFn runs", () => {
-  test("maintenance handle is closed during reindex and a fresh handle is used afterwards", async () => {
+  // R78: memory inference's writes used to trigger a FULL reindex through
+  // this same `reindexFn` seam (call site 1) — replaced with `indexWrittenAssets`
+  // over exactly the paths the pass wrote. `indexWrittenAssets` opens its own
+  // write handle on the same index.db WAL file, so the #584 discipline (close
+  // the maintenance handle first, reopen a fresh one after, even on failure)
+  // still applies — just around the incremental call instead of `reindexFn`.
+  test("maintenance handle is closed during the post-inference index update", async () => {
     const stash = storage.stashDir;
     writeMemory(stash, "alpha");
     await indexStash(stash);
 
+    // A real file for indexWrittenAssets to upsert — the derived child memory
+    // inference would have written.
+    const derivedPath = path.join(stash, "memories", "alpha.derived.md");
+    fs.writeFileSync(derivedPath, "---\ninferred: true\ndescription: derived alpha\n---\n\nDerived fact.\n", "utf8");
+
     let capturedInferenceDb: Database | undefined;
     let reindexCalls = 0;
-    let handleOpenDuringReindex: boolean | undefined;
-    let handleOpenDuringGraphExtraction: boolean | undefined;
-    let graphDb: Database | undefined;
 
     const result = await akmImprove({
       stashDir: stash,
@@ -151,35 +164,48 @@ describe("#584: index.db handle is closed before reindexFn runs", () => {
         inputRef: o.ref,
         proposalRef: "lessons/stub",
       }),
-      // Report written facts so the maintenance pass triggers the
-      // post-inference reindex (#584 call site 1).
+      // Report a written path so the maintenance pass triggers the
+      // post-inference incremental index (#584 call site 1, now indexWrittenAssets).
       memoryInferenceFn: async (ctx) => {
         capturedInferenceDb = ctx.db;
-        return stubMemoryInferenceResult({ considered: 1, splitParents: 1, writtenFacts: 1 });
+        return stubMemoryInferenceResult({
+          considered: 1,
+          splitParents: 1,
+          writtenFacts: 1,
+          writtenPaths: [derivedPath],
+        });
       },
       reindexFn: async () => {
         reindexCalls += 1;
-        // The maintenance pass's index.db handle (captured above) must be
-        // CLOSED while reindex runs — reindex opens its own write handle on
-        // the same WAL file and a still-open sibling caused SQLITE_BUSY.
-        handleOpenDuringReindex = isHandleOpen(capturedInferenceDb);
-      },
-      // Graph extraction runs after the reindex sites and receives the
-      // maintenance handle — it must be a fresh, usable post-reindex handle.
-      graphExtractionFn: async (ctx) => {
-        graphDb = ctx.db;
-        handleOpenDuringGraphExtraction = isHandleOpen(ctx.db);
-        return stubGraphExtractionResult;
       },
     });
 
     expect(result.ok).toBe(true);
-    expect(reindexCalls).toBeGreaterThanOrEqual(1);
-    expect(handleOpenDuringReindex).toBe(false);
-    expect(handleOpenDuringGraphExtraction).toBe(true);
-    // The post-reindex handle is a NEW connection, not the closed original.
-    expect(graphDb).toBeDefined();
-    expect(graphDb).not.toBe(capturedInferenceDb);
+    // The incremental index path never calls the full-reindex seam.
+    expect(reindexCalls).toBe(0);
+    // The maintenance pass's index.db handle (captured above) must be CLOSED
+    // by the time indexWrittenAssets ran — it opens its own write handle on
+    // the same WAL file and a still-open sibling caused SQLITE_BUSY (#584).
+    expect(isHandleOpen(capturedInferenceDb)).toBe(false);
+    // The reopened handle (dbCell.current) must be fresh and usable for
+    // whatever runs next in the same maintenance sequence
+    // (runProposalHygienePass, then runOrphanStateGcPass(ctx, dbCell) —
+    // loop-stages.ts). Graph extraction used to be the pipeline stage
+    // exercising this same post-reopen handle and asserted directly on it
+    // (`handleOpenDuringGraphExtraction`/`graphDb`); retired in
+    // 0.9.17-alpha.9 along with that assertion. runOrphanStateGcPass returns
+    // early with this exact warning when `dbCell.current` is falsy — its
+    // absence here is the fresh-handle proof now.
+    const resultWarnings = (result as unknown as { warnings?: string[] }).warnings ?? [];
+    expect(resultWarnings).not.toContain("orphan state GC skipped: no index.db handle available");
+
+    // The derived file is indexed without a full reindex.
+    const checkDb = openIndexDatabase(getDbPath());
+    try {
+      expect(getEntryByRef(checkDb, "memories/alpha.derived")).not.toBeNull();
+    } finally {
+      closeDatabase(checkDb);
+    }
   });
 });
 
@@ -209,7 +235,6 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
         actionableRefs: [],
         memoryRefsForInference: new Set<string>(),
         allWarnings,
-        reindexFn: async () => undefined,
         eventsCtx: { db: eventsDb },
       });
 
@@ -261,7 +286,6 @@ describe("#585: post-loop purge reuses the long-lived eventsCtx.db connection", 
       actionableRefs: [],
       memoryRefsForInference: new Set<string>(),
       allWarnings,
-      reindexFn: async () => undefined,
       eventsCtx: { dbPath: stateDbPath },
     });
 

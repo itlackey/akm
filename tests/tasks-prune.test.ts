@@ -4,15 +4,16 @@
 
 /**
  * `akm task prune` (#851): reclaim installed scheduler entries `sync` can
- * never see because their own `--scheduler-context` descriptor doesn't
- * resolve to a live bundle (#846's `belongsToBundle` deliberately excludes
- * them rather than guessing ownership).
+ * never see because they do not resolve to a live bundle — a current row
+ * whose inline `AKM_BUNDLE_DIR` names a directory that is gone, or a row
+ * written before 0.9.17-alpha.7 whose `--scheduler-context` descriptor cannot
+ * be read (#846's ownership attribution deliberately excludes them rather
+ * than guessing).
  *
  * Mirrors tests/integration/tasks-sync-dry-run.test.ts's harness: a real
  * `CRON_BACKEND` wired to an in-memory `CronExec`, so these tests exercise
- * the exact production path (`akmTasksPrune` -> `buildSchedulerRemoveOperation`
- * -> `applySchedulerTransaction`) with zero interaction with any real
- * crontab/plist/schtasks state.
+ * the exact production path (`akmTasksPrune` -> the backend's `uninstall`)
+ * with zero interaction with any real crontab/plist/schtasks state.
  *
  * ABSOLUTE SAFETY REQUIREMENTS this file exists to prove:
  *   1. Default invocation (no --yes, no --id) makes ZERO scheduler writes —
@@ -30,14 +31,9 @@ import path from "node:path";
 import { akmTasksPrune, akmTasksSync } from "../src/commands/tasks/tasks";
 import { taskPruneExitCode } from "../src/commands/tasks/tasks-cli";
 import { makeBundleRef } from "../src/core/asset/asset-ref";
+import { setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
 import { compileTaskSchedulerBindings } from "../src/tasks/scheduler-binding";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  schedulerContextPath,
-  writeSchedulerContextDescriptor,
-} from "../src/tasks/scheduler-invocation";
 import type { Cleanup } from "./_helpers/sandbox";
 import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome } from "./_helpers/sandbox";
 
@@ -63,12 +59,13 @@ function spyingMemoryExec(initial = ""): CronExec & { current: () => string; wri
   };
 }
 
-function writeTask(id: string, schedule: string, enabled = true): void {
+function writeTask(id: string, schedule: string): void {
   fs.writeFileSync(
     path.join(tasksDir, `${id}.yml`),
-    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n    enabled: ${enabled}\n`,
+    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
+  setSchedulerRefEnabled(makeBundleRef(path.basename(stashDir).toLowerCase(), `tasks/${id}`), true);
 }
 
 beforeEach(() => {
@@ -89,12 +86,10 @@ afterEach(() => {
   tasksDir = "";
 });
 
+// The sandbox stash is the env-selected working stash, so `akmTasksSync`
+// writes its rows with `AKM_BUNDLE_DIR=<stash>` inline: alive from prune's
+// point of view.
 const backendFor = (exec: CronExec) => {
-  // Same default-context wiring tasks-sync(-dry-run).test.ts use: install
-  // operations that don't pass their own contextPath fall back to this one,
-  // and it resolves to THIS sandbox's stash dir, so a plain `akmTasksSync`
-  // install is always alive/live from prune's point of view.
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },
@@ -104,31 +99,27 @@ const backendFor = (exec: CronExec) => {
   });
 };
 
-/** Install one synthetic orphan entry directly through the backend, bypassing sync's own bundle scope. */
-async function installOrphan(backend: ReturnType<typeof CRON_BACKEND>, id: string, contextPath: string): Promise<void> {
+/** A current row, installed directly through the backend, whose inline AKM_BUNDLE_DIR names a directory that is gone. */
+async function installDeadBundleOrphan(backend: ReturnType<typeof CRON_BACKEND>, id: string): Promise<void> {
   const bundleName = path.basename(stashDir).toLowerCase();
   const bindings = compileTaskSchedulerBindings({
     id,
     qualifiedRef: makeBundleRef(bundleName, `tasks/${id}`),
-    enabled: true,
     schedules: [{ cron: "0 3 * * *", source: `${id}.yml:0`, ordinal: 0 }],
   });
   const binding = bindings[0];
   if (!binding) throw new Error(`invariant: compileTaskSchedulerBindings produced no binding for ${id}`);
-  await backend.install(binding, { contextPath });
-}
-
-/** An absolute path to a scheduler-context descriptor file that has never been written. */
-function missingContextPath(): string {
-  return path.join(os.tmpdir(), `akm-t851-missing-context-${Math.random().toString(36).slice(2)}.json`);
-}
-
-/** A written, valid descriptor whose AKM_BUNDLE_DIR points at a directory that does not exist. */
-function deadBundleContextPath(): string {
-  const context = resolveScheduledTaskContext();
   const deadDir = path.join(os.tmpdir(), `akm-t851-dead-bundle-${Math.random().toString(36).slice(2)}`);
-  const descriptor = schedulerContextDescriptor({ ...context, AKM_BUNDLE_DIR: deadDir }, "");
-  return writeSchedulerContextDescriptor(descriptor) ?? schedulerContextPath(descriptor);
+  await backend.install(binding, { environment: { AKM_BUNDLE_DIR: deadDir } });
+}
+
+/** A row as 0.9.0 – 0.9.17-alpha.6 wrote it, naming a descriptor that has never been written. */
+function appendMissingContextOrphan(exec: CronExec & { current: () => string }, id: string): void {
+  const bundleName = path.basename(stashDir).toLowerCase();
+  const missing = path.join(os.tmpdir(), `akm-t851-missing-context-${Math.random().toString(36).slice(2)}.json`);
+  exec.write(
+    `${exec.current()}# akm:task ${id} BEGIN\n0 3 * * * /usr/local/bin/akm --scheduler-context ${missing} task run ${id} --bundle ${bundleName} --scheduled > /var/log/akm/${id}.log 2>&1\n# akm:task ${id} END\n`,
+  );
 }
 
 describe("akmTasksPrune", () => {
@@ -137,8 +128,8 @@ describe("akmTasksPrune", () => {
     const backend = backendFor(exec);
     writeTask("alive", "*/15 * * * *");
     await akmTasksSync({ backend });
-    await installOrphan(backend, "ghost", missingContextPath());
-    await installOrphan(backend, "stale", deadBundleContextPath());
+    appendMissingContextOrphan(exec, "ghost");
+    await installDeadBundleOrphan(backend, "stale");
     const writesBeforePrune = exec.writeCalls;
 
     const result = await akmTasksPrune({ backend });
@@ -158,6 +149,20 @@ describe("akmTasksPrune", () => {
     expect(exec.current()).toContain("task run alive");
     expect(exec.current()).toContain("task run ghost");
     expect(exec.current()).toContain("task run stale");
+  });
+
+  test("an older row whose descriptor names no AKM_BUNDLE_DIR is an invalid-context candidate", async () => {
+    const exec = spyingMemoryExec();
+    const backend = backendFor(exec);
+    const descriptor = path.join(stashDir, "no-bundle-dir.json");
+    fs.writeFileSync(descriptor, JSON.stringify({ version: 1, environment: { AKM_STATE_DIR: "/srv/state" } }));
+    exec.write(
+      `# akm:task odd BEGIN\n0 3 * * * /usr/local/bin/akm --scheduler-context ${descriptor} task run odd --scheduled > /var/log/akm/odd.log 2>&1\n# akm:task odd END\n`,
+    );
+
+    const result = await akmTasksPrune({ backend });
+
+    expect(result.preview.removes.map((op) => [op.id, op.reason])).toEqual([["odd", "invalid-context"]]);
   });
 
   test("no candidates: dry-run reports nothing to prune and exits clean", async () => {
@@ -180,8 +185,8 @@ describe("akmTasksPrune", () => {
     const backend = backendFor(exec);
     writeTask("alive", "*/15 * * * *");
     await akmTasksSync({ backend });
-    await installOrphan(backend, "ghost", missingContextPath());
-    await installOrphan(backend, "stale", deadBundleContextPath());
+    appendMissingContextOrphan(exec, "ghost");
+    await installDeadBundleOrphan(backend, "stale");
     const writesBeforePrune = exec.writeCalls;
 
     const result = await akmTasksPrune({ backend }, { yes: true });
@@ -201,8 +206,8 @@ describe("akmTasksPrune", () => {
     const backend = backendFor(exec);
     writeTask("alive", "*/15 * * * *");
     await akmTasksSync({ backend });
-    await installOrphan(backend, "ghost", missingContextPath());
-    await installOrphan(backend, "stale", deadBundleContextPath());
+    appendMissingContextOrphan(exec, "ghost");
+    await installDeadBundleOrphan(backend, "stale");
 
     const result = await akmTasksPrune({ backend }, { yes: true, id: ["ghost"] });
 

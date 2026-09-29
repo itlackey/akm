@@ -215,9 +215,9 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.hint).toBe(new UsageError("x", "TASK_SOURCE_INVALID").hint());
   });
 
-  // P4 (spec §3.2.2, rows B-14/B-15, F-A2.35): task source v3 AND v2 are
-  // both retired from `src` now, with the SAME TASK_SCHEMA_VERSION_UNSUPPORTED
-  // code and migrate hint (the migrator runs both generations in sequence).
+  // The runtime reads only task source v4 (#987): v3 AND v2 fail with the
+  // SAME TASK_SCHEMA_VERSION_UNSUPPORTED code, naming `akm migrate apply`
+  // (the migrator runs both generations in sequence).
   test.each([
     ["v3", "version: 3\nrun: echo hi\nschedule: '@daily'\n"],
     ["v2", "version: 2\nschedule: '@daily'\ncommand: echo hi\n"],
@@ -236,12 +236,8 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
     expect(typeof parsed.error).toBe("string");
-    // Both fixtures are unmigratable shapes (issue #869): the message names
-    // the blocked reason and tells the operator a human decision is needed,
-    // rather than pointing at `akm migrate apply`, which would just report
-    // the same block.
-    expect(parsed.error).toContain("needs a human decision");
-    expect(parsed.hint).toContain("Review the file and resolve the ambiguity by hand");
+    expect(parsed.error).toContain("akm migrate apply");
+    expect(parsed.hint).toContain("akm migrate apply --dry-run");
   });
 
   test("akm workflow run of a step passing with: to a task target emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
@@ -336,7 +332,6 @@ describe("error class hints", () => {
     expect(new ConfigError("missing stash", "STASH_DIR_NOT_FOUND").hint()).toContain("akm setup");
     expect(new ConfigError("not a dir", "STASH_DIR_NOT_A_DIRECTORY").hint()).toContain("directory");
     expect(new ConfigError("unreadable", "STASH_DIR_UNREADABLE").hint()).toContain("permission");
-    expect(new ConfigError("no embedding", "EMBEDDING_NOT_CONFIGURED").hint()).toContain("akm config set embedding");
     expect(new ConfigError("no llm", "LLM_NOT_CONFIGURED").hint()).toContain("defaults.llmEngine");
   });
 
@@ -366,7 +361,6 @@ describe("error class hints", () => {
   test("UsageError without a code-mapped hint returns undefined", () => {
     // INVALID_FLAG_VALUE is intentionally a generic fallback — points at --help.
     expect(new UsageError("bad flag", "INVALID_FLAG_VALUE").hint()).toContain("akm <command> --help");
-    expect(new UsageError("unknown key", "UNKNOWN_CONFIG_KEY").hint()).toBeUndefined();
     expect(new UsageError("bad json arg", "INVALID_JSON_ARGUMENT").hint()).toBeUndefined();
   });
 
@@ -673,7 +667,6 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
       [["registry", "search", "x"], "akm search --from registry"],
       [["workflow", "watch", "run-1"], "akm log --run"],
       [["config", "show"], "akm config list"],
-      [["task", "enable", "t1"], "akm task sync"],
       [["task", "show", "t1"], "akm show"],
       [["log", "tail"], "@offset:"],
     ];
@@ -780,7 +773,7 @@ describe("S11: sectioned root help", () => {
     // suite doesn't sandbox for this one subprocess.
     const { stdout, stderr } = spawnCli(["migrate", "status"], { cwd: repoRoot });
     expect(stderr).not.toContain("Unknown command");
-    expect(stdout).toContain('"status"');
+    expect(`${stdout}${stderr}`).toContain('"status"');
   });
 
   test("akm migrate --help renders its own usage", () => {
@@ -818,6 +811,16 @@ describe("S11: sectioned root help", () => {
     for (const id of VALID_ADAPTER_IDS) {
       expect(stdout).toContain(id);
     }
+    expect(stdout).toContain("--credential");
+    expect(stdout).toContain("secret://name");
+  });
+
+  test("akm bundle update --help documents scheduling and lock-aware automation (#967/#976)", () => {
+    const { status, stdout, stderr } = spawnCli(["bundle", "update", "--help"], { cwd: repoRoot });
+    expect(status).toBe(0);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("--skip-if-locked");
+    expect(stdout).toContain("schedule this command");
   });
 
   test("akm task run --help includes the akm prefix on nested USAGE lines", () => {

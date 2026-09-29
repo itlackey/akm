@@ -4,6 +4,366 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.9.17] - 2026-09-29
+
+### Added
+
+- **Declared links (#935).** `akm index` now records the relations a bundle
+  already declares — `xrefs:`, `supersededBy:`, `contradictedBy:`,
+  `currentBeliefRefs:`, a `.derived` memory's parent, a wiki's `sources:`,
+  resolved wiki/OKF page links, and a workflow step's or task's target — as
+  typed links, read from what it already parses, with no model call. `akm
+  show` lists an asset's links grouped `outgoing`/`incoming`/`unresolved` (up
+  to 10 per kind, with a total), and `akm info` reports link counts and how
+  many are unresolved. Curate's support refs (at most two per item) now come
+  from declared links instead of the LLM entity graph's `related` list (see
+  Removed): on a 23,979-entry snapshot, `related` supplied support refs for
+  5.4% of curate items against 29.6% for declared links, and judged
+  usefulness rose from about 7 to about 24 useful support refs per 100 items.
+- **Consolidate pair pass and retire proposals.** A second consolidation pass
+  compares each new-or-changed memory, flat `knowledge/` file, or lesson
+  against its nearest neighbours (the best 5 of 20 candidates, same bundle,
+  memory tier only) and has an LLM judge label each pair `duplicate`,
+  `subsumed`, `supersedes`, `contradicts`, `overlap`, or `unrelated` (judged
+  at cosine ≥ 0.93, or ≥ 0.95 for an asset the pass has never attempted —
+  unless git added it within the last 7 days, which still judges at 0.93).
+  The first three labels mint a reviewed `retire` proposal for the losing side
+  (owner-calibrated precision 20/22 = 0.91 [0.72, 0.97]); `contradicts` is
+  counted but left to a human; at most 300 pairs are judged a night. Retire
+  proposals mint under their own generator, `consolidate-pair` — kept apart
+  from the promote pass's `consolidate` proposals in bulk accept/reject — and
+  are reviewed like any other proposal (`akm proposal list --generator
+  consolidate-pair`, `show`, `diff`, `accept`, `reject`). Accepting one
+  archives the losing asset (and its `.derived` twin) instead of deleting it;
+  `akm proposal revert` restores the archived bytes exactly, including a file
+  with no trailing newline. Triage never auto-accepts a retire proposal,
+  whatever `applyMode` says.
+- **Retirement continuity check (rule R3).** Before the pair pass mints a
+  retire proposal, it replays up to five of the retired asset's own past
+  `search`/`curate` queries and requires the successor to rank in the top 10
+  everywhere the retired asset did. A failing or unverifiable query
+  (including one where the embedding endpoint is unreachable) flags the
+  proposal's `retirement.continuityRisk`, which excludes it from every bulk
+  accept path — but not bulk reject, and a person can still accept it by id.
+  `akm proposal list`/`show` surface the flag and the failing queries;
+  `akm proposal accept --generator ... --dry-run` reports how many
+  otherwise-matching proposals were skipped for this reason. `akm proposal
+  list` also gained a `--generator <name>` filter.
+- **A promotion now retires its source memory (O1).** When `akm proposal
+  accept` promotes a consolidate `promote` proposal — by a person or by
+  triage auto-promotion — it archives the source memory (and its `.derived`
+  twin) through the same retire-archive path, provided the source is
+  unchanged since the promotion was minted. A promotion no longer leaves a
+  memory/knowledge duplicate behind. Best-effort: a failure to archive only
+  warns.
+- **Archive purge sweep.** At the very start of every `akm improve` run, a
+  deterministic pass with no LLM call deletes an archived retirement's files
+  (never its `cleanup.md` tombstone) once it is more than 30 days old and
+  every file under its archive directory is git-tracked, clean, and
+  verifiable; anything less than that — or a bundle with no git history at
+  all — is left in place for a later sweep. A new `akm health` advisory,
+  `memory-cleanup-archive`, reports how many archived files and bytes are
+  not yet purgeable — untracked, modified, or unverifiable for a git-backed
+  bundle; everything, forever, for one with no git history at all.
+- **`akm bundle rename <old> <new>`.** Properly re-keys a bundle instead of
+  requiring a hand-edit of `config.json`: it rewrites `bundles`,
+  `defaultBundle`/`defaultWriteTarget`, and every scheduler ref that name the
+  old id, re-keys the indexed entries and enrichment cache in `index.db`,
+  rewrites this tool's own state rows that name the old bundle, and re-syncs
+  native scheduler rows under the new name. Refs inside asset content
+  (cross-references, a task's `uses:`) are reported, never silently
+  rewritten. `--dry-run` shows the full plan without writing anything.
+
+### Changed
+
+- **Search and curate are rebuilt on measured evidence.** Search now ranks by
+  reciprocal rank fusion (RRF) of two 100-candidate lists — whole-document
+  BM25 and nearest document vectors — replacing the previous require-every-
+  word keyword ladder plus a dozen additional ranking-signal boosts (exact-
+  name, type, belief-state, tag, graph, utility, and more): on a 221-query
+  LLM-judged retrieval suite, plain whole-document BM25 alone beat that whole
+  boosted pipeline by 0.156 nDCG@10. A hit's `score` is now its fused RRF
+  value (at most 2/61 ≈ 0.033, not comparable to an old score), keyword
+  matching no longer does prefix matching (a search for `dock` no longer
+  matches `docker`), and a slow embedding endpoint falls back to keyword-only
+  ranking after `embedding.queryTimeoutMs` (default 3000 ms) instead of
+  blocking the search. `akm curate` is now the top hits of that same fused
+  search, enriched with a preview and up to two support refs, rather than its
+  own layer of second-guessing fallback searches and nudges. Query embedding
+  now uses the template a model actually expects (Qwen3's retrieval
+  instruction, `search_query:`/`search_document:` for nomic,
+  `query:`/`passage:` for E5, and others — overridable with
+  `embedding.queryTemplate`/`documentTemplate`) instead of one generic
+  prefix; a nomic-embed or E5 configuration re-embeds every entry on the next
+  `akm index` because the new document template changes what gets embedded
+  (set `embedding.documentTemplate: ""` to keep the old vectors instead).
+  Measured on the suite: search nDCG@10 rises from 0.346 to 0.556 and curate
+  precision@5 from 0.350 to 0.551; search p50 latency falls from about 787 ms
+  to about 400 ms, and a freshly built index shrinks from 560 MB to 340 MB.
+  Content indexed under two names (a memory also promoted verbatim to
+  knowledge, say) now returns only the higher-ranked copy instead of both,
+  and `akm curate` returns an empty, explained result for input that is not
+  a real query (a harness/tool envelope, a bare stash README) instead of
+  `--limit` unrelated items.
+- **Index layout 26.** Vectors are stored once — the sqlite-vec mirror, the
+  fragment full-text table, and the stored embedding-input text are dropped
+  in favor of a derived hash — and every relation `akm index` already parses
+  is stored as a typed link (see Added). An index an older 0.9.17 prerelease
+  or 0.9.16 wrote migrates to layout 26 in place on the first writable open —
+  a 0.9.16 index also gets a one-time full-text rebuild along the way, a few
+  seconds for a 24k-entry index — and the run ends with a VACUUM that
+  reclaims the space the migration frees (in one measurement, a 601 MB index
+  built one layer short of layout 26 dropped to 377 MB; actual savings vary
+  with how much of an existing index was already free space). An index this
+  release cannot read (written by a newer akm) is refused, naming the
+  upgrade, instead of being silently reinterpreted.
+- **A scheduled task is just a command and a schedule.** Each native
+  crontab/launchd/Task Scheduler row now carries its own `AKM_BUNDLE_DIR`
+  (plus any `AKM_CONFIG_DIR`/`AKM_DATA_DIR`/`AKM_CACHE_DIR`/`AKM_STATE_DIR`
+  the syncing shell set explicitly) inline, instead of pointing at a
+  `--scheduler-context <file>` descriptor; a crontab now carries its PATH the
+  same way, in a `# akm:env` block akm writes and rewrites next to its task
+  rows, instead of inside each row's own descriptor file. The first `akm task
+  sync` after upgrading rewrites every akm-managed row once, in place — same
+  launcher, same schedule, nothing added or removed — and once `akm task
+  doctor` lists no binding still pointing at a descriptor, the old
+  `$DATA/tasks/context/` files it leaves behind can be deleted. Rows written
+  by 0.9.0 through 0.9.16 keep firing until that sync.
+- **`akm improve` reworks only what retrieval actually returned, or what's
+  new.** The proactive-maintenance and high-salience lanes, and the memory
+  consolidation judge, are now scoped to assets a real `search`, `curate`,
+  `show`, or `feedback` touched in the last 90 days, plus material no
+  improve stage has processed yet — not the whole stash.
+  Measured on a 19,870-asset copy of the maintainer's bundle: the fallback
+  lanes' candidate pool drops from 15,686 to 6,450 assets, and in July the
+  proactive lane had rewritten 3,069 assets, 3,059 of which had never been
+  retrieved since usage logging began. Left-out assets are reported under a
+  new `retrieval` gate (`akm improve --dry-run`, and health's `not_retrieved`
+  skip reason).
+- **Reflect refuses a rewrite that grades worse on the asset's own searches
+  (#722).** Before proposing a rewrite of existing content, reflect grades
+  the old and new versions on up to five queries that actually retrieved the
+  asset, using the same relevance judge the retrieval eval uses (kappa 0.83
+  against human grades); a rewrite that grades lower on average is refused as
+  `quality_rejected`. Of 60 accepted rewrites reviewed this way after the
+  fact, 23% [14-35%] graded lower than the content they replaced.
+- **Config is fully tolerant of what an older or newer release wrote.** No
+  config object is strict any more: an unknown key at any depth — retired,
+  misspelled, or written by a newer release — is kept in memory, named once,
+  round-trips through ordinary writes, and is dropped only by `akm migrate
+  apply`. `akm migrate apply` itself collapses to one config step that reads
+  `config.json` through the normal load pipeline and writes the current
+  shape back under a backup.
+- **Locking and writes are simpler.** A lock file is now one `O_EXCL`
+  create. A write to a git-backed bundle writes the file directly and
+  commits exactly that path. `akm proposal accept`/`revert` write the asset
+  file, then record the proposal and its event in one `state.db`
+  transaction, so a crash in between leaves a re-acceptable pending proposal
+  rather than something corrupt.
+- **Scheduling is one list.** `scheduler.enabled` in `config.json` holds the
+  fully-qualified refs a host schedules; it is still written and read in the
+  `{kind, ref, sourceId}` shape 0.9.16 used. A config with no list at all —
+  0.9.15 and earlier — is read on the first sync after upgrading as "keep
+  what's already installed," and the list is written from there.
+- **A frozen workflow plan carries `irVersion` 6.** Every workflow — Markdown
+  and the GitHub-shaped YAML subset alike — compiles to the one plan type
+  that was previously irVersion 4/5's target; a stored irVersion 4 or 5 plan
+  is still read and run tolerantly (an unrecognized key in it is ignored
+  instead of abandoning the run), and only a plan a *newer* akm froze is
+  refused. An explicit `engine: null` on a task, workflow, or command layer
+  now means "no preference here" and falls through to `defaults.engine`,
+  instead of forcing the `opencode-sdk` fallback.
+- **The quality judge that gates reflect and distill scores each criterion
+  separately** instead of one blended float, no longer scores an
+  ACTIONABILITY criterion that measured no better than chance (AUC 0.46), and
+  now runs at a pinned temperature of 0 — at the previous effective default
+  of 0.3, 10 of 16 identical inputs had flipped verdict. Consolidate's own
+  prompt and schema now ask only for `promote`; `merge`/`delete`/`contradict`
+  were advisory-only and had not actually executed since July regardless.
+- **A pasted credential in a search or curate query is redacted before it's
+  stored.** A password, bearer token, JWT, `ghp_…` token, PEM key, and
+  similar patterns are replaced with `[REDACTED]` in `state.db`'s usage and
+  event logs; a scan of mined queries had found 22 stored verbatim. Existing
+  rows are not rewritten.
+- **One bad item no longer aborts a whole `akm task sync` or `akm migrate`
+  run.** A binding or bundle that fails to reconcile, or a migration step
+  that throws, is now reported individually (`failures`/`failedSteps`) while
+  every other task, bundle, or step still completes.
+- **A one-file change in a large directory no longer costs `akm index` tens
+  of minutes.** Both full-text tables' per-entry deletes were unindexed table
+  scans; on a 23.9k-entry index, one touched file in a 13.7k-entry directory
+  took 26-31 minutes before this release and well under a minute after.
+- **Output shapes changed along with the features above.** A search hit
+  drops `selectedRef`, `parentRef`, `fragmentOrdinal`, `fragmentCount`, its
+  fragment line/size fields, `matchStage`, and `graph` (fragments no longer
+  compete as search candidates; `akm show <ref>#<fragment>` still resolves a
+  section). `akm index`/`akm info` drop `vecAvailable`, and
+  `semanticStatus` no longer reports `ready-vec`. `akm migrate status`'s
+  separate `taskV3Migration`/`taskV4Migration` sections are now one
+  `taskFiles` section. `akm workflow plan` drops its `sourceReadSet` block.
+- **`akm health` gets a new hard `state-db-integrity` check** (a read-only
+  SQLite `PRAGMA quick_check` against `state.db`, plus a freelist-ratio
+  warning above 50%), and drops eight checks nothing acted on: the
+  `task-log-backing` hard check, the `pool-saturation` advisory, and six
+  research advisories (`outcome-proxy-adequacy`, `outcome-proxy-dead`,
+  `salience-uniformity-collapse`, `enrichment-lane-minting`,
+  `improve-churn-ratio`, `collapse-churn-detector`). `processes.reflect` also
+  gains `excludeRefPrefixes: string[]` to skip a ref prefix (a raw
+  wiki-ingest snapshot tree, say) that a type-only `allowedTypes` filter
+  can't carve out on its own.
+
+### Removed
+
+- **The LLM entity-graph extraction pass.** `akm improve`'s per-file
+  entity/relation extraction, its tables, and `akm show`'s `related` list are
+  gone: on the navigation eval, vector kNN beat `related` by 0.157 P@5
+  [0.051, 0.260], and its only other consumer, curate's support refs, moved
+  to declared links (see Added). The tables are dropped unconditionally on
+  an index's next writable open. The `graph-refresh` improve strategy and its
+  `akm-graph-refresh-weekly` task template are retired with it — naming
+  `graph-refresh` (via `--strategy` or a task) now fails outright, naming the
+  retirement. `akm health` drops every graph metric (KPI card, summary rows,
+  per-run duration/entity/relation columns).
+- **LLM metadata enrichment (`index.metadataEnhance`).** On a 49-query,
+  1,968-entry measurement it moved search nDCG@10 by -0.0092 [-0.0324,
+  +0.0165] and long-prompt curate P@5 by -0.054 [-0.093, -0.012] — no
+  measurable benefit for a full pass costing about 27 B70-hours. It was
+  already off by default.
+- **The per-run forgetting-safety lane.** A one-time cutover guard from a
+  June 2026 ranking-formula change that had kept running on every improve run
+  since. Thirty days of events showed no marginal pick over the signal-delta
+  lane once the new retrieval scope (above) applied: 4 of its last 5 flagged
+  refs were also picked by signal-delta, and the 5th was independently
+  planned under signal-delta the same run.
+- **Removed flags and drain policies.** `akm search --no-project-context` and
+  `akm proposal drain --policy`/`--max-diff-lines` now fail as unknown flags
+  (exit 2), and the `personal-stash`/`conservative`/`manual` drain policies
+  are gone. Drain, and improve's triage pre-pass, now accept only a proposal
+  the quality judge passed on its exact content and reject an empty diff;
+  everything else goes to `processes.triage.judgment` or waits for review.
+  Extract and consolidate proposals, which `personal-stash` auto-accepted on
+  size alone, are no longer auto-accepted.
+- **Retired config keys** — kept and tolerated, dropped only by `akm migrate
+  apply`: `index.graph.*`, `index.metadataEnhance`, `search.minScore`,
+  `search.graphBoost.*`, `improve.utilityDecay.*`, `improve.collapseDetector`,
+  `improve.salience.replayBudget`, `processes.triage.policy`,
+  `processes.triage.maxDiffLines`, `processes.consolidate.contradictionDetection`,
+  the retired `processes.consolidate.antiCollapse` merge guards
+  (`maxGeneration`, `lexicalDiversityCheck`, `mergeInformationFloor`,
+  `minSpecificityRetention` — `antiCollapse` itself, and its
+  `randomClusterFraction` mixing, are unaffected), and every improve
+  strategy's `processes.graphExtraction.*` and
+  `processes.consolidate.incrementalSince`/`.neighborsPerChanged` (the pair
+  pass replaces incremental-window candidate selection with the improve
+  ledger). A leftover `improve.strategies["graph-refresh"]` override block is
+  also dropped this way; `defaults.improveStrategy: "graph-refresh"` is not —
+  change that one by hand.
+- **Also removed, superseded by the simpler mechanisms above:** the
+  scheduler source-grant layer and its fire-time re-check, the filesystem
+  transaction journals used by proposal accept/revert, the maintenance
+  barrier and its per-process activity registry, the SQLite lock-operation
+  mutex, the strict per-key config schemas and the retired-key registry, and
+  the health advisories tied to all of the above. `akm migrate apply` deletes
+  the files they left behind: `$DATA/txn/`, `$DATA/txn-quarantine/`,
+  `maintenance.barrier.lock`, and the `maintenance-activities/` registry,
+  which leaked an entry per process (one host had 229,943 entries, 927 MB).
+
+### Fixed
+
+- **`akm info` now always reports and exits 0, like a help command.** An
+  invalid `config.json`, an unreadable or missing bundle directory, and a
+  locked, newer, or corrupt `index.db` are each named in the report instead
+  of failing the command or showing unexplained zeros.
+- **`akm health` no longer silently drops every improve run recorded before
+  #947** (2026-09-09): a `plan` object with no `processes` key failed to
+  decode entirely, excluding those runs from `--window-compare`, `--group-by
+  run`, and the HTML/MD reports. On a real 30-day window this had dropped 11
+  of 55 runs.
+- **`akm show` works again for a memory with a `.derived.md` child** (835 of
+  them on one real bundle) — broken since 0.9.7.
+- **`akm bundle add --name` is a contract on every add path, not a hint.**
+  An explicit `--name` that is not a legal bundle slug, or is already taken,
+  now fails before any write instead of silently falling back to a derived
+  name (`akm bundle add --provider ... --name` had its own gap in this same
+  check, now closed). A registry add with no `--name` is keyed by its
+  package or repo name instead of the fixed name `extracted` every registry
+  bundle after the first used to collide on.
+- **`akm improve --require-engines` no longer aborts a scheduled run because
+  a local LLM endpoint was merely busy.** Its reachability probe now waits up
+  to the engine's own timeout (at most two minutes) instead of a flat 3
+  seconds.
+- **A scheduled row's value survives a `$` or a backslash**, and a cron
+  command too long for one line is recognized by `akm task sync` again
+  instead of being rewritten on every sync.
+
+## [0.9.16] - 2026-09-22
+
+### Fixed
+
+- **Result documents larger than 64 KiB are no longer truncated on a piped
+  stdout.** `akm show`/`search`/`config get … | python3 -c …` (or `| head`, or
+  any other pipe) returned exactly 65,536 bytes — the Linux pipe-buffer size —
+  producing unparseable JSON, while the same command with `--output <file>`
+  wrote the complete document. The two stdout writers (`deliverRendered` for
+  json/yaml/text/md/html, `outputJsonl` for jsonl) used `console.log`, and on
+  Bun `console.log` issues a single `write(2)` against a non-blocking fd 1 and
+  silently discards whatever the kernel did not accept; a pipe accepts at most
+  one buffer's worth. Both now go through `writeStdout`
+  (`src/output/stdout.ts`), which uses `process.stdout.write` — that handles
+  the short write correctly, and the queued remainder keeps the process alive
+  until it drains. Byte-for-byte output is unchanged on every format; only the
+  transport moved.
+
+### Added
+
+- **Scheduled execution is now granted by host-local config and bound to the
+  approved source installation.** `scheduler.enabled` records
+  `{kind, ref, sourceId}` entries written by `akm task enable`; authored task
+  frontmatter cannot enable itself. `akm migrate apply` performs the explicit,
+  backed-up conversion of older grants, and runtime config points unmigrated
+  installations to that command instead of silently inventing authority.
+- **Executable assets now run beneath a host-owned tool ceiling.** Local
+  `execution.allowedTools` config caps asset tool requests. Workspace,
+  environment, and opaque runtime selection are no longer accepted from asset
+  frontmatter, and a transport that cannot enforce a non-empty resolved tool
+  policy fails before dispatch.
+
+### Changed
+
+- **Unscoped `akm task sync` reconciles every enabled bundle.** It refreshes
+  the native scheduler from the latest locally enabled task/workflow sources
+  and removes attributable bindings for bundles that have been disabled.
+  Removing a bundle also revokes its scheduler grants.
+- **Bundle activation and identity are consistent across the CLI.** A disabled
+  bundle is inert for reads, writes, indexing, execution, and scheduling;
+  explicit lifecycle updates remain available. Physical-root identity rejects
+  duplicate or symlink-aliased bundle registrations and prevents an
+  `AKM_BUNDLE_DIR` alias from reactivating disabled content.
+- **Shared config inheritance now separates portable policy from host
+  authority.** Source/default ownership, registries, scheduler and execution
+  grants, credentials, executable arguments/workspace, setup/experimental
+  state, reranker connections, and publication hooks stay local. Every
+  bundle-relative `extends` hop is checked by real path containment.
+- **Unsafe overrides now name one risk each.** Use
+  `--allow-insecure-transport` for reviewed plain HTTP and
+  `--allow-dangerous-env-keys` for reviewed process-hijacking environment
+  keys; the former combined `--allow-insecure` switch is removed.
+- **Bundle/source resolution carries explicit default and priority state.**
+  Search, show, write targeting, registry installation, and configuration
+  mutation no longer infer ownership or trust from array position.
+
+### Fixed
+
+- Protected generated improve content from credential echoes, redacted bodies,
+  and run-only scaffolding, while exercising the real bounded engine probe.
+- Repaired degraded sqlite-vec mirrors, preserved scheduler intent across
+  synchronization, kept explicit setup choices and rollback serialization
+  stable, and tolerated valid sharded startup contention.
+- Made git, website, npm, and filesystem bundle add/update/remove workflows
+  converge on the same lifecycle and dangerous-environment audit behavior.
+
 ## [0.9.15] - 2026-09-10
 
 ### Added

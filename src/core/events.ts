@@ -110,25 +110,15 @@ export type EventType =
   /** Owning LLM telemetry sink marker — carries `{expectedTerminalRecords}`. */
   | "llm_usage_summary"
   /**
-   * WS-1 forgetting-safety rank-change report (plan §WS-1 step 7). Emitted once
-   * per improve run on the second and subsequent runs, when the stash-wide rank
-   * comparison can be made. Metadata carries `{stashSize, totalChanged,
-   * forgettingCandidates, topDrops}`. See `buildRankChangeReport` in salience.ts.
+   * Retired (0.9.17-alpha.9, R5): the per-run forgetting-safety rank-change
+   * report (plan §WS-1 step 7). No longer emitted — the 30-day event window
+   * showed no pick the signal-delta lane or retrieval scope would not also
+   * have made, and its purpose moved into the retirement continuity check
+   * (`checkRetirementContinuity` in consolidate/continuity-check.ts, now
+   * driven by search rank, not salience rank). Kept here only so old rows
+   * still decode. Metadata was `{stashSize, totalChanged, forgettingCandidates, topDrops}`.
    */
   | "improve_salience_rank_change"
-  /**
-   * WS-1 first-run marker. Emitted on the very first improve run when the
-   * asset_salience table is empty — no pre-existing baseline exists to compare
-   * against (the old combinedEligibilityScore ordering was not captured in state.db).
-   * Metadata carries `{candidateCount, note}`.
-   */
-  | "improve_salience_first_run"
-  /**
-   * #610 — bounded replay budget selection. Emitted once per improve run when a
-   * replay budget is configured. Metadata carries `{count, budget,
-   * convergedSkipped, candidatePool}` (aggregated, never per-ref).
-   */
-  | "improve_replay_selected"
   /**
    * #626 — emitted once per extract run when the pre-LLM triage gate is enabled
    * and evaluated at least one session. Counts-only metadata: `{evaluated,
@@ -136,15 +126,18 @@ export type EventType =
    */
   | "extract_triaged"
   /**
-   * R5 — emitted (rarely) by the collapse/churn detector when a cycle trips an
-   * alert rule. Metadata carries `{kind, detail, metrics, canarySetId, runId}`
-   * where `kind` ∈ collapse-recall | collapse-entropy | collapse-shrink |
-   * churn | merge-floor. Cycle history itself lives in `improve_cycle_metrics`
-   * (365-day retention), not the events log.
+   * R0 — emitted by `vacuumIfReclaimable`
+   * (src/storage/state-db-integrity.ts) after a `VACUUM` triggered by a
+   * post-purge freelist-ratio check. Metadata carries
+   * `{pagesBefore, pagesAfter, freelistRatioBefore}`.
    */
-  | "collapse_detector_alert"
-  /** R5 — emitted by the maintenance purge when improve_cycle_metrics rows past retention are deleted. Metadata: `{purgedCount, retentionDays}`. */
-  | "improve_cycle_metrics_purged"
+  | "state_db_vacuumed"
+  /**
+   * Emitted by `vacuumIfReclaimable` when `akm index` compacts index.db: after
+   * an index layout migration, or when more than half its pages are free.
+   * Metadata carries `{pagesBefore, pagesAfter, freelistRatioBefore}`.
+   */
+  | "index_db_vacuumed"
   /**
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /

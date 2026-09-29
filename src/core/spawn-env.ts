@@ -151,7 +151,7 @@ export function collectAllowlistedEnv(
  * a shell's own command-path caching already does, and the cost of not
  * memoizing is paid on every child-env build: two PATH splits and up to seven
  * SYNCHRONOUS `existsSync` probes, on the event loop a 10 000-unit fan-out
- * shares with the run's lease heartbeat.
+ * shares with every other in-flight unit.
  *
  * Bounded so a caller that somehow varies its PATH cannot grow it without
  * limit; a spawn path only ever sees a handful of distinct PATH strings, so

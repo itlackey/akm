@@ -14,7 +14,7 @@ import path from "node:path";
 import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../../src/commands/improve/salience";
-import { listProposals } from "../../src/commands/proposal/repository";
+import { archiveProposal, createProposal, listProposals } from "../../src/commands/proposal/repository";
 import {
   detectDoubleFrontmatter,
   isValidDescription,
@@ -24,10 +24,10 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
-import { getDistillRejectedDir } from "../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
 import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
+import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
 import {
   type Cleanup,
   mutateScopedEnv,
@@ -362,6 +362,106 @@ describe("buildDistillPrompt", () => {
   test("omits rejected proposals section when none provided", () => {
     const prompt = buildDistillPrompt({ inputRef: "skills/deploy", assetContent: null, feedback: [] });
     expect(prompt).not.toContain("Previously rejected proposals");
+  });
+});
+
+// (R1) A legacy rejected proposal (metadata_json has no `changes`
+// key at all — the pre-#858/#859 archive shape) must not throw before the
+// distill prompt is built. The Reflexion-context mapper used
+// `proposalContent(p)`, which throws when `changes[0]?.after` is undefined;
+// `storedToChanges` deliberately returns `[]` for these rows. Reading the
+// preview from `p.payload.content` instead (always populated) fixes it.
+describe("akmDistill — rejected proposals tolerate legacy rows with no persisted changes (R1)", () => {
+  test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
+    const stash = makeStashDir();
+    const sourceFile = path.join(stash, "skills", "duplicate.md");
+    fs.writeFileSync(sourceFile, "---\ndescription: Source skill\n---\n\nSource skill body.\n", "utf8");
+
+    const rejected = createProposal(stash, {
+      ref: "skills/duplicate",
+      source: "distill",
+      payload: { content: VALID_LESSON },
+    });
+    archiveProposal(stash, rejected.id, "rejected", "not a real improvement");
+
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = db.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(rejected.id) as {
+        metadata_json: string;
+      };
+      const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+      delete metadata.changes;
+      db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), rejected.id);
+    } finally {
+      db.close();
+    }
+
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skills/duplicate",
+      stashDir: stash,
+      config: configEnabled(stash),
+      lookupFn: async () => sourceFile,
+      readEventsFn: emptyEvents,
+      chat: async (_config, messages) => {
+        receivedPrompt = messages.map((message) => message.content).join("\n");
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).not.toBe("llm_failed");
+    expect(receivedPrompt).toContain("Previously rejected proposals");
+    expect(receivedPrompt).toContain("not a real improvement");
+  });
+});
+
+// buildDistillMessages excludes the drain's stale-target auto-rejects from the
+// Reflexion "don't repeat this" context (STALE, R20): that rejection is a
+// procedural refusal (the target changed after mint), not a judgement on the
+// content, and would mislead the LLM into avoiding content it was never
+// actually judged on. An ordinary rejection stays in the context.
+describe("akmDistill — rejected proposals exclude stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
+  test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
+    const stash = makeStashDir();
+    const sourceFile = path.join(stash, "skills", "dup-stale-vs-ordinary.md");
+    fs.writeFileSync(sourceFile, "---\ndescription: Source skill\n---\n\nSource skill body.\n", "utf8");
+
+    const staleRejected = createProposal(stash, {
+      ref: "skills/dup-stale-vs-ordinary",
+      source: "distill",
+      payload: { content: VALID_LESSON.replace("Use `rg`", "STALE_TARGET_REJECTED_BODY_MARKER. Use `rg`") },
+    });
+    archiveProposal(stash, staleRejected.id, "rejected", "stale-target: STALE_TARGET_REASON_MARKER", undefined, {
+      outcome: "auto-rejected",
+      reason: "stale-target",
+      gate: "triage:personal-stash",
+    });
+
+    const ordinaryRejected = createProposal(stash, {
+      ref: "skills/dup-stale-vs-ordinary",
+      source: "distill",
+      payload: { content: VALID_LESSON.replace("Use `rg`", "ORDINARY_REJECTED_BODY_MARKER. Use `rg`") },
+    });
+    archiveProposal(stash, ordinaryRejected.id, "rejected", "ORDINARY_REJECTION_REASON_MARKER");
+
+    let receivedPrompt = "";
+    const result = await akmDistill({
+      ref: "skills/dup-stale-vs-ordinary",
+      stashDir: stash,
+      config: configEnabled(stash),
+      lookupFn: async () => sourceFile,
+      readEventsFn: emptyEvents,
+      chat: async (_config, messages) => {
+        receivedPrompt = messages.map((message) => message.content).join("\n");
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).not.toBe("llm_failed");
+    expect(receivedPrompt).toContain("ORDINARY_REJECTED_BODY_MARKER");
+    expect(receivedPrompt).toContain("ORDINARY_REJECTION_REASON_MARKER");
+    expect(receivedPrompt).not.toContain("STALE_TARGET_REJECTED_BODY_MARKER");
+    expect(receivedPrompt).not.toContain("STALE_TARGET_REASON_MARKER");
   });
 });
 
@@ -1742,13 +1842,12 @@ describe("akmDistill — pipeline-fix integration", () => {
     expect(result.outcome).toBe("review_needed");
     expect(result.score).toBe(2.0);
     expect(result.reason).toMatch(/description|when_to_use|frontmatter/);
-    expect(listProposals(stash)).toEqual([]);
-    const rejectedDir = getDistillRejectedDir(stash);
-    const rejectedFiles = fs.readdirSync(rejectedDir);
-    expect(rejectedFiles).toHaveLength(1);
-    const rejectedContent = fs.readFileSync(path.join(rejectedDir, rejectedFiles[0]!), "utf8");
-    expect(rejectedContent).toContain("outcome: review_needed");
-    expect(rejectedContent).toContain("Lesson distilled from knowledge:foo");
+    // R10: review_needed now mints a pending proposal so a human can triage
+    // it in the normal queue.
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.status).toBe("pending");
+    expect(proposals[0]!.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
 
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)?.metadata?.outcome).toBe("review_needed");
@@ -1778,7 +1877,8 @@ describe("akmDistill — pipeline-fix integration", () => {
     });
 
     expect(result.outcome).toBe("review_needed");
-    expect(listProposals(stash)).toEqual([]);
+    // R10: review_needed now mints a pending proposal for human triage.
+    expect(listProposals(stash)).toHaveLength(1);
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)?.metadata?.outcome).toBe("review_needed");
   });
@@ -1810,18 +1910,19 @@ describe("akmDistill — pipeline-fix integration", () => {
 // ── R3/G4: judge-verdict routing + output encoding salience ──────────────────
 
 describe("akmDistill — R3 judge verdict routing + G4 output encoding salience", () => {
-  test("generation and quality judging share the credential captured before distill mutations", async () => {
+  test("generation and quality judging each read the credential at dispatch; neither value is persisted", async () => {
     const stash = makeStashDir();
     const sourcePath = path.join(stash, "skills", "deploy.md");
     fs.writeFileSync(sourcePath, "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n");
     const config = configJudgeEnabled(stash);
     const engine = config.engines?.default;
     if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.apiKey = "$AKM_DISTILL_LEASE_KEY";
-    const secret = "distill-lease-original-092";
+    engine.apiKey = "$AKM_DISTILL_ROTATING_KEY";
+    const secret = "distill-original-092";
+    const rotated = "distill-rotated-092";
     const observed: Array<string | undefined> = [];
 
-    const result = await withEnv({ AKM_DISTILL_LEASE_KEY: secret }, () =>
+    const result = await withEnv({ AKM_DISTILL_ROTATING_KEY: secret }, () =>
       akmDistill({
         ref: "skills/deploy",
         config,
@@ -1830,7 +1931,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
         readEventsFn: emptyEvents,
         chat: async (connection, messages) => {
           observed.push(connection.apiKey);
-          if (observed.length === 1) mutateScopedEnv("AKM_DISTILL_LEASE_KEY", undefined);
+          if (observed.length === 1) mutateScopedEnv("AKM_DISTILL_ROTATING_KEY", rotated);
           const joined = messages.map((message) => message.content).join("\n");
           if (joined.includes("Score this lesson")) {
             return JSON.stringify({ score: 4.5, reason: "adds new info" });
@@ -1841,8 +1942,11 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     );
 
     expect(result.outcome).toBe("queued");
-    expect(observed).toEqual([secret, secret]);
+    expect(observed).toEqual([secret, rotated]);
     expect(listProposals(stash)).toHaveLength(1);
+    const persisted = JSON.stringify(listProposals(stash));
+    expect(persisted).not.toContain(secret);
+    expect(persisted).not.toContain(rotated);
   });
 
   test("queued lesson stamps judgeConfidence on the event and content-scores the OUTPUT ref", async () => {
@@ -1899,6 +2003,71 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     });
     expect(result.outcome).toBe("review_needed");
     expect(result.score).toBe(-1);
-    expect(listProposals(stash).length).toBe(0);
+    // R10: review_needed mints a pending proposal (for human triage) — the
+    // point of this test is that it is never auto-QUEUED as accepted content.
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.status).toBe("pending");
+  });
+});
+
+// ── Quality rejections land in the improve ledger ───────────────────────────
+
+describe("akmDistill — quality rejections land in the improve ledger", () => {
+  test("quality_rejected records the distill rejection window for the input, with the judge's reason, and queues nothing", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({ score: 1.5, reason: "adds nothing new" });
+        }
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.score).toBe(1.5);
+    expect(result.proposalId).toBeUndefined();
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
+
+    const db = openStateDatabase();
+    try {
+      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      expect(row).toMatchObject({ outcome: "quality_rejected", detail: "adds nothing new" });
+      expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("review_needed mints a pending proposal (queued for human triage, not silently discarded)", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({ score: 3.0, reason: "uncertain, could go either way" });
+        }
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("review_needed");
+    expect(result.proposalId).toBeDefined();
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]!.status).toBe("pending");
+    expect(proposals[0]!.source).toBe("distill");
   });
 });

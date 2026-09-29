@@ -339,13 +339,14 @@ describe("akm sync", () => {
     );
   });
 
-  test("named save does not resolve installed filesystem entries as git-backed save targets", async () => {
+  test("named save commits an installed filesystem bundle backed by git (#969)", async () => {
     const primaryStashDir = makeTempDir("akm-save-primary-installed-");
     initGitRepo(primaryStashDir);
 
     const installedStashDir = makeTempDir("akm-save-installed-");
     initGitRepo(installedStashDir);
-    fs.writeFileSync(path.join(installedStashDir, "installed.md"), "# installed\n");
+    fs.mkdirSync(path.join(installedStashDir, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(installedStashDir, "knowledge", "installed.md"), "# installed\n");
 
     const configRoot = makeTempDir("akm-save-config-installed-");
     writeJson(path.join(configRoot, "akm", "config.json"), {
@@ -365,14 +366,10 @@ describe("akm sync", () => {
       () => runCliCapture(["sync", "installed-stash"]),
     );
 
-    // Exit 1 (not found), not 2 (usage): the argument is well-formed, the
-    // bundle just isn't a git-backed sync target.
-    expect(result.code).toBe(1);
-    const error = JSON.parse(result.stderr.trim()) as { error?: string; code?: string };
-    expect(error.code).toBe("SOURCE_NOT_FOUND");
-    expect(error.error).toContain('No git bundle found with name "installed-stash"');
-    expect(spawnSync("git", ["-C", installedStashDir, "status", "--porcelain"], { encoding: "utf8" }).stdout).toContain(
-      "installed.md",
-    );
+    expect(result.code).toBe(0);
+    const json = parseSaveOutput(result.stdout);
+    expect(json.committed).toBe(true);
+    expect(gitHeadSubject(installedStashDir)).toMatch(/^akm save /);
+    expect(spawnSync("git", ["-C", installedStashDir, "status", "--porcelain"], { encoding: "utf8" }).stdout).toBe("");
   });
 });

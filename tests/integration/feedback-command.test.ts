@@ -1,12 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmSearch } from "../../src/commands/read/search";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
-import type { SourceSearchHit } from "../../src/sources/types";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -30,10 +28,6 @@ async function runCli(args: string[]): Promise<{ status: number | null; stdout: 
 function parseJsonOutput(result: { stdout: string; stderr: string }): Record<string, unknown> {
   const payload = result.stdout.trim() || result.stderr.trim();
   return JSON.parse(payload) as Record<string, unknown>;
-}
-
-function isLocalHit(hit: { type: string }): hit is SourceSearchHit {
-  return hit.type !== "registry";
 }
 
 // Full composite isolation (incl. XDG_DATA_HOME): this file asserts EXACT
@@ -290,34 +284,6 @@ describe("akm feedback", () => {
     } finally {
       db.close();
     }
-  });
-
-  test("positive feedback affects subsequent ranking after re-indexing", async () => {
-    writeFile(
-      path.join(stashDir, "memories", "alpha.md"),
-      "---\ndescription: shared deployment incident memory\n---\nUse the same deployment incident checklist.\n",
-    );
-    writeFile(
-      path.join(stashDir, "memories", "omega.md"),
-      "---\ndescription: shared deployment incident memory\n---\nUse the same deployment incident checklist.\n",
-    );
-
-    await buildIndex();
-
-    const before = await akmSearch({ query: "shared deployment incident", source: "local" });
-    const beforeMemories = before.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
-    expect(beforeMemories.slice(0, 2).map((hit) => hit.ref)).toEqual(["memories/alpha", "memories/omega"]);
-    expect(beforeMemories[0]?.score).toBe(beforeMemories[1]?.score);
-
-    const feedback = await runCli(["feedback", "memories/omega", "--positive", "--format=json"]);
-    expect(feedback.status).toBe(0);
-
-    await buildIndex();
-
-    const after = await akmSearch({ query: "shared deployment incident", source: "local" });
-    const afterMemories = after.hits.filter(isLocalHit).filter((hit) => hit.type === "memory");
-    expect(afterMemories[0]?.ref).toBe("memories/omega");
-    expect(afterMemories[0]?.whyMatched).toContain("usage history boost");
   });
 
   test("feedback on an unindexed asset fails fast with a clear error instead of triggering a slow reindex", async () => {

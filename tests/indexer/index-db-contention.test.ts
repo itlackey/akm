@@ -16,7 +16,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { ConfigError, TransientError } from "../../src/core/errors";
-import { reclassifyIndexDbContention } from "../../src/indexer/indexer";
+import { reclassifyIndexDbContention } from "../../src/indexer/index-db-contention";
 
 describe("reclassifyIndexDbContention", () => {
   test("a contention-shaped raw driver error reclassifies to INDEX_DB_CONTENDED with the original as cause", () => {

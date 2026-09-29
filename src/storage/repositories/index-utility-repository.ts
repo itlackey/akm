@@ -5,15 +5,15 @@
 /**
  * `index.db` utility-score + retrieval-count repository (MemRL signals).
  *
- * Owns the raw SQL for `utility_scores` / `utility_scores_scoped` and the
- * retrieval-frequency counting over `usage_events`. The bounded-step EMA policy
- * itself lives in `indexer/feedback/utility-policy`; this repo only reads/writes.
+ * Owns the raw SQL for `utility_scores` and the retrieval-frequency counting
+ * over `usage_events`. The bounded-step EMA policy itself lives in
+ * `indexer/feedback/utility-policy`; this repo only reads/writes.
  */
 
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { computeNextUtility, type FeedbackUtilityResult } from "../../indexer/feedback/utility-policy";
 import type { Database, SqlValue } from "../database";
-import type { RetrievalCountOptions, ScopedUtilityRow, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
+import type { RetrievalCountOptions, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
 /**
@@ -48,21 +48,10 @@ export function getUtilityScore(db: Database, entryId: number): UtilityScoreRow 
 }
 
 /**
- * Batch-load utility scores for multiple entry IDs in a single query.
- * Returns a `{ global, scoped }` pair, both Maps keyed by entry_id.
- *
- * When `scopeKey` is provided a second query runs against
- * `utility_scores_scoped` and the result is returned as `scoped`.
- * Both maps are always present; `scoped` is empty when `scopeKey` is absent.
+ * Batch-load utility scores for multiple entry IDs, keyed by entry_id.
  */
-export function getUtilityScoresByIds(
-  db: Database,
-  ids: number[],
-  scopeKey?: string,
-): { global: Map<number, UtilityScoreRow>; scoped: Map<number, ScopedUtilityRow> } {
-  const global = new Map<number, UtilityScoreRow>();
-  const scoped = new Map<number, ScopedUtilityRow>();
-  if (ids.length === 0) return { global, scoped };
+export function getUtilityScoresByIds(db: Database, ids: number[]): Map<number, UtilityScoreRow> {
+  const scores = new Map<number, UtilityScoreRow>();
   // Process in chunks to stay within SQLITE_MAX_VARIABLE_NUMBER
   for (let i = 0; i < ids.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = ids.slice(i, i + SQLITE_CHUNK_SIZE);
@@ -81,7 +70,7 @@ export function getUtilityScoresByIds(
       updated_at: string;
     }>;
     for (const row of rows) {
-      global.set(row.entry_id, {
+      scores.set(row.entry_id, {
         entryId: row.entry_id,
         utility: row.utility,
         showCount: row.show_count,
@@ -91,28 +80,8 @@ export function getUtilityScoresByIds(
         updatedAt: row.updated_at,
       });
     }
-    if (scopeKey) {
-      const scopedRows = db
-        .prepare(
-          `SELECT entry_id, scope_key, utility, last_used_at FROM utility_scores_scoped WHERE scope_key = ? AND entry_id IN (${placeholders})`,
-        )
-        .all(scopeKey, ...chunk) as Array<{
-        entry_id: number;
-        scope_key: string;
-        utility: number;
-        last_used_at: number;
-      }>;
-      for (const row of scopedRows) {
-        scoped.set(row.entry_id, {
-          entryId: row.entry_id,
-          scopeKey: row.scope_key,
-          utility: row.utility,
-          lastUsedAt: row.last_used_at,
-        });
-      }
-    }
   }
-  return { global, scoped };
+  return scores;
 }
 
 /**

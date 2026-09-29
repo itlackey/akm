@@ -26,7 +26,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { emitJsonError } from "../../src/cli/shared";
-import { ConfigError, NotFoundError, UsageError } from "../../src/core/errors";
+import { ConfigError, NotFoundError, TransientError, UsageError } from "../../src/core/errors";
 
 interface Captured {
   exitCode: number;
@@ -80,6 +80,15 @@ describe("classifyExitCode via emitJsonError (H6)", () => {
     const { exitCode, envelope } = runEmit(new NotFoundError("missing", "ASSET_NOT_FOUND"));
     expect(exitCode).toBe(1);
     expect(envelope.code).toBe("ASSET_NOT_FOUND");
+  });
+
+  // #948 addendum: TEMPFAIL(75), distinct from USAGE(2) — a scheduler/cron
+  // wrapper retries a TransientError instead of treating it as a bad command
+  // line. Single-source table lives in EXIT_CODES (src/cli/shared.ts).
+  it("TransientError -> exit 75 (TEMPFAIL) and carries its code", () => {
+    const { exitCode, envelope } = runEmit(new TransientError("locked", "STATE_DB_CONTENDED"));
+    expect(exitCode).toBe(75);
+    expect(envelope.code).toBe("STATE_DB_CONTENDED");
   });
 
   // INTENTIONAL behaviour change: non-AkmError now exits 70, not 1.

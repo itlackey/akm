@@ -209,7 +209,7 @@ const envExportCommand = defineJsonCommand({
  */
 async function runEnvInjected(
   target: string,
-  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[]; allowInsecure?: boolean },
+  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[]; allowDangerousEnvKeys?: boolean },
 ): Promise<void> {
   const command = getParsedInvocation().passthroughArgs();
   if (command.length === 0) {
@@ -248,7 +248,7 @@ async function runEnvInjected(
   const { values: envValues } = resolveEnvBinding(target, {
     only: opts.only,
     except: opts.except,
-    allowInsecure: opts.allowInsecure,
+    allowDangerousEnvKeys: opts.allowDangerousEnvKeys,
   });
 
   const mergedEnv = buildChildEnv(process.env, {
@@ -330,7 +330,7 @@ const envRunCommand = defineJsonCommand({
       description:
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
-    "allow-insecure": {
+    "allow-dangerous-env-keys": {
       type: "boolean",
       description:
         "Allow injecting a process-hijacking variable (e.g. LD_PRELOAD, GIT_SSH_COMMAND) from a third-party stash, which otherwise blocks. Use only after explicitly reviewing the env file.",
@@ -343,7 +343,7 @@ const envRunCommand = defineJsonCommand({
       except: parseKeyListFlag(args.except),
       clean: args.clean === true,
       inherit: parseKeyListFlag(args.inherit) ?? [],
-      allowInsecure: args["allow-insecure"] === true,
+      allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
     });
   },
 });

@@ -18,7 +18,7 @@
  *     existing plan_hash / unit inputHash, is untouched by this phase.
  *   - B-44 (PRESERVE, A-N7): `computeUnitInputHash`'s own prefix
  *     (now `akm.workflow.unit\0v7\0`) and `hashVersion` (now 7), plus
- *     `WORKFLOW_IR_V5_VERSION`, are pinned externally. P2b bumped NOTHING
+ *     `WORKFLOW_PLAN_VERSION`, are pinned externally. P2b bumped NOTHING
  *     (§1.1(4): "P2b bumps nothing. P3a owns irVersion 5 + hashVersion 6");
  *     P3a landed 6; the R-R15 fix (PR #844 review F6) then bumped unit+gate
  *     to 7 when the resolved-`taskInputs` preimage field landed, and this
@@ -63,7 +63,8 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
-import { decodeWorkflowPlanV4, WORKFLOW_IR_V5_VERSION } from "../../src/workflows/ir/schema-v4";
+import { WORKFLOW_PLAN_VERSION } from "../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { abandonWorkflowRun, startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -117,7 +118,7 @@ async function freeze(ref: string) {
   return {
     runId: started.run.id,
     planHash: row?.plan_hash ?? null,
-    plan: decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null")),
+    plan: decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null")),
   };
 }
 
@@ -151,8 +152,8 @@ describe("P2b freeze identity — B-01: absence-when-empty is the identity-prese
 });
 
 describe("P2b freeze identity — B-44: the frozen hash vocabulary is unchanged (A-N7, §1.1(4))", () => {
-  test('WORKFLOW_IR_V5_VERSION is 5, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7 — P3a landed 6, the R-R15 taskInputs fix bumped 7', async () => {
-    expect(WORKFLOW_IR_V5_VERSION).toBe(5);
+  test('WORKFLOW_PLAN_VERSION is 6, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7 — P3a landed 6, the R-R15 taskInputs fix bumped 7', async () => {
+    expect(WORKFLOW_PLAN_VERSION).toBe(6);
 
     writeWorkflow("plain-command", [
       `      - id: ${STEP_ID}`,

@@ -80,7 +80,6 @@ function enabledConfig(overrides?: Record<string, unknown>): import("../../../..
             // keep noisy passes out of the way
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             proactiveMaintenance: { enabled: true, ...(overrides ?? {}) },
           },

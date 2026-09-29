@@ -62,8 +62,7 @@ export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfig
  * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
  * fields are process-specific — see the field comments in config-schema.ts for
  * which process each knob applies to and its default (e.g. `minPoolSize` =
- * consolidate; `minNewSessions`/`indexSessions`/`triage` = extract;
- * `fullScan`/`topN` = graphExtraction).
+ * consolidate; `minNewSessions`/`indexSessions`/`triage` = extract).
  */
 export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;
 
@@ -141,13 +140,16 @@ export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfig
 export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
 
 /**
- * Index-time configuration. Combines well-known feature sections
- * (`metadataEnhance`) with per-pass overrides keyed by pass name.
+ * Index-time configuration. Combines the reserved `defaults` block with
+ * per-pass overrides keyed by pass name.
  */
 export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSchema>;
 
 /** `akm improve` pipeline tuning (`improve`). See config-schema.ts for docs. */
 export type ImproveConfig = z.infer<typeof import("./config-schema").ImproveConfigSchema>;
+
+/** Host-local scheduler activation configuration. */
+export type SchedulerConfig = z.infer<typeof import("./config-schema").SchedulerConfigSchema>;
 
 /**
  * The full on-disk config shape. This IS the Zod schema's output type — there

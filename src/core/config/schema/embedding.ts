@@ -30,11 +30,7 @@ export const EmbeddingConnectionConfigSchema = z
     endpoint: z.string().optional(),
     model: z.string().optional(),
     apiKey: symbolicOrWarnApiKey("embedding.apiKey").optional(),
-    // Bounded to the index schema's own vec-table guard (1–4096,
-    // storage/repositories/index-schema.ts) so an out-of-range dimension
-    // fails at config validation with a clear message instead of crashing
-    // `akm index` when ensureSchema rejects it (§24.2 "Semantic" gate).
-    dimension: positiveInt.max(4096).optional(),
+    dimension: positiveInt.optional(),
     localModel: z.string().min(1).optional(),
     /**
      * Per-document token cap applied BEFORE batching (default 512,
@@ -71,6 +67,25 @@ export const EmbeddingConnectionConfigSchema = z
      * no retry — every batch that hit it was silently dropped (#954).
      */
     timeoutMs: positiveInt.optional(),
+    /**
+     * How long search waits for the query embedding (default 3000,
+     * `DEFAULT_QUERY_EMBED_TIMEOUT_MS` in `src/indexer/search/db-search.ts`).
+     * On expiry the search is served by keyword ranking alone, with a warning.
+     */
+    queryTimeoutMs: positiveInt.optional(),
+    /**
+     * Text sent to the model around a search query, `{text}` marking the
+     * query (a template without it is a prefix). Overrides the preset matched
+     * on the model name (`src/llm/embedders/profile.ts`); `""` sends the query
+     * as is.
+     */
+    queryTemplate: z.string().optional(),
+    /**
+     * Text sent to the model around each document at index time, as
+     * `queryTemplate`. Part of the embedding fingerprint: changing it
+     * re-embeds the index.
+     */
+    documentTemplate: z.string().optional(),
     /**
      * Overrides the fixed in-flight request window (#954, added after field
      * evidence from multi-slot local servers). Bounded 1-16. Unset keeps

@@ -33,7 +33,7 @@ export const registryCommand = defineGroupCommand({
         name: { type: "string", description: "Human-friendly name for the registry" },
         provider: { type: "string", description: "Provider type (e.g. static-index, skills-sh)" },
         options: { type: "string", description: "Provider-specific options as JSON." },
-        "allow-insecure": {
+        "allow-insecure-transport": {
           type: "boolean",
           description: "Allow a plain HTTP registry URL (otherwise rejected)",
           default: false,
@@ -51,15 +51,15 @@ export const registryCommand = defineGroupCommand({
           throw new UsageError("Registry URL must start with http:// or https://");
         }
         if (args.url.startsWith("http://")) {
-          const allowInsecure = args["allow-insecure"];
-          if (!allowInsecure) {
+          const allowInsecureTransport = args["allow-insecure-transport"];
+          if (!allowInsecureTransport) {
             throw new UsageError(
               "Registry URL uses plain HTTP (not HTTPS). An on-path attacker could substitute a malicious index. " +
-                "Use https:// or pass --allow-insecure if you have explicitly accepted the risk.",
+                "Use https:// or pass --allow-insecure-transport if you have explicitly accepted the risk.",
             );
           }
           warn(
-            "Warning: registry URL uses plain HTTP (not HTTPS). --allow-insecure was set; an on-path attacker could substitute a malicious index.",
+            "Warning: registry URL uses plain HTTP (not HTTPS). --allow-insecure-transport was set; an on-path attacker could substitute a malicious index.",
           );
         }
         const entry: RegistryConfigEntry = { url: args.url };

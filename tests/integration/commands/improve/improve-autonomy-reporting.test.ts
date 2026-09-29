@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { IMPROVE_AUTONOMY_CONFIG_KEY } from "../../../../src/core/config/experimental";
@@ -23,7 +23,6 @@ const config = {
           distill: { enabled: false },
           consolidate: { enabled: false, contradictionDetection: { enabled: true } },
           memoryInference: { enabled: false },
-          graphExtraction: { enabled: false },
           extract: { enabled: false },
           validation: { enabled: false },
           triage: { enabled: false },
@@ -61,7 +60,6 @@ const emptyPreparation = {
     contradicted: 0,
     warnings: [],
   },
-  consolidationRan: false,
 };
 
 let storage: IsolatedAkmStorage;
@@ -83,13 +81,6 @@ describe("review-first improve autonomy reporting", () => {
     overrideSeam(_setWarnSinkForTests, (level, args) => {
       if (level === "warn") warningLines.push(args.map(String).join(" "));
     });
-    const contradictionDetectionFn = mock(async () => ({
-      familiesExamined: 0,
-      pairsChecked: 0,
-      edgesWritten: 0,
-      warnings: [],
-    }));
-
     const result = await akmImprove({
       scope: "memory",
       stashDir: storage.stashDir,
@@ -100,7 +91,6 @@ describe("review-first improve autonomy reporting", () => {
         memorySummary: { eligible: 2, derived: 2 },
         strategyFilteredRefs: [],
       })) as never,
-      contradictionDetectionFn: contradictionDetectionFn as never,
       runImprovePreparationStageFn: (async () => emptyPreparation) as never,
       runImproveLoopStageFn: (async () => ({
         reflectsWithErrorContext: 0,
@@ -109,13 +99,11 @@ describe("review-first improve autonomy reporting", () => {
       runImprovePostLoopStageFn: (async () => ({
         allWarnings: [],
         memoryInferenceDurationMs: 0,
-        graphExtractionDurationMs: 0,
       })) as never,
     });
 
     expect(result.ok).toBe(true);
     expect(result.memoryCleanup?.analyzedDerived).toBe(0);
-    expect(contradictionDetectionFn).not.toHaveBeenCalled();
 
     const directLanes = ["consolidate", "contradiction", "memoryCleanup"];
     const warningLanes = directLanes.filter((lane) =>

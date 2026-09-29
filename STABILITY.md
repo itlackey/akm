@@ -281,8 +281,8 @@ CHANGELOG with a migration note.
   print unredacted. `akm task validate <path>` (new in 0.9.11) is the same
   kind of zero-write introspection as `explain`, but takes a bare filesystem
   path rather than a bundle-qualified ref — it reports whether that ONE file
-  would parse cleanly (`valid`), auto-convert from task v2/v3 (`converts`),
-  need a human decision the deterministic migrator can't make (`blocked`),
+  would parse cleanly (`valid`), need `akm migrate apply` first (`blocked`:
+  task v2/v3, or a retired `schedule[].enabled`),
   fail schema validation (`invalid`), or isn't a task source at all
   (`not-a-task`) — exactly the diagnostic `akm task sync` would produce for
   it, before the file is ever wired into a bundle or the scheduler.
@@ -366,8 +366,8 @@ for scripted use.
 ### `akm improve` autonomy — opt-in in 0.9.0
 
 **`akm improve` is review-first by default in 0.9.0.** The command itself is ON
-— its schedules, reflect/distill proposals, and graph extraction all run — but
-the lanes that mutate assets *without* review require an explicit opt-in:
+— its schedules and reflect/distill proposals all run — but the lanes that
+mutate assets *without* review require an explicit opt-in:
 
 ```sh
 akm config set experimental.improveAutonomy true
@@ -388,9 +388,10 @@ review-first config correctly shows `queue`.
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
 | `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
 
-Consolidation remains enabled with autonomy off because merge, delete, and
-contradiction operations are advisory; promotion only emits a reviewable
-proposal.
+Consolidation remains enabled with autonomy off: both its passes (promotion,
+and the pair pass's duplicate/subsumed/supersedes judging) only ever emit a
+reviewable proposal, and a pair-pass `retire` proposal is never auto-accepted
+by `triage` `applyMode: "promote"` regardless of this gate.
 
 Because the gate is applied before the LLM preflight, a review-first workspace
 also needs fewer engines configured: a strategy whose only model-backed process
@@ -409,9 +410,9 @@ Autonomy is never inferred: an absent `experimental` section, an absent key, and
 an explicit `false` all read as off, so a partially-written or older config is
 review-first rather than accidentally permissive.
 
-Reflect, distill, extract candidates, validation, proactive-maintenance
-selection, and graph extraction are proposal-only and never write assets
-directly. Two further direct writes are ungated by design: `extract`'s session
+Reflect, distill, extract candidates, validation, and proactive-maintenance
+selection are proposal-only and never write assets directly. Two further
+direct writes are ungated by design: `extract`'s session
 indexing (additive `sessions/**` writes,
 `processes.extract.indexSessions`, default on) and distill's
 encoding-salience frontmatter stamp (metadata only).

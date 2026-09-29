@@ -202,10 +202,9 @@ export interface WalkMarkdownFilesResult {
 /**
  * Recursively collect every `.md` file under `root`.
  *
- * Shared by graph-extraction and memory-inference so the walk logic lives in
- * exactly one place. Mirrors the `complete` tracking of the other walkers in
- * this file: a directory that cannot be read makes the result incomplete
- * instead of silently looking like a clean, empty scan.
+ * Used by memory-inference. Mirrors the `complete` tracking of the other
+ * walkers in this file: a directory that cannot be read makes the result
+ * incomplete instead of silently looking like a clean, empty scan.
  */
 export function walkMarkdownFiles(root: string): WalkMarkdownFilesResult {
   const files: string[] = [];

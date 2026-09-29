@@ -2,49 +2,47 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** The complete migration surface: explicit task-v2 files to task-v3 files. */
+/** The task-file migration step: every bundle's task directory, planned to task source v4 and rewritten under one backup. */
 
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { detectAdapterId } from "../../src/core/adapter/detect-adapter";
-import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/config/config-sources";
+import { deriveBundleId } from "../../src/core/bundle-id";
 import { type AkmConfig, loadConfig, resetConfigCache } from "../../src/core/config/config";
-import { pruneToNewest, withConfigLock } from "../../src/core/config/config-io";
+import { withConfigLock } from "../../src/core/config/config-io";
+import { bundleComponentConfig, bundlesToSourceEntries } from "../../src/core/config/config-sources";
 import { ConfigError } from "../../src/core/errors";
-import { withMaintenanceStartBarrier } from "../../src/core/maintenance-barrier";
 import { getDataDir } from "../../src/core/paths";
 import { resolveWritable } from "../../src/core/write-source";
 import { lockContentRootFor } from "../../src/integrations/lockfile";
-import { applyTaskToV3MigrationPlan, inspectTaskToV3Files, type TaskToV3Root } from "./migrate/task-files-to-v3";
-import { planTaskToV3Migration, type TaskToV3MigrationPlan } from "../../src/tasks/source/task-to-v3";
-import { applyTaskToV4MigrationPlan, inspectTaskToV4Files } from "./migrate/task-files-to-v4";
-import { planTaskToV4Migration, type TaskToV4MigrationPlan } from "../../src/tasks/source/task-to-v4";
+import type { TaskToV4MigrationPlan } from "../../src/tasks/source/task-to-v4";
+import { applyTaskFilesPlan, inspectTaskFiles, planTaskFilesMigration, type TaskFileRoot } from "./migrate/task-files";
 
-export interface TaskV3MigrationFileSummary {
+export interface TaskFileSummary {
   filePath: string;
   status: "changed" | "skipped" | "blocked";
   reason: string;
   beforeHash: string;
   afterHash?: string;
   detail?: string;
+  notice?: string;
 }
 
-export interface TaskV3MigrationSummary {
+export interface TaskFilesSummary {
   schemaVersion: 1;
-  generation: string;
   changed: number;
   skipped: number;
   blocked: number;
-  files: TaskV3MigrationFileSummary[];
+  files: TaskFileSummary[];
 }
 
-export interface MigrationPlan {
+export interface TaskFilesMigrationStatus {
   schemaVersion: 1;
   status: "current" | "ready" | "blocked";
   blockers: string[];
-  taskV3Migration: TaskV3MigrationSummary;
+  taskFiles: TaskFilesSummary;
   backupPath?: string;
   applied?: number;
 }
@@ -74,7 +72,7 @@ function existingDirectory(target: string): boolean {
  * error further down the pipeline. When they disagree, name both bundle
  * ids and the shared path so the operator knows exactly what to fix.
  */
-function reconcileDuplicateRoot(existing: TaskToV3Root, candidate: TaskToV3Root, sharedPath: string): void {
+function reconcileDuplicateRoot(existing: TaskFileRoot, candidate: TaskFileRoot, sharedPath: string): void {
   if (existing.writable === candidate.writable && existing.layout === candidate.layout) return;
   throw new ConfigError(
     `Bundles "${existing.bundleId}" and "${candidate.bundleId}" both resolve to the same directory ` +
@@ -84,9 +82,9 @@ function reconcileDuplicateRoot(existing: TaskToV3Root, candidate: TaskToV3Root,
   );
 }
 
-function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskToV3Root[] {
+function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskFileRoot[] {
   const sources = new Map((bundlesToSourceEntries(config) ?? []).map((source) => [source.name, source]));
-  const rootsByPath = new Map<string, TaskToV3Root>();
+  const rootsByPath = new Map<string, TaskFileRoot>();
   for (const [bundleId, bundle] of Object.entries(config.bundles ?? {})) {
     if (bundle.enabled === false) continue;
     const source = sources.get(bundleId);
@@ -109,28 +107,10 @@ function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskToV3R
     }
     if (!existingDirectory(componentRoot)) continue;
 
-    const adapter = component?.adapter ?? detectAdapterId(componentRoot, "");
-    if (!component?.adapter && adapter === "") {
-      const flatTasks = fs
-        .readdirSync(componentRoot, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".yml"))
-        .map((entry) => entry.name)
-        .sort();
-      if (flatTasks.length > 0) {
-        throw new ConfigError(
-          `Task migration cannot classify top-level task file(s) ${flatTasks.join(", ")} in bundle ${bundleId}; configure adapter "akm-task" or move them under tasks/.`,
-          "INVALID_CONFIG_FILE",
-        );
-      }
-    }
-    if (adapter !== "akm" && adapter !== "akm-task") continue;
-    const candidate: TaskToV3Root = {
-      bundleId,
-      root: componentRoot,
-      bundleRoot,
-      writable: component?.writable ?? resolveWritable(source),
-      layout: adapter === "akm-task" ? "akm-task" : "akm-stash",
-    };
+    const candidate = taskRoot(bundleId, bundleRoot, componentRoot, component?.adapter, () =>
+      component?.writable ?? resolveWritable(source),
+    );
+    if (!candidate) continue;
     const existing = rootsByPath.get(componentRoot);
     if (existing) {
       reconcileDuplicateRoot(existing, candidate, componentRoot);
@@ -138,127 +118,55 @@ function taskRoots(config: AkmConfig, resolutionBase = process.cwd()): TaskToV3R
     }
     rootsByPath.set(componentRoot, candidate);
   }
+
+  // The working stash `AKM_BUNDLE_DIR` selects when no bundle names it: the
+  // runtime reads its tasks too, so its v2/v3 files must convert here.
+  const envStash = process.env.AKM_BUNDLE_DIR?.trim();
+  if (envStash && existingDirectory(envStash)) {
+    const stashRoot = path.resolve(envStash);
+    if (!rootsByPath.has(stashRoot)) {
+      const bundleId = deriveBundleId(undefined, stashRoot, new Set(Object.keys(config.bundles ?? {})));
+      // The runtime reads this stash with the adapter it detects, or `akm`.
+      const candidate = taskRoot(bundleId, stashRoot, stashRoot, detectAdapterId(stashRoot), () => true);
+      if (candidate) rootsByPath.set(stashRoot, candidate);
+    }
+  }
   return [...rootsByPath.values()];
 }
 
-function summarize(plan: TaskToV3MigrationPlan): TaskV3MigrationSummary {
-  const files = plan.files.map((file) => ({
-    filePath: file.filePath,
-    status: file.status,
-    reason: file.reason,
-    beforeHash: file.beforeHash,
-    ...(file.status === "changed" ? { afterHash: file.afterHash } : {}),
-    ...(file.detail ? { detail: file.detail } : {}),
-  }));
+/** One task root, or none when its adapter holds no tasks. */
+function taskRoot(
+  bundleId: string,
+  bundleRoot: string,
+  componentRoot: string,
+  configuredAdapter: string | undefined,
+  writable: () => boolean,
+): TaskFileRoot | undefined {
+  const adapter = configuredAdapter ?? detectAdapterId(componentRoot, "");
+  if (!configuredAdapter && adapter === "") {
+    const flatTasks = fs
+      .readdirSync(componentRoot, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".yml"))
+      .map((entry) => entry.name)
+      .sort();
+    if (flatTasks.length > 0) {
+      throw new ConfigError(
+        `Task migration cannot classify top-level task file(s) ${flatTasks.join(", ")} in bundle ${bundleId}; configure adapter "akm-task" or move them under tasks/.`,
+        "INVALID_CONFIG_FILE",
+      );
+    }
+  }
+  if (adapter !== "akm" && adapter !== "akm-task") return undefined;
   return {
-    schemaVersion: 1,
-    generation: plan.generation,
-    changed: files.filter((file) => file.status === "changed").length,
-    skipped: files.filter((file) => file.status === "skipped").length,
-    blocked: files.filter((file) => file.status === "blocked").length,
-    files,
+    bundleId,
+    root: componentRoot,
+    bundleRoot,
+    writable: writable(),
+    layout: adapter === "akm-task" ? "akm-task" : "akm-stash",
   };
 }
 
-function blockerText(plan: TaskToV3MigrationPlan): string[] {
-  return plan.files.flatMap((file) =>
-    file.status === "blocked"
-      ? [`${file.filePath}: ${file.reason}${file.detail ? ` (${file.detail})` : ""}`]
-      : [],
-  );
-}
-
-function inspectCurrentTaskPlan(): { result: MigrationPlan; plan: TaskToV3MigrationPlan } {
-  resetConfigCache();
-  const config = loadConfig();
-  const plan = planTaskToV3Migration(inspectTaskToV3Files(taskRoots(config)));
-  const blockers = blockerText(plan);
-  const summary = summarize(plan);
-  return {
-    plan,
-    result: {
-      schemaVersion: 1,
-      status: blockers.length > 0 ? "blocked" : summary.changed > 0 ? "ready" : "current",
-      blockers,
-      taskV3Migration: summary,
-    },
-  };
-}
-
-export function inspectMigrationPlan(): MigrationPlan {
-  return inspectCurrentTaskPlan().result;
-}
-
-/**
- * Snapshot dirs kept per generation under `<dataDir>/backups/task-v3|task-v4`
- * (#897): one apply run writes one timestamped-UUID dir and nothing pruned
- * them. Same cap as config backups; the legacy `backups/{migrations,manual,
- * releases,operations}` dirs are not written by current code and are left alone.
- */
-const MAX_TASK_MIGRATION_BACKUPS = 5;
-
-export function pruneTaskMigrationBackups(generationBackupDir: string): void {
-  pruneToNewest(generationBackupDir, MAX_TASK_MIGRATION_BACKUPS, (entry) => entry.isDirectory());
-}
-
-/** Convert eligible task-v2 files to task v3 and return the resulting plan. */
-export function applyTaskV3Migration(): MigrationPlan {
-  return withConfigLock(() =>
-    withMaintenanceStartBarrier(() => {
-      const before = inspectCurrentTaskPlan();
-      // Blocked files are skipped, not fatal: migrate whatever in the batch
-      // can be migrated and report the rest as blocked (the entrypoint exits
-      // non-zero whenever any file is still blocked afterward).
-      if (before.result.taskV3Migration.changed === 0) return before.result;
-      const backupRoot = path.join(getDataDir(), "backups", "task-v3");
-      const backupPath = path.join(backupRoot, `${Date.now()}-${randomUUID()}`);
-      const applied = applyTaskToV3MigrationPlan(before.plan, { backupRoot: backupPath });
-      const after = inspectCurrentTaskPlan().result;
-      if (after.taskV3Migration.changed > 0) {
-        throw new ConfigError("Task migration did not converge to task v3.", "INVALID_CONFIG_FILE");
-      }
-      pruneTaskMigrationBackups(backupRoot);
-      return { ...after, backupPath, applied: applied.changed.length };
-    }),
-  );
-}
-
-// ─── Second generation: task v3 -> task source v4 (spec docs/plans/specs/p2b-input-bindings.md §5) ───
-// Wired the SAME way as the v2 -> v3 generation above: same withConfigLock +
-// withMaintenanceStartBarrier + timestamped-UUID backup root + --dry-run plan
-// + summary shape. `taskRoots` is version-agnostic (it only locates each
-// bundle's task directory; it never reads file contents) so it is reused
-// as-is — `TaskToV3Root`'s fields are structurally identical to `TaskToV4Root`.
-
-export interface TaskV4MigrationFileSummary {
-  filePath: string;
-  status: "changed" | "skipped" | "blocked";
-  reason: string;
-  beforeHash: string;
-  afterHash?: string;
-  detail?: string;
-  notice?: string;
-}
-
-export interface TaskV4MigrationSummary {
-  schemaVersion: 1;
-  generation: string;
-  changed: number;
-  skipped: number;
-  blocked: number;
-  files: TaskV4MigrationFileSummary[];
-}
-
-export interface TaskV4MigrationStatus {
-  schemaVersion: 1;
-  status: "current" | "ready" | "blocked";
-  blockers: string[];
-  taskV4Migration: TaskV4MigrationSummary;
-  backupPath?: string;
-  applied?: number;
-}
-
-function summarizeV4(plan: TaskToV4MigrationPlan): TaskV4MigrationSummary {
+function summarize(plan: TaskToV4MigrationPlan): TaskFilesSummary {
   const files = plan.files.map((file) => ({
     filePath: file.filePath,
     status: file.status,
@@ -270,7 +178,6 @@ function summarizeV4(plan: TaskToV4MigrationPlan): TaskV4MigrationSummary {
   }));
   return {
     schemaVersion: 1,
-    generation: plan.generation,
     changed: files.filter((file) => file.status === "changed").length,
     skipped: files.filter((file) => file.status === "skipped").length,
     blocked: files.filter((file) => file.status === "blocked").length,
@@ -278,53 +185,42 @@ function summarizeV4(plan: TaskToV4MigrationPlan): TaskV4MigrationSummary {
   };
 }
 
-function blockerTextV4(plan: TaskToV4MigrationPlan): string[] {
-  return plan.files.flatMap((file) =>
-    file.status === "blocked"
-      ? [`${file.filePath}: ${file.reason}${file.detail ? ` (${file.detail})` : ""}`]
-      : [],
-  );
-}
-
-function inspectCurrentTaskV4Plan(): { result: TaskV4MigrationStatus; plan: TaskToV4MigrationPlan } {
+function inspectCurrent(): { result: TaskFilesMigrationStatus; plan: TaskToV4MigrationPlan } {
   resetConfigCache();
-  const config = loadConfig();
-  const plan = planTaskToV4Migration(inspectTaskToV4Files(taskRoots(config)));
-  const blockers = blockerTextV4(plan);
-  const summary = summarizeV4(plan);
+  const plan = planTaskFilesMigration(inspectTaskFiles(taskRoots(loadConfig())));
+  const blockers = plan.files.flatMap((file) =>
+    file.status === "blocked" ? [`${file.filePath}: ${file.reason}${file.detail ? ` (${file.detail})` : ""}`] : [],
+  );
+  const summary = summarize(plan);
   return {
     plan,
     result: {
       schemaVersion: 1,
       status: blockers.length > 0 ? "blocked" : summary.changed > 0 ? "ready" : "current",
       blockers,
-      taskV4Migration: summary,
+      taskFiles: summary,
     },
   };
 }
 
-export function inspectTaskV4MigrationStatus(): TaskV4MigrationStatus {
-  return inspectCurrentTaskV4Plan().result;
+/** Read-only: what `apply` would rewrite, and what it cannot. */
+export function inspectTaskFilesMigration(): TaskFilesMigrationStatus {
+  return inspectCurrent().result;
 }
 
-/** Convert eligible task-v3 files to task source v4 and return the resulting plan. */
-export function applyTaskV4Migration(): TaskV4MigrationStatus {
-  return withConfigLock(() =>
-    withMaintenanceStartBarrier(() => {
-      const before = inspectCurrentTaskV4Plan();
-      // Blocked files are skipped, not fatal: migrate whatever in the batch
-      // can be migrated and report the rest as blocked (the entrypoint exits
-      // non-zero whenever any file is still blocked afterward).
-      if (before.result.taskV4Migration.changed === 0) return before.result;
-      const backupRoot = path.join(getDataDir(), "backups", "task-v4");
-      const backupPath = path.join(backupRoot, `${Date.now()}-${randomUUID()}`);
-      const applied = applyTaskToV4MigrationPlan(before.plan, { backupRoot: backupPath });
-      const after = inspectCurrentTaskV4Plan().result;
-      if (after.taskV4Migration.changed > 0) {
-        throw new ConfigError("Task migration did not converge to task source v4.", "INVALID_CONFIG_FILE");
-      }
-      pruneTaskMigrationBackups(backupRoot);
-      return { ...after, backupPath, applied: applied.changed.length };
-    }),
-  );
+/**
+ * Rewrite every v2/v3 task file (and every v4 file still carrying the
+ * retired `schedule[].enabled` key) as task source v4, under one backup
+ * directory for the run. Blocked files are skipped, not fatal: whatever can
+ * be migrated is, and the rest is reported (the entrypoint exits non-zero
+ * while any file is still blocked).
+ */
+export function applyTaskFilesMigration(): TaskFilesMigrationStatus {
+  return withConfigLock(() => {
+    const before = inspectCurrent();
+    if (before.result.taskFiles.changed === 0) return before.result;
+    const backupPath = path.join(getDataDir(), "backups", "tasks", `${Date.now()}-${randomUUID()}`);
+    const applied = applyTaskFilesPlan(before.plan, { backupRoot: backupPath });
+    return { ...inspectCurrent().result, backupPath, applied: applied.changed.length };
+  });
 }

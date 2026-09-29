@@ -3,13 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm workflow plan <ref>` — compile + freeze WITHOUT publishing (P3b, spec
- * docs/plans/specs/p3b-child-executor.md §4.6). Zero durable writes, zero
- * usage/event rows (row B-48): this module calls exactly the same two
- * functions `startWorkflowRun` does to reach a frozen plan
- * (`loadWorkflowAsset`, `compileResolveFreezeWorkflowV4`) and NOTHING else —
- * never `publishWorkflowRunV4`, `startWorkflowRun`, `warn()`, `appendEvent`,
- * or `akmIndex`.
+ * `akm workflow plan <ref>` — compile + freeze WITHOUT publishing. Zero
+ * durable writes, zero usage/event rows: this module calls exactly the same
+ * two functions `startWorkflowRun` does to reach a frozen plan
+ * (`loadWorkflowAsset`, `freezeWorkflow`) and NOTHING else — never
+ * `publishWorkflowRunV4`, `startWorkflowRun`, `appendEvent`, or `akmIndex`.
  *
  * SECRET-FREE, by construction (§4.6's closed print list): a resolved
  * reference VALUE is never printed (references resolve at pre-attempt, not
@@ -23,24 +21,23 @@
 import path from "node:path";
 import { loadConfig } from "../../core/config/config";
 import type { TaskInputBinding } from "../../execution/input-contract";
-import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import { lowerResolvedExecutionRequest } from "../../integrations/agent/execution-lowering";
-import { collectWorkflowWarnings } from "../../workflows/ir/compile";
-import { compileResolveFreezeWorkflowV4 } from "../../workflows/ir/freeze-v4";
+import type { LoweringNotice } from "../../execution/resolved-request";
+import { buildExecutionFromWire } from "../../integrations/agent/execution";
+import { freezeWorkflow } from "../../workflows/freeze/freeze";
 import { computePlanHash } from "../../workflows/ir/plan-hash";
 import type {
   FrozenChildWorkflowTarget,
+  FrozenWorkflowCommandTarget,
   FrozenWorkflowEnvironmentBinding,
   FrozenWorkflowTarget,
-  IrStepPlanV4,
-  IrUnitNodeV4,
-  WorkflowPlanGraphV4,
-} from "../../workflows/ir/schema-v4";
+  WorkflowPlan,
+  WorkflowPlanStep,
+  WorkflowUnitNode,
+} from "../../workflows/plan";
 import { loadWorkflowAsset } from "../../workflows/runtime/workflow-asset-loader";
-import type { WorkflowSourceStep } from "../../workflows/source-ir/schema";
 
 /** The step's dispatch unit — the map template for a fan-out, else the root unit. Undefined for a route step. */
-function stepUnit(step: IrStepPlanV4): IrUnitNodeV4 | undefined {
+function stepUnit(step: WorkflowPlanStep): WorkflowUnitNode | undefined {
   const root = step.root;
   if (!root) return undefined;
   return root.kind === "map" ? root.template : root;
@@ -60,13 +57,13 @@ function projectInputBinding(binding: TaskInputBinding): Record<string, unknown>
     : { name: binding.name, kind: "reference", from: binding.from };
 }
 
-function childExportedOutputNames(frozenPlan: WorkflowPlanGraphV4): readonly string[] {
+function childExportedOutputNames(frozenPlan: WorkflowPlan): readonly string[] {
   return frozenPlan.outputs ? Object.keys(frozenPlan.outputs) : ["runId", "status"];
 }
 
 /**
  * A `child-workflow` target's `expansion`. Recurses into the embedded
- * plan's own steps in the identical shape (§4.6) — `sourceStepsById` is
+ * plan's own steps in the identical shape — `usesById` is
  * omitted for the recursive call because a nested child's own authored
  * source is not available here (only its already-frozen plan is), so a
  * task-wrapped step nested inside a child conservatively reports `via:
@@ -86,20 +83,20 @@ function childExpansion(target: FrozenChildWorkflowTarget): Record<string, unkno
 
 /** The task/child expansion boundary for one step (§4.6). */
 function stepExpansion(
-  step: IrStepPlanV4,
+  step: WorkflowPlanStep,
   frozenTarget: FrozenWorkflowTarget | undefined,
-  sourceStepsById: ReadonlyMap<string, WorkflowSourceStep> | undefined,
+  usesById: ReadonlyMap<string, string | undefined> | undefined,
 ): Record<string, unknown> {
   if (frozenTarget?.kind === "child-workflow") return childExpansion(frozenTarget);
-  const uses = sourceStepsById?.get(step.stepId)?.uses;
+  const uses = usesById?.get(step.stepId);
   if (uses?.startsWith("tasks/")) return { via: "task", taskRef: uses };
   return { via: "direct" };
 }
 
 function projectStep(
-  step: IrStepPlanV4,
+  step: WorkflowPlanStep,
   sequenceIndex: number,
-  sourceStepsById: ReadonlyMap<string, WorkflowSourceStep> | undefined,
+  usesById: ReadonlyMap<string, string | undefined> | undefined,
 ): Record<string, unknown> {
   const unit = stepUnit(step);
   const frozenTarget = unit?.frozenTarget;
@@ -120,7 +117,7 @@ function projectStep(
       judgeEngine: step.gate.frozenJudge ? step.gate.frozenJudge.request.engine.name : null,
     },
     ...(step.outputSchema !== undefined ? { outputSchema: step.outputSchema } : {}),
-    expansion: stepExpansion(step, frozenTarget, sourceStepsById),
+    expansion: stepExpansion(step, frozenTarget, usesById),
   };
 }
 
@@ -129,28 +126,24 @@ function projectStep(
  * from its own already-frozen `request` (the identical computation
  * `freeze/targets/command.ts`'s `commandResult` already performs at freeze
  * time and discards) — walked over the whole plan, including gate judges and
- * recursively into every embedded child plan. Read-only: `lowerResolvedExecutionRequest`
- * takes no config it could write through and dispatches nothing.
+ * recursively into every embedded child plan. Read-only: `buildExecutionFromWire`
+ * reads no config and dispatches nothing.
  */
-function collectLoweringNotices(plan: WorkflowPlanGraphV4, config: ReturnType<typeof loadConfig>): LoweringNotice[] {
+function collectLoweringNotices(plan: WorkflowPlan, config: ReturnType<typeof loadConfig>): LoweringNotice[] {
   const notices: LoweringNotice[] = [];
-  const lower = (request: ResolvedExecutionRequestV1): void => {
-    notices.push(...lowerResolvedExecutionRequest(request, config).notices);
+  const lower = (target: FrozenWorkflowCommandTarget): void => {
+    notices.push(...buildExecutionFromWire(target).notices);
   };
   for (const step of plan.steps) {
     const unit = stepUnit(step);
     if (unit) {
-      if (unit.frozenTarget.kind === "command") lower(unit.frozenTarget.request);
+      if (unit.frozenTarget.kind === "command") lower(unit.frozenTarget);
       else if (unit.frozenTarget.kind === "child-workflow")
         notices.push(...collectLoweringNotices(unit.frozenTarget.frozenPlan, config));
     }
-    if (step.gate.frozenJudge) lower(step.gate.frozenJudge.request);
+    if (step.gate.frozenJudge) lower(step.gate.frozenJudge);
   }
   return notices;
-}
-
-function relativeSourceReadSet(plan: WorkflowPlanGraphV4): string[] {
-  return plan.sourceReadSet.map((snapshot) => snapshot.identity.file);
 }
 
 /**
@@ -160,10 +153,10 @@ function relativeSourceReadSet(plan: WorkflowPlanGraphV4): string[] {
 export async function akmWorkflowPlan(ref: string): Promise<Record<string, unknown>> {
   const asset = await loadWorkflowAsset(ref);
   const config = loadConfig();
-  const frozen = await compileResolveFreezeWorkflowV4(asset, config);
+  const frozen = await freezeWorkflow(asset, config);
   const plan = frozen.plan;
 
-  const sourceStepsById = new Map((asset.sourceIr.jobs[0]?.steps ?? []).map((step) => [step.id, step] as const));
+  const usesById = new Map(asset.plan.steps.map((step) => [step.stepId, step.spec?.uses] as const));
   const sourceFormat = path.extname(asset.path).toLowerCase() === ".md" ? "markdown" : "github-yaml";
 
   return {
@@ -179,9 +172,8 @@ export async function akmWorkflowPlan(ref: string): Promise<Record<string, unkno
     ...(plan.budget ? { budget: plan.budget } : {}),
     ...(plan.params ? { params: plan.params } : {}),
     ...(plan.outputs ? { outputs: plan.outputs } : {}),
-    steps: plan.steps.map((step, index) => projectStep(step, index, sourceStepsById)),
-    sourceReadSet: relativeSourceReadSet(plan),
+    steps: plan.steps.map((step, index) => projectStep(step, index, usesById)),
     notices: collectLoweringNotices(plan, config),
-    warnings: collectWorkflowWarnings(asset.sourceIr).map((warning) => warning.message),
+    warnings: frozen.warnings.map((warning) => warning.message),
   };
 }

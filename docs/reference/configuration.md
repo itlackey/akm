@@ -10,33 +10,17 @@ automatic project-config discovery.
 
 ## Version 0.9
 
-A present configuration file must set `configVersion` to a version this
-binary knows: the current `"0.9.0"`, or a known older version it can
-auto-upgrade in memory (see "Version read shim" below). Missing, newer,
-numeric, and any other unrecognized version are rejected by ordinary
-commands without rewriting the file — an older binary never guesses at a
-newer, unknown shape. Pre-0.9 config and database layouts are not runtime
-inputs and are not migrated by `akm upgrade`. Configure the current schema
-directly. The standalone migrator exists only for explicit task migration:
-task v2 to task v3, then task v3 to task source v4, in one pass.
-
-### Version read shim
-
-Like the task-source v2/v3 auto-shim (`akm migrate apply`'s in-memory
-counterpart, documented under Migration below), a known older `configVersion`
-is converted to the current shape in memory on load — with a one-line stderr
-deprecation warning — rather than hard-failing every command. Nothing is
-written back to disk by the shim itself; the very next config-mutating
-command (`akm config set`, etc.) persists the upgrade for free, since every
-config write already forces `configVersion` to the current value, which
-silences the warning. A `configVersion` this binary does not recognize at
-all — including anything newer than current — still fails closed with
-`UNSUPPORTED_CONFIG_VERSION`.
-
-As of this writing `"0.9.0"` is the only `configVersion` akm has ever
-shipped, so there is no real older shape for the shim to convert yet; the
-mechanism (`src/core/config/config-version-shim.ts`) is established ahead of
-the first bump that will need it, per #863.
+`configVersion` is `"0.9.0"`, the only value akm has ever shipped. It is
+read, never gated on: a file without the field loads silently, and a file
+declaring any other value is named once on stderr (`config.json declares
+configVersion "X"; this release reads it as 0.9.0.`) and read as the
+current shape anyway — nothing is rewritten on disk. The next config write
+(`akm config set`, etc.) and `akm migrate apply`'s config step both persist
+`"0.9.0"`, which silences the note. When a newer akm wrote the shared
+config, `akm health`'s `binary-config-skew` advisory is what says so. Pre-0.9
+config and database layouts are not runtime inputs. Historical task sources
+are handled by the standalone `akm-migrate` executable, also invoked by `akm
+migrate` / `akm upgrade`; ordinary runtime code reads only the current shape.
 
 ```jsonc
 {
@@ -64,6 +48,9 @@ the first bump that will need it, per #863.
     "maxConcurrency": 8,
     "judgeEngine": "reviewer"
   },
+  "execution": {
+    "allowedTools": ["read_file", "search"]
+  },
   "improve": {
     "strategies": {
       "nightly": {
@@ -77,6 +64,26 @@ the first bump that will need it, per #863.
   }
 }
 ```
+
+## Scheduler activation
+
+`scheduler.enabled` is this host's list of scheduled refs, such as
+`stash//tasks/nightly`. A ref that is not listed is disabled. On disk each
+entry is still written as the `{kind, ref, sourceId}` object 0.9.16 reads,
+so that release keeps working against a config this one wrote; in memory it
+is the ref.
+A config without the list (written before 0.9.17) means "keep what is
+installed": the first `akm task sync` fills it from the akm-written native
+scheduler rows. The 0.9.17-alpha `{kind, ref, sourceId}` entries are read as
+their `ref`. Authored task/workflow files may describe schedules but cannot
+put themselves on the list.
+
+This key is deliberately local: if a config uses `extends`, any `scheduler`
+section in the base is ignored with a warning. Only the top-level local config
+can activate schedules. Prefer `akm task enable <ref>` and `akm task disable
+<ref>` over editing the JSON by hand; both update the allow-list and sync the
+affected bundle. An unscoped `akm task sync` reconciles enabled refs across all
+enabled configured bundles.
 
 ## Engines
 
@@ -111,6 +118,12 @@ settable via `extraParams`. A response with reasoning tokens despite
 An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
 Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection.
+
+Executable assets may request tools, but the request is not authority. Configure
+the host-local `execution.allowedTools` list to define the ceiling; `"*"` is an
+explicit allow-all. The default is an empty list. Asset frontmatter cannot set
+`workspace`, `environment`, or opaque `runtime` values; those belong to local
+engine configuration or workflow environment bindings.
 
 `platform: "opencode-sdk"` needs the **`opencode` binary** on PATH (or a `bin`
 pointing at it). akm bundles `@opencode-ai/sdk`, but that package is an HTTP
@@ -301,7 +314,7 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
         "engine": "fast",
         "processes": {
           "reflect": { "llm": { "temperature": 0.2 } },
-          "graphExtraction": { "model": "qwen3-small" }
+          "memoryInference": { "model": "qwen3-small" }
         }
       }
     }
@@ -397,7 +410,22 @@ unless a remote `embedding` config is provided.
 embedding model: `provider`, `endpoint`, `model`, `apiKey` (symbolic
 reference, same rules as engine `apiKey`), `dimension`, `localModel`,
 `maxInputTokens`, `maxTokens`, `batchSize`, `contextLength`, `timeoutMs`,
-`concurrency`, and `ollamaOptions.num_ctx`.
+`queryTimeoutMs`, `queryTemplate`, `documentTemplate`, `concurrency`, and
+`ollamaOptions.num_ctx`.
+
+Retrieval models expect a prompt around queries and documents. akm picks it by
+model name (`src/llm/embedders/profile.ts`): Qwen3-Embedding gets
+`Instruct: Given a question or task, retrieve the knowledge asset that helps with it\nQuery:{text}`
+on queries; nomic-embed `search_query: ` / `search_document: `; the BGE
+English, mxbai and arctic models `Represent this sentence for searching
+relevant passages: ` on queries; E5 `query: ` / `passage: `; any other model
+none. `embedding.queryTemplate` and `embedding.documentTemplate` override the
+preset (`{text}` marks where the text goes, a template without it is a prefix,
+and `""` means none). The document template is part of the embedding
+fingerprint, so changing it re-embeds the index; the query template applies
+at search time only. `embedding.queryTimeoutMs` (default `3000`) bounds how
+long a search waits for its query embedding before falling back to keyword
+ranking with a warning.
 
 The knobs that bound request/document size and rate, all optional (defaults
 apply when unset), for a remote endpoint (`src/llm/embedders/remote.ts`):
@@ -501,26 +529,20 @@ taking about the same wall time as a single one against a healthy endpoint.
 
 ## Search tuning
 
-`search` tunes ranking, not behavior an ordinary user needs to touch:
+`search` sets which types search leaves out by default, and the optional curate reranker:
 
 | Key | Purpose |
 | --- | --- |
-| `search.minScore` | Drop results below this score |
 | `search.defaultExcludeTypes` | Asset types excluded from results by default |
-
-### Graph boost search tuning
-
-| Key | Purpose |
-| --- | --- |
-| `search.graphBoost.*` | Entity-graph relevance boost: `directBoostPerEntity`/`directBoostCap` (directly related entities), `hopBoostPerEntity`/`hopBoostCap` (multi-hop, capped at `maxHops` ≤ 3), `confidenceMode` (`blend`, the only supported value), `confidenceWeight` (0–1, default `0.2`) |
 
 ### Curate rerank (#951)
 
-An optional cross-encoder rerank pass over `akm curate`'s already-selected
-candidates, via a standalone `/rerank`-style HTTP endpoint (NOT one of the
-`engines.*` `"llm"`/`"agent"` kinds). Disabled by default; a misconfigured
-endpoint, network failure, timeout, or malformed response falls back to
-curate's own ranking unchanged.
+An optional cross-encoder rerank pass over the top fused search candidates
+`akm curate` fetches, via a standalone `/rerank`-style HTTP endpoint (NOT one
+of the `engines.*` `"llm"`/`"agent"` kinds). Each candidate is sent as its
+name, description and the start of its indexed content (2,000 characters in
+all). Disabled by default; a misconfigured endpoint, network failure, timeout,
+or malformed response keeps the fused order.
 
 | Key | Purpose |
 | --- | --- |
@@ -529,7 +551,7 @@ curate's own ranking unchanged.
 | `search.curateRerank.model` | Model name sent to the endpoint (optional) |
 | `search.curateRerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
 | `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
-| `search.curateRerank.topN` | How many of curate's ranked candidates to send (default `8`, max `50`) |
+| `search.curateRerank.topN` | How many of the top fused candidates to rerank (default `30`, max `50`) |
 
 ## Feedback
 
@@ -550,6 +572,12 @@ full bundle model (`path`, `git`, `website`, `npm`, `writable`, `registryId`,
 bundle's `components.<id>.adapter` key pins it to a specific format adapter
 instead of relying on auto-detection — see [Bundle Types](bundle-types.md)
 for the full adapter list and what each one reads/writes.
+
+Each physical content root has one bundle id. Duplicate paths and symbolic-link
+aliases are rejected because source ownership, scheduler authority, and default
+selection must not depend on which spelling a caller used. If an older config
+contains aliases, choose the id whose durable refs should survive and remove
+the other entry before running ordinary commands.
 
 ### defaultWriteTarget
 
@@ -700,6 +728,16 @@ one file, and have each host's local config extend it.
   add`/`akm sync` first so the file is materialized locally, then point
   `extends` at it.
 
+Shared layers carry portable policy, not host authority. `bundles`, source and
+write defaults, registries, embedding connections, scheduler activation,
+`execution`, `experimental`, and setup state are ignored when inherited.
+Engine definitions may be shared, but credentials and executable authority
+(`apiKey`, `apiKeyFile`, `bin`, `args`, and `workspace`) must be supplied by
+the local file. Improve publication (`strategies.*.sync`) and reranker network
+configuration are local as well. Bundle-relative chains stay physically inside
+the bundle root for every hop; lexical `..` paths and symlink escapes are both
+rejected before a referenced file is read.
+
 There is no `extends: <url>` form: config load is synchronous and runs on
 every invocation, and akm deliberately does not fetch network resources at
 load time (the same reason `registries` is never fetched until a
@@ -780,11 +818,9 @@ one of the three per engine.
 
 `embedding.apiKey` accepts the same three forms and resolves `secret://` the
 same way, on every path that sends an embedding request: `akm index`
-(including its `bundle update` post-commit embedding pass and the targeted
-re-embed a write command like `akm remember` triggers), `akm improve`'s
-consolidate pass (memory dedup and similarity clustering), and the
-fingerprint-rename canary `akm index` runs when the embedding config
-changes. All of them build the
+(including the reindex `akm bundle update` runs and the targeted re-embed a
+write command like `akm remember` triggers), `akm improve`'s
+consolidate pass (memory dedup and similarity clustering). All of them build the
 provider request through the same `RemoteEmbedder`/`resolveSecret` boundary,
 so a `secret://` reference resolves identically regardless of which command
 triggered the request (#953).
@@ -804,3 +840,24 @@ profile identities.
 `embedding.chunkSize` was never read by anything under `src/` (#954), so a
 config that still sets it is simply ignored — it still loads, unvalidated
 and without warning.
+
+`index.graph.*` and every strategy's `processes.graphExtraction.*` are retired
+in 0.9.17-alpha.9: the LLM entity graph they configured is gone —
+`akm show`'s links come from declared links instead (see `## Strategies`
+above). A config that still sets them loads; each key is named once as
+unknown, and `akm migrate apply` removes it. The built-in `graph-refresh`
+strategy is retired too, but not the same way as an ordinary unknown name:
+naming it via `--strategy` or a task always fails with a message pointing at
+the retirement, even when `improve.strategies["graph-refresh"]` still has a
+leftover override from customizing the built-in (the message names it;
+`akm migrate apply` drops it — a leftover override is never resolved as a new
+custom strategy, which would silently run a full, unplanned improve pass).
+`defaults.improveStrategy: "graph-refresh"` still loads config successfully;
+the refusal happens lazily, when the strategy is actually resolved.
+
+`improve.strategies.<name>.processes.consolidate.incrementalSince` and
+`.neighborsPerChanged` are retired in 0.9.17-alpha.9: the consolidate pair
+pass is now the candidate generator, narrowing per initiator through the
+improve ledger rather than a global time window. A config that still sets
+either key loads; each is named once as unknown, and `akm migrate apply`
+removes it.

@@ -180,7 +180,7 @@ export interface DisplayRefItem {
  *
  * Exported (Chunk-8 WI-8.5c) as the ONE conceptId derivation the improve
  * correlation sites (`eligibility.ts` candidate refs, `salience.ts`
- * last-use lookup, `collapse-detector.ts` canary mint/score) share with the
+ * last-use lookup) share with the
  * display rule — the permanent successor to the retired transient
  * `legacyConceptId`.
  */

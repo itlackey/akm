@@ -24,7 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { looksLikeGithubWorkflowSource } from "../../../workflows/source-ir/compile";
+import { looksLikeGithubWorkflowSource } from "../../../workflows/compile";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";

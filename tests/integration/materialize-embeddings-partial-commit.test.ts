@@ -22,7 +22,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { deriveEntryProvenance, deriveInstallations } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
-import { buildSearchText } from "../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import type { EmbeddingBatchCommit, EmbeddingBatchSkip } from "../../src/llm/embedders/remote";
 import type { Database } from "../../src/storage/database";
@@ -54,7 +53,7 @@ describe("generateEmbeddingsForDb: per-batch commit survives an eventual failure
         "memories",
         name,
       );
-      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, buildSearchText(entry), provenance);
+      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     }
   }
 

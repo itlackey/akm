@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { canonicalJson, reduceStepOutcomes, type UnitOutcome } from "../../../src/workflows/exec/step-work";
-import type { IrStepPlanV4 } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlanStep } from "../../../src/workflows/plan";
 import { distinctJsonValues, randomJsonValue, reorderKeys } from "./_gen";
 import { fuzzSeeds, Rng, withSeed } from "./_rng";
 
@@ -30,7 +30,7 @@ const PLAN = {
   title: "s",
   sequenceIndex: 0,
   gate: { kind: "gate", id: "s.gate", stepId: "s", criteria: [] },
-} as unknown as IrStepPlanV4;
+} as unknown as WorkflowPlanStep;
 
 let idCounter = 0;
 function ok(result: unknown): UnitOutcome {

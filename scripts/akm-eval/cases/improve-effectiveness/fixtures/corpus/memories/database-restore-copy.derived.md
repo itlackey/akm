@@ -13,4 +13,4 @@ searchHints:
 
 # PostgreSQL Recovery Check
 
-Verify the WAL archive checksum before PostgreSQL point-in-time recovery and validate the database before reopening traffic.
+verify the WAL archive checksum before PostgreSQL point-in-time recovery and validate the database before reopening traffic.

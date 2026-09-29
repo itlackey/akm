@@ -104,7 +104,16 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
     // #577: surface the gate verdict inline so the queue explains itself.
     const gate = formatGateDecisionSummary(p.gateDecision);
     const gateSuffix = gate ? `  ${gate}` : "";
-    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}`);
+    // A retire proposal's continuityRisk excludes it from bulk accept —
+    // visible in the default list, not just `proposal show`, since the owner
+    // reviews the backlog list-first. `list`'s default (brief) shape
+    // projects a `continuityRisk: true` marker instead of the full
+    // `retirement` object (only present from `--detail normal` up), so both
+    // shapes are checked here.
+    const retirement = p.retirement as Record<string, unknown> | undefined;
+    const flagged = p.continuityRisk === true || Boolean(retirement?.continuityRisk);
+    const continuitySuffix = flagged ? "  ⚠ continuity-risk" : "";
+    lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}${continuitySuffix}`);
   }
   return lines.join("\n").trimEnd();
 }
@@ -136,6 +145,49 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);
     if (review.reason) lines.push(`review.reason: ${String(review.reason)}`);
     if (review.decidedAt) lines.push(`review.decidedAt: ${String(review.decidedAt)}`);
+  }
+  // alpha.9: a consolidate retire proposal writes no content (`payload.content`
+  // is empty by design) — this is the reason a reviewer needs instead. `diff`
+  // shows the body being retired.
+  const retirement = p.retirement as Record<string, unknown> | undefined;
+  if (retirement) {
+    lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
+    lines.push(`retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`);
+    lines.push(`retire.reason: ${String(retirement.judgeReason)}`);
+    // Item 1 (continuity check): flagged, but still minted — never swept by a
+    // bulk accept, only acceptable by id, so a reviewer must see it here.
+    const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
+    if (continuityRisk) {
+      const failingQueries = typeof continuityRisk.failingQueries === "number" ? continuityRisk.failingQueries : 0;
+      const unverifiedQueries =
+        typeof continuityRisk.unverifiedQueries === "number" ? continuityRisk.unverifiedQueries : 0;
+      const summary: string[] = [];
+      if (failingQueries > 0) {
+        summary.push(
+          `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
+        );
+      }
+      // S2: a query the search call never ran, or that fell back to
+      // keyword-only ranking, is never silently trusted OR silently
+      // dropped — it excludes the proposal from bulk accept on its own.
+      if (unverifiedQueries > 0) {
+        summary.push(
+          `${unverifiedQueries} quer${unverifiedQueries === 1 ? "y" : "ies"} unverified (search failed or used the keyword-only fallback)`,
+        );
+      }
+      lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
+      // N3 / S4: the actual failing query text, not just the count — a
+      // reviewer deciding whether to accept by id needs to see what would
+      // stop resolving, not just how many queries.
+      const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
+      for (const rank of ranks) {
+        const successorRank =
+          rank.successorRank === null || rank.successorRank === undefined
+            ? "absent from top 10"
+            : `#${String(rank.successorRank)}`;
+        lines.push(`  - "${String(rank.query)}": retired #${String(rank.retiredRank)}, successor ${successorRank}`);
+      }
+    }
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {
@@ -181,7 +233,6 @@ export function formatProposalRejectPlain(r: Record<string, unknown>): string {
 }
 
 export function formatProposalDrainPlain(r: Record<string, unknown>): string {
-  const policy = String(r.policy ?? "?");
   const applyMode = String(r.applyMode ?? "queue");
   const promoted = Array.isArray(r.promoted) ? (r.promoted as unknown[]) : [];
   const rejected = Array.isArray(r.rejected) ? (r.rejected as unknown[]) : [];
@@ -191,7 +242,7 @@ export function formatProposalDrainPlain(r: Record<string, unknown>): string {
   const failed = Array.isArray(r.failed) ? (r.failed as Array<Record<string, unknown>>) : [];
   const prefix = r.dryRun === true ? "[dry-run] " : "";
   const lines = [
-    `${prefix}Drained proposal queue (strategy=${String(r.strategy ?? "?")}, policy=${policy}, applyMode=${applyMode})`,
+    `${prefix}Drained proposal queue (strategy=${String(r.strategy ?? "?")}, applyMode=${applyMode})`,
     `  promoted: ${promoted.length}`,
     `  rejected: ${rejected.length}`,
     `  deferred: ${deferred.length}`,

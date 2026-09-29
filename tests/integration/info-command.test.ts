@@ -5,14 +5,19 @@ import path from "node:path";
 import { assembleInfo } from "../../src/commands/sources/info";
 import { resolveStashDir } from "../../src/core/common";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
-import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../src/core/paths";
+import { getCacheDir, getConfigDir, getConfigPath, getDataDir, getStateDir } from "../../src/core/paths";
 import { resetQuiet, setQuiet } from "../../src/core/warn";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
-import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import {
+  closeDatabase,
+  openIndexDatabase,
+  openReadonlyExistingDatabase,
+} from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
 import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
-import { setMeta } from "../../src/storage/repositories/index-meta-repository";
+import { getMeta, setMeta } from "../../src/storage/repositories/index-meta-repository";
 import { searchVec, upsertEmbedding } from "../../src/storage/repositories/index-vec-repository";
 import { runCliCapture } from "../_helpers/cli";
 import {
@@ -22,6 +27,7 @@ import {
   sandboxXdgConfigHome,
   sandboxXdgDataHome,
 } from "../_helpers/sandbox";
+import { makeUnresolvablePath } from "../_helpers/unreadable-path";
 
 // ── Temp directory management ───────────────────────────────────────────────
 
@@ -136,13 +142,7 @@ describe("assembleInfo", () => {
     const dbPath = path.join(tmpDir("db"), "test.db");
     const db = openIndexDatabase(dbPath);
     const entry = makeEntry("skill", "test-skill");
-    upsertEntry(
-      db,
-      path.join(stashDir, "skills", "test-skill"),
-      entry,
-      "test skill",
-      infoEntryProvenance("skill", "test-skill"),
-    );
+    upsertEntry(db, path.join(stashDir, "skills", "test-skill"), entry, infoEntryProvenance("skill", "test-skill"));
     rebuildFts(db);
     setMeta(db, "builtAt", "2026-03-17T00:00:00Z");
     closeDatabase(db);
@@ -151,7 +151,6 @@ describe("assembleInfo", () => {
 
     expect(info.indexStats.entryCount).toBe(1);
     expect(info.indexStats.lastBuiltAt).toBe("2026-03-17T00:00:00Z");
-    expect(typeof info.indexStats.vecAvailable).toBe("boolean");
   });
 
   // R-057(a): indexStats previously carried only an aggregate entryCount with
@@ -165,21 +164,18 @@ describe("assembleInfo", () => {
       db,
       path.join(stashDir, "skills", "test-skill"),
       makeEntry("skill", "test-skill"),
-      "test skill",
       infoEntryProvenance("skill", "test-skill"),
     );
     upsertEntry(
       db,
       path.join(stashDir, "skills", "test-skill-2"),
       makeEntry("skill", "test-skill-2"),
-      "test skill 2",
       infoEntryProvenance("skill", "test-skill-2"),
     );
     upsertEntry(
       db,
       path.join(stashDir, "knowledge", "test-doc"),
       makeEntry("knowledge", "test-doc"),
-      "test doc",
       infoEntryProvenance("knowledge", "test-doc"),
     );
     rebuildFts(db);
@@ -264,13 +260,12 @@ describe("assembleInfo", () => {
     const stashDir = makeStashDir();
 
     const dbPath = path.join(tmpDir("db"), "test.db");
-    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    let db = openIndexDatabase(dbPath);
     const entry = makeEntry("skill", "embed-skill");
     const id = upsertEntry(
       db,
       path.join(stashDir, "skills", "embed-skill"),
       entry,
-      "embed skill",
       infoEntryProvenance("skill", "embed-skill"),
     );
     upsertEmbedding(db, id, [1, 0, 0, 0]);
@@ -282,7 +277,7 @@ describe("assembleInfo", () => {
 
     expect(info.indexStats.entryCount).toBe(1);
 
-    db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    db = openIndexDatabase(dbPath);
     try {
       expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
     } finally {
@@ -378,6 +373,149 @@ describe("assembleInfo", () => {
     const serialized = JSON.stringify(info);
     expect(serialized).not.toContain("super-secret-key-12345");
     expect(serialized).not.toContain("apiKey");
+  });
+});
+
+// ── a10-info: akm info must behave like a help command — always exit 0 and
+// report, never refuse. These pin the per-section degrade cases the fix
+// covers on top of the pre-existing "absent"/"unreadable" ones above. ────────
+describe("assembleInfo — index.db degrade cases never throw (a10-info)", () => {
+  test("a newer index layout is reported in indexStats.unavailable, not thrown", () => {
+    const stashDir = makeStashDir();
+    const dbPath = path.join(tmpDir("db"), "test.db");
+    const db = openIndexDatabase(dbPath);
+    upsertEntry(
+      db,
+      path.join(stashDir, "skills", "test-skill"),
+      makeEntry("skill", "test-skill"),
+      infoEntryProvenance("skill", "test-skill"),
+    );
+    rebuildFts(db);
+    // A version newer than this akm understands (checkIndexLayout's refusal
+    // case) — openExistingDatabase would throw ConfigError("INDEX_SCHEMA_INCOMPATIBLE");
+    // `akm info` must report it instead.
+    setMeta(db, "version", String(CANONICAL_INDEX_DB_VERSION + 1));
+    closeDatabase(db);
+
+    const info = assembleInfo({ dbPath });
+
+    expect(info.indexStats.entryCount).toBe(0);
+    expect(info.indexStats.unavailable).toBeDefined();
+    expect(info.indexStats.unavailable).toContain("newer akm");
+    expect(info.indexStats.unavailable).toContain("Upgrade akm");
+  });
+
+  test("an older index layout is served as-is, WITHOUT migrating (real stats, no unavailable, version untouched)", () => {
+    const stashDir = makeStashDir();
+    const dbPath = path.join(tmpDir("db"), "test.db");
+    const db = openIndexDatabase(dbPath);
+    upsertEntry(
+      db,
+      path.join(stashDir, "skills", "test-skill"),
+      makeEntry("skill", "test-skill"),
+      infoEntryProvenance("skill", "test-skill"),
+    );
+    rebuildFts(db);
+    const olderVersion = String(CANONICAL_INDEX_DB_VERSION - 1);
+    setMeta(db, "version", olderVersion);
+    closeDatabase(db);
+
+    const info = assembleInfo({ dbPath });
+
+    expect(info.indexStats.entryCount).toBe(1);
+    expect(info.indexStats.unavailable).toBeUndefined();
+
+    // A read-only open never calls ensureSchema — confirm the on-disk
+    // version is still the older one, not bumped by a migration.
+    const reread = openReadonlyExistingDatabase(dbPath);
+    try {
+      expect(reread && getMeta(reread, "version")).toBe(olderVersion);
+    } finally {
+      if (reread) closeDatabase(reread);
+    }
+  });
+
+  test("a genuinely empty (0-byte) index.db reports indexStats.unavailable rather than throwing", () => {
+    const dbPath = path.join(tmpDir("db"), "empty.db");
+    fs.writeFileSync(dbPath, "");
+
+    const info = assembleInfo({ dbPath });
+
+    expect(info.indexStats.entryCount).toBe(0);
+    expect(info.indexStats.unavailable).toBeDefined();
+  });
+
+  // Regression guard for #791: the pre-existing classifyPathAccess "inaccessible"
+  // pre-check (indexStats.unreadable) must still fire unchanged now that the
+  // open beneath it is a different, stricter opener. ELOOP is uid-independent
+  // (unlike chmod 0000, which is unenforced for uid 0 — see
+  // tests/_helpers/unreadable-path.ts), so this runs the same under CI-as-root.
+  test("an unreadable index.db (ELOOP) still reports indexStats.unreadable, not unavailable", () => {
+    const dir = tmpDir("db");
+    const looping = makeUnresolvablePath(dir, "index.db");
+
+    const info = assembleInfo({ dbPath: looping });
+
+    expect(info.indexStats.entryCount).toBe(0);
+    expect(info.indexStats.unreadable).toBeDefined();
+    expect(info.indexStats.unreadable).toContain("ELOOP");
+    expect(info.indexStats.unavailable).toBeUndefined();
+  });
+});
+
+describe("assembleInfo — config degrade (a10-info)", () => {
+  afterEach(() => resetConfigCache());
+
+  test("an invalid config.json reports configError and still shows readable defaults, never throws", () => {
+    fs.writeFileSync(getConfigPath(), "{ not valid json\n");
+    resetConfigCache();
+
+    const info = assembleInfo();
+
+    expect(info.configError).toBeDefined();
+    expect(info.configError).toContain("config");
+    // Config-derived fields fall back to the same defaults a fresh install
+    // reports (DEFAULT_CONFIG) rather than aborting the whole command.
+    expect(info.defaultBundle).toBeNull();
+    expect(info.semanticSearch.mode).toBe("off");
+    expect(info.semanticSearch.status).toBe("disabled");
+    expect(info.registries.length).toBeGreaterThan(0);
+    // bundleDir still resolves via the sandboxed AKM_BUNDLE_DIR env override
+    // (step 1 of resolveStashDir), which never reads config at all.
+    expect(typeof info.bundleDir).toBe("string");
+    expect(info.bundleDir.length).toBeGreaterThan(0);
+  });
+
+  test("a healthy config never sets configError", () => {
+    const info = assembleInfo();
+    expect(info.configError).toBeUndefined();
+  });
+
+  // R-057/a10-info follow-up: a bundle path that IS configured but doesn't
+  // resolve (STASH_DIR_UNREADABLE) is a genuine misconfiguration, not a
+  // fresh install — bundleDir still falls back to the platform default (a
+  // courtesy), but the real reason must not be silently dropped.
+  test("a configured bundle path that does not resolve reports bundleDirError, not silently", () => {
+    const config = loadConfig();
+    config.bundles = { main: { path: "/nonexistent/definitely-not-here" } };
+    config.defaultBundle = "main";
+    saveConfig(config);
+    resetConfigCache();
+
+    // The outer beforeEach's sandboxed AKM_BUNDLE_DIR would otherwise win
+    // resolveStashDir()'s step 1 and mask the configured-path failure this
+    // test targets (step 2).
+    const previousBundleDir = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      const info = assembleInfo();
+      expect(info.bundleDirError).toBeDefined();
+      expect(info.bundleDirError).toContain("/nonexistent/definitely-not-here");
+      expect(info.defaultBundle).toBe("main");
+      expect(info.bundleDir).not.toBe("/nonexistent/definitely-not-here");
+    } finally {
+      if (previousBundleDir !== undefined) process.env.AKM_BUNDLE_DIR = previousBundleDir;
+    }
   });
 });
 

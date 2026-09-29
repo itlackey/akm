@@ -315,6 +315,14 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
 // ── 3c. D-R6 reserved filenames (index.md / log.md) ──────────────────────────
 
 describe("akm adapter — D-R6 reserved filenames are never items (spec §5.1)", () => {
+  test("a bundle-root README.md is documentation, not a knowledge item (#979)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-root-readme-"));
+    tmpDirs.push(tmp);
+    const file = path.join(tmp, "README.md");
+    fs.writeFileSync(file, "# Bundle documentation\n\nInstall and usage notes.\n");
+    expect(akmAdapter.recognize(component({ root: tmp }), buildFileContext(tmp, file))).toBeNull();
+  });
+
   test("a knowledge/index.md is not recognized as an item", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "akm-adapter-reserved-"));
     tmpDirs.push(tmp);

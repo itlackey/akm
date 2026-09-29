@@ -492,6 +492,36 @@ describe("task-yaml metadata fold", () => {
     expect(entry.searchHints).toContain("prompt:commands/review");
   });
 
+  test("records the asset a task targets as `uses` (#935); a run: or inline-command task targets none", () => {
+    const root = tmpDir();
+    const cases: Array<[string, string[], string[] | undefined]> = [
+      [
+        "workflow.yml",
+        ["version: 4", "uses: workflows/daily-backup", "schedule: '@daily'"],
+        ["workflows/daily-backup"],
+      ],
+      ["script.yml", ["version: 4", "uses: other//scripts/report", "schedule: '@daily'"], ["other//scripts/report"]],
+      [
+        "stored.yml",
+        ["version: 4", "uses: akm/command", "with:", "  ref: commands/review", "schedule: '@daily'"],
+        ["commands/review"],
+      ],
+      [
+        "inline.yml",
+        ["version: 4", "uses: akm/command", "with:", "  content: Summarize the day", "schedule: '@daily'"],
+        undefined,
+      ],
+      ["run.yml", ["version: 4", "run: echo hi", "schedule: '@daily'"], undefined],
+    ];
+    for (const [file, lines, uses] of cases) {
+      const filePath = path.join(root, "tasks", file);
+      writeFile(filePath, lines.join("\n"));
+      const entry: IndexDocument = { name: file, type: "task" };
+      applyFoldedMetadata(entry, foldRecognizedMetadata("task-yaml", buildFileContext(root, filePath)));
+      expect(entry.uses, file).toEqual(uses);
+    }
+  });
+
   test("still applies task/scheduled tags without throwing when the YAML is unparseable", () => {
     const root = tmpDir();
     const filePath = path.join(root, "tasks", "broken.yml");
@@ -506,6 +536,66 @@ describe("task-yaml metadata fold", () => {
     expect(entry.tags).toContain("task");
     expect(entry.tags).toContain("scheduled");
     expect(entry.searchHints ?? []).toEqual([]);
+  });
+});
+
+// ── 2c. workflow metadata fold: step targets (#935) ─────────────────────────
+describe("workflow-md metadata fold", () => {
+  test("records each step's target asset as `uses`, in step order, once each", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "workflows", "release.yml");
+    writeFile(
+      filePath,
+      [
+        "name: release",
+        "on:",
+        "  workflow_dispatch: {}",
+        "jobs:",
+        "  release:",
+        "    runs-on: [self-hosted]",
+        "    steps:",
+        "      - id: cut",
+        "        uses: commands/cut-release",
+        "      - id: review",
+        "        uses: akm/command",
+        "        with:",
+        "          ref: commands/review",
+        "      - id: notify",
+        "        uses: other//scripts/notify",
+        "      - id: cut-again",
+        "        uses: commands/cut-release",
+        "      - id: shell",
+        "        run: echo done",
+      ].join("\n"),
+    );
+    const entry: IndexDocument = { name: "release", type: "workflow" };
+    applyFoldedMetadata(entry, foldRecognizedMetadata("workflow-md", buildFileContext(root, filePath)));
+    expect(entry.uses).toEqual(["commands/cut-release", "commands/review", "other//scripts/notify"]);
+  });
+
+  test("a Markdown workflow's prose steps target no asset", () => {
+    const root = tmpDir();
+    const filePath = path.join(root, "workflows", "review.md");
+    writeFile(
+      filePath,
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: read",
+        "---",
+        "",
+        "# Review",
+        "",
+        "## read",
+        "",
+        "Read the diff.",
+      ].join("\n"),
+    );
+    const entry: IndexDocument = { name: "review", type: "workflow" };
+    applyFoldedMetadata(entry, foldRecognizedMetadata("workflow-md", buildFileContext(root, filePath)));
+    expect(entry.searchHints).toContain("read");
+    expect(entry.uses).toBeUndefined();
   });
 });
 

@@ -14,7 +14,7 @@ cheap:
 | --- | --- | --- |
 | Implement one item | Sonnet, in its own worktree `.claude/worktrees/<batch>-<key>` on `wt/<batch>/<key>` | all items at once, up to the runtime's agent cap |
 | Review that item, one fix round | Sonnet | starts the moment its item lands (pipelined, no barrier) |
-| Integrate and gate | Sonnet merges every item branch `--no-ff` into `wt/<batch>`, regenerates the schema, runs the gate ONCE | the one barrier |
+| Integrate and gate | Sonnet merges every item branch `--no-ff` into `wt/<batch>-integration`, regenerates the schema, runs the gate ONCE | the one barrier |
 | Final review | Opus (or Fable via `finalReviewModel`) over the whole `baseSha..head` diff | one agent |
 
 If the final review finds anything that must change, it writes
@@ -33,7 +33,7 @@ pushes. The coordinator reviews the integrated branch and pushes.
 
 ```jsonc
 {
-  "batch": "field-F4",                      // names the branch wt/<batch> and worktree
+  "batch": "field-F4",                      // names the branch wt/<batch>-integration and worktree
   "baseSha": "673eb83f",                    // where every item branch starts
   "brief": "/abs/path/briefs/field-F4.md",  // what to implement; next-iteration briefs land beside it
   "items": [                                // independent work items

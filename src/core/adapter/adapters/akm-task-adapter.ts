@@ -18,11 +18,9 @@
  * ── validate (spec §6 task validation column) ──
  *
  * Validation enters the canonical task source parser (`parseTaskSource`,
- * task source v4 native as of P4 — a `version: 3` or `version: 2` document
- * is auto-read through the in-memory migration shim in
- * `parse-task-source.ts`; only a version the shim's deterministic planners
- * cannot convert, or any other unsupported number, fails closed with
- * `TASK_SCHEMA_VERSION_UNSUPPORTED`). That parser owns the closed key sets,
+ * which reads only task source v4 — a `version: 2` or `version: 3`
+ * document fails closed with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
+ * `akm migrate apply`, which converts it). That parser owns the closed key sets,
  * the executable-selector XOR, hostile YAML policy, the `akm/command`
  * builtin, bounds, and physical `working-directory` containment. The
  * adapter only translates a parser failure into the format-family
@@ -36,7 +34,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { parseTaskSource } from "../../../tasks/source/parse-task-source";
+import { readBoundedTaskSourceYaml } from "../../../tasks/source/bounded-document";
+import { parseTaskSource, peekTaskSourceVersion } from "../../../tasks/source/parse-task-source";
 import {
   TASK_EXTENSION,
   TASK_NEAR_MISS_EXTENSION,
@@ -141,8 +140,11 @@ export const akmTaskAdapter: BundleAdapter = {
   },
 
   /**
-   * Install-time probe (§1.2): a root holding a top-level, valid task-v3
-   * `.yml` file. The full parser keeps this disjoint from unrelated YAML and
+   * Install-time probe (§1.2): a root holding a top-level, valid task source
+   * v4 `.yml` file, or a task v2/v3 file that `akm migrate apply` has yet to
+   * convert (the runtime refuses those, so without this the migrator and
+   * `akm task sync` would not find them in a bundle whose adapter config does
+   * not record). The full parser keeps this disjoint from unrelated YAML and
    * prevents probe semantics from drifting from validation semantics.
    */
   looksLikeRoot(root: string): boolean {
@@ -164,9 +166,28 @@ export const akmTaskAdapter: BundleAdapter = {
         parseTaskSource({ yaml: raw, filePath: entry.name, workspaceRoot: root });
         return true;
       } catch {
+        if (isLegacyTaskDocument(raw, entry.name)) return true;
         // Continue probing the remaining top-level .yml files.
       }
     }
     return false;
   },
 };
+
+/** The executable keys each retired task schema version required one of. */
+const LEGACY_TASK_TARGET_KEYS: Readonly<Record<number, readonly string[]>> = {
+  2: ["workflow", "prompt", "command"],
+  3: ["uses", "run"],
+};
+
+/** A task v2/v3 document: its schema version, plus a target key that version used. */
+function isLegacyTaskDocument(yaml: string, filePath: string): boolean {
+  let root: unknown;
+  try {
+    root = readBoundedTaskSourceYaml({ yaml, filePath }, { sourceLabel: "task source" }).root;
+  } catch {
+    return false;
+  }
+  const keys = LEGACY_TASK_TARGET_KEYS[peekTaskSourceVersion(root) ?? 0];
+  return keys !== undefined && keys.some((key) => Object.hasOwn(root as object, key));
+}

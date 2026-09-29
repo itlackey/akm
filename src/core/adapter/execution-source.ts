@@ -10,7 +10,7 @@ import {
   type ExecutionJsonObject,
   type ExecutionJsonValue,
 } from "../../execution/json";
-import { assertSnapshotKeys, type StrictRecordSnapshot, snapshotStrictRecord } from "../../execution/record";
+import { type StrictRecordSnapshot, snapshotStrictRecord } from "../../execution/record";
 import {
   type AdapterOwnedExtensions,
   type AdapterRenderedCommandSource,
@@ -156,15 +156,6 @@ function nullableObject(value: unknown, path: string): ExecutionJsonObject | nul
   return value === null ? null : cloneExecutionJsonObject(value, path);
 }
 
-function nullableEnvironment(value: unknown, path: string): ExecutionJsonObject | null {
-  if (value === null) return null;
-  const environment = cloneExecutionJsonObject(value, path);
-  if (Object.values(environment).some((entry) => typeof entry !== "string")) {
-    throw new TypeError(`${path} values must be strings`);
-  }
-  return environment;
-}
-
 function nullableTimeout(value: unknown, path: string): string | number | null {
   const timeout = cloneExecutionJson(value, path);
   if (timeout !== null && typeof timeout !== "string" && typeof timeout !== "number") {
@@ -183,24 +174,16 @@ export function executionDefaultsFromFrontmatter(
   },
 ): UnresolvedExecutionDefaults {
   const frontmatter = snapshotStrictRecord(data, "frontmatter");
-  const optionRecord = snapshotStrictRecord(options, "execution frontmatter projection options");
-  assertSnapshotKeys(
-    optionRecord,
-    ["kind", "allowTopLevelEngine", "toolsKeys"],
-    "execution frontmatter projection options",
-  );
-  const kind = optionRecord.kind;
+  const kind = options.kind;
   if (kind !== "command" && kind !== "persona") {
     throw new TypeError("execution frontmatter projection options.kind is invalid");
   }
-  const allowTopLevelEngine = Object.hasOwn(optionRecord, "allowTopLevelEngine")
-    ? optionRecord.allowTopLevelEngine
-    : false;
+  const allowTopLevelEngine = Object.hasOwn(options, "allowTopLevelEngine") ? options.allowTopLevelEngine : false;
   if (typeof allowTopLevelEngine !== "boolean") {
     throw new TypeError("execution frontmatter projection options.allowTopLevelEngine must be a boolean");
   }
-  const configuredToolsKeys = Object.hasOwn(optionRecord, "toolsKeys")
-    ? cloneExecutionJson(optionRecord.toolsKeys, "execution frontmatter projection options.toolsKeys")
+  const configuredToolsKeys = Object.hasOwn(options, "toolsKeys")
+    ? cloneExecutionJson(options.toolsKeys, "execution frontmatter projection options.toolsKeys")
     : ["tools"];
   if (!Array.isArray(configuredToolsKeys) || configuredToolsKeys.some((key) => typeof key !== "string" || !key)) {
     throw new TypeError("execution frontmatter projection options.toolsKeys must be an array of non-empty strings");
@@ -209,6 +192,18 @@ export function executionDefaultsFromFrontmatter(
   const namespace = own(frontmatter, "akm")
     ? requireMetadataMapping(frontmatter.akm, "frontmatter.akm")
     : snapshotStrictRecord({}, "frontmatter.akm");
+  for (const key of ["workspace", "environment", "runtime"] as const) {
+    const location = own(frontmatter, key)
+      ? `frontmatter.${key}`
+      : own(namespace, key)
+        ? `frontmatter.akm.${key}`
+        : undefined;
+    if (location) {
+      throw new TypeError(
+        `${location} is host-controlled and cannot be declared by an executable asset; configure the selected engine or workflow execution environment instead`,
+      );
+    }
+  }
   const out = Object.create(null) as Record<string, unknown>;
   if (kind === "command" && own(frontmatter, "agent")) {
     out.agent = nullableString(frontmatter.agent, "frontmatter.agent");
@@ -308,25 +303,6 @@ export function executionDefaultsFromFrontmatter(
       : namespacedTimeouts.get(selectedTimeoutKey);
   }
 
-  for (const key of ["workspace", "environment", "runtime"] as const) {
-    const namespaced = own(namespace, key)
-      ? key === "workspace"
-        ? nullableString(namespace[key], `frontmatter.akm.${key}`)
-        : key === "environment"
-          ? nullableEnvironment(namespace[key], `frontmatter.akm.${key}`)
-          : nullableObject(namespace[key], `frontmatter.akm.${key}`)
-      : undefined;
-    const topLevel =
-      allowTopLevelEngine && own(frontmatter, key)
-        ? key === "workspace"
-          ? nullableString(frontmatter[key], `frontmatter.${key}`)
-          : key === "environment"
-            ? nullableEnvironment(frontmatter[key], `frontmatter.${key}`)
-            : nullableObject(frontmatter[key], `frontmatter.${key}`)
-        : undefined;
-    if (topLevel !== undefined) out[key] = topLevel;
-    else if (namespaced !== undefined) out[key] = namespaced;
-  }
   return out as UnresolvedExecutionDefaults;
 }
 
@@ -346,17 +322,6 @@ export interface RenderMarkdownExecutionSourceInput {
   readonly extensions?: ExtensionsProjection;
 }
 
-function snapshotRendererInput(input: RenderMarkdownExecutionSourceInput): {
-  readonly input: StrictRecordSnapshot;
-  readonly identity: StrictRecordSnapshot;
-} {
-  const inputSnapshot = snapshotStrictRecord(input, "adapter execution source");
-  assertSnapshotKeys(inputSnapshot, ["kind", "raw", "identity", "defaults", "extensions"], "adapter execution source");
-  const identity = snapshotStrictRecord(inputSnapshot.identity, "adapter execution source identity");
-  assertSnapshotKeys(identity, ["ref", "bundle", "adapter", "file"], "adapter execution source identity");
-  return { input: inputSnapshot, identity };
-}
-
 export function renderMarkdownExecutionSource(
   input: RenderMarkdownExecutionSourceInput & { readonly kind: "command" },
 ): AdapterRenderedCommandSource;
@@ -369,33 +334,32 @@ export function renderMarkdownExecutionSource(
 export function renderMarkdownExecutionSource(
   input: RenderMarkdownExecutionSourceInput,
 ): AdapterRenderedExecutionSource {
-  const snapshots = snapshotRendererInput(input);
-  const raw = snapshots.input.raw;
+  const raw = input.raw;
   if (typeof raw !== "string") throw new TypeError("adapter execution source.raw must be a string");
-  const kind = snapshots.input.kind;
+  const kind = input.kind;
   if (kind !== "command" && kind !== "persona") throw new TypeError("adapter execution source.kind is invalid");
-  const identityFile = snapshots.identity.file;
-  const parsed = parseExecutionMarkdown(raw, typeof identityFile === "string" ? identityFile : undefined);
-  const hasDefaults = Object.hasOwn(snapshots.input, "defaults");
-  const defaultsProjection = snapshots.input.defaults;
+  const identity = input.identity;
+  const parsed = parseExecutionMarkdown(raw, identity.file);
+  const hasDefaults = Object.hasOwn(input, "defaults");
+  const defaultsProjection = input.defaults;
   const defaults = typeof defaultsProjection === "function" ? defaultsProjection(parsed.data) : defaultsProjection;
   if (hasDefaults && defaults === undefined) {
     throw new TypeError("adapter execution source defaults must be omitted or resolve to an object");
   }
-  const extensionsProjection = snapshots.input.extensions;
+  const extensionsProjection = input.extensions;
   const extensionsAreProjected = typeof extensionsProjection === "function";
   const extensions = extensionsAreProjected ? extensionsProjection(parsed.data) : extensionsProjection;
-  if (Object.hasOwn(snapshots.input, "extensions") && !extensionsAreProjected && extensions === undefined) {
+  if (Object.hasOwn(input, "extensions") && !extensionsAreProjected && extensions === undefined) {
     throw new TypeError("adapter execution source extensions must be omitted or be an adapter-owned extension object");
   }
   return createAdapterRenderedExecutionSource({
     kind,
     content: parsed.content,
     identity: {
-      ref: snapshots.identity.ref as string,
-      bundle: snapshots.identity.bundle as string,
-      adapter: snapshots.identity.adapter as string,
-      file: snapshots.identity.file as string,
+      ref: identity.ref,
+      bundle: identity.bundle,
+      adapter: identity.adapter,
+      file: identity.file,
       hash: createHash("sha256").update(raw, "utf8").digest("hex"),
     },
     ...(hasDefaults ? { defaults } : {}),

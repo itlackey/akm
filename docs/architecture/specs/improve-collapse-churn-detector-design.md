@@ -1,6 +1,15 @@
 # R5 — Longitudinal Collapse/Churn Detector for `akm improve`
 
-> **Status:** Partially implemented. The COLLAPSE alert class (§1, three
+> **Status (0.9.17): removed.** The detector, its `collapse_detector_alert`
+> event, the `improve_cycle_metrics` / `canary_queries` tables and
+> `scripts/refresh-canary-set.ts` were deleted with the improve ledger change
+> (migration 028 drops the tables); recorded telemetry shows no alert ever fired. The
+> generation and lexical-diversity merge checks, which never refused a merge,
+> went with it; only the random-cluster injection in
+> `src/commands/improve/anti-collapse.ts` remains. The history below is kept
+> for reference.
+>
+> **Earlier status:** Partially implemented. The COLLAPSE alert class (§1, three
 > sub-conditions) and the MERGE-FLOOR advisory are live. **The CHURN alert
 > class described throughout this document (§1, §5.2 `accepted_actions`
 > column, §6.1 `churnMinAcceptedActions` config key, §8 item 2) was removed
@@ -199,15 +208,13 @@ canaries).
 
 ### 2.5 When it runs
 
-Once per qualifying improve cycle, in the **post-loop stage after the recombine pass**
-(`runImprovePostLoopStage`, `src/commands/improve/loop-stages.ts` — insert immediately
-after the procedural block ends at ~line 833, before the return at ~line 835), gated
-on: detector enabled AND (`consolidationRan === true` OR
-`recombination.processed > 0`) AND not `options.dryRun`. Rationale for one hook rather
-than one inside `akmConsolidate` and one inside `akmRecombine`: the post-loop point is
-after `reindexWithIndexDbReleased`, so FTS sees the post-merge index, and one call site
-covers both passes with the pass attribution recorded in the row (`pass` column takes
-`"consolidate"`, `"recombine"`, or `"both"`). On non-qualifying runs (the ~93% of
+Once per qualifying improve cycle, in the **post-loop stage**
+(`runImprovePostLoopStage`, `src/commands/improve/loop-stages.ts`), gated
+on: detector enabled AND `consolidationRan === true` AND not `options.dryRun`. The
+`pass` column is always written as `"consolidate"` today — there is no recombine pass
+wired into the loop (no `recombination` value reaches this gate), so the
+`"recombine"`/`"both"` pass values and the recombine-triggered snapshots this section
+originally described are not implemented. On non-qualifying runs (the ~93% of
 default-profile runs that touch no merges) the detector does nothing — zero cost on the
 20–30-min hot path.
 

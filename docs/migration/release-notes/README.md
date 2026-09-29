@@ -7,6 +7,13 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.9.17](0.9.17.md) — consolidate's retire proposals and continuity check,
+  promotions archiving their source memory, declared links replacing the LLM
+  entity graph, index layout 26, scheduler rows carrying their own context,
+  and `akm improve` scoped to what retrieval actually returns
+- [0.9.16](0.9.16.md) — source-bound scheduler grants, local execution
+  authority, config inheritance's portable-data boundary, and split unsafe
+  overrides
 - [0.9.15](0.9.15.md) — exit-code 75 for lease/state.db contention,
   `--require-engines` scheduled task templates, `--no-probe` cli-version
   skip, thinking-control wire forms, embedding re-embed safety and

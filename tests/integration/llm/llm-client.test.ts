@@ -1137,6 +1137,20 @@ describe("parseEmbeddedJsonResponse", () => {
   test("returns undefined when no JSON object or array exists", () => {
     expect(parseEmbeddedJsonResponse("not json at all")).toBeUndefined();
   });
+
+  // Object-preferring is the only mode left (0.9.17-alpha.9 removed the
+  // array-preferring `expect: "array"` mode with the batched LLM
+  // entity-graph extraction it existed for, #635 — every remaining caller
+  // calls this with no options, so the choice was dead weight, not live).
+  test("object-preferring: a leading object is returned even when a top-level array follows — regression guard", () => {
+    const raw = 'Note {"ok":true}\n[1,2,3]';
+    expect(parseEmbeddedJsonResponse<{ ok: boolean }>(raw)).toEqual({ ok: true });
+  });
+
+  test("falls back to a top-level array when no object is present", () => {
+    const raw = 'Here are the results:\n[{"entities":["A"],"relations":[]}]\nDone.';
+    expect(parseEmbeddedJsonResponse<unknown[]>(raw)).toEqual([{ entities: ["A"], relations: [] }]);
+  });
 });
 
 describe("parseJsonResponse", () => {
@@ -1147,50 +1161,5 @@ describe("parseJsonResponse", () => {
       missing: [],
       feedback: "",
     });
-  });
-});
-
-describe('parseEmbeddedJsonResponse({ expect: "array" })', () => {
-  test("parses a direct top-level array", () => {
-    expect(parseEmbeddedJsonResponse<number[]>("[1,2,3]", { expect: "array" })).toEqual([1, 2, 3]);
-  });
-
-  test("salvages a prose-wrapped array", () => {
-    const raw = 'Here are the results:\n[{"entities":["A"],"relations":[]}]\nDone.';
-    expect(parseEmbeddedJsonResponse<unknown[]>(raw, { expect: "array" })).toEqual([
-      { entities: ["A"], relations: [] },
-    ]);
-  });
-
-  test("salvages a fenced array", () => {
-    const raw = '```json\n[{"entities":[],"relations":[]}]\n```';
-    expect(parseEmbeddedJsonResponse<unknown[]>(raw, { expect: "array" })).toEqual([{ entities: [], relations: [] }]);
-  });
-
-  test("prefers the array even when a leading object precedes it (the #635 bug)", () => {
-    // Default object-preferring mode returns the leading object — a false
-    // "non-array" for the graph batch path. Array mode must return the array.
-    const raw =
-      'For example {"from":"A","to":"B"}.\nNow the answer:\n[{"entities":["A","B"],"relations":[{"from":"A","to":"B"}]}]';
-    expect(parseEmbeddedJsonResponse<unknown[]>(raw, { expect: "array" })).toEqual([
-      { entities: ["A", "B"], relations: [{ from: "A", to: "B" }] },
-    ]);
-  });
-
-  test("skips a malformed leading array and parses the later valid array", () => {
-    const raw = 'Draft: [{"entities":["A",]}]\nFinal: [{"entities":["ServiceA"],"relations":[]}]';
-    expect(parseEmbeddedJsonResponse<unknown[]>(raw, { expect: "array" })).toEqual([
-      { entities: ["ServiceA"], relations: [] },
-    ]);
-  });
-
-  test("returns undefined when only an object is present (no array to salvage)", () => {
-    const raw = 'Here is the result:\n{"entities":["A"],"relations":[]}';
-    expect(parseEmbeddedJsonResponse<unknown[]>(raw, { expect: "array" })).toBeUndefined();
-  });
-
-  test('default ("any") mode still prefers a leading object — regression guard', () => {
-    const raw = 'Note {"ok":true}\n[1,2,3]';
-    expect(parseEmbeddedJsonResponse<{ ok: boolean }>(raw)).toEqual({ ok: true });
   });
 });

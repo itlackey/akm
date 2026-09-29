@@ -47,6 +47,8 @@ import { checkUnquotedDescriptionColon } from "../../core/asset/frontmatter-lint
 import { isArchivedRelPath } from "../../core/asset/memory-archive";
 import { conceptIdFromTypeName, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { localDateStamp } from "../../core/common";
+import { containsRedactedContent, REDACTED_CONTENT_MARKER } from "../../core/content-safety";
+import { DERIVED_SUFFIX } from "../../core/recognition-util";
 import { findFenceRegions } from "./markdown-insertion";
 import type { LintContext, LintIssue } from "./types";
 
@@ -218,12 +220,14 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
   for (const root of stashRoots) {
     if (resolveRefPathInStash(relPath, refType, refName, root) !== null) return true;
   }
-  // #884: a memory pruned by `analyzeMemoryCleanup` was ARCHIVED, not deleted —
-  // its bytes and identity live on under `.akm/memory-cleanup/archive`. Inbound
-  // belief edges to it are satisfied, not dangling, so resolve the tombstone
-  // rather than reporting `missing-ref`. Checked only after every live location
-  // misses: a tombstone must never shadow a real file, and the scan then costs
-  // one directory read per root instead of one per ref.
+  // #884: an asset `analyzeMemoryCleanup` pruned, or (alpha.9) a consolidate
+  // pair-pass `retire` proposal or a promotion's source memory retired, was
+  // ARCHIVED, not deleted — its bytes and identity live on under
+  // `.akm/memory-cleanup/archive`. Inbound refs to it are satisfied, not
+  // dangling, so resolve the tombstone rather than reporting `missing-ref`.
+  // Checked only after every live location misses: a tombstone must never
+  // shadow a real file, and the scan then costs one directory read per root
+  // instead of one per ref.
   //
   // Existence ONLY. `resolveRefPathInStash` deliberately does NOT consult the
   // archive: it hands back a path callers MUTATE (SPEC-5 `--supersedes`
@@ -233,15 +237,35 @@ export function refExistsInAnyStash(relPath: string, refType: string, refName: s
 }
 
 /**
- * True when `(refType, refName)` names a memory that prune archived in any
- * root. Mirrors `resolveRefPathInStash`'s candidate set so a ref that resolved
- * through the `.derived.md` twin (#882) still resolves once archived.
+ * The stash-relative files that satisfy a ref, in preference order: its own
+ * placement spellings, then, for a memory, the `<name>.derived.md` child (#882),
+ * so an edge to a parent whose plain `.md` is gone still reaches the child it was
+ * distilled into. This is lint's reachability rule only; the child owns
+ * `memories/<name>.derived`, never `memories/<name>`.
+ */
+function refPathCandidates(refType: string, typeDir: string, refName: string): string[] {
+  const candidates = assetPathCandidatesForName(refType, typeDir, refName);
+  if (refType !== "memory" || refName.endsWith(DERIVED_SUFFIX)) return candidates;
+  return [...candidates, assetPathForName(refType, typeDir, `${refName}${DERIVED_SUFFIX}`)];
+}
+
+/**
+ * True when `(refType, refName)` names an asset the cleanup archive holds a
+ * tombstone for, in any root. Mirrors `resolveRefPathInStash`'s candidate set
+ * so a memory ref that resolved through the `.derived.md` child (#882) still
+ * resolves once archived.
+ *
+ * Originally memory-only (#884: only `.derived` memories were ever pruned).
+ * 0.9.17-alpha.9 generalized `archiveCleanupCandidate` to any memory,
+ * knowledge or lesson file (a consolidate pair-pass `retire` proposal, or an
+ * accepted promotion's source memory), so this must check every type, not
+ * just `memory` — otherwise an xref to a retired knowledge or lesson asset
+ * reports `missing-ref` even though it resolves fine through the tombstone.
  */
 function memoryArchiveHasRef(refType: string, refName: string, stashRoots: string[]): boolean {
-  if (refType !== "memory") return false; // only memories are ever archived
   const typeDir = stashDirFor(refType);
   if (typeDir === undefined) return false;
-  const candidates = assetPathCandidatesForName(refType, typeDir, refName);
+  const candidates = refPathCandidates(refType, typeDir, refName);
   for (const root of stashRoots) {
     for (const candidate of candidates) {
       if (isArchivedRelPath(candidate, root)) return true;
@@ -255,8 +279,8 @@ function memoryArchiveHasRef(refType: string, refName: string, stashRoots: strin
  * the same reachability rules (in the same order) as
  * {@link refExistsInAnyStash}, which delegates here. Returns the absolute path
  * of the file that makes the ref "exist" — for a multi-file skill directory
- * that is its `SKILL.md` primary, for a `memory` ref its `.derived.md` twin
- * when the plain `.md` is absent (#882, see `assetPathCandidatesForName`) —
+ * that is its `SKILL.md` primary, for a `memory` ref its `.derived.md` child
+ * when the plain `.md` is absent (#882, see {@link refPathCandidates}) —
  * or `null` when the ref does not resolve in this root.
  *
  * Extracted for SPEC-5 (`--supersedes` demotion): write commands need the
@@ -267,7 +291,7 @@ function memoryArchiveHasRef(refType: string, refName: string, stashRoots: strin
  */
 export function resolveRefPathInStash(relPath: string, refType: string, refName: string, root: string): string | null {
   const typeDir = stashDirFor(refType);
-  const candidates = typeDir === undefined ? [relPath] : assetPathCandidatesForName(refType, typeDir, refName);
+  const candidates = typeDir === undefined ? [relPath] : refPathCandidates(refType, typeDir, refName);
   for (const candidate of candidates) {
     const absPath = path.join(root, candidate);
     if (fs.existsSync(absPath)) return absPath;
@@ -618,6 +642,15 @@ export function runBaseChecks(ctx: LintContext): LintIssue[] {
     .map((v) => String(v).trim())
     .filter(Boolean);
   const shouldRun = (issueType: string) => !lintSkip.includes(issueType);
+
+  if (shouldRun("redacted-content") && containsRedactedContent(currentRaw)) {
+    issues.push({
+      file: ctx.relPath,
+      issue: "redacted-content",
+      detail: `asset contains ${REDACTED_CONTENT_MARKER}; restore the original non-secret prose from version history`,
+      fixed: false,
+    });
+  }
 
   // ── 1. unquoted-colon ──────────────────────────────────────────────────
   if (shouldRun("unquoted-colon")) {

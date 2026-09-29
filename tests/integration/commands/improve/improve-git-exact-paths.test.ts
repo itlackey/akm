@@ -37,7 +37,6 @@ const config = {
             "distill",
             "consolidate",
             "memoryInference",
-            "graphExtraction",
             "extract",
             "validation",
             "triage",
@@ -104,7 +103,6 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
           contradicted: 0,
           warnings: [],
         },
-        consolidationRan: false,
       };
     }) as never,
     runImproveLoopStageFn: (async () => ({
@@ -114,7 +112,6 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
     runImprovePostLoopStageFn: (async () => ({
       allWarnings: [],
       memoryInferenceDurationMs: 0,
-      graphExtractionDurationMs: 0,
     })) as never,
     saveGitStashFn: mock((_name?: string, _message?: string, _writable?: boolean, options?: { paths?: string[] }) => {
       calls.push(options?.paths ?? []);

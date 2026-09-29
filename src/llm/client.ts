@@ -182,10 +182,9 @@ function retryBackoffMs(): number {
  * narrating about a document) does not get misclassified as a provider
  * context-limit error (#496).
  *
- * Canonical home: `graph-extract.ts` re-exports this so the index-pass
- * graph extractor and the retry classifier (`isRetryable`) share one
- * definition — retrying a context overflow cannot shrink the input, so it
- * must never be retried.
+ * Canonical home: `structured-call.ts`'s failure classifier and the retry
+ * classifier (`isRetryable`) here share one definition — retrying a context
+ * overflow cannot shrink the input, so it must never be retried.
  */
 export function isContextSizeError(message: string): boolean {
   const lower = message.toLowerCase();
@@ -201,11 +200,23 @@ export function isContextSizeError(message: string): boolean {
 }
 
 /**
+ * Codes describing a failure to reach or get a usable response from the
+ * provider transport itself, as opposed to a malformed-but-received response
+ * (`parse_error`) or a request-shape rejection (`rate_limited`). Used by
+ * {@link isRetryable}, which additionally requires evidence the failure is
+ * transient. Not exported — its one external caller (batched LLM
+ * entity-graph extraction) was retired in 0.9.17-alpha.9.
+ */
+function isTransportFailure(err: LlmCallError): boolean {
+  return err.code === "provider_error" || err.code === "network_error" || err.code === "provider_html_error";
+}
+
+/**
  * Decide whether a first-attempt {@link LlmCallError} is eligible for a single
  * retry. Retryable: HTTP 5xx (`provider_error` with statusCode >= 500) and
  * `network_error` whose message looks like a transient connection drop.
- * NOT retryable: 4xx, `rate_limited` (429), `timeout`, `parse_error`, and
- * context-overflow-classified errors.
+ * NOT retryable: 4xx, `rate_limited` (429), `timeout`, `parse_error`,
+ * `provider_html_error`, and context-overflow-classified errors.
  *
  * The connection-drop heuristic covers the substrings emitted across runtimes
  * for a mid-flight socket close:
@@ -223,6 +234,7 @@ export function isContextSizeError(message: string): boolean {
  */
 function isRetryable(err: LlmCallError): boolean {
   if (isContextSizeError(err.message)) return false;
+  if (!isTransportFailure(err)) return false;
   if (err.code === "provider_error") {
     return typeof err.statusCode === "number" && err.statusCode >= 500;
   }
@@ -617,11 +629,15 @@ async function chatCompletionAttemptOnce(
  * attempts the schema request fresh every time and falls back once per call
  * on a 4xx — see the in-memory tracker below.
  */
-export async function probeLlmReachable(config: LlmConnectionConfig): Promise<{ reachable: boolean; error?: string }> {
+export async function probeLlmReachable(
+  config: LlmConnectionConfig,
+  timeoutMs?: number,
+): Promise<{ reachable: boolean; error?: string }> {
   try {
     const raw = await chatCompletion(config, [{ role: "user", content: "Respond with just the word: ok" }], {
       maxTokens: 16,
       temperature: 0,
+      ...(timeoutMs !== undefined ? { timeoutMs } : {}),
     });
     return raw.length > 0 ? { reachable: true } : { reachable: false, error: "empty response" };
   } catch (err) {

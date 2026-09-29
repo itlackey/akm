@@ -18,10 +18,7 @@ describe("triage improve-process config schema", () => {
         triage: {
           enabled: true,
           applyMode: "queue",
-          policy: "personal-stash",
           maxAcceptsPerRun: 25,
-          maxDiffLines: 200,
-          rejectEmpty: true,
           judgment: { engine: "fast", timeoutMs: 600000 },
         },
       },
@@ -34,10 +31,7 @@ describe("triage improve-process config schema", () => {
       ImproveProcessConfigSchema.safeParse({
         enabled: false,
         applyMode: "promote",
-        policy: "conservative",
         maxAcceptsPerRun: 10,
-        maxDiffLines: 50,
-        rejectEmpty: false,
         judgment: { engine: "agent" },
       }).success,
     ).toBe(true);
@@ -46,11 +40,15 @@ describe("triage improve-process config schema", () => {
     expect(ImproveProcessConfigSchema.safeParse({ applyMode: "delete" }).success).toBe(false);
     // maxAcceptsPerRun must be a positive integer
     expect(ImproveProcessConfigSchema.safeParse({ maxAcceptsPerRun: 0 }).success).toBe(false);
-    expect(ImproveProcessConfigSchema.safeParse({ maxDiffLines: -1 }).success).toBe(false);
-    // judgment rejects unknown keys so typos cannot silently change execution policy.
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } }).success).toBe(false);
-    // judgment.mode is retired in favor of a named engine.
-    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(false);
+    // The retired drain-policy keys are tolerated like any unknown key, never fatal.
+    expect(
+      ImproveProcessConfigSchema.safeParse({ policy: "personal-stash", maxDiffLines: -1, rejectEmpty: true }).success,
+    ).toBe(true);
+    // An unknown judgment key is not fatal: the loader warns about it and it changes nothing.
+    const withUnknown = ImproveProcessConfigSchema.safeParse({ judgment: { engine: "fast", bogus: 1 } });
+    expect(withUnknown.success).toBe(true);
+    // judgment.mode is retired in favor of a named engine; like any unknown key it is tolerated, not fatal.
+    expect(ImproveProcessConfigSchema.safeParse({ judgment: { mode: "llm" } }).success).toBe(true);
     // judgment.timeoutMs accepts null
     expect(ImproveProcessConfigSchema.safeParse({ judgment: { timeoutMs: null } }).success).toBe(true);
   });
@@ -70,6 +68,25 @@ describe("triage improve-process config schema", () => {
     expect(ImproveProfileConfigSchema.safeParse({ processes: { futureProcess: { enabled: false } } }).success).toBe(
       true,
     );
+  });
+
+  // 0.9.17-alpha.9: graphExtraction is a genuinely retired process name (the
+  // LLM entity-graph extraction it ran is gone), not a typo — unlike an
+  // unrecognized name, it must not fail config loading even when enabled.
+  test("an enabled processes.graphExtraction is tolerated, not rejected like an unknown process", () => {
+    const result = ImproveProfileConfigSchema.safeParse({
+      processes: {
+        reflect: { enabled: true },
+        graphExtraction: { enabled: true, fullScan: true },
+      },
+    });
+    expect(result.success).toBe(true);
+    if (!result.success) return;
+    // Kept in memory as an ordinary unknown key — nothing reads it any more.
+    expect((result.data.processes as Record<string, unknown> | undefined)?.graphExtraction).toEqual({
+      enabled: true,
+      fullScan: true,
+    });
   });
 
   test("triage may select an agent engine while missing engines are rejected", () => {

@@ -421,12 +421,12 @@ describe("agent and output setup steps", () => {
 describe("semantic search setup", () => {
   beforeEach(resetHarness);
 
-  test("should list local model and sqlite-vec guidance when describing semantic search assets", async () => {
+  test("should list the local model download when describing semantic search assets", async () => {
     const assets = describeSemanticSearchAssets();
 
+    expect(assets).toHaveLength(1);
     expect(assets[0]).toContain("Local embedding model");
     expect(assets[0]).toContain("download");
-    expect(assets[1]).toContain("sqlite-vec");
   });
 
   test("stepSemanticSearch returns disabled when user opts out", async () => {

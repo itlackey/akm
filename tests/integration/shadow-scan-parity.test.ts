@@ -21,7 +21,7 @@
  *      populated `content_hash` (the diff-persist provenance write, M-core-2);
  *   3. the durable `document_json` deep-equals `indexDocumentToStashEntry(doc)` —
  *      the exact IndexDocument `recognize` reconstructs — modulo the persist-time
- *      `fileSize` (attached by `attachFileSize`, absent from the doc). This one
+ *      `fileSize` (attached by `withFileSize`, absent from the doc). This one
  *      equality SUBSUMES the old folded-search-fields and filter/ranking-signal
  *      arms: every one of those surfaces is derived from `document_json`.
  *
@@ -156,7 +156,7 @@ for (const { name, root } of STASHES) {
         expect(expected, `no recognize doc for ${rowKey(r)}`).toBeDefined();
         if (!expected) continue;
         const persisted = { ...r.entry };
-        // fileSize is attached at persist time by attachFileSize; the doc-derived
+        // fileSize is attached at persist time by withFileSize; the doc-derived
         // IndexDocument never carries it. Strip it for the structural comparison.
         persisted.fileSize = undefined;
         delete persisted.fileSize;

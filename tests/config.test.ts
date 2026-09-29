@@ -19,6 +19,7 @@ import { EmbeddingConnectionConfigSchema } from "../src/core/config/config-schem
 import { ConfigError } from "../src/core/errors";
 import { getCacheDir, getConfigDir, getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { schedulerEnabledRefs } from "../src/tasks/activation-config";
 import {
   type Cleanup,
   mockHomedir,
@@ -181,6 +182,12 @@ describe("loadConfig", () => {
   test("passes through string 'off' for semanticSearchMode", () => {
     writeCurrentConfig({ semanticSearchMode: "off" });
     expect(loadConfig().semanticSearchMode).toBe("off");
+  });
+
+  test("warns when an unknown top-level key has no defined behavior", () => {
+    writeCurrentConfig({ defualtBundle: "typo" });
+    const warnings = captureWarnings(() => loadConfig());
+    expect(warnings.join("\n")).toMatch(/unknown config key.*defualtBundle/i);
   });
 
   test("ignores stash-root config.json files", () => {
@@ -528,7 +535,7 @@ describe("embedding config", () => {
     expect(loadConfig().embedding).toBeUndefined();
   });
 
-  test("ignores the retired `embedding.chunkSize` key, unvalidated, with no error and no warning (#954)", () => {
+  test("ignores the retired `embedding.chunkSize` key with one warning and no error (#954)", () => {
     // Nothing in src/ ever read embedding.chunkSize; it is dead, not migrated. Before #954 it was
     // still a *validated* schema field (positiveInt), so an out-of-range value failed config
     // load even though the value was never used. Retiring the key drops the validation with it:
@@ -540,7 +547,8 @@ describe("embedding config", () => {
     const warnings = captureWarnings(() => {
       expect(() => loadConfig()).not.toThrow();
     });
-    expect(warnings).toEqual([]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toMatch(/unknown config key "embedding\.chunkSize"/i);
     expect(loadConfig().embedding?.chunkSize).toBe(-3);
     expect(Object.keys(EmbeddingConnectionConfigSchema.shape)).not.toContain("chunkSize");
   });
@@ -763,77 +771,73 @@ describe("primary stash config", () => {
     updateConfig({ bundles: { main: { path: "/custom/stash", writable: true } }, defaultBundle: "main" });
     expect(primaryBundlePath(loadConfig())).toBe("/custom/stash");
   });
+
+  test("rejects disabled read and write defaults", () => {
+    writeCurrentConfig({
+      bundles: { off: { path: "/custom/stash", enabled: false } },
+      defaultBundle: "off",
+      defaultWriteTarget: "off",
+    });
+    expect(() => loadConfig()).toThrow(/defaultBundle.*disabled|defaultWriteTarget.*disabled/i);
+  });
+
+  test("rejects two bundle ids that alias one physical directory through a symlink", () => {
+    const root = makeTmpDir();
+    const real = path.join(root, "real");
+    const alias = path.join(root, "alias");
+    fs.mkdirSync(real);
+    fs.symlinkSync(real, alias, "dir");
+    try {
+      writeCurrentConfig({ bundles: { first: { path: real }, second: { path: alias } }, defaultBundle: "first" });
+      expect(() => loadConfig()).toThrow(/same physical content root/i);
+    } finally {
+      cleanup(root);
+    }
+  });
 });
 
 // ── search config ────────────────────────────────────────────────────────────
 
 describe("search config", () => {
-  test("loads search.graphBoost values", () => {
+  test("loads search.defaultExcludeTypes and search.curateRerank", () => {
     writeCurrentConfig({
-      search: {
-        minScore: 0.15,
-        graphBoost: {
-          directBoostPerEntity: 0.2,
-          directBoostCap: 0.6,
-          hopBoostPerEntity: 0.08,
-          hopBoostCap: 0.24,
-          maxHops: 2,
-          confidenceMode: "blend",
-          confidenceWeight: 0.4,
-        },
-      },
+      search: { defaultExcludeTypes: ["session", "memory"], curateRerank: { enabled: true, topN: 30 } },
     });
-
     expect(loadConfig().search).toEqual({
-      minScore: 0.15,
-      graphBoost: {
-        directBoostPerEntity: 0.2,
-        directBoostCap: 0.6,
-        hopBoostPerEntity: 0.08,
-        hopBoostCap: 0.24,
-        maxHops: 2,
-        confidenceMode: "blend",
-        confidenceWeight: 0.4,
-      },
+      defaultExcludeTypes: ["session", "memory"],
+      curateRerank: { enabled: true, topN: 30 },
     });
   });
 
-  test("rejects search.graphBoost.confidenceWeight > 1 (no silent clamp)", () => {
-    writeCurrentConfig({
-      search: {
-        graphBoost: {
-          confidenceMode: "blend",
-          confidenceWeight: 99,
-        },
-      },
-    });
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/confidenceWeight/);
-  });
-
-  test("rejects search.graphBoost.maxHops > 3 (no silent clamp)", () => {
-    writeCurrentConfig({ search: { graphBoost: { maxHops: 99 } } });
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/maxHops/);
-  });
-
-  test("tolerates unknown search.graphBoost keys (lenient unknown-key policy)", () => {
-    // Lenient policy: unknown keys are preserved, not rejected — cross-version
-    // config skew must not become INVALID_CONFIG_FILE. Known keys still validate.
-    writeCurrentConfig({
-      search: {
-        graphBoost: {
-          maxHops: 2,
-          unsupportedNested: "x",
-        },
-      },
-    });
-
+  test("tolerates the retired search.minScore and search.graphBoost keys (lenient unknown-key policy)", () => {
+    // Search ranking no longer reads either key. A config an older release
+    // wrote must still load, keeping the values in memory rather than failing.
+    writeCurrentConfig({ search: { minScore: 0.15, graphBoost: { maxHops: 99, confidenceWeight: 99 } } });
     expect(() => loadConfig()).not.toThrow();
-    const gb = loadConfig().search?.graphBoost as Record<string, unknown>;
-    expect(gb.maxHops).toBe(2);
-    expect(gb.unsupportedNested).toBe("x");
+    expect(loadConfig().search).toEqual({ minScore: 0.15, graphBoost: { maxHops: 99, confidenceWeight: 99 } });
+  });
+});
+
+describe("embedding profile config", () => {
+  test("loads embedding.queryTemplate, documentTemplate and queryTimeoutMs", () => {
+    writeCurrentConfig({
+      embedding: {
+        localModel: "Xenova/bge-small-en-v1.5",
+        queryTemplate: "",
+        documentTemplate: "doc: {text}",
+        queryTimeoutMs: 800,
+      },
+    });
+    expect(loadConfig().embedding).toMatchObject({
+      queryTemplate: "",
+      documentTemplate: "doc: {text}",
+      queryTimeoutMs: 800,
+    });
+  });
+
+  test("rejects a non-positive embedding.queryTimeoutMs", () => {
+    writeCurrentConfig({ embedding: { localModel: "Xenova/bge-small-en-v1.5", queryTimeoutMs: 0 } });
+    expect(() => loadConfig()).toThrow(ConfigError);
   });
 });
 
@@ -901,6 +905,17 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.defaults?.llmEngine).toBe("openai-mini");
     expect(loaded.defaults?.engine).toBe("opencode-default");
     expect(loaded.defaults?.improveStrategy).toBe("my-custom-strategy");
+  });
+
+  test("defaults.improveStrategy: graph-refresh loads (retirement is refused lazily by resolveImproveStrategy, not eagerly at config load)", () => {
+    // Eagerly refusing this here would fail every command's config load,
+    // including `akm migrate apply` — the one command that would let an
+    // owner fix a stale default. resolveImproveStrategy
+    // (src/commands/improve/improve-strategies.ts) is the one place that
+    // refuses "graph-refresh", at improve-invocation time.
+    writeCurrentConfig({ defaults: { improveStrategy: "graph-refresh" } });
+    const loaded = loadConfig();
+    expect(loaded.defaults?.improveStrategy).toBe("graph-refresh");
   });
 
   test("ignores legacy features.improve instead of failing config load", () => {
@@ -1025,25 +1040,23 @@ describe("extends inheritance (#945)", () => {
     expect(() => loadConfig()).toThrow(ConfigError);
   });
 
-  test("the base config runs through its own independent version-shim pass", () => {
-    // The synthetic "0.0.1" -> "0.9.0" shim moves a root `defaultEngine` under
-    // `defaults.llmEngine` (config-version-shim.ts). Writing the BASE at that
-    // old version proves the base gets its own shim pass, independent of the
-    // (current-version) local file that extends it.
+  test("a base config declaring a foreign configVersion is still merged underneath", () => {
+    // The base gets the same per-file pipeline as the local file: its
+    // `configVersion` is read as current rather than gating the merge.
     const dir = path.dirname(getConfigPath());
     writeRawConfig(
       path.join(dir, "old-base.json"),
       JSON.stringify({
-        configVersion: "0.0.1",
-        defaultEngine: "legacy",
+        configVersion: "0.8.0",
+        defaults: { llmEngine: "legacy" },
         engines: { legacy: { kind: "llm", endpoint: "https://api.example.test/v1/chat/completions", model: "m" } },
       }),
     );
     writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./old-base.json" }));
 
     const config = loadConfig();
+    expect(config.configVersion).toBe("0.9.0");
     expect(config.defaults?.llmEngine).toBe("legacy");
-    expect((config as unknown as Record<string, unknown>).defaultEngine).toBeUndefined();
   });
 
   test("extends by a filesystem bundle asset ref (bundle//<path>), no index involved", () => {
@@ -1119,6 +1132,65 @@ describe("extends inheritance (#945)", () => {
     }
   });
 
+  test("rejects a bundle config symlink that physically escapes its content root", () => {
+    const fleetDir = makeTmpDir();
+    const outsideDir = makeTmpDir();
+    try {
+      fs.mkdirSync(path.join(fleetDir, "config"), { recursive: true });
+      fs.writeFileSync(
+        path.join(outsideDir, "shared.json"),
+        JSON.stringify({ configVersion: "0.9.0", archiveRetentionDays: 99 }),
+      );
+      fs.symlinkSync(path.join(outsideDir, "shared.json"), path.join(fleetDir, "config", "shared.json"));
+      writeRawConfig(
+        getConfigPath(),
+        JSON.stringify({
+          configVersion: "0.9.0",
+          bundles: { fleet: { path: fleetDir } },
+          extends: "fleet//config/shared.json",
+        }),
+      );
+      expect(() => loadConfig()).toThrow(/symbolic link outside/i);
+    } finally {
+      cleanup(fleetDir);
+      cleanup(outsideDir);
+    }
+  });
+
+  test("strips inherited host authority while retaining portable engine settings", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(
+      path.join(dir, "base.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: {
+          inherited: {
+            kind: "agent",
+            platform: "claude",
+            model: "portable-model",
+            bin: "/untrusted/bin",
+            args: ["--dangerous"],
+            workspace: "/untrusted/workspace",
+          },
+        },
+        execution: { allowedTools: ["*"] },
+        experimental: { improveAutonomy: true },
+      }),
+    );
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", extends: "./base.json" }));
+
+    const config = loadConfig();
+    expect(config.engines?.inherited).toMatchObject({ kind: "agent", platform: "claude", model: "portable-model" });
+    expect(config.engines?.inherited).not.toHaveProperty("bin");
+    expect(config.engines?.inherited).not.toHaveProperty("args");
+    expect(config.engines?.inherited).not.toHaveProperty("workspace");
+    expect(config.execution).toBeUndefined();
+    expect(config.experimental).toBeUndefined();
+    expect(getConfigValueSource("engines.inherited.model")).toBe("extends:./base.json");
+    expect(getConfigValueSource("engines.inherited.bin")).toBe("default");
+    expect(getConfigValueSource("execution.allowedTools")).toBe("default");
+  });
+
   test("config get extends returns the locally configured ref (not silently dropped)", () => {
     // Deliberate deviation from a literal "strip extends before validation"
     // reading: `mutateConfig` (config set/unset) reads the EFFECTIVE config as
@@ -1134,6 +1206,49 @@ describe("extends inheritance (#945)", () => {
     const config = loadConfig();
     expect(config.archiveRetentionDays).toBe(7);
     expect((config as unknown as Record<string, unknown>).extends).toBe("./base.json");
+  });
+
+  test("scheduler activation is host-local and never inherited through extends", () => {
+    const dir = path.dirname(getConfigPath());
+    writeRawConfig(
+      path.join(dir, "base.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        scheduler: { enabled: [{ kind: "task", ref: "fleet//tasks/untrusted" }] },
+      }),
+    );
+    writeRawConfig(
+      getConfigPath(),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        extends: "./base.json",
+        scheduler: {
+          enabled: [{ kind: "task", ref: "local//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
+        },
+      }),
+    );
+
+    const warnings = captureWarnings(() => {
+      expect(loadConfig().scheduler?.enabled).toEqual(["local//tasks/nightly"]);
+    });
+    expect(warnings.join("\n")).toMatch(/ignoring inherited config key "scheduler"/i);
+  });
+
+  test("scheduler.enabled tolerates non-canonical and duplicate entries, including 0.9.17-alpha grant objects", () => {
+    writeCurrentConfig({
+      scheduler: {
+        enabled: [
+          { kind: "task", ref: "tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
+          { kind: "task", ref: "team//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` },
+          "team//tasks/nightly",
+        ],
+      },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(schedulerEnabledRefs(loadConfig())).toEqual(["team//tasks/nightly"]);
+    });
+    expect(warnings.join("\n")).toMatch(/Ignoring scheduler\.enabled entry "tasks\/nightly"/);
   });
 
   test("config set on an unrelated key after adopting extends does not duplicate the base's fields into the local file", () => {
@@ -1208,91 +1323,5 @@ describe("getConfigValueSource (#945)", () => {
     );
 
     expect(getConfigValueSource("archiveRetentionDays")).toBe("local");
-  });
-});
-
-// ── Strict version gate ──────────────────────────────────────────────────────
-
-describe("strict 0.9 config loading", () => {
-  const originalNoAutoMigrate = process.env.AKM_NO_AUTO_MIGRATE;
-
-  afterEach(() => {
-    // Restore env after each test
-    if (originalNoAutoMigrate === undefined) {
-      delete process.env.AKM_NO_AUTO_MIGRATE;
-    } else {
-      process.env.AKM_NO_AUTO_MIGRATE = originalNoAutoMigrate;
-    }
-    resetConfigCache();
-  });
-
-  test("rejects a legacy config with no configVersion without rewriting it", () => {
-    delete process.env.AKM_NO_AUTO_MIGRATE;
-
-    const configPath = getConfigPath();
-    const v1Config = {
-      llm: {
-        endpoint: "http://localhost:11434",
-        model: "qwen3",
-        features: { memory_inference: true },
-      },
-    };
-    const original = JSON.stringify(v1Config);
-    writeRawConfig(configPath, original);
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
-    const onDisk = JSON.parse(fs.readFileSync(configPath, "utf8"));
-    expect(onDisk.configVersion).toBeUndefined();
-    expect(onDisk.llm?.endpoint).toBe("http://localhost:11434");
-    expect(onDisk.profiles).toBeUndefined();
-    const backupDir = path.join(getCacheDir(), "config-backups");
-    expect(fs.existsSync(backupDir)).toBe(false);
-  });
-
-  test("AKM_NO_AUTO_MIGRATE does not bypass the strict version gate", () => {
-    process.env.AKM_NO_AUTO_MIGRATE = "1";
-
-    const configPath = getConfigPath();
-    const v1Config = {
-      llm: {
-        endpoint: "http://localhost:11434",
-        model: "qwen3",
-        features: { memory_inference: true },
-      },
-    };
-    writeRawConfig(configPath, JSON.stringify(v1Config));
-
-    expect(() => loadConfig()).toThrow(ConfigError);
-    expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
-
-    const onDisk = fs.readFileSync(configPath, "utf8");
-    const parsed = JSON.parse(onDisk);
-    expect(parsed.configVersion).toBeUndefined();
-    expect(parsed.llm?.features?.memory_inference).toBe(true);
-  });
-
-  test("version rejection does not attempt a write even when the directory is read-only (#461)", () => {
-    delete process.env.AKM_NO_AUTO_MIGRATE;
-
-    const configPath = getConfigPath();
-    const v1Config = {
-      llm: {
-        endpoint: "http://localhost:11434",
-        model: "qwen3",
-        features: { memory_inference: true },
-      },
-    };
-    writeRawConfig(configPath, JSON.stringify(v1Config));
-
-    const configDir = path.dirname(configPath);
-    fs.chmodSync(configDir, 0o555);
-    try {
-      expect(() => loadConfig()).toThrow(ConfigError);
-      expect(() => loadConfig()).toThrow(/Unsupported configVersion/);
-      expect(JSON.parse(fs.readFileSync(configPath, "utf8")).llm.model).toBe("qwen3");
-    } finally {
-      fs.chmodSync(configDir, 0o755);
-    }
   });
 });

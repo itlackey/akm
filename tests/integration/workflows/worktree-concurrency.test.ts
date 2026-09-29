@@ -40,7 +40,6 @@ import {
   worktreesRoot,
 } from "../../../src/workflows/exec/worktree";
 import { git, makeGitRepo as makeTempGitRepo } from "../../_helpers/git";
-import { makeSandboxDir, withEnv } from "../../_helpers/sandbox";
 
 const GIT = isGitAvailable();
 
@@ -346,53 +345,6 @@ describe("sweepStaleWorktrees — age-based GC", () => {
     const parent = fs.mkdtempSync(path.join(os.tmpdir(), "akm-wt-sweep-none-"));
     roots.push(parent);
     expect(await sweepStaleWorktrees({ root: path.join(parent, WORKTREES_DIR_NAME) })).toEqual([]);
-  });
-});
-
-// ── Liveness: the sweep must never collect a worktree still in use ──────────
-
-describe.skipIf(!GIT)("sweepStaleWorktrees — liveness guard", () => {
-  const sandboxes: Array<() => void> = [];
-
-  afterEach(() => {
-    for (const cleanup of sandboxes.splice(0)) cleanup();
-  });
-
-  function age(dir: string, ms: number): void {
-    const when = new Date(Date.now() - ms);
-    fs.utimesSync(dir, when, when);
-  }
-
-  test("a worktree whose owning process is still alive survives, however old the root looks", async () => {
-    const sandbox = makeSandboxDir("akm-wt-live");
-    sandboxes.push(sandbox.cleanup);
-    // TMPDIR moves `worktreesRoot()` into the sandbox, so both the mint and the
-    // default-root sweep stay inside it — the shared real root (and whatever
-    // other suites are minting under it right now) is never touched.
-    await withEnv({ TMPDIR: sandbox.dir }, async () => {
-      expect(worktreesRoot().startsWith(sandbox.dir)).toBe(true);
-      const repo = makeTempGitRepo({ dir: path.join(sandbox.dir, "repo") });
-      const live = await createUnitWorktree(repo, RUN_ID, "live:0");
-      expect(live.ok).toBe(true);
-      if (!live.ok) return;
-
-      // A long-running unit that writes only inside subdirectories leaves the
-      // worktree root's mtime at creation time — age alone reads it as stale.
-      fs.mkdirSync(path.join(live.path, "nested"), { recursive: true });
-      fs.writeFileSync(path.join(live.path, "nested", "in-progress.txt"), "working\n");
-      age(live.path, STALE_WORKTREE_MAX_AGE_MS * 2);
-
-      expect(await sweepStaleWorktrees()).toEqual([]);
-      expect(fs.readFileSync(path.join(live.path, "nested", "in-progress.txt"), "utf8")).toBe("working\n");
-
-      // Once the unit is finished with it, the same aged tree is collectible
-      // again — retaining forensic state for 7 days is the sweep's whole job.
-      const retained = await cleanupUnitWorktree(repo, live.path);
-      expect(retained.dirty).toBe(true);
-      age(live.path, STALE_WORKTREE_MAX_AGE_MS * 2);
-      expect(await sweepStaleWorktrees()).toContain(live.path);
-      expect(fs.existsSync(live.path)).toBe(false);
-    });
   });
 });
 

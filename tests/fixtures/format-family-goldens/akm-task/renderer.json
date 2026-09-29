@@ -8,7 +8,7 @@
     "AKM-native; mirrors the frozen renderer/all-types.json task entry"
   ],
   "notes": [
-    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm task run <id> -> run now; edit the file + akm task sync -> unschedule` (the full bundle-qualified ref is passed straight to `akm show`; the dedicated `tasks show`/`tasks remove` subcommands were removed in favor of generic `akm show`, and `task enable`/`disable` were removed in 0.9 (S6) in favor of a file edit + `akm task sync`)."
+    "SPECIFICATION golden. `task` → renderer 'task-yaml'. action = src/core/type-presentation.ts task action: `akm show <ref> -> inspect; akm task run <id> -> run now; akm task enable|disable <ref> -> change host-local scheduling` (the full bundle-qualified ref is passed straight to `akm show`; scheduler activation is local config and is never controlled by task source)."
   ],
   "byRelPath": {
     "nightly-index.yml": {
@@ -16,14 +16,14 @@
       "ref": "sample-akm-task//nightly-index",
       "label": "Task",
       "renderer": "task-yaml",
-      "action": "akm show sample-akm-task//nightly-index -> inspect; akm task run <id> -> run now; edit the file + akm task sync -> unschedule"
+      "action": "akm show sample-akm-task//nightly-index -> inspect; akm task run <id> -> run now; akm task enable|disable sample-akm-task//nightly-index -> change local scheduling"
     },
     "two-targets.yml": {
       "type": "task",
       "ref": "sample-akm-task//two-targets",
       "label": "Task",
       "renderer": "task-yaml",
-      "action": "akm show sample-akm-task//two-targets -> inspect; akm task run <id> -> run now; edit the file + akm task sync -> unschedule",
+      "action": "akm show sample-akm-task//two-targets -> inspect; akm task run <id> -> run now; akm task enable|disable sample-akm-task//two-targets -> change local scheduling",
       "note": "renders normally despite being invalid; presentation keys on type=task, not on validity."
     }
   }

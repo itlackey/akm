@@ -12,19 +12,6 @@ import { warnOnce } from "../../warn";
 import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
-//
-// WI-9.6c: `graphExtractionIncludeTypes` is no longer validated against a
-// hardcoded allowlist (the prior GRAPH_EXTRACTION_INCLUDE_TYPES_ALLOWED,
-// which included a stale `wiki` entry and was already missing `fact` from the
-// runtime consumer's own list — the schema-level allowlist had drifted from
-// reality). Accept-any until Chunk 2 sources a real type list from adapter
-// metadata: the field is now an array of arbitrary non-empty strings.
-// Runtime consumers already handle unknown/unsupported type strings
-// gracefully — src/indexer/graph/graph-extraction.ts's
-// `SUPPORTED_GRAPH_EXTRACTION_INCLUDE_TYPES` set (and `collectEligibleFiles`)
-// silently skips any type it doesn't recognize (no placement entry ⇒ zero
-// eligible files for that type; no crash). This is a permissive-direction
-// behavior change: configs with a previously-rejected type string now parse.
 
 const INDEX_PASS_RETIRED_KEYS = new Set([
   "endpoint",
@@ -36,23 +23,11 @@ const INDEX_PASS_RETIRED_KEYS = new Set([
   "capabilities",
 ]);
 
-const INDEX_PASS_KNOWN_KEYS = new Set([
-  "engine",
-  "model",
-  "timeoutMs",
-  "enabled",
-  "llm",
-  "graphExtractionBatchSize",
-  "graphExtractionIncludeTypes",
-  "lazyGraphExtraction",
-]);
-
 /**
- * Per-pass `index.<pass>` entry. Uses preprocess + manual validation so we can
- * emit targeted error messages ("Retired or misplaced engine setting",
- * "Unknown key `index.<pass>.<key>`")
- * instead of Zod's generic `Unrecognized key` / `Expected boolean, received
- * string` strings — keeps `akm` startup errors actionable.
+ * Per-pass `index.<pass>` entry. The preprocess names and drops the retired
+ * engine settings above with a targeted message. Any other unknown key is kept
+ * and named once by the config loader's schema walk, like an unknown key
+ * anywhere else in config.
  */
 export const IndexPassConfigSchema = z.preprocess(
   (raw, ctx) => {
@@ -70,15 +45,6 @@ export const IndexPassConfigSchema = z.preprocess(
         );
         cleaned ??= { ...obj };
         delete cleaned[key];
-      } else if (!INDEX_PASS_KNOWN_KEYS.has(key)) {
-        warnOnce(
-          `index-pass:unknown:${dotted}`,
-          `Unknown key \`${dotted}\` ignored. Per-pass entries support ` +
-            "`engine`, `model`, `timeoutMs`, `enabled`, `llm`, `graphExtractionBatchSize`, " +
-            "`graphExtractionIncludeTypes`, and `lazyGraphExtraction`.",
-        );
-        cleaned ??= { ...obj };
-        delete cleaned[key];
       }
     }
     return cleaned ?? raw;
@@ -90,15 +56,9 @@ export const IndexPassConfigSchema = z.preprocess(
       timeoutMs: z.union([positiveInt, z.null()]).optional(),
       enabled: z.boolean().optional(),
       llm: LlmInvocationOverridesSchema.optional(),
-      graphExtractionBatchSize: positiveInt.optional(),
-      // Accept-any until Chunk 2 (WI-9.6c) — no longer enum-restricted.
-      graphExtractionIncludeTypes: z.array(z.string().min(1)).nonempty().optional(),
-      lazyGraphExtraction: z.boolean().optional(),
     })
     .passthrough(),
 );
-
-const MetadataEnhanceSchema = z.object({ enabled: z.boolean().optional() }).passthrough();
 
 const IndexDefaultsSchema = z
   .object({
@@ -112,24 +72,19 @@ const IndexDefaultsSchema = z
 type IndexConfigOutput = {
   [key: string]: unknown;
   defaults?: z.infer<typeof IndexDefaultsSchema>;
-  metadataEnhance?: z.infer<typeof MetadataEnhanceSchema>;
-  graph?: z.infer<typeof IndexPassConfigSchema>;
   memory?: z.infer<typeof IndexPassConfigSchema>;
-  enrichment?: z.infer<typeof IndexPassConfigSchema>;
 };
 
 /**
  * Index config is a union of reserved feature sections and per-pass entries.
- * Passthrough so per-pass entries (keyed by arbitrary pass names like `graph`,
- * `enrichment`) can live next to the reserved keys.
+ * Passthrough so per-pass entries (keyed by arbitrary pass names like
+ * `memory`, or a retired one like `graph`) can live next to the reserved keys.
  * The outer preprocess emits the legacy parser's actionable error messages
  * for the two most common type-shape mistakes:
  *   - An array at the `index` block.
  *   - A non-object at `index.<passName>`.
- * Inner field validation (graphExtractionIncludeTypes shape, invocation
- * overrides, provider-key rejection) is delegated to {@link IndexPassConfigSchema}.
- * `graphExtractionIncludeTypes` accepts arbitrary non-empty strings
- * (WI-9.6c — no hardcoded type allowlist; accept-any until Chunk 2).
+ * Inner field validation (invocation overrides, provider-key rejection) is
+ * delegated to {@link IndexPassConfigSchema}.
  */
 const IndexConfigRuntimeSchema = z.preprocess(
   (raw, ctx) => {
@@ -138,7 +93,7 @@ const IndexConfigRuntimeSchema = z.preprocess(
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "enrichment": { "enabled": false } }`).',
+          'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "memory": { "enabled": false } }`).',
       });
       return raw;
     }
@@ -164,7 +119,6 @@ const IndexConfigRuntimeSchema = z.preprocess(
   z
     .object({
       defaults: IndexDefaultsSchema.optional(),
-      metadataEnhance: MetadataEnhanceSchema.optional(),
     })
     .catchall(IndexPassConfigSchema),
 );

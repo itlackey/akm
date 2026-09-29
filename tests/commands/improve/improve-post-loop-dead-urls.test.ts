@@ -25,7 +25,6 @@ function disabledProcesses(): ImproveProfileConfig["processes"] {
     distill: { enabled: false },
     consolidate: { enabled: false },
     memoryInference: { enabled: false },
-    graphExtraction: { enabled: false },
     extract: { enabled: false },
     validation: { enabled: false },
     triage: { enabled: false },
@@ -65,8 +64,6 @@ describe("runImprovePostLoopStage dead-URL scan coverage (#892)", () => {
             actionableRefs,
             cleanupWarnings: [],
             memoryRefsForInference: new Set(),
-            reindexFn: async () => undefined,
-            consolidationRan: false,
             improveProfile: { processes: disabledProcesses() } as ImproveProfileConfig,
           }),
         (url) => {

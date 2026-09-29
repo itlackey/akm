@@ -282,18 +282,9 @@ export function getIndexRebuildLockPath(): string {
   return path.join(getDataDir(), "index.rebuild.lock");
 }
 
-export function getMaintenanceBarrierPath(): string {
-  return path.join(getDataDir(), "maintenance.barrier.lock");
-}
-
 /** Path to the state.db file in $DATA. */
 export function getStateDbPathInDataDir(): string {
   return path.join(getDataDir(), "state.db");
-}
-
-/** Content-addressed scheduler runtime descriptors. */
-export function getTaskContextDir(env: NodeJS.ProcessEnv = process.env): string {
-  return path.join(getDataDir(env), "tasks", "context");
 }
 
 /** Path to the akm.lock file in $DATA. */
@@ -390,25 +381,6 @@ export function getStashStateKey(stashDir: string): string {
 
 function stashScopedDir(base: string, stashDir: string): string {
   return path.join(base, getStashStateKey(stashDir));
-}
-
-/**
- * `$STATE/improve/distill-rejected/<stash>/` — lessons that failed the
- * distill quality gate. Moved out of `$STASH/.akm/distill-rejected/`
- * (itlackey/akm#890): nothing reads it to resolve bundle content, so it does
- * not meet the "must travel with the content" rule.
- */
-export function getDistillRejectedDir(stashDir: string): string {
-  return stashScopedDir(path.join(getStateDir(), "improve", "distill-rejected"), stashDir);
-}
-
-/**
- * `$STATE/improve/eval-cases/<stash>/` — regression eval cases captured from
- * rejected distill/proposal output. Moved out of `$STASH/.akm/eval-cases/`
- * (itlackey/akm#890).
- */
-export function getEvalCasesDir(stashDir: string): string {
-  return stashScopedDir(path.join(getStateDir(), "improve", "eval-cases"), stashDir);
 }
 
 /**

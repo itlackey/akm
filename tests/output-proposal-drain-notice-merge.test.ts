@@ -27,7 +27,6 @@ function drainEnvelope(notices: ReturnType<typeof mergeProposalDrainNotices>): R
   return {
     schemaVersion: 1,
     ok: true,
-    policy: "personal-stash",
     applyMode: "queue",
     dryRun: true,
     strategy: "default",

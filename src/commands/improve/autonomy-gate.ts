@@ -8,8 +8,8 @@
  * `akm improve` stays ON by default. What this gates is **autonomy** — the lanes
  * that mutate a user's assets without review. A blanket experimental gate on the
  * whole feature was rejected because it would have turned installed schedules
- * into no-ops and removed the only normal producer of memory inference and graph
- * extraction; gating the autonomy resolves that without removing the feature.
+ * into no-ops and removed the only normal producer of memory inference; gating
+ * the autonomy resolves that without removing the feature.
  *
  * Three lanes are gated. `sync.push` deliberately is NOT: it publishes
  * already-committed content to a remote the user configured for that purpose and

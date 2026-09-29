@@ -95,8 +95,7 @@ describe("RemoteEmbedder.embedBatch: failed-batch visibility (#954, field-report
             ["doc one", "doc two"],
             undefined,
             (skip) => skips.push(skip),
-            (_indices, _embeddings, _model, outcome) =>
-              committed.push({ outcome: outcome?.outcome, reason: outcome?.reason }),
+            (_indices, _embeddings, outcome) => committed.push({ outcome: outcome?.outcome, reason: outcome?.reason }),
           );
         },
         () => new Response("synthetic upstream failure", { status: 500 }),
@@ -299,7 +298,7 @@ describe("RemoteEmbedder.embedBatch: context-size split-and-retry", () => {
           ["a", "bb", "ccc", "dddd"],
           undefined,
           undefined,
-          (indices, embeddings, _model, outcome) => committed.push({ indices, embeddings, outcome: outcome?.outcome }),
+          (indices, embeddings, outcome) => committed.push({ indices, embeddings, outcome: outcome?.outcome }),
         );
 
         // Every text ends up embedded; none skipped.
@@ -410,7 +409,7 @@ describe("RemoteEmbedder.embedBatch: run-scoped adaptive request budget after a 
           texts,
           undefined,
           (skip) => skips.push(skip),
-          (indices, embeddings, _model, outcome) =>
+          (indices, embeddings, outcome) =>
             committed.push({ indices, embeddings, outcome: outcome?.outcome, reason: outcome?.reason }),
         );
       },
@@ -477,8 +476,7 @@ describe("RemoteEmbedder.embedBatch: run-scoped adaptive request budget after a 
           texts,
           undefined,
           (skip) => skips.push(skip),
-          (_indices, _embeddings, _model, outcome) =>
-            committed.push({ outcome: outcome?.outcome, reason: outcome?.reason }),
+          (_indices, _embeddings, outcome) => committed.push({ outcome: outcome?.outcome, reason: outcome?.reason }),
         );
       },
       async () => {
@@ -689,59 +687,6 @@ describe("RemoteEmbedder.embedBatch: stops dispatching after the first onBatch f
     // never dispatches HTTP requests for) batches 2-4 once onBatch fails.
     expect(requestCount).toBe(1);
     expect(onBatchCalls).toBe(1);
-  });
-});
-
-describe("RemoteEmbedder.embedBatch: surfaces the response model id (#955)", () => {
-  test("passes the response body's `model` field to onBatch as its 3rd argument", async () => {
-    await withMockedFetch(
-      async () => {
-        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "configured-name" });
-        const models: (string | undefined)[] = [];
-        await embedder.embedBatch(["a", "b"], undefined, undefined, (_indices, _embeddings, model) =>
-          models.push(model),
-        );
-        // A gateway can answer with a different id than the configured
-        // string (e.g. a bare model id behind a provider/model prefix) —
-        // the embedding-fingerprint canary (#955) relies on seeing that
-        // reported id, not the request's own `model` field echoed back.
-        expect(models).toEqual(["server-reported-id"]);
-      },
-      async () =>
-        jsonResponse({
-          model: "server-reported-id",
-          data: [
-            { embedding: [1, 0], index: 0 },
-            { embedding: [0, 1], index: 1 },
-          ],
-        }),
-    );
-  });
-
-  test("passes undefined to onBatch when the provider's response omits `model`", async () => {
-    await withMockedFetch(
-      async () => {
-        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "configured-name" });
-        const models: (string | undefined)[] = [];
-        await embedder.embedBatch(["a"], undefined, undefined, (_indices, _embeddings, model) => models.push(model));
-        expect(models).toEqual([undefined]);
-      },
-      async () => jsonResponse({ data: [{ embedding: [1, 0], index: 0 }] }),
-    );
-  });
-
-  test("an oversized pre-flight skip commits with no model (no request was ever made)", async () => {
-    await withMockedFetch(
-      async () => {
-        const embedder = new RemoteEmbedder({ endpoint: "http://localhost:1/v1", model: "test-model", maxTokens: 1 });
-        const models: (string | undefined)[] = [];
-        await embedder.embedBatch(["x".repeat(200)], undefined, undefined, (_indices, _embeddings, model) =>
-          models.push(model),
-        );
-        expect(models).toEqual([undefined]);
-      },
-      async () => jsonResponse({ model: "should-not-be-called", data: [] }),
-    );
   });
 });
 

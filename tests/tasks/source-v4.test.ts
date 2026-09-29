@@ -91,7 +91,7 @@ import {
   JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS,
   validateJsonSchemaSubset,
 } from "../../src/core/json-schema";
-import { _setWarnSinkForTests } from "../../src/core/warn";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../src/execution/limits";
 import { TASK_V3_MAX_REDACT_NAMES } from "../../src/tasks/source/bounded-document";
 import * as ParseTaskSourceModule from "../../src/tasks/source/parse-task-source";
@@ -104,7 +104,7 @@ import {
   TASK_RUN_VALUE_FLAGS,
 } from "../../src/tasks/task-run-reserved-flags";
 import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
-import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/program/schema";
+import { PROGRAM_PARAM_NAME_PATTERN } from "../../src/workflows/parser";
 import { WORKFLOW_MAX_SCHEMA_BYTES } from "../../src/workflows/resource-limits";
 import { overrideSeam } from "../_helpers/seams";
 
@@ -227,8 +227,8 @@ describe("task source v4 — closed key-set constants (D2-N3, D2-N7)", () => {
     expect(TASK_SOURCE_V4_TOP_LEVEL_KEYS).not.toContain("on");
   });
 
-  test("TASK_SOURCE_V4_SCHEDULE_KEYS closes one schedule-list entry to cron/enabled/inputs", () => {
-    expect([...TASK_SOURCE_V4_SCHEDULE_KEYS].sort()).toEqual(["cron", "enabled", "inputs"].sort() as never);
+  test("TASK_SOURCE_V4_SCHEDULE_KEYS closes one schedule-list entry to cron/inputs", () => {
+    expect([...TASK_SOURCE_V4_SCHEDULE_KEYS].sort()).toEqual(["cron", "inputs"].sort() as never);
   });
 
   test("TASK_INPUT_DECLARATION_KEYS derives its JSON-Schema-subset keywords from JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS (D2-N3) rather than restating them", () => {
@@ -561,46 +561,79 @@ describe("task source v4 — version router (spec §3.4, D2-N2's exact routing t
     expect(result.v4.manualOnly).toBe(true);
   });
 
-  // Upgrade-smoothness shim (spec docs/plans/specs/p4-deletions-closeout.md
-  // §3.2.2 as amended): `version: 3` and `version: 2` no longer fail closed
-  // by themselves — `parseTaskSource` first runs the SAME pure planners
-  // `akm migrate apply` uses on the bytes already in hand, entirely in
-  // memory, and only falls back to `TASK_SCHEMA_VERSION_UNSUPPORTED` when
-  // that deterministic conversion itself cannot proceed. A migratable v3
-  // document reads straight through.
-  test("version: 3 is auto-read as v4 through the in-memory migration shim (row B-14)", () => {
-    const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n";
-    const filePath = "/bundle/tasks/x.yml";
-    const result = parseTaskSource({ yaml, filePath });
-    expect(result.version).toBe(4);
-    if (result.version !== 4) throw new Error("unreachable: asserted above");
-    expect(result.v4.target).toEqual({ kind: "uses", uses: { kind: "command", ref: "commands/review" } });
-  });
+  // The runtime reads only task source v4 (#987). A v2/v3 document, or a v4
+  // document still carrying 0.9.15's retired `schedule[].enabled`, is exactly
+  // what `akm migrate apply` rewrites; the reader refuses it, naming that
+  // command, and never converts it in memory. The caller reports the refusal
+  // per file (`akm task sync` keeps reconciling every other task).
+  describe("anything `akm migrate apply` would rewrite is refused, naming it", () => {
+    let warnCalls: string[] = [];
 
-  // When the deterministic conversion itself cannot proceed (an unknown v3
-  // field, here), the shim yields no bytes and the gate falls back to a hard
-  // failure — the shim removes friction for the deterministic case, it never
-  // launders a genuinely invalid document. The message now names the
-  // migrator's own blocked reason (issue #869) rather than a generic
-  // "not accepted", since re-running the migrator would report the same
-  // block: a person has to resolve it, not the tool.
-  test("version: 3 that the migration planner cannot convert still raises TASK_SCHEMA_VERSION_UNSUPPORTED", () => {
-    const yaml = "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\nbogus: true\n";
-    const filePath = "/bundle/tasks/x.yml";
-    let error: unknown;
-    try {
-      parseTaskSource({ yaml, filePath });
-    } catch (cause) {
-      error = cause;
+    beforeEach(() => {
+      warnCalls = [];
+      _resetWarnOnceForTests();
+      overrideSeam(_setWarnSinkForTests, (level, args) => {
+        if (level !== "warn") return;
+        warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
+      });
+    });
+
+    function refusal(yaml: string, filePath: string): UsageError {
+      let error: unknown;
+      try {
+        parseTaskSource({ yaml, filePath });
+      } catch (cause) {
+        error = cause;
+      }
+      expect(error).toBeInstanceOf(UsageError);
+      return error as UsageError;
     }
-    expect(error).toBeInstanceOf(UsageError);
-    expect((error as UsageError).code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
-    expect((error as UsageError).message).toBe(
-      `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version 3 and needs a human decision before it can run — the deterministic migrator cannot convert it automatically (invalid-v3-task: unknown v3 field(s): bogus).`,
-    );
-    expect((error as UsageError).hint()).toBe(
-      "Review the file and resolve the ambiguity by hand, then it will convert normally; `akm migrate status` reports the same reason.",
-    );
+
+    test.each([
+      ["version: 3", "version: 3\nuses: commands/review\nakm:\n  schedule: '@daily'\n", 3],
+      [
+        "a convertible version: 2",
+        "version: 2\nschedule: '0 2 * * *'\nenabled: true\ncommand: /usr/local/bin/backup.sh\n",
+        2,
+      ],
+      [
+        "a version: 2 the migrator itself cannot convert",
+        "version: 2\nschedule: '0 2 * * *'\ncommand:\n  - /usr/local/bin/backup.sh\n  - --force\n",
+        2,
+      ],
+    ] as const)("%s raises TASK_SCHEMA_VERSION_UNSUPPORTED naming `akm migrate apply`, without converting it", (_label, yaml, version) => {
+      const filePath = "/bundle/tasks/legacy.yml";
+      const error = refusal(yaml, filePath);
+      expect(error.code).toBe("TASK_SCHEMA_VERSION_UNSUPPORTED");
+      expect(error.message).toBe(
+        `TASK_SCHEMA_VERSION_UNSUPPORTED: Task at ${filePath} uses task schema version ${version}; this release reads only version 4. Run \`akm migrate apply\` to convert it.`,
+      );
+      expect(error.hint()).toContain("akm migrate apply --dry-run");
+      expect(warnCalls).toEqual([]);
+    });
+
+    test("a v4 document with a retired schedule[].enabled raises TASK_SOURCE_INVALID naming `akm migrate apply`, whatever the value", () => {
+      for (const value of ["false", "true", "yes"]) {
+        const filePath = `/bundle/tasks/retired-${value}.yml`;
+        const error = refusal(
+          `version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n    enabled: ${value}\n`,
+          filePath,
+        );
+        expect(error.code).toBe("TASK_SOURCE_INVALID");
+        expect(error.message).toBe(
+          `Invalid task source v4 at ${filePath}: schedule[].enabled was removed (scheduler activation is host-local config). Run \`akm migrate apply\` to rewrite it.`,
+        );
+      }
+      expect(warnCalls).toEqual([]);
+    });
+
+    test("a v4 document without schedule[].enabled parses directly and never warns", () => {
+      const yaml = "version: 4\nuses: commands/review\nschedule:\n  - cron: '0 4 * * *'\n";
+      const result = parseTaskSource({ yaml, filePath: "/bundle/tasks/z.yml" });
+      expect(result.version).toBe(4);
+      expect(result.v4.schedule).toHaveLength(1);
+      expect(warnCalls).toHaveLength(0);
+    });
   });
 
   // Row B-16: a document with no version: key, or a version: that is NOT A
@@ -667,12 +700,12 @@ describe("task source v4 — optional schedule (D2-N6, D2-N5, B-06..B-10, B-38)"
     expect(Object.isFrozen(doc.schedule)).toBe(true);
   });
 
-  test("schedule: as a bare string is shorthand for one enabled binding with no inputs (B-08)", () => {
+  test("schedule: as a bare string is shorthand for one binding with no inputs (B-08)", () => {
     const doc = parseTaskSourceV4Document(v4Doc({ uses: "commands/review", schedule: "0 8 * * 1" }), {
       filePath: "/x.yml",
     });
     expect(doc.manualOnly).toBe(false);
-    expect(doc.schedule).toEqual([{ cron: "0 8 * * 1", enabled: true, inputs: {}, source: "schedule", ordinal: 0 }]);
+    expect(doc.schedule).toEqual([{ cron: "0 8 * * 1", inputs: {}, source: "schedule", ordinal: 0 }]);
   });
 
   test("schedule: as a list assigns ordinals and schedule[<i>].cron source strings (B-09)", () => {
@@ -681,21 +714,20 @@ describe("task source v4 — optional schedule (D2-N6, D2-N5, B-06..B-10, B-38)"
       { filePath: "/x.yml" },
     );
     expect(doc.schedule).toEqual([
-      { cron: "0 6 * * *", enabled: true, inputs: {}, source: "schedule[0].cron", ordinal: 0 },
-      { cron: "30 18 * * 1-5", enabled: true, inputs: {}, source: "schedule[1].cron", ordinal: 1 },
+      { cron: "0 6 * * *", inputs: {}, source: "schedule[0].cron", ordinal: 0 },
+      { cron: "30 18 * * 1-5", inputs: {}, source: "schedule[1].cron", ordinal: 1 },
     ]);
   });
 
-  test("schedule[i].enabled: false disables that ONE binding without affecting siblings; default is true (B-10, D2-N5)", () => {
-    const doc = parseTaskSourceV4Document(
-      v4Doc({
-        uses: "commands/review",
-        schedule: [{ cron: "0 6 * * *" }, { cron: "30 18 * * 1-5", enabled: false }],
-      }),
-      { filePath: "/x.yml" },
+  test("schedule[i].enabled is rejected because activation is host-local config", () => {
+    expectTaskSourceInvalid(
+      () =>
+        parseTaskSourceV4Document(
+          v4Doc({ uses: "commands/review", schedule: [{ cron: "0 6 * * *", enabled: false }] }),
+          { filePath: "/x.yml" },
+        ),
+      /enabled|unknown/i,
     );
-    expect(doc.schedule[0]?.enabled).toBe(true);
-    expect(doc.schedule[1]?.enabled).toBe(false);
   });
 
   test("schedule count is bounded by TASK_V3_MAX_SCHEDULES, reused (B-09)", () => {

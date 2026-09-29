@@ -11,13 +11,8 @@ import { akmShowUnified } from "../../src/commands/read/show";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { replaceStoredGraph } from "../../src/indexer/db/graph-db";
-import { loadGraphBoostContext, resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../src/indexer/indexer";
-import { buildLexicalQueryPlan } from "../../src/indexer/search/fts-query";
-import { defaultRankingContributors } from "../../src/indexer/search/ranking-contributors";
-import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
-import { getEntryById, getEntryByRef } from "../../src/storage/repositories/index-entries-repository";
+import { openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
@@ -48,16 +43,13 @@ beforeEach(async () => {
   });
   writeIndexFixture();
   await akmIndex({ stashDir: storage.stashDir, full: true });
-  installGraphFixture();
   const state = openStateDatabase();
   state.prepare("DELETE FROM usage_events").run();
   state.close();
-  resetGraphBoostCache();
 });
 
 afterEach(() => {
   resetConfigCache();
-  resetGraphBoostCache();
   storage.cleanup();
 });
 
@@ -86,13 +78,6 @@ function writeIndexFixture(): void {
   writeAsset(
     storage.stashDir,
     "knowledge",
-    "graph-target",
-    "description: graphneedle graph-target operational guide\nquality: curated\ntags: [graph-target]\nsearchHints: [graph-target]",
-    "Graph target body.",
-  );
-  writeAsset(
-    storage.stashDir,
-    "knowledge",
     "plain-target",
     "description: plainneedle operational guide",
     "Plain target body.",
@@ -113,31 +98,6 @@ function writeIndexFixture(): void {
     "inferred: true\nsource: memories/team-only\ndescription: team-direct-child-needle",
     "Team-only derived body.",
   );
-}
-
-function installGraphFixture(): void {
-  const db = openExistingDatabase(getDbPath());
-  try {
-    replaceStoredGraph(db, {
-      schemaVersion: 2,
-      generatedAt: "2026-07-22T00:00:00.000Z",
-      stashRoot: storage.stashDir,
-      files: [
-        {
-          path: path.join(storage.stashDir, "knowledge", "graph-target.md"),
-          type: "knowledge",
-          bodyHash: "graph-body-hash",
-          extractionRunId: "graph-run-1",
-          entities: ["graphneedle", "graph", "target", "graph-target"],
-          relations: [],
-        },
-      ],
-      entities: ["graphneedle", "graph", "target", "graph-target"],
-      relations: [],
-    });
-  } finally {
-    closeDatabase(db);
-  }
 }
 
 function usageRows(): UsageRow[] {
@@ -162,43 +122,6 @@ function clearUsageRows(): void {
   db.close();
 }
 
-function rankingContributorLedger(query: string, ref: string): Array<{ name: string; contribution: number }> {
-  const db = openExistingDatabase(getDbPath());
-  try {
-    const entryId = getEntryByRef(db, ref)?.id;
-    if (entryId === undefined) throw new Error(`Missing indexed fixture: ${ref}`);
-    const indexed = getEntryById(db, entryId);
-    if (!indexed) throw new Error(`Missing indexed entry ${entryId}: ${ref}`);
-
-    const queryTokens = buildLexicalQueryPlan(query).tokens.map((token) => token.toLowerCase());
-    const ctx = {
-      db,
-      query,
-      queryLower: query.toLowerCase().trim(),
-      queryTokens,
-      graphContext: loadGraphBoostContext([storage.stashDir, teamDir], query, undefined, db),
-      projectContext: null,
-    };
-    const item = {
-      id: entryId,
-      entry: indexed.entry,
-      filePath: indexed.filePath,
-      score: 1,
-      rankingMode: "fts" as const,
-      itemRef: indexed.itemRef,
-      bundleId: indexed.bundleId,
-      conceptId: indexed.conceptId,
-    };
-
-    return defaultRankingContributors
-      .filter((contributor) => contributor.appliesTo(item, ctx))
-      .map((contributor) => ({ name: contributor.name, contribution: contributor.adjust(item, ctx) }))
-      .filter(({ contribution }) => contribution !== 0);
-  } finally {
-    closeDatabase(db);
-  }
-}
-
 describe("downstream value attribution", () => {
   test("persists MI direct and parent-surface exposure without adding attribution to search result payloads", async () => {
     const direct = await akmSearch({ query: "direct-child-needle", limit: 10 });
@@ -221,58 +144,12 @@ describe("downstream value attribution", () => {
     expect(JSON.stringify({ direct, surface })).not.toContain("downstreamAttribution");
   });
 
-  test("persists graph metadata only for a positive graph contribution", async () => {
-    const graph = await akmSearch({ query: "graphneedle", limit: 10 });
-    await akmSearch({ query: "plainneedle", limit: 10 });
-
-    const graphMetadata = metadataFor("graphneedle", "stash//knowledge/graph-target") as {
-      downstreamAttribution?: {
-        graphExtraction?: { boost?: number; bodyHash?: string; extractionRunId?: string };
-      };
-    };
-    expect(graphMetadata.downstreamAttribution?.graphExtraction?.boost).toBeGreaterThan(0);
-    expect(graphMetadata.downstreamAttribution?.graphExtraction).toMatchObject({
-      bodyHash: "graph-body-hash",
-      extractionRunId: "graph-run-1",
-    });
+  test("an asset outside memory-inference exposure records control usage metadata", async () => {
+    const plain = await akmSearch({ query: "plainneedle", limit: 10 });
+    expect(plain.hits.map((hit) => ("ref" in hit ? hit.ref : undefined))).toContain("knowledge/plain-target");
     expect(metadataFor("plainneedle", "stash//knowledge/plain-target")).toEqual({
       downstreamAttribution: { version: 1, control: true },
     });
-    expect(JSON.stringify(graph)).not.toContain("graph-body-hash");
-    expect(JSON.stringify(graph)).not.toContain("graph-run-1");
-  });
-
-  test("records only the graph contributor's applied capped contribution", async () => {
-    await akmSearch({ query: "graph-target", limit: 10, disableProjectContext: true });
-
-    const graph = metadataFor("graph-target", "stash//knowledge/graph-target") as {
-      downstreamAttribution?: { graphExtraction?: { boost?: number } };
-    };
-    const ledger = rankingContributorLedger("graph-target", "stash//knowledge/graph-target");
-    expect(ledger).toEqual([
-      { name: "exact-name-ranking", contribution: 2 },
-      { name: "type-ranking", contribution: 0.22 },
-      { name: "search-hint-ranking", contribution: 0.12 },
-      { name: "alias-ranking", contribution: 0.3 },
-      { name: "description-ranking", contribution: 0.25 },
-      { name: "metadata-ranking", contribution: 0.095 },
-      { name: "graph-ranking", contribution: 0.75 },
-    ]);
-
-    const graphIndex = ledger.findIndex(({ name }) => name === "graph-ranking");
-    const preGraphBoost = ledger.slice(0, graphIndex).reduce((sum, contributor) => sum + contributor.contribution, 0);
-    const rawGraphBoost = ledger[graphIndex]?.contribution ?? 0;
-    const boostCap = 3;
-    const expectedAppliedGraphBoost =
-      Math.min(boostCap, preGraphBoost + rawGraphBoost) - Math.min(boostCap, preGraphBoost);
-
-    // The central lexical planner tokenizes `graph-target` as `graph` +
-    // `target`, so alias and multi-token description evidence now consumes
-    // 2.985 of the common 3.0 cap before graph ranking runs. Attribution must
-    // record only the 0.015 share scoring actually admits, not its raw 0.75.
-    expect(preGraphBoost).toBeCloseTo(2.985, 6);
-    expect(expectedAppliedGraphBoost).toBeCloseTo(0.015, 6);
-    expect(graph.downstreamAttribution?.graphExtraction?.boost).toBeCloseTo(expectedAppliedGraphBoost, 6);
   });
 
   test("brief search output does not attribute stripped derived surface content", async () => {
@@ -357,12 +234,12 @@ describe("downstream value attribution", () => {
 
   test("final curate selection retains attribution and audit source without a nested show row", async () => {
     const searchResponse = await akmSearch({
-      query: "graphneedle",
+      query: "direct-child-needle",
       limit: 10,
       skipLogging: true,
       eventSource: "audit",
     });
-    await akmCurate({ query: "graphneedle", limit: 1, searchResponse, eventSource: "audit" });
+    await akmCurate({ query: "direct-child-needle", limit: 1, searchResponse, eventSource: "audit" });
 
     const rows = usageRows();
     const selected = rows.filter((row) => row.event_type === "curate" && row.entry_ref !== null);
@@ -370,7 +247,7 @@ describe("downstream value attribution", () => {
     expect(selected[0]?.source).toBe("audit");
     expect(selected[0]?.metadata ? JSON.parse(selected[0].metadata) : undefined).toMatchObject({
       downstreamAttribution: {
-        graphExtraction: { bodyHash: "graph-body-hash", extractionRunId: "graph-run-1" },
+        memoryInference: { exposure: "direct", childRef: "stash//memories/parent.derived" },
       },
     });
     expect(rows.filter((row) => row.event_type === "show")).toHaveLength(0);

@@ -74,7 +74,6 @@ export async function prepareTaskV3Execution(
       await (context.prepareCommand ?? prepareCommandInvocation)({
         action,
         config: context.config,
-        invocationKind: "task",
         current: currentExecutionValues(document, context, commandEnvironment),
         ...(context.commandSourceLoader ? { sourceLoader: context.commandSourceLoader } : {}),
       }),
@@ -98,7 +97,6 @@ export async function prepareTaskV3Execution(
       await (context.prepareCommand ?? prepareCommandInvocation)({
         action: { ref: qualified },
         config: context.config,
-        invocationKind: "task",
         current: currentExecutionValues(document, context, commandEnvironment),
         ...(context.commandSourceLoader ? { sourceLoader: context.commandSourceLoader } : {}),
       }),

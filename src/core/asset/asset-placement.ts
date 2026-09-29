@@ -28,7 +28,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { toPosix } from "../common";
-import { DERIVED_SUFFIX, type KnownType, SCRIPT_EXTENSIONS, WORKFLOW_EXTENSIONS } from "../recognition-util";
+import { type KnownType, SCRIPT_EXTENSIONS, WORKFLOW_EXTENSIONS } from "../recognition-util";
 
 export interface AssetSpec {
   stashDir: string;
@@ -288,21 +288,12 @@ export function assetPathForName(assetType: string, typeRoot: string, name: stri
  * "default" alias is genuinely dual-owned: both `<dir>/.env` and
  * `<dir>/default.env` derive the same canonical name (`toCanonicalName`
  * above), so a physical-owner lookup must consider both without reading
- * either file. `memory` has a second, analogous duality (#882): a ref to
- * `<name>` may own either `<name>.md` or the LLM-inferred `<name>.derived.md`
- * twin — `.derived` is a provenance marker on the SAME identity, not part of
- * the name (see `resolveParentRef`/`isDerivedMemory` in
- * `commands/improve/memory/derived-ref.ts`, and the belief-edge identity
- * channel's own `memory:<name>.derived` refs). The plain `.md` file wins when
- * both exist, so it stays `primary` — first in the returned list — and every
- * caller here already prefers the first candidate that exists on disk. Every
- * other placement type has exactly one inverse spelling.
+ * either file. Every other placement type has exactly one inverse spelling —
+ * including `memory`: `<name>.derived.md` is a separate item that owns
+ * `<name>.derived`, never a second spelling of `<name>`.
  */
 export function assetPathCandidatesForName(assetType: string, typeRoot: string, name: string): string[] {
   const primary = assetPathForName(assetType, typeRoot, name);
-  if (assetType === "memory" && !name.endsWith(DERIVED_SUFFIX)) {
-    return [primary, assetPathForName(assetType, typeRoot, `${name}${DERIVED_SUFFIX}`)];
-  }
   if (assetType !== "env") return [primary];
   const base = name === "default" ? "" : name.endsWith("/default") ? name.slice(0, -"default".length) : undefined;
   if (base === undefined) return [primary];

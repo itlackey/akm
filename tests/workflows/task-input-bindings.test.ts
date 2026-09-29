@@ -17,7 +17,7 @@
  * Sandbox/freeze pattern follows tests/workflows/with-rejection.test.ts and
  * tests/workflows/task-source-v4-deferral.test.ts (withIsolatedAkmStorage +
  * writeWorkflowTestConfig + akmIndex + startWorkflowRun +
- * decodeWorkflowPlanV4).
+ * decodeWorkflowPlan).
  *
  * RED TODAY, for two independent, already-understood reasons the spec names
  * explicitly (A-N6, A-N3):
@@ -62,10 +62,11 @@ import { UsageError } from "../../src/core/errors";
 import type { TaskInputBinding } from "../../src/execution/input-contract";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
+import { compileWorkflowSource } from "../../src/workflows/compile";
 import { computeStepWorkList } from "../../src/workflows/exec/step-work";
-import { decodeWorkflowPlanV4, type FrozenWorkflowTarget } from "../../src/workflows/ir/schema-v4";
+import type { FrozenWorkflowTarget } from "../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { listWorkflowRuns, startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { decodeWorkflowSourceIrV1, type WorkflowSourceIrV1 } from "../../src/workflows/source-ir/schema";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
 const STEP_ID = "dispatch";
@@ -154,7 +155,7 @@ async function planRow(runId: string) {
   return withWorkflowRunsRepo((repo) => repo.getRunById(runId));
 }
 
-function stepTarget(plan: ReturnType<typeof decodeWorkflowPlanV4>, index: number): FrozenWorkflowTarget | undefined {
+function stepTarget(plan: ReturnType<typeof decodeWorkflowPlan>, index: number): FrozenWorkflowTarget | undefined {
   const root = plan.steps[index]?.root;
   if (!root) return undefined;
   return root.kind === "map" ? root.template.frozenTarget : root.frozenTarget;
@@ -206,7 +207,7 @@ describe("P2b freeze-time — literal and reference bindings normalize into inpu
 
     const started = await startWorkflowRun("workflows/case");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
     expect(target?.kind).toBe("command");
 
@@ -237,7 +238,7 @@ describe("P2b freeze-time — literal and reference bindings normalize into inpu
 
     const started = await startWorkflowRun("workflows/case");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 1);
     const bindings = frozenInputBindings(target);
     expect(bindings).toHaveLength(4); // files, scope, strict, ticket (sorted); meta absent
@@ -525,132 +526,46 @@ describe("P2b freeze-time — COMPOSITION_INVALID narrows to no-declared-inputs,
   });
 });
 
-describe("P2b freeze-time — decode widens for task targets only; the expression guard recurses (B-27, A-N3)", () => {
-  // NEITHER text front end can exercise this directly: github-yaml.ts:183-184's
-  // `checkTree` rejects ANY `${{` occurrence ANYWHERE in a GH-YAML document at
-  // PARSE time ("GitHub expressions and contexts are not supported."),
-  // independent of, and unconditionally earlier than, the shared semantic
-  // `rejectStepWithExpressions` guard this test targets — a GH-YAML fixture
-  // would be RED for the wrong reason forever, even after A-N3 lands. The
-  // Markdown front end has no such pre-scan, but its OWN step grammar has no
-  // `uses`/`with` fields at all (allowed step keys: id, unit, map, route,
-  // inputs, output, gate) — composition is a GitHub-shaped-YAML-only
-  // surface. `decodeWorkflowSourceIrV1` is the shared semantic layer BOTH
-  // front ends funnel through (compile.ts's `compileGithubWorkflowSource` /
-  // `compileMarkdownWorkflowSource`), and it is itself exported and callable
-  // directly on a hand-built `WorkflowSourceIrV1` — exactly the pattern
-  // tests/workflows/source-ir-contract.test.ts's own "strict source IR
-  // decoder" suite already uses (`replaceOnlyDecodedStep` +
-  // `decodeWorkflowSourceIrV1(ir)`, e.g. its `${{ github.ref }}` "uses"
-  // expression-rejection case) to reach this exact semantic layer without
-  // going through either text parser's own, unrelated restrictions.
-  test("B-27: a ${{ … }} expression nested inside a with: value on a task step is rejected (the guard now recurses)", () => {
-    const span = { path: "x.yml", start: 1, end: 9 };
-    const ir: WorkflowSourceIrV1 = {
-      sourceIrVersion: 1,
-      name: "B-27 fixture",
-      triggers: [{ kind: "workflow_dispatch", source: span }],
-      jobs: [
-        {
-          id: "main",
-          needs: [],
-          steps: [
-            {
-              id: STEP_ID,
-              uses: TASK_REF,
-              with: {
-                ticket: "ABC-1",
-                meta: { note: "${{ params.x }}" },
-              },
-              source: span,
-            },
-          ],
-          source: span,
-        },
-      ],
-      source: span,
-    };
-
-    expect(() => decodeWorkflowSourceIrV1(ir)).toThrow(/step dispatch with\.meta contains an unsupported expression/);
-  });
-
-  // (P2b test-review finding #2) B-27 above pins that the widened decode
-  // still rejects a NESTED expression — on its own that does not prove the
-  // widening is TASK-SCOPED, since an implementation that relaxes
-  // scalarRecord for EVERY uses: target would pass B-27 too (a nested
-  // expression is still caught by rejectStepWithExpressions regardless of
-  // which targets scalarRecord itself now skips). These four siblings pin
-  // the actual scope boundary directly: akm/command, commands/<ref>, and
-  // scripts/<ref> are UNAFFECTED (byte-identical rejection); only a
-  // tasks/<ref> step's decode widens. This authors F-A2's re-scoped
-  // assertion HERE, in the red commit, rather than leaving the only coverage
-  // inside tests/workflows/characterization-with-drop.test.ts:98 — the very
-  // test F-A2 edits during Implement (its tasks/x arm is REMOVED there; this
-  // describe is the independent pin that removal does not leave the
-  // task-scoping fact unpinned).
-  //
-  // Untyped Record<string, unknown> fixtures (rather than this file's own
-  // strictly-typed WorkflowSourceIrV1 literal above) deliberately mirror
-  // characterization-with-drop.test.ts's OWN `baseIr`/step shape: `with`'s
-  // widened Record<string, unknown> type (A-N3) is exactly what is NOT yet
-  // true for these three preserved targets, so building them through a typed
-  // literal would need its own `@ts-expect-error` per call site for no
-  // benefit — decodeWorkflowSourceIrV1 itself accepts `unknown`.
-  function bareSpan() {
-    return { path: "x.yml", start: 1, end: 9 };
-  }
-  function bareIr(step: Record<string, unknown>): unknown {
-    return {
-      sourceIrVersion: 1,
-      name: "B-26/B-25 task-scoping fixture",
-      triggers: [{ kind: "workflow_dispatch", source: bareSpan() }],
-      jobs: [{ id: "main", needs: [], steps: [step], source: bareSpan() }],
-      source: bareSpan(),
-    };
+describe("P2b compile-time — structured with: values are a task/workflow binding surface only (B-25…B-27, A-N3)", () => {
+  function compileStep(uses: string, withLines: string[]) {
+    return compileWorkflowSource(
+      [
+        "name: Binding scope",
+        "on: { workflow_dispatch: null }",
+        "jobs:",
+        "  main:",
+        "    runs-on: [self-hosted]",
+        "    steps:",
+        `      - id: ${STEP_ID}`,
+        `        uses: ${uses}`,
+        "        with:",
+        ...withLines,
+        "",
+      ].join("\n"),
+      { path: "workflows/binding-scope.yml" },
+    );
   }
 
-  test("B-26: a nested with: value on uses: akm/command is UNAFFECTED by the task-scoped widening, byte-identical (verified: validateWorkflowBuiltinCommand's OWN structural check governs this target — scalarRecord's 'must be a scalar' message is unreachable here, before or after A-N3)", () => {
-    const step = {
-      id: STEP_ID,
-      uses: "akm/command",
-      commandMode: "literal",
-      with: { content: { nested: true } },
-      source: bareSpan(),
-    };
-    // Deliberately NOT /must be a scalar/: akm/command's with: is owned by
-    // validateWorkflowBuiltinCommand -> parseBuiltinCommandAction
-    // (schema.ts:362-374; src/commands/command/builtin-action.ts), which
-    // runs BEFORE scalarRecord in validateStep and rejects a non-string
-    // content with ITS OWN message ("Built-in command action with.content
-    // must be a string.") — every with: shape for this target either
-    // satisfies parseBuiltinCommandAction's own field/type checks (in which
-    // case the recognized fields are already scalar, so scalarRecord passes
-    // too) or fails there first, so scalarRecord's message can never surface
-    // for uses: akm/command, independent of A-N3. Pinning this real,
-    // byte-identical fact — not an inapplicable "must be a scalar" one — is
-    // what proves this target is unaffected by the task-scoped relaxation.
-    expect(() => decodeWorkflowSourceIrV1(bareIr(step))).toThrow(/with\.content must be a string/);
+  test("B-27: a ${{ … }} expression nested inside a with: value on a task step is rejected", () => {
+    const result = compileStep(TASK_REF, ["          ticket: ABC-1", '          meta: { note: "${{ params.x }}" }']);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]?.code).toBe("unsupported-github-expression");
   });
 
-  test("B-26: a nested with: value on uses: commands/<ref> is still rejected 'must be a scalar', byte-identical", () => {
-    const step = { id: STEP_ID, uses: "commands/other", with: { note: { nested: true } }, source: bareSpan() };
-    expect(() => decodeWorkflowSourceIrV1(bareIr(step))).toThrow(/step dispatch with\.note must be a scalar/);
+  test.each([
+    "akm/command",
+    "commands/other",
+    "scripts/build.sh",
+  ])("B-26: a nested with: value on uses: %s is rejected as non-scalar", (uses) => {
+    const result = compileStep(uses, ["          content: { nested: true }"]);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[0]?.code).toBe("scalar-required");
   });
 
-  test("B-26: a nested with: value on uses: scripts/<ref> is ALSO still rejected 'must be a scalar', byte-identical", () => {
-    const step = { id: STEP_ID, uses: "scripts/build.sh", with: { note: { nested: true } }, source: bareSpan() };
-    expect(() => decodeWorkflowSourceIrV1(bareIr(step))).toThrow(/step dispatch with\.note must be a scalar/);
-  });
-
-  test("B-25: the IDENTICAL nested with: SHAPE on a uses: tasks/<ref> step now decodes — scalarRecord's restriction narrows to non-task targets only", () => {
-    const step = {
-      id: STEP_ID,
-      uses: TASK_REF,
-      with: { ticket: "T-1", meta: { nested: true } },
-      source: bareSpan(),
-    };
-    const decoded = decodeWorkflowSourceIrV1(bareIr(step)) as WorkflowSourceIrV1;
-    expect(decoded.jobs[0]?.steps[0]?.with).toEqual({ ticket: "T-1", meta: { nested: true } });
+  test("B-25: the identical nested with: shape on a uses: tasks/<ref> step compiles", () => {
+    const result = compileStep(TASK_REF, ["          ticket: T-1", "          meta: { nested: true }"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.plan.steps[0]?.spec?.with).toEqual({ ticket: "T-1", meta: { nested: true } });
   });
 });
 
@@ -722,7 +637,7 @@ describe("P2b freeze-time — no merge semantics across a two-level task -> work
 
     const started = await startWorkflowRun("workflows/chain-child");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
 
     expect(frozenInputBindings(stepTarget(plan, 0))).toEqual([
       { kind: "literal", name: "scope", value: "inner-default" },
@@ -820,7 +735,7 @@ describe("P3a — a task-wrapped workflow target now composes to a child-workflo
 
     const started = await startWorkflowRun("workflows/nested-no-with");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
 
     expect(target).toMatchObject({
@@ -843,7 +758,7 @@ describe("P3a — a task-wrapped workflow target now composes to a child-workflo
 
     const started = await startWorkflowRun("workflows/nested-with-with");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
 
     expect(target).toMatchObject({
@@ -860,7 +775,7 @@ describe("P3a — a task-wrapped workflow target now composes to a child-workflo
 describe("P2b freeze-time — hash coverage: a changed binding changes the unit input hash (B-41, B-42, §1.1(4))", () => {
   /** The single step's content-derived input hash, computed the SAME pure way the engine does. */
   function unitHash(
-    plan: ReturnType<typeof decodeWorkflowPlanV4>,
+    plan: ReturnType<typeof decodeWorkflowPlan>,
     runId: string,
     stepOutputs: Record<string, unknown> = {},
   ) {
@@ -887,8 +802,8 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
 
     const runA = await startWorkflowRun("workflows/case-a");
     const runB = await startWorkflowRun("workflows/case-b");
-    const planA = decodeWorkflowPlanV4(JSON.parse((await planRow(runA.run.id))?.plan_json ?? "null"));
-    const planB = decodeWorkflowPlanV4(JSON.parse((await planRow(runB.run.id))?.plan_json ?? "null"));
+    const planA = decodeWorkflowPlan(JSON.parse((await planRow(runA.run.id))?.plan_json ?? "null"));
+    const planB = decodeWorkflowPlan(JSON.parse((await planRow(runB.run.id))?.plan_json ?? "null"));
 
     // Computed TWO ways (once per frozen plan) and compared, per §1.1(4).
     expect(unitHash(planA, runA.run.id)).not.toBe(unitHash(planB, runB.run.id));
@@ -924,8 +839,8 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
 
     const runA = await startWorkflowRun("workflows/case-a");
     const runB = await startWorkflowRun("workflows/case-b");
-    const planA = decodeWorkflowPlanV4(JSON.parse((await planRow(runA.run.id))?.plan_json ?? "null"));
-    const planB = decodeWorkflowPlanV4(JSON.parse((await planRow(runB.run.id))?.plan_json ?? "null"));
+    const planA = decodeWorkflowPlan(JSON.parse((await planRow(runA.run.id))?.plan_json ?? "null"));
+    const planB = decodeWorkflowPlan(JSON.parse((await planRow(runB.run.id))?.plan_json ?? "null"));
 
     // Hand-built stepOutputs (chaos.test.ts / gate-artifacts.test.ts's own
     // pattern) so the reference resolves successfully on BOTH plans without
@@ -942,10 +857,8 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     // changes is what `from: steps.collect.output.a` RESOLVES to — exactly
     // the value the unit actually receives (prompt "## Task inputs" block /
     // AKM_TASK_INPUTS / childParams). Under hashVersion 6 these two hashes
-    // were IDENTICAL (R-R15, the documented resume caveat); the taskInputs
-    // preimage field makes them differ, so a resume whose upstream journaled
-    // output was altered raises replay divergence instead of silently
-    // reusing the stale row.
+    // were IDENTICAL (R-R15); the taskInputs preimage field makes them differ,
+    // so the recorded (informational) input hash tells the two asks apart.
     writeCentralTaskFixture();
     writeWorkflow("case-resolved", [
       "      - id: collect",
@@ -962,7 +875,7 @@ describe("P2b freeze-time — hash coverage: a changed binding changes the unit 
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const run = await startWorkflowRun("workflows/case-resolved");
-    const plan = decodeWorkflowPlanV4(JSON.parse((await planRow(run.run.id))?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse((await planRow(run.run.id))?.plan_json ?? "null"));
 
     const hashOne = unitHash(plan, run.run.id, { collect: { a: ["fileA"] } });
     const hashOneAgain = unitHash(plan, run.run.id, { collect: { a: ["fileA"] } });

@@ -222,7 +222,7 @@ akm bundle add file:///absolute/path/to/bundle
    hooks (`BASH_ENV`, `PROMPT_COMMAND`, `NODE_OPTIONS`, `PYTHONSTARTUP`, ...),
    and interactive-tool overrides (`EDITOR`, `PAGER`, `GIT_SSH_COMMAND`, ...).
    `akm bundle add` **blocks the install** when a dangerous key is present unless
-   `--allow-insecure` is set (or you confirm at an interactive prompt).
+   `--allow-dangerous-env-keys` is set (or you confirm at an interactive prompt).
    This is a **key-name audit only** (plus the path-traversal rejection in step
    3) -- akm does **not** scan source files, prompts, metadata, or install
    scripts for prompt-injection phrases, shell pipes, or lifecycle hooks.
@@ -343,7 +343,7 @@ entry that the indexer walks like any other source.
 Fetches a static JSON v3 index from the configured URL and performs
 client-side scoring. The index is cached locally with a 1-hour TTL. There is
 currently no fallback to a stale cache row past that TTL on fetch failure —
-`fetchCachedJson` (`src/storage/repositories/registry-cache.ts`) only
+`fetchCachedJson` (`src/storage/repositories/registry-index-cache-repository.ts`) only
 consults the cache row that its own `getRegistryIndexCache` lookup returned
 under the same TTL, and that lookup returns nothing once the row is older
 than `maxAgeMs`, so a fetch failure after the TTL expires surfaces as an

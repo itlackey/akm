@@ -188,11 +188,12 @@ export interface IndexDocument {
   /**
    * Asset quality marker (v1 spec §4.2). Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
-   * `"enriched"` marks entries that have been LLM-enhanced (also included in
-   * default search, excluded from re-enrichment unless `--re-enrich` is set);
-   * `"proposed"` is excluded from default search and surfaced only with
-   * `--include-proposed`. Unknown string values parse with a one-time
-   * `console.warn` and remain searchable (treated as included-by-default).
+   * `"enriched"` marks entries the now-retired LLM metadata-enhancement pass
+   * (0.9.17-alpha.9) rewrote (also included in default search; nothing sets
+   * it anymore); `"proposed"` is excluded from default search and surfaced
+   * only with `--include-proposed`. Unknown string values parse with a
+   * one-time `console.warn` and remain searchable (treated as
+   * included-by-default).
    */
   quality?: "generated" | "curated" | "enriched" | "proposed" | (string & {});
   confidence?: number;
@@ -244,11 +245,6 @@ export interface IndexDocument {
   beliefState?: "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived" | (string & {});
   supersededBy?: string[];
   contradictedBy?: string[];
-  /**
-   * R5 — merge depth counter (frontmatter `generation`), maintained by
-   * consolidation provenance metadata. Absent = original asset.
-   */
-  generation?: number;
   currentBeliefRefs?: string[];
   /**
    * How the memory was captured. `hot` indicates a user-driven write
@@ -289,11 +285,13 @@ export interface IndexDocument {
   updated?: string;
   /** Resolved native links = relationships (§9); navigation/lint, NOT graph boost. */
   links?: string[];
+  /** The assets a workflow's steps or a task target (`uses:` refs, stored `akm/command` refs), in authored order. */
+  uses?: string[];
   /**
    * OKF v0.2 trust/provenance family ← frontmatter `generated`/`verified`/`sources`.
    * This TypeScript field is NAMESPACED to avoid colliding with the
-   * pre-existing `sources?: string[]` (wiki citations), `generation?: number`
-   * (consolidation depth), and `quality: "generated"` (enum value) fields
+   * pre-existing `sources?: string[]` (wiki citations) and
+   * `quality: "generated"` (enum value) fields
    * above — see the file-level note ahead of {@link OkfProvenance}. The
    * ON-DISK spelling is a separate, deliberately hybrid decision (#730
    * review): `okf` (D1) parses third-party OKF v0.2 bundles' bare top-level
@@ -325,8 +323,6 @@ export interface IndexDocument {
 //     frontmatter block is a list of OBJECTS (`{resource, id?, title?, …}`),
 //     an incompatible shape that would silently drop to `[]` if folded onto
 //     this field (the exact collision this namespacing avoids).
-//   - `generation?: number`  (below) — consolidation merge-depth counter; NOT
-//     the OKF v0.2 `generated: {by, at}` provenance mapping.
 //   - `quality: "generated"` (above) — an existing enum VALUE, unrelated.
 // See D1.3 (`docs/architecture/specs/akm-0.9.0-bundle-adapter-spec.md` §0.1)
 // and `docs/architecture/specs/okf-support.md`'s v0.2 note.

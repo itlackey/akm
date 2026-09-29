@@ -25,10 +25,15 @@ import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import { getStashLocksDir } from "../../../../src/core/paths";
+import { recordWrittenPath } from "../../../../src/core/write-provenance";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
+import type { EnsureIndexOptions } from "../../../../src/indexer/ensure-index";
+import { ensureIndex } from "../../../../src/indexer/ensure-index";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { LLM_USAGE_EVENT, LLM_USAGE_SUMMARY_EVENT } from "../../../../src/llm/usage-persist";
-import { emitLlmUsage, hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
+import { currentLlmStage, emitLlmUsage, hasLlmUsageSink } from "../../../../src/llm/usage-telemetry";
+import { closeDatabase, openExistingDatabase } from "../../../../src/storage/repositories/index-connection";
+import { getIndexedFilePaths } from "../../../../src/storage/repositories/index-entries-repository";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -58,10 +63,9 @@ function triageEnabledConfig(enabled: boolean): AkmConfig {
             distill: { enabled: false },
             consolidate: { enabled: false },
             memoryInference: { enabled: false },
-            graphExtraction: { enabled: false },
             extract: { enabled: false },
             validation: { enabled: false },
-            triage: { enabled, applyMode: "queue", policy: "personal-stash", maxAcceptsPerRun: 25 },
+            triage: { enabled, applyMode: "queue", maxAcceptsPerRun: 25 },
             proactiveMaintenance: { enabled: false },
             recombine: { enabled: false },
             procedural: { enabled: false },
@@ -121,6 +125,35 @@ describe("akm improve — triage pre-pass", () => {
   );
 
   test(
+    "R17: the pre-pass drain runs under withLlmStage, attributed to triage.judgment",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+
+      let stageDuringDrain: string | undefined;
+      const drainProposalsFn = mock(async () => {
+        stageDuringDrain = currentLlmStage();
+        emitLlmUsage({ outcome: "success", modelSource: "configured", durationMs: 1, model: "prepass" });
+        return emptyDrainResult();
+      });
+
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        drainProposalsFn: drainProposalsFn as never,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(stageDuringDrain).toBe("triage");
+      const usageEvents = readEvents({ type: LLM_USAGE_EVENT }).events;
+      const prepassEvent = usageEvents.find((event) => event.metadata?.model === "prepass");
+      expect(prepassEvent?.metadata?.process).toBe("triage.judgment");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
     "one usage sink covers prepass and long-lived DB phases",
     async () => {
       const result = await akmImprove({
@@ -166,7 +199,6 @@ describe("akm improve — triage pre-pass", () => {
               contradicted: 0,
               warnings: [],
             },
-            consolidationRan: false,
           };
         }) as never,
         runImproveLoopStageFn: (async () => ({
@@ -176,7 +208,6 @@ describe("akm improve — triage pre-pass", () => {
         runImprovePostLoopStageFn: (async () => ({
           allWarnings: [],
           memoryInferenceDurationMs: 0,
-          graphExtractionDurationMs: 0,
         })) as never,
       });
 
@@ -436,6 +467,75 @@ describe("akm improve — triage pre-pass", () => {
       });
       expect(result2.ok).toBe(true);
       expect(fs.existsSync(lockPath)).toBe(false);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "R6: ensureIndex runs BEFORE triage, and triage's own writes are indexed " +
+      "incrementally before collectEligibleRefs runs",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+
+      const callOrder: string[] = [];
+      const promotedPath = path.join(stashDir, "knowledge", "promoted.md");
+
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: triageEnabledConfig(true),
+        ensureIndexFn: async (dir: string, opts?: EnsureIndexOptions) => {
+          callOrder.push("ensureIndex");
+          return ensureIndex(dir, opts);
+        },
+        drainProposalsFn: (async () => {
+          callOrder.push("triage");
+          // Simulate a real triage promotion: a proposal landing straight in
+          // the flat `knowledge/` root (see `runTriagePrePass`'s docstring).
+          // The real promote path (`commands/proposal/repository.ts`) calls
+          // `recordWrittenPath` itself — mirror that here so the run's write
+          // journal (opened before this seam runs) sees the write.
+          fs.mkdirSync(path.dirname(promotedPath), { recursive: true });
+          fs.writeFileSync(promotedPath, "---\ndescription: promoted\n---\n\n# promoted\n\nBody.\n", "utf8");
+          recordWrittenPath(promotedPath);
+          return {
+            promoted: ["p1"],
+            rejected: [],
+            deferred: [],
+            skippedByCap: [],
+            staged: [],
+            failed: [],
+          } satisfies DrainResult;
+        }) as never,
+        collectEligibleRefsFn: (async () => {
+          callOrder.push("collect");
+          const db = openExistingDatabase();
+          let indexedAtCollect = false;
+          try {
+            indexedAtCollect = getIndexedFilePaths(db).has(promotedPath);
+          } finally {
+            closeDatabase(db);
+          }
+          // Assert INSIDE the seam — this is the only point that observes the
+          // index mid-run, before the run's own end-of-run indexing (if any)
+          // could paper over an ordering bug.
+          expect(indexedAtCollect).toBe(true);
+          return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+        }) as never,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(callOrder).toEqual(["ensureIndex", "triage", "collect"]);
+
+      // Confirm from OUTSIDE the run too: the promoted file is indexed without
+      // this test ever having called a second full `akmIndex`.
+      const db = openExistingDatabase();
+      try {
+        expect(getIndexedFilePaths(db).has(promotedPath)).toBe(true);
+      } finally {
+        closeDatabase(db);
+      }
     },
     TIMEOUT_MS,
   );

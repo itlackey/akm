@@ -36,7 +36,6 @@ test("improve dedupes safe lowering notices through JSON and text output", async
               distill: { enabled: false },
               consolidate: { enabled: false },
               memoryInference: { enabled: false },
-              graphExtraction: { enabled: false },
               extract: { enabled: false },
               validation: { enabled: false },
               triage: { enabled: false },
@@ -114,7 +113,6 @@ test("improve dedupes safe lowering notices through JSON and text output", async
             durationMs: 0,
             notices: [notice],
           },
-          consolidationRan: false,
         })) as never,
         runImproveLoopStageFn: (async () => ({
           reflectsWithErrorContext: 0,
@@ -123,7 +121,6 @@ test("improve dedupes safe lowering notices through JSON and text output", async
         runImprovePostLoopStageFn: (async () => ({
           allWarnings: [],
           memoryInferenceDurationMs: 0,
-          graphExtractionDurationMs: 0,
         })) as never,
       }),
     );
@@ -163,7 +160,6 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
               distill: { enabled: false },
               consolidate: { enabled: false },
               memoryInference: { enabled: false },
-              graphExtraction: { enabled: false },
               extract: { enabled: false },
               validation: { enabled: false },
               triage: { enabled: false },
@@ -220,7 +216,6 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
             warnings: [],
             durationMs: 0,
           },
-          consolidationRan: false,
         };
       }) as never,
       runImproveLoopStageFn: (async () => ({
@@ -230,7 +225,6 @@ test("dry-run preserves the same plan-owned lowering notices as live output with
       runImprovePostLoopStageFn: (async () => ({
         allWarnings: [],
         memoryInferenceDurationMs: 0,
-        graphExtractionDurationMs: 0,
       })) as never,
     };
 

@@ -34,19 +34,19 @@
  * ## Schema evolution
  *
  * Same migration-safety contract as state.db: append-only `MIGRATIONS` applied
- * through the shared runner in src/storage/engines/sqlite-migrations.ts.
+ * through the shared runner in src/storage/sqlite-migrations.ts.
  *
  * @module logs-db
  */
 
 import path from "node:path";
 import type { Database, SqlValue } from "../storage/database";
+import { openManagedDatabase } from "../storage/managed-db";
 import {
   assertMigrationRegistry,
   type Migration,
   runMigrations as runSqliteMigrations,
-} from "../storage/engines/sqlite-migrations";
-import { openManagedDatabase } from "../storage/managed-db";
+} from "../storage/sqlite-migrations";
 import { getDataDir } from "./paths";
 
 // Re-export the boundary Database type so consumers can type their handles

@@ -60,13 +60,13 @@ describe("generateEmbeddingsForDb: throughput line sums the capped text actually
     if (!installation || !component) throw new Error("failed to derive a test bundle installation");
     texts.forEach((text, i) => {
       const name = `entry-${i}`;
-      const entry = { name, type: "memories", filename: `${name}.md` };
+      const entry = { name, type: "memories", filename: `${name}.md`, content: text };
       const provenance = deriveEntryProvenance(
         { bundleId: installation.id, componentId: component.id, adapterId: component.adapter },
         "memories",
         name,
       );
-      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, text, provenance);
+      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     });
   }
 

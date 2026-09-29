@@ -6,21 +6,28 @@ import fs from "node:fs";
 import path from "node:path";
 import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, SourceConfigEntry } from "../../core/config/config";
-import { bundleComponentConfig, bundlesToSourceEntries, getSources, loadConfig } from "../../core/config/config";
+import {
+  bundleComponentConfig,
+  bundleKeyForContentRoot,
+  bundlesToSourceEntries,
+  getSources,
+  isBundleEnabled,
+  loadConfig,
+} from "../../core/config/config";
+import { ConfigError } from "../../core/errors";
 import { getUnresolvedSourcesDir } from "../../core/paths";
+import { warn } from "../../core/warn";
 import { resolveGitContentRoot, resolveWritable } from "../../core/write-source";
 import { lockContentRootFor } from "../../integrations/lockfile";
 import { resolveSourceProviderFactory } from "../../sources/provider-factory";
 import { ensureWebsiteMirror } from "../../sources/snapshot-fetchers/website-ingest";
-// Eager side-effect imports so all built-in source providers self-register
-// before resolveEntryContentDir() runs.
-import "../../sources/providers/index";
-import { warn } from "../../core/warn";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface SearchSource {
   path: string;
+  /** Explicit working/default status; never inferred from array position. */
+  isDefault?: boolean;
   /** For installed sources, the installed stash id */
   registryId?: string;
   /** Effective policy after applying `resolveWritable`. */
@@ -43,7 +50,7 @@ export interface SearchSource {
  *   2. The configured `defaultBundle`, after component-root validation.
  *   3. Remaining configured bundles in installation-priority order.
  *
- * Disabled entries (`enabled: false`) are filtered after deduplication.
+ * Disabled entries (`enabled: false`) are excluded before materialization.
  * Missing configured roots remain in the result so the
  * indexer can classify their scan as incomplete instead of mistaking them for
  * removed sources.
@@ -61,10 +68,26 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
           ? undefined
           : resolveStashDir();
 
+  const implicitConfiguredBundle = implicitStashDir ? bundleKeyForContentRoot(config, implicitStashDir) : undefined;
+  if (implicitConfiguredBundle && !isBundleEnabled(config, implicitConfiguredBundle)) {
+    throw new ConfigError(
+      `The requested working source is disabled as bundle ${JSON.stringify(implicitConfiguredBundle)}.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+
   // Explicit and environment overrides stay first. Without either override,
   // the configured default enters through the validated loop below.
-  const sources: SearchSource[] = implicitStashDir ? [{ path: implicitStashDir, writable: true }] : [];
-  const seen = new Set<string>(implicitStashDir ? [implicitStashDir] : []);
+  const sources: SearchSource[] = implicitStashDir ? [{ path: implicitStashDir, writable: true, isDefault: true }] : [];
+  const sourceIdentity = (dir: string): string => {
+    const resolved = path.resolve(dir);
+    try {
+      return fs.realpathSync.native(resolved);
+    } catch {
+      return resolved;
+    }
+  };
+  const seen = new Set<string>(implicitStashDir ? [sourceIdentity(implicitStashDir)] : []);
 
   const addSource = (
     dir: string,
@@ -73,18 +96,21 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
     type: SourceConfigEntry["type"],
     adapterId?: string,
     unresolved = false,
+    isDefault = false,
   ) => {
     const resolved = path.resolve(dir);
-    if (seen.has(resolved)) {
+    const identity = sourceIdentity(resolved);
+    if (seen.has(identity)) {
       // Already in the source list — typically the primary stash injected at
       // sources[0] before this loop. Enrich that entry with whatever metadata
       // the matching config source carries so `--from <config-name>` can
       // find it via registryId. Without this, the primary stash entry stays
       // identity-less and a user-named primary source ("name": "my-stash")
       // would validate but match zero entries when filtering.
-      const existing = sources.find((s) => s.path === resolved);
+      const existing = sources.find((source) => sourceIdentity(source.path) === identity);
       if (existing && existing.type === undefined) {
         if (registryId) existing.registryId = registryId;
+        if (isDefault) existing.isDefault = true;
         existing.type = type;
         existing.writable = writable;
         existing.adapterId = adapterId;
@@ -92,13 +118,14 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       if (existing && unresolved) existing.unresolved = true;
       return;
     }
-    seen.add(resolved);
+    seen.add(identity);
     if (isSuspiciousStashRoot(dir)) {
       warn(`Warning: stash root "${dir}" appears to be a system directory. This may be unintentional.`);
     }
     sources.push({
       path: resolved,
       ...(registryId ? { registryId } : {}),
+      ...(isDefault ? { isDefault: true } : {}),
       writable,
       type,
       ...(adapterId ? { adapterId } : {}),
@@ -126,6 +153,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         entry.type,
         component?.adapter,
         true,
+        entry.name === config.defaultBundle,
       );
       continue;
     }
@@ -140,10 +168,19 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
         entry.type,
         component?.adapter,
         true,
+        entry.name === config.defaultBundle,
       );
       continue;
     }
-    addSource(dir, entry.name, component?.writable ?? resolveWritable(entry), entry.type, component?.adapter);
+    addSource(
+      dir,
+      entry.name,
+      component?.writable ?? resolveWritable(entry),
+      entry.type,
+      component?.adapter,
+      false,
+      entry.name === config.defaultBundle,
+    );
   }
 
   return sources;

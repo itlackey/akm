@@ -9,30 +9,33 @@
  * high-signal set of stash + registry hits and enrich each with the data
  * needed to act (ref, run, parameters, follow-up command).
  *
- * The exported `akmCurate()` API is the single entry point. Internal helpers
- * stay private. Tests can drive the public API or call the smaller pure
- * helpers (`curateSearchResults`, `deriveCurateFallbackQueries`,
- * `mergeCurateSearchResponses`) by importing them directly.
+ * Curation is one search with the fused ranking, the top `limit` hits, and
+ * per-hit enrichment (preview, run and parameters, support refs from the
+ * hit's declared links). An optional reranker reorders the top fused
+ * candidates first.
+ *
+ * The exported `akmCurate()` API is the single entry point; tests can also
+ * drive `curateSearchResults` with a fixture search response.
  */
 
-import fs from "node:fs";
-import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { parseRefInput } from "../../core/asset/resolve-ref";
-import { getIndexPassConfig, loadConfig } from "../../core/config/config";
+import { parseBundleRef } from "../../core/asset/asset-ref";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
+import { loadConfig } from "../../core/config/config";
 import { rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { nonTaskInput } from "../../core/non-task-input";
+import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import { enqueueGraphExtraction, hasGraphData } from "../../indexer/db/graph-db";
+import { searchHitContent } from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
   copySearchHitAttribution,
   getSearchHitAttribution,
   usageEventAttributionMetadata,
 } from "../../indexer/search/search-attribution";
-import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { insertUsageEvent, type UsageEventSource } from "../../indexer/usage/usage-events";
 import { estimateTokenCount } from "../../llm/embedders/remote";
-import { tryLlmFeature } from "../../llm/feature-gate";
+import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import { rerankDocuments } from "../../llm/rerank-client";
 import { truncateDescription } from "../../output/shapes/helpers";
 import type {
@@ -44,7 +47,6 @@ import type {
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
 import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
-import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
 import { akmSearch, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -116,79 +118,37 @@ export interface CurateOptions {
   /**
    * When true, skip logging usage events for this curate call (F2/R-055):
    * neither the top-level curate event nor the underlying search/show reads
-   * feed usage-events telemetry or ranking signals. Wired to `akm curate
-   * --no-track-usage`. Internal callers already pass `skipLogging: true` on
-   * their own nested `akmSearch`/`akmShowUnified` calls unconditionally
-   * (searchForCuration, enrichCuratedStashHit) — this flag additionally
-   * silences curate's OWN top-level event.
+   * feed usage-events telemetry. Wired to `akm curate --no-track-usage`.
+   * Curate's own nested `akmSearch`/`akmShowUnified` calls always pass
+   * `skipLogging: true` — this flag additionally silences curate's OWN
+   * top-level event.
    */
   skipLogging?: boolean;
 }
 
-const CURATE_FALLBACK_FILTER_WORDS = new Set([
-  "a",
-  "an",
-  "and",
-  "for",
-  "how",
-  "i",
-  "in",
-  "of",
-  "or",
-  "the",
-  "to",
-  "with",
-]);
-const CURATE_SHORT_FALLBACK_TOKENS = new Set(["ai", "ci", "cd", "go", "js", "ts"]);
-const MIN_CURATE_FALLBACK_TOKEN_LENGTH = 3;
-const MAX_CURATE_FALLBACK_KEYWORDS = 6;
-export const CURATE_SEARCH_LIMIT_MULTIPLIER = 4;
-export const MIN_CURATE_SEARCH_LIMIT = 12;
 const DEFAULT_CURATE_LIMIT = 4;
-const CURATE_CLOSE_SCORE_BAND = 0.12;
-// Used by `shouldRunCurateFallback` to judge whether the initial search
-// already returned strong results (a different purpose from ranking/keeping
-// hits — see that function for its own rationale).
-const CURATE_RELATIVE_SCORE_FLOOR = 0.7;
-const CURATE_FALLBACK_TOP_SCORE_THRESHOLD = 0.8;
-const CURATE_FALLBACK_STRONG_SCORE_FLOOR = 0.35;
 const MAX_CURATE_SUPPORT_REFS = 2;
-
-type CurateIntent = {
-  executionHeavy: boolean;
-  multiStep: boolean;
-  delegation: boolean;
-  recall: boolean;
-  reference: boolean;
-};
-
-type CurateFamily = { key: string; role: "root" } | { key: string; role: "reference"; topicTokens: string[] };
-
-type AnnotatedCurateHit = {
-  hit: SourceSearchHit;
-  rawScore: number;
-  adjustedScore: number;
-  originalIndex: number;
-  family?: CurateFamily;
-};
-
-type CollapsedCurateHit = {
-  hit: SourceSearchHit;
-  originalIndex: number;
-};
-
-const CURATE_REFERENCE_QUERY_RE = /\b(?:reference|docs?|guide|how|explain|learn|readme|why)\b/;
+/** Fused candidates the reranker reorders when `search.curateRerank.topN` is unset. */
+const DEFAULT_CURATE_RERANK_TOP_N = 30;
+/** Characters of name, description and content sent to the reranker per candidate. */
+const RERANK_DOCUMENT_CHARS = 2000;
 
 /**
  * Fire-and-forget: log a curate event to the usage_events table and events.jsonl.
  * Never blocks the caller; errors are silently ignored.
  */
 function logCurateEvent(
-  query: string,
+  rawQuery: string,
   result: CurateResponse,
   eventSource: UsageEventSource = "user",
   attributionProjection: AttributionProjection = "full",
 ): void {
+  // Credentials pasted into a query (e.g. by the Claude Code hook that
+  // curates every user prompt) must never reach state.db verbatim — see
+  // `redactCredentialPatterns`. Redacted once here so every persistence call
+  // below (events.metadata_json via appendEvent, usage_events.query via
+  // insertUsageEvent) gets the same scrubbed text.
+  const query = redactCredentialPatterns(rawQuery);
   const itemRefs = result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`));
   appendEvent({
     eventType: "curate",
@@ -247,15 +207,31 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     );
   }
 
+  const nonTask = nonTaskInput(trimmedQuery);
+  if (nonTask) {
+    const abstained: CurateResponse = {
+      query: options.query,
+      summary: `Curate abstained: the input is ${nonTask}, not a task.`,
+      items: [],
+      tip: 'Nothing was selected on purpose. To curate for it, pass the task itself: akm curate "<what you are trying to do>".',
+    };
+    if (!options.skipLogging) {
+      logCurateEvent(options.query, abstained, options.eventSource, options.attributionProjection);
+    }
+    return abstained;
+  }
+
   const limit = options.limit && options.limit > 0 ? options.limit : DEFAULT_CURATE_LIMIT;
   const source = options.source ?? parseSearchSource("local");
   const searchResponse =
     options.searchResponse ??
-    (await searchForCuration({
+    (await akmSearch({
       query: options.query,
       type: options.type,
-      limit: Math.max(limit * CURATE_SEARCH_LIMIT_MULTIPLIER, MIN_CURATE_SEARCH_LIMIT),
+      // An enabled reranker reorders the top fused candidates, not just the final `limit`.
+      limit: Math.max(limit, rerankTopN(loadConfig())),
       source,
+      skipLogging: true,
     }));
   const result = await curateSearchResults(options.query, searchResponse, limit, options.type, options.eventSource);
   if (!options.skipLogging) {
@@ -274,21 +250,14 @@ export async function curateSearchResults(
   const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
 
-  // F3/R-018: `--type` must NARROW the candidate pool, not bypass curation.
-  // Previously a set `selectedType` skipped `selectCuratedStashHits` (ranking,
-  // intent nudges, score floor) entirely, taking the raw top-N of whatever
-  // order the hits arrived in. Filtering the pool down to the requested type up front and
-  // then running the SAME pipeline over it gives `--type` its intended
-  // "narrow, don't disable" semantics — and matters even when the caller's
-  // search already applied a type filter at the DB layer, because
-  // `curateSearchResults` is also driven directly (tests, `searchResponse`
-  // fixtures) with a `SearchResponse` that was never type-filtered.
+  // F3/R-018: `--type` NARROWS the candidate pool. The caller's search
+  // usually applied the filter already, but `curateSearchResults` is also
+  // driven directly (tests, `searchResponse` fixtures) with a
+  // `SearchResponse` that was never type-filtered.
   const stashHits =
     selectedType && selectedType !== "any" ? allStashHits.filter((hit) => hit.type === selectedType) : allStashHits;
 
-  const selected = selectCuratedStashHits(query, stashHits, limit);
-  const selectedStashHits = await maybeRerankCuratedStashHits(query, selected.selected);
-  const supportRefsByRef = selected.supportRefsByRef;
+  const selectedStashHits = (await maybeRerankCuratedStashHits(query, stashHits)).slice(0, limit);
 
   // F4/R-019: respect `--limit` for registry fill instead of hard-capping it
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
@@ -298,11 +267,7 @@ export async function curateSearchResults(
 
   const items = [
     ...(await Promise.all(
-      selectedStashHits
-        .slice(0, limit)
-        .map((hit) =>
-          enrichCuratedStashHit(query, hit, supportRefsByRef.get(hit.ref) ?? [], selectedRefs, eventSource),
-        ),
+      selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource)),
     )),
     ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
   ].slice(0, limit);
@@ -382,7 +347,6 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
 async function enrichCuratedStashHit(
   query: string,
   hit: SourceSearchHit,
-  supportRefs: CurateSupportRef[],
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
 ): Promise<CuratedStashItem> {
@@ -393,14 +357,9 @@ async function enrichCuratedStashHit(
     shown = undefined;
   }
 
-  // #624-P3: when lazy graph extraction is opted in, enqueue an ungraphed
-  // asset for a later pass to extract. Fire-and-forget, non-blocking, NO inline
-  // extraction and NO LLM call here. Default-off (flag unset) = byte-identical.
-  if (shown?.path) maybeEnqueueLazyGraph(shown.path);
-
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
-  const mergedSupportRefs = mergeCurateSupportRefs(supportRefs, shown?.related?.hits, selectedRefs, hit.ref);
+  const supportRefs = buildCurateSupportRefs(shown?.links, selectedRefs, hit.ref);
 
   const item: CuratedStashItem = {
     source: "local",
@@ -417,53 +376,13 @@ async function enrichCuratedStashHit(
     ...(shown?.keys?.length ? { keys: shown.keys } : {}),
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
-    ...(mergedSupportRefs.length > 0 ? { supportRefs: mergedSupportRefs } : {}),
+    ...(supportRefs.length > 0 ? { supportRefs } : {}),
     followUp: `akm show ${hit.ref}`,
     reason: buildCuratedReason(query, shown?.type ?? hit.type),
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
   return item;
-}
-
-/**
- * #624-P3 — enqueue an ungraphed asset for lazy graph extraction when the
- * `index.graph.lazyGraphExtraction` flag is on. Pure side-effect, fully
- * best-effort: any failure (config, fs, db) is swallowed so curate never fails
- * on it. NO LLM call and NO inline extraction — only a cheap queue insert.
- * Default-off (flag unset) returns immediately = byte-identical behavior.
- */
-function maybeEnqueueLazyGraph(assetPath: string): void {
-  try {
-    const config = loadConfig();
-    if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction !== true) return;
-
-    const sources = resolveSourceEntries();
-    const source = findSourceForPath(assetPath, sources);
-    const stashRoot = source?.path;
-    if (!stashRoot) return;
-
-    let raw: string;
-    try {
-      raw = fs.readFileSync(assetPath, "utf8");
-    } catch {
-      return;
-    }
-    const body = parseFrontmatter(raw).content.trim();
-    if (!body) return;
-    const bodyHash = computeBodyHash(body);
-
-    withIndexDb(
-      (db) => {
-        if (!hasGraphData(db, stashRoot, assetPath)) {
-          enqueueGraphExtraction(db, stashRoot, assetPath, bodyHash, 0);
-        }
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-  }
 }
 
 function buildCuratedRegistryItem(query: string, hit: RegistrySearchResultHit): CuratedRegistryItem {
@@ -520,292 +439,20 @@ function buildCurateSummary(query: string, items: CuratedItem[]): string {
   return `Selected ${items.length} curated result${items.length === 1 ? "" : "s"}: ${labels.join(", ")}.`;
 }
 
-export function deriveCurateFallbackQueries(query: string): string[] {
-  const normalizedWhole = query
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-  const tokens = Array.from(
-    new Set(
-      query
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .map((token) => token.trim())
-        .filter(
-          (token) =>
-            token.length > 0 &&
-            !CURATE_FALLBACK_FILTER_WORDS.has(token) &&
-            (token.length >= MIN_CURATE_FALLBACK_TOKEN_LENGTH || CURATE_SHORT_FALLBACK_TOKENS.has(token)),
-        ),
-    ),
-  ).slice(0, MAX_CURATE_FALLBACK_KEYWORDS);
-  if (tokens.length === 1 && tokens[0] === normalizedWhole) return [];
-  return tokens;
+/** How many fused candidates curate fetches for the reranker; 0 when reranking is off. */
+function rerankTopN(config: ReturnType<typeof loadConfig>): number {
+  if (!isLlmFeatureEnabled(config, "curate_rerank")) return 0;
+  return config.search?.curateRerank?.topN ?? DEFAULT_CURATE_RERANK_TOP_N;
 }
-
-export function mergeCurateSearchResponses(base: SearchResponse, extras: SearchResponse[]): SearchResponse {
-  // The base (full-query) ranking is authoritative by default; keyword
-  // fallbacks add recall without comparing their raw scores to the full-query
-  // score scale. Base order is preserved and fallback-only hits append below,
-  // except for the narrow weak-provenance promotion documented below. Duplicate
-  // refs keep their base position but take the maximum score for the downstream
-  // relevance floor.
-  const bestExtraStashScore = new Map<string, number>();
-  for (const result of extras) {
-    for (const hit of result.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
-      const prev = bestExtraStashScore.get(hit.ref);
-      if (prev === undefined || (hit.score ?? 0) > prev) bestExtraStashScore.set(hit.ref, hit.score ?? 0);
-    }
-  }
-  const baseRefs = new Set<string>();
-  const baseStash: SourceSearchHit[] = [];
-  for (const hit of base.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
-    baseRefs.add(hit.ref);
-    const extraScore = bestExtraStashScore.get(hit.ref);
-    baseStash.push(extraScore !== undefined && extraScore > (hit.score ?? 0) ? { ...hit, score: extraScore } : hit);
-  }
-  const extraOnly = new Map<string, SourceSearchHit>();
-  for (const result of extras) {
-    for (const hit of result.hits.filter((entry): entry is SourceSearchHit => entry.type !== "registry")) {
-      if (baseRefs.has(hit.ref)) continue;
-      const existing = extraOnly.get(hit.ref);
-      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) extraOnly.set(hit.ref, hit);
-    }
-  }
-  // Fallback-only hits ordinarily stay below every full-query hit through the
-  // downstream selector, which re-sorts by score and derives its relevance
-  // floor from the leader. Restamping them below the minimum base score keeps a
-  // single-token score from leapfrogging contextual results. The one exception
-  // is a strong name match repairing a lexically weak base, selected below.
-  const sortedExtra = [...extraOnly.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-  const lexicalAttribution = (hit: SourceSearchHit) => getSearchHitAttribution(hit)?.lexical;
-  // The full-query base remains authoritative unless its lexical provenance is
-  // itself weak: relaxed recovery, or no hit whose name covers the query. In
-  // that case one fallback discovery with strong name coverage may lead. This
-  // preserves contextual base ranking while allowing measured recall to repair
-  // a thin match without comparing unrelated raw FTS score scales.
-  const weakLexicalBase =
-    baseStash.length > 0 &&
-    baseStash.every((hit) => {
-      const lexical = lexicalAttribution(hit);
-      return lexical !== undefined && (lexical.execution === "relaxed" || lexical.nameMatchTier < 2);
-    });
-  const promotedExtraIndex = weakLexicalBase
-    ? sortedExtra.findIndex((hit) => (lexicalAttribution(hit)?.nameMatchTier ?? 0) >= 2)
-    : -1;
-  const promotedExtra = promotedExtraIndex >= 0 ? sortedExtra[promotedExtraIndex] : undefined;
-  const remainingExtra =
-    promotedExtraIndex >= 0 ? sortedExtra.filter((_, index) => index !== promotedExtraIndex) : sortedExtra;
-  const minBaseScore = baseStash.length
-    ? Math.min(...baseStash.map((hit) => hit.score ?? 0))
-    : Number.POSITIVE_INFINITY;
-  const cappedExtra = baseStash.length
-    ? remainingExtra.map((hit, i) => ({ ...hit, score: minBaseScore - 1e-6 * (i + 1) }))
-    : remainingExtra;
-  const mergedHits = [
-    ...(promotedExtra ? [{ ...promotedExtra, score: minBaseScore }] : []),
-    ...baseStash,
-    ...cappedExtra,
-  ];
-
-  // Registry hits are supplemental fill — same rule: base first (max score on
-  // dups), then fallback-only registry hits appended by score.
-  const bestExtraRegScore = new Map<string, number>();
-  for (const result of extras) {
-    for (const hit of result.registryHits ?? []) {
-      const prev = bestExtraRegScore.get(hit.id);
-      if (prev === undefined || (hit.score ?? 0) > prev) bestExtraRegScore.set(hit.id, hit.score ?? 0);
-    }
-  }
-  const baseRegIds = new Set<string>();
-  const baseReg: RegistrySearchResultHit[] = [];
-  for (const hit of base.registryHits ?? []) {
-    baseRegIds.add(hit.id);
-    const extraScore = bestExtraRegScore.get(hit.id);
-    baseReg.push(extraScore !== undefined && extraScore > (hit.score ?? 0) ? { ...hit, score: extraScore } : hit);
-  }
-  const extraRegOnly = new Map<string, RegistrySearchResultHit>();
-  for (const result of extras) {
-    for (const hit of result.registryHits ?? []) {
-      if (baseRegIds.has(hit.id)) continue;
-      const existing = extraRegOnly.get(hit.id);
-      if (!existing || (hit.score ?? 0) > (existing.score ?? 0)) extraRegOnly.set(hit.id, hit);
-    }
-  }
-
-  const warnings = Array.from(
-    new Set([...(base.warnings ?? []), ...extras.flatMap((result) => result.warnings ?? [])]),
-  );
-  const mergedRegistryHits = [
-    ...baseReg,
-    ...[...extraRegOnly.values()].sort((a, b) => (b.score ?? 0) - (a.score ?? 0)),
-  ];
-  const modes = [base.searchMode, ...extras.map((result) => result.searchMode)].filter(
-    (mode): mode is SearchExecutionMode => mode !== undefined,
-  );
-  const searchMode = modes.includes("fts-fallback")
-    ? "fts-fallback"
-    : modes.includes("semantic")
-      ? "semantic"
-      : modes.includes("keyword")
-        ? "keyword"
-        : undefined;
-
-  return {
-    ...base,
-    hits: mergedHits,
-    ...(mergedRegistryHits.length > 0 ? { registryHits: mergedRegistryHits } : {}),
-    ...(warnings.length > 0 ? { warnings } : {}),
-    ...(searchMode ? { searchMode } : {}),
-    ...(mergedHits.length > 0 || mergedRegistryHits.length > 0 ? { tip: undefined } : {}),
-  };
-}
-
-export async function searchForCuration(input: {
-  query: string;
-  type?: string;
-  limit: number;
-  source: ReturnType<typeof parseSearchSource>;
-}): Promise<SearchResponse> {
-  const initial = await akmSearch({ ...input, skipLogging: true });
-  if (!shouldRunCurateFallback(initial, input.limit)) return initial;
-
-  const fallbackQueries = deriveCurateFallbackQueries(input.query);
-  if (fallbackQueries.length === 0) return initial;
-
-  const fallbackResults = await Promise.all(
-    fallbackQueries.map((token) =>
-      akmSearch({
-        query: token,
-        type: input.type,
-        limit: input.limit,
-        source: input.source,
-        skipLogging: true,
-      }),
-    ),
-  );
-  return mergeCurateSearchResponses(initial, fallbackResults);
-}
-
-function parseCurateIntent(query: string): CurateIntent {
-  const lower = query.toLowerCase();
-  return {
-    executionHeavy: /(run|script|bash|shell|cli|execute|automation|deploy|build|test|lint)/.test(lower),
-    multiStep: /(plan|workflow|steps?|procedure|rollout|review|migration|release|checklist)/.test(lower),
-    delegation: /(agent|assistant|planner|reviewer|architect|prompt)/.test(lower),
-    recall: /(memory|context|recall|remember)/.test(lower),
-    reference: CURATE_REFERENCE_QUERY_RE.test(lower),
-  };
-}
-
-function computeCurateTypeNudge(type: string, intent: CurateIntent): number {
-  let nudge = 0;
-  if (intent.executionHeavy) {
-    if (type === "script") nudge += 0.06;
-    else if (type === "command") nudge += 0.04;
-    else if (type === "memory") nudge -= 0.04;
-  }
-  if (intent.multiStep) {
-    if (type === "workflow") nudge += 0.06;
-    else if (type === "skill") nudge += 0.04;
-    else if (type === "knowledge") nudge -= 0.02;
-  }
-  if (intent.delegation && type === "agent") nudge += 0.06;
-  if (intent.recall && type === "memory") nudge += 0.08;
-  if (intent.reference) {
-    if (type === "knowledge") nudge += 0.05;
-    else if (type === "skill") nudge += 0.02;
-  }
-  return nudge;
-}
-
-function getCurateFamily(ref: string): CurateFamily | undefined {
-  try {
-    // F4b: `ref` is a search-hit ref in the 0.9.0 conceptId grammar — parse via
-    // the new-grammar `parseRefInput` so skill/reference family grouping still
-    // recognizes it. Search may add an opaque Markdown selector; identity and
-    // family ownership are on the parent asset, not that selector.
-    const parsed = parseRefInput(ref.split("#", 1)[0]!);
-    if (parsed.type === "skill") {
-      return { key: parsed.name, role: "root" };
-    }
-    if (parsed.type !== "knowledge") return undefined;
-    const match = /^skills\/(.+?)\/references\/(.+)$/.exec(parsed.name);
-    if (!match) return undefined;
-    return {
-      key: match[1]!,
-      role: "reference",
-      topicTokens: match[2]!
-        .split(/[^a-z0-9]+/i)
-        .map((token) => token.trim().toLowerCase())
-        .filter(Boolean),
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function annotateCurateHit(
-  query: string,
-  hit: SourceSearchHit,
-  index: number,
-  intent: CurateIntent,
-): AnnotatedCurateHit {
-  const rawScore = hit.score ?? 0;
-  const family = getCurateFamily(hit.ref);
-  let adjustedScore = rawScore + computeCurateTypeNudge(hit.type, intent);
-  if (family?.role === "root" && !isNarrowReferenceFamilyQuery(query, family)) adjustedScore += 0.07;
-  if (family?.role === "reference" && isNarrowReferenceFamilyQuery(query, family)) adjustedScore += 0.07;
-  return {
-    hit,
-    rawScore,
-    adjustedScore,
-    originalIndex: index,
-    family,
-  };
-}
-
-function compareCurateHits(a: AnnotatedCurateHit, b: AnnotatedCurateHit): number {
-  const rawDiff = b.rawScore - a.rawScore;
-  if (Math.abs(rawDiff) > CURATE_CLOSE_SCORE_BAND) return rawDiff;
-
-  const adjustedDiff = b.adjustedScore - a.adjustedScore;
-  if (adjustedDiff !== 0) return adjustedDiff;
-  if (rawDiff !== 0) return rawDiff;
-  return a.originalIndex - b.originalIndex;
-}
-
-function isNarrowReferenceFamilyQuery(query: string, family: CurateFamily | undefined): boolean {
-  if (!family || family.role !== "reference") return false;
-  const lower = query.toLowerCase();
-  if (CURATE_REFERENCE_QUERY_RE.test(lower)) return true;
-  return family.topicTokens.some((token) => token.length >= 3 && lower.includes(token));
-}
-
-function appendCurateSupportRef(
-  supportRefsByRef: Map<string, CurateSupportRef[]>,
-  ownerRef: string,
-  supportRef: CurateSupportRef,
-): void {
-  const existing = supportRefsByRef.get(ownerRef) ?? [];
-  if (existing.some((entry) => entry.ref === supportRef.ref)) return;
-  supportRefsByRef.set(ownerRef, [...existing, supportRef]);
-}
-
-/** Default number of `selectCuratedStashHits` candidates sent to the reranker when `search.curateRerank.topN` isn't set. */
-const DEFAULT_CURATE_RERANK_TOP_N = 8;
 
 /**
- * Optional cross-encoder rerank pass over curate's already-selected, already-
- * ranked candidates (#951). Disabled by default (`search.curateRerank.enabled`
- * is falsy) and, when enabled, best-effort: any failure (misconfigured
- * endpoint, network error, timeout, malformed response) falls back to
- * `selectCuratedStashHits`'s own ranking unchanged — a reranker outage must
- * never turn into a curate failure.
- *
- * Only the top `topN` (default {@link DEFAULT_CURATE_RERANK_TOP_N}) already-
- * selected hits are sent (bounded request size); anything past that keeps its
- * original position appended after the reranked prefix.
+ * Optional cross-encoder rerank of the top fused candidates (#951). Disabled
+ * by default (`search.curateRerank.enabled`) and, when enabled, best-effort:
+ * any failure (misconfigured endpoint, network error, timeout, malformed
+ * response) keeps the fused order — a reranker outage must never turn into a
+ * curate failure. The top `topN` candidates (default
+ * {@link DEFAULT_CURATE_RERANK_TOP_N}) are sent as name, description and the
+ * start of the indexed content; the rest keep their fused order after them.
  */
 async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[]): Promise<SourceSearchHit[]> {
   if (hits.length <= 1) return hits;
@@ -815,11 +462,9 @@ async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[
     "curate_rerank",
     config,
     async () => {
-      const topN = rerankConfig?.topN ?? DEFAULT_CURATE_RERANK_TOP_N;
-      const head = hits.slice(0, topN);
-      const tail = hits.slice(topN);
-      const documents = head.map((hit) => [hit.name, hit.description].filter(Boolean).join(" — "));
-      const ranked = await rerankDocuments(rerankConfig ?? {}, query, documents);
+      const head = hits.slice(0, rerankTopN(config));
+      const tail = hits.slice(head.length);
+      const ranked = await rerankDocuments(rerankConfig ?? {}, query, rerankDocumentTexts(head));
       const rerankedHead = ranked
         .map(({ index }) => head[index])
         .filter((hit): hit is SourceSearchHit => hit !== undefined);
@@ -830,116 +475,54 @@ async function maybeRerankCuratedStashHits(query: string, hits: SourceSearchHit[
   );
 }
 
-function selectCuratedStashHits(
-  query: string,
-  hits: SourceSearchHit[],
-  limit: number,
-): { selected: SourceSearchHit[]; supportRefsByRef: Map<string, CurateSupportRef[]> } {
-  const intent = parseCurateIntent(query);
-  const collapsed = collapseCurateFamilies(query, hits);
-  const ranked = collapsed.hits
-    .map(({ hit, originalIndex }) => annotateCurateHit(query, hit, originalIndex, intent))
-    .sort(compareCurateHits);
-  const supportRefsByRef = collapsed.supportRefsByRef;
-
-  return { selected: ranked.slice(0, limit).map((entry) => entry.hit), supportRefsByRef };
+/**
+ * Name, description and the start of each hit's indexed content, capped for
+ * the reranker. The content is the index's safe projection (env and secret
+ * values never reach it), never the raw file.
+ */
+function rerankDocumentTexts(hits: SourceSearchHit[]): string[] {
+  return hits.map((hit) =>
+    [hit.name, hit.description, searchHitContent(hit)].filter(Boolean).join("\n").slice(0, RERANK_DOCUMENT_CHARS),
+  );
 }
 
-function collapseCurateFamilies(
-  query: string,
-  hits: SourceSearchHit[],
-): { hits: CollapsedCurateHit[]; supportRefsByRef: Map<string, CurateSupportRef[]> } {
-  const passthrough: CollapsedCurateHit[] = [];
-  const supportRefsByRef = new Map<string, CurateSupportRef[]>();
-  const groups = new Map<
-    string,
-    {
-      root?: CollapsedCurateHit;
-      references: CollapsedCurateHit[];
-    }
-  >();
-
-  for (const [index, hit] of hits.entries()) {
-    const family = getCurateFamily(hit.ref);
-    if (!family) {
-      passthrough.push({ hit, originalIndex: index });
-      continue;
-    }
-    const group = groups.get(family.key) ?? { references: [] };
-    if (family.role === "root") {
-      if (!group.root) group.root = { hit, originalIndex: index };
-    } else {
-      group.references.push({ hit, originalIndex: index });
-    }
-    groups.set(family.key, group);
-  }
-
-  const collapsedFamilies: CollapsedCurateHit[] = [];
-  for (const group of groups.values()) {
-    const bestReference = group.references[0];
-    const representative =
-      group.root && !isNarrowReferenceFamilyQuery(query, getCurateFamily(bestReference?.hit.ref ?? group.root.hit.ref))
-        ? group.root
-        : (bestReference ?? group.root);
-    if (!representative) continue;
-
-    collapsedFamilies.push(representative);
-    const supportCandidates = [group.root, ...group.references]
-      .filter((entry): entry is CollapsedCurateHit => {
-        return entry !== undefined && entry.hit.ref !== representative.hit.ref;
-      })
-      .sort((a, b) => {
-        if (a === group.root) return -1;
-        if (b === group.root) return 1;
-        return a.hit.ref.localeCompare(b.hit.ref);
-      });
-    for (const support of supportCandidates) {
-      appendCurateSupportRef(supportRefsByRef, representative.hit.ref, {
-        ref: support.hit.ref,
-        type: support.hit.type,
-        reason: "Related family asset to inspect next.",
-      });
-    }
-  }
-
-  return {
-    hits: [...passthrough, ...collapsedFamilies].sort((a, b) => a.originalIndex - b.originalIndex),
-    supportRefsByRef,
-  };
-}
-
-function mergeCurateSupportRefs(
-  seeded: CurateSupportRef[],
-  relatedHits:
-    | Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>
-    | undefined,
+/**
+ * Up to {@link MAX_CURATE_SUPPORT_REFS} assets the hit's declared links (#935)
+ * name, not already selected: what the hit links to first, then what links to
+ * it, in the order `akm show` lists them. The LLM entity graph's `related`
+ * list no longer feeds them.
+ */
+function buildCurateSupportRefs(
+  links: ShowResponse["links"],
   selectedRefs: Set<string>,
   ownerRef: string,
 ): CurateSupportRef[] {
-  const merged: CurateSupportRef[] = [];
-  for (const entry of seeded) {
-    if (entry.ref === ownerRef || selectedRefs.has(entry.ref)) continue;
-    if (merged.some((existing) => existing.ref === entry.ref)) continue;
-    merged.push(entry);
-    if (merged.length >= MAX_CURATE_SUPPORT_REFS) return merged;
+  const supportRefs: CurateSupportRef[] = [];
+  for (const [part, direction] of [
+    ["outgoing", "from"],
+    ["incoming", "to"],
+  ] as const) {
+    for (const [kind, group] of Object.entries(links?.[part] ?? {})) {
+      for (const ref of group.refs) {
+        if (ref === ownerRef || selectedRefs.has(ref) || supportRefs.some((existing) => existing.ref === ref)) continue;
+        const type = supportRefType(ref);
+        supportRefs.push({
+          ref,
+          ...(type ? { type } : {}),
+          reason: `Declared link (${kind}) ${direction} this asset.`,
+        });
+        if (supportRefs.length >= MAX_CURATE_SUPPORT_REFS) return supportRefs;
+      }
+    }
   }
-
-  if (!Array.isArray(relatedHits)) return merged;
-  for (const hit of relatedHits) {
-    if (!hit.ref || hit.ref === ownerRef || selectedRefs.has(hit.ref)) continue;
-    if (merged.some((existing) => existing.ref === hit.ref)) continue;
-    merged.push({ ref: hit.ref, type: hit.type, reason: "Related asset via shared entities." });
-    if (merged.length >= MAX_CURATE_SUPPORT_REFS) break;
-  }
-  return merged;
+  return supportRefs;
 }
 
-function shouldRunCurateFallback(initial: SearchResponse, desiredCount: number): boolean {
-  const stashHits = initial.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
-  if (stashHits.length === 0) return true;
-
-  const topScore = stashHits[0]?.score ?? 0;
-  const strongFloor = Math.max(CURATE_FALLBACK_STRONG_SCORE_FLOOR, topScore * CURATE_RELATIVE_SCORE_FLOOR);
-  const strongCount = stashHits.filter((hit) => (hit.score ?? 0) >= strongFloor).length;
-  return !(topScore >= CURATE_FALLBACK_TOP_SCORE_THRESHOLD && strongCount >= Math.min(2, desiredCount));
+/** The asset type a ref's conceptId names (`memories/x` → `memory`), when it names one. */
+function supportRefType(ref: string): string | undefined {
+  try {
+    return typeNameFromConceptId(parseBundleRef(ref).conceptId)?.type;
+  } catch {
+    return undefined;
+  }
 }

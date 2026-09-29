@@ -189,7 +189,6 @@ function renderExecSummary(vm: HealthReportViewModel): string {
   const trendRows = [
     trendLi("Decision quality", vm.trend.decisionQuality),
     trendLi("Output volume", vm.trend.outputVolume),
-    trendLi("Failures", vm.trend.failures),
     trendLi("Latency", vm.trend.latency),
   ].join("");
 
@@ -214,7 +213,6 @@ function renderExecSummary(vm: HealthReportViewModel): string {
           `<abbr title="Candidates reviewed but intentionally left unchanged on this run.">${vm.latest.judgedNoAction}</abbr>`,
         ),
         li("MI written", String(vm.latest.miWritten)),
-        li("Graph entities/relations", `${vm.latest.geEntities} / ${vm.latest.geRelations}`),
       ].join("")
     : '<li><span class="k">No runs in window</span><span class="v">—</span></li>';
 
@@ -275,7 +273,7 @@ function renderExecSummary(vm: HealthReportViewModel): string {
       </div>
     </div>
     <div class="overall">Overall trend: <b>${esc(vm.trend.overall)}</b> ${overallEmoji}
-      &nbsp;·&nbsp; based on decision quality, output volume, failures, and latency ${
+      &nbsp;·&nbsp; based on decision quality, output volume, and latency ${
         vm.comparisonMode === "custom" ? "across the selected windows" : "vs the prior window"
       }.</div>`.trim();
 }
@@ -308,12 +306,6 @@ function renderKpiCards(vm: HealthReportViewModel): string {
     kpiCard("neutral", "Median Duration", `${vm.medianDurMin}m`, `p95 = ${vm.p95DurMin}m`),
     kpiCard("blue", "Total Promoted", num(vm.consolidation.promoted), `avg ${vm.avgPromoted} / run`),
     kpiCard("blue", "MI Written", num(vm.miWritten), `${vm.miYieldRate} yield rate`),
-    kpiCard(
-      "purple",
-      "Graph Entities",
-      num(vm.graphExtraction.entities),
-      `+${num(vm.graphExtraction.relations)} relations`,
-    ),
     kpiCard(
       "neutral",
       "Stash Derived",
@@ -446,50 +438,6 @@ function renderActionItems(vm: HealthReportViewModel): string {
       cls: "warn",
       title: "No recent improve runs",
       descHtml: `Newest run is ${esc(latestRunHuman)} — older than the 6h freshness threshold. Check the improve scheduler/cron.`,
-    });
-  }
-
-  // WS-5: corpus entrenchment flag.
-  if (vm.degradation?.entrenchmentFlagged) {
-    pushItem({
-      key: "corpus-entrenchment",
-      prio: "P2",
-      cls: "warn",
-      title: "Corpus entrenchment risk: retrieval_salience Gini > 0.35",
-      descHtml:
-        "A small set of assets dominates retrieval — retrieval diversity is low. " +
-        "Review top-ranked assets for stale or over-represented content. " +
-        `Corpus diversity proxy: ${esc(String(vm.degradation.corpusCentroidDistance))}.`,
-      remedy: "akm health --format json | jq '.improve.degradation'",
-    });
-  }
-
-  // Low-tail companion: salience distribution collapsed toward uniform.
-  if (vm.degradation?.salienceUniformityFlagged) {
-    pushItem({
-      key: "salience-uniformity-collapse",
-      prio: "P2",
-      cls: "warn",
-      title: "Salience distribution collapsed: retrieval_salience Gini < 0.08",
-      descHtml:
-        `The ${vm.degradation.retrievalSalienceSampleSize} observed, resolvable salience scores are near-uniform — ` +
-        "ranking carries little discrimination among assets with retrieval evidence. " +
-        `Corpus diversity proxy: ${esc(String(vm.degradation.corpusCentroidDistance))}.`,
-      remedy: "akm health --format json | jq '.improve.degradation'",
-    });
-  }
-
-  // WS-5: over-budget consolidation advisory.
-  if (vm.perf.overBudgetRuns > 0) {
-    pushItem({
-      key: "over-budget-consolidation",
-      prio: "P2",
-      cls: "warn",
-      title: `${vm.perf.overBudgetRuns} consolidation run${vm.perf.overBudgetRuns === 1 ? "" : "s"} exceeded budget`,
-      descHtml:
-        "Consolidation phase wall time exceeded the total run budget on these runs. " +
-        "Consider increasing the timeout or reducing the consolidation pool via strategy config.",
-      remedy: "akm config list",
     });
   }
 

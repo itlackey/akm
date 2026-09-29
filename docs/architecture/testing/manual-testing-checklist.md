@@ -674,15 +674,15 @@ test -s "$AKM_SANDBOX/index-verbose.stderr"
 
 ```sh
 akm search k8s-deploy \
-  --detail full --no-track-usage --no-project-context --format json |
+  --detail full --no-track-usage --format json |
   jq -e '
     .hits[0].ref == "skills/k8s-deploy" and
     .hits[0].type == "skill" and
     .hits[0].score >= 0 and .hits[0].score <= 1
   '
 
-json_count="$(akm search docker --no-track-usage --no-project-context | jq '.hits | length')"
-jsonl_count="$(akm search docker --no-track-usage --no-project-context --format jsonl | jq -s 'length')"
+json_count="$(akm search docker --no-track-usage | jq '.hits | length')"
+jsonl_count="$(akm search docker --no-track-usage --format jsonl | jq -s 'length')"
 test "$json_count" -gt 0
 test "$json_count" -eq "$jsonl_count"
 ```
@@ -704,9 +704,8 @@ test "$json_count" -eq "$jsonl_count"
 - [ ] **[LOCAL]** Belief current/historical/all partitions state correctly.
 - [ ] **[LOCAL]** Proposed quality and sessions are excluded by default and
       included only through explicit flags.
-- [ ] **[LOCAL]** `--no-track-usage` leaves event/ranking state unchanged;
+- [ ] **[LOCAL]** `--no-track-usage` leaves usage-event state unchanged;
       default successful read advances it.
-- [ ] **[LOCAL]** `--no-project-context` removes cwd/repository boost.
 - [ ] **[LOCAL]** Zero/negative/fractional/prefix numeric limits (`2x`), overflow,
       and conflicting repeats are rejected. `parseInt` prefix acceptance fails.
 
@@ -994,19 +993,19 @@ Production must reject loopback/private hosts:
 
 ```sh
 expect_error 78 INVALID_CONFIG_FILE \
-  bundle add "$AKM_QA_WEBSITE_URL" --name private-site --allow-insecure
+  bundle add "$AKM_QA_WEBSITE_URL" --name private-site --allow-insecure-transport
 ```
 
 Protocol-only fixture:
 
 ```sh
 NODE_ENV=test akm bundle add "$AKM_QA_WEBSITE_URL" \
-  --name qa-site --allow-insecure --max-pages 2 --max-depth 1
+  --name qa-site --allow-insecure-transport --max-pages 2 --max-depth 1
 NODE_ENV=test akm search qa-site --from qa-site --no-track-usage
 ```
 
 - [ ] **[SERVICE]** Production blocks private start/redirect hosts;
-      `--allow-insecure` accepts transport risk only, not SSRF.
+      `--allow-insecure-transport` accepts transport risk only, not SSRF.
 - [ ] **[SERVICE]** Test-seam crawl respects page/depth/robots; request log proves
       private path not fetched.
 - [ ] **[SERVICE]** Change site version to `v2`, named-update, and prove v2 bytes.
@@ -1023,14 +1022,14 @@ NODE_ENV=test akm search qa-site --from qa-site --no-track-usage
 
 ```sh
 expect_error 2 INVALID_FLAG_VALUE registry add "$AKM_QA_REGISTRY_URL" --name qa-registry
-akm registry add "$AKM_QA_REGISTRY_URL" --name qa-registry --allow-insecure
+akm registry add "$AKM_QA_REGISTRY_URL" --name qa-registry --allow-insecure-transport
 akm registry list | jq -e '.registries[] | select(.name == "qa-registry")'
 akm search kubernetes --from registry --detail full
 akm search kubernetes --from registry --assets --detail full
 akm registry remove qa-registry --yes
 ```
 
-- [ ] **[SERVICE]** HTTP requires allow-insecure and warns.
+- [ ] **[SERVICE]** HTTP requires `--allow-insecure-transport` and warns.
 - [ ] **[SERVICE]** Duplicate URL is idempotent `added:false`; unknown remove is
       exit `1`, `SOURCE_NOT_FOUND`.
 - [ ] **[SERVICE]** Registry hits remain `registryHits`, not local `hits`.
@@ -1372,7 +1371,7 @@ akm env remove env/qa-export --yes
 - [ ] **[LOCAL]** First-party env activation warns and proceeds; third-party
       activation blocks exit `2`. Excluding all dangerous keys permits the safe
       subset.
-- [ ] **[LOCAL]** `--allow-insecure` can authorize reviewed installation but
+- [ ] **[LOCAL]** `--allow-dangerous-env-keys` can authorize reviewed installation but
       never authorizes later dangerous activation.
 - [ ] **[LOCAL REGRESSION]** Lint suppression cannot authorize untrusted install;
       declarative first materialization and every update receive the same audit.
@@ -1948,7 +1947,7 @@ akm task history --id manual-failure --limit 1
 - [ ] **LOCAL** Source/dist scheduler write without rebind rejects ineligible executable before task/scheduler mutation.
 - [ ] **LOCAL** Explicit rebind records reviewed invocation and warns not release-eligible.
 - [ ] **PLATFORM** Use installed npm/standalone candidate in disposable account.
-- [ ] **PLATFORM** Add disabled command/prompt/workflow; inspect native entry; edit enabled/schedule/target + sync; execute; inspect history/log; delete YAML + sync removes entry.
+- [ ] **PLATFORM** Add a disabled command/prompt/workflow; confirm no native entry exists; use `akm task enable` and inspect the native entry; edit schedule/target + sync; execute; inspect history/log; use `akm task disable` and confirm removal; delete YAML + sync remains converged.
 - [ ] **PLATFORM** Existing binding remains unless rebind; upgrade behavior is explicit.
 
 | Platform | Evidence |
@@ -2025,20 +2024,20 @@ akm proposal reject --generator distill \
 - [ ] **LOCAL** Max-diff-lines and older-than strictly validate integers/ranges and select exact rows.
 - [ ] **LOCAL** Dry-run does not create backups, commits, or asset/index mutations.
 
-### 16.4 Drain policy and observability
+### 16.4 Drain and observability
 
 ```sh
 before_event_id="$(akm log --format json | jq -r '.events[-1].id // 0')"
-akm proposal drain --policy manual --dry-run --format json \
+akm proposal drain --dry-run --format json \
   > "$AKM_SANDBOX/drain-dry-run.json"
 after_event_id="$(akm log --format json | jq -r '.events[-1].id // 0')"
 ```
 
-- [ ] **LOCAL** Manual policy deterministically rejects empty diff and defers nonempty proposals; it never accepts by itself.
+- [ ] **LOCAL** Without a judgment tier, drain accepts only proposals a quality judge passed (a `staged` gate decision whose content hash still matches), rejects empty diffs, and defers everything else; it never accepts an unjudged proposal by itself.
 - [ ] **LOCAL** Dry-run leaves assets/statuses unchanged but appends the documented `triage_drained` observability event. It is not globally side-effect-free.
-- [ ] **LOCAL** Max accepts, max diff lines, older-than, queue mode versus `--promote`, and hard cap buckets are exact.
-- [ ] **AI** Judgment-enabled policy uses selected frozen engine and fails closed on malformed/failed judgment.
-- [ ] **LOCAL** Invalid policy/path and noninteractive promotion without `--yes` fail before writes.
+- [ ] **LOCAL** Max accepts, older-than, queue mode versus `--promote`, and hard cap buckets are exact.
+- [ ] **AI** Judgment-enabled drain uses selected frozen engine and fails closed on malformed/failed judgment.
+- [ ] **LOCAL** Noninteractive promotion without `--yes` fails before writes.
 
 ### 16.5 Proposal generation and crash recovery
 
@@ -2237,8 +2236,7 @@ restore_semantic_dirs() {
 | --- | --- | --- |
 | `disabled` | Mode is `off` | FTS only, no embedding request |
 | `pending` | Enabled but not verified/current fingerprint changed | FTS fallback with advisory |
-| `ready-js` | Complete vectors, JavaScript cosine path | Hybrid/vector search |
-| `ready-vec` | Complete vectors, sqlite-vec fast path ready | Hybrid/vector search |
+| `ready-js` | Complete vectors (scanned by cosine similarity in JavaScript) | Hybrid/vector search |
 | `blocked` | Recent embedding failure | FTS fallback until retry/expiry |
 
 - [ ] **[CORE]** With mode off, full index reports disabled, stores zero
@@ -2264,13 +2262,12 @@ akm index --full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-index.json"
 jq -e '
   .verification.ok == true and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec") and
+  .verification.semanticStatus == "ready-js" and
   .verification.embeddingCount == .verification.entryCount
 ' "$AKM_SANDBOX/semantic-deterministic-index.json"
 
 akm search "deploy docker compose in a homelab" \
-  --detail full --no-project-context --format json \
+  --detail full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-search.json"
 akm log --type search --limit 1 --detail full --format json \
   >"$AKM_SANDBOX/semantic-deterministic-log.json"
@@ -2307,11 +2304,10 @@ jq -e '
   .verification.ok == true and
   .verification.embeddingProvider == "remote" and
   .verification.embeddingCount == .verification.entryCount and
-  (.verification.semanticStatus == "ready-js" or
-   .verification.semanticStatus == "ready-vec")
+  .verification.semanticStatus == "ready-js"
 ' "$AKM_SANDBOX/semantic-remote-index.json"
 
-akm search deploy --detail full --no-project-context --format json \
+akm search deploy --detail full --format json \
   >"$AKM_SANDBOX/semantic-remote-search.json"
 jq -s -e '
   [.[] | select(.pathname == "/v1/embeddings")] as $requests |
@@ -2365,7 +2361,7 @@ jq -e '
   .verification.semanticStatus == "blocked"
 ' "$AKM_SANDBOX/semantic-blocked-index.json"
 
-akm search deploy --detail full --no-project-context --format json \
+akm search deploy --detail full --format json \
   >"$AKM_SANDBOX/semantic-blocked-search.json"
 jq -e '(.hits | length) > 0 and (.warnings | length) > 0' \
   "$AKM_SANDBOX/semantic-blocked-search.json"
@@ -2627,7 +2623,7 @@ installed CLI cannot activate that seam merely through ambient environment:
 before_requests="$(wc -l <"$AKM_QA_SERVICE_LOG")"
 set +e
 NODE_ENV=test akm bundle add "$AKM_QA_WEBSITE_URL" \
-  --name qa-ambient-bypass --allow-insecure \
+  --name qa-ambient-bypass --allow-insecure-transport \
   >"$AKM_SANDBOX/ambient-bypass.stdout" \
   2>"$AKM_SANDBOX/ambient-bypass.stderr" </dev/null
 ambient_status=$?
@@ -2956,7 +2952,7 @@ Use an installed npm or standalone candidate and a disposable OS account. Do
 not hide an ineligible checkout behind `--rebind` in release acceptance.
 
 - [ ] **[PLATFORM]** Doctor reports eligible `npm`/`standalone` binding with
-      absolute candidate paths and no credentials in context descriptor.
+      absolute candidate paths and no credentials in the row.
 - [ ] **[PLATFORM]** Add disabled task, inspect native definition, enable/edit +
       sync, trigger, verify candidate version/history/log, delete YAML + sync,
       and prove native removal.
@@ -3232,7 +3228,7 @@ remaining gaps carry approved waivers with the expiries recorded below.
     It drives the real `akm bundle add` CLI end-to-end against a materialized
     copy of `tests/fixtures/manual-qa/dangerous-bundle/` (whose
     `env/runtime.env` carries `NODE_OPTIONS`), non-TTY and without
-    `--allow-insecure`, and asserts every lifecycle surface after the block:
+    `--allow-dangerous-env-keys`, and asserts every lifecycle surface after the block:
     **byte-level** parity of `config.json` and `akm.lock`, no surviving content
     root, and no orphaned index row. Three workspace states are covered —
     pristine, pre-existing operator config, and a bundle already installed —

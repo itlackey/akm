@@ -3,15 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig } from "../../core/config/config-types";
-import { ConfigError, UsageError } from "../../core/errors";
-import { cloneExecutionJsonObject } from "../../execution/json";
+import { UsageError } from "../../core/errors";
 import {
   createInlineResolvedCommand,
   createResolvedCommand,
   createResolvedPersona,
   type LoweringNotice,
   type ResolvedCommandContent,
-  type ResolvedExecutionRequestV1,
 } from "../../execution/resolved-request";
 import {
   type AdapterRenderedCommandSource,
@@ -22,27 +20,16 @@ import {
 } from "../../execution/source";
 import { recordIndexedShowUsage } from "../../indexer/usage/show-usage";
 import { resolveUsageEventSource, type UsageEventSource } from "../../indexer/usage/usage-events";
+import { fallbackAnnouncement } from "../../integrations/agent/engine-fallback";
 import {
-  fallbackAnnouncement,
-  NO_ENGINE_MESSAGE_SUFFIX,
-  NO_ENGINE_REMEDY,
-} from "../../integrations/agent/engine-fallback";
-import {
+  buildExecution,
   type ExecutionFieldProvenance,
-  type ExecutionInvocationKind,
-  type ResolvedExecutionPlanV1,
-  requireAuthorizedExecutionPlan,
-  type ToolAuthorizer,
-} from "../../integrations/agent/execution-cascade";
-import {
-  type DispatchLoweredExecutionOptions,
-  dispatchLoweredExecutionRequest,
-  lowerResolvedExecutionRequest,
-} from "../../integrations/agent/execution-lowering";
-import { prepareResolvedExecution } from "../../integrations/agent/execution-preparation";
+  type ResolvedExecution,
+  resolveExecution,
+} from "../../integrations/agent/execution";
 import type { ResolvedModelMapV1 } from "../../integrations/agent/model-map";
+import { type RunExecutionOptions, runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../integrations/agent/spawn";
-import type { chatCompletion } from "../../llm/client";
 import { parseBuiltinCommandAction } from "./builtin-action";
 import {
   type ExecutionSourceLookup,
@@ -66,19 +53,11 @@ export interface PrepareCommandInvocationOptions {
   readonly sourceLookup?: ExecutionSourceLookup;
   readonly invocationDefaults?: UnresolvedExecutionDefaults;
   readonly current?: UnresolvedExecutionDefaults;
-  readonly authorizeTools?: ToolAuthorizer;
-  /** Provenance selects the common cascade layer; direct remains the public default. */
-  readonly invocationKind?: ExecutionInvocationKind;
   /** Authored workflow prose is already classified as literal by source IR and must bypass portable templating. */
   readonly inlineContentMode?: "portable-template" | "literal";
 }
 
-export interface PreparedCommandInvocation {
-  readonly plan: ResolvedExecutionPlanV1;
-  readonly request: ResolvedExecutionRequestV1;
-  readonly config: AkmConfig;
-  readonly fallbackEngineName?: string;
-}
+export type PreparedCommandInvocation = ResolvedExecution;
 
 export interface CommandDispatchResult {
   readonly schemaVersion: 2;
@@ -121,11 +100,10 @@ export interface CommandDryRunResult {
 }
 
 export interface DispatchPreparedCommandOptions {
-  readonly executeRunner?: DispatchLoweredExecutionOptions["executeRunner"];
-  /** Test injection seam; production uses the leased executeRunner path. */
-  readonly runAgent?: DispatchLoweredExecutionOptions["runAgent"];
-  readonly runOptions?: DispatchLoweredExecutionOptions["runOptions"];
-  readonly chat?: typeof chatCompletion;
+  readonly runAgent?: RunExecutionOptions["runAgent"];
+  readonly runSdk?: RunExecutionOptions["runSdk"];
+  readonly runOptions?: RunExecutionOptions["runOptions"];
+  readonly chat?: RunExecutionOptions["chat"];
   /**
    * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 3, R-07
    * fix): task-runner provenance. When present, it (a) becomes the FALLBACK
@@ -141,17 +119,11 @@ export interface DispatchPreparedCommandOptions {
 }
 
 /**
- * F-1 (spec §5.2 point 3): resolve the ambient-first provenance stamp
- * (matching the native arm's own `process.env.AKM_EVENT_SOURCE ?? …`) and
- * hand it to `dispatchLoweredExecutionRequest`'s dedicated, single-purpose
- * `eventSource` field — never through `runOptions`/`agentOptions`, which
- * stays exactly as untrusted for overriding resolved content as it was
- * before P1b (a caller-supplied `runOptions.env` still cannot replace frozen
- * request data, including a scheduler-restored directory value — see
- * `tests/integration/tasks-runner.test.ts`'s "forwards scheduled AKM
- * directory context … without trusting task or caller overrides").
+ * The ambient `AKM_EVENT_SOURCE` wins over the task runner's provenance; it
+ * rides `runExecution`'s single-purpose `eventSource`, never `runOptions.env`,
+ * so a caller cannot replace the request's own environment.
  */
-function loweredDispatchOptions(options: DispatchPreparedCommandOptions): DispatchLoweredExecutionOptions {
+function runOptionsFor(options: DispatchPreparedCommandOptions): RunExecutionOptions {
   const { eventSource, ...rest } = options;
   if (eventSource === undefined) return rest;
   return { ...rest, eventSource: process.env.AKM_EVENT_SOURCE ?? eventSource };
@@ -195,14 +167,9 @@ function qualifyCommandSelectedPersona(selector: string, command: AdapterRendere
   return `${command.identity.bundle}//${selector}`;
 }
 
-function snapshotCommandConfig(config: AkmConfig, path = "command config"): AkmConfig {
-  return cloneExecutionJsonObject(config, path) as unknown as AkmConfig;
-}
-
 export async function prepareCommandInvocation(
   options: PrepareCommandInvocationOptions,
 ): Promise<PreparedCommandInvocation> {
-  const inputConfig = snapshotCommandConfig(options.config, "command input config");
   const action = parseBuiltinCommandAction(options.action);
   const sourceLoader = options.sourceLoader ?? defaultSourceLoader;
   let renderedCommand: AdapterRenderedCommandSource | undefined;
@@ -210,7 +177,7 @@ export async function prepareCommandInvocation(
   let command: ResolvedCommandContent;
   if (action.kind === "stored") {
     const rendered = await sourceLoader(action.ref, "command", {
-      config: inputConfig,
+      config: options.config,
       ...(options.sourceLookup ? { lookup: options.sourceLookup } : {}),
     });
     if (rendered.kind !== "command") throw new TypeError("command source loader returned a non-command source");
@@ -250,7 +217,7 @@ export async function prepareCommandInvocation(
         ? qualifyCommandSelectedPersona(selectedAgent.value, renderedCommand)
         : selectedAgent.value;
     const rendered = await sourceLoader(lookupRef, "persona", {
-      config: inputConfig,
+      config: options.config,
       ...(options.sourceLookup ? { lookup: options.sourceLookup } : {}),
     });
     if (rendered.kind !== "persona") throw new TypeError("persona source loader returned a non-persona source");
@@ -258,10 +225,9 @@ export async function prepareCommandInvocation(
   }
   const persona = renderedPersona ? createResolvedPersona(renderedPersona) : selectedAgent.present ? null : undefined;
 
-  return prepareResolvedExecution({
+  return resolveExecution({
     command,
-    config: inputConfig,
-    invocationKind: options.invocationKind ?? "direct",
+    config: options.config,
     ...(persona !== undefined ? { persona } : {}),
     ...(renderedPersona ? { agentLayer: { id: renderedPersona.identity.ref, values: renderedPersona.defaults } } : {}),
     commandLayer: {
@@ -271,7 +237,6 @@ export async function prepareCommandInvocation(
     ...(options.invocationDefaults ? { invocationDefaults: options.invocationDefaults } : {}),
     ...(options.current ? { current: options.current } : {}),
     ...(options.modelMap ? { modelMap: options.modelMap } : {}),
-    ...(options.authorizeTools ? { authorizeTools: options.authorizeTools } : {}),
   });
 }
 
@@ -329,7 +294,7 @@ function canonicalDiagnosticNoticeField(field: string | null | undefined): strin
 }
 
 function diagnosticProvenance(
-  provenance: ResolvedExecutionPlanV1["provenance"],
+  provenance: ResolvedExecution["provenance"],
 ): readonly Readonly<CommandDiagnosticProvenance>[] {
   const canonical = new Map<string, Readonly<CommandDiagnosticProvenance>>();
   for (const [field, source] of Object.entries(provenance)) {
@@ -352,21 +317,6 @@ function safeDiagnosticToken(value: string): boolean {
 function safeDiagnosticNotice(notice: Readonly<LoweringNotice>): Readonly<CommandDiagnosticNotice> | undefined {
   if (!safeDiagnosticToken(notice.adapter)) return undefined;
   switch (notice.code) {
-    case "engine-fallback":
-      return Object.freeze({
-        code: "engine-fallback",
-        severity: "info",
-        adapter: "akm",
-        field: "engine",
-        message: "No engine was selected; using the fixed opencode-sdk fallback.",
-      });
-    case "unrecognized-request-notice":
-      return Object.freeze({
-        code: "unrecognized-request-notice",
-        severity: "warning",
-        adapter: "akm",
-        message: "An unrecognized durable execution notice was omitted at the engine lowering boundary.",
-      });
     case "untranslated-field": {
       const field = canonicalDiagnosticNoticeField(notice.field);
       if (!field) return undefined;
@@ -411,26 +361,20 @@ function diagnosticNotices(notices: readonly Readonly<LoweringNotice>[]): readon
 }
 
 /**
- * Authorize and lower a prepared invocation, then project only safe structural
- * diagnostics. It never acquires a dispatch lease, materializes credentials,
- * records usage, or exposes request/plan values.
+ * Build a prepared invocation and project only safe structural diagnostics.
+ * Reads no credential, records no usage, and exposes no request values.
  */
 export function inspectPreparedCommandInvocation(prepared: PreparedCommandInvocation): CommandDryRunResult {
-  const request = requireAuthorizedExecutionPlan(prepared.plan);
-  const lowered = lowerResolvedExecutionRequest(request, prepared.config);
-  const selectedEngine = request.engine.name;
-  if (!selectedEngine) {
-    throw new ConfigError(`command ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "INVALID_CONFIG_FILE");
-  }
-  return Object.freeze({
+  const built = buildExecution(prepared.request, prepared.runner);
+  return {
     schemaVersion: 1,
     shape: "command-dry-run",
     ok: true,
     dryRun: true,
-    engine: selectedEngine,
-    provenance: diagnosticProvenance(prepared.plan.provenance),
-    notices: diagnosticNotices(lowered.notices),
-  });
+    engine: prepared.request.engine.name,
+    provenance: diagnosticProvenance(prepared.provenance),
+    notices: diagnosticNotices(built.notices),
+  };
 }
 
 function resultEnvelope(
@@ -459,13 +403,10 @@ export async function dispatchPreparedCommandInvocation(
   prepared: PreparedCommandInvocation,
   options: DispatchPreparedCommandOptions = {},
 ): Promise<CommandDispatchResult> {
-  const request = requireAuthorizedExecutionPlan(prepared.plan);
-  const lowered = lowerResolvedExecutionRequest(request, prepared.config);
+  const { request } = prepared;
+  const built = buildExecution(request, prepared.runner);
   const selectedEngine = request.engine.name;
-  if (!selectedEngine) {
-    throw new ConfigError(`command ${NO_ENGINE_MESSAGE_SUFFIX} ${NO_ENGINE_REMEDY}`, "INVALID_CONFIG_FILE");
-  }
-  const result = await dispatchLoweredExecutionRequest(lowered, loweredDispatchOptions(options));
+  const result = await runExecution(built, runOptionsFor(options));
   const consumedRefs = new Set<string>();
   if (request.command.source) consumedRefs.add(request.command.source.ref);
   if (request.persona) consumedRefs.add(request.persona.source.ref);
@@ -476,7 +417,7 @@ export async function dispatchPreparedCommandInvocation(
   const eventSource = resolveUsageEventSource(process.env, options.eventSource ?? "user");
   for (const ref of consumedRefs) recordIndexedShowUsage(ref, eventSource);
   const announcement = fallbackAnnouncement(prepared.fallbackEngineName, selectedEngine);
-  return resultEnvelope(result, selectedEngine, announcement ? [announcement] : [], lowered.notices);
+  return resultEnvelope(result, selectedEngine, announcement ? [announcement] : [], built.notices);
 }
 
 export async function executeCommandInvocation(

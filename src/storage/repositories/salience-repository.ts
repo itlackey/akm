@@ -133,27 +133,6 @@ export function getAssetSalience(db: Database, ref: string): AssetSalienceRow | 
   return row == null ? undefined : (row as AssetSalienceRow);
 }
 
-/**
- * Load ALL rank scores from the asset_salience table (full-stash query).
- *
- * Used by the forgetting-safety report (plan §WS-1 step 7) to compute stash-wide
- * rank positions rather than pool-relative positions. Returns an empty Map when the
- * table is empty (first WS-1 run = no pre-existing rows).
- *
- * Order is unspecified; callers must sort before assigning 1-indexed positions.
- */
-export function getAllRankScores(db: Database): Map<string, number> {
-  const rows = db.prepare("SELECT asset_ref, rank_score FROM asset_salience").all() as Array<{
-    asset_ref: string;
-    rank_score: number;
-  }>;
-  const result = new Map<string, number>();
-  for (const row of rows) {
-    result.set(row.asset_ref, row.rank_score);
-  }
-  return result;
-}
-
 // ── Plasticity helpers ────────────────────────────────────────────────────────
 
 /**
@@ -164,8 +143,7 @@ export function getAllRankScores(db: Database): Map<string, number> {
  * Invariant: recordNoOp must never originate rank_score semantics. If the asset has
  * no salience row yet (persistence's best-effort try/catch may have swallowed an
  * error), we do nothing — a no-op counter is meaningless without a rank_score row,
- * and a synthetic INSERT would fabricate a rank_score=0 entry that could produce
- * false catastrophic-forgetting signals in buildRankChangeReport.
+ * and a synthetic INSERT would fabricate a rank_score=0 entry with nothing behind it.
  */
 export function recordNoOp(db: Database, ref: string): void {
   db.prepare(

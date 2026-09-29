@@ -20,12 +20,12 @@ import {
   prepareImproveLoopEnv,
   processImproveLoopRef,
 } from "../../../src/commands/improve/loop-stages";
-import { createRunContext } from "../../../src/commands/improve/run-context";
 import type { Proposal } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
-import type { EventEnvelope } from "../../../src/core/events-types";
 import type { AkmReflectResult, ImproveEligibleRef } from "../../../src/core/improve-types";
+import { openStateDatabase } from "../../../src/core/state-db";
+import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
 const disposers: Array<{ cleanup: () => void }> = [];
@@ -89,13 +89,11 @@ function makeEnv(overrides: Partial<ImproveLoopEnv> & { stashDir: string }): Imp
     distillCooledRefs: new Set(),
     distillOnlyRefSet: new Set(),
     recentErrors: {},
-    rejectedProposalsByRef: new Map(),
     improveProfile: {},
     resolvedPlan: {
       processes: { reflect: { runner: null }, distill: { runner: null } },
     } as unknown as ImproveLoopEnv["resolvedPlan"],
     skipDistillDueToRequirePlannedRefs: false,
-    pendingProposalRefSet: new Set(),
     remainingBudgetMs: () => 60_000,
     ...overrides,
   };
@@ -126,10 +124,10 @@ describe("processImproveLoopRef — reflect half", () => {
   });
 
   test.each([
-    ["cooldown", "reflect-cooldown", false],
     ["content_policy_reject", "reflect-guard-rejected", true],
     ["unsupported_type", "reflect-skipped", false],
     ["no_change", "reflect-skipped", false],
+    ["quality_rejected", "reflect-failed", false],
     ["agent_error", "reflect-failed", true],
   ] as const)("reflect failure reason %s → mode %s (error push: %p)", async (reason, mode, pushed) => {
     const { stashDir } = freshSandbox();
@@ -188,6 +186,66 @@ describe("processImproveLoopRef — reflect half", () => {
   });
 });
 
+/** The improve-ledger row the loop recorded for `ref` under `source`, if any. */
+function ledgerRow(stashDir: string, ref: string, source: string) {
+  const db = openStateDatabase();
+  try {
+    return getImproveLedgerRow(db, stashDir, ref, source);
+  } finally {
+    db.close();
+  }
+}
+
+describe("processImproveLoopRef — reflect outcomes land in the improve ledger", () => {
+  test("a no-op reflect records `unchanged` (a revisit window) and pushes no error", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("no_change")) });
+
+    const tally = await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(tally.actions[0]!.mode).toBe("reflect-skipped");
+    expect(tally.recentErrorPushes).toEqual([]);
+    expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toMatchObject({ outcome: "unchanged" });
+  });
+
+  test("a failed reflect records `failed`; a quality rejection is left to reflect itself", async () => {
+    const { stashDir } = freshSandbox();
+    const failing = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("parse_error")) });
+    await processImproveLoopRef(eligibleRef("knowledge/failing.md"), failing);
+    expect(ledgerRow(stashDir, "knowledge/failing.md", "reflect")).toMatchObject({
+      outcome: "failed",
+      nextEligibleAt: null,
+    });
+
+    const judged = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("quality_rejected")) });
+    await processImproveLoopRef(eligibleRef("knowledge/judged.md"), judged);
+    expect(ledgerRow(stashDir, "knowledge/judged.md", "reflect")).toBeUndefined();
+  });
+
+  test("the row is keyed by the candidate's item_ref when it has one", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({ stashDir, reflectFn: () => Promise.resolve(reflectFail("no_change")) });
+
+    await processImproveLoopRef({ ...eligibleRef("knowledge/guide.md"), itemRef: "stash//knowledge/guide.md" }, env);
+
+    expect(ledgerRow(stashDir, "stash//knowledge/guide.md", "reflect")).toMatchObject({ outcome: "unchanged" });
+    expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toBeUndefined();
+  });
+
+  test("a dry run records nothing", async () => {
+    const { stashDir } = freshSandbox();
+    const env = makeEnv({
+      stashDir,
+      options: { stashDir, dryRun: true, config: {} as AkmConfig },
+      reflectFn: () => Promise.resolve(reflectFail("no_change")),
+    });
+
+    await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(ledgerRow(stashDir, "knowledge/guide.md", "reflect")).toBeUndefined();
+  });
+});
+
 describe("processImproveLoopRef — distill half", () => {
   const memoryRef = "memories/finding-1";
 
@@ -221,34 +279,42 @@ describe("processImproveLoopRef — distill half", () => {
     expect(tally.memoryRefsForInference).toEqual([]);
   });
 
-  test("pending proposal for the derived lesson ref short-circuits before the seam", async () => {
+  test("a skipped distill records `unchanged`; a transport failure records nothing", async () => {
     const { stashDir } = freshSandbox();
-    const env = distillOnlyEnv({
+    const skipped = distillOnlyEnv({
       stashDir,
-      primaryStashDir: stashDir,
-      pendingProposalRefSet: new Set([deriveLessonRef(memoryRef)]),
+      distillFn: () =>
+        Promise.resolve({
+          schemaVersion: 1 as const,
+          ok: true,
+          outcome: "skipped" as const,
+          inputRef: memoryRef,
+          proposalRef: deriveLessonRef(memoryRef),
+          skipReason: "input_too_short",
+        }),
+    });
+    await processImproveLoopRef(eligibleRef(memoryRef), skipped);
+    expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({
+      outcome: "unchanged",
+      detail: "input_too_short",
     });
 
-    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
-
-    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
-    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "pending proposal exists" });
-  });
-
-  test("a fresh proposal rejection opens the D-2 (#370) grace window", async () => {
-    const { stashDir } = freshSandbox();
-    const env = distillOnlyEnv({
+    const failedRef = "memories/finding-2";
+    const transport = makeEnv({
       stashDir,
-      primaryStashDir: stashDir,
-      rejectedProposalsByRef: new Map([
-        [deriveLessonRef(memoryRef), { ts: new Date().toISOString() } as EventEnvelope],
-      ]),
+      distillOnlyRefSet: new Set([failedRef]),
+      signalBearingSet: new Set([failedRef]),
+      distillFn: () =>
+        Promise.resolve({
+          schemaVersion: 1 as const,
+          ok: false,
+          outcome: "llm_failed" as const,
+          inputRef: failedRef,
+          proposalRef: deriveLessonRef(failedRef),
+        }),
     });
-
-    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
-
-    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
-    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: "distill reject grace window" });
+    await processImproveLoopRef(eligibleRef(failedRef), transport);
+    expect(ledgerRow(stashDir, failedRef, "distill")).toBeUndefined();
   });
 
   test("requirePlannedRefs guard skips distill-only refs", async () => {
@@ -272,6 +338,10 @@ describe("processImproveLoopRef — distill half", () => {
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
     expect(tally.actions[0]!.result).toMatchObject({ ok: false, outcome: "validation_failed" });
+    expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({
+      outcome: "failed",
+      detail: "frontmatter invalid",
+    });
   });
 
   test("a non-Usage error from distill is recorded as a generic error action", async () => {
@@ -286,23 +356,10 @@ describe("processImproveLoopRef — distill half", () => {
 });
 
 describe("prepareImproveLoopEnv — derived guards", () => {
-  // WI-9.10: ImproveRunContext is deleted — ImproveLoopState wraps a RunContext
-  // (`ctx`) and keeps `primaryStashDir` as an honest optional (undefined here
-  // when the caller sets no stashDir — the no-stash preload-tolerance path,
-  // test below: "distillOnlyRefSet mirrors..."). `ctx.stashDir` is REQUIRED by
-  // the RunContext contract, so the fixture falls back to "" for it; nothing
-  // in these tests reads `ctx.stashDir`.
   function runCtx(overrides: Partial<ImproveLoopState>): ImproveLoopState {
     const stashDir = (overrides.options as { stashDir?: string } | undefined)?.stashDir;
     return {
-      ctx: createRunContext({
-        stashDir: stashDir ?? "",
-        config: {} as AkmConfig,
-        eventsCtx: {},
-        proposalsCtx: {},
-        sourceRun: "test-run",
-        dryRun: false,
-      }),
+      eventsCtx: {},
       primaryStashDir: stashDir,
       scope: { mode: "all" },
       options: { config: {} as AkmConfig },
@@ -314,8 +371,6 @@ describe("prepareImproveLoopEnv — derived guards", () => {
       distillCooledRefs: new Set(),
       distillOnlyRefs: [],
       recentErrors: {},
-      rejectedProposalsByRef: new Map(),
-      utilityMap: new Map(),
       startMs: Date.now(),
       budgetMs: 60_000,
       improveProfile: {},
@@ -352,12 +407,10 @@ describe("prepareImproveLoopEnv — derived guards", () => {
     expect(flagUnset.skipDistillDueToRequirePlannedRefs).toBe(false);
   });
 
-  test("distillOnlyRefSet mirrors distillOnlyRefs and the proposal preload tolerates a missing stash", () => {
+  test("distillOnlyRefSet mirrors distillOnlyRefs", () => {
     const env = prepareImproveLoopEnv(
       runCtx({ distillOnlyRefs: [eligibleRef("memories/a"), eligibleRef("memories/b")] }),
     );
     expect([...env.distillOnlyRefSet].sort()).toEqual(["memories/a", "memories/b"]);
-    // No stashDir anywhere → the preload never queries and stays empty.
-    expect(env.pendingProposalRefSet.size).toBe(0);
   });
 });

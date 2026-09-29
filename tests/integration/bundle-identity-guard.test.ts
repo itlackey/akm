@@ -14,7 +14,6 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { _setWarnSinkForTests } from "../../src/core/warn";
 import { resetBundleIdentityGuardForTests, warnOnBundleRenameDrift } from "../../src/indexer/bundle-identity-guard";
-import { openDatabase } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { type Cleanup, sandboxXdgDataHome } from "../_helpers/sandbox";
@@ -45,13 +44,18 @@ function seedIndexBundles(bundleIds: string[]): void {
   try {
     for (const [i, bundleId] of bundleIds.entries()) {
       const conceptId = `knowledge/k${i}`;
-      upsertEntry(db, `/s/${bundleId}/k${i}.md`, { name: `k${i}`, type: "knowledge" }, `k${i}`, {
-        itemRef: `${bundleId}//${conceptId}`,
-        bundleId,
-        componentId: bundleId,
-        conceptId,
-        adapterId: "akm",
-      });
+      upsertEntry(
+        db,
+        `/s/${bundleId}/k${i}.md`,
+        { name: `k${i}`, type: "knowledge" },
+        {
+          itemRef: `${bundleId}//${conceptId}`,
+          bundleId,
+          componentId: bundleId,
+          conceptId,
+          adapterId: "akm",
+        },
+      );
     }
   } finally {
     closeDatabase(db);
@@ -64,36 +68,33 @@ function bundlesConfig(...ids: string[]): AkmConfig {
   return { configVersion: "0.9.0", semanticSearchMode: "auto", bundles } as unknown as AkmConfig;
 }
 
+function bundleConfigAt(id: string, bundlePath: string): AkmConfig {
+  return {
+    configVersion: "0.9.0",
+    semanticSearchMode: "auto",
+    bundles: { [id]: { path: bundlePath } },
+  } as unknown as AkmConfig;
+}
+
 describe("§11.5 bundle-rename startup guard", () => {
   test("warns on the hand-rename signature (configured id missing, unconfigured id indexed)", () => {
     seedIndexBundles(["oldname"]);
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));
     expect(warnCalls).toHaveLength(1);
     expect(warnCalls[0]).toContain("bundle identity drift");
     expect(warnCalls[0]).toContain('"newname"');
     expect(warnCalls[0]).toContain('"oldname"');
   });
 
-  test("stays silent when the configured bundle ids match the indexed prefixes", () => {
-    seedIndexBundles(["primary"]);
-    warnOnBundleRenameDrift(bundlesConfig("primary"));
+  test("stays silent for a genuinely new bundle while unrelated stale rows remain (#971)", () => {
+    seedIndexBundles(["oldname"]);
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/newname"));
     expect(warnCalls).toHaveLength(0);
   });
 
-  test("skips the rename-drift comparison for a stamped v22 index with a hidden generated legacy column", () => {
-    seedIndexBundles(["oldname"]);
-    const raw = openDatabase(getDbPath());
-    try {
-      raw.exec("ALTER TABLE entries ADD COLUMN entry_key TEXT GENERATED ALWAYS AS (item_ref) VIRTUAL");
-    } finally {
-      raw.close();
-    }
-
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
-
-    // The read boundary rejects the non-canonical index before the guard can
-    // query it. This best-effort heuristic stays quiet; the command-level
-    // INDEX_SCHEMA_INCOMPATIBLE error is the one actionable diagnostic.
+  test("stays silent when the configured bundle ids match the indexed prefixes", () => {
+    seedIndexBundles(["primary"]);
+    warnOnBundleRenameDrift(bundlesConfig("primary"));
     expect(warnCalls).toHaveLength(0);
   });
 
@@ -118,8 +119,8 @@ describe("§11.5 bundle-rename startup guard", () => {
 
   test("warns only once per process until re-armed", () => {
     seedIndexBundles(["oldname"]);
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
-    warnOnBundleRenameDrift(bundlesConfig("newname"));
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));
+    warnOnBundleRenameDrift(bundleConfigAt("newname", "/s/oldname"));
     expect(warnCalls).toHaveLength(1);
   });
 });

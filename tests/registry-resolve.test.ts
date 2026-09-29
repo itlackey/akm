@@ -1,16 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { NotFoundError, UsageError } from "../src/core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../src/core/errors";
 import {
-  npmArtifactNetworkPolicy,
+  gitCredentialEnvironment,
   parseRegistryRef,
   resolveRegistryArtifact,
-  trustedNpmTarballHosts,
-  UntrustedNpmTarballError,
   validateGitRef,
   validateGitUrl,
   validateNpmTarballUrl,
 } from "../src/registry/resolve";
-import { withMockedFetch } from "./_helpers/sandbox";
+import { withEnvSync, withMockedFetch } from "./_helpers/sandbox";
 
 // ── validateGitUrl ───────────────────────────────────────────────────────────
 
@@ -61,6 +59,40 @@ describe("validateGitUrl", () => {
 
   test("accepts git@ SSH shorthand with subdomain", () => {
     expect(() => validateGitUrl("git@gitlab.example.com:group/subgroup/repo.git")).not.toThrow();
+  });
+});
+
+describe("gitCredentialEnvironment", () => {
+  test("passes bearer credentials through child-process config instead of a URL or argv (#977)", () => {
+    const env = withEnvSync(
+      { GIT_CONFIG_COUNT: undefined, GIT_CONFIG_KEY_0: undefined, GIT_CONFIG_VALUE_0: undefined },
+      () => gitCredentialEnvironment("secret-value"),
+    );
+
+    expect(env.GIT_CONFIG_COUNT).toBe("1");
+    expect(env.GIT_CONFIG_KEY_0).toBe("http.extraHeader");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("Authorization: Bearer secret-value");
+  });
+
+  test("appends to existing process-scoped Git config instead of replacing it", () => {
+    const env = withEnvSync(
+      {
+        GIT_CONFIG_COUNT: "1",
+        GIT_CONFIG_KEY_0: "url.file:///fixture/.insteadOf",
+        GIT_CONFIG_VALUE_0: "https://fixture.invalid/repo.git",
+      },
+      () => gitCredentialEnvironment("secret-value"),
+    );
+
+    expect(env.GIT_CONFIG_COUNT).toBe("2");
+    expect(env.GIT_CONFIG_KEY_0).toBe("url.file:///fixture/.insteadOf");
+    expect(env.GIT_CONFIG_VALUE_0).toBe("https://fixture.invalid/repo.git");
+    expect(env.GIT_CONFIG_KEY_1).toBe("http.extraHeader");
+    expect(env.GIT_CONFIG_VALUE_1).toBe("Authorization: Bearer secret-value");
+  });
+
+  test("rejects control characters in resolved credentials", () => {
+    expect(() => gitCredentialEnvironment("secret\nextra-header: injected")).toThrow(UsageError);
   });
 });
 
@@ -133,7 +165,7 @@ describe("validateNpmTarballUrl", () => {
       "http://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
       "https://registry.npmjs.org:8080/pkg/-/pkg-1.0.0.tgz",
     ]) {
-      expect(() => validateNpmTarballUrl(url, "pkg@1.0.0")).toThrow(UntrustedNpmTarballError);
+      expect(() => validateNpmTarballUrl(url, "pkg@1.0.0")).toThrow(NotFoundError);
     }
   });
 
@@ -144,19 +176,17 @@ describe("validateNpmTarballUrl", () => {
     } catch (err) {
       caught = err as Error;
     }
-    expect(caught).toBeInstanceOf(UntrustedNpmTarballError);
-    expect((caught as UntrustedNpmTarballError).code).toBe("UNTRUSTED_NPM_TARBALL");
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).code).toBe("REGISTRY_RESPONSE_INVALID");
     expect(caught?.message).toContain("evil.example.com");
   });
 
   test("rejects malformed tarball URL", () => {
-    expect(() => validateNpmTarballUrl("not-a-url", "pkg@1.0.0")).toThrow(UntrustedNpmTarballError);
+    expect(() => validateNpmTarballUrl("not-a-url", "pkg@1.0.0")).toThrow(NotFoundError);
   });
 
   test("rejects disallowed scheme", () => {
-    expect(() => validateNpmTarballUrl("ftp://registry.npmjs.org/pkg.tgz", "pkg@1.0.0")).toThrow(
-      UntrustedNpmTarballError,
-    );
+    expect(() => validateNpmTarballUrl("ftp://registry.npmjs.org/pkg.tgz", "pkg@1.0.0")).toThrow(NotFoundError);
   });
 
   test("accepts operator-configured private registry", () => {
@@ -169,20 +199,20 @@ describe("validateNpmTarballUrl", () => {
   test("does not let a configured mirror nominate a different public origin", () => {
     process.env.AKM_NPM_REGISTRY = "https://npm.internal.example.com";
     expect(() => validateNpmTarballUrl("https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz", "pkg@1.0.0")).toThrow(
-      UntrustedNpmTarballError,
+      NotFoundError,
     );
   });
 
   test("rejects untrusted host even with override set", () => {
     process.env.AKM_NPM_REGISTRY = "https://npm.internal.example.com";
-    expect(() => validateNpmTarballUrl("https://evil.example.com/pkg.tgz", "pkg@1.0.0")).toThrow(
-      UntrustedNpmTarballError,
-    );
+    expect(() => validateNpmTarballUrl("https://evil.example.com/pkg.tgz", "pkg@1.0.0")).toThrow(NotFoundError);
   });
 
-  test("throws on unparseable AKM_NPM_REGISTRY override instead of silently falling back", () => {
+  test("throws on unparseable AKM_NPM_REGISTRY override instead of silently falling back", async () => {
     process.env.AKM_NPM_REGISTRY = "this is not a url";
-    expect(() => trustedNpmTarballHosts()).toThrow(/AKM_NPM_REGISTRY/);
+    const parsed = parseRegistryRef("npm:pkg");
+    await expect(resolveRegistryArtifact(parsed)).rejects.toThrow(ConfigError);
+    await expect(resolveRegistryArtifact(parsed)).rejects.toThrow(/AKM_NPM_REGISTRY/);
   });
 });
 
@@ -315,14 +345,7 @@ describe("resolveRegistryArtifact — npm metadata honors AKM_NPM_REGISTRY (R-03
     expect(requestedUrls).toEqual(["https://npm.internal.example.com/private-pkg"]);
     expect(requestedUrls.some((u) => u.includes("registry.npmjs.org"))).toBe(false);
     expect(result.resolvedVersion).toBe("1.0.0");
-    expect(result.registryOrigin).toBe("https://npm.internal.example.com");
-    expect(result.allowPrivateRegistryOrigin).toBe(true);
-    process.env.AKM_NPM_REGISTRY = "http://changed-after-metadata.invalid:9999";
-    expect(npmArtifactNetworkPolicy(result)).toEqual({
-      kind: "npm-api",
-      registryOrigin: "https://npm.internal.example.com",
-      allowPrivateRegistryOrigin: true,
-    });
+    expect(result.artifactUrl).toBe("https://npm.internal.example.com/private-pkg/-/private-pkg-1.0.0.tgz");
   });
 
   test("falls back to the public registry for metadata when no override is set", async () => {

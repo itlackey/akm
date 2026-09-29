@@ -2,16 +2,21 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { rethrowIfTestIsolationError } from "../../core/errors";
+import { formatRegistryError } from "../../core/registry-url";
+import { warn } from "../../core/warn";
 import type { Database } from "../database";
+import { closeDatabase, openIndexDatabase } from "./index-connection";
 
 /**
- * Storage repository owning the raw SQL for the `registry_index_cache` table
- * in `index.db`.
+ * The `registry_index_cache` table in `index.db`: the raw SQL plus the
+ * "fresh cache → live fetch → stale fallback" skeleton the registry providers
+ * (`src/registry/providers/*`) run their loads through.
  *
- * These helpers live in the storage layer (not the indexer) so the
- * dependency arrow points `indexer → storage` rather than the reverse;
- * `registry-cache.ts` (the seam registry providers actually consume) imports
- * them from here.
+ * The open is {@link openIndexDatabase} (creates the data dir, ensures the
+ * schema, tolerates a failed open) rather than the `openExistingDatabase`
+ * loan helper: registry search must keep working before `index.db` exists,
+ * so a failed open degrades to "no cache" instead of failing the search.
  */
 
 /** Shape of a cached registry row as returned by {@link getRegistryIndexCache}. */
@@ -78,4 +83,124 @@ export function getRegistryIndexCache(
   if (Number.isNaN(fetchedAt) || Date.now() - fetchedAt > maxAgeMs) return undefined;
 
   return { indexJson: row.index_json, etag: row.etag, lastModified: row.last_modified };
+}
+
+/**
+ * Open the cache DB (a failed open yields `db = undefined`; the bun-test
+ * isolation guard is re-thrown), run `fn`, and close the DB only after `fn`
+ * has fully settled — the callbacks are async, and closing earlier would tear
+ * the DB down mid-write.
+ */
+export async function withRegistryCacheDb<T>(fn: (db: Database | undefined) => Promise<T>): Promise<T> {
+  let db: Database | undefined;
+  try {
+    db = openIndexDatabase();
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    db = undefined;
+  }
+  try {
+    return await fn(db);
+  } finally {
+    if (db) {
+      try {
+        closeDatabase(db);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/** Options for {@link fetchCachedJson}. */
+export interface FetchCachedJsonOptions<T> {
+  /** Cache primary key (e.g. the registry URL, or a per-query hash). */
+  cacheKey: string;
+  /** Max age in ms before a cached row is treated as a miss (TTL). */
+  ttlMs: number;
+  /**
+   * Parse a cached JSON string into the provider value, or return `undefined`
+   * when the cached payload is unusable. Owns its own `JSON.parse` + error
+   * handling so each provider keeps its exact corrupt-cache behaviour (skills.sh
+   * swallows a parse error and falls through; static-index lets it throw).
+   *
+   * @param json  The raw `index_json` string from the cache row.
+   * @param opts.stale `true` when consulting the cache as a fetch-failure
+   *   fallback (skills.sh additionally requires a non-empty result in this case).
+   */
+  parseCache: (json: string, opts: { stale: boolean }) => T | undefined;
+  /**
+   * Perform the live fetch + parse. Returns the value plus the JSON string to
+   * write to the cache. Throws on fetch/parse failure so the caller can fall
+   * back to a stale cache row.
+   */
+  fetchFresh: () => Promise<{ value: T; cacheJson: string }>;
+}
+
+/**
+ * Returns a fresh cache hit when present, otherwise fetches live (writing the
+ * result back best-effort), and falls back to a stale cache row when the
+ * fetch fails.
+ */
+export async function fetchCachedJson<T>(opts: FetchCachedJsonOptions<T>): Promise<T> {
+  const { cacheKey, ttlMs, parseCache, fetchFresh } = opts;
+
+  return withRegistryCacheDb(async (db) => {
+    let dbCacheResult: RegistryIndexCacheRow | undefined;
+    try {
+      if (db) {
+        dbCacheResult = getRegistryIndexCache(db, cacheKey, ttlMs);
+      }
+    } catch (err) {
+      // Never mask the bun-test isolation guard as "DB unavailable" — see
+      // rethrowIfTestIsolationError in src/core/errors.ts.
+      rethrowIfTestIsolationError(err);
+      // index.db read failed (pre-migration install or test env) — fall through
+    }
+
+    if (dbCacheResult) {
+      const cached = parseCache(dbCacheResult.indexJson, { stale: false });
+      if (cached !== undefined) {
+        return cached;
+      }
+    }
+
+    try {
+      const { value, cacheJson } = await fetchFresh();
+      if (db) {
+        try {
+          upsertRegistryIndexCache(db, cacheKey, cacheJson);
+        } catch {
+          /* best-effort */
+        }
+      }
+      return value;
+    } catch (err) {
+      // Fetch failed — use stale DB cache if available.
+      if (dbCacheResult) {
+        const stale = parseCache(dbCacheResult.indexJson, { stale: true });
+        if (stale !== undefined) return stale;
+      }
+      // No in-TTL row — consult the cache PAST its TTL before giving up: a
+      // briefly unreachable registry should degrade to the last-known index,
+      // loudly, not hard-fail the command.
+      try {
+        const expiredRow = db ? getRegistryIndexCache(db, cacheKey, Number.POSITIVE_INFINITY) : undefined;
+        if (expiredRow) {
+          const stale = parseCache(expiredRow.indexJson, { stale: true });
+          if (stale !== undefined) {
+            warn(
+              `Registry fetch failed (${formatRegistryError(err)}); ` +
+                "serving the last cached index, which is past its refresh interval.",
+            );
+            return stale;
+          }
+        }
+      } catch (cacheErr) {
+        rethrowIfTestIsolationError(cacheErr);
+        // cache read failed — fall through to the original fetch error
+      }
+      throw err;
+    }
+  });
 }

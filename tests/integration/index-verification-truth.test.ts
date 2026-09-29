@@ -5,11 +5,9 @@
 /**
  * Index verification truthfulness (§24.2 "Semantic" release gate).
  *
- * 1. `ready-vec` must reflect the path search will ACTUALLY take: when the
- *    embedding phase records vec fast-path insert failures (e.g. a
- *    vector-width mismatch), search routes to the JS-cosine fallback — and
- *    the verification/`akm info` status must say so instead of overstating
- *    "sqlite-vec active" from the loaded extension alone.
+ * 1. The semantic status reflects the stored vectors: `ready-js` once every
+ *    entry has one, whatever width the provider served, and `blocked` when
+ *    the provider fails.
  * 2. A pre-aborted / mid-run-aborted AbortSignal must reject `akmIndex()`
  *    rather than being ignored.
  */
@@ -22,16 +20,21 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { clearEmbeddingCache } from "../../src/llm/embedders/cache";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
-function mockEmbeddingServer(dim: number): { url: string; server: ReturnType<typeof Bun.serve> } {
+/** `dim` may vary per input position to simulate a provider serving inconsistent widths. */
+function mockEmbeddingServer(dim: number | ((index: number) => number)): {
+  url: string;
+  server: ReturnType<typeof Bun.serve>;
+} {
+  const widthAt = typeof dim === "number" ? () => dim : dim;
   const server = Bun.serve({
     port: 0,
     async fetch(request) {
       const body = (await request.json()) as { input?: unknown };
       const count = Array.isArray(body.input) ? body.input.length : 1;
-      const vector = Array.from({ length: dim }, (_, i) => (i + 1) / dim);
+      const vectorAt = (index: number) => Array.from({ length: widthAt(index) }, (_, i) => (i + 1) / widthAt(index));
       return new Response(
         JSON.stringify({
-          data: Array.from({ length: count }, () => ({ embedding: vector })),
+          data: Array.from({ length: count }, (_, index) => ({ embedding: vectorAt(index) })),
           model: "test",
           usage: { prompt_tokens: 5, total_tokens: 5 },
         }),
@@ -71,36 +74,25 @@ describe("index verification truthfulness", () => {
     resetConfigCache();
   }
 
-  test("vec fast-path insert failures demote the status to ready-js (never a false ready-vec)", async () => {
-    // The vec table is created at FLOAT[8] (config dimension), but the
-    // endpoint delivers 4-wide vectors: the BLOB rows store fine (embedding
-    // count satisfied) while every vec0 insert fails — the exact partial
-    // degradation that used to still report "ready-vec".
-    const mock = mockEmbeddingServer(4);
+  test("every entry embedded reports ready-js, whatever widths the provider serves", async () => {
+    // The config declares 8 dimensions; the endpoint serves a 4-wide vector
+    // for the first input and 8-wide ones after it. Each row stores its own
+    // vector, so the pass is complete.
+    fs.writeFileSync(
+      path.join(storage.stashDir, "memories", "vec-truth-2.md"),
+      "---\ndescription: second vec truth fixture\n---\n\nAnother memory.\n",
+    );
+    const mock = mockEmbeddingServer((index) => (index === 0 ? 4 : 8));
     server = mock.server;
     configureEmbedding(mock.url, 8);
 
     const result = await akmIndex({ stashDir: storage.stashDir, full: true });
 
-    expect(result.verification.embeddingCount).toBeGreaterThan(0);
-    if (!result.verification.vecAvailable) {
-      // Host without the sqlite-vec extension: ready-js is trivially correct.
-      expect(result.verification.semanticStatus).toBe("ready-js");
-      return;
-    }
+    const { entryCount, embeddingCount } = result.verification;
+    expect(entryCount).toBeGreaterThanOrEqual(2);
+    expect(embeddingCount).toBe(entryCount);
     expect(result.verification.semanticStatus).toBe("ready-js");
-    expect(result.verification.message).toContain("degraded");
-  });
-
-  test("a clean vec run still reports ready-vec (control)", async () => {
-    const mock = mockEmbeddingServer(8);
-    server = mock.server;
-    configureEmbedding(mock.url, 8);
-
-    const result = await akmIndex({ stashDir: storage.stashDir, full: true });
-
-    expect(result.verification.embeddingCount).toBeGreaterThan(0);
-    expect(result.verification.semanticStatus).toBe(result.verification.vecAvailable ? "ready-vec" : "ready-js");
+    expect(result.verification.message).toBe(`Semantic search ready (${embeddingCount}/${entryCount} embeddings).`);
   });
 
   test("a failing embedding provider lands a real 'blocked' verification, not a crash or a lie", async () => {

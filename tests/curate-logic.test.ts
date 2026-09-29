@@ -1,10 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import {
-  akmCurate,
-  curateSearchResults,
-  deriveCurateFallbackQueries,
-  mergeCurateSearchResponses,
-} from "../src/commands/read/curate";
+import { akmCurate, curateSearchResults } from "../src/commands/read/curate";
 import { UsageError } from "../src/core/errors";
 import type { RegistrySearchResultHit, SearchResponse, SourceSearchHit } from "../src/sources/types";
 
@@ -36,182 +31,38 @@ function searchResponse(overrides: Partial<SearchResponse> = {}): SearchResponse
   };
 }
 
-describe("deriveCurateFallbackQueries", () => {
-  test("drops filler words, dedupes tokens, preserves meaningful short tokens, and caps fallback keywords", () => {
-    expect(
-      deriveCurateFallbackQueries("How do I deploy to CI/CD with Docker docker release rollback staging prod now"),
-    ).toEqual(["deploy", "ci", "cd", "docker", "release", "rollback"]);
-  });
-
-  test("allows one-token prompt residue fallback", () => {
-    expect(deriveCurateFallbackQueries("the docker")).toEqual(["docker"]);
-  });
-
-  test("returns an empty list when the normalized query is already a single usable token", () => {
-    expect(deriveCurateFallbackQueries("docker")).toEqual([]);
-  });
-});
-
-describe("mergeCurateSearchResponses", () => {
-  test("keeps the highest-scoring duplicate stash and registry hits and merges warnings", () => {
-    const base = searchResponse({
-      hits: [
-        stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/a", score: 0.3 }),
-      ],
-      registryHits: [registryHit({ name: "docker-kit", id: "reg-1", score: 0.2 })],
-      tip: "No phrase results.",
-      warnings: ["base warning"],
-    });
-    const merged = mergeCurateSearchResponses(base, [
-      searchResponse({
-        hits: [
-          stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/a", score: 0.9 }),
-          stashHit({ type: "script", name: "docker-clean", ref: "scripts/docker-clean", path: "/tmp/b", score: 0.5 }),
-        ],
-        registryHits: [registryHit({ name: "docker-kit", id: "reg-1", score: 0.8 })],
-        warnings: ["fallback warning"],
-      }),
-    ]);
-
-    expect(merged.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
-      "skills/docker-homelab",
-      "scripts/docker-clean",
-    ]);
-    expect(merged.registryHits?.map((hit) => [hit.id, hit.score])).toEqual([["reg-1", 0.8]]);
-    expect(merged.warnings).toEqual(["base warning", "fallback warning"]);
-    expect(merged.tip).toBeUndefined();
-  });
-
-  test("deduplicates repeated semantic failures and preserves fts-fallback mode", () => {
-    const warning = "Vector search unavailable — falling back to keyword search.";
-    const merged = mergeCurateSearchResponses(searchResponse({ searchMode: "fts-fallback", warnings: [warning] }), [
-      searchResponse({ searchMode: "fts-fallback", warnings: [warning] }),
-      searchResponse({ searchMode: "fts-fallback", warnings: [warning] }),
-    ]);
-
-    expect(merged.searchMode).toBe("fts-fallback");
-    expect(merged.warnings).toEqual([warning]);
-  });
-
-  test("keeps full-query (base) hits ABOVE higher-scored fallback-only hits (no keyword leapfrog)", () => {
-    // Regression for the curate-vs-search divergence: the full-query search
-    // returned the contextually-relevant memory at a moderate hybrid score,
-    // but a bare-keyword fallback search matched an unrelated asset on its exact
-    // title and normalized to ~0.95. The prior merge re-sorted the union by raw
-    // score, so the keyword junk leapfrogged the relevant hit. Base order MUST
-    // win; fallback-only hits append below.
-    const base = searchResponse({
-      hits: [stashHit({ type: "memory", name: "relevant", ref: "memories/relevant", path: "/tmp/r", score: 0.5 })],
-    });
-    const merged = mergeCurateSearchResponses(base, [
-      searchResponse({
-        hits: [
-          // Unrelated asset that scored high on a single-token title match.
-          stashHit({ type: "knowledge", name: "junk", ref: "knowledge/junk", path: "/tmp/j", score: 0.95 }),
-          // The relevant ref also surfaced via a key term → dup keeps MAX score.
-          stashHit({ type: "memory", name: "relevant", ref: "memories/relevant", path: "/tmp/r", score: 0.6 }),
-        ],
-      }),
-    ]);
-
-    expect(merged.hits.map((hit) => ("ref" in hit ? hit.ref : `registry:${hit.id}`))).toEqual([
-      "memories/relevant", // base hit stays first despite the 0.95 fallback-only junk
-      "knowledge/junk", // fallback-only appended below
-    ]);
-    // The dup base hit is bumped to the higher score for the downstream floor.
-    expect((merged.hits[0] as SourceSearchHit).score).toBe(0.6);
-    // Load-bearing: the fallback-only hit's score is restamped strictly BELOW the
-    // base score. Order alone is not enough — selectCuratedStashHits re-sorts by
-    // score and derives its floor from the top score, so an un-capped 0.95 here
-    // would re-leapfrog the relevant base hit downstream (the real prod bug).
-    const baseScore = (merged.hits[0] as SourceSearchHit).score ?? 0;
-    const fallbackScore = (merged.hits[1] as SourceSearchHit).score ?? 0;
-    expect(fallbackScore).toBeLessThan(baseScore);
-  });
-});
-
 describe("curateSearchResults", () => {
-  test("ranks stronger same-type hits ahead of weaker different-type hits", async () => {
+  test("keeps the search order and takes the top `limit` hits", async () => {
     const result = await curateSearchResults(
       "release review",
       searchResponse({
         hits: [
-          stashHit({
-            type: "skill",
-            name: "release-playbook",
-            ref: "skills/release-playbook",
-            path: "/tmp/1",
-            score: 0.99,
-          }),
-          stashHit({
-            type: "knowledge",
-            name: "release-guide",
-            ref: "knowledge/release-guide",
-            path: "/tmp/2",
-            score: 0.8,
-          }),
-          stashHit({
-            type: "command",
-            name: "release-manager",
-            ref: "commands/release-manager",
-            path: "/tmp/3",
-            score: 0.15,
-          }),
-          stashHit({
-            type: "agent",
-            name: "release-reviewer",
-            ref: "agents/release-reviewer",
-            path: "/tmp/4",
-            score: 0.05,
-          }),
+          stashHit({ type: "knowledge", name: "release-guide", ref: "knowledge/release-guide", path: "/tmp/2" }),
+          stashHit({ type: "skill", name: "release-playbook", ref: "skills/release-playbook", path: "/tmp/1" }),
+          stashHit({ type: "agent", name: "release-reviewer", ref: "agents/release-reviewer", path: "/tmp/4" }),
+          stashHit({ type: "command", name: "release-manager", ref: "commands/release-manager", path: "/tmp/3" }),
         ],
       }),
-      4,
+      3,
     );
 
-    // No score-floor exclusion: all four hits are returned, in rawScore-descending
-    // order (the property `selectCuratedStashHits` actually guarantees via its sort).
     expect(result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`))).toEqual([
-      "skills/release-playbook",
       "knowledge/release-guide",
-      "commands/release-manager",
+      "skills/release-playbook",
       "agents/release-reviewer",
     ]);
   });
 
-  // F3/R-018 (was "selectedType bypasses diversification and keeps top hits
-  // of that type"): the OLD behavior pinned here was the BUG — a set
-  // `selectedType` skipped `selectCuratedStashHits` entirely and did a raw
-  // `stashHits.slice(0, limit)` of the array AS RECEIVED, which neither
-  // filtered by type NOR ranked by score. That the old fixture happened to
-  // still exclude the skill hit (it sat past `limit` in array order) and
-  // happened to keep the two commands in score order masked both defects.
-  // This fixture makes both defects observable: the highest-scoring hit
-  // (score 1) is a `skill`, placed FIRST in array order, and the two
-  // `command` hits are given out of score order. `--type command` must (a)
-  // exclude the skill despite its higher score/earlier position and (b) rank
-  // the two commands by the real curation pipeline (score-descending here),
-  // not by their raw array order.
-  test("--type narrows the candidate pool and still runs the full curation pipeline over it", async () => {
+  // F3/R-018: `--type` narrows the pool of a search response that was never
+  // type-filtered (tests, `searchResponse` fixtures) without reordering it.
+  test("--type narrows the candidate pool and keeps the search order", async () => {
     const result = await curateSearchResults(
       "release",
       searchResponse({
         hits: [
-          stashHit({ type: "skill", name: "release-review", ref: "skills/release-review", path: "/tmp/1", score: 1 }),
-          stashHit({
-            type: "command",
-            name: "release-notes",
-            ref: "commands/release-notes",
-            path: "/tmp/2",
-            score: 0.7,
-          }),
-          stashHit({
-            type: "command",
-            name: "release-manager",
-            ref: "commands/release-manager",
-            path: "/tmp/3",
-            score: 0.9,
-          }),
+          stashHit({ type: "skill", name: "release-review", ref: "skills/release-review", path: "/tmp/1" }),
+          stashHit({ type: "command", name: "release-notes", ref: "commands/release-notes", path: "/tmp/2" }),
+          stashHit({ type: "command", name: "release-manager", ref: "commands/release-manager", path: "/tmp/3" }),
         ],
       }),
       2,
@@ -219,8 +70,8 @@ describe("curateSearchResults", () => {
     );
 
     expect(result.items.map((item) => ("ref" in item ? item.ref : `registry:${item.id}`))).toEqual([
-      "commands/release-manager",
       "commands/release-notes",
+      "commands/release-manager",
     ]);
   });
 
@@ -253,109 +104,6 @@ describe("curateSearchResults", () => {
       "registry:reg-b",
       "registry:reg-c",
     ]);
-  });
-
-  test("collapses broad root/reference families into one top-level result with support refs", async () => {
-    const result = await curateSearchResults(
-      "docker homelab",
-      searchResponse({
-        hits: [
-          stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/1", score: 1 }),
-          stashHit({
-            type: "knowledge",
-            name: "skills/docker-homelab/references/compose",
-            ref: "knowledge/skills/docker-homelab/references/compose",
-            path: "/tmp/2",
-            score: 1,
-          }),
-          stashHit({
-            type: "knowledge",
-            name: "skills/docker-homelab/references/networking",
-            ref: "knowledge/skills/docker-homelab/references/networking",
-            path: "/tmp/3",
-            score: 0.9,
-          }),
-        ],
-      }),
-      4,
-    );
-
-    expect(result.items).toHaveLength(1);
-    const first = result.items[0] as Record<string, unknown>;
-    expect(first.ref).toBe("skills/docker-homelab");
-    expect(first.supportRefs).toEqual([
-      {
-        ref: "knowledge/skills/docker-homelab/references/compose",
-        type: "knowledge",
-        reason: "Related family asset to inspect next.",
-      },
-      {
-        ref: "knowledge/skills/docker-homelab/references/networking",
-        type: "knowledge",
-        reason: "Related family asset to inspect next.",
-      },
-    ]);
-  });
-
-  test("collapses multi-segment skill paths (e.g. system-ops/docker-homelab)", async () => {
-    const result = await curateSearchResults(
-      "docker homelab",
-      searchResponse({
-        hits: [
-          stashHit({
-            type: "skill",
-            name: "system-ops/docker-homelab",
-            ref: "skills/system-ops/docker-homelab",
-            path: "/tmp/1",
-            score: 1,
-          }),
-          stashHit({
-            type: "knowledge",
-            name: "skills/system-ops/docker-homelab/references/containers",
-            ref: "knowledge/skills/system-ops/docker-homelab/references/containers",
-            path: "/tmp/2",
-            score: 0.95,
-          }),
-          stashHit({
-            type: "knowledge",
-            name: "skills/system-ops/docker-homelab/references/homelab-stacks",
-            ref: "knowledge/skills/system-ops/docker-homelab/references/homelab-stacks",
-            path: "/tmp/3",
-            score: 0.9,
-          }),
-        ],
-      }),
-      4,
-    );
-
-    expect(result.items).toHaveLength(1);
-    const first = result.items[0] as Record<string, unknown>;
-    expect(first.ref).toBe("skills/system-ops/docker-homelab");
-    expect(Array.isArray(first.supportRefs)).toBe(true);
-    const supportRefs = first.supportRefs as Array<{ ref: string }>;
-    expect(supportRefs.map((s) => s.ref)).toContain("knowledge/skills/system-ops/docker-homelab/references/containers");
-  });
-
-  test("keeps the narrow child reference as the top-level family representative", async () => {
-    const result = await curateSearchResults(
-      "docker compose reference",
-      searchResponse({
-        hits: [
-          stashHit({ type: "skill", name: "docker-homelab", ref: "skills/docker-homelab", path: "/tmp/1", score: 1 }),
-          stashHit({
-            type: "knowledge",
-            name: "skills/docker-homelab/references/compose",
-            ref: "knowledge/skills/docker-homelab/references/compose",
-            path: "/tmp/2",
-            score: 1,
-          }),
-        ],
-      }),
-      4,
-    );
-
-    expect(result.items).toHaveLength(1);
-    expect((result.items[0] as Record<string, unknown>).ref).toBe("knowledge/skills/docker-homelab/references/compose");
   });
 });
 
@@ -398,5 +146,39 @@ describe("akmCurate", () => {
 
     expect(result.items.length).toBeGreaterThan(0);
     expect(result.items.length).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("akmCurate abstains on input that is not a task", () => {
+  const matching = searchResponse({
+    hits: [stashHit({ type: "knowledge", name: "deploy-guide", ref: "knowledge/deploy-guide", path: "/tmp/1" })],
+  });
+
+  test.each([
+    [
+      "a harness envelope",
+      "<task-notification> <task-id>b1</task-id> <status>completed</status> <summary>Build passed</summary> </task-notification>",
+    ],
+    [
+      "an XML payload after leading whitespace",
+      '  <cross-session-message from="akm-45">REPORT.md is free</cross-session-message>',
+    ],
+    ["the stash README line", "This is an **AKM stash** — a structured knowledge repository that stores reusable"],
+  ])("returns no items for %s and says it abstained", async (_label, query) => {
+    const result = await akmCurate({ query, searchResponse: matching, skipLogging: true });
+
+    expect(result.items).toEqual([]);
+    expect(result.summary).toStartWith("Curate abstained");
+    expect(result.tip).toContain("on purpose");
+  });
+
+  test("still curates a task that mentions a tag, and a task over 2,000 characters", async () => {
+    const longTask = `Fix the failing deploy check. ${"The step that uploads the bundle times out after the retry. ".repeat(40)}`;
+    expect(longTask.length).toBeGreaterThan(2000);
+    for (const query of ["why does <system-reminder> text show up in my hook output?", longTask]) {
+      const result = await akmCurate({ query, searchResponse: matching, skipLogging: true });
+      expect(result.items.map((item) => ("ref" in item ? item.ref : item.id))).toEqual(["knowledge/deploy-guide"]);
+      expect(result.tip).toBeUndefined();
+    }
   });
 });

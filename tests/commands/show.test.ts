@@ -7,8 +7,6 @@ import { saveConfig } from "../../src/core/config/config";
 import { NotFoundError } from "../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 
-// Trigger source-provider self-registration
-import "../../src/sources/providers/index";
 import { seedLockEntries } from "../_helpers/lockfile";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "../_helpers/sandbox";
 
@@ -87,6 +85,18 @@ describe("akmShow stash .meta convention", () => {
   test("throws a maintainer-actionable error when the doc is absent", async () => {
     saveConfig({ semanticSearchMode: "off" });
     await expect(akmShow({ ref: "meta:missing" })).rejects.toThrow(/\.meta\/missing/);
+  });
+});
+
+describe("akmShow legacy colon refs (#964)", () => {
+  test("returns the exact slash-form replacement without treating meta refs as assets", async () => {
+    saveConfig({ semanticSearchMode: "off" });
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(
+      /Use the slash form instead: akm show knowledge\/print\/some-doc/,
+    );
+    await expect(akmShow({ ref: "team//skill:ai/agent-tools#usage" })).rejects.toThrow(
+      /akm show team\/\/skills\/ai\/agent-tools#usage/,
+    );
   });
 });
 
@@ -661,6 +671,29 @@ describe("akmShow markdown fragments", () => {
     const result = await akmShow({ ref: "knowledge/guide.md" });
     expect(result.action).toContain("#fragment");
     expect(result.action).not.toContain("toc");
+  });
+});
+
+// ── Derived memory children ──────────────────────────────────────────────────
+
+describe("akmShow memory with a .derived.md child", () => {
+  test("the memory, a section of it, and its derived child all show", async () => {
+    const parent = path.join(stashDir, "memories", "ops", "gate.md");
+    const child = path.join(stashDir, "memories", "ops", "gate.derived.md");
+    writeFile(parent, "---\ndescription: Parent\n---\n# Gate\n\n## Checks\nParent body.\n");
+    writeFile(child, "---\ninferred: true\nsource: memories/ops/gate\n---\nDerived body.\n");
+    saveConfig({ semanticSearchMode: "off" });
+
+    const shown = await akmShow({ ref: "memories/ops/gate", skipLogging: true });
+    expect(shown.path).toBe(parent);
+    expect(shown.content).toContain("Parent body.");
+
+    const section = await akmShow({ ref: "memories/ops/gate#checks", skipLogging: true });
+    expect(section.content).toBe("## Checks\nParent body.\n");
+
+    const derived = await akmShow({ ref: "memories/ops/gate.derived", skipLogging: true });
+    expect(derived.path).toBe(child);
+    expect(derived.content).toContain("Derived body.");
   });
 });
 

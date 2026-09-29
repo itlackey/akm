@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { resolveStashDir } from "../../core/common";
+import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
-import { registerSourceProvider } from "../provider-factory";
+import type { SourceProvider } from "../provider";
 
 /**
  * Filesystem source — points at a directory the user already manages.
@@ -12,7 +13,7 @@ import { registerSourceProvider } from "../provider-factory";
  * Implements {@link SourceProvider} with `{ name, kind, path }`. No `sync()`:
  * content is the user's own directory, never refreshed by akm.
  */
-registerSourceProvider("filesystem", (entry) => {
+export function createFilesystemProvider(entry: SourceConfigEntry): SourceProvider {
   if (entry.type !== "filesystem") {
     throw new ConfigError(`filesystem source invoked with type="${entry.type}"`);
   }
@@ -28,4 +29,4 @@ registerSourceProvider("filesystem", (entry) => {
       return stashDir;
     },
   };
-});
+}

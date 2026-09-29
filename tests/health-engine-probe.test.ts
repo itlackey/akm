@@ -601,7 +601,7 @@ describe("health engine probes", () => {
     expect(result.message).not.toContain("is unavailable:");
     expect(result.evidence).toMatchObject({
       strategy: "default",
-      unavailableProcesses: expect.arrayContaining(["reflect", "distill", "consolidate", "graphExtraction"]),
+      unavailableProcesses: expect.arrayContaining(["reflect", "distill", "consolidate"]),
     });
     expect(JSON.stringify(result)).not.toContain("PRIVATE_DEFAULT_STRATEGY_TOKEN");
   });
@@ -626,7 +626,6 @@ describe("health engine probes", () => {
               reflect: { enabled: true },
               distill: { enabled: true },
               consolidate: { enabled: true },
-              graphExtraction: { enabled: true },
               validation: { enabled: true },
               memoryInference: { enabled: false },
               extract: { enabled: false },
@@ -645,7 +644,7 @@ describe("health engine probes", () => {
     const evidence = result.evidence as { strategy: string; unavailableProcesses: string[] };
     expect(evidence.strategy).toBe("default");
     expect([...evidence.unavailableProcesses].sort()).toEqual(
-      ["consolidate", "distill", "graphExtraction", "reflect", "validation"].sort(),
+      ["consolidate", "distill", "reflect", "validation"].sort(),
     );
     expect(JSON.stringify(result)).not.toContain("PRIVATE_ONLY_LLM_TOKEN");
   });

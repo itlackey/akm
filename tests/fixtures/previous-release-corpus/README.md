@@ -7,30 +7,34 @@ to enforce.
 
 Files:
 - `task-v2.yml` — a conformant task v2 file: `schedule`, `command`,
-  `enabled`, `timeoutMs`, `name`, `description`, `when_to_use`, `tags`. Read
-  via the in-memory v2->v3->v4 migration shim in
-  `src/tasks/source/parse-task-source.ts`.
+  `enabled`, `timeoutMs`, `name`, `description`, `when_to_use`, `tags`.
+  Refused at runtime naming `akm migrate apply` (the runtime reads only task
+  source v4, #987) and converted by `akm-migrate`'s v2->v3->v4 planners.
 - `task-v3.yml` — a conformant task v3 file: `akm.schedule`,
-  `uses: akm/command`, `with.content`. Read via the in-memory v3->v4
-  migration shim, same file.
+  `uses: akm/command`, `with.content`. Refused the same way and converted by
+  the v3->v4 planner.
+- `task-v4-schedule-enabled.yml` — a `version: 4` file exactly as 0.9.15's
+  `akm task add --disabled` wrote it (`renderTaskYaml` in that release's
+  `src/commands/tasks/tasks.ts`: `schedule: [{cron, enabled: false}]`, the
+  same field order/tags/when_to_use richness as `task-v2.yml`). 0.9.15's v4
+  grammar still accepted `schedule[].enabled`; this release's does not.
+  Refused at runtime naming `akm migrate apply`, whose v4->v4 pass strips
+  the key without reading its value.
 
 The proposals-state.db fixture (a pre-#858 legacy `metadata_json` row) is
 built programmatically inside the test — it is DB state, not a file, so
 there is nothing to check in here for it.
 
-- `config-0.0.1.json` — SYNTHETIC (#863): unlike the fixtures above, `"0.9.0"`
-  is the only `configVersion` akm has ever shipped, so there is no real prior
-  release to take a shape from. This fixture stands in for one, establishing
-  the `configVersion` read-shim mechanism (`src/core/config/config-version-shim.ts`)
-  before a real bump ever needs it. Read via the in-memory `0.0.1`->`0.9.0`
-  upgrade in that shim (root-level `defaultEngine` -> `defaults.llmEngine`).
-  Delete this fixture and its shim entry once a real old `configVersion`
-  fixture replaces it.
-
 The `AKM_BUNDLE_DIR` duplicate-`stash`-bundle fixture (#870) and the
 retired-0.8-source-keys fixture (#863) are both built programmatically
 inside the test (a `config.json` with a specific `bundles` shape, and a raw
 JSON config, respectively) — there is nothing to check in here for them.
+
+- `index-v25.sql` — a layout-25 index as `akm index --full` in 0.9.17-alpha.7
+  wrote it over a small stash (memories with `xrefs`, `contradictedBy` and a
+  `.derived` child, a superseded guide, a wiki page citing its raw source, a
+  task targeting a workflow that targets a command), trimmed to the tables the
+  layout-26 migration reads. Paths are rebased to `/fixture/stash`.
 
 - `openpalm-consumer/` — downstream-consumer fixtures (#880) standing in for
   the shapes OpenPalm (a real, if unofficial, integration point) writes and

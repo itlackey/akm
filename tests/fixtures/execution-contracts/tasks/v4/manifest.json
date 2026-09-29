@@ -19,22 +19,21 @@
       "represents": ["schedule:string-shorthand"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "0 8 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "0 8 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": { "kind": "uses", "uses": { "kind": "command", "ref": "commands/review" } }
       }
     },
     {
       "id": "schedule-list-multiple",
       "file": "schedule-list-multiple.yml",
-      "represents": ["schedule:list", "schedule:per-binding-enabled", "schedule:per-binding-inputs"],
+      "represents": ["schedule:list", "schedule:per-binding-inputs"],
       "expected": {
         "manualOnly": false,
         "schedule": [
-          { "cron": "0 6 * * *", "enabled": true, "inputs": {}, "source": "schedule[0].cron", "ordinal": 0 },
-          { "cron": "30 18 * * 1-5", "enabled": false, "inputs": {}, "source": "schedule[1].cron", "ordinal": 1 },
+          { "cron": "0 6 * * *", "inputs": {}, "source": "schedule[0].cron", "ordinal": 0 },
+          { "cron": "30 18 * * 1-5", "inputs": {}, "source": "schedule[1].cron", "ordinal": 1 },
           {
             "cron": "0 9 * * 1",
-            "enabled": true,
             "inputs": { "scope": "all" },
             "source": "schedule[2].cron",
             "ordinal": 2
@@ -56,7 +55,7 @@
       "represents": ["target:command"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "15 4 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "15 4 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": { "kind": "uses", "uses": { "kind": "command", "ref": "commands/publish-changelog" } }
       }
     },
@@ -66,7 +65,7 @@
       "represents": ["target:script"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "15 4 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "15 4 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": { "kind": "uses", "uses": { "kind": "script", "ref": "scripts/nightly-cleanup.sh" } }
       }
     },
@@ -76,7 +75,7 @@
       "represents": ["target:workflow"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "15 4 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "15 4 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": { "kind": "uses", "uses": { "kind": "workflow", "ref": "workflows/nightly-report" } }
       }
     },
@@ -86,7 +85,7 @@
       "represents": ["target:builtin-command", "with:legal-on-akm-command"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "15 4 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "15 4 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": {
           "kind": "uses",
           "uses": { "kind": "builtin-command", "ref": "akm/command" },
@@ -101,7 +100,7 @@
       "represents": ["target:run-shell"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "15 4 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "15 4 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": { "kind": "run", "run": "akm index --full", "shell": "bash" }
       }
     },
@@ -131,7 +130,7 @@
       "represents": ["options:top-level-execution-controls", "options:d2-n7-survivors"],
       "expected": {
         "manualOnly": false,
-        "schedule": [{ "cron": "15 4 * * 1", "enabled": true, "inputs": {}, "source": "schedule", "ordinal": 0 }],
+        "schedule": [{ "cron": "15 4 * * 1", "inputs": {}, "source": "schedule", "ordinal": 0 }],
         "target": { "kind": "run", "run": "akm index --full" },
         "env": { "MODE": "safe", "RETRIES": 3, "DRY_RUN": true },
         "execution": {

@@ -18,7 +18,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
@@ -34,7 +33,6 @@ async function runCli(args: string[], stashDir: string): Promise<{ stdout: strin
   return withEnv({ AKM_BUNDLE_DIR: stashDir, AKM_CONFIG_DIR: undefined }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
-    resetGraphBoostCache();
     const { stdout, stderr, code } = await runCliCapture(args);
     return { stdout, stderr, status: code };
   });
@@ -43,13 +41,11 @@ async function runCli(args: string[], stashDir: string): Promise<{ stdout: strin
 beforeEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 });
 
 afterEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 });
 
 /**

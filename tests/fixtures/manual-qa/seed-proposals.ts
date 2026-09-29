@@ -4,12 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import {
-  createProposal,
-  isProposalSkipped,
-  type Proposal,
-  type ProposalSource,
-} from "../../../src/commands/proposal/repository";
+import { createProposal, type Proposal, type ProposalSource } from "../../../src/commands/proposal/repository";
 
 const stashArg = process.argv[2];
 if (!stashArg) {
@@ -51,35 +46,26 @@ const context = {
     })(),
 };
 
-function seed(
-  label: string,
-  ref: string,
-  source: ProposalSource,
-  content: string,
-  frontmatter?: Record<string, unknown>,
-): Proposal {
-  const result = createProposal(
+function seed(ref: string, source: ProposalSource, content: string, frontmatter?: Record<string, unknown>): Proposal {
+  return createProposal(
     stashDir,
     {
       ref,
       source,
       sourceRun: "manual-qa-seed",
-      force: true,
       payload: { content, ...(frontmatter ? { frontmatter } : {}) },
     },
     context,
   );
-  if (isProposalSkipped(result)) throw new Error(`Manual QA proposal ${label} was unexpectedly skipped`);
-  return result;
 }
 
 const proposals = {
-  update: seed("update", "memories/qa-proposal-update", "reflect", updateAfter),
-  newAsset: seed("newAsset", "memories/qa-proposal-new", "distill", readSeed("new-memory.md")),
-  emptyDiff: seed("emptyDiff", "memories/qa-proposal-empty", "consolidate", emptyBefore, {
+  update: seed("memories/qa-proposal-update", "reflect", updateAfter),
+  newAsset: seed("memories/qa-proposal-new", "distill", readSeed("new-memory.md")),
+  emptyDiff: seed("memories/qa-proposal-empty", "consolidate", emptyBefore, {
     description: "Existing target for an empty-diff proposal",
   }),
-  defer: seed("defer", "memories/qa-proposal-defer", "consolidate", readSeed("defer-after.md"), {
+  defer: seed("memories/qa-proposal-defer", "consolidate", readSeed("defer-after.md"), {
     description: "Updated target for a deferred proposal",
   }),
 };

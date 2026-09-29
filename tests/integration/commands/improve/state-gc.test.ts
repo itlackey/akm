@@ -26,7 +26,7 @@
  * dependency.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 
 import {
   type IndexDbCell,
@@ -94,13 +94,18 @@ function insertLiveEntry(indexDb: Database, itemRef: string): void {
   const storedRef = itemRef.includes("//") ? itemRef : `${FIXTURE_BUNDLE}//${itemRef}`;
   const [bundleId, conceptId] = storedRef.split("//", 2) as [string, string];
   const name = conceptId.split("/").at(-1) ?? conceptId;
-  upsertEntry(indexDb, `/fixture/dir/${name}.md`, { name, type: "memory" }, storedRef, {
-    itemRef: storedRef,
-    bundleId,
-    componentId: bundleId,
-    conceptId,
-    adapterId: "akm",
-  });
+  upsertEntry(
+    indexDb,
+    `/fixture/dir/${name}.md`,
+    { name, type: "memory" },
+    {
+      itemRef: storedRef,
+      bundleId,
+      componentId: bundleId,
+      conceptId,
+      adapterId: "akm",
+    },
+  );
 }
 
 function openIndex(): Database {
@@ -114,12 +119,6 @@ function makeCtx(overrides: Partial<MaintenanceCtx> = {}): MaintenanceCtx {
     primaryStashDir: storage.stashDir,
     memoryInferenceFn: () => {
       throw new Error("memoryInferenceFn not expected in this scenario");
-    },
-    graphExtractionFn: () => {
-      throw new Error("graphExtractionFn not expected in this scenario");
-    },
-    reindexWithIndexDbReleased: () => {
-      throw new Error("reindex not expected in this scenario");
     },
     ...overrides,
   };
@@ -146,6 +145,27 @@ describe("runOrphanStateGcPass", () => {
         expect(row?.missing_since).not.toBeNull();
         expect(typeof row?.missing_since).toBe("number");
       });
+    } finally {
+      closeDatabase(indexDb);
+    }
+  });
+
+  // getLiveRefSnapshot's `SELECT item_ref FROM entries` used to run
+  // OUTSIDE this pass's try/catch, so a schema mismatch (e.g. a DB version
+  // upgrade that dropped `entries` — the case improve.ts's #339 comment
+  // names) escaped as a throw instead of degrading to the same
+  // "orphan state GC failed: …" warning every other failure in this pass
+  // produces.
+  test("a missing entries table degrades to a warning instead of throwing", () => {
+    withStateDb((db) => upsertAssetSalience(db, "memories/gone", FIXTURE_VECTOR));
+    const indexDb = openIndex();
+    indexDb.exec("DROP TABLE entries");
+    try {
+      const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+      expect(out.pending).toBe(0);
+      expect(out.collected).toBe(0);
+      expect(out.warnings).toHaveLength(1);
+      expect(out.warnings[0]).toContain("orphan state GC failed");
     } finally {
       closeDatabase(indexDb);
     }
@@ -347,6 +367,48 @@ describe("runOrphanStateGcPass", () => {
     expect(out.warnings.length).toBeGreaterThan(0);
     expect(out.pending).toBe(0);
     expect(out.collected).toBe(0);
+  });
+
+  // R78: the pass used to call `getEntryByRef` (two indexDb statements, with
+  // the bare-ref fallback) once per pending row — O(N) round trips against
+  // index.db for N pending rows. It now builds one live-ref snapshot up front
+  // and matches every row against it in memory.
+  test("a GC pass over N pending rows performs O(1) indexDb queries, not O(N)", () => {
+    const orphanCount = 40;
+    withStateDb((db) => {
+      for (let i = 0; i < orphanCount; i++) {
+        upsertAssetSalience(db, `memories/orphan-${i}`, FIXTURE_VECTOR);
+      }
+    });
+    const indexDb = openIndex(); // empty — every pending ref is a genuine orphan
+    try {
+      let indexDbQueries = 0;
+      const realPrepare = indexDb.prepare.bind(indexDb);
+      const prepareSpy = spyOn(indexDb, "prepare").mockImplementation((sql: string) => {
+        indexDbQueries++;
+        return realPrepare(sql);
+      });
+
+      try {
+        const out = runOrphanStateGcPass(ctxWithCollect(false), { current: indexDb });
+        expect(out.pending).toBe(orphanCount);
+      } finally {
+        prepareSpy.mockRestore();
+      }
+
+      // One query total for the whole pass (both state tables share it) — NOT
+      // one per pending row.
+      expect(indexDbQueries).toBe(1);
+
+      withStateDb((db) => {
+        const rows = listAssetSalienceMissingState(db);
+        expect(rows).toHaveLength(orphanCount);
+        // Every absent ref still received its missing_since stamp.
+        expect(rows.every((r) => r.missing_since != null)).toBe(true);
+      });
+    } finally {
+      closeDatabase(indexDb);
+    }
   });
 });
 

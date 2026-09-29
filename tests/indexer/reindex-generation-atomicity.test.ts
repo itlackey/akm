@@ -5,13 +5,12 @@
 /**
  * Issue #759 (1/3) — index GENERATIONS during a full reindex.
  *
- * `persistDirRecords` (src/indexer/indexer.ts) wraps the full-rebuild wipe and
- * the re-insert in ONE `db.transaction(...)` specifically so that a concurrent
- * reader never observes an empty or half-rebuilt index between the two. That
- * guarantee had no direct test: by the time `akmIndex()` resolves, the commit
- * has already collapsed both generations into a single observable state, so
- * nothing outside the transaction can tell an atomic rebuild from a
- * delete-then-insert one.
+ * `persistDirRecords` (src/indexer/indexer.ts) upserts and prunes every
+ * directory's rows in ONE `db.transaction(...)` specifically so that a
+ * concurrent reader never observes a half-rewritten index. That guarantee had
+ * no direct test: by the time `akmIndex()` resolves, the commit has already
+ * collapsed both generations into a single observable state, so nothing
+ * outside the transaction can tell an atomic rewrite from a piecemeal one.
  *
  * These tests open a SECOND, independent read-only connection to the very same
  * `index.db` file from inside the in-flight transaction (via the
@@ -21,7 +20,7 @@
  * Why the seam is unavoidable: SQLite is synchronous, the writer holds the JS
  * thread for the whole transaction, and the property under test is only true
  * *during* a window that does not exist once the call returns. The seam fires
- * two `undefined?.()` calls per reindex in production.
+ * one `undefined?.()` call per reindex in production.
  */
 
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -105,9 +104,9 @@ test("a concurrent reader never observes an empty or partial index mid-reindex",
 
   await akmIndex({ stashDir: storage.stashDir, full: true });
 
-  // THE property: at every point where the writer had already wiped and/or
-  // rewritten the tables, the concurrent reader still saw generation 1 whole.
-  // Never transiently empty, never a partial/mixed blend of the two.
+  // THE property: while the writer had already rewritten and pruned the
+  // tables, the concurrent reader still saw generation 1 whole. Never
+  // transiently empty, never a partial/mixed blend of the two.
   for (const observation of observations) {
     expect({ point: observation.point, empty: observation.names.length === 0 }).toEqual({
       point: observation.point,
@@ -116,10 +115,8 @@ test("a concurrent reader never observes an empty or partial index mid-reindex",
     expect(observation.names).toEqual(beforeNames);
   }
 
-  // The race really interleaved: both in-transaction points fired exactly
-  // once, including the one immediately after every DELETE of the wipe. A
-  // wipe that escaped the transaction would fire the point from outside it.
-  expect(observations.map((o) => o.point)).toEqual(["full-delete-applied", "records-persisted"]);
+  // The race really interleaved: the in-transaction point fired exactly once.
+  expect(observations.map((o) => o.point)).toEqual(["records-persisted"]);
 
   // And once committed, the new generation is fully visible.
   expect(currentEntryNames()).toEqual(generationTwo);
@@ -132,17 +129,17 @@ test("the mid-transaction reader is a real second connection, not the writer's o
   // Sanity check on the harness itself: a WAL reader opened during the write
   // transaction must be able to read at all (i.e. it is not silently throwing
   // and being swallowed), and it must NOT see uncommitted writer state.
-  let sawEmptyDatabaseFile = false;
+  let rowsSeenInsideTransaction = -1;
   let openedInsideTransaction = 0;
   writeKnowledge("second", "Added document.");
   overrideSeam(_setIndexTransactionHookForTests, (point: IndexTransactionPoint) => {
-    if (point !== "full-delete-applied") return;
+    if (point !== "records-persisted") return;
     openedInsideTransaction++;
     const db = openReadonlyExistingDatabase(getDbPath());
     if (!db) throw new Error("second reader could not open index.db");
     try {
       const row = db.prepare("SELECT COUNT(*) AS n FROM entries").get() as { n: number };
-      sawEmptyDatabaseFile = row.n === 0;
+      rowsSeenInsideTransaction = row.n;
     } finally {
       db.close();
     }
@@ -150,9 +147,9 @@ test("the mid-transaction reader is a real second connection, not the writer's o
 
   await akmIndex({ stashDir: storage.stashDir, full: true });
 
-  // The writer had already run `DELETE FROM entries` when the hook fired; a
-  // reader that saw 0 rows would mean the wipe had escaped its transaction.
-  expect(sawEmptyDatabaseFile).toBe(false);
+  // The writer had already inserted `second` when the hook fired; a reader
+  // that saw 2 rows would mean the write had escaped its transaction.
+  expect(rowsSeenInsideTransaction).toBe(1);
   expect(openedInsideTransaction).toBe(1);
   expect(currentEntryNames()).toEqual(["knowledge/second", "knowledge/solo"]);
 });

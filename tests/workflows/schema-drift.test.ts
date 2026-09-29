@@ -13,7 +13,7 @@ import {
   PROGRAM_REDUCERS,
   PROGRAM_RETRY_REASONS,
   PROGRAM_STEP_ID_PATTERN,
-} from "../../src/workflows/program/schema";
+} from "../../src/workflows/parser";
 import {
   WORKFLOW_ENGINE_NAME_PATTERN,
   WORKFLOW_MAX_CONCURRENCY,

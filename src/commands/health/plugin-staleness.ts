@@ -68,6 +68,48 @@ function claudePluginsDir(): string {
   return process.env.AKM_CLAUDE_PLUGINS_DIR ?? path.join(os.homedir(), ".claude", "plugins");
 }
 
+/**
+ * Root of OpenCode's package cache, same override pattern as
+ * {@link claudePluginsDir} (`AKM_OPENCODE_CACHE_DIR` for tests).
+ * The OpenCode plugin (`akm-opencode`) bundles its own `akm-cli` under
+ * `packages/akm-opencode/node_modules/akm-cli` and runs it in-process,
+ * sharing the host's databases with every other akm install — its version
+ * lag matters the same way a stale Claude plugin's does.
+ */
+function opencodeCacheDir(): string {
+  return process.env.AKM_OPENCODE_CACHE_DIR ?? path.join(os.homedir(), ".cache", "opencode");
+}
+
+/**
+ * Read the OpenCode plugin's bundled `akm-cli` version from its
+ * `package.json` — never executed, just parsed, mirroring
+ * {@link detectInstalledPlugins}'s manifest read. `undefined` when the
+ * OpenCode plugin, or its bundled akm-cli, is not installed.
+ */
+function detectOpencodeBundledAkmVersion(cacheRoot: string): string | undefined {
+  const pkgPath = path.join(cacheRoot, "packages", "akm-opencode", "node_modules", "akm-cli", "package.json");
+  try {
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
+    return typeof pkg.version === "string" ? pkg.version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function buildOpencodeBundledAdvisory(bundledVersion: string, cliVersion: string): HealthCheckResult {
+  const stale = bundledVersion !== cliVersion;
+  return {
+    name: "opencode-plugin-version",
+    kind: "deterministic",
+    status: stale ? "warn" : "pass",
+    confidence: "high",
+    message: stale
+      ? `OpenCode's bundled akm-cli is v${bundledVersion}, but the running CLI is v${cliVersion} — it shares the same databases in-process; update the OpenCode plugin.`
+      : `OpenCode's bundled akm-cli matches the running v${cliVersion}.`,
+    evidence: { bundledVersion, cliVersion },
+  };
+}
+
 /** One `akm` plugin found in the Claude Code plugin cache. */
 interface DetectedPlugin {
   harness: "claude";
@@ -185,18 +227,32 @@ export interface PluginStalenessOptions {
   cliVersion: string;
   /** Injectable remote-tag lister; defaults to the real `git ls-remote`. */
   listRemoteTags?: ListRemoteTagsFn;
+  /** Root of OpenCode's package cache. Defaults to `opencodeCacheDir()`. */
+  opencodeCacheRoot?: string;
 }
 
 /**
- * Build one `plugin-version` advisory per detected `akm` harness plugin.
- * Returns `[]` when no plugin is installed — the benign, common case.
+ * Build one `plugin-version` advisory per detected `akm` harness plugin,
+ * plus one `opencode-plugin-version` advisory when the
+ * OpenCode plugin's bundled `akm-cli` is found — it shares the host's
+ * databases in-process, so its lag matters the same way a stale Claude
+ * plugin's does. Returns `[]` when neither is installed — the benign,
+ * common case.
  */
 export function collectPluginStalenessAdvisories(options: PluginStalenessOptions): HealthCheckResult[] {
   const pluginsRoot = options.pluginsRoot ?? claudePluginsDir();
   const listRemoteTags = options.listRemoteTags ?? realListRemoteTags;
   const plugins = detectInstalledPlugins(pluginsRoot);
 
-  return plugins.map((plugin) => buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags));
+  const results = plugins.map((plugin) => buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags));
+
+  const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
+  const bundledVersion = detectOpencodeBundledAkmVersion(opencodeCacheRoot);
+  if (bundledVersion !== undefined) {
+    results.push(buildOpencodeBundledAdvisory(bundledVersion, options.cliVersion));
+  }
+
+  return results;
 }
 
 function buildAdvisory(

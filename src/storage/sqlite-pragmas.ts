@@ -106,18 +106,22 @@ export function isNetworkFilesystem(fsType: number | undefined): boolean {
   return NETWORK_FS_MAGICS.has(fsType);
 }
 
-/** Options for {@link applyStandardPragmas}. */
-/**
- * How long a statement waits for a lock before failing with SQLITE_BUSY.
- *
- * Exported so read-only openers can apply it too. They cannot run the rest of
- * the standard set (journal_mode and foreign_keys are write operations), but
- * the default of 0 makes reads fail INSTANTLY under writer contention — which
- * matters in the DELETE/TRUNCATE journal modes 0.9.1's network-filesystem
- * fallback and `AKM_SQLITE_JOURNAL_MODE` can select, where readers do block.
- */
+/** How long a statement waits for a lock before failing with SQLITE_BUSY. */
 export const SQLITE_BUSY_TIMEOUT_MS = 30_000;
 
+/**
+ * The standard set for a READ-ONLY handle: just `busy_timeout`. A read-only
+ * connection cannot run the rest (journal_mode and foreign_keys are write
+ * operations), but SQLite's default timeout of 0 makes reads fail INSTANTLY
+ * under writer contention — which matters in the DELETE/TRUNCATE journal modes
+ * the network-filesystem fallback and `AKM_SQLITE_JOURNAL_MODE` can select,
+ * where readers do block.
+ */
+export function applyReadonlyPragmas(db: Database): void {
+  db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+}
+
+/** Options for {@link applyStandardPragmas}. */
 export interface StandardPragmaOptions {
   /**
    * When `false`, `PRAGMA foreign_keys = ON` is NOT applied. Default `true`

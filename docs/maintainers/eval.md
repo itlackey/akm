@@ -389,18 +389,12 @@ always write schema v2 and require the fingerprint.
 
 ## Graph A/B ablation (Phase 5)
 
-`scripts/akm-eval/bin/akm-eval-graph-ablation` (roadmap R5) drives a
-two-sandbox ablation against the same source bundle — graph extraction on
-vs. off — and reports per-metric deltas (retrieval hit@K, precision@K,
-contradiction precision/recall, latency, and a proxy token-cost). The off
-side is gated via a planted `config.json` that sets both
-`improve.strategies.default.processes.graphExtraction.enabled: false` and
-`index.graph.enabled: false`.
-
-Outputs land under `<stash>/.akm/evals/ablations/<eval-run-id>/` so they
-never collide with the main `runs/` namespace. See
+Retired in 0.9.17-alpha.9. `scripts/akm-eval/bin/akm-eval-graph-ablation`
+drove a two-sandbox ablation comparing graph extraction on vs. off, but the
+LLM graph it ablated is gone. The entry point now refuses immediately with a
+one-line message and a non-zero exit. See
 [`scripts/akm-eval/README.md`](../../scripts/akm-eval/README.md#graph-ab-harness)
-for usage, the full metric list, and the verdict heuristic.
+for detail.
 
 ## LLM judging (optional, Phase 7)
 

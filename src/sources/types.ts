@@ -4,7 +4,7 @@
 
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
-import type { ProgramExecCore } from "../workflows/program/schema";
+import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
 
 export type AkmSearchType = string;
 export type SearchSource = "local" | "registry" | "all";
@@ -16,7 +16,7 @@ export type FragmentContextMode = "exact" | "lead";
 
 /** Public provenance for an indexed-safe Markdown fragment selection. */
 export interface FragmentProvenance {
-  /** Fragment-qualified selector that search chose or show resolved. */
+  /** Fragment-qualified selector that show resolved. */
   selectedRef?: string;
   /** Canonical parent asset ref, without a selector. */
   parentRef?: string;
@@ -34,7 +34,7 @@ export interface FragmentProvenance {
   parentEstimatedTokens?: number;
 }
 
-export interface SourceSearchHit extends FragmentProvenance {
+export interface SourceSearchHit {
   type: string;
   name: string;
   path: string;
@@ -72,14 +72,6 @@ export interface SourceSearchHit extends FragmentProvenance {
    * `quality` field.
    */
   quality?: string;
-  /**
-   * Which stage of the progressive AND→OR lexical search ladder produced
-   * this hit: `"exact"` (strict AND), `"prefix"` (prefix AND), or
-   * `"relaxed"` (OR fallback). Absent when the hit has no FTS component
-   * (e.g. a pure-semantic hybrid contribution, or a registry/browse hit
-   * that never goes through the lexical ladder).
-   */
-  matchStage?: "exact" | "prefix" | "relaxed";
   beliefState?: string;
   currentBeliefRefs?: string[];
   /**
@@ -96,10 +88,6 @@ export interface SourceSearchHit extends FragmentProvenance {
    * child when this pointer is set.
    */
   expandTo?: string;
-  graph?: {
-    entities: Array<{ name: string; kind: "matched" | "connected"; confidence?: number }>;
-    relations: Array<{ from: string; to: string; type?: string; confidence?: number }>;
-  };
 }
 
 export interface RegistrySearchResultHit {
@@ -164,7 +152,7 @@ export interface WorkflowStepOrchestrationSummary {
    * so what `show` prints is what runs. `passEnv`/`inheritEnv` describe the
    * child's environment SCOPE by variable name; no value is ever projected.
    *
-   * The SHARED projection shape (`workflows/program/schema.ts`), not a mirror
+   * The SHARED projection shape (`WorkflowExec`, `workflows/plan.ts`), not a mirror
    * of it: a field added there must not be able to reach the frozen plan while
    * silently missing from what `show` describes.
    */
@@ -213,15 +201,8 @@ export interface WorkflowRunSummary {
   agentHarness?: string | null;
   /** Platform-native session id that owns the run, if known. */
   agentSessionId?: string | null;
-  /**
-   * Engine run lease (R2 single-driver enforcement): present while an
-   * `akm workflow run` invocation holds the run. `until` is the ISO-8601
-   * expiry; an expired lease may still be surfaced here (claimable, not live).
-   */
-  engineLease?: { holder: string; until: string };
-  /** Frozen workflow plan format on this row; null for historical rows. */
+  /** Frozen workflow plan format on this row (informational); null for historical rows. */
   planIrVersion?: number | null;
-  executionSupport?: "supported" | "unsupported-version" | "missing-plan" | "corrupt-plan";
   /**
    * Resolved declared `outputs:` (P3b), present only on a completed run
    * whose plan declared any. Absent, never `null` — every pre-existing
@@ -238,6 +219,10 @@ export interface AddResponse {
   schemaVersion: number;
   bundleDir: string;
   ref: string;
+  /** Config key the bundle was installed under (`bundles.<id>`). */
+  bundleId: string;
+  /** The registry install id (e.g. `npm:pkg`, `github:owner/repo`). Present for registry stash installs. */
+  registryId?: string;
   /** Present for registry stash installs (npm, github, git) */
   installed?: {
     id: string;
@@ -448,6 +433,12 @@ export interface UpdateResponse {
  */
 export type ShowDetailLevel = "brief" | "summary" | "normal" | "full";
 
+/** One kind of declared link on `akm show`: how many there are, and the first few refs. */
+export interface ShowLinkGroup {
+  total: number;
+  refs: string[];
+}
+
 export interface ShowResponse extends FragmentProvenance {
   schemaVersion?: number;
   type: string;
@@ -496,9 +487,17 @@ export interface ShowResponse extends FragmentProvenance {
    * Populated by the `env-file` renderer; never set for any other type.
    */
   keys?: string[];
-  related?: {
-    total: number;
-    hits: Array<{ ref?: string; path: string; type: string; sharedEntities: string[]; relationCount: number }>;
+  /**
+   * Declared links (#935), grouped by kind (`xref`, `superseded_by`, `uses`, …):
+   * what this asset names (`outgoing`), what names it (`incoming`), and the
+   * tokens it names that resolve to no indexed asset (`unresolved`, as
+   * authored). `total` counts every link of the kind; `refs` lists the first
+   * few. Each part is omitted when empty, and the field when all are.
+   */
+  links?: {
+    outgoing?: Record<string, ShowLinkGroup>;
+    incoming?: Record<string, ShowLinkGroup>;
+    unresolved?: Record<string, ShowLinkGroup>;
   };
   /** Fragment presentation requested by the caller; absent for whole assets. */
   contextMode?: FragmentContextMode;
@@ -549,6 +548,24 @@ export interface InfoResponse {
   /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
   defaultBundle: string | null;
   /**
+   * Set only when config.json exists but could not be loaded (parse or
+   * schema failure). Every config-derived field above/below falls back to
+   * the same defaults a fresh install reports while this is set. Absent on
+   * every healthy run and when there is simply no config file yet (a fresh
+   * install needs no error — it already reports the defaults), so no
+   * existing consumer sees a new key.
+   */
+  configError?: string;
+  /**
+   * Set only when `bundleDir` could not be resolved the normal way (no
+   * bundle created yet, or a configured bundle path that doesn't exist or
+   * isn't a directory) — `bundleDir` still reports the platform-default
+   * location as a courtesy, but that default may not be where the bundle
+   * actually is, so the real reason is kept here rather than silently
+   * dropped. Absent whenever `bundleDir` resolved normally.
+   */
+  bundleDirError?: string;
+  /**
    * Resolved per-platform directories (#951) — XDG on Linux/macOS,
    * APPDATA/LOCALAPPDATA on Windows (see `src/core/paths.ts`) — so a script
    * can read akm's paths with `akm info --format json | jq -r .dataDir`
@@ -564,7 +581,7 @@ export interface InfoResponse {
   semanticSearch: {
     mode: "off" | "auto";
     /** Read live from the index at call time — never a cached verdict. */
-    status: "disabled" | "pending" | "ready-js" | "ready-vec";
+    status: "disabled" | "pending" | "ready-js";
   };
   registries: Array<{ url: string; name?: string; provider?: string; enabled?: boolean }>;
   sourceProviders: Array<{ type: string; name?: string; path?: string; url?: string; enabled?: boolean }>;
@@ -572,17 +589,32 @@ export interface InfoResponse {
     entryCount: number;
     /** Per-asset-type breakdown of `entryCount`, keyed by asset type (e.g. "skill", "knowledge") (R-057). */
     byType: Record<string, number>;
+    /**
+     * Declared links (#935) per kind, with how many name a target that is not
+     * indexed. Absent when the index holds none.
+     */
+    links?: Record<string, { total: number; unresolved: number }>;
     lastBuiltAt: string | null;
     hasEmbeddings: boolean;
-    vecAvailable: boolean;
     /**
      * Set only when the index exists but could not be READ (#791) — carries the
      * path, errno, mode/owner and the running uid. Without it, an unreadable
      * index is indistinguishable from an unbuilt one: both report
-     * `entryCount: 0, vecAvailable: false` at exit 0, which is what led a
+     * `entryCount: 0, hasEmbeddings: false` at exit 0, which is what led a
      * consuming agent to tell its user akm's "vector service is unavailable".
      * Absent on every healthy run, so no existing consumer sees a new key.
      */
     unreadable?: string;
+    /**
+     * Set only when the index exists AND is filesystem-readable, but the
+     * SQLite-level read did not complete: locked by another akm process past
+     * `akm info`'s bounded wait (about 1.5s — it must never sit behind a
+     * writer's lock for long), or a newer index layout this akm cannot
+     * understand (reported here, not refused). A genuinely corrupt database
+     * file also lands here rather than throwing. Absent on every healthy run
+     * (including a merely older, unmigrated layout, which is still readable
+     * as-is), so no existing consumer sees a new key.
+     */
+    unavailable?: string;
   };
 }

@@ -16,8 +16,8 @@
  *   2. `process.cwd()` and `globalThis.fetch` — snapshotted per-test and
  *      restored in `afterEach`.
  *   3. Module-level singletons in production code — `cachedConfig`,
- *      `embedCache`, `localEmbedder`, `cachedParsedGraph`, the warn-module
- *      log file path, and quiet/verbose flags. Each has an exported reset
+ *      `embedCache`, `localEmbedder`, the warn-module log file path, and
+ *      quiet/verbose flags. Each has an exported reset
  *      hook that the harness calls in `beforeEach`.
  *
  * In addition to providing isolation, the `afterEach` runs a tripwire that
@@ -47,10 +47,8 @@ import path from "node:path";
 
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
-import { resetGraphBoostCache } from "../src/indexer/graph/graph-boost";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
-import { _setRegistryNetworkOverridesForTests } from "../src/registry/network";
 import { resetAllSeams } from "./_helpers/seams";
 
 /**
@@ -299,15 +297,9 @@ function healSandboxEnv(): void {
 /** Reset every known module-level singleton in production code. */
 function resetSingletons(): void {
   resetAllSeams();
-  _setRegistryNetworkOverridesForTests({
-    allowLoopbackFixtures: true,
-    resolveHostname: async () => ["93.184.216.34"],
-    requestPinned: async (url, _address, init) => fetch(url, { ...init, redirect: "manual" }),
-  });
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
   _setAssetMutationLeaseSyncTimingForTests(undefined);
   // Enable quiet mode by default in tests so production [improve]/warn/info
   // lines do not flood stderr and bury bun's "(fail) <test name>" output.

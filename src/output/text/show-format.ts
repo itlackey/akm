@@ -52,17 +52,19 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
     if (r.editHint) lines.push(`editHint: ${String(r.editHint)}`);
     if (r.schemaVersion !== undefined) lines.push(`schemaVersion: ${String(r.schemaVersion)}`);
   }
-  const related =
-    typeof r.related === "object" && r.related !== null ? (r.related as Record<string, unknown>) : undefined;
-  const relatedHits = related && Array.isArray(related.hits) ? (related.hits as Array<Record<string, unknown>>) : [];
-  if (related) {
+  const links = typeof r.links === "object" && r.links !== null ? (r.links as Record<string, unknown>) : undefined;
+  if (links) {
     lines.push("");
-    lines.push(`related: ${String(related.total ?? relatedHits.length)}`);
-    for (const hit of relatedHits) {
-      lines.push(`  - ${String(hit.type ?? "?")}: ${formatRelatedLabel(hit)}`);
-      const shared = Array.isArray(hit.sharedEntities) ? (hit.sharedEntities as unknown[]).map(String) : [];
-      if (shared.length > 0) lines.push(`    shared: ${shared.join(", ")}`);
-      lines.push(`    relationCount: ${String(hit.relationCount ?? 0)}`);
+    lines.push("links:");
+    for (const part of ["outgoing", "incoming", "unresolved"]) {
+      const groups = links[part];
+      if (typeof groups !== "object" || groups === null) continue;
+      lines.push(`  ${part}:`);
+      for (const [kind, group] of Object.entries(groups as Record<string, { total?: number; refs?: unknown[] }>)) {
+        const refs = Array.isArray(group.refs) ? group.refs.map(String) : [];
+        const more = (group.total ?? refs.length) > refs.length ? ` (+${(group.total ?? 0) - refs.length} more)` : "";
+        lines.push(`    ${kind}: ${refs.join(", ")}${more}`);
+      }
     }
   }
   const payloads = [r.content, r.template, r.prompt].filter((value) => value != null).map(String);
@@ -94,11 +96,4 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
   appendShowDirectives(lines, r);
 
   return lines.length > 0 ? lines.join("\n") : null;
-}
-
-function formatRelatedLabel(hit: Record<string, unknown>): string {
-  const ref = typeof hit.ref === "string" ? hit.ref : undefined;
-  if (ref) return ref;
-  const pathValue = typeof hit.path === "string" ? hit.path : "?";
-  return pathValue.split("/").pop() ?? pathValue;
 }

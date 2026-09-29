@@ -26,9 +26,12 @@
  */
 
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { renameBundle } from "../../core/bundle-rename";
+import { NotFoundError, TransientError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
+import { warn } from "../../core/warn";
 import type { SourceKind } from "../../sources/types";
+import { akmTasksSync } from "../tasks/tasks";
 import { addCommand } from "./add-cli";
 import { akmInit } from "./init";
 import { akmListSources, akmRemove, akmUpdate } from "./installed-stashes";
@@ -128,12 +131,21 @@ const removeCommand = defineJsonCommand({
 });
 
 const updateCommand = defineJsonCommand({
-  meta: { name: "update", description: "Refresh one or all configured bundles and reconcile their index" },
+  meta: {
+    name: "update",
+    description:
+      "Refresh one or all configured bundles and reconcile their index. Git refresh is explicit; schedule this command for automatic updates.",
+  },
   args: {
     target: { type: "positional", description: "Bundle to update (id or ref)", required: false },
     all: { type: "boolean", description: "Update all configured bundles and report each outcome", default: false },
     force: { type: "boolean", description: "Force fresh download even if version is unchanged", default: false },
-    "allow-insecure": {
+    "skip-if-locked": {
+      type: "boolean",
+      description: "Exit successfully when index/state database contention shows another akm operation is active",
+      default: false,
+    },
+    "allow-dangerous-env-keys": {
       type: "boolean",
       description:
         "Allow an update containing dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the staged bundle.",
@@ -152,20 +164,29 @@ const updateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const result = await akmUpdate({
-      target: args.target,
-      all: args.all,
-      force: args.force,
-      yes: args.yes,
-      allowInsecure: args["allow-insecure"],
-    });
+    let result: Awaited<ReturnType<typeof akmUpdate>>;
+    try {
+      result = await akmUpdate({
+        target: args.target,
+        all: args.all,
+        force: args.force,
+        yes: args.yes,
+        allowDangerousEnvKeys: args["allow-dangerous-env-keys"],
+      });
+    } catch (error) {
+      const skippable = isSkippableBundleUpdateLock(error);
+      if (!args["skip-if-locked"] || !skippable) throw error;
+      warn(`[bundle update] ${error.message}; skipping (--skip-if-locked)`);
+      output("update", { ok: true, skipped: { reason: "lock-held", code: error.code } });
+      return;
+    }
     appendEvent({
       eventType: "update",
       metadata: {
         target: args.target ?? null,
         all: args.all === true,
         force: args.force === true,
-        allowInsecure: args["allow-insecure"] === true,
+        allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
         processed: Array.isArray((result as { processed?: unknown[] }).processed)
           ? (result as { processed: unknown[] }).processed.length
           : 0,
@@ -174,6 +195,38 @@ const updateCommand = defineJsonCommand({
     output("update", result);
   },
 });
+
+const renameCommand = defineJsonCommand({
+  meta: {
+    name: "rename",
+    description:
+      "Rename a configured bundle's key everywhere akm persists it (config, lock, index, and its own proposals/task history). Content inside the bundle that still spells the old ref is reported, not rewritten.",
+  },
+  args: {
+    old: { type: "positional", description: "Current bundle name", required: true },
+    new: { type: "positional", description: "New bundle name (must be a legal, unused slug)", required: true },
+    "dry-run": {
+      type: "boolean",
+      description: "Show the rename plan without writing anything",
+      default: false,
+    },
+  },
+  async run({ args }) {
+    const result = await renameBundle(
+      args.old,
+      args.new,
+      { dryRun: args["dry-run"] },
+      {
+        syncTasks: (newId, backend) => akmTasksSync({ backend }, newId),
+      },
+    );
+    output("bundle-rename", result);
+  },
+});
+
+export function isSkippableBundleUpdateLock(error: unknown): error is TransientError {
+  return error instanceof TransientError && ["INDEX_DB_CONTENDED", "STATE_DB_CONTENDED"].includes(error.code);
+}
 
 export const bundleCommand = defineGroupCommand({
   meta: {
@@ -187,5 +240,6 @@ export const bundleCommand = defineGroupCommand({
     show: showCommand,
     remove: removeCommand,
     update: updateCommand,
+    rename: renameCommand,
   },
 });

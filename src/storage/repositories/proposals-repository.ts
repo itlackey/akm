@@ -131,7 +131,7 @@ const GATE_OUTCOMES: Record<ProposalGateDecisionOutcome, true> = {
 };
 
 function validatePresentMetadata(meta: Record<string, unknown>): void {
-  const stringFields = ["sourceRun", "beforeHash", "backupContent"] as const;
+  const stringFields = ["sourceRun", "beforeHash", "beforeHashNormalized", "backupContent"] as const;
   for (const field of stringFields) {
     if (Object.hasOwn(meta, field) && typeof meta[field] !== "string") invalidPresentField(field);
   }
@@ -202,6 +202,56 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
   }
   if (Object.hasOwn(meta, "eligibilitySource") && typeof meta.eligibilitySource !== "string") {
     invalidPresentField("eligibilitySource");
+  }
+  if (Object.hasOwn(meta, "promotionSource") && typeof meta.promotionSource !== "string") {
+    invalidPresentField("promotionSource");
+  }
+  if (Object.hasOwn(meta, "promotionSourceHash") && typeof meta.promotionSourceHash !== "string") {
+    invalidPresentField("promotionSourceHash");
+  }
+  if (Object.hasOwn(meta, "retirement")) {
+    const retirement = meta.retirement as Record<string, unknown> | null;
+    if (
+      typeof retirement !== "object" ||
+      retirement === null ||
+      typeof retirement.retiredRef !== "string" ||
+      typeof retirement.successorRef !== "string" ||
+      typeof retirement.cosine !== "number" ||
+      !Number.isFinite(retirement.cosine) ||
+      (retirement.judgeLabel !== "duplicate" &&
+        retirement.judgeLabel !== "subsumed" &&
+        retirement.judgeLabel !== "supersedes") ||
+      typeof retirement.judgeReason !== "string" ||
+      typeof retirement.retiredContentHash !== "string" ||
+      typeof retirement.successorContentHash !== "string" ||
+      (retirement.reason !== "duplicate" && retirement.reason !== "subsumed" && retirement.reason !== "superseded")
+    ) {
+      invalidPresentField("retirement");
+    }
+  }
+  if (Object.hasOwn(meta, "retiredArchive")) {
+    const archive = meta.retiredArchive as Record<string, unknown> | null;
+    if (
+      typeof archive !== "object" ||
+      archive === null ||
+      !Array.isArray(archive.dirs) ||
+      archive.dirs.length === 0 ||
+      archive.dirs.some((dir) => typeof dir !== "string" || dir.length === 0)
+    ) {
+      invalidPresentField("retiredArchive");
+    }
+  }
+  if (Object.hasOwn(meta, "retireAcceptIntent")) {
+    const intent = meta.retireAcceptIntent as Record<string, unknown> | null;
+    if (
+      typeof intent !== "object" ||
+      intent === null ||
+      typeof intent.assetPath !== "string" ||
+      intent.assetPath.length === 0 ||
+      typeof intent.backupContent !== "string"
+    ) {
+      invalidPresentField("retireAcceptIntent");
+    }
   }
 }
 
@@ -281,6 +331,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     changes,
     ...(proposedTarget !== undefined ? { proposedTarget } : {}),
     ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
+    ...(typeof meta.beforeHashNormalized === "string" ? { beforeHashNormalized: meta.beforeHashNormalized } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
@@ -288,6 +339,13 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(meta.acceptedTarget !== undefined ? { acceptedTarget: meta.acceptedTarget as Proposal["acceptedTarget"] } : {}),
     ...(typeof meta.eligibilitySource === "string"
       ? { eligibilitySource: meta.eligibilitySource as Proposal["eligibilitySource"] }
+      : {}),
+    ...(typeof meta.promotionSource === "string" ? { promotionSource: meta.promotionSource } : {}),
+    ...(typeof meta.promotionSourceHash === "string" ? { promotionSourceHash: meta.promotionSourceHash } : {}),
+    ...(meta.retirement !== undefined ? { retirement: meta.retirement as Proposal["retirement"] } : {}),
+    ...(meta.retiredArchive !== undefined ? { retiredArchive: meta.retiredArchive as Proposal["retiredArchive"] } : {}),
+    ...(meta.retireAcceptIntent !== undefined
+      ? { retireAcceptIntent: meta.retireAcceptIntent as Proposal["retireAcceptIntent"] }
       : {}),
   };
 }
@@ -335,6 +393,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   metaObj.changes = changesToStored(proposal.changes);
   if (proposal.proposedTarget !== undefined) metaObj.proposedTarget = currentProposalTarget(proposal.proposedTarget);
   if (proposal.beforeHash !== undefined) metaObj.beforeHash = proposal.beforeHash;
+  if (proposal.beforeHashNormalized !== undefined) metaObj.beforeHashNormalized = proposal.beforeHashNormalized;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
@@ -342,6 +401,11 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
   if (proposal.acceptedTarget !== undefined) metaObj.acceptedTarget = proposal.acceptedTarget;
   if (proposal.eligibilitySource !== undefined) metaObj.eligibilitySource = proposal.eligibilitySource;
+  if (proposal.promotionSource !== undefined) metaObj.promotionSource = proposal.promotionSource;
+  if (proposal.promotionSourceHash !== undefined) metaObj.promotionSourceHash = proposal.promotionSourceHash;
+  if (proposal.retirement !== undefined) metaObj.retirement = proposal.retirement;
+  if (proposal.retiredArchive !== undefined) metaObj.retiredArchive = proposal.retiredArchive;
+  if (proposal.retireAcceptIntent !== undefined) metaObj.retireAcceptIntent = proposal.retireAcceptIntent;
   validatePresentMetadata(metaObj);
 
   return {
@@ -459,6 +523,14 @@ export function getStateProposal(db: Database, id: string, stashDir?: string): P
   return row ? proposalRowToProposal(row) : undefined;
 }
 
+/** `(ref, source)` of every proposal, any status, in one stash: no payload is read. */
+export function listProposalRefSources(db: Database, stashDir: string): Array<{ ref: string; source: string }> {
+  return db.prepare("SELECT ref, source FROM proposals WHERE stash_dir = ?").all(stashDir) as Array<{
+    ref: string;
+    source: string;
+  }>;
+}
+
 /**
  * Find PENDING proposal ids in one stash whose id starts with `idPrefix`.
  * Backs the UUID-prefix form of `akm proposal show/accept/... <prefix>` —
@@ -477,4 +549,57 @@ export function listStateProposalIdsByPrefix(db: Database, stashDir: string, idP
     )
     .all(stashDir, `${escaped}%`) as Array<{ id: string }>;
   return rows.map((r) => r.id);
+}
+
+/**
+ * Preview counterpart of {@link renameProposalsBundleRef} for `akm bundle
+ * rename --dry-run`: the same two `WHERE` predicates, read-only.
+ */
+export function countProposalsForBundleRename(db: Database, oldBundleId: string): { refs: number; targets: number } {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  const refs = (
+    db.prepare(`SELECT COUNT(*) AS n FROM proposals WHERE ref LIKE ? ESCAPE '\\'`).get(`${prefix}%`) as {
+      n: number;
+    }
+  ).n;
+  const targets = (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM proposals WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?`)
+      .get(oldBundleId) as { n: number }
+  ).n;
+  return { refs, targets };
+}
+
+/**
+ * Rewrite every proposal that names `oldBundleId` from `akm bundle rename`
+ * (D6): the fully-qualified `ref` column (`<bundle>//conceptId` — an
+ * unqualified legacy `ref` resolves against `defaultBundle` at use time and
+ * never names a bundle explicitly, so it is left alone), and
+ * `metadata_json.proposedTarget.source`, which names the write-target bundle
+ * a still-pending proposal would apply to (`resolveRecordedProposalTarget`,
+ * `commands/proposal/repository.ts`). Returns how many rows of each were
+ * rewritten.
+ */
+export function renameProposalsBundleRef(
+  db: Database,
+  oldBundleId: string,
+  newBundleId: string,
+): { refs: number; targets: number } {
+  const prefix = `${escapeLikePattern(oldBundleId)}//`;
+  return db.transaction(() => {
+    const refs = Number(
+      db
+        .prepare(`UPDATE proposals SET ref = ? || substr(ref, ?) WHERE ref LIKE ? ESCAPE '\\'`)
+        .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+    );
+    const targets = Number(
+      db
+        .prepare(
+          `UPDATE proposals SET metadata_json = json_set(metadata_json, '$.proposedTarget.source', ?)
+           WHERE json_extract(metadata_json, '$.proposedTarget.source') = ?`,
+        )
+        .run(newBundleId, oldBundleId).changes,
+    );
+    return { refs, targets };
+  })();
 }

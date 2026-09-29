@@ -135,15 +135,12 @@ describe("source commands and resolution", () => {
       const result = await akmSearch({ query: "summarize diff", type: "script" });
 
       expect(result.hits.length).toBeGreaterThan(0);
-      expect(result.hits[0]!.whyMatched).toBeDefined();
-      // Ranking mode depends on whether semantic search (embeddings) is available.
-      // Accept "fts bm25 relevance", "semantic similarity", or "hybrid (fts + semantic)".
-      expect(
-        result.hits[0]!.whyMatched?.includes("fts bm25 relevance") ||
-          result.hits[0]!.whyMatched?.includes("semantic similarity") ||
-          result.hits[0]!.whyMatched?.includes("hybrid (fts + semantic)"),
-      ).toBe(true);
-      expect(result.hits[0]!.whyMatched).toContain("matched name tokens");
+      // The hit's rank in each candidate list that returned it; the vector
+      // list is present only when embeddings are available.
+      expect(result.hits[0]!.whyMatched?.[0]).toBe("lexical rank 1");
+      for (const reason of result.hits[0]!.whyMatched ?? []) {
+        expect(reason).toMatch(/^(lexical|vector) rank \d+$/);
+      }
     });
   });
 
@@ -341,7 +338,7 @@ Creates a user.
     });
   });
 
-  test("search-emitted Markdown fragment selectors round-trip through show with frontmatter offsets", async () => {
+  test("search returns the whole document for a match deep in its body, and show records the selection", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const body = Array.from({ length: 500 }, () => "background transcript material").join(" ");
     writeFile(
@@ -351,17 +348,10 @@ Creates a user.
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
       const searched = await akmSearch({ query: "NeedleFragmentCase", type: "knowledge" });
       const hit = searched.hits[0];
-      expect(hit && isLocalHit(hit) ? hit.ref : undefined).toMatch(/#akm-fragment-/);
-      if (!hit || !isLocalHit(hit)) throw new Error("expected a local fragment hit");
-      // Search refs address the indexed safe revision. A concurrent disk edit
-      // must not make the opaque selector disappear or show different bytes.
-      writeFile(
-        path.join(stashDir, "knowledge", "fragment-roundtrip.md"),
-        "---\ndescription: changed\n---\nnew disk bytes",
-      );
+      if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
+      expect(hit.ref).toBe("knowledge/fragment-roundtrip");
       const shown = await akmShow({ ref: hit.ref });
-      expect(shown.content).toBe("NeedleFragmentCase: Proof Appears Here!");
-      expect(shown.content).not.toContain("new disk bytes");
+      expect(shown.content).toContain("NeedleFragmentCase: Proof Appears Here!");
       const selection = readEvents({ type: "select" }).events.at(-1);
       expect(selection).toMatchObject({
         ref: "knowledge/fragment-roundtrip",
@@ -401,7 +391,7 @@ Creates a user.
     });
   });
 
-  test("search→show covers preamble, duplicate headings, and fallback fragment shapes", async () => {
+  test("search→show finds preamble, duplicate-heading and fallback-split matches in whole documents", async () => {
     const stashDir = createTmpDir("akm-stash-");
     writeFile(
       path.join(stashDir, "knowledge", "preamble.md"),
@@ -428,8 +418,8 @@ Creates a user.
       ];
       for (const [query, expected] of cases) {
         const hit = (await akmSearch({ query, type: "knowledge" })).hits[0];
-        expect(hit && isLocalHit(hit) ? hit.ref : undefined).toMatch(/#akm-fragment-/);
-        if (!hit || !isLocalHit(hit)) throw new Error("expected local fragment hit");
+        if (!hit || !isLocalHit(hit)) throw new Error("expected a local hit");
+        expect(hit.ref).not.toContain("#");
         expect((await akmShow({ ref: hit.ref })).content).toContain(expected);
       }
     });

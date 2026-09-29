@@ -73,6 +73,27 @@ modes, depend on it in tests, or use it to choose between source and package
 behavior. Invoke `bun src/cli.ts`, `node dist/akm`, or `bun run test:package`
 explicitly instead.
 
+## Inspecting a Live Database
+
+`state.db`, `logs.db`, and `index.db` are WAL-mode SQLite databases that akm
+(or a scheduled task) may be writing at any moment. Open a live one only with
+`sqlite3 -readonly`:
+
+```bash
+sqlite3 -readonly ~/.local/share/akm/state.db "PRAGMA quick_check;"
+sqlite3 -readonly ~/.local/share/akm/state.db ".backup /tmp/state-snapshot.db"
+```
+
+Do not open a live akm database with a plain (read-write) `sqlite3`
+connection, even just to run `.backup`. A read-write connection can trigger a
+WAL checkpoint when it closes, and doing that concurrently with an akm writer
+was the one non-standard element present in a `state.db` index-corruption
+incident (duplicate `events` index entries, repaired with `REINDEX`);
+deliberate concurrency stress-testing did not reproduce it, so treat this as
+a precaution against a suspected but unconfirmed hazard, not a proven one.
+`-readonly` avoids the whole class of risk by never taking a write
+connection.
+
 ## Verification
 
 Use focused tests while iterating, then the repository gates before pushing:

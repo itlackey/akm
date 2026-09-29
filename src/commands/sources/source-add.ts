@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { isBundleSlug } from "../../core/asset/asset-ref";
+import { slugForRegistryId, validateExplicitBundleName } from "../../core/bundle-id";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import type { AkmConfig, BundleConfigEntry, SourceConfigEntry } from "../../core/config/config";
 import {
@@ -14,6 +15,7 @@ import {
   installedSourceDescriptor,
   loadConfig,
   mutateConfig,
+  resolveSecret,
 } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { akmIndex } from "../../indexer/indexer";
@@ -30,16 +32,27 @@ import {
   validateWebsiteInputUrl,
 } from "../../sources/snapshot-fetchers/website-ingest";
 import type { AddResponse } from "../../sources/types";
-import { bundleKeyForPath, bundleKeyForUrl, nextBundleKey } from "./bundle-config-ops";
+import { revokeSchedulerActivationsForBundle } from "../../tasks/activation-config";
+import {
+  type BundleInsertPosition,
+  bundleKeyForPath,
+  bundleKeyForUrl,
+  nextBundleKey,
+  placeBundle,
+} from "./bundle-config-ops";
 
-export async function akmAdd(input: {
-  ref: string;
-  name?: string;
-  options?: Record<string, unknown>;
-  writable?: boolean;
-  /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
-  adapter?: string;
-}): Promise<AddResponse> {
+export async function akmAdd(
+  input: {
+    ref: string;
+    name?: string;
+    options?: Record<string, unknown>;
+    writable?: boolean;
+    /** Symbolic Git credential reference; resolved only for Git subprocesses. */
+    credential?: string;
+    /** Override the auto-detected component adapter (#909). Local (filesystem) adds only. */
+    adapter?: string;
+  } & BundleInsertPosition,
+): Promise<AddResponse> {
   const ref = input.ref.trim();
   if (!ref)
     throw new UsageError(
@@ -50,7 +63,7 @@ export async function akmAdd(input: {
   const stashDir = resolveStashDir();
 
   if (shouldAddAsWebsiteUrl(ref)) {
-    return addWebsiteSource(ref, stashDir, input.name, input.options);
+    return addWebsiteSource(ref, stashDir, input.name, input.options, input);
   }
 
   // Local directories become filesystem bundles; registry refs use the
@@ -58,13 +71,13 @@ export async function akmAdd(input: {
   try {
     const parsed = parseRegistryRef(ref);
     if (parsed.source === "local") {
-      return addLocalSource(ref, parsed.sourcePath, stashDir, input.name, input.adapter);
+      return addLocalSource(ref, parsed.sourcePath, stashDir, input.name, input.adapter, input);
     }
   } catch {
     // Not a local ref — fall through to registry install
   }
 
-  return addRegistryStash(ref, stashDir, input.writable);
+  return addRegistryStash(ref, stashDir, input.name, input.writable, input, input.credential);
 }
 
 /** Add a local directory as a filesystem bundle. */
@@ -74,6 +87,7 @@ async function addLocalSource(
   stashDir: string,
   explicitName?: string,
   explicitAdapter?: string,
+  position: BundleInsertPosition = {},
 ): Promise<AddResponse> {
   const stashRoot = detectStashRoot(sourcePath);
   const resolvedPath = path.resolve(stashRoot);
@@ -82,6 +96,9 @@ async function addLocalSource(
   mutateConfig((config) => {
     const existing = bundleKeyForPath(config, resolvedPath);
     if (existing) {
+      if (explicitName !== undefined) {
+        validateExplicitBundleName(config.bundles ?? {}, explicitName, existing);
+      }
       bundleKey = existing;
       const current = config.bundles?.[existing];
       if (current?.components && explicitAdapter === undefined) return config;
@@ -94,12 +111,16 @@ async function addLocalSource(
       return { ...config, bundles };
     }
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
+    // D6: an explicit `--name` is a contract on this (local) add path — validated
+    // strictly before nextBundleKey derives a key, since that shared helper is also
+    // used by the out-of-scope `akm source add` (`addStash`) and stays forgiving.
+    if (explicitName !== undefined) validateExplicitBundleName(bundles, explicitName);
     bundleKey = nextBundleKey(bundles, explicitName, resolvedPath);
-    bundles[bundleKey] = {
+    const entry: BundleConfigEntry = {
       path: resolvedPath,
       components: { main: { root: ".", adapter } },
     };
-    return { ...config, bundles };
+    return { ...config, bundles: placeBundle(bundles, bundleKey, entry, position) };
   });
 
   const index = await akmIndex({ stashDir });
@@ -109,6 +130,7 @@ async function addLocalSource(
     schemaVersion: 1,
     bundleDir: stashDir,
     ref,
+    bundleId: bundleKey,
     sourceAdded: {
       type: "filesystem",
       path: resolvedPath,
@@ -133,6 +155,7 @@ async function addWebsiteSource(
   stashDir: string,
   name?: string,
   options?: Record<string, unknown>,
+  position: BundleInsertPosition = {},
 ): Promise<AddResponse> {
   const allowPrivateHosts = shouldAllowPrivateWebsiteUrlForTests(ref);
   const normalizedUrl = validateWebsiteInputUrl(ref, { allowPrivateHosts });
@@ -140,10 +163,27 @@ async function addWebsiteSource(
   const maxPages = numberOption(options?.maxPages);
   const maxDepth = numberOption(options?.maxDepth);
   let entry: SourceConfigEntry | undefined;
+  let bundleId = "";
   mutateConfig((config) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(config.bundles ?? {}) };
     const existingKey = bundleKeyForUrl(config, normalizedUrl);
-    const key = existingKey ?? nextBundleKey(bundles, name ?? toWebsiteName(normalizedUrl), normalizedUrl);
+    if (existingKey && name !== undefined) {
+      validateExplicitBundleName(bundles, name, existingKey);
+    }
+    // An explicit `--name` is a contract (D6) — validated strictly and used
+    // as-is, never silently substituted. A DERIVED default (no --name) keeps
+    // the forgiving `deriveBundleId` fallback, so a dotted hostname or a
+    // URL collision still mints a usable id instead of erroring.
+    let key: string;
+    if (existingKey) {
+      key = existingKey;
+    } else if (name !== undefined) {
+      validateExplicitBundleName(bundles, name);
+      key = name;
+    } else {
+      key = deriveBundleId(toWebsiteName(normalizedUrl), normalizedUrl, new Set(Object.keys(bundles)));
+    }
+    bundleId = key;
     // Merge onto the existing descriptor rather than replacing it: re-running
     // `bundle add` for a URL that already has a bundle would otherwise drop
     // respectRobots / refresh, silently restoring default robots enforcement
@@ -165,9 +205,9 @@ async function addWebsiteSource(
       entry = bundleEntryToSourceEntry(key, bundles[key]!) as SourceConfigEntry;
       return config;
     }
-    bundles[key] = nextBundle;
+    const nextBundles = placeBundle(bundles, key, nextBundle, position);
     entry = bundleEntryToSourceEntry(key, nextBundle) as SourceConfigEntry;
-    return { ...config, bundles };
+    return { ...config, bundles: nextBundles };
   });
 
   const cachePaths = await ensureWebsiteMirror(entry as SourceConfigEntry, {
@@ -182,6 +222,7 @@ async function addWebsiteSource(
     schemaVersion: 1,
     bundleDir: stashDir,
     ref,
+    bundleId,
     sourceAdded: {
       type: "website",
       url: normalizedUrl,
@@ -205,14 +246,32 @@ async function addWebsiteSource(
  * Install a stash from a registry (npm, github, git) by dispatching to the
  * matching syncable provider and persisting the lock entry.
  */
-async function addRegistryStash(ref: string, stashDir: string, writable?: boolean): Promise<AddResponse> {
+async function addRegistryStash(
+  ref: string,
+  stashDir: string,
+  explicitName?: string,
+  writable?: boolean,
+  position: BundleInsertPosition = {},
+  credentialRef?: string,
+): Promise<AddResponse> {
   const parsedRef = parseRegistryRef(ref);
   if (writable === true && parsedRef.source !== "git" && parsedRef.source !== "github") {
     throw new ConfigError("writable: true is only supported on filesystem and git sources", "INVALID_CONFIG_FILE");
   }
+  if (credentialRef && parsedRef.source !== "git" && parsedRef.source !== "github") {
+    throw new ConfigError("credential is only supported on git sources", "INVALID_CONFIG_FILE");
+  }
 
   const currentConfig = loadConfig();
   const existingBundleKey = findInstalledBundleKey(currentConfig.bundles ?? {}, parsedRef.id);
+  // D6: validate an explicit `--name` before any network sync or write — an
+  // illegal name, a name already taken by a different bundle, or re-adding
+  // this same install under a different name than it already carries must
+  // fail loudly here, not mint a `-<hash>` fallback deep inside the config
+  // mutation below.
+  if (explicitName !== undefined) {
+    validateExplicitBundleName(currentConfig.bundles ?? {}, explicitName, existingBundleKey);
+  }
   const existingBundle = existingBundleKey ? currentConfig.bundles?.[existingBundleKey] : undefined;
   const priorLock = existingBundleKey ? readLockfile().find((entry) => entry.id === existingBundleKey) : undefined;
   const existingWritable =
@@ -227,20 +286,30 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     writable: effectiveWritable,
     ...(effectiveWritable && priorLock?.localRoot ? { writableRoot: priorLock.localRoot } : {}),
     ...(requiredRoots.length > 0 ? { writableRequiredRoots: requiredRoots } : {}),
+    ...(credentialRef
+      ? { credential: resolveSecret(credentialRef, storeSecretResolver.resolveSecret) }
+      : existingBundle?.credential
+        ? { credential: resolveSecret(existingBundle.credential, storeSecretResolver.resolveSecret) }
+        : {}),
   });
 
-  const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry({
-    id: synced.id,
-    source: synced.source,
-    ref: synced.ref,
-    artifactUrl: synced.artifactUrl,
-    resolvedVersion: synced.resolvedVersion,
-    resolvedRevision: synced.resolvedRevision,
-    stashRoot: synced.contentDir,
-    cacheDir: synced.cacheDir,
-    installedAt: synced.syncedAt,
-    writable: synced.writable,
-  });
+  const { config: updatedConfig, bundleId } = upsertInstalledRegistryEntry(
+    {
+      id: synced.id,
+      source: synced.source,
+      ref: synced.ref,
+      artifactUrl: synced.artifactUrl,
+      resolvedVersion: synced.resolvedVersion,
+      resolvedRevision: synced.resolvedRevision,
+      stashRoot: synced.contentDir,
+      cacheDir: synced.cacheDir,
+      installedAt: synced.syncedAt,
+      writable: synced.writable,
+    },
+    position,
+    credentialRef,
+    explicitName,
+  );
 
   // The prior materialized root (if this is a re-install) — read BEFORE the lock
   // upsert overwrites it, so a moved cache root can be cleaned afterwards.
@@ -273,6 +342,8 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
     schemaVersion: 1,
     bundleDir: stashDir,
     ref,
+    bundleId,
+    registryId: synced.id,
     installed: {
       id: synced.id,
       source: synced.source,
@@ -303,14 +374,20 @@ async function addRegistryStash(ref: string, stashDir: string, writable?: boolea
  * (spec §10.1 / §10.2 desired/resolved split). The bundle carries ONLY the
  * desired descriptor (git/npm locator + preserved `registryId` + `writable`);
  * the resolved cache root belongs exclusively in the lock (written by callers
- * via {@link upsertLockEntry} with the returned `bundleId`). Returns the config
+ * via {@link upsertLockEntry} with the returned `bundleId`). A new install is
+ * keyed by `explicitName` (the CLI's `--name`) when given. Returns the config
  * plus the derived bundle id so the caller keys its lock entry identically.
  */
-export function upsertInstalledRegistryEntry(entry: InstalledBundle): { config: AkmConfig; bundleId: string } {
+export function upsertInstalledRegistryEntry(
+  entry: InstalledBundle,
+  position: BundleInsertPosition = {},
+  credential?: string,
+  explicitName?: string,
+): { config: AkmConfig; bundleId: string } {
   let bundleId = entry.id;
   const config = mutateConfig((current) => {
     const bundles: Record<string, BundleConfigEntry> = { ...(current.bundles ?? {}) };
-    bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot);
+    bundleId = resolveInstalledBundleKey(bundles, entry.id, entry.stashRoot, explicitName);
     const existingComponents = bundles[bundleId]?.components;
     const components = existingComponents
       ? Object.fromEntries(
@@ -327,13 +404,15 @@ export function upsertInstalledRegistryEntry(entry: InstalledBundle): { config: 
           },
         };
     const descriptor = installedSourceDescriptor(entry.source, entry.ref, path.resolve(entry.stashRoot));
-    bundles[bundleId] = {
+    const effectiveCredential = credential ?? bundles[bundleId]?.credential;
+    const nextEntry: BundleConfigEntry = {
       ...descriptor,
+      ...(effectiveCredential ? { credential: effectiveCredential } : {}),
       ...(entry.writable === true ? { writable: true } : {}),
       ...(entry.id !== bundleId ? { registryId: entry.id } : {}),
       components: components satisfies NonNullable<BundleConfigEntry["components"]>,
     };
-    return { ...current, bundles };
+    return { ...current, bundles: placeBundle(bundles, bundleId, nextEntry, position) };
   }).config;
   return { config, bundleId };
 }
@@ -351,7 +430,15 @@ export async function removeInstalledRegistryEntry(id: string): Promise<AkmConfi
     if (!key) return current;
     removedKey = key;
     delete bundles[key];
-    return { ...current, bundles: Object.keys(bundles).length > 0 ? bundles : undefined };
+    return revokeSchedulerActivationsForBundle(
+      {
+        ...current,
+        bundles: Object.keys(bundles).length > 0 ? bundles : undefined,
+        ...(current.defaultBundle === key ? { defaultBundle: undefined } : {}),
+        ...(current.defaultWriteTarget === key ? { defaultWriteTarget: undefined } : {}),
+      },
+      key,
+    );
   }).config;
   if (removedKey) await removeLockEntry(removedKey);
   return config;
@@ -373,18 +460,28 @@ function findInstalledBundleKey(bundles: Record<string, BundleConfigEntry>, inst
 
 /**
  * The stable bundle key for a registry install: reuse the existing bundle for
- * this install id (so re-installs keep the same key), otherwise derive a
- * batch-unique key via the shared {@link deriveBundleId} (D-R5), unique against
- * the currently-configured bundle keys.
+ * this install id (so re-installs keep the same key — a caller-visible name
+ * mismatch was already rejected upstream, by {@link validateExplicitBundleName}
+ * in `addRegistryStash`, before any write). Otherwise an explicit `--name`
+ * (D6) is a contract — validated strictly and used as-is, never silently
+ * substituted. Without one, a batch-unique key is derived via the shared
+ * {@link deriveBundleId} (D-R5) from the package/repo name the install id
+ * names rather than the basename of the materialized cache directory
+ * (`extracted`) — unique against the currently-configured bundle keys.
  */
 function resolveInstalledBundleKey(
   bundles: Record<string, BundleConfigEntry>,
   installId: string,
   stashRoot: string,
+  explicitName?: string,
 ): string {
   const existing = findInstalledBundleKey(bundles, installId);
   if (existing) return existing;
-  return deriveBundleId(installId, path.resolve(stashRoot), new Set(Object.keys(bundles)));
+  if (explicitName !== undefined) {
+    validateExplicitBundleName(bundles, explicitName);
+    return explicitName;
+  }
+  return deriveBundleId(slugForRegistryId(installId), path.resolve(stashRoot), new Set(Object.keys(bundles)));
 }
 
 function toReadableId(resolvedPath: string): string {

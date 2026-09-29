@@ -26,7 +26,7 @@ import { validateJsonSchemaSubset } from "../core/json-schema";
  * Input/param names must be addressable as a plain identifier
  * (`params.<ident>` / `inputs.<ident>`): a letter or underscore, then
  * letters, digits, or underscores. Byte-identical source/flags to
- * `src/workflows/program/schema.ts`'s `PROGRAM_PARAM_NAME_PATTERN`, which
+ * `src/workflows/parser.ts`'s `PROGRAM_PARAM_NAME_PATTERN`, which
  * re-exports this constant (D3-N1) rather than defining its own copy.
  */
 export const INPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;

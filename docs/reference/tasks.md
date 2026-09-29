@@ -5,31 +5,37 @@ Task assets are strict, local automation sources. They live at
 launchd, or Windows Task Scheduler with `akm task sync`. The task file is
 authored source; scheduler entries are derived OS state.
 
-**Task source v4 (`version: 4`) is the only task source grammar this
-release accepts.** A document with `version: 3` or `version: 2` (or any
-other value) fails to load with `UsageError` code
-`TASK_SCHEMA_VERSION_UNSUPPORTED`, naming the migrator. Task source v4 adds
-typed `inputs:` and a single bounded `output:` schema (command targets
-only), and makes scheduling OPTIONAL rather than mandatory. `akm task add`
-authors task source v4 directly.
+**Task source v4 (`version: 4`) is the only task source grammar akm reads.**
+A document with `version: 3` or `version: 2` fails to load with `UsageError`
+code `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming `akm migrate apply`, which
+converts it. A declared `version: 4` document whose `schedule[]` still
+carries a per-entry `enabled` key — 0.9.15's v4 grammar accepted it, this
+release's does not — fails the same way with `TASK_SOURCE_INVALID`
+(activation is host-local, below). Each such file fails on its own:
+`akm task sync` reports it and keeps reconciling every other task. Task
+source v4 adds typed `inputs:` and a single bounded `output:` schema
+(command targets only), and makes scheduling OPTIONAL rather than
+mandatory. `akm task add` authors task source v4 directly.
 
 If you have `version: 3` or `version: 2` files on disk (from an earlier
 akm release), see [Migrating to task source v4](#migrating-to-task-source-v4)
-below — `akm migrate apply` converts both generations in one pass. The
+below — `akm migrate apply` converts both generations in one pass and
+rewrites the file on disk (`akm upgrade` runs it after an install). The
 retired v3 grammar itself is documented at the bottom of this page
 ([Task v3 (retired): grammar reference for migration](#task-v3-retired-grammar-reference-for-migration))
-purely so you can read an old file while migrating it; it is not accepted
-by any command in this release.
+purely so you can read an old file while migrating it; it is no longer
+accepted as a standing grammar by any command in this release.
 
 ## Files and schema
 
 The only recognized task extension is `.yml`. A `.yaml` near miss is never
-indexed, scheduled, or run. Every task must declare `version: 4`; a
+indexed, scheduled, or run. Every task should declare `version: 4`; a
 document with no `version:` key, or a `version:` that is not a number,
 fails with `TASK_SOURCE_INVALID` (`must be exactly 4.` / `is required and
 must be exactly 4.`) — a genuinely malformed v4 document, not a legacy one.
 `version: 3` and `version: 2` fail with `TASK_SCHEMA_VERSION_UNSUPPORTED`
-instead (see [Migrating to task source v4](#migrating-to-task-source-v4)).
+naming `akm migrate apply` (see
+[Migrating to task source v4](#migrating-to-task-source-v4)).
 The published [task schema](../../schemas/akm-task.json) describes the
 hand-authored contract; `src/tasks/source/task-source-v4.ts` is the
 authoritative bounded parser.
@@ -148,12 +154,10 @@ name: Nightly review
 run: akm improve --strategy default
 schedule:
   - cron: "@daily"
-    enabled: false
 ```
 
-A bare string (`schedule: "0 8 * * 1"`) is shorthand for one enabled
-binding with no inputs. A list entry may set its own `enabled` (default
-`true`) and literal `inputs`; those literals are validated against the
+A bare string (`schedule: "0 8 * * 1"`) is shorthand for one trigger with
+no inputs. A list entry may set literal `inputs`; those literals are validated against the
 task's `inputs:` declarations both at parse time and again at
 `akm task sync` (once with declared defaults applied), and are
 **delivered** to the scheduled run: `akm task sync` compiles each entry's
@@ -163,18 +167,23 @@ fired run receives them exactly as `akm task run <id> --<name> <value>`
 would. Multiple schedule entries create deterministic scheduler bindings
 for the one source task.
 
-Task source v4 has **no document-level `enabled` flag** — enablement is
-per schedule binding. Disable one binding by setting its own
-`enabled: false`. `--schedule` is a required flag on every `akm task add`
-invocation, `--disabled` included — not a check specific to `--disabled` —
-so `akm task add --disabled` always has a schedule to write `enabled: false`
-onto and never needs to reject a schedule-less task with "nothing to
-disable."
+Task source v4 has **no enablement flag**. A source describes what may run;
+it cannot authorize its own host scheduling. Activation is this host's list of
+fully-qualified refs in `config.json` under `scheduler.enabled`. A ref that
+is not listed is disabled. A config with no list at all (written before
+0.9.17) means "keep what is installed": the first sync fills the list from
+the akm-written native bindings. Use `akm task enable <bundle>//tasks/<id>`
+and `akm task disable <bundle>//tasks/<id>` to change the list and
+immediately sync the affected bundle. `akm task add` enables its new task by
+default; `--disabled` writes the same task source but does not list it.
 
 `akm task run <id>` executes a task immediately, including a disabled task.
-`akm task sync` validates the complete desired set before atomically
-reconciling scheduler state. Scheduled invocations re-read the guarded current
-task bytes; workflow targets then create a fresh durable workflow freeze.
+`akm task sync` scans every enabled configured bundle, reads only locally
+activated task/workflow refs, and reconciles the native scheduler one row at a
+time (see [Operations](#operations)). `--bundle <name>` narrows that pass to
+one active bundle. If every configured bundle is disabled, sync removes the
+attributable native entries without reading task content. Workflow targets
+create a fresh durable workflow freeze at fire time.
 
 ## Typed inputs and output
 
@@ -200,7 +209,6 @@ output:
 uses: commands/review
 schedule:
   - cron: "0 8 * * 1"
-    enabled: true
     inputs: { scope: all, ticket: OPS-1234 }
 timeout: 45000
 engine: reviewer
@@ -229,9 +237,7 @@ redact: [TOKEN]
   field path (`schedule`, or `schedule[<i>]`), naming the unsatisfied
   input. The rule covers every entry: the `schedule: "<cron>"` string
   shorthand, a list entry with no `inputs:` key, and an entry whose
-  `inputs:` mapping is present but incomplete — including one written
-  `enabled: false`, so enabling it later can never turn a parsed document
-  unrunnable. `akm task sync` keeps its own equivalent check over the
+  `inputs:` mapping is present but incomplete. `akm task sync` keeps its own equivalent check over the
   defaulted values and still rejects the whole desired set before touching
   any scheduler state. Give every schedule entry an explicit value for the
   input, or declare a `default` instead; manual runs are unaffected — a
@@ -343,7 +349,8 @@ Common v2 → v3 blocked reasons and what to do about each — these need a
 hand-authored replacement, not a re-run; see [the 0.9.1 to 0.9.2 migration
 guide](../migration/v0.9.1-to-v0.9.2.md#v2--v3-blocked-cases) for the full v2
 to v4 field mapping (`command:` array → `run:` + `shell:`, `timeoutMs:` →
-`timeout:`, document-level `enabled:` → per-`schedule:`-entry `enabled`):
+`timeout:`). Source-owned `enabled` fields are removed; native bindings that
+are provably enabled seed the host-local activation list:
 
 | Reason | Meaning | Fix |
 |---|---|---|
@@ -357,7 +364,6 @@ Common v3 → v4 blocked reasons and what to do about each:
 | `github-action-target-removed` | The task's `uses:` is a GitHub Action locator (`owner/repo[/path]@ref`); that spelling has no task source v4 equivalent. | Rewrite the target as `commands/`, `scripts/`, `workflows/`, or `akm/command` by hand. |
 | `with-on-non-command-target` | A `with:` block is authored on a target other than `uses: akm/command`. | Task-call inputs are declared and bound separately in v4 — author `inputs:` on the task and, if it is a workflow step's own composition, bind them with the step's `with:` instead. |
 | `ambiguous-scheduling-source` | The document declares both `akm.schedule` and `on:`. | Pick one; the migrator will not guess which one wins. |
-| `enabled-false-has-no-schedule-entry` | `akm.enabled: false` with no cron trigger to attach it to (the only trigger is `on.workflow_dispatch`). | Task source v4 has no document-level `enabled` flag — decide whether the task should be scheduled (add a cron) or left manual-only (drop `akm.enabled`), then re-run. |
 | `read-only-source` | The owning source or file is not writable. | Move or re-source the file somewhere writable, or edit it by hand. |
 | `invalid-v3-task` | The v3 document itself is structurally invalid (unknown fields, missing selector, malformed trigger, etc). | Fix the underlying v3 document first — the migrator translates structure, it does not repair it. |
 | `generated-v4-validation-failed` | The converted bytes fail the real task source v4 parser; the detail carries the parse error. | Read the detail — it names the offending field and why v4 refuses it — then fix that field in the v3 file and preview again. |
@@ -402,33 +408,96 @@ for full before/after examples and recovery guidance.
   anything — see [`akm task explain`](#akm-task-explain) above.
 - `akm task validate <path>` parses one task file by filesystem path (the
   file need not live in a configured bundle) and reports the same
-  `valid`/`converts`/`blocked`/`invalid`/`not-a-task` diagnostic
+  `valid`/`blocked`/`invalid`/`not-a-task` diagnostic
   `akm task sync` would produce for it — including sync's own cron-dialect
   check and its per-schedule-entry input-contract check — without touching
   the scheduler and without requiring a configured engine, even for a
   command-kind task. The envelope's own `sourceVersion` field names the
-  file's originally declared schema version (2, 3, or 4).
-- `akm task add` writes a task source v4 document and installs it after
-  validation. `--params` renders typed `inputs:` declarations instead of a
-  `with:` bag; `--schedule` is required on every invocation, and
-  `--disabled` writes `schedule: [{cron: …, enabled: false}]` instead of a
-  document-level flag.
+  file's declared schema version. A version 2/3 file, and a `version: 4`
+  file still carrying a retired `schedule[].enabled`, report `blocked`
+  (exit 1) naming `akm migrate apply`, which converts them.
+- `akm task add` validates a task source v4 document, writes it, adds its ref
+  to local scheduler activation, and syncs its bundle. `--params` renders
+  typed `inputs:` declarations instead of a `with:` bag; `--schedule` is
+  required on every invocation. `--disabled` writes the same source but
+  leaves the ref out of activation. `--force` overwrites an existing task of
+  the same id; without it add refuses. Add also refuses, before writing
+  anything, when the id is already scheduled from another bundle or
+  installation. If the row itself cannot be installed, add fails and says so;
+  the task stays written and enabled, and the next `akm task sync` retries it.
 - `akm task history` reads durable run history from `state.db`.
-- Disable a binding by editing the source and syncing: set that schedule
-  entry's own `enabled: false`.
+- `akm task enable <ref>` / `akm task disable <ref>` change only local
+  scheduler config, then reconcile that bundle.
 - Delete the `.yml` source and sync to remove its derived binding(s).
+- `akm task sync` reads the installed rows once, compares each against what
+  its source renders, and installs, rewrites, or removes rows one at a time.
+  A row that fails to install or remove is reported in `failures` and every
+  other row still applies. A source that fails to parse is reported the same
+  way, and its installed row is left exactly as it is. Rows akm cannot attribute to a bundle this sync covers —
+  another bundle's, another installation's (the row's `AKM_BUNDLE_DIR`
+  names a different working stash), or anything outside akm's `# akm:task` markers,
+  `com.akm.task.` labels, or `\akm\` task folder — are never touched. A
+  Task Scheduler row is compared by the fingerprint akm writes into its
+  `<Source>` plus its enabled state, so an edit made in Task Scheduler that
+  keeps that fingerprint is left alone.
+- `akm task sync`, `add`, `enable`, `disable`, and `prune --yes` hold one lock
+  file, `$STATE/locks/scheduler.lock`, while they read and write the native
+  scheduler. A second one started meanwhile exits 75 (retry shortly); a lock
+  left by a process that is no longer running is reclaimed.
 - `akm task sync --dry-run` previews the reconcile (adds/updates/removes,
   removals annotated with their owning bundle) without writing to the
   scheduler; exits non-zero when removals are pending.
 - `akm task prune` removes installed scheduler entries `sync` cannot reach
-  because their own descriptor no longer resolves to a live bundle
-  (corrupt/missing `--scheduler-context`, or the owning bundle directory is
-  gone). It never touches an entry that still resolves to a live bundle.
+  because they no longer resolve to a live bundle: a row whose
+  `AKM_BUNDLE_DIR` names a directory that is gone, or a row written before
+  0.9.17-alpha.7 whose `--scheduler-context` descriptor cannot be read. It
+  never touches an entry that still resolves to a live bundle.
   Defaults to a dry-run preview (zero writes); `--yes` executes it; `--id
   <id1,id2,...>` scopes to specific ids and refuses any id that isn't a
   current orphan candidate.
-- Use `akm task sync --rebind` only when deliberately changing the captured
-  AKM runtime, then verify with `akm task doctor`.
+- A plain sync keeps each installed row's launcher. Use
+  `akm task sync --rebind` only when deliberately changing the captured AKM
+  runtime, then verify with `akm task doctor`. When the launcher sync writes
+  runs akm from a source checkout (`src/cli.ts`, a local build, or a package
+  inside a git work tree), sync says so once: scheduled runs then run
+  whatever the checkout holds.
+- `akm task sync` writes one `PATH=` line inside a `# akm:env BEGIN`/`END`
+  section directly above the first akm task block in the crontab (on macOS,
+  an `EnvironmentVariables` entry in each plist). It is the PATH of the shell
+  that ran the sync, rewritten on every crontab write and removed with the
+  last akm block; cron applies it to every row below it.
+- A task's row is its command plus its schedule:
+  `<launcher> task run <id> --bundle <bundle> --scheduled`, and it sets its
+  own environment. Every row sets `AKM_BUNDLE_DIR` to the working stash of
+  the shell that ran the sync (its `AKM_BUNDLE_DIR`, or the default bundle),
+  so the scheduled run uses the same working stash, `--bundle` finds a stash
+  no config names, and sync tells rows of other installations sharing the
+  scheduler apart (#846). Rows synced from a shell that set
+  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or `AKM_STATE_DIR`
+  explicitly set those too. Each backend does it its own way: a
+  `VAR=value` prefix in the crontab, an `EnvironmentVariables` entry in the
+  plist, a `$env:VAR='value';` assignment ahead of the command in Task
+  Scheduler. Other defaults resolve at fire time, so a scheduled run uses
+  the same state, data and cache directories an interactive command does.
+  Run the sync from a shell whose environment you would want scheduled.
+
+  ```text
+  15 2 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run nightly --bundle work --scheduled > /home/u/.cache/akm/tasks/logs/nightly.log 2>&1
+  ```
+
+  A row whose command is over 1,000 bytes runs a wrapper script under the
+  log directory instead (`sh <log dir>/.akm-cron-wrapper-<id>-<hash>.sh`);
+  sync reads the script to tell which task the row runs.
+
+  Releases 0.9.0 through 0.9.17-alpha.6 wrote a `--scheduler-context
+  <file>` argument into each row instead, naming a descriptor file under
+  `$DATA/tasks/context/` that held the same values. akm still applies that
+  file when such a row fires, and the first `akm task sync` after upgrading
+  rewrites each row in place: it shows as an update, keeps the row's
+  launcher and schedule, and sets the values inline. A row the sync leaves as it is (its task file failed to load, or
+  a `--bundle` sync did not cover it) still names its file; once
+  `akm task doctor` lists no binding with a `contextPath`, the old descriptor
+  files are not read and can be deleted.
 
 Scheduler execution is at least once. Backends provide a stable invocation
 identity and AKM fences stale attempts, but an ambiguous process crash can be
@@ -469,8 +538,10 @@ on:
 refs consumed it as run params; command/script refs rejected it outright).
 A GitHub Action locator (`owner/repo[/path]@ref`) was a recognized `uses:`
 shape that was always rejected before dispatch — remote action acquisition
-was never implemented in any akm release. `akm.enabled: false` disabled the
-whole document, not a specific schedule binding.
+was never implemented in any akm release. `akm.enabled` was source-owned
+scheduling state. `akm migrate apply` removes it; migration preserves actual
+host activation only when the native scheduler proves that the corresponding
+binding is enabled.
 
 See [Migrating to task source v4](#migrating-to-task-source-v4) above to
 convert a file out of this grammar.

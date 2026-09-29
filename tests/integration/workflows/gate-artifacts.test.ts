@@ -13,7 +13,7 @@ import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type GateFeedback } from "../../../src/workflows/exec/step-work";
-import type { WorkflowPlanGraphV4 as WorkflowPlanGraph } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 import { getWorkflowStatus, resumeWorkflowRun } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
@@ -760,7 +760,6 @@ async function journalRow(row: {
 }): Promise<void> {
   await withWorkflowRunsRepo((repo) => {
     const now = new Date().toISOString();
-    const claimHolder = `direct:${row.unitId}`;
     const reserved = repo.reserveUnitAttempt({
       runId: RUN_ID,
       unitId: row.unitId,
@@ -773,16 +772,12 @@ async function journalRow(row: {
       model: null,
       inputHash: row.inputHash ?? `test:${row.unitId}`,
       now,
-      claimHolder,
-      claimExpiresAt: new Date(Date.parse(now) + 90_000).toISOString(),
-      leaseMode: "direct",
     }).attempt;
     repo.finishUnitAttempt({
       runId: RUN_ID,
       unitId: row.unitId,
       attempt: reserved.attempt,
       dispatchId: reserved.dispatch_id,
-      claimHolder,
       status: row.status,
       resultJson: row.resultJson,
       tokens: null,

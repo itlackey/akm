@@ -7,7 +7,7 @@
  * real `akm bundle update` composition is covered separately in
  * tests/integration/source-qa-fixes.test.ts with a stored bearer-token file.
  *
- * The website provider factory registers itself on import; this test drives
+ * This test resolves the website provider factory and drives
  * `sync()` directly with a stub SecretResolver and asserts it is consulted for
  * `secrets/x-bearer-token`, and that the resolved value never surfaces in the
  * produced snapshot (containment — graft (a), verified rather than enforced via
@@ -17,7 +17,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import type { SecretResolver } from "../src/sources/provider";
 import { resolveSourceProviderFactory } from "../src/sources/provider-factory";
-import "../src/sources/providers/website";
 import { ensureWebsiteMirror, getWebsiteCachePaths } from "../src/sources/snapshot-fetchers/website-ingest";
 import { withMockedFetch } from "./_helpers/sandbox";
 

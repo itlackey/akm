@@ -5,8 +5,8 @@ import path from "node:path";
 import { buildShellExportScript, createEnv, listKeys, loadEnv } from "../../../src/commands/env/env";
 import { sensitiveMarkerPath } from "../../../src/core/env-secret-ref";
 import { getDbPath } from "../../../src/core/paths";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../../src/storage/repositories/index-entries-repository";
@@ -44,7 +44,7 @@ const xdgConfig = cliXdgConfig;
 
 /**
  * In-process CLI runner. Pins the AKM env (stash + any extra vars) for the
- * duration of the call and resets the embedder/graph singletons so the run
+ * duration of the call and resets the embedder singletons so the run
  * reads the pinned env.
  */
 async function runCli(
@@ -54,7 +54,6 @@ async function runCli(
   return withEnv({ AKM_BUNDLE_DIR: undefined, AKM_CONFIG_DIR: undefined, ...extraEnv }, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
-    resetGraphBoostCache();
     const { stdout, stderr, code } = await runCliCapture(args);
     return { stdout, stderr, status: code };
   });
@@ -249,7 +248,7 @@ afterEach(() => {
 const SECRET_VALUE = "correct-horse-battery-staple-do-not-leak";
 
 describe("env indexer safety", () => {
-  test("env values never appear in the FTS index, search_text, or document_json", async () => {
+  test("env values never appear in the FTS index, the embedding input, or document_json", async () => {
     const stashDir = currentStashDir;
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
 
@@ -296,11 +295,12 @@ describe("env indexer safety", () => {
       expect(json).not.toContain("zqxcommentleak");
       expect(json).not.toContain("Production secrets");
 
-      // 5. CRITICAL: neither values nor comment text are in entries.search_text
-      type Row = { search_text: string | null; document_json: string };
-      const rows = db.prepare("SELECT search_text, document_json FROM entries WHERE type = ?").all("env") as Row[];
+      // 5. CRITICAL: neither values nor comment text are in the stored document
+      // or the text its vector is embedded from
+      type Row = { document_json: string };
+      const rows = db.prepare("SELECT document_json FROM entries WHERE type = ?").all("env") as Row[];
       expect(rows.length).toBe(1);
-      const searchText = rows[0]!.search_text ?? "";
+      const searchText = buildSearchText(JSON.parse(rows[0]!.document_json));
       expect(searchText).not.toContain(SECRET_VALUE);
       expect(searchText).not.toContain("zqxoldcredleak");
       expect(searchText).not.toContain("zqxcommentleak");

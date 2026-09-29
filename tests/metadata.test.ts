@@ -10,7 +10,6 @@ import {
   extractTagsFromPath,
   fileNameToDescription,
   type IndexDocument,
-  isEnrichmentComplete,
   validateStashEntry,
 } from "../src/indexer/passes/metadata";
 import { recognizeStashEntries } from "../src/indexer/scan/drain-dir";
@@ -388,50 +387,6 @@ test("recognize preserves curated aliases from comment metadata", async () => {
   expect(stash.entries[0]!.aliases).toEqual(
     expect.arrayContaining(["release workflow", "ship service", "deploy service"]),
   );
-});
-
-// ── isEnrichmentComplete ────────────────────────────────────────────────────
-
-test("isEnrichmentComplete returns true when description, tags, and searchHints are all populated", () => {
-  const entry: IndexDocument = {
-    name: "deploy",
-    type: "script",
-    description: "Deploy services to production",
-    tags: ["deploy", "production"],
-    searchHints: ["deploy a service to production", "roll out new code"],
-  };
-  expect(isEnrichmentComplete(entry)).toBe(true);
-});
-
-test("isEnrichmentComplete returns false when description is missing", () => {
-  const entry: IndexDocument = {
-    name: "deploy",
-    type: "script",
-    tags: ["deploy", "production"],
-    searchHints: ["deploy a service to production"],
-  };
-  expect(isEnrichmentComplete(entry)).toBe(false);
-});
-
-test("isEnrichmentComplete returns false when tags array is empty", () => {
-  const entry: IndexDocument = {
-    name: "deploy",
-    type: "script",
-    description: "Deploy services to production",
-    tags: [],
-    searchHints: ["deploy a service to production"],
-  };
-  expect(isEnrichmentComplete(entry)).toBe(false);
-});
-
-test("isEnrichmentComplete returns false when searchHints is missing", () => {
-  const entry: IndexDocument = {
-    name: "deploy",
-    type: "script",
-    description: "Deploy services to production",
-    tags: ["deploy", "production"],
-  };
-  expect(isEnrichmentComplete(entry)).toBe(false);
 });
 
 // ── Wave 1: captureMode / whenToUse / lessonStrength / evidenceSources ──────

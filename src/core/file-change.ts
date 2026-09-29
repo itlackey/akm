@@ -22,13 +22,20 @@ export type FileChangeOp = "create" | "update" | "delete";
 /**
  * The content of a proposal's PRIMARY change (WI-6.2 envelope read path).
  *
- * By construction `changes[0].after === payload.content`; consumers read
- * through this accessor so the single-content assumption lives in ONE place
- * once multi-file proposals (consolidate ops) ride the envelope. Typed
- * structurally (not against `Proposal`) so this module stays dependency-free.
+ * By construction `changes[0].after === payload.content` for a `create` or
+ * `update` change; consumers read through this accessor so the
+ * single-content assumption lives in ONE place. A `delete` primary change (a
+ * consolidate retire proposal, alpha.9) writes no content by definition, so
+ * it reads as `""` here rather than throwing — every generic proposal scan
+ * (dedup-by-body-hash, the triage drain's diff-size filter, the quality
+ * validators) can call this on ANY pending proposal, retire included,
+ * without special-casing the op first. Typed structurally (not against
+ * `Proposal`) so this module stays dependency-free.
  */
 export function proposalContent(p: { changes: FileChange[] }): string {
-  const content = p.changes[0]?.after;
+  const primary = p.changes[0];
+  if (primary?.op === "delete") return "";
+  const content = primary?.after;
   if (content === undefined) throw new Error("Proposal primary change has no content.");
   return content;
 }

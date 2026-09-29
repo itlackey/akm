@@ -4,57 +4,85 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import dotenv from "dotenv";
 import { loadAdapterExecutionSource } from "../../commands/command/execution-source-loader";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { compareCodePoints, isWithin, toPosix } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config-types";
 import { parseEnvRef } from "../../core/env-secret-ref";
 import { UsageError } from "../../core/errors";
-import type { GuardedExecutionSource, GuardedExecutionSourceCollector } from "../../execution/guarded-source";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../sources/resolve";
-import { freezeWorkflowEnvironment } from "../ir/environment-v4";
-import type { FrozenWorkflowEnvironmentBinding } from "../ir/schema-v4";
-import type { ProgramExec } from "../program/schema";
+import { isInferredSecretName } from "../../tasks/log-redaction";
+import { SECRET_TOKEN_RE } from "../exec/environment";
+import { detectSecretShapedParams } from "../exec/param-secrets";
+import type { FrozenWorkflowEnvironmentBinding, WorkflowExec } from "../plan";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
-import type { WorkflowSourceStep } from "../source-ir/schema";
-import type { OwnedAsset, ResolutionContext } from "./step-values";
+import type { FreezeStep, OwnedAsset, ResolutionContext } from "./step-values";
 
+/**
+ * A step's frozen environment: literal `env:` values, `pass_env` names, then
+ * one value-free descriptor per `unit.env` ref (owner, key set, secret-token
+ * names). Values are read at dispatch (`exec/environment.ts`), never frozen.
+ */
 export function freezeEnvironment(
-  source: WorkflowSourceStep,
-  exec: ProgramExec | undefined,
+  source: FreezeStep,
+  exec: WorkflowExec | undefined,
   context: ResolutionContext,
 ): FrozenWorkflowEnvironmentBinding[] {
-  const literals = Object.entries(source.env ?? {}).map(([name, value]) =>
-    Object.freeze({ kind: "literal" as const, name, value: String(value) }),
-  );
-  const passThrough = (exec?.passEnv ?? []).map((name) => Object.freeze({ kind: "pass-through" as const, name }));
-  const refs = source.unit?.env ?? [];
-  const envRefs = freezeWorkflowEnvironment(refs, {
-    collector: context.collector,
-    resolveRef: (ref) => {
-      const parsedEnv = parseEnvRef(ref);
-      if (parsedEnv.type !== "env") throw new UsageError(`Expected an env ref; got ${ref}.`, "WORKFLOW_SOURCE_INVALID");
-      const owned = resolveOwnedAssetSync(ref, "env", context);
-      return { ref: owned.ref, bundle: owned.bundle, adapter: owned.adapter, root: owned.root, path: owned.file };
-    },
+  const literals = Object.entries(source.env ?? {}).map(([name, raw]) => {
+    const value = String(raw);
+    // A literal is frozen into plan_json; a credential belongs in an env ref, as for task env.
+    if (isInferredSecretName(name) || detectSecretShapedParams({ [name]: value }).length > 0) {
+      throw new UsageError(
+        `Workflow step ${source.id} env.${name} is a secret-shaped literal env value. Store credentials in an env asset (unit.env) rather than workflow source.`,
+        "WORKFLOW_SOURCE_INVALID",
+      );
+    }
+    return Object.freeze({ kind: "literal" as const, name, value });
   });
+  const passThrough = (exec?.passEnv ?? []).map((name) => Object.freeze({ kind: "pass-through" as const, name }));
+  const seen = new Set<string>();
+  const envRefs: FrozenWorkflowEnvironmentBinding[] = [];
+  for (const [precedence, ref] of (source.unit?.env ?? []).entries()) {
+    if (parseEnvRef(ref).type !== "env") {
+      throw new UsageError(`Expected an env ref; got ${ref}.`, "WORKFLOW_SOURCE_INVALID");
+    }
+    const owned = resolveOwnedAssetSync(ref, "env", context);
+    if (seen.has(owned.ref)) continue;
+    seen.add(owned.ref);
+    const parsed = dotenv.parse(fs.readFileSync(owned.file));
+    const secretNames = new Set<string>();
+    for (const value of Object.values(parsed)) {
+      for (const match of value.matchAll(SECRET_TOKEN_RE)) if (match[1]) secretNames.add(match[1]);
+    }
+    envRefs.push(
+      Object.freeze({
+        kind: "env-ref" as const,
+        ref: owned.ref,
+        owner: Object.freeze({
+          bundle: owned.bundle,
+          adapter: owned.adapter,
+          requestedRoot: owned.root,
+          requestedPath: owned.file,
+          relativePath: toPosix(path.relative(owned.root, owned.file)),
+        }),
+        keys: Object.keys(parsed).sort(compareCodePoints),
+        secretNames: [...secretNames].sort(compareCodePoints),
+        precedence,
+      }),
+    );
+  }
   return [...literals, ...passThrough, ...envRefs];
 }
 
-export async function guardedExecutionSource(ref: string, kind: "command" | "persona", context: ResolutionContext) {
+/** Load a command or persona the workflow names, resolved through the workflow's own bundles. */
+export async function workflowExecutionSource(ref: string, kind: "command" | "persona", context: ResolutionContext) {
   const owned = await resolveOwnedAsset(ref, kind === "command" ? "command" : "agent", context);
-  captureOwned(owned, context.collector);
-  const options = {
-    config: context.config,
-    fileContext: () => context.collector.fileContext(owned.root, owned.file),
-  };
-  const rendered =
-    kind === "command"
-      ? await loadAdapterExecutionSource(owned.ref, "command", options)
-      : await loadAdapterExecutionSource(owned.ref, "persona", options);
-  context.collector.bindIdentity(owned.file, owned.root, rendered.identity);
-  return rendered;
+  return kind === "command"
+    ? loadAdapterExecutionSource(owned.ref, "command", { config: context.config })
+    : loadAdapterExecutionSource(owned.ref, "persona", { config: context.config });
 }
 
 export async function resolveOwnedAsset(
@@ -69,7 +97,7 @@ export function resolveOwnedAssetSync(ref: string, type: "env", context: Resolut
   return resolveOwnedAssetCore(ref, type, context, true) as OwnedAsset;
 }
 
-export function resolveOwnedAssetCore(
+function resolveOwnedAssetCore(
   refInput: string,
   type: "command" | "agent" | "task" | "workflow" | "script" | "env",
   context: ResolutionContext,
@@ -80,37 +108,20 @@ export function resolveOwnedAssetCore(
   const conceptId = parsed.conceptId.startsWith(`${plural}/`) ? parsed.conceptId : `${plural}/${parsed.conceptId}`;
   const name = conceptId.slice(plural.length + 1);
   const direct = parsed.bundle ? configuredOwner(parsed.bundle, context.config) : undefined;
-  const sources = resolveSourceEntries(undefined, context.config);
-  const installations = deriveInstallations(sources);
-  const candidates = direct
-    ? [direct]
-    : sources.flatMap((source, index) => {
-        const installation = installations[index];
-        if (!installation || (parsed.bundle && installation.id !== parsed.bundle)) return [];
-        return [
-          {
-            bundle: installation.id,
-            root: source.path,
-            adapter: source.adapterId ?? installation.components[0]?.adapter ?? "akm",
-          },
-        ];
-      });
+  const candidates = direct ? [direct] : installedOwners(parsed.bundle, context.config);
   const findSync = (): OwnedAsset => {
     for (const candidate of candidates) {
       const directory = path.join(candidate.root, plural);
       for (const extension of assetExtensions(type)) {
         const file = path.resolve(directory, `${name}${extension}`);
         if (fs.existsSync(file) && fs.statSync(file).isFile()) {
+          if (!isWithin(file, candidate.root)) {
+            throw new UsageError(`${file} resolves outside its owning root.`, "PATH_ESCAPE_VIOLATION");
+          }
           return { ...candidate, ref: makeBundleRef(candidate.bundle, conceptId), file };
         }
       }
     }
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §5.2, row B-11 preservation
-    // gate): PRESERVED, not re-coded — tests/workflows/child-workflow-freeze.test.ts's
-    // "B-11: workflows/<ref> that does not resolve fails the existing
-    // asset-resolution failure, unchanged in code and shape" pins this exact
-    // code by name and by its own title. Recorded deviation from §5.2's flat
-    // "→ WORKFLOW_SOURCE_INVALID" for this file's 3 sites.
     throw new UsageError(`Workflow source target ${refInput} was not found.`, "INVALID_FLAG_VALUE");
   };
   if (sync) return findSync();
@@ -127,7 +138,27 @@ export function resolveOwnedAssetCore(
   })();
 }
 
-export function configuredOwner(
+/** Every installed bundle root (or just `bundle`'s), in installation priority order. */
+function installedOwners(
+  bundle: string | undefined,
+  config: AkmConfig,
+): Array<{ bundle: string; root: string; adapter: string }> {
+  const sources = resolveSourceEntries(undefined, config);
+  const installations = deriveInstallations(sources);
+  return sources.flatMap((source, index) => {
+    const installation = installations[index];
+    if (!installation || (bundle && installation.id !== bundle)) return [];
+    return [
+      {
+        bundle: installation.id,
+        root: source.path,
+        adapter: source.adapterId ?? installation.components[0]?.adapter ?? "akm",
+      },
+    ];
+  });
+}
+
+function configuredOwner(
   bundle: string,
   config: AkmConfig,
 ): { bundle: string; root: string; adapter: string } | undefined {
@@ -142,55 +173,30 @@ export function configuredOwner(
   };
 }
 
-export function assetExtensions(type: string): readonly string[] {
-  if (type === "script")
-    return [
-      "",
-      ".sh",
-      ".ts",
-      ".js",
-      ".py",
-      ".rb",
-      ".go",
-      ".pl",
-      ".php",
-      ".lua",
-      ".r",
-      ".swift",
-      ".kt",
-      ".kts",
-      ".ps1",
-      ".cmd",
-      ".bat",
-    ];
+const SCRIPT_EXTENSIONS = [
+  "",
+  ".sh",
+  ".ts",
+  ".js",
+  ".py",
+  ".rb",
+  ".go",
+  ".pl",
+  ".php",
+  ".lua",
+  ".r",
+  ".swift",
+  ".kt",
+  ".kts",
+  ".ps1",
+  ".cmd",
+  ".bat",
+];
+
+function assetExtensions(type: string): readonly string[] {
+  if (type === "script") return SCRIPT_EXTENSIONS;
   if (type === "env") return ["", ".env"];
   return ["", ".md", ".yml"];
-}
-
-export function captureOwned(owned: OwnedAsset, collector: GuardedExecutionSourceCollector): GuardedExecutionSource {
-  trackAncestry(collector, owned.root, owned.file);
-  const retained = collector.capture(owned.file, owned.root, { authored: true });
-  return collector.bindIdentity(owned.file, owned.root, {
-    ref: owned.ref,
-    bundle: owned.bundle,
-    adapter: owned.adapter,
-    file: retained.relativePath,
-    hash: retained.sha256,
-  });
-}
-
-export function trackAncestry(collector: GuardedExecutionSourceCollector, rootInput: string, file: string): void {
-  const root = path.resolve(rootInput);
-  collector.trackDirectory(root, root);
-  const relative = path.relative(root, path.dirname(file));
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new UsageError(`${file} resolves outside its owning root.`, "PATH_ESCAPE_VIOLATION");
-  }
-  let current = root;
-  for (const segment of relative === "" ? [] : relative.split(path.sep)) {
-    current = path.join(current, segment);
-    collector.trackDirectory(current, root);
-  }
 }
 
 export function qualifyRef(ref: string, plural: string, asset: WorkflowAsset, config: AkmConfig): string {

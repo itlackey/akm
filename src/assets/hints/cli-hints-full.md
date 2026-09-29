@@ -245,10 +245,9 @@ akm improve --no-push                         # commit but skip push for this ru
 akm improve --sync                            # force sync even on strategies that disable it
 ```
 
-Strategy sync defaults: `catchup`, `consolidate`, `default`,
-`graph-refresh`, `quick`, and `thorough` auto-commit + push;
-`proactive-maintenance` and `reflect-distill` skip sync entirely. Override
-with `--sync` / `--no-sync` flags.
+Strategy sync defaults: `catchup`, `consolidate`, `default`, `quick`, and
+`thorough` auto-commit + push; `proactive-maintenance` and `reflect-distill`
+skip sync entirely. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm bundle add` opts a remote git bundle into push-on-sync:
 
@@ -264,6 +263,7 @@ akm bundle add @scope/pkg                            # From npm (managed)
 akm bundle add owner/repo                            # From GitHub (managed)
 akm bundle add ./path/to/local/bundle                   # Local directory
 akm bundle add git@github.com:org/repo.git --provider git --name my-skills --writable
+akm bundle add https://github.com/org/private.git --provider git --credential '$GIT_READ_TOKEN'
 akm registry add https://skills.sh --name skills.sh --provider skills-sh  # Add the skills.sh registry
 akm registry remove skills.sh                 # Remove the skills.sh registry
 akm bundle list                                      # List all sources
@@ -271,8 +271,12 @@ akm bundle list --kind git                           # Filter by provider (files
 akm bundle remove <target>                           # Remove by id, ref, path, or name
 akm bundle update --all                              # Update all managed sources
 akm bundle update <target> --force                   # Force re-download
-akm bundle update <target> --allow-insecure          # Approve reviewed dangerous env keys
+akm bundle update <target> --allow-dangerous-env-keys # Approve reviewed dangerous env keys
+akm bundle update --all --skip-if-locked             # Scheduled refresh; exit 0 on DB contention
 ```
+
+Git bundles refresh only when `akm bundle update` runs. Schedule that command
+when automatic refresh is desired.
 
 ## Registries
 
@@ -303,8 +307,8 @@ akm bundle create                                      # Initialize working bund
 akm setup                                     # Interactive wizard: bundle + LLM/embedding + agent + registry config
 akm setup --dir ~/custom-bundle                # Run the wizard against a custom bundle path
 akm setup --yes                               # Non-interactive, accepts all defaults
-akm index                                     # Rebuild search index (metadata enrichment when configured)
-akm index --full                              # Full reindex (metadata enrichment when configured)
+akm index                                     # Rebuild search index
+akm index --full                              # Full reindex
 akm bundle list                                      # List all sources
 akm lint                                      # Structural lint over the bundle; exits 0 regardless of findings
 akm lint --fix                                # Auto-fix Tier 1 issues
@@ -357,7 +361,9 @@ file plus one `sync` is a complete workflow.
 ```sh
 akm task add nightly-improve --schedule "@daily" --command "akm improve --strategy default"
 akm task add briefing --schedule "0 9 * * *" --prompt "Draft the morning briefing"  # Inline command task
-akm task sync                                  # Reconcile task files with the OS scheduler
+akm task enable <bundle>//tasks/<id>           # Enable locally and sync that bundle
+akm task disable <bundle>//tasks/<id>          # Disable locally and unschedule it
+akm task sync                                  # Reconcile activated refs from every enabled configured bundle
 akm task sync --rebind                         # Also re-pin the scheduler's akm binary/spelling
 akm task doctor                                # Scheduler binding + runtime eligibility diagnosis
 akm task history                               # Recent run rows (status, timing)
@@ -370,10 +376,10 @@ Task files use task source v4 (`version: 4`). There is no `akm:` options bag
 or `on:` block — every control (`schedule`, `timeout`, `engine`, `model`,
 `redact`, `maxSteps`, `maxRetries`, …) is a top-level key now. Typed
 `inputs:` declarations and a bounded `output:` schema work like a
-workflow's (`output:` replaces v3's `akm.outputSchema`). To disable one
-schedule entry, set that entry's `enabled: false` under `schedule:` and run
-`akm task sync` (the cron line stays, commented); to remove one, delete the
-YAML and run `akm task sync` — the scheduler entry is unbound. Top-level
+workflow's (`output:` replaces v3's `akm.outputSchema`). Task source never
+controls activation: use `akm task enable` / `disable`, which update the
+host-local config allow-list and sync. To remove one, delete the YAML and run
+`akm task sync` — the scheduler entry is unbound. Top-level
 `timeout:` may be `null` (disable the invocation timer) or a duration/number
 overriding the selected engine invocation timeout. Preview old task-v2/v3
 conversion with `akm migrate apply --dry-run`.
@@ -392,7 +398,7 @@ akm agent --model sonnet --prompt "..."         # Model override (aliases or exa
 ```sh
 akm info                                       # Capabilities, bundle dir, index stats, semantic-search status
 akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
-akm health --report                            # Adds accept-rate and graph-coverage metrics
+akm health --report                            # Adds accept-rate metrics
 akm log                                        # Append-only event stream (mutations, feedback, indexing)
 akm log --ref <ref>                            # One asset's event trail
 akm log --since @offset:<id>                   # Durable row-id cursor — poll this to follow the stream

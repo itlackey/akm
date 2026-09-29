@@ -6,11 +6,13 @@ import { akmSearch } from "../../../src/commands/read/search";
 import { saveConfig } from "../../../src/core/config/config";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
+import { getDbPath } from "../../../src/core/paths";
 import { setQuiet } from "../../../src/core/warn";
-import type { GraphExtractionResult } from "../../../src/indexer/graph/graph-extraction";
 import { akmIndex } from "../../../src/indexer/indexer";
 import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
+import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
+import { getEntryByRef } from "../../../src/storage/repositories/index-entries-repository";
 import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withImproveAutonomy, withTestImproveLlm } from "../../_helpers/improve-config";
@@ -799,7 +801,7 @@ describe("akm improve memory cleanup", () => {
     // candidates (no orchestrator candidateRefs filter). On this fixture it
     // finds nothing, but the action is still recorded. Website-source
     // exclusion still holds — what matters is reflectedRefs/distilledRefs.
-    expect(result.actions?.map((action) => action.mode)).toEqual(["memory-inference", "graph-extraction"]);
+    expect(result.actions?.map((action) => action.mode)).toEqual(["memory-inference"]);
     expect(reflectedRefs).toEqual([]);
     expect(distilledRefs).toEqual([]);
   });
@@ -1102,7 +1104,6 @@ describe("akm improve memory cleanup", () => {
     });
 
     const inferredRefs: string[][] = [];
-    const graphCalls: number[] = [];
 
     const result = await akmImprove({
       scope: "memory",
@@ -1150,25 +1151,8 @@ describe("akm improve memory cleanup", () => {
           htmlErrorCount: 0,
           cacheHits: 0,
           retryAttempts: 0,
+          writtenPaths: [],
         } satisfies MemoryInferenceResult;
-      },
-      graphExtractionFn: async () => {
-        graphCalls.push(1);
-        return {
-          considered: 1,
-          extracted: 1,
-          totalEntities: 1,
-          totalRelations: 0,
-          written: true,
-          quality: {
-            consideredFiles: 1,
-            extractedFiles: 1,
-            entityCount: 1,
-            relationCount: 0,
-            extractionCoverage: 1,
-            density: 0,
-          },
-        } satisfies GraphExtractionResult;
       },
     });
 
@@ -1177,7 +1161,6 @@ describe("akm improve memory cleanup", () => {
     // filesystem scan. The mock above pushes whatever options.candidateRefs is
     // (now undefined → empty Set), so we just assert the pass was invoked.
     expect(inferredRefs).toEqual([[]]);
-    expect(graphCalls).toHaveLength(1);
     expect(result.memoryInference).toEqual({
       considered: 1,
       splitParents: 1,
@@ -1189,20 +1172,47 @@ describe("akm improve memory cleanup", () => {
       htmlErrorCount: 0,
       cacheHits: 0,
       retryAttempts: 0,
+      writtenPaths: [],
     });
-    expect(result.graphExtraction?.written).toBe(true);
   });
 
-  test("improve reindexes after memory inference before refreshing the graph", async () => {
+  // R78: this used to assert a full reindex ("reindex" in callOrder) ran
+  // between memory inference and graph extraction. It now indexes exactly
+  // the files memory inference wrote (indexWrittenAssets) instead, so
+  // reindexFn is never called for this reason and the derived file lands in
+  // index.db without one.
+  test("improve indexes memory inference's written paths incrementally, without a full reindex", async () => {
     const stashDir = makeTempDir("akm-improve-memory-reindex-order-");
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
     await buildIndex(stashDir);
+    // Isolate the incremental-index path under test from the D9 consolidation
+    // reindex (a genuinely separate, still-full reindex this run would
+    // otherwise also trigger and make "no full reindex" unprovable here).
+    saveConfig(
+      withImproveAutonomy(
+        withTestImproveLlm({
+          semanticSearchMode: "off",
+          bundles: { stash: { path: stashDir, writable: true } },
+          defaultBundle: "stash",
+          defaultWriteTarget: "stash",
+          improve: {
+            strategies: { default: { processes: { extract: { enabled: false }, consolidate: { enabled: false } } } },
+          },
+        }),
+      ),
+    );
 
     appendEvent({
       eventType: "feedback",
       ref: durableRef("memories/vpn"),
       metadata: { signal: "positive", note: "good" },
     });
+
+    // A real derived file on disk — the incremental index call needs a real
+    // path to upsert, and its presence in index.db afterwards (checked
+    // below) is the proof it was indexed without a full reindex.
+    const derivedPath = path.join(stashDir, "memories", "vpn.derived.md");
+    fs.writeFileSync(derivedPath, "---\ninferred: true\ndescription: derived vpn\n---\n\nDerived vpn fact.\n", "utf8");
 
     const callOrder: string[] = [];
 
@@ -1243,129 +1253,19 @@ describe("akm improve memory cleanup", () => {
           htmlErrorCount: 0,
           cacheHits: 0,
           retryAttempts: 0,
+          writtenPaths: [derivedPath],
         } satisfies MemoryInferenceResult;
       },
-      graphExtractionFn: async ({ options }) => {
-        callOrder.push("graphExtraction");
-        // Phase 1 perf fix: improve now passes candidatePaths filtered to refs
-        // actually touched this run (here: memories/vpn). The set must include
-        // the resolved file for the processed memory so graph extraction can
-        // rescan only the changed files.
-        expect(options?.candidatePaths).toBeDefined();
-        expect(options?.candidatePaths?.size).toBeGreaterThan(0);
-        return {
-          considered: 1,
-          extracted: 1,
-          totalEntities: 1,
-          totalRelations: 0,
-          written: true,
-          quality: {
-            consideredFiles: 1,
-            extractedFiles: 1,
-            entityCount: 1,
-            relationCount: 0,
-            extractionCoverage: 1,
-            density: 0,
-          },
-        } satisfies GraphExtractionResult;
-      },
     });
 
-    expect(callOrder).toEqual(["memoryInference", "reindex", "graphExtraction"]);
+    expect(callOrder).toEqual(["memoryInference"]);
     expect(result.memoryInference?.writtenFacts).toBe(1);
-    expect(result.graphExtraction?.written).toBe(true);
-  });
 
-  test("improve emits incremental graph extraction progress lines", async () => {
-    const stashDir = makeTempDir("akm-improve-graph-progress-");
-    writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
-    await buildIndex(stashDir);
-
-    appendEvent({
-      eventType: "feedback",
-      ref: durableRef("memories/vpn"),
-      metadata: { signal: "positive", note: "good" },
-    });
-
-    // setQuiet(false): the harness sets quiet=true by default; opt back into
-    // noisy mode so that info()/warn() calls from production code reach the
-    // warnSpy and the progress-line assertions below can see them.
-    setQuiet(false);
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+    const checkDb = openIndexDatabase(getDbPath());
     try {
-      await akmImprove({
-        scope: "memory",
-        stashDir,
-        ensureIndexFn: async () => false,
-        reflectFn: async ({ ref }) => ({
-          schemaVersion: 2,
-          ok: true,
-          proposal: makeProposal(ref ?? "memories/missing"),
-          ref: ref ?? "",
-          engine: "test",
-          durationMs: 1,
-        }),
-        distillFn: async ({ ref }) => ({
-          schemaVersion: 1,
-          ok: true,
-          outcome: "queued",
-          inputRef: ref,
-          proposalRef: `lessons/${ref?.replace(/[:/]/g, "-") ?? "missing"}-lesson`,
-          proposalKind: "lesson",
-        }),
-        graphExtractionFn: async ({ onProgress }) => {
-          onProgress?.({
-            processed: 1,
-            total: 3,
-            extracted: 1,
-            totalEntities: 2,
-            totalRelations: 1,
-            currentPath: path.join(stashDir, "memories", "vpn.md"),
-          });
-          onProgress?.({
-            processed: 2,
-            total: 3,
-            extracted: 1,
-            totalEntities: 2,
-            totalRelations: 1,
-            currentPath: path.join(stashDir, "memories", "deploy.md"),
-          });
-          onProgress?.({
-            processed: 3,
-            total: 3,
-            extracted: 2,
-            totalEntities: 4,
-            totalRelations: 2,
-            currentPath: path.join(stashDir, "memories", "release.md"),
-          });
-          return {
-            considered: 3,
-            extracted: 2,
-            totalEntities: 4,
-            totalRelations: 2,
-            written: true,
-            quality: {
-              consideredFiles: 3,
-              extractedFiles: 2,
-              entityCount: 4,
-              relationCount: 2,
-              extractionCoverage: 2 / 3,
-              density: 2,
-            },
-          } satisfies GraphExtractionResult;
-        },
-      });
-
-      const lines = warnSpy.mock.calls
-        .map((args) => args.map((arg) => String(arg)).join(" "))
-        .filter((line) => line.startsWith("[improve] graph extraction "));
-
-      expect(lines.some((line) => line.includes("1/3") && line.includes("vpn.md"))).toBe(true);
-      expect(lines.some((line) => line.includes("2/3") && line.includes("deploy.md"))).toBe(true);
-      expect(lines.some((line) => line.includes("3/3") && line.includes("release.md"))).toBe(true);
+      expect(getEntryByRef(checkDb, "memories/vpn.derived")).not.toBeNull();
     } finally {
-      warnSpy.mockRestore();
-      setQuiet(true); // restore harness default before tripwire check
+      closeDatabase(checkDb);
     }
   });
 
@@ -1412,30 +1312,11 @@ describe("akm improve memory cleanup", () => {
         htmlErrorCount: 0,
         cacheHits: 0,
         retryAttempts: 0,
-      }),
-      graphExtractionFn: async () => ({
-        considered: 1,
-        extracted: 1,
-        totalEntities: 1,
-        totalRelations: 0,
-        written: true,
-        quality: {
-          consideredFiles: 1,
-          extractedFiles: 1,
-          entityCount: 1,
-          relationCount: 0,
-          extractionCoverage: 1,
-          density: 0,
-        },
+        writtenPaths: [],
       }),
     });
 
-    expect(result.actions?.map((action) => action.mode)).toEqual([
-      "reflect",
-      "distill",
-      "memory-inference",
-      "graph-extraction",
-    ]);
+    expect(result.actions?.map((action) => action.mode)).toEqual(["reflect", "distill", "memory-inference"]);
 
     const { events } = readEvents({ type: "improve_completed" });
     expect(events).toHaveLength(1);
@@ -1444,9 +1325,7 @@ describe("akm improve memory cleanup", () => {
       reflectActions: 1,
       distillActions: 1,
       memoryInferenceActions: 1,
-      graphExtractionActions: 1,
       memoryInferenceWrites: 1,
-      graphExtractionExtractedFiles: 1,
       memoryEligible: 1,
       memoryDerived: 0,
     });

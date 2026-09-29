@@ -10,6 +10,7 @@ import {
   isRecombineJunkTag,
   type RecombineAnalyzerEntry,
   readCurrentRecombineEntries,
+  renderRecombineAnalyzerReport,
 } from "../../../scripts/akm-eval/src/recombine-analyzer";
 import { resolveDataDir } from "../../../scripts/akm-eval/src/sources/paths";
 import { CANONICAL_ENTRY_SCHEMA_SQL } from "../../../src/storage/repositories/index-entry-schema";
@@ -477,8 +478,8 @@ function buildDbFixture(): DbFixture {
       .prepare(
         `INSERT INTO entries
          (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-          content_hash, document_json, search_text, derived_from)
-         VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, ?, ?, ?, NULL)`,
+          content_hash, document_json, derived_from)
+         VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, ?, ?, NULL)`,
       )
       .run(
         id,
@@ -495,7 +496,6 @@ function buildDbFixture(): DbFixture {
           fileSize: 1000 + id,
           description: `SENSITIVE_DESCRIPTION_CANARY_${id}`,
         }),
-        `SENSITIVE_SEARCH_TEXT_CANARY_${id}`,
       );
     index.prepare("INSERT INTO graph_files VALUES (?, ?, ?)").run(stashDir, filePath, `hash-${id}`);
     index
@@ -506,9 +506,9 @@ function buildDbFixture(): DbFixture {
     .prepare(
       `INSERT INTO entries
        (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-        content_hash, document_json, search_text, derived_from)
+        content_hash, document_json, derived_from)
        VALUES (99, 'invalid-ref', 'team', 'team', 'memories/legacy-only', 'akm', 'memory',
-               '/missing', NULL, ?, '', NULL)`,
+               '/missing', NULL, ?, NULL)`,
     )
     .run(JSON.stringify({ name: "legacy-only", type: "memory", tags: ["auth"] }));
   index.close();
@@ -561,8 +561,8 @@ function insertGraphMemory(db: Database, fixtureDb: DbFixture, id: number, entit
   db.prepare(
     `INSERT INTO entries
      (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-      content_hash, document_json, search_text, derived_from)
-     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, '', NULL)`,
+      content_hash, document_json, derived_from)
+     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, NULL)`,
   ).run(
     id,
     `team//memories/${name}`,
@@ -580,7 +580,7 @@ function insertGraphMemory(db: Database, fixtureDb: DbFixture, id: number, entit
 }
 
 describe("akm-eval recombine analyzer CLI read-only boundary", () => {
-  test("refuses a pre-canonical index instead of rebuilding refs from legacy entry_key", () => {
+  test("refuses a legacy entries table instead of rebuilding refs from legacy entry_key", () => {
     const root = tempDir();
     const indexDb = path.join(root, "index.db");
     const db = new Database(indexDb);
@@ -607,42 +607,7 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toContain("current canonical entries schema");
-    expect(digestTree(root)).toEqual(before);
-  });
-
-  test("refuses a stamped exact-name entries table without the canonical constraints", () => {
-    const root = tempDir();
-    const indexDb = path.join(root, "index.db");
-    const db = new Database(indexDb);
-    db.exec(`
-      CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-      INSERT INTO index_meta (key, value) VALUES ('version', '${DB_VERSION}');
-      CREATE TABLE entries (
-        id, item_ref, bundle_id, component_id, concept_id, adapter_id,
-        type, file_path, content_hash, document_json, search_text, derived_from
-      );
-      CREATE INDEX idx_entries_bundle ON entries(bundle_id);
-      CREATE INDEX idx_entries_type ON entries(type);
-      CREATE INDEX idx_entries_file_path ON entries(file_path);
-      CREATE INDEX idx_entries_derived_from ON entries(derived_from);
-      INSERT INTO entries VALUES
-        (1, 'team//memories/hostile', 'team', 'team', 'memories/hostile', 'akm',
-         'memory', '/stash/memories/hostile.md', NULL,
-         '{"name":"hostile","type":"memory","tags":["auth"]}', 'hostile', NULL);
-    `);
-    db.close();
-    const before = digestTree(root);
-
-    const result = Bun.spawnSync([WRAPPER, "--index-db", indexDb, "--format", "json"], {
-      cwd: REPO_ROOT,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-
-    expect(result.exitCode).toBe(2);
-    expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toContain("current canonical entries schema");
+    expect(result.stderr.toString()).toContain("no entries table this akm reads");
     expect(digestTree(root)).toEqual(before);
   });
 
@@ -665,7 +630,6 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     expect(result.stderr.toString()).toBe("");
     expect(result.stdout.toString()).not.toContain("SENSITIVE_BODY_CANARY");
     expect(result.stdout.toString()).not.toContain("SENSITIVE_DESCRIPTION_CANARY");
-    expect(result.stdout.toString()).not.toContain("SENSITIVE_SEARCH_TEXT_CANARY");
     const report = JSON.parse(result.stdout.toString()) as {
       graph: {
         availability: string;
@@ -678,13 +642,16 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
       clusters: Array<{ memberRefs: string[] }>;
       summary: { skippedMissingCanonicalRef: number };
     };
+    // The default relatedness is "tags" (0.9.17-alpha.9 — graph and both are
+    // retired and refuse), so the graph is not-requested even though this
+    // fixture's graph_files/graph_file_entities tables have real rows.
     expect(report.graph).toMatchObject({
-      availability: "available",
-      fileCount: 3,
-      entityCount: 1,
-      coveredMemoryCount: 3,
-      memoryCount: 3,
-      memoryCoverage: 1,
+      availability: "not-requested",
+      fileCount: null,
+      entityCount: null,
+      coveredMemoryCount: null,
+      memoryCount: null,
+      memoryCoverage: null,
     });
     expect(report.clusters[0]?.memberRefs).toEqual([
       "team//memories/project-a/auth-1",
@@ -722,8 +689,15 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     expect(input.entries.every((entry) => entry.entities.length === 0)).toBe(true);
   });
 
+  // The CLI's `--relatedness graph` now refuses unconditionally (0.9.17-alpha.9
+  // — see the "refuses --relatedness graph/both" tests below), so this
+  // available-but-sparse scenario can no longer be reached through it. The
+  // underlying invariant it protects — graph-only mode never silently falls
+  // back to tags, even when the graph query succeeds but returns nothing
+  // useful — is still real for a direct `analyzeRecombineCandidates` caller
+  // (the CLI is only one such caller), so it is exercised there instead.
   for (const graphPopulation of ["empty", "uncovered"] as const) {
-    test(`graph-only mode does not use tag fallback for an available ${graphPopulation} graph`, () => {
+    test(`graph-only mode does not use tag fallback for an available ${graphPopulation} graph (direct analyzeRecombineCandidates call)`, () => {
       const fixtureDb = buildDbFixture();
       const db = new Database(fixtureDb.indexDb);
       db.exec("DELETE FROM graph_file_entities; DELETE FROM graph_files");
@@ -739,22 +713,13 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
       }
       db.close();
 
-      const result = Bun.spawnSync(
-        [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", "graph", "--format", "json"],
-        {
-          cwd: REPO_ROOT,
-          env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
+      const input = readCurrentRecombineEntries(fixtureDb.indexDb, "graph");
+      const report = analyzeRecombineCandidates(input.entries, {
+        relatedness: "graph",
+        graphStatus: input.graphStatus,
+        skippedMissingCanonicalRef: input.skippedMissingCanonicalRef,
+      });
 
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr.toString()).toBe("");
-      const report = JSON.parse(result.stdout.toString()) as {
-        graph: { availability: string; coveredMemoryCount: number; entityCount: number };
-        clusters: Array<{ signature: string }>;
-      };
       expect(report.graph.availability).toBe("available");
       expect(report.graph.coveredMemoryCount).toBe(0);
       expect(report.graph.entityCount).toBe(graphPopulation === "uncovered" ? 1 : 0);
@@ -863,33 +828,28 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     }
   });
 
+  // Graph coverage rendering is specific to graph/both relatedness, and the
+  // CLI's --relatedness graph/both now refuse unconditionally (0.9.17-alpha.9
+  // — see the "refuses --relatedness graph/both" tests below), so this is a
+  // direct analyzeRecombineCandidates/renderRecombineAnalyzerReport call
+  // rather than a CLI invocation.
   test("renders zero-memory graph coverage as undefined in JSON and Markdown", () => {
     const fixtureDb = buildDbFixture();
     const db = new Database(fixtureDb.indexDb);
     db.exec("DELETE FROM entries; DELETE FROM graph_file_entities; DELETE FROM graph_files");
     db.close();
 
-    const json = Bun.spawnSync([WRAPPER, "--index-db", fixtureDb.indexDb, "--format", "json"], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
-      stdout: "pipe",
-      stderr: "pipe",
+    const input = readCurrentRecombineEntries(fixtureDb.indexDb, "graph");
+    const report = analyzeRecombineCandidates(input.entries, {
+      relatedness: "graph",
+      graphStatus: input.graphStatus,
+      skippedMissingCanonicalRef: input.skippedMissingCanonicalRef,
     });
-    const markdown = Bun.spawnSync([WRAPPER, "--index-db", fixtureDb.indexDb, "--format", "md"], {
-      cwd: REPO_ROOT,
-      env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    const markdown = renderRecombineAnalyzerReport(report, "md");
 
-    expect(json.exitCode).toBe(0);
-    expect(markdown.exitCode).toBe(0);
-    const report = JSON.parse(json.stdout.toString()) as {
-      graph: { memoryCount: number; coveredMemoryCount: number; memoryCoverage: number | null };
-    };
     expect(report.graph).toMatchObject({ memoryCount: 0, coveredMemoryCount: 0, memoryCoverage: null });
-    expect(markdown.stdout.toString()).toContain("Graph coverage: 0/0 memories (undefined)");
-    expect(markdown.stdout.toString()).not.toContain("0.0%");
+    expect(markdown).toContain("Graph coverage: 0/0 memories (undefined)");
+    expect(markdown).not.toContain("0.0%");
   });
 
   test("reads entries and graph population from one consistent SQLite snapshot", () => {
@@ -918,8 +878,8 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
                 .prepare(
                   `INSERT INTO entries
                      (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-                      content_hash, document_json, search_text, derived_from)
-                     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, '', NULL)`,
+                      content_hash, document_json, derived_from)
+                     VALUES (?, ?, 'team', 'team', ?, 'akm', 'memory', ?, NULL, ?, NULL)`,
                 )
                 .run(
                   id,
@@ -956,6 +916,10 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
   });
 
   for (const graphFailure of ["missing-table", "incompatible-column"] as const) {
+    // The CLI now refuses --relatedness graph unconditionally (0.9.17-alpha.9),
+    // before ever opening the index, so the broken-schema fixture below no
+    // longer changes the outcome — kept anyway so this test still proves the
+    // refusal fires without touching the index or state.db.
     test(`graph mode fails explicitly on ${graphFailure} graph schema without modifying inputs`, () => {
       const fixtureDb = buildDbFixture();
       breakGraphSchema(fixtureDb.indexDb, graphFailure);
@@ -973,33 +937,28 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
 
       expect(result.exitCode).toBe(2);
       expect(result.stdout.toString()).toBe("");
-      expect(result.stderr.toString()).toContain("graph relatedness unavailable");
-      expect(result.stderr.toString()).toContain("akm index");
+      expect(result.stderr.toString()).toContain("--relatedness graph was retired in 0.9.17-alpha.9");
       expect(digestTree(fixtureDb.root)).toEqual(beforeTree);
       expect(rowCounts(fixtureDb.stateDb)).toEqual(beforeRows);
     });
 
-    test(`blended mode reports degraded graph state and tag fallback on ${graphFailure}`, () => {
+    // Same reasoning: --relatedness both also refuses unconditionally now.
+    // The underlying degraded-graph + tag-fallback behavior this used to
+    // exercise through the CLI is still real for a direct
+    // analyzeRecombineCandidates caller (the CLI is only one such caller).
+    test(`blended mode reports degraded graph state and tag fallback on ${graphFailure} (direct analyzeRecombineCandidates call)`, () => {
       const fixtureDb = buildDbFixture();
       breakGraphSchema(fixtureDb.indexDb, graphFailure);
       const beforeTree = digestTree(fixtureDb.root);
       const beforeRows = rowCounts(fixtureDb.stateDb);
-      const result = Bun.spawnSync(
-        [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", "both", "--format", "json"],
-        {
-          cwd: REPO_ROOT,
-          env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
 
-      expect(result.exitCode).toBe(0);
-      expect(result.stderr.toString()).toBe("");
-      const report = JSON.parse(result.stdout.toString()) as {
-        graph: { availability: string; degradedReason: string | null };
-        clusters: Array<{ signature: string; memberRefs: string[] }>;
-      };
+      const input = readCurrentRecombineEntries(fixtureDb.indexDb, "both");
+      const report = analyzeRecombineCandidates(input.entries, {
+        relatedness: "both",
+        graphStatus: input.graphStatus,
+        skippedMissingCanonicalRef: input.skippedMissingCanonicalRef,
+      });
+
       expect(report.graph.availability).toBe("degraded");
       expect(report.graph.degradedReason).toContain("graph schema/query unavailable");
       expect(report.clusters).toContainEqual(
@@ -1017,25 +976,24 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
     });
   }
 
-  test("Markdown makes blended graph degradation and tag fallback explicit", () => {
+  // Direct call for the same reason as the "blended mode" tests above: the
+  // CLI's --relatedness both now refuses before rendering anything.
+  test("Markdown makes blended graph degradation and tag fallback explicit (direct call)", () => {
     const fixtureDb = buildDbFixture();
     breakGraphSchema(fixtureDb.indexDb, "missing-table");
-    const result = Bun.spawnSync(
-      [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", "both", "--format", "md"],
-      {
-        cwd: REPO_ROOT,
-        env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
-        stdout: "pipe",
-        stderr: "pipe",
-      },
-    );
 
-    expect(result.exitCode).toBe(0);
-    expect(result.stderr.toString()).toBe("");
-    expect(result.stdout.toString()).toContain("Graph status: degraded");
-    expect(result.stdout.toString()).toContain("Graph coverage: unavailable");
-    expect(result.stdout.toString()).toContain("Graph fallback: tags");
-    expect(result.stdout.toString()).toContain("akm index --full");
+    const input = readCurrentRecombineEntries(fixtureDb.indexDb, "both");
+    const report = analyzeRecombineCandidates(input.entries, {
+      relatedness: "both",
+      graphStatus: input.graphStatus,
+      skippedMissingCanonicalRef: input.skippedMissingCanonicalRef,
+    });
+    const markdown = renderRecombineAnalyzerReport(report, "md");
+
+    expect(markdown).toContain("Graph status: degraded");
+    expect(markdown).toContain("Graph coverage: unavailable");
+    expect(markdown).toContain("Graph fallback: tags");
+    expect(markdown).toContain("retired in 0.9.17-alpha.9");
   });
 
   test("graph-only failure does not create the requested output file", () => {
@@ -1054,8 +1012,27 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
 
     expect(result.exitCode).toBe(2);
     expect(result.stdout.toString()).toBe("");
-    expect(result.stderr.toString()).toContain("graph relatedness unavailable");
+    expect(result.stderr.toString()).toContain("--relatedness graph was retired in 0.9.17-alpha.9");
     expect(fs.existsSync(out)).toBe(false);
+  });
+
+  test("refuses --relatedness graph/both unconditionally, naming the 0.9.17-alpha.9 retirement", () => {
+    const fixtureDb = buildDbFixture();
+    for (const mode of ["graph", "both"] as const) {
+      const result = Bun.spawnSync(
+        [WRAPPER, "--index-db", fixtureDb.indexDb, "--relatedness", mode, "--format", "json"],
+        {
+          cwd: REPO_ROOT,
+          env: { ...process.env, AKM_DATA_DIR: fixtureDb.dataDir },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout.toString()).toBe("");
+      expect(result.stderr.toString()).toContain(`--relatedness ${mode} was retired in 0.9.17-alpha.9`);
+      expect(result.stderr.toString()).toContain("use --relatedness tags");
+    }
   });
 
   test("the canonical entries schema rejects duplicate item refs at the write boundary", () => {
@@ -1067,8 +1044,8 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
         .prepare(
           `INSERT INTO entries
            (id, item_ref, bundle_id, component_id, concept_id, adapter_id, type, file_path,
-            content_hash, document_json, search_text, derived_from)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            content_hash, document_json, derived_from)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           100,
@@ -1081,7 +1058,6 @@ describe("akm-eval recombine analyzer CLI read-only boundary", () => {
           String(row.file_path),
           row.content_hash == null ? null : String(row.content_hash),
           String(row.document_json),
-          String(row.search_text),
           row.derived_from == null ? null : String(row.derived_from),
         ),
     ).toThrow();

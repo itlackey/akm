@@ -27,8 +27,10 @@
 
 import type { DetailLevel } from "./context";
 import type { OutputCommandName } from "./shapes";
+import { writeStdout } from "./stdout";
 import { addFormatters } from "./text/add";
 import { bundleCreateFormatters } from "./text/bundle-create";
+import { bundleRenameFormatters } from "./text/bundle-rename";
 import { bundleShowFormatters } from "./text/bundle-show";
 import { cloneFormatters } from "./text/clone";
 import { configFormatters } from "./text/config";
@@ -66,6 +68,7 @@ import { workflowFormatters } from "./text/workflow";
 // compile instead of silently disappearing at runtime.
 const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
   ...bundleCreateFormatters,
+  ...bundleRenameFormatters,
   ...bundleShowFormatters,
   ...indexFormatters,
   ...showFormatters,
@@ -105,16 +108,16 @@ export function outputJsonl(command: string, shaped: unknown): void {
     const r = shaped as Record<string, unknown>;
     const hits = Array.isArray(r.hits) ? (r.hits as Record<string, unknown>[]) : [];
     for (const hit of hits) {
-      console.log(JSON.stringify(hit));
+      writeStdout(JSON.stringify(hit));
     }
     const registryHits = Array.isArray(r.registryHits) ? (r.registryHits as Record<string, unknown>[]) : [];
     for (const hit of registryHits) {
-      console.log(JSON.stringify(hit));
+      writeStdout(JSON.stringify(hit));
     }
     return;
   }
   // For non-search commands, output the whole object as a single JSONL line
-  console.log(JSON.stringify(shaped));
+  writeStdout(JSON.stringify(shaped));
 }
 
 // ── Dispatcher ────────────────────────────────────────────────────────────────

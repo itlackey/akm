@@ -69,7 +69,7 @@ const ACTION_BUILDERS: Record<string, (ref: string) => string> = {
   secret: (ref) =>
     `akm show ${ref} -> name only (value never shown); akm secret run ${ref} <VAR> -- <command> -> run with value injected into $VAR`,
   task: (ref) =>
-    `akm show ${ref} -> inspect; akm task run <id> -> run now; edit the file + akm task sync -> unschedule`,
+    `akm show ${ref} -> inspect; akm task run <id> -> run now; akm task enable|disable ${ref} -> change local scheduling`,
   session: (ref) =>
     `akm show ${ref} -> read the session summary; follow the \`access\` frontmatter to open the raw log at \`log_path\``,
   fact: (ref) => `akm show ${ref} -> read the stash fact and apply it as durable context`,

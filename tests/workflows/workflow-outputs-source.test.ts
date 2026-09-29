@@ -3,43 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P3b Lane B TESTS — workflow `outputs:` authoring, compile, and freeze (spec
- * docs/plans/specs/p3b-child-executor.md §4.2, rows B-01…B-17; named in §7's
- * new-suites table as this file). Companion runtime-resolution coverage
- * (B-18…B-27) lives in
- * tests/integration/workflows/workflow-outputs-runtime.test.ts; the
- * freeze-time child-output reference check (B-28…B-32) lives in
+ * Workflow `outputs:` — authoring grammar, compile-time reference checks, the
+ * stored plan's decode, and freezing into the durable plan. Runtime resolution
+ * lives in tests/integration/workflows/workflow-outputs-runtime.test.ts; the
+ * freeze-time child-output reference check in
  * tests/workflows/child-output-references.test.ts.
- *
- * RED phase: `outputs:` is not yet a recognized `WORKFLOW_KEYS` entry
- * (`src/workflows/parser.ts`), `WorkflowSourceIrV1` has no `outputs` field
- * (`src/workflows/source-ir/schema.ts`), `WorkflowPlanDraft` has no
- * `outputs` field (`src/workflows/ir/compile.ts`), and
- * `WorkflowPlanGraphV4`/`decodeWorkflowPlanV4` (`src/workflows/ir/schema-v4.ts`)
- * neither carry nor accept one — every positive-path assertion below
- * (parses / compiles / freezes / decodes) fails today.
- *
- * No `@ts-expect-error` directive is needed anywhere in this file, mirroring
- * `tests/workflows/plan-v5-schema.test.ts`'s and
- * `tests/workflows/child-workflow-freeze.test.ts`'s precedent for this exact
- * kind of red-phase coverage:
- *
- *   - Grammar/compile-level rows (B-03…B-10) drive the REAL, already-existing
- *     `compileWorkflowSource` / `compileWorkflowPlan` functions with plain
- *     markdown/YAML strings — `outputs:` is just untyped frontmatter content
- *     at that boundary, so there is nothing to reference that fails to
- *     type-check. `outputs:` is authoring-surface-only (B-N4): it never
- *     reaches `parseGithubWorkflowSource`'s closed `ROOT_KEYS`, so a
- *     GitHub-shaped `.yml` document is rejected exactly like any other
- *     unrecognized root key today, unchanged (B-10, PRESERVE).
- *   - Decode-level rows (B-11…B-17) build a fresh, independently-valid plan
- *     via the existing `freezeWorkflow` test helper, then splice a plain JSON
- *     `outputs` value onto the CLONED wire object (`JSON.parse`/`JSON.stringify`
- *     round trips, typed `any`) before calling `decodeWorkflowPlanV4(input:
- *     unknown, …)` — never through a not-yet-existing `FrozenWorkflowOutput`
- *     TypeScript interface. Reading a field back off a decoded plan goes
- *     through a single `as unknown as DecodedOutputsView` cast, always
- *     type-legal.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -49,15 +17,12 @@ import { loadConfig, resetConfigCache } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import { compileWorkflowPlan, type WorkflowPlanCompileResult } from "../../src/workflows/ir/compile";
-import { compileResolveFreezeWorkflowV4 } from "../../src/workflows/ir/freeze-v4";
+import { checkWorkflowPlan, compileWorkflowSource, type WorkflowCompileResult } from "../../src/workflows/compile";
+import { freezeWorkflow as freezeAsset } from "../../src/workflows/freeze/freeze";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
-import { decodeWorkflowPlanV4 } from "../../src/workflows/ir/schema-v4";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
-import { compileWorkflowSource, type WorkflowSourceCompileResult } from "../../src/workflows/source-ir/compile";
-import { sourceStepInstructions, sourceStepProgramUnit } from "../../src/workflows/source-ir/program";
-import { decodeWorkflowSourceIrV1 } from "../../src/workflows/source-ir/schema";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 import { freezeWorkflow, type WorkflowPlanFixture } from "../_helpers/workflow";
 
@@ -86,23 +51,15 @@ function twoStepDoc(extraFrontmatter: string[] = []): string {
   ].join("\n");
 }
 
-function compileSource(markdown: string, sourcePath = "workflows/test.md"): WorkflowSourceCompileResult {
+function compileSource(markdown: string, sourcePath = "workflows/test.md"): WorkflowCompileResult {
   return compileWorkflowSource(markdown, { path: sourcePath, workspaceRoot: "/tmp" });
 }
 
-/** Compile all the way to the unresolved plan draft — pure, no config/engine resolution needed. */
-function compileDraft(markdown: string, sourcePath = "workflows/test.md"): WorkflowPlanCompileResult {
+/** Compile and run the cross-step reference check — pure, no config/engine resolution needed. */
+function compileChecked(markdown: string, sourcePath = "workflows/test.md") {
   const compiled = compileSource(markdown, sourcePath);
   if (!compiled.ok) return compiled;
-  const sourceSteps = compiled.ir.jobs[0]?.steps ?? [];
-  const resolvedUnits = new Map(
-    sourceSteps
-      .filter((step) => step.route === undefined)
-      .map(
-        (step) => [step.id, { unit: sourceStepProgramUnit(step), instructions: sourceStepInstructions(step) }] as const,
-      ),
-  );
-  return compileWorkflowPlan(compiled.ir, "test", resolvedUnits);
+  return checkWorkflowPlan(compiled.plan);
 }
 
 function errorMessages(result: { ok: false; errors: readonly { message: string }[] }): string {
@@ -136,7 +93,7 @@ describe("outputs: — authoring grammar (B-03…B-09)", () => {
   });
 
   test("B-06: from: naming a step id the document does not declare fails compile, naming the step and the output", () => {
-    const result = compileDraft(twoStepDoc(["outputs:", "  report:", "    from: steps.ghost.output"]));
+    const result = compileChecked(twoStepDoc(["outputs:", "  report:", "    from: steps.ghost.output"]));
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     const messages = result.errors.map((e) => e.message).join("\n");
@@ -220,7 +177,7 @@ function splicedOutputs(plan: WorkflowPlanFixture, outputs: unknown): unknown {
 function expectDecodeUsageError(input: unknown): UsageError {
   let caught: unknown;
   try {
-    decodeWorkflowPlanV4(input);
+    decodeWorkflowPlan(input);
   } catch (error) {
     caught = error;
   }
@@ -229,68 +186,44 @@ function expectDecodeUsageError(input: unknown): UsageError {
   return caught;
 }
 
-describe("outputs: — decode integrity (B-11…B-16)", () => {
+describe("outputs: — decoding a stored plan (B-11…B-16)", () => {
   test("B-11: a workflow declaring no outputs: has plan.outputs absent (never {}), and the hash is a stable function of the plan", () => {
     const plan = freezeWorkflow(TWO_STEP_MD, "workflows/no-outputs.md");
     expect(Object.hasOwn(plan, "outputs")).toBe(false);
     expect(outputsView(plan).outputs).toBeUndefined();
-    const redecoded = decodeWorkflowPlanV4(JSON.parse(canonicalPlanJson(plan)));
+    const redecoded = decodeWorkflowPlan(JSON.parse(canonicalPlanJson(plan)));
     expect(computePlanHash(redecoded)).toBe(computePlanHash(plan));
   });
 
-  test("B-12: decodeWorkflowPlanV4 accepts a plan with a valid outputs entry; irVersion stays 5", () => {
+  test("B-12: decodeWorkflowPlan accepts a plan with a valid outputs entry", () => {
     const plan = freezeWorkflow(TWO_STEP_MD, "workflows/valid-outputs.md");
-    const spliced = splicedOutputs(plan, { report: { from: "steps.summarize.output" } });
-    expect(() => decodeWorkflowPlanV4(spliced)).not.toThrow();
-    const decoded = decodeWorkflowPlanV4(spliced);
-    expect(decoded.irVersion).toBe<number>(5);
+    const decoded = decodeWorkflowPlan(splicedOutputs(plan, { report: { from: "steps.summarize.output" } }));
     expect(outputsView(decoded).outputs?.report?.from).toBe("steps.summarize.output");
   });
 
-  test("B-13: decodeWorkflowPlanV4 rejects outputs: {} — absent-never-empty (P2b A-N7)", () => {
-    const plan = freezeWorkflow(TWO_STEP_MD, "workflows/empty-outputs.md");
-    expectDecodeUsageError(splicedOutputs(plan, {}));
+  test("B-13…B-16: key order, extra keys, and an unknown step are the resolver's concern, not a decode refusal", () => {
+    const plan = freezeWorkflow(TWO_STEP_MD, "workflows/tolerant-outputs.md");
+    const decoded = decodeWorkflowPlan(
+      splicedOutputs(plan, {
+        zebra: { from: "steps.summarize.output", bogus: 1 },
+        apple: { from: "steps.ghost.output" },
+      }),
+    );
+    expect(Object.keys(outputsView(decoded).outputs ?? {})).toEqual(["zebra", "apple"]);
   });
 
-  test("B-14: decodeWorkflowPlanV4 rejects outputs whose keys are not in sorted-unique order", () => {
-    const plan = freezeWorkflow(TWO_STEP_MD, "workflows/unsorted-outputs.md");
-    // Insertion order "zebra" then "apple" is deliberately NOT the canonical
-    // sorted order — string keys iterate in insertion order in V8/JSC.
-    const spliced = splicedOutputs(plan, {
-      zebra: { from: "steps.summarize.output" },
-      apple: { from: "steps.collect.output" },
-    });
-    expectDecodeUsageError(spliced);
-  });
-
-  test("B-15: decodeWorkflowPlanV4 rejects an outputs.<n>.from naming a step not in plan.steps, naming the output and the step", () => {
-    const plan = freezeWorkflow(TWO_STEP_MD, "workflows/missing-step-outputs.md");
-    const spliced = splicedOutputs(plan, { report: { from: "steps.ghost.output" } });
-    const error = expectDecodeUsageError(spliced);
-    expect(error.message).toContain("report");
-    expect(error.message).toContain("ghost");
-  });
-
-  test("B-16: decodeWorkflowPlanV4 rejects an unknown key inside an outputs entry, through the module's existing assertKeys", () => {
-    const plan = freezeWorkflow(TWO_STEP_MD, "workflows/bogus-key-outputs.md");
-    const spliced = splicedOutputs(plan, { report: { from: "steps.summarize.output", bogus: 1 } });
-    const error = expectDecodeUsageError(spliced);
-    expect(error.message).toContain("bogus");
-  });
-
-  test("regression: decodeWorkflowSourceIrV1 rejects outputs.<n>.from that parses but names a param, not just the parser", () => {
-    const compiled = compileSource(twoStepDoc(["outputs:", "  report:", "    from: steps.summarize.output"]));
-    if (!compiled.ok) throw new Error("unreachable");
-    const raw = JSON.parse(JSON.stringify(compiled.ir)) as { outputs: Record<string, unknown> };
-    raw.outputs.report = { from: "params.scope" };
-    expect(() => decodeWorkflowSourceIrV1(raw)).toThrow();
+  test("an outputs entry without a from: reference is a plan this akm cannot run", () => {
+    const plan = freezeWorkflow(TWO_STEP_MD, "workflows/broken-outputs.md");
+    expect(expectDecodeUsageError(splicedOutputs(plan, { report: "steps.summarize.output" })).message).toContain(
+      "outputs.report",
+    );
   });
 });
 
 // ── B-01, B-02, B-17: the full author -> compile -> freeze -> durable-plan
 // ── pipeline (needs an isolated stash + index + config) ────────────────────
 
-describe("outputs: — end-to-end freeze into the durable plan irVersion 5 plan (B-01, B-02, B-17)", () => {
+describe("outputs: — end-to-end freeze into the durable plan (B-01, B-02, B-17)", () => {
   let storage: IsolatedAkmStorage;
 
   beforeEach(() => {
@@ -313,7 +246,7 @@ describe("outputs: — end-to-end freeze into the durable plan irVersion 5 plan 
   async function frozenPlan(ref: string): Promise<unknown> {
     const started = await startWorkflowRun(ref);
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    return decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    return decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
   }
 
   test("B-01: outputs: {report: {from: steps.summarize.output}} parses, compiles, and freezes into plan.outputs", async () => {
@@ -349,8 +282,8 @@ describe("outputs: — end-to-end freeze into the durable plan irVersion 5 plan 
 
     const asset = await loadWorkflowAsset("workflows/stable-outputs");
     const config = loadConfig();
-    const first = await compileResolveFreezeWorkflowV4(asset, config);
-    const second = await compileResolveFreezeWorkflowV4(asset, config);
+    const first = await freezeAsset(asset, config);
+    const second = await freezeAsset(asset, config);
     expect(computePlanHash(second.plan)).toBe(computePlanHash(first.plan));
     expect(canonicalPlanJson(second.plan)).toBe(canonicalPlanJson(first.plan));
   });

@@ -30,19 +30,15 @@ import {
   fragmentForSelector,
   MARKDOWN_FRAGMENT_CONTEXT_DEFAULT_MAX_CHARS,
 } from "../../core/asset/markdown-fragments";
-import { displayRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
+import { displayRef, displayRefForConceptId, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
 import { asNonEmptyString, isWithin } from "../../core/common";
-import { getIndexPassConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
-import type { LoweringNotice } from "../../execution/resolved-request";
-import { hasGraphData } from "../../indexer/db/graph-db";
-import { listRelatedPathsForFile } from "../../indexer/graph/graph-boost";
-import { extractGraphForSingleFile } from "../../indexer/graph/graph-extraction";
 import { lookupBundleRef, lookupBundleRefWithResolution } from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { projectMarkdownFragmentContent } from "../../indexer/passes/metadata";
@@ -63,16 +59,11 @@ import {
   getRenderer,
   type MatchResult,
 } from "../../indexer/walk/file-context";
-import { resolveIndexPassExecution } from "../../llm/index-passes";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
-import { resolveStorageLocations } from "../../storage/locations";
-import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
-import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
+import type { FragmentContextMode, ShowDetailLevel, ShowLinkGroup, ShowResponse } from "../../sources/types";
+import { withIndexDb } from "../../storage/repositories/index-db";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
-import { computeBodyHash } from "../../storage/repositories/index-llm-cache-repository";
-// Eagerly import source providers to trigger self-registration.
-import "../../sources/providers/index";
-import type { FragmentContextMode, ShowDetailLevel, ShowResponse } from "../../sources/types";
+import { readEntryLinks } from "../../storage/repositories/index-links-repository";
 import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
 import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
@@ -122,6 +113,14 @@ export async function akmShowUnified(input: {
     if (metaRef) return showStashMeta(metaRef);
   }
 
+  const legacyReplacement = legacyColonRefReplacement(ref);
+  if (legacyReplacement) {
+    throw new NotFoundError(
+      `The legacy colon ref "${ref}" was removed in 0.9.0. Use the slash form instead: ` +
+        `akm show ${legacyReplacement}`,
+    );
+  }
+
   // Env/secret bodies have no safe fragment surface, and a fragment cannot
   // widen what the env/secret renderers expose: both always omit the body
   // (env — key names only; secret — never rendered), fragment or not. Warn
@@ -158,6 +157,19 @@ export async function akmShowUnified(input: {
     }
   }
   return result;
+}
+
+/** Actionable migration guidance for the retired `[bundle//]type:name` spelling. */
+function legacyColonRefReplacement(ref: string): string | undefined {
+  const match = /^(?:(?<bundle>[^/#]+)\/\/)?(?<type>[a-z][a-z0-9-]*):(?<name>[^#]+)(?<fragment>#.*)?$/i.exec(ref);
+  const type = match?.groups?.type?.toLowerCase();
+  const name = match?.groups?.name;
+  if (!type || !name) return undefined;
+  const stashDir = stashDirFor(type);
+  if (!stashDir) return undefined;
+  const bundle = match?.groups?.bundle;
+  const fragment = match?.groups?.fragment ?? "";
+  return `${bundle ? `${bundle}//` : ""}${stashDir}/${name}${fragment}`;
 }
 
 /**
@@ -379,8 +391,7 @@ export async function showLocal(input: {
       }
 
       const renderBundle = indexedEntry.bundleId;
-      const renderDefaultBundle =
-        config.defaultBundle ?? (source?.path === allSources[0]?.path ? renderBundle : undefined);
+      const renderDefaultBundle = config.defaultBundle ?? (source?.isDefault === true ? renderBundle : undefined);
       const renderCtx = buildRenderContext(fileCtx, match, allSourceDirs, renderBundle, renderDefaultBundle);
       response = renderer.buildShowResponse(renderCtx);
       if (parsed.fragment !== undefined) {
@@ -398,7 +409,8 @@ export async function showLocal(input: {
   }
   response.type = indexedEntry.type;
   response.name = indexedEntry.name;
-  const isPrimaryStash = source !== undefined && source.path === allSources[0]?.path;
+  const isPrimaryStash = source?.isDefault === true;
+  const displayDefaultBundle = config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined);
   const canonicalRef = displayRef(
     {
       type: indexedEntry.type,
@@ -406,7 +418,7 @@ export async function showLocal(input: {
       conceptId: indexedEntry.conceptId,
       bundleId: indexedEntry.bundleId,
     },
-    config.defaultBundle ?? (isPrimaryStash ? indexedEntry.bundleId : undefined),
+    displayDefaultBundle,
   );
   if (parsed.fragment && indexedFragment) {
     const selectedFragmentId = indexedFragment.fragments[indexedFragment.ordinal]!.fragmentId;
@@ -466,33 +478,12 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    related: (() => {
-      try {
-        return withIndexDb((db) => {
-          const related = listRelatedPathsForFile(sourceStashDir, assetPath, 5, db);
-          return { total: related.length, hits: related };
-        });
-      } catch (err) {
-        rethrowIfTestIsolationError(err);
-        rethrowIfDataDirUnreadable(err);
-        return { total: 0, hits: [] };
-      }
-    })(),
+    ...showLinks(indexedEntry.itemRef, displayDefaultBundle),
   };
 
   const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
   if (activeRun) {
     (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
-  }
-
-  // #624-P3: opt-in inline graph extraction. Default OFF — when the flag is
-  // unset this whole block is skipped (no hasGraphData check, no LLM call), so
-  // behavior is byte-identical to today. When ON, it extracts graph data for an
-  // ungraphed asset, but ONLY when a model is configured (model-available
-  // guard) and ALWAYS bounded by a 30s timeout so `show` can never hang. Any
-  // timeout/model-unavailable/error path returns the response unchanged.
-  if (getIndexPassConfig(config.index, "graph")?.lazyGraphExtraction === true) {
-    await maybeExtractGraphInline(config, sourceStashDir, assetPath);
   }
 
   if (input.detail === "brief") {
@@ -504,6 +495,56 @@ export async function showLocal(input: {
   }
 
   return fullResponse;
+}
+
+/** Refs listed per kind of declared link; `total` still counts them all (one memory is named by 1,437 others). */
+const LINKS_PER_KIND = 10;
+
+/**
+ * The declared links (#935) of an indexed asset, grouped by kind: outgoing in
+ * authored order, incoming by ref, and unresolved tokens as authored. Empty
+ * parts are omitted, and the field when nothing links either way.
+ */
+function showLinks(itemRef: string, defaultBundle: string | undefined): Pick<ShowResponse, "links"> {
+  let rows: ReturnType<typeof readEntryLinks>;
+  try {
+    rows = withIndexDb((db) => readEntryLinks(db, itemRef));
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    rethrowIfDataDirUnreadable(err);
+    return {};
+  }
+  const outgoing: Array<{ kind: string; ref: string }> = [];
+  const unresolved: Array<{ kind: string; ref: string }> = [];
+  for (const row of rows.outgoing) {
+    if (row.conceptId === undefined) unresolved.push({ kind: row.kind, ref: row.raw ?? "" });
+    else outgoing.push({ kind: row.kind, ref: displayRefForConceptId(row.conceptId, row.bundleId, defaultBundle) });
+  }
+  const incoming = rows.incoming.map((row) => ({
+    kind: row.kind,
+    ref: displayRefForConceptId(row.conceptId ?? "", row.bundleId, defaultBundle),
+  }));
+  const links = {
+    ...groupLinks("outgoing", outgoing),
+    ...groupLinks("incoming", incoming),
+    ...groupLinks("unresolved", unresolved),
+  };
+  return Object.keys(links).length > 0 ? { links } : {};
+}
+
+function groupLinks(
+  part: "outgoing" | "incoming" | "unresolved",
+  rows: Array<{ kind: string; ref: string }>,
+): Partial<Record<typeof part, Record<string, ShowLinkGroup>>> {
+  if (rows.length === 0) return {};
+  const groups: Record<string, ShowLinkGroup> = {};
+  for (const kind of [...new Set(rows.map((row) => row.kind))].sort()) groups[kind] = { total: 0, refs: [] };
+  for (const { kind, ref } of rows) {
+    const group = groups[kind]!;
+    group.total++;
+    if (group.refs.length < LINKS_PER_KIND) group.refs.push(ref);
+  }
+  return { [part]: groups };
 }
 
 /**
@@ -563,83 +604,6 @@ function findUnrecognizedScriptSource(
     }
   }
   return undefined;
-}
-
-/**
- * #624-P3 — opt-in inline graph extraction for `akm show`. Best-effort and
- * timeout-bounded: never throws, never hangs, never mutates the response.
- *
- * Preconditions (caller already checked the flag): a model must be configured
- * (model-available guard via {@link resolveIndexPassExecution}) and the asset
- * must be ungraphed ({@link hasGraphData}). Extraction races a 30s timeout so
- * `show` cannot block on a slow provider; any timeout/error/missing-model path
- * is swallowed and `show` returns its already-assembled response unchanged.
- */
-async function maybeExtractGraphInline(
-  config: ReturnType<typeof loadConfig>,
-  sourceStashDir: string,
-  assetPath: string,
-): Promise<void> {
-  try {
-    // Resolve readiness and the symbolic runner once. The inline dispatch must
-    // consume this same snapshot even if models.json changes while show runs.
-    const graphExecution = resolveIndexPassExecution("graph", config);
-    if (!graphExecution.runner) return;
-    const emittedNoticeKeys = new Set<string>();
-    const reportNotices = (notices: readonly Readonly<LoweringNotice>[]): void => {
-      for (const notice of notices) {
-        const key = JSON.stringify(notice);
-        if (emittedNoticeKeys.has(key)) continue;
-        emittedNoticeKeys.add(key);
-        const field = typeof notice.field === "string" ? ` field=${notice.field}` : "";
-        warn(`[akm] lazy graph extraction notice ${notice.code} adapter=${notice.adapter}${field}: ${notice.message}`);
-      }
-    };
-    reportNotices(graphExecution.notices);
-
-    let alreadyGraphed = false;
-    let bodyHash: string | undefined;
-    try {
-      const raw = fs.readFileSync(assetPath, "utf8");
-      bodyHash = computeBodyHash(parseFrontmatter(raw).content.trim());
-    } catch {
-      return; // file gone/unreadable ⇒ nothing to extract
-    }
-
-    withIndexDb(
-      (db) => {
-        alreadyGraphed = hasGraphData(db, sourceStashDir, assetPath);
-      },
-      { busyTimeoutMs: TELEMETRY_BUSY_TIMEOUT_MS },
-    );
-    if (alreadyGraphed) return;
-
-    // Open the db for the async extraction ourselves: `withIndexDb` is
-    // synchronous and would close the connection the instant the async fn
-    // returns its Promise (before extraction completes). Close it explicitly
-    // after the race settles instead.
-    const db = openExistingDatabase(resolveStorageLocations().indexDb);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, 30_000);
-    });
-    try {
-      await Promise.race([
-        extractGraphForSingleFile(db, sourceStashDir, assetPath, bodyHash, {
-          config,
-          llmRunner: graphExecution.runner,
-          onNotices: reportNotices,
-        }),
-        timeout,
-      ]);
-    } finally {
-      if (timer) clearTimeout(timer);
-      closeDatabase(db);
-    }
-  } catch (err) {
-    rethrowIfTestIsolationError(err);
-    // Any other failure: silently return the unchanged show response.
-  }
 }
 
 /**

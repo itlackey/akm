@@ -6,7 +6,7 @@
  * Secret indexer-leakage safety — the critical security test.
  *
  * A secret is discoverable by NAME, but the file's bytes (the value) must never
- * reach the FTS index, entries.search_text, document_json, or `akm show` output.
+ * reach the FTS index, the embedding input, document_json, or `akm show` output.
  * Mirrors tests/vault.test.ts "vault indexer safety".
  */
 
@@ -15,8 +15,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { setSecret } from "../../../src/commands/env/secret";
 import { getDbPath } from "../../../src/core/paths";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { getAllEntries } from "../../../src/storage/repositories/index-entries-repository";
@@ -38,7 +38,6 @@ let envCleanup: Cleanup = () => {};
 beforeEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 
   const cacheResult = sandboxXdgCacheHome();
   const cfgResult = sandboxXdgConfigHome(cacheResult.cleanup);
@@ -63,11 +62,10 @@ afterEach(() => {
   currentStashDir = "";
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
 });
 
 describe("secret indexer safety", () => {
-  test("secret values never appear in the FTS index, search_text, or document_json", async () => {
+  test("secret values never appear in the FTS index, the embedding input, or document_json", async () => {
     const stashDir = currentStashDir;
     setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from(`${SECRET_VALUE}\nmultiline\n`));
 
@@ -88,11 +86,11 @@ describe("secret indexer safety", () => {
       // 2. CRITICAL: the value is nowhere in the persisted record.
       expect(JSON.stringify(secretEntry)).not.toContain(SECRET_VALUE);
 
-      // 3. CRITICAL: the value is not in search_text or document_json.
-      type Row = { search_text: string | null; document_json: string };
-      const rows = db.prepare("SELECT search_text, document_json FROM entries WHERE type = ?").all("secret") as Row[];
+      // 3. CRITICAL: the value is not in document_json or the text its vector is embedded from.
+      type Row = { document_json: string };
+      const rows = db.prepare("SELECT document_json FROM entries WHERE type = ?").all("secret") as Row[];
       expect(rows.length).toBe(1);
-      expect(rows[0]!.search_text ?? "").not.toContain(SECRET_VALUE);
+      expect(buildSearchText(JSON.parse(rows[0]!.document_json))).not.toContain(SECRET_VALUE);
       expect(rows[0]!.document_json).not.toContain(SECRET_VALUE);
 
       // 4. CRITICAL: the value cannot be retrieved via FTS5 search.

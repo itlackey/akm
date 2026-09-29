@@ -3,11 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
 import { getDbPath } from "../src/core/paths";
-import {
-  ensurePrimaryIndexForRead,
-  ensurePrimaryIndexFromConfig,
-  resolveReadSources,
-} from "../src/indexer/read-preflight";
+import { ensurePrimaryIndexForRead, resolveReadSources } from "../src/indexer/read-preflight";
 import {
   type IsolatedAkmStorage,
   makeSandboxDir,
@@ -57,7 +53,7 @@ describe("read preflight helpers", () => {
     const knowledgeFile = path.join(storage.stashDir, "knowledge", "bootstrap.md");
     fs.writeFileSync(knowledgeFile, "# bootstrap\n", "utf8");
 
-    const ensured = await ensurePrimaryIndexFromConfig();
+    const ensured = await ensurePrimaryIndexForRead(resolveReadSources().primarySource);
     expect(ensured).toBe(true);
     expect(fs.existsSync(getDbPath())).toBe(true);
   });

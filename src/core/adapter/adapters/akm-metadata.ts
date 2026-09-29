@@ -56,12 +56,13 @@
  * distinction never triggers.
  */
 
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../commands/command/builtin-action";
 import { scanEnvKeyNames } from "../../../commands/env/env";
 import type { IndexDocument } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
-import { compileWorkflowSource } from "../../../workflows/source-ir/compile";
-import { sourceStepInstructions } from "../../../workflows/source-ir/program";
+import { compileWorkflowSource, workflowStepInstructions } from "../../../workflows/compile";
+import type { WorkflowStepSpec } from "../../../workflows/plan";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
@@ -76,6 +77,8 @@ export interface FoldedMetadata {
   source?: string;
   toc?: TocHeading[];
   parameters?: Array<{ name: string; description?: string }>;
+  /** The assets a workflow's steps or a task target (#935 declared links). */
+  uses?: string[];
 }
 
 /**
@@ -138,6 +141,23 @@ function applyFrontmatterDescriptionAndTags(fm: Record<string, unknown>, out: Fo
     if (fmTags.length > 0) {
       out.tags = Array.from(new Set([...(out.tags ?? []), ...fmTags]));
     }
+  }
+}
+
+/** The command a stored `akm/command` action runs; inline content names no asset. */
+function storedCommandRef(action: ParsedBuiltinCommandAction | undefined): string | undefined {
+  return action?.kind === "stored" ? action.ref : undefined;
+}
+
+/** The asset a workflow step targets: its `uses:` ref, or the ref of a stored `akm/command`. Prose and `run:` steps target none. */
+function workflowStepTarget(spec: WorkflowStepSpec | undefined): string | undefined {
+  if (!spec?.uses) return undefined;
+  if (spec.uses !== "akm/command") return spec.uses;
+  if (spec.commandMode !== "stored-ref") return undefined;
+  try {
+    return storedCommandRef(parseBuiltinCommandAction(spec.with));
+  } catch {
+    return undefined;
   }
 }
 
@@ -250,6 +270,8 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
           else if (target.command?.kind === "inline") hints.add(`prompt:${target.command.content}`);
           else if (target.command?.kind === "stored") hints.add(`prompt:${target.command.ref}`);
           else hints.add(`uses:${target.uses.ref}`);
+          const used = target.uses.kind !== "builtin-command" ? target.uses.ref : storedCommandRef(target.command);
+          if (used) out.uses = [used];
         } else {
           hints.add(`run:${target.run}`);
         }
@@ -318,17 +340,21 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
       try {
         const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot: file.stashRoot });
         if (!result.ok) return out;
-        const sourceIr = result.ir;
+        const plan = result.plan;
         const hints = new Set<string>();
-        if (sourceIr.preamble) hints.add(sourceIr.preamble);
-        for (const step of sourceIr.jobs.flatMap((job) => job.steps)) {
-          hints.add(step.id);
-          hints.add(sourceStepInstructions(step));
-          if (step.gate?.rubric) hints.add(step.gate.rubric);
+        const uses = new Set<string>();
+        if (plan.preamble) hints.add(plan.preamble);
+        for (const step of plan.steps) {
+          hints.add(step.stepId);
+          hints.add(workflowStepInstructions(step));
+          if (step.gate.criteria[0]) hints.add(step.gate.criteria[0]);
+          const used = workflowStepTarget(step.spec);
+          if (used) uses.add(used);
         }
         out.searchHints = Array.from(hints).filter(Boolean);
-        if (sourceIr.params) {
-          const parameters = Object.entries(sourceIr.params).map(([name, schema]) => {
+        if (uses.size > 0) out.uses = [...uses];
+        if (plan.paramSchemas) {
+          const parameters = Object.entries(plan.paramSchemas).map(([name, schema]) => {
             const description = schema.description;
             return { name, ...(typeof description === "string" && description ? { description } : {}) };
           });
@@ -388,4 +414,5 @@ export function applyFoldedMetadata(entry: IndexDocument, folded: FoldedMetadata
   }
   if (folded.toc) entry.toc = folded.toc;
   if (folded.parameters) entry.parameters = folded.parameters;
+  if (folded.uses) entry.uses = folded.uses;
 }

@@ -107,13 +107,13 @@ describe("withLlmStage ambient attribution", () => {
 
     await withLlmStage("memory-inference", async () => {
       await deepCall(); // attributed to memory-inference through awaits
-      await withLlmStage("graph-extraction", async () => {
+      await withLlmStage("distill", async () => {
         await deepCall(); // innermost scope wins
       });
       await deepCall(); // back to memory-inference after the inner scope
     });
 
-    expect(records.map((r) => r.stage)).toEqual(["memory-inference", "graph-extraction", "memory-inference"]);
+    expect(records.map((r) => r.stage)).toEqual(["memory-inference", "distill", "memory-inference"]);
   });
 
   test("an explicit stage on the record is not overwritten by the ambient one", () => {
@@ -128,14 +128,14 @@ describe("withLlmStage ambient attribution", () => {
   test("stamps durable engine and process attribution", () => {
     const records: LlmUsageRecord[] = [];
     setLlmUsageSink((r) => records.push(r));
-    withLlmStage("graph-extraction", () => emitLlmUsage(terminalRecord({ durationMs: 7 })), {
-      engine: "local-graph",
-      process: "graphExtraction",
+    withLlmStage("distill", () => emitLlmUsage(terminalRecord({ durationMs: 7 })), {
+      engine: "local-distill",
+      process: "distill",
     });
     expect(records[0]).toMatchObject({
-      stage: "graph-extraction",
-      engine: "local-graph",
-      process: "graphExtraction",
+      stage: "distill",
+      engine: "local-distill",
+      process: "distill",
       durationMs: 7,
     });
   });

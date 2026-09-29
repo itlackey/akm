@@ -4,20 +4,12 @@
 
 import { ConfigError } from "../../core/errors";
 import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
-import { assertFrozenExecutableIdentity } from "../../execution/executable-identity";
-import {
-  canonicalResolvedExecutionRequest,
-  decodeResolvedExecutionRequest,
-  type LoweringNotice,
-} from "../../execution/resolved-request";
-import {
-  dispatchLoweredExecutionRequest,
-  type LoweredExecutionRequest,
-  lowerResolvedExecutionRequestWithRunner,
-} from "../../integrations/agent/execution-lowering";
+import { canonicalResolvedExecutionRequest, type LoweringNotice } from "../../execution/resolved-request";
+import { type BuiltExecution, buildExecutionFromWire } from "../../integrations/agent/execution";
+import { runExecution } from "../../integrations/agent/runner-dispatch";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
 import { getHarness } from "../../integrations/harnesses";
-import type { FrozenWorkflowTarget } from "../ir/schema-v4";
+import type { FrozenWorkflowTarget } from "../plan";
 
 /** Everything the dispatcher needs to run one frozen workflow unit. */
 export interface UnitDispatchRequest {
@@ -53,23 +45,7 @@ export interface UnitDispatchRequest {
   /** Working directory for the unit's child process or SDK session. */
   cwd?: string;
   signal?: AbortSignal;
-  /**
-   * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 2), gap
-   * closed (P1b Lane C code review): the task runner's resolved provenance
-   * event source. A "script"/"shell" frozenTarget's exec unit reads it via
-   * exec-unit.ts's RunExecUnitInput.eventSource -> childEnv, applied to the
-   * allowlisted BASE only, so an authored `env:` binding still wins. A
-   * "command" frozenTarget's `dispatchWorkflowExecution` (below) forwards it
-   * into `dispatchLoweredExecutionRequest`'s own `eventSource` option — but
-   * ONLY when {@link UnitDispatchRequest.env} does not already bind
-   * `AKM_EVENT_SOURCE` itself (precedence fix, code review round 2; see
-   * `forwardedDispatchEventSource`), so the two arms agree. When forwarded,
-   * it applies the identical single-key child-env layering
-   * (execution-lowering.ts:998-1001) that the R-07 command-arm fix uses — so
-   * the "agent"/"sdk" arms observe it too. Typed as a bare `string` (not
-   * `UsageEventSource`) — see run-workflow.ts's RunWorkflowOptions.eventSource
-   * for why.
-   */
+  /** The task runner's provenance event source (`AKM_EVENT_SOURCE`); an authored `env:` binding wins. */
   eventSource?: string;
 }
 
@@ -90,14 +66,13 @@ export interface UnitDispatchResult {
 /** The one dispatch seam. `feedback` carries a structured-output retry prompt. */
 export type UnitDispatcher = (request: UnitDispatchRequest, feedback?: string) => Promise<UnitDispatchResult>;
 
-/** Lower a persisted v4 common request through its persisted runner only. */
+/** Lower a frozen common request through its frozen runner only. */
 export function prepareWorkflowExecution(
   request: UnitDispatchRequest & { frozenTarget: Extract<FrozenWorkflowTarget, { kind: "command" }> },
   prompt = request.prompt,
-): LoweredExecutionRequest {
+): BuiltExecution {
   const target = request.frozenTarget;
   if (target.cwdIdentity) assertFrozenDirectoryContained(target.cwdIdentity);
-  if (target.executable) assertFrozenExecutableIdentity(target.executable, `unit ${request.unitId} executable`);
   const wire = JSON.parse(canonicalResolvedExecutionRequest(target.request)) as Record<string, unknown>;
   const command = { ...(wire.command as Record<string, unknown>), content: prompt };
   const runtime = {
@@ -114,7 +89,7 @@ export function prepareWorkflowExecution(
   if (request.systemPrompt !== undefined) {
     wire.conversation = [{ role: "system", content: request.systemPrompt }];
   }
-  return lowerResolvedExecutionRequestWithRunner(decodeResolvedExecutionRequest(wire), target.runner);
+  return buildExecutionFromWire({ request: wire, runner: target.runner });
 }
 
 function message(err: unknown): string {
@@ -122,36 +97,9 @@ function message(err: unknown): string {
 }
 
 /**
- * The `eventSource` value `dispatchWorkflowExecution` should forward into
- * `dispatchLoweredExecutionRequest`'s options, or `undefined` to forward
- * nothing.
- *
- * Precedence fix (P1b Lane C code review, round 2). The gap-fix originally
- * forwarded `request.eventSource` unconditionally.
- * `dispatchLoweredExecutionRequest` applies a forwarded value as `env: {
- * ...lowered.options.env, AKM_EVENT_SOURCE: eventSource }`
- * (execution-lowering.ts:998-1001) — an unconditional override of that one
- * key — and `lowered.options.env` IS the unit's own authored/resolved `env:`
- * binding (`request.env`, folded in by `prepareWorkflowExecution` above via
- * `request.runtime.environment`), so the unconditional forward let the
- * provenance stamp win over an authored `env: { AKM_EVENT_SOURCE: ... }`
- * binding. That inverts the precedence pre-P1b had (the child env was built
- * from ambient passthrough with `options.env` — the authored binding —
- * applied AFTER it, at highest precedence, in `buildChildEnv`/`spawn.ts`) and
- * disagrees with the sibling "script"/"shell" arm: `exec-unit.ts`'s own
- * `childEnv` stamps its allowlisted base only when the name is absent there,
- * strictly BEFORE the bindings overlay runs, so an authored binding always
- * wins there. Gating the forward on `request.env` not already binding the
- * name restores agreement: an authored binding leaves `eventSource`
- * unforwarded (so the merge above never touches the key, and the authored
- * value in `lowered.options.env` stands), while an absent binding still
- * forwards the resolved value exactly as before.
- *
- * Exported so this precedence rule is pinned directly:
- * `dispatchWorkflowExecution` itself has no injectable
- * `runAgent`/`executeRunner`/`chat` seam to exercise the decision end-to-end
- * without a live agent/LLM dispatch (see the P1b spec's Review log, which
- * records the same constraint for the gap-fix this corrects).
+ * The `eventSource` to forward into `runExecution`, or undefined when the
+ * unit's own `env:` already binds `AKM_EVENT_SOURCE` — an authored binding
+ * wins, as it does for exec units.
  */
 export function forwardedDispatchEventSource(
   request: Pick<UnitDispatchRequest, "eventSource" | "env">,
@@ -170,20 +118,8 @@ export async function dispatchWorkflowExecution(
   feedback?: string,
 ): Promise<UnitDispatchResult> {
   const prompt = feedback ? `${request.prompt}\n\n${feedback}` : request.prompt;
-  // B-N11 (P3b, spec docs/plans/specs/p3b-child-executor.md §1.6): an
-  // internal-invariant guard, not a user-facing one. `dispatchJournaledAttempt`
-  // (native-executor.ts, P3b §3.2) routes a `child-workflow` unit to the child
-  // executor (child-workflow.ts) BEFORE dispatch is ever reached, so arriving
-  // HERE with one means that seam was BYPASSED — an engine routing bug, never
-  // a not-yet-implemented feature (that premise, P3a Review log R8's, is gone
-  // now that P3b ships a production caller). A plain `Error` naming the seam
-  // that should have been reached instead, not a `UsageError`: nothing a user
-  // can author reaches this line once the seam exists, so there is no
-  // user-facing code to carry. Kept here, rather than deleted outright, so a
-  // bypassed seam still fails closed instead of falling into the generic
-  // `kind !== "command"` guard below, which would blame a legitimate target
-  // kind as "not a command target" — the exact false, unhelpful message R8
-  // was opened to remove.
+  // Internal invariant: native-executor routes child-workflow units to the
+  // child executor before dispatch, so reaching here is an engine bug.
   if (request.frozenTarget.kind === "child-workflow") {
     throw new Error(
       `unit ${JSON.stringify(request.unitId)} targets child workflow ${JSON.stringify(request.frozenTarget.ref)}, ` +
@@ -224,26 +160,16 @@ export async function dispatchWorkflowExecution(
     };
   }
 
-  let result: Awaited<ReturnType<typeof dispatchLoweredExecutionRequest>>;
+  let result: Awaited<ReturnType<typeof runExecution>>;
   try {
     const eventSource = forwardedDispatchEventSource(request);
-    result = await dispatchLoweredExecutionRequest(lowered, {
+    result = await runExecution(lowered, {
       runOptions: {
         stdio: "captured",
         parseOutput: "text",
         ...(request.signal ? { signal: request.signal } : {}),
       },
-      // Gap fix (P1b Lane C code review, spec §5.2(2)); precedence-gated
-      // (round 2, see forwardedDispatchEventSource above): forward the
-      // resolved provenance event source so an "agent"/"sdk" unit's
-      // dispatched child env carries AKM_EVENT_SOURCE too, not only a
-      // "script"/"shell" unit's — but only when the unit's own authored
-      // `env:` binding does not already set the name, so an authored binding
-      // still wins, mirroring exec-unit.ts's childEnv guard.
-      // dispatchLoweredExecutionRequest applies a forwarded value as exactly
-      // one child-env key (execution-lowering.ts:998-1001) — the same
-      // mechanism the R-07 command-arm fix (command-execution.ts) already
-      // uses.
+
       ...(eventSource !== undefined ? { eventSource } : {}),
     });
   } catch (err) {

@@ -16,7 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { computeAcceptRateBySource } from "../../../src/commands/health/accept-rate";
-import { archiveProposal, createProposal, isProposalSkipped } from "../../../src/commands/proposal/repository";
+import { archiveProposal, createProposal } from "../../../src/commands/proposal/repository";
 
 const VALID_LESSON = (slug: string) =>
   `---\ndescription: Accept-rate fixture lesson for ${slug}\nwhen_to_use: Testing accept-rate aggregation\n---\n\nBody.\n`;
@@ -42,10 +42,8 @@ function seedProposal(stash: string, ref: string, source: string) {
   const created = createProposal(stash, {
     ref,
     source,
-    force: true,
     payload: { content: VALID_LESSON(ref) },
   });
-  if (isProposalSkipped(created)) throw new Error(`unexpected skip seeding ${ref}`);
   return created;
 }
 
@@ -85,5 +83,23 @@ describe("computeAcceptRateBySource", () => {
   test("returns an empty array when no proposals exist", () => {
     const stash = makeStashDir();
     expect(computeAcceptRateBySource(stash)).toEqual([]);
+  });
+
+  test("a stale-target auto-reject is excluded from rejected/total; an ordinary rejection is counted (STALE, R20)", () => {
+    const stash = makeStashDir();
+
+    const stale = seedProposal(stash, "lessons/stale", "distill");
+    archiveProposal(stash, stale.id, "rejected", "stale-target: target changed after mint", undefined, {
+      outcome: "auto-rejected",
+      reason: "stale-target",
+      gate: "triage:personal-stash",
+    });
+
+    const ordinary = seedProposal(stash, "lessons/ordinary", "distill");
+    archiveProposal(stash, ordinary.id, "rejected", "not a real improvement");
+
+    const result = computeAcceptRateBySource(stash);
+    const distill = result.find((r) => r.source === "distill");
+    expect(distill).toEqual({ source: "distill", total: 1, accepted: 0, rejected: 1, pending: 0, acceptRate: 0 });
   });
 });

@@ -155,6 +155,11 @@ function akmStashAbstains(root: string, absPath: string): boolean {
   const segments = relPath.split(/[\\/]+/).filter(Boolean);
   if (segments.length === 0) return false;
 
+  // A bundle's root README describes the bundle itself; it is not an AKM
+  // knowledge asset. Nested README files remain adapter-owned documentation
+  // and are handled by the normal typed-directory matcher policy.
+  if (segments.length === 1 && segments[0]?.toLowerCase() === "readme.md") return true;
+
   // Skip env `.env` files that have a sibling `.sensitive` marker file.
   if (segments[0] === "env" && (absPath.endsWith(".env") || path.basename(absPath) === ".env")) {
     if (fs.existsSync(absPath.replace(/\.env$/, ".sensitive"))) return true;
@@ -211,8 +216,9 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "cwd",
   "wikiRole",
   "sources",
-  "generation",
   "evidenceSources",
+  // #935: a workflow's step targets and a task's target, read as declared links.
+  "uses",
   // D2 (#730): the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native
   // writes (generated/verified/sources, namespaced — see `types.ts`'s
   // `OkfProvenance` doc). Carried so the akm adapter rereads what it wrote and

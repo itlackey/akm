@@ -5,8 +5,8 @@
 /**
  * VALUE-02 residual (issue #787): a test that deterministically forces
  * `akmSearch` down its vector-only match path — a hit with no FTS match at
- * all, surfaced purely from `embedScoreMap` (`rankingMode: "semantic"` in
- * src/indexer/search/ranking.ts).
+ * all, surfaced purely by the vector channel of the fused ranking
+ * (src/indexer/search/db-search.ts).
  *
  * The deterministic feature-hashing embedder
  * (src/llm/embedders/deterministic.ts) has no semantic understanding, so
@@ -15,11 +15,9 @@
  * that always holds:
  *
  *   - FTS only returns rows whose indexed text actually contains a query
- *     token. A query whose tokens appear in NO entry matches nothing, in every
- *     variant `searchFts` tries (exact AND, prefix, relaxed OR).
- *   - The vector path returns nearest NEIGHBOURS. With `search.minScore: 0` it
- *     is not gated on token overlap at all, so it still ranks the only indexed
- *     entry.
+ *     token. A query whose tokens appear in NO entry matches nothing.
+ *   - The vector path returns nearest NEIGHBOURS. It is not gated on token
+ *     overlap at all, so it still ranks the only indexed entry.
  *
  * So: index exactly one entry, query tokens that appear nowhere in it, and the
  * only thing that can produce a hit is the vector path.
@@ -62,7 +60,6 @@ describe("akmSearch: vector-only match path (VALUE-02)", () => {
         bundles: { stash: { path: storage.stashDir } },
         defaultBundle: "stash",
         registries: [],
-        search: { minScore: 0 },
       });
       await akmIndex({ stashDir: storage.stashDir, full: true });
 
@@ -74,7 +71,6 @@ describe("akmSearch: vector-only match path (VALUE-02)", () => {
         bundles: { stash: { path: storage.stashDir } },
         defaultBundle: "stash",
         registries: [],
-        search: { minScore: 0 },
       });
       const ftsOnly = await akmSearch({ query: QUERY, skipLogging: true });
       expect(ftsOnly.hits.some((hit) => "path" in hit && hit.path === knowledgeFile)).toBe(false);
@@ -86,15 +82,12 @@ describe("akmSearch: vector-only match path (VALUE-02)", () => {
         bundles: { stash: { path: storage.stashDir } },
         defaultBundle: "stash",
         registries: [],
-        search: { minScore: 0 },
       });
       const hybrid = await akmSearch({ query: QUERY, skipLogging: true });
       const hit = hybrid.hits.find((h) => "path" in h && h.path === knowledgeFile);
       expect(hit).toBeDefined();
-      // `rankingMode: "semantic"` (vector-only, no FTS match) is the only
-      // ranking mode that produces this exact reason string
-      // (buildWhyMatched in src/indexer/search/db-search.ts).
-      expect(hit?.whyMatched).toContain("semantic similarity");
+      // Only the vector channel returned it: no lexical rank.
+      expect(hit?.whyMatched).toEqual(["vector rank 1"]);
     } finally {
       storage.cleanup();
     }

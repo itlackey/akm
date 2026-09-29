@@ -47,6 +47,24 @@ fi
 logdir="$(mktemp -d "${TMPDIR:-/tmp}/akm-integration-shards.XXXXXX")"
 echo "── integration: ${N} shards over ${total} files; live logs: ${logdir}/shard-N.log"
 
+# A shard's own --timeout=120000 catches a slow TEST, not a stuck PROCESS —
+# e.g. a child process a test spawned that never exits. That is exactly how
+# the alpha.9 release was lost: one shard hung with no ceiling on `wait`
+# below, was killed at the 20-minute CI job timeout, and GitHub kept no
+# logs. 600s is well above the observed norm — a full `bun run check`
+# (lint, tsc, and BOTH shard runs together) takes ~2m15s locally — and
+# leaves ample margin under the job timeout for this script to notice,
+# kill, and report before GitHub does.
+shard_timeout_secs=600
+
+# `setsid` (util-linux) isn't on macOS by default. When it's present, a
+# shard runs in its own process group and a hang is killed by group (below).
+# Otherwise, fall back to killing the shard's own pid plus its direct
+# children (`pkill -P`) — the 600s deadline and log-tail message are the
+# same either way.
+has_setsid=false
+command -v setsid >/dev/null 2>&1 && has_setsid=true
+
 declare -a pids tmps
 for k in $(seq 0 $((N - 1))); do
   slice=()
@@ -60,8 +78,49 @@ for k in $(seq 0 $((N - 1))); do
   # 120s per-test (vs 30s serial): under N-way process contention a heavy test
   # can legitimately run 3-4x its solo duration; the timeout exists to catch
   # HANGS, not to police performance, and 30s flaked real passes under load.
-  ( HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  if $has_setsid; then
+    # `exec setsid` gives this shard its own process group (pgid == its pid,
+    # distinct from every sibling shard's), so the timeout below can kill it
+    # — and anything it spawned — without touching the others.
+    ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  else
+    ( HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  fi
   pids+=($!)
+done
+
+# A shard still alive at the deadline is a hang: kill its whole process
+# group (TERM, then KILL after a short grace period) and print its log tail
+# — the last test file header shows where it hung — before falling through
+# to the ordinary wait loop below, which then reaps it immediately.
+deadline=$(( $(date +%s) + shard_timeout_secs ))
+alive=("${pids[@]}")
+while [ "${#alive[@]}" -gt 0 ] && [ "$(date +%s)" -lt "$deadline" ]; do
+  next=()
+  for p in "${alive[@]}"; do
+    kill -0 "$p" 2>/dev/null && next+=("$p")
+  done
+  alive=("${next[@]}")
+  [ "${#alive[@]}" -gt 0 ] && sleep 1
+done
+for idx in "${!pids[@]}"; do
+  p="${pids[$idx]}"
+  kill -0 "$p" 2>/dev/null || continue
+  t="${tmps[$idx]}"
+  echo "── integration: shard $((idx + 1)) (pid ${p}) exceeded ${shard_timeout_secs}s — killing its process group (HANG)" >&2
+  if $has_setsid; then
+    kill -TERM -"$p" 2>/dev/null || true
+    sleep 2
+    kill -KILL -"$p" 2>/dev/null || true
+  else
+    pkill -TERM -P "$p" 2>/dev/null || true
+    kill -TERM "$p" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -P "$p" 2>/dev/null || true
+    kill -KILL "$p" 2>/dev/null || true
+  fi
+  echo "── shard $((idx + 1)) log tail (last 80 lines, TIMED OUT): ${t} ──"
+  tail -80 "$t"
 done
 
 # Wait for every shard; a non-zero shard exit fails the run.
@@ -86,7 +145,12 @@ for t in "${tmps[@]}"; do
   # undiagnosable).
   if [ "${f:-0}" != "0" ] || ! grep -qE '[0-9]+ pass' "$t"; then
     grep -E "\(fail\)|^error:|panic" "$t" | head -10 || true
-    echo "── shard log tail (last 80 lines) ──"
+    # Every assertion diff, wherever it sits in the log: bun prints the
+    # `error:` block at the point of failure, which the tail alone misses in
+    # a long shard (see scripts/test-unit.sh).
+    echo "── failure details: ${t} ──"
+    grep -n -B4 -A30 -E "^error:|panic" "$t" | head -400 || true
+    echo "── shard log tail (last 80 lines): ${t} ──"
     tail -80 "$t"
   fi
 done

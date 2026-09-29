@@ -17,7 +17,7 @@
  *   3. SIGTERM sent while a request is in flight ends the process within a
  *      bounded grace period.
  *
- * A second, negative case (#957 field-G r2-1) pins the opposite direction:
+ * A second, negative case (#957 field-G) pins the opposite direction:
  * the heartbeat used to be armed at run start, before the triage/index
  * prepass, so it fired on healthy runs whose prepass alone (not the engine)
  * took longer than its window. That test drives a slow *embedding* endpoint
@@ -371,7 +371,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
   }, 30_000);
 });
 
-describe("akm improve — a slow prepass must not trip the first-response heartbeat (#957 field-G r2-1)", () => {
+describe("akm improve — a slow prepass must not trip the first-response heartbeat (#957 field-G)", () => {
   test("negative case: slow embedding prepass + fast-answering engine never prints the heartbeat", async () => {
     writeMemory("note-c");
     const embedServer = slowEmbeddingServer(6_000);
@@ -399,7 +399,7 @@ describe("akm improve — a slow prepass must not trip the first-response heartb
       expect(elapsedMs).toBeGreaterThan(5_000);
       expect(requestCount()).toBeGreaterThan(0);
       expect(code).toBe(0);
-      // #957 field-G r2-1: the heartbeat used to be armed at run start, so a
+      // #957 field-G: the heartbeat used to be armed at run start, so a
       // slow prepass alone (no slow engine at all) tripped it. It must stay
       // silent when the engine itself never took long.
       expect(stderr).not.toContain("Still waiting for the first engine response");

@@ -2,9 +2,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { ConfigError } from "../../../src/core/errors";
 import { openStateDatabase } from "../../../src/core/state-db";
-import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
 import type { Database } from "../../../src/storage/database";
@@ -28,15 +26,8 @@ import {
 } from "../../../src/storage/repositories/index-entries-repository";
 import { rebuildFts, searchFts } from "../../../src/storage/repositories/index-fts-repository";
 import { getMeta, setMeta } from "../../../src/storage/repositories/index-meta-repository";
-import { DB_VERSION, EMBEDDING_DIM } from "../../../src/storage/repositories/index-schema";
-import {
-  isVecAvailable,
-  isVecFastPathComplete,
-  isVecFastPathReady,
-  searchVec,
-  setVecFastPathReady,
-  upsertEmbedding,
-} from "../../../src/storage/repositories/index-vec-repository";
+import { DB_VERSION } from "../../../src/storage/repositories/index-schema";
+import { searchVec, upsertEmbedding } from "../../../src/storage/repositories/index-vec-repository";
 import {
   getRegistryIndexCache,
   upsertRegistryIndexCache,
@@ -100,7 +91,6 @@ function insertTestEntry(
     dirPath?: string;
     filePath?: string;
     description?: string;
-    searchText?: string;
     type?: IndexDocument["type"];
   },
 ): number {
@@ -112,13 +102,7 @@ function insertTestEntry(
     key,
   );
   const dirPath = opts?.dirPath ?? "/test/dir";
-  return upsertEntry(
-    db,
-    opts?.filePath ?? path.join(dirPath, `${key}.ts`),
-    entry,
-    opts?.searchText ?? `${key} ${entry.description}`,
-    provenance,
-  );
+  return upsertEntry(db, opts?.filePath ?? path.join(dirPath, `${key}.ts`), entry, provenance);
 }
 
 // ── Section 1.1: Schema ────────────────────────────────────────────────────
@@ -151,27 +135,6 @@ describe("Schema", () => {
     }
   });
 
-  test("openIndexDatabase with a stale version marker rebuilds the derived index generation", () => {
-    const dbPath = tmpDbPath();
-
-    // Open, insert data, stamp an OLDER version than DB_VERSION.
-    let db = openIndexDatabase(dbPath);
-    insertTestEntry(db, "old-entry");
-    expect(getEntryCount(db)).toBe(1);
-    setMeta(db, "version", "0");
-    closeDatabase(db);
-
-    // Reopen — index.db is regenerable, so an incompatible generation is
-    // discarded instead of carrying live compatibility SQL.
-    db = openIndexDatabase(dbPath);
-    try {
-      expect(getEntryCount(db)).toBe(0);
-      expect(getMeta(db, "version")).toBe(String(DB_VERSION));
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
   test("openIndexDatabase creates FTS5 table", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
@@ -181,39 +144,6 @@ describe("Schema", () => {
         | undefined;
       expect(row).toBeDefined();
       expect(row?.name).toBe("entries_fts");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("isVecAvailable returns true when sqlite-vec is installed", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath);
-    try {
-      expect(isVecAvailable(db)).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("embeddingDim is stored and triggers vec table recreation", () => {
-    const dbPath = tmpDbPath();
-
-    let db = openIndexDatabase(dbPath, { embeddingDim: 512 });
-    try {
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("512");
-      }
-    } finally {
-      closeDatabase(db);
-    }
-
-    // Reopen with a different dimension
-    db = openIndexDatabase(dbPath, { embeddingDim: 768 });
-    try {
-      if (isVecAvailable(db)) {
-        expect(getMeta(db, "embeddingDim")).toBe("768");
-      }
     } finally {
       closeDatabase(db);
     }
@@ -260,10 +190,10 @@ describe("Entry CRUD", () => {
       const name = "my-tool";
       const prov = deriveEntryProvenance({ bundleId: "team-kb", componentId: "team-kb", adapterId: "akm" }, type, name);
       const entry = makeEntry({ name, type, description: "original" });
-      upsertEntry(db, "/s/dir/my-tool.ts", entry, "my-tool original", prov);
+      upsertEntry(db, "/s/dir/my-tool.ts", entry, prov);
       // Re-upsert the SAME item_ref (same identity) with an updated payload.
       const entry2 = makeEntry({ name, type, description: "updated" });
-      upsertEntry(db, "/s/dir/my-tool.ts", entry2, "my-tool updated", prov);
+      upsertEntry(db, "/s/dir/my-tool.ts", entry2, prov);
       expect(getEntryCount(db)).toBe(1);
       const rows = db.prepare("SELECT item_ref, document_json FROM entries").all() as Array<{
         item_ref: string;
@@ -298,7 +228,6 @@ describe("Entry CRUD", () => {
         db,
         "/p/dir/my-tool.ts",
         makeEntry({ name, type, description: "primary" }),
-        "my-tool primary",
         primaryProv,
       );
       const secondaryProv = deriveEntryProvenance(
@@ -310,7 +239,6 @@ describe("Entry CRUD", () => {
         db,
         "/z/dir/my-tool.ts",
         makeEntry({ name, type, description: "secondary" }),
-        "my-tool secondary",
         secondaryProv,
       );
       expect(getEntryCount(db)).toBe(2);
@@ -492,18 +420,18 @@ describe("FTS search", () => {
     try {
       insertTestEntry(db, "deploy-tool", {
         description: "Deploy applications to production servers",
-        searchText: "deploy deploy deploy applications production servers deployment",
       });
       insertTestEntry(db, "infra-tool", {
         description: "Cloud infrastructure for deploy pipelines",
-        searchText: "cloud infrastructure management scaling networking deploy pipelines automation",
       });
       rebuildFts(db);
 
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("deploy-tool");
-      expect(results[1]!.entry.name).toBe("infra-tool");
+      expect(results.map((r) => r.itemRef)).toEqual([
+        "test-bundle//scripts/deploy-tool",
+        "test-bundle//scripts/infra-tool",
+      ]);
     } finally {
       closeDatabase(db);
     }
@@ -515,18 +443,16 @@ describe("FTS search", () => {
       insertTestEntry(db, "build-script", {
         type: "script",
         description: "Build the project",
-        searchText: "build project compilation",
       });
       insertTestEntry(db, "build-skill", {
         type: "skill",
         description: "Build pipeline skill",
-        searchText: "build pipeline skill compilation",
       });
       rebuildFts(db);
 
       const scriptResults = searchFts(db, "build", 10, "script");
       expect(scriptResults).toHaveLength(1);
-      expect(scriptResults[0]!.entry.type).toBe("script");
+      expect(scriptResults[0]!.itemRef).toBe("test-bundle//scripts/build-script");
 
       const allResults = searchFts(db, "build", 10);
       expect(allResults).toHaveLength(2);
@@ -540,13 +466,12 @@ describe("FTS search", () => {
     try {
       insertTestEntry(db, "hello-tool", {
         description: "hello world 123 greeting",
-        searchText: "hello world 123 greeting",
       });
       rebuildFts(db);
 
       // Should not throw a SQL error despite special characters
       const results = searchFts(db, "hello! world@123", 10);
-      expect(results[0]!.entry.name).toBe("hello-tool");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/hello-tool");
       // "hello" and "world" and "123" are valid tokens after sanitization
       expect(results.length).toBeGreaterThanOrEqual(1);
     } finally {
@@ -557,7 +482,7 @@ describe("FTS search", () => {
   test("searchFts returns empty for garbage query", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "some-tool", { searchText: "some useful tool" });
+      insertTestEntry(db, "some-tool");
       rebuildFts(db);
 
       const results = searchFts(db, "!@#$%", 10);
@@ -573,7 +498,7 @@ describe("FTS search", () => {
   test("query that becomes empty after sanitization returns no results", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "target", { searchText: "some useful content" });
+      insertTestEntry(db, "target");
       rebuildFts(db);
 
       // "! @" contains only non-alphanumeric chars; after sanitization all
@@ -588,10 +513,10 @@ describe("FTS search", () => {
   test("query with only 1-character tokens returns no results when content has no matching single-char terms", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "abc-tool", { searchText: "alpha bravo charlie" });
+      insertTestEntry(db, "abc-tool");
       rebuildFts(db);
 
-      // "a b c" — single-char tokens are passed to FTS5 but don't match
+      // "a b c" — "a" is a stopword; "b" and "c" reach FTS5 but don't match
       // "alpha", "bravo", "charlie" because FTS5 doesn't do prefix matching.
       const results = searchFts(db, "a b c", 10);
       expect(results).toEqual([]);
@@ -603,20 +528,15 @@ describe("FTS search", () => {
   test("FTS5 syntax injection is neutralized", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "foo-tool", { description: "foo bar baz", searchText: "foo bar baz" });
-      insertTestEntry(db, "bar-tool", { description: "bar qux quux", searchText: "bar qux quux" });
+      insertTestEntry(db, "foo-tool", { description: "foo bar baz" });
+      insertTestEntry(db, "bar-tool", { description: "bar qux quux" });
       rebuildFts(db);
 
-      // "NEAR(foo, bar)" is raw FTS5 syntax that should be sanitized.
-      // After sanitization, syntax chars and NEAR are stripped, leaving
-      // tokens "foo" "bar" (implicit AND) — should not throw and should
-      // return matches containing both foo and bar.
+      // "NEAR(foo, bar)" is raw FTS5 syntax. Every token is quoted, so NEAR
+      // is an ordinary word and the query matches any of near/foo/bar — it
+      // must not throw, and the document with both foo and bar ranks first.
       const results = searchFts(db, "NEAR(foo, bar)", 10);
-      expect(results.length).toBeGreaterThanOrEqual(1);
-
-      // foo-tool has both "foo" and "bar" in its search text
-      const names = results.map((r) => r.entry.name);
-      expect(names).toContain("foo-tool");
+      expect(results.map((r) => r.itemRef)).toEqual(["test-bundle//scripts/foo-tool", "test-bundle//scripts/bar-tool"]);
     } finally {
       closeDatabase(db);
     }
@@ -627,17 +547,14 @@ describe("FTS search", () => {
     try {
       insertTestEntry(db, "deploy-prod", {
         description: "deploy application production servers",
-        searchText: "deploy application production servers",
       });
       insertTestEntry(db, "test-runner", {
         description: "test runner unit integration",
-        searchText: "test runner unit integration",
       });
       rebuildFts(db);
 
       const results = searchFts(db, "deploy production", 10);
-      expect(results).toHaveLength(1);
-      expect(results[0]!.entry.name).toBe("deploy-prod");
+      expect(results.map((r) => r.itemRef)).toEqual(["test-bundle//scripts/deploy-prod"]);
     } finally {
       closeDatabase(db);
     }
@@ -646,15 +563,14 @@ describe("FTS search", () => {
   test("rebuildFts synchronizes FTS with entries table", () => {
     const db = openIndexDatabase(tmpDbPath());
     try {
-      insertTestEntry(db, "alpha", { description: "alpha functionality", searchText: "alpha functionality" });
-      insertTestEntry(db, "beta", { description: "beta functionality", searchText: "beta functionality" });
-      insertTestEntry(db, "gamma", { description: "gamma functionality", searchText: "gamma functionality" });
+      insertTestEntry(db, "alpha", { description: "alpha functionality" });
+      insertTestEntry(db, "beta", { description: "beta functionality" });
+      insertTestEntry(db, "gamma", { description: "gamma functionality" });
 
       rebuildFts(db);
 
       const alphaResults = searchFts(db, "alpha", 10);
-      expect(alphaResults).toHaveLength(1);
-      expect(alphaResults[0]!.entry.name).toBe("alpha");
+      expect(alphaResults.map((r) => r.itemRef)).toEqual(["test-bundle//scripts/alpha"]);
 
       const allResults = searchFts(db, "functionality", 10);
       expect(allResults).toHaveLength(3);
@@ -704,30 +620,13 @@ describe("Meta helpers", () => {
 // ── Section 1.5: Vector / Embedding integration ────────────────────────────
 
 describe("Vector / Embedding integration", () => {
-  test("openIndexDatabase creates vec table when extension available", () => {
+  test("upsertEmbedding stores and searchVec retrieves by similarity", () => {
     const dbPath = tmpDbPath();
     const db = openIndexDatabase(dbPath);
     try {
-      expect(isVecAvailable(db)).toBe(true);
-      const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'entries_vec'").get() as
-        | { name: string }
-        | undefined;
-      expect(row).toBeDefined();
-      expect(row?.name).toBe("entries_vec");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("upsertEmbedding stores and searchVec retrieves by similarity", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    try {
-      expect(isVecAvailable(db)).toBe(true);
-
       // Insert two entries with distinct embeddings
-      const id1 = insertTestEntry(db, "vec-tool-1", { searchText: "deployment" });
-      const id2 = insertTestEntry(db, "vec-tool-2", { searchText: "testing" });
+      const id1 = insertTestEntry(db, "vec-tool-1");
+      const id2 = insertTestEntry(db, "vec-tool-2");
 
       // Embedding vectors: tool-1 points "north", tool-2 points "east"
       upsertEmbedding(db, id1, [1, 0, 0, 0]);
@@ -746,9 +645,9 @@ describe("Vector / Embedding integration", () => {
 
   test("upsertEmbedding overwrites existing embedding for same entry", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath);
     try {
-      const id = insertTestEntry(db, "vec-update", { searchText: "update test" });
+      const id = insertTestEntry(db, "vec-update");
 
       upsertEmbedding(db, id, [1, 0, 0, 0]);
       let results = searchVec(db, [1, 0, 0, 0], 10);
@@ -770,18 +669,24 @@ describe("Vector / Embedding integration", () => {
   });
 
   test("upsertEntry invalidates vectors only when the embedding input changes", () => {
-    const db = openIndexDatabase(tmpDbPath(), { embeddingDim: 4 });
+    const db = openIndexDatabase(tmpDbPath());
     try {
-      const id = insertTestEntry(db, "vec-input", { searchText: "same projection" });
+      const id = insertTestEntry(db, "vec-input", { description: "same projection" });
       upsertEmbedding(db, id, [1, 0, 0, 0]);
+      const storedHash = () =>
+        (db.prepare("SELECT embed_hash FROM entries WHERE id = ?").get(id) as { embed_hash: string }).embed_hash;
+      const firstHash = storedHash();
 
-      expect(insertTestEntry(db, "vec-input", { searchText: "same projection" })).toBe(id);
+      // Same text, another file path: the embedding input is unchanged.
+      expect(
+        insertTestEntry(db, "vec-input", { description: "same projection", filePath: "/test/moved/vec-input.ts" }),
+      ).toBe(id);
+      expect(storedHash()).toBe(firstHash);
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings WHERE id = ?").get(id)).toEqual({ count: 1 });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec WHERE id = ?").get(id)).toEqual({ count: 1 });
 
-      expect(insertTestEntry(db, "vec-input", { searchText: "changed projection" })).toBe(id);
+      expect(insertTestEntry(db, "vec-input", { description: "changed projection" })).toBe(id);
+      expect(storedHash()).not.toBe(firstHash);
       expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings WHERE id = ?").get(id)).toEqual({ count: 0 });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec WHERE id = ?").get(id)).toEqual({ count: 0 });
     } finally {
       closeDatabase(db);
     }
@@ -789,11 +694,11 @@ describe("Vector / Embedding integration", () => {
 
   test("searchVec respects k limit", () => {
     const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+    const db = openIndexDatabase(dbPath);
     try {
       // Insert 5 entries with embeddings
       for (let i = 0; i < 5; i++) {
-        const id = insertTestEntry(db, `vec-k-${i}`, { searchText: `entry ${i}` });
+        const id = insertTestEntry(db, `vec-k-${i}`);
         const vec = [0, 0, 0, 0];
         vec[i % 4] = 1;
         upsertEmbedding(db, id, vec);
@@ -806,196 +711,35 @@ describe("Vector / Embedding integration", () => {
     }
   });
 
-  test("upsertEmbedding surfaces a vec fast-path insert failure instead of swallowing it", () => {
-    const dbPath = tmpDbPath();
-    // entries_vec is created at dim 4; a dim-3 vector makes the vec0 INSERT
-    // throw while the BLOB row (which has no dimension constraint) still writes.
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
+  test("a stored vector of another width never matches a query", () => {
+    const db = openIndexDatabase(tmpDbPath());
     try {
-      expect(isVecAvailable(db)).toBe(true);
-      const id = insertTestEntry(db, "vec-mismatch", { searchText: "mismatch" });
-
-      const res = upsertEmbedding(db, id, [1, 0, 0]);
-
-      // The BLOB is written (semantic search can still fall back)...
-      expect(res.stored).toBe(true);
-      // ...but the vec fast-path failure is REPORTED, not silently swallowed.
-      expect(res.vec).toBe("failed");
+      const id = insertTestEntry(db, "dim-change");
+      upsertEmbedding(db, id, [1, 0, 0, 0]);
+      expect(searchVec(db, [1, 0, 0, 0], 10)).toHaveLength(1);
+      expect(searchVec(db, [1, 0, 0, 0, 0, 0, 0, 0], 10)).toEqual([]);
     } finally {
       closeDatabase(db);
     }
   });
 
-  test("a degraded vec fast path routes searchVec to the JS-cosine BLOB fallback", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    try {
-      const id = insertTestEntry(db, "vec-degraded", { searchText: "degraded" });
-      // BLOB + vec rows both written by a healthy upsert.
-      expect(upsertEmbedding(db, id, [1, 0, 0, 0]).vec).toBe("ok");
-
-      // Simulate the state after failed/partial vec inserts: the BLOB table is
-      // complete but the vec table is empty.
-      db.prepare("DELETE FROM entries_vec").run();
-
-      // Trusting the (now-empty) fast path returns nothing — the dishonest case.
-      setVecFastPathReady(db, true);
-      expect(isVecFastPathReady(db)).toBe(true);
-      expect(searchVec(db, [1, 0, 0, 0], 10).length).toBe(0);
-
-      // Marking the fast path degraded routes search to the complete BLOB table
-      // via JS-cosine — honest degradation, not a hard failure.
-      setVecFastPathReady(db, false);
-      expect(isVecFastPathReady(db)).toBe(false);
-      const fallback = searchVec(db, [1, 0, 0, 0], 10);
-      expect(fallback.length).toBe(1);
-      expect(fallback[0]!.id).toBe(id);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec fast-path completeness accepts identical BLOB and vec ID sets", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-complete-exact"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-complete-first");
-      const secondId = insertTestEntry(db, "vec-complete-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, secondId, [0, 1, 0, 0]).vec).toBe("ok");
-
-      expect(isVecFastPathComplete(db)).toBe(true);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec fast-path completeness rejects a missing vec ID", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-complete-partial"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-partial-first");
-      const secondId = insertTestEntry(db, "vec-partial-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, secondId, [0, 1, 0, 0]).vec).toBe("ok");
-      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(secondId);
-
-      expect(isVecFastPathComplete(db)).toBe(false);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("vec fast-path completeness rejects equal counts with mismatched IDs", () => {
-    const db = openIndexDatabase(tmpDbPath("vec-complete-mismatched"), { embeddingDim: 4 });
-    try {
-      const firstId = insertTestEntry(db, "vec-mismatch-first");
-      const missingId = insertTestEntry(db, "vec-mismatch-second");
-      expect(upsertEmbedding(db, firstId, [1, 0, 0, 0]).vec).toBe("ok");
-      expect(upsertEmbedding(db, missingId, [0, 1, 0, 0]).vec).toBe("ok");
-      db.prepare("DELETE FROM entries_vec WHERE id = ?").run(missingId);
-      const orphanId = missingId + 100_000;
-      const orphanVector = Buffer.from(new Float32Array([0, 0, 1, 0]).buffer);
-      db.prepare("INSERT INTO entries_vec (id, embedding) VALUES (?, ?)").run(orphanId, orphanVector);
-
-      expect(db.prepare("SELECT COUNT(*) AS count FROM embeddings").get()).toEqual({ count: 2 });
-      expect(db.prepare("SELECT COUNT(*) AS count FROM entries_vec").get()).toEqual({ count: 2 });
-      expect(isVecFastPathComplete(db)).toBe(false);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("a non-integer or non-positive embeddingDim warns and falls back to the default instead of aborting", () => {
-    // index-schema.ts used to throw a bare Error for any dim outside 1–4096,
-    // aborting the whole index open at exit 70 mid-run — including for
-    // legitimately large real embedding widths above 4096, which the config
-    // schema does not itself reject. A dimension that cannot back a vec0
-    // column at all (non-integer, zero, negative) still cannot be used, but
-    // degrades to a warning and the static default (matching how
-    // index-connection.ts's resolveConfiguredEmbeddingDim already handles the
-    // same bad-value case) rather than aborting.
-    for (const dim of [0, -1, 384.5]) {
-      const messages: string[] = [];
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") messages.push(args.map(String).join(" "));
-      });
-      let db: Database | undefined;
-      try {
-        db = openIndexDatabase(tmpDbPath(), { embeddingDim: dim });
-        expect(getMeta(db, "embeddingDim")).toBe(String(EMBEDDING_DIM));
-        expect(messages.some((message) => message.includes("Invalid embedding dimension"))).toBe(true);
-      } finally {
-        if (db) closeDatabase(db);
-        _setWarnSinkForTests(undefined);
-      }
-    }
-  });
-
-  test("an embeddingDim above the old 4096 ceiling is honored, not rejected", () => {
-    const dbPath = tmpDbPath();
-    const db = openIndexDatabase(dbPath, { embeddingDim: 8192 });
-    try {
-      expect(getMeta(db, "embeddingDim")).toBe("8192");
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("embeddingDim change recreates vec table and clears old embeddings", () => {
+  test("openExistingDatabase serves the stored embeddings", () => {
     const dbPath = tmpDbPath();
 
-    // Open with dim=4 and insert an embedding
-    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    const id = insertTestEntry(db, "dim-change", { searchText: "dimension test" });
-    upsertEmbedding(db, id, [1, 0, 0, 0]);
-    let results = searchVec(db, [1, 0, 0, 0], 10);
-    expect(results.length).toBe(1);
-    closeDatabase(db);
-
-    // Reopen with dim=8 — vec table should be recreated, old embeddings gone
-    db = openIndexDatabase(dbPath, { embeddingDim: 8 });
-    try {
-      expect(getMeta(db, "embeddingDim")).toBe("8");
-      // Old embedding was dim=4 and table was recreated for dim=8, so no results
-      results = searchVec(db, [1, 0, 0, 0, 0, 0, 0, 0], 10);
-      expect(results.length).toBe(0);
-    } finally {
-      closeDatabase(db);
-    }
-  });
-
-  test("openExistingDatabase preserves existing embedding dimension and embeddings", () => {
-    const dbPath = tmpDbPath();
-
-    let db = openIndexDatabase(dbPath, { embeddingDim: 4 });
-    const id = insertTestEntry(db, "dim-stable", { searchText: "dimension stable" });
+    let db = openIndexDatabase(dbPath);
+    const id = insertTestEntry(db, "dim-stable");
     upsertEmbedding(db, id, [1, 0, 0, 0]);
     setMeta(db, "hasEmbeddings", "1");
     closeDatabase(db);
 
     db = openExistingDatabase(dbPath);
     try {
-      expect(getMeta(db, "embeddingDim")).toBe("4");
       expect(getMeta(db, "hasEmbeddings")).toBe("1");
       const results = searchVec(db, [1, 0, 0, 0], 10);
       expect(results.length).toBe(1);
       expect(results[0]!.id).toBe(id);
     } finally {
       closeDatabase(db);
-    }
-  });
-
-  test("openExistingDatabase rejects a non-canonical generation before returning a handle", () => {
-    const dbPath = tmpDbPath();
-    const seed = openIndexDatabase(dbPath);
-    setMeta(seed, "version", "0");
-    closeDatabase(seed);
-
-    expect(() => openExistingDatabase(dbPath)).toThrow(ConfigError);
-    try {
-      openExistingDatabase(dbPath);
-    } catch (error) {
-      expect((error as ConfigError).code).toBe("INDEX_SCHEMA_INCOMPATIBLE");
-      expect((error as Error).message).not.toMatch(/no such table|SQLITE/i);
     }
   });
 });
@@ -1017,24 +761,24 @@ describe("entry-owned FTS projection", () => {
     return row?.cnt ?? 0;
   }
 
-  function upsertFtsEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
+  function upsertFtsEntry(db: Database, key: string, entry: IndexDocument): number {
     const provenance = deriveEntryProvenance(
       { bundleId: "stash", componentId: "stash", adapterId: "akm" },
       entry.type,
       key,
     );
-    return upsertEntry(db, `/d/${key}.md`, entry, searchText, provenance);
+    return upsertEntry(db, `/d/${key}.md`, entry, provenance);
   }
 
   test("upsertEntry immediately inserts and replaces its FTS row", () => {
     const db = openIndexDatabase(tmpDbPath("entry-fts"));
     try {
-      upsertFtsEntry(db, "k1", makeEntry("alpha", "first"), "alpha first");
-      upsertFtsEntry(db, "k2", makeEntry("bravo", "legacyuniquemarker"), "bravo legacyuniquemarker");
-      upsertFtsEntry(db, "k3", makeEntry("charlie", "third"), "charlie third");
+      upsertFtsEntry(db, "k1", makeEntry("alpha", "first"));
+      upsertFtsEntry(db, "k2", makeEntry("bravo", "legacyuniquemarker"));
+      upsertFtsEntry(db, "k3", makeEntry("charlie", "third"));
       expect(ftsCount(db)).toBe(3);
 
-      upsertFtsEntry(db, "k2", makeEntry("bravo", "currentuniquemarker"), "bravo currentuniquemarker");
+      upsertFtsEntry(db, "k2", makeEntry("bravo", "currentuniquemarker"));
       expect(ftsCount(db)).toBe(3);
 
       const updatedHits = db
@@ -1053,7 +797,7 @@ describe("entry-owned FTS projection", () => {
   test("rebuildFts remains an explicit full recovery operation", () => {
     const db = openIndexDatabase(tmpDbPath("entry-fts-recovery"));
     try {
-      upsertFtsEntry(db, "k1", makeEntry("alpha"), "alpha");
+      upsertFtsEntry(db, "k1", makeEntry("alpha"));
       db.exec("DELETE FROM entries_fts");
       expect(ftsCount(db)).toBe(0);
       rebuildFts(db);
@@ -1076,7 +820,7 @@ describe("entries-by-path reads (getEntryIdByFilePath / getEntryFilePathById)", 
     const entry = { description: `Description for ${key}`, type, name: key } as unknown as IndexDocument;
     const bundleId = path.basename(stashDir) || "root";
     const provenance = deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, key);
-    return upsertEntry(db, filePath, entry, key, provenance);
+    return upsertEntry(db, filePath, entry, provenance);
   }
 
   test("getEntryIdByFilePath resolves the row id by exact file_path, undefined when no match", () => {

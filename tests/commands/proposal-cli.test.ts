@@ -2,8 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
+import { stageJudgedProposal } from "../../src/commands/improve/stage";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
-import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
+import { createProposal, getProposal } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { slugForPath } from "../../src/indexer/installations";
 import { runCliCapture } from "../_helpers/cli";
@@ -89,10 +90,9 @@ describe("akm proposal drain strategy selector", () => {
               distill: { enabled: false },
               consolidate: { enabled: false },
               memoryInference: { enabled: false },
-              graphExtraction: { enabled: false },
               extract: { enabled: false },
               validation: { enabled: false },
-              triage: { enabled: true, policy: "manual", applyMode: "queue" },
+              triage: { enabled: true, applyMode: "queue" },
             },
           },
         },
@@ -102,7 +102,6 @@ describe("akm proposal drain strategy selector", () => {
     expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({
       strategy: "queue-only",
-      policy: "manual",
       applyMode: "queue",
       judgmentEngine: null,
       judgmentKind: null,
@@ -137,7 +136,7 @@ describe("akm proposal drain strategy selector", () => {
     expect(JSON.parse(explicit.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
   });
 
-  test("reports a stale-target refusal under `failed` instead of failed:0 (#921)", async () => {
+  test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
     const stashDir = makeStashDir();
     const assetPath = path.join(stashDir, "lessons", "cli-stale.md");
     fs.writeFileSync(
@@ -148,12 +147,12 @@ describe("akm proposal drain strategy selector", () => {
     const created = createProposal(stashDir, {
       ref: "lessons/cli-stale",
       source: "extract",
-      force: true,
       sourceRun: "run-x",
       target: { source: slugForPath(stashDir), root: stashDir },
       payload: { content: VALID_LESSON, frontmatter: { description: "cli-stale fixture" } },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
+    // A quality judge passed it, so the drain tries to promote it.
+    stageJudgedProposal(stashDir, created);
     fs.writeFileSync(
       assetPath,
       "---\ndescription: Someone else edited this.\nwhen_to_use: Testing.\n---\n\nNewer.\n",
@@ -163,8 +162,16 @@ describe("akm proposal drain strategy selector", () => {
     const result = await runCli(["proposal", "drain", "--promote", "-y", "--format=json"], { stashDir });
     expect(result.status).toBe(0);
     const envelope = JSON.parse(result.stdout);
+    // The stale-target category is not a merit rejection, so the drain
+    // resolves it with a structured auto-reject instead of retrying forever
+    // — it lands in `rejected`, not `failed` (STALE, R20).
     expect(envelope.promoted).toEqual([]);
-    expect(envelope.failed).toEqual([expect.objectContaining({ id: created.id, reason: "stale-target" })]);
+    expect(envelope.failed).toEqual([]);
+    expect(envelope.rejected).toEqual([created.id]);
+    expect(getProposal(stashDir, created.id)).toMatchObject({
+      status: "rejected",
+      gateDecision: { outcome: "auto-rejected", reason: "stale-target" },
+    });
   });
 });
 
@@ -172,10 +179,8 @@ function seedProposal(stash: string, ref = "lessons/rg-over-grep") {
   const result = createProposal(stash, {
     ref,
     source: "reflect",
-    force: true,
     payload: { content: VALID_LESSON },
   });
-  if (isProposalSkipped(result)) throw new Error("unexpected skip in seedProposal");
   return result;
 }
 

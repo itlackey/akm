@@ -4,10 +4,9 @@
 
 /**
  * #919: a run keeps executing its frozen plan after its source is edited.
- * `plan_ir_version` is only ever written as the literal 5, so the reported
- * `irVersion 111` cannot come from this tree; this pins the contract the
- * report expected: edit the source mid-run, resolve the same ref again, and
- * the run finishes on the ORIGINAL step text.
+ * Edit the source mid-run, resolve the same ref again, and the run finishes on
+ * the ORIGINAL step text — with one warning saying the source changed since
+ * the freeze (a resume re-reads the source only to say so).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -58,7 +57,16 @@ function writeWorkflow(name: string, secondStepBody: string): string {
 const okDispatcher: UnitDispatcher = async () => ({ ok: true, text: "done" });
 
 describe("#919 repro — mid-run source edit does not bump plan_ir_version or invalidate the run", () => {
-  test("plan_ir_version stays 5 before and after an edit, and the resumed run keeps executing", async () => {
+  test("a resume without an edit says nothing about the source", async () => {
+    writeWorkflow("unedited", "Do the second thing.");
+    const started = await runWorkflowSteps({ target: "workflows/unedited", maxSteps: 1, dispatcher: okDispatcher });
+    expect(started.run.status).toBe("active");
+    const resumed = await runWorkflowSteps({ target: "workflows/unedited", dispatcher: okDispatcher });
+    expect(resumed.run.status).toBe("completed");
+    expect(resumed.warnings ?? []).toEqual([]);
+  });
+
+  test("plan_ir_version stays the current version before and after an edit, and the resumed run keeps executing", async () => {
     const file = writeWorkflow("repro-919", "Do the ORIGINAL second thing.");
 
     // "akm workflow run workflows/repro-919 --max-steps=1"
@@ -70,7 +78,7 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(started.run.status).toBe("active");
 
     const before = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(before?.plan_ir_version).toBe(5);
+    expect(before?.plan_ir_version).toBe(6);
 
     // "edit ~/akm/workflows/repro-919.md — extend a step body"
     writeWorkflow("repro-919", "Do the EDITED second thing, now with more detail.");
@@ -86,12 +94,17 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
       },
     });
 
-    // Did not reproduce: the run resolves and finishes, not
-    // WORKFLOW_IR_VERSION_UNSUPPORTED.
+    // The run resolves and finishes on the frozen plan.
     expect(resumed.run.id).toBe(started.run.id);
     expect(resumed.resumed).toBe(true);
     expect(resumed.done).toBe(true);
     expect(resumed.run.status).toBe("completed");
+
+    // ...and says, once, that the source it was frozen from has changed.
+    const drift = (resumed.warnings ?? []).filter((w) => w.includes("has changed since this run was frozen"));
+    expect(drift).toHaveLength(1);
+    expect(drift[0]).toContain("continuing with the frozen plan");
+    expect(drift[0]).toContain("--new");
 
     // The frozen plan dispatched — never the edited source.
     expect(prompts).toHaveLength(1);
@@ -99,6 +112,6 @@ describe("#919 repro — mid-run source edit does not bump plan_ir_version or in
     expect(prompts[0]).not.toContain("EDITED");
 
     const after = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
-    expect(after?.plan_ir_version).toBe(5);
+    expect(after?.plan_ir_version).toBe(6);
   });
 });

@@ -7,10 +7,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { jsonWithByteCap } from "../core/common";
-import { NotFoundError, UsageError } from "../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { asRecord, asString, GITHUB_API_BASE, githubHeaders } from "../integrations/github";
-import { cancelRegistryResponse, fetchRegistryResponse, type RegistryNetworkPolicy } from "./network";
+import { fetchRegistryJson } from "./network";
 import { isExactSemver, isSemverRange, maxSatisfying } from "./semver";
 import type {
   InstallKind,
@@ -21,6 +20,29 @@ import type {
   ParsedRegistryRef,
   ResolvedRegistryArtifact,
 } from "./types";
+
+/**
+ * Pass an HTTPS bearer credential to Git without placing it in the remote URL
+ * or argv. The value exists only in the child-process environment and is never
+ * persisted or included in diagnostics.
+ */
+export function gitCredentialEnvironment(credential?: string): NodeJS.ProcessEnv {
+  if (!credential) return { ...process.env };
+  if (/[\r\n\0]/.test(credential)) {
+    throw new UsageError("Git credential contains an invalid control character.");
+  }
+  const configuredCount = process.env.GIT_CONFIG_COUNT;
+  const nextIndex = configuredCount === undefined ? 0 : Number(configuredCount);
+  if (!Number.isSafeInteger(nextIndex) || nextIndex < 0) {
+    throw new UsageError("GIT_CONFIG_COUNT must be a non-negative integer before a Git credential can be added.");
+  }
+  return {
+    ...process.env,
+    GIT_CONFIG_COUNT: String(nextIndex + 1),
+    [`GIT_CONFIG_KEY_${nextIndex}`]: "http.extraHeader",
+    [`GIT_CONFIG_VALUE_${nextIndex}`]: `Authorization: Bearer ${credential}`,
+  };
+}
 
 /**
  * Validate that a URL is safe to pass to git.
@@ -55,13 +77,13 @@ export function validateGitRef(ref: string): void {
 
 export function parseRegistryRef(rawRef: string): ParsedRegistryRef {
   const ref = rawRef.trim();
-  if (!ref) throw new Error("Registry ref is required.");
+  if (!ref) throw new UsageError("Registry ref is required.", "MISSING_REQUIRED_ARGUMENT");
 
   // Detect registry search result IDs (e.g. "skills-sh:org/skills/name")
   // that are not installable refs. Known installable prefixes are handled below.
   const registryIdHint = detectRegistrySearchId(ref);
   if (registryIdHint) {
-    throw new Error(registryIdHint);
+    throw new UsageError(registryIdHint);
   }
 
   if (ref.startsWith("npm:")) {
@@ -158,22 +180,25 @@ function detectRegistrySearchId(ref: string): string | undefined {
   return lines.join("\n");
 }
 
-export async function resolveRegistryArtifact(parsed: ParsedRegistryRef): Promise<ResolvedRegistryArtifact> {
+export async function resolveRegistryArtifact(
+  parsed: ParsedRegistryRef,
+  options?: { gitCredential?: string },
+): Promise<ResolvedRegistryArtifact> {
   switch (parsed.source) {
     case "npm":
       return resolveNpmArtifact(parsed);
     case "local":
       return resolveLocalArtifact(parsed);
     case "git":
-      return resolveGitArtifact(parsed);
+      return resolveGitArtifact(parsed, options?.gitCredential);
     case "github":
-      return resolveGithubArtifact(parsed);
+      return resolveGithubArtifact(parsed, options?.gitCredential);
   }
 }
 
 function parseNpmRef(input: string, originalRef: string): ParsedNpmRef {
   const trimmed = input.trim();
-  if (!trimmed) throw new Error("Invalid npm ref.");
+  if (!trimmed) throw new UsageError("Invalid npm ref.");
 
   const parsed = splitNpmNameAndVersion(trimmed);
   validateNpmPackageName(parsed.packageName);
@@ -191,12 +216,12 @@ function parseGithubShorthand(input: string, originalRef: string): ParsedGithubR
   const [repoPart, requestedRef] = splitRefSuffix(input.trim());
   const segments = repoPart.split("/").filter(Boolean);
   if (segments.length !== 2) {
-    throw new Error("Invalid GitHub ref. Expected owner/repo or owner/repo#ref.");
+    throw new UsageError("Invalid GitHub ref. Expected owner/repo or owner/repo#ref.");
   }
   const owner = segments[0];
   const repo = segments[1]!.replace(/\.git$/i, "");
   if (!owner || !repo) {
-    throw new Error("Invalid GitHub ref. Expected owner/repo.");
+    throw new UsageError("Invalid GitHub ref. Expected owner/repo.");
   }
   return {
     source: "github",
@@ -213,7 +238,7 @@ function parseRemoteUrl(rawUrl: string): ParsedGithubRef | ParsedGitRef {
   try {
     url = new URL(rawUrl);
   } catch {
-    throw new Error("Invalid registry URL.");
+    throw new UsageError("Invalid registry URL.");
   }
 
   if (url.hostname === "github.com") {
@@ -226,7 +251,7 @@ function parseRemoteUrl(rawUrl: string): ParsedGithubRef | ParsedGitRef {
 function parseGithubUrl(url: URL, rawUrl: string): ParsedGithubRef {
   const segments = url.pathname.split("/").filter(Boolean);
   if (segments.length < 2) {
-    throw new Error("Invalid GitHub URL. Expected https://github.com/owner/repo.");
+    throw new UsageError("Invalid GitHub URL. Expected https://github.com/owner/repo.");
   }
   const owner = segments[0]!;
   const repo = segments[1]!.replace(/\.git$/i, "");
@@ -244,7 +269,7 @@ function parseGithubUrl(url: URL, rawUrl: string): ParsedGithubRef {
 
 function parseGitUrl(input: string, originalRef: string): ParsedGitRef {
   const [urlPart, requestedRef] = splitRefSuffix(input.trim());
-  if (!urlPart) throw new Error("Invalid git ref. A URL is required.");
+  if (!urlPart) throw new UsageError("Invalid git ref. A URL is required.");
 
   // Normalize the URL for the id (strip .git suffix, fragment)
   const normalized = urlPart.replace(/\.git$/i, "");
@@ -278,7 +303,7 @@ function tryParseLocalRef(rawRef: string, explicitPath: boolean): ParsedLocalRef
 
   if (!stat.isDirectory()) {
     if (explicitPath) {
-      throw new Error("Local add path must be a directory, but the provided path is not one.");
+      throw new UsageError("Local add path must be a directory, but the provided path is not one.");
     }
     // Bare name exists but isn't a directory — not a local ref
     return undefined;
@@ -320,106 +345,48 @@ function isPathLikeRef(ref: string): boolean {
 /** Default public npm registry host. */
 const DEFAULT_NPM_REGISTRY_HOST = "registry.npmjs.org";
 
-/**
- * Typed error raised when the npm registry returns a tarball URL on a host
- * that is not the public registry or the operator-configured mirror. Carries
- * a stable `.code` so callers (and JSON envelope output) can branch on it
- * without parsing the message string.
- */
-export class UntrustedNpmTarballError extends Error {
-  readonly code = "UNTRUSTED_NPM_TARBALL" as const;
-  private readonly _hint?: string;
-  constructor(msg: string, hint?: string) {
-    super(msg);
-    this.name = "UntrustedNpmTarballError";
-    this._hint = hint;
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-  hint(): string | undefined {
-    return (
-      this._hint ??
-      "Set AKM_NPM_REGISTRY to your private npm mirror's base URL if you install from a non-default registry."
-    );
-  }
-}
-
-/**
- * Resolve the set of npm registry hosts whose tarballs are considered trusted.
- * Always includes the public npm registry, plus the host of an operator-set
- * `AKM_NPM_REGISTRY` environment variable (if it parses to a valid URL).
- */
-export function trustedNpmTarballHosts(): Set<string> {
-  const hosts = new Set<string>([DEFAULT_NPM_REGISTRY_HOST]);
-  const override = process.env.AKM_NPM_REGISTRY?.trim();
-  if (override) {
-    // A malformed override must not be silently ignored (falling back to the
-    // public registry as though nothing was configured) — that would install
-    // from the wrong registry without telling the operator (R-035).
-    let overrideHost: string;
-    try {
-      overrideHost = new URL(override).hostname.toLowerCase();
-    } catch {
-      throw new UsageError(`AKM_NPM_REGISTRY is set to an invalid URL: ${override}`);
-    }
-    if (overrideHost) hosts.add(overrideHost);
-  }
-  return hosts;
-}
+const UNTRUSTED_TARBALL_HINT =
+  "Set AKM_NPM_REGISTRY to your private npm mirror's base URL if you install from a non-default registry.";
 
 /**
  * Validate that an npm tarball URL starts at the exact metadata registry
- * origin. A compromised mirror must not change scheme or port (or nominate a
- * different host) in `dist.tarball`; later public redirects remain subject to
- * the outbound boundary's hop-by-hop policy.
+ * origin: a mirror must not change scheme or port, or nominate a different
+ * host, in `dist.tarball`.
  */
 export function validateNpmTarballUrl(tarballUrl: string, packageRef: string, registryOrigin?: string): void {
   let url: URL;
   try {
     url = new URL(tarballUrl);
   } catch {
-    throw new UntrustedNpmTarballError(`npm package ${packageRef} returned an invalid tarball URL: ${tarballUrl}`);
+    throw new NotFoundError(
+      `npm package ${packageRef} returned an invalid tarball URL: ${tarballUrl}`,
+      "REGISTRY_RESPONSE_INVALID",
+      UNTRUSTED_TARBALL_HINT,
+    );
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new UntrustedNpmTarballError(
+    throw new NotFoundError(
       `npm package ${packageRef} returned a tarball with disallowed scheme "${url.protocol}".`,
+      "REGISTRY_RESPONSE_INVALID",
+      UNTRUSTED_TARBALL_HINT,
     );
   }
-  const expectedOrigin = registryOrigin ?? new URL(npmMetadataRegistry().baseUrl).origin;
+  const expectedOrigin = registryOrigin ?? new URL(npmMetadataRegistry()).origin;
   if (url.origin !== expectedOrigin) {
-    throw new UntrustedNpmTarballError(
+    throw new NotFoundError(
       `npm package ${packageRef} returned a tarball URL on untrusted origin "${url.origin}" (expected: ${expectedOrigin}).`,
+      "REGISTRY_RESPONSE_INVALID",
+      UNTRUSTED_TARBALL_HINT,
     );
   }
-}
-
-/** Network policy for a tarball URL that already passed {@link validateNpmTarballUrl}. */
-export function npmArtifactNetworkPolicy(
-  artifact: Pick<ResolvedRegistryArtifact, "registryOrigin" | "allowPrivateRegistryOrigin">,
-): Extract<RegistryNetworkPolicy, { kind: "npm-api" }> {
-  if (!artifact.registryOrigin) {
-    throw new UsageError("npm artifact network policy requires the registry origin that authorized its metadata.");
-  }
-  return {
-    kind: "npm-api",
-    registryOrigin: new URL(artifact.registryOrigin).origin,
-    allowPrivateRegistryOrigin: artifact.allowPrivateRegistryOrigin === true,
-  };
 }
 
 /**
- * Resolve the npm registry base URL used to fetch package METADATA.
- *
- * R-035: `AKM_NPM_REGISTRY` previously only widened the trusted-tarball-host
- * allowlist (see {@link trustedNpmTarballHosts}) while the metadata endpoint
- * stayed hardcoded to the public registry — so an operator-configured mirror
- * was never actually consulted, making the `UntrustedNpmTarballError.hint()`
- * text below false. Honoring the override here for metadata too makes the
- * hint true: installs really do resolve entirely against the configured
- * mirror when it is set, mirroring how a private npm registry replaces the
- * default wholesale (like npm's own `--registry` flag) rather than being
- * merged with it.
+ * The npm registry base URL for package METADATA: `AKM_NPM_REGISTRY` when set
+ * (a private mirror replaces the default wholesale, like npm's own
+ * `--registry`), else the public registry.
  */
-function npmMetadataRegistry(): { baseUrl: string; allowPrivateRegistryOrigin: boolean } {
+function npmMetadataRegistry(): string {
   const override = process.env.AKM_NPM_REGISTRY?.trim();
   if (override) {
     // A malformed override must not be silently ignored (falling back to the
@@ -429,27 +396,17 @@ function npmMetadataRegistry(): { baseUrl: string; allowPrivateRegistryOrigin: b
     try {
       url = new URL(override);
     } catch {
-      throw new UsageError(`AKM_NPM_REGISTRY is set to an invalid URL: ${override}`);
+      throw new ConfigError(`AKM_NPM_REGISTRY is set to an invalid URL: ${override}`, "REGISTRY_URL_INVALID");
     }
-    const base = `${url.origin}${url.pathname === "/" ? "" : url.pathname}`;
-    return { baseUrl: base.replace(/\/+$/, ""), allowPrivateRegistryOrigin: true };
+    return `${url.origin}${url.pathname === "/" ? "" : url.pathname}`.replace(/\/+$/, "");
   }
-  return { baseUrl: `https://${DEFAULT_NPM_REGISTRY_HOST}`, allowPrivateRegistryOrigin: false };
+  return `https://${DEFAULT_NPM_REGISTRY_HOST}`;
 }
 
 async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistryArtifact> {
   const encodedName = encodeURIComponent(parsed.packageName);
-  const npmRegistry = npmMetadataRegistry();
-  const npmPolicy: RegistryNetworkPolicy = {
-    kind: "npm-api",
-    registryOrigin: new URL(npmRegistry.baseUrl).origin,
-    allowPrivateRegistryOrigin: npmRegistry.allowPrivateRegistryOrigin,
-  };
-  const metadata = await fetchJson<Record<string, unknown>>(
-    `${npmRegistry.baseUrl}/${encodedName}`,
-    undefined,
-    npmPolicy,
-  );
+  const registryBase = npmMetadataRegistry();
+  const metadata = await fetchJson<Record<string, unknown>>(`${registryBase}/${encodedName}`, undefined);
 
   const versions = asRecord(metadata.versions);
   const distTags = asRecord(metadata["dist-tags"]);
@@ -472,16 +429,19 @@ async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistr
   }
 
   if (!resolvedVersion || !(resolvedVersion in versions)) {
-    throw new Error(`Unable to resolve npm ref "${parsed.ref}".`);
+    throw new NotFoundError(`Unable to resolve npm ref "${parsed.ref}".`, "REGISTRY_NOT_FOUND");
   }
 
   const versionMeta = asRecord(versions[resolvedVersion]);
   const dist = asRecord(versionMeta.dist);
   const tarballUrl = asString(dist.tarball);
   if (!tarballUrl) {
-    throw new Error(`npm package ${parsed.packageName}@${resolvedVersion} does not expose a tarball URL.`);
+    throw new NotFoundError(
+      `npm package ${parsed.packageName}@${resolvedVersion} does not expose a tarball URL.`,
+      "REGISTRY_RESPONSE_INVALID",
+    );
   }
-  validateNpmTarballUrl(tarballUrl, `${parsed.packageName}@${resolvedVersion}`, npmPolicy.registryOrigin);
+  validateNpmTarballUrl(tarballUrl, `${parsed.packageName}@${resolvedVersion}`, new URL(registryBase).origin);
 
   const resolvedRevision = asString(dist.shasum) ?? asString(dist.integrity);
 
@@ -492,18 +452,16 @@ async function resolveNpmArtifact(parsed: ParsedNpmRef): Promise<ResolvedRegistr
     artifactUrl: tarballUrl,
     resolvedVersion,
     resolvedRevision,
-    registryOrigin: npmPolicy.registryOrigin,
-    allowPrivateRegistryOrigin: npmPolicy.allowPrivateRegistryOrigin,
   };
 }
 
-async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedRegistryArtifact> {
+async function resolveGithubArtifact(parsed: ParsedGithubRef, credential?: string): Promise<ResolvedRegistryArtifact> {
   const gitUrl = `https://github.com/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}.git`;
   const repoBase = `${GITHUB_API_BASE}/repos/${encodeURIComponent(parsed.owner)}/${encodeURIComponent(parsed.repo)}`;
 
   // Prefer git-backed installs so private GitHub repos work with the user's
   // normal git credential helper rather than requiring API-specific auth.
-  const gitResolvedRevision = resolveGitRevisionFromRemote(gitUrl, parsed.requestedRef);
+  const gitResolvedRevision = resolveGitRevisionFromRemote(gitUrl, parsed.requestedRef, credential);
   if (gitResolvedRevision) {
     return {
       id: parsed.id,
@@ -515,13 +473,12 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     };
   }
 
-  const headers = githubHeaders();
+  const headers = { ...githubHeaders(), ...(credential ? { Authorization: `Bearer ${credential}` } : {}) };
 
   if (parsed.requestedRef) {
     const commit = await tryFetchJson<Record<string, unknown>>(
       `${repoBase}/commits/${encodeURIComponent(parsed.requestedRef)}`,
       headers,
-      GITHUB_API_POLICY,
     );
     const resolvedRevision = asString(commit?.sha) ?? parsed.requestedRef;
     return {
@@ -534,11 +491,7 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     };
   }
 
-  const latestRelease = await tryFetchJson<Record<string, unknown>>(
-    `${repoBase}/releases/latest`,
-    headers,
-    GITHUB_API_POLICY,
-  );
+  const latestRelease = await tryFetchJson<Record<string, unknown>>(`${repoBase}/releases/latest`, headers);
   if (latestRelease) {
     const tarballUrl = asString(latestRelease.tarball_url);
     if (tarballUrl) {
@@ -553,16 +506,18 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
     }
   }
 
-  const repoMeta = await fetchJson<Record<string, unknown>>(repoBase, headers, GITHUB_API_POLICY);
+  const repoMeta = await fetchJson<Record<string, unknown>>(repoBase, headers);
   const defaultBranch = asString(repoMeta.default_branch);
   if (!defaultBranch) {
-    throw new Error(`Unable to resolve default branch for ${parsed.owner}/${parsed.repo}.`);
+    throw new NotFoundError(
+      `Unable to resolve default branch for ${parsed.owner}/${parsed.repo}.`,
+      "REGISTRY_RESPONSE_INVALID",
+    );
   }
 
   const commit = await tryFetchJson<Record<string, unknown>>(
     `${repoBase}/commits/${encodeURIComponent(defaultBranch)}`,
     headers,
-    GITHUB_API_POLICY,
   );
 
   return {
@@ -575,25 +530,30 @@ async function resolveGithubArtifact(parsed: ParsedGithubRef): Promise<ResolvedR
   };
 }
 
-function resolveGitRevisionFromRemote(url: string, requestedRef?: string): string | undefined {
+function resolveGitRevisionFromRemote(url: string, requestedRef?: string, credential?: string): string | undefined {
   validateGitUrl(url);
   const ref = requestedRef ?? "HEAD";
   if (requestedRef) validateGitRef(requestedRef);
-  const result = spawnSync("git", ["ls-remote", url, ref], { encoding: "utf8", timeout: 30_000 });
+  const result = spawnSync("git", ["ls-remote", url, ref], {
+    encoding: "utf8",
+    timeout: 30_000,
+    env: gitCredentialEnvironment(credential),
+  });
   if (result.status !== 0) return undefined;
   const firstLine = result.stdout.trim().split(/\r?\n/)[0];
   return firstLine?.split(/\s/)[0] || undefined;
 }
 
-async function resolveGitArtifact(parsed: ParsedGitRef): Promise<ResolvedRegistryArtifact> {
-  const resolvedRevision = resolveGitRevisionFromRemote(parsed.url, parsed.requestedRef);
+async function resolveGitArtifact(parsed: ParsedGitRef, credential?: string): Promise<ResolvedRegistryArtifact> {
+  const resolvedRevision = resolveGitRevisionFromRemote(parsed.url, parsed.requestedRef, credential);
   if (!resolvedRevision) {
     // Unlike the GitHub path (which falls back to the REST API on a failed
     // `git ls-remote`), a plain git source has no fallback resolver — an
     // unresolved revision here would silently disable the post-clone
     // revision-integrity check in `verifyClonedRevision` (R-011).
-    throw new Error(
+    throw new NotFoundError(
       `Unable to resolve ${parsed.requestedRef ?? "HEAD"} for ${parsed.url} via 'git ls-remote'; refusing to install without a verifiable revision.`,
+      "REGISTRY_NOT_FOUND",
     );
   }
   return {
@@ -640,13 +600,13 @@ function splitNpmNameAndVersion(input: string): { packageName: string; requested
 }
 
 function validateNpmPackageName(name: string): void {
-  if (!name) throw new Error("Invalid npm package name: name is required.");
-  if (name.length > 214) throw new Error(`Invalid npm package name: "${name}" exceeds 214 characters.`);
+  if (!name) throw new UsageError("Invalid npm package name: name is required.");
+  if (name.length > 214) throw new UsageError(`Invalid npm package name: "${name}" exceeds 214 characters.`);
   if (name !== name.toLowerCase() && !name.startsWith("@")) {
-    throw new Error(`Invalid npm package name: "${name}" must be lowercase.`);
+    throw new UsageError(`Invalid npm package name: "${name}" must be lowercase.`);
   }
   if (name.startsWith(".") || name.startsWith("_")) {
-    throw new Error(`Invalid npm package name: "${name}" cannot start with . or _.`);
+    throw new UsageError(`Invalid npm package name: "${name}" cannot start with . or _.`);
   }
   if (
     /[~'!()*]/.test(name) ||
@@ -655,7 +615,7 @@ function validateNpmPackageName(name: string): void {
       .replace(/%40/g, "@")
       .replace(/%2[Ff]/g, "/") !== name
   ) {
-    throw new Error(`Invalid npm package name: "${name}" contains invalid characters.`);
+    throw new UsageError(`Invalid npm package name: "${name}" contains invalid characters.`);
   }
 }
 
@@ -733,31 +693,20 @@ function readGitValue(repoRoot: string, ...args: string[]): string | undefined {
   return value || undefined;
 }
 
-// Cap JSON responses at 10 MB — npm package manifests and GitHub API
-// responses are typically a few KB; a compromised registry streaming
-// tens of MB of JSON is a DoS surface, not a feature.
+// npm package manifests and GitHub API responses are typically a few KB; 10 MB
+// is the cap on what one is allowed to send.
 const REGISTRY_JSON_BYTE_CAP = 10 * 1024 * 1024;
 
-const GITHUB_API_POLICY: RegistryNetworkPolicy = { kind: "github-api" };
-
-async function fetchJson<T>(url: string, headers: HeadersInit | undefined, policy: RegistryNetworkPolicy): Promise<T> {
-  const response = await fetchRegistryResponse(url, { headers }, { policy, timeoutMs: 30_000 });
-  if (!response.ok) {
-    await cancelRegistryResponse(response);
-    throw new Error(`Request failed (${response.status}) for ${url}`);
-  }
-  return jsonWithByteCap<T>(response, REGISTRY_JSON_BYTE_CAP, { bodyTimeoutMs: 30_000 });
+async function fetchJson<T>(url: string, headers: HeadersInit | undefined): Promise<T> {
+  return fetchRegistryJson<T>(url, { headers, timeoutMs: 30_000, maxBytes: REGISTRY_JSON_BYTE_CAP });
 }
 
-async function tryFetchJson<T>(
-  url: string,
-  headers: HeadersInit | undefined,
-  policy: RegistryNetworkPolicy,
-): Promise<T | null> {
-  const response = await fetchRegistryResponse(url, { headers }, { policy, timeoutMs: 30_000 });
-  if (!response.ok) {
-    await cancelRegistryResponse(response);
-    return null;
+/** `fetchJson` for optional GitHub lookups: a not-found / unusable answer is `null`, a transient failure still throws. */
+async function tryFetchJson<T>(url: string, headers: HeadersInit | undefined): Promise<T | null> {
+  try {
+    return await fetchJson<T>(url, headers);
+  } catch (error) {
+    if (error instanceof NotFoundError) return null;
+    throw error;
   }
-  return jsonWithByteCap<T>(response, REGISTRY_JSON_BYTE_CAP, { bodyTimeoutMs: 30_000 });
 }

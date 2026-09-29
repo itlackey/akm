@@ -17,7 +17,7 @@ describe("provider-registry", () => {
       type: "test-provider",
       search: async () => ({ hits: [] }),
     });
-    // createProviderRegistry (src/registry/create-provider-registry.ts) is a
+    // The registry provider map (src/registry/factory.ts) is a
     // module-level singleton Map, so a leaked registration here would outlive
     // this test for the rest of the process. Use the real unregister seam
     // (ISOLATION-04) to restore "unregistered" exactly.
@@ -41,8 +41,10 @@ describe("provider-registry", () => {
     expect(resolveRegistryProviderFactory("skills-sh")).not.toBeNull();
   });
 
-  test("filesystem stash provider is registered after import", async () => {
-    await import("../src/sources/providers/filesystem");
-    expect(resolveSourceProviderFactory("filesystem")).not.toBeNull();
+  test("source provider factories resolve the four supported kinds and nothing else", () => {
+    for (const kind of ["filesystem", "git", "npm", "website"]) {
+      expect(resolveSourceProviderFactory(kind)).not.toBeNull();
+    }
+    expect(resolveSourceProviderFactory("github")).toBeNull();
   });
 });

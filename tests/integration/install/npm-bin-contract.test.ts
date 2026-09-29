@@ -4,18 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { realNodeExecutable } from "../../_helpers/node-runtime";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "..", "..", "..");
 const NPM_SHEBANG = /^#!\s*(?:\/usr\/bin\/env\s+(?:-S\s+)?((?:[^ \t=]+=[^ \t=]+\s+)*))?([^ \t]+)(.*)$/;
 
 function npmShimInterpreter(source: string): string | undefined {
   return source.trim().split(/\r*\n/, 1)[0]?.match(NPM_SHEBANG)?.[2];
-}
-
-function nodeExecutable(): string {
-  const node = Bun.which("node");
-  if (!node) throw new Error("Node.js is required for the npm launcher contract test");
-  return fs.realpathSync(node);
 }
 
 function preinstallProgram(script: string): string {
@@ -26,13 +21,13 @@ function preinstallProgram(script: string): string {
 
 function runAsNodeVersion(version: string, program: string): ReturnType<typeof spawnSync> {
   return spawnSync(
-    nodeExecutable(),
+    realNodeExecutable(),
     [
       "--input-type=module",
       "--eval",
       `Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)}, configurable: true });\n${program}`,
     ],
-    { encoding: "utf8", env: { PATH: path.dirname(nodeExecutable()) } },
+    { encoding: "utf8", env: { PATH: path.dirname(realNodeExecutable()) } },
   );
 }
 

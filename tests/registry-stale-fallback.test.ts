@@ -14,7 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { _setWarnSinkForTests } from "../src/core/warn";
-import { fetchCachedJson, withRegistryCacheDb } from "../src/storage/repositories/registry-cache";
+import { fetchCachedJson, withRegistryCacheDb } from "../src/storage/repositories/registry-index-cache-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 

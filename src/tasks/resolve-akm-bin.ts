@@ -11,17 +11,16 @@
  * Resolution order:
  *
  *   1. `process.execPath` alone for a Bun standalone executable.
- *   2. Absolute Node plus the public `dist/akm` package launcher — eligible
- *      when it is the active npm global install, or when this process
- *      cannot write to the directory containing it (a read-only mount, e.g.
- *      an image-baked install, gives the same "won't change out from under
- *      the scheduler" guarantee npm-global ownership does).
- *   3. Absolute runtime plus the source/build CLI entry, classified as a
- *      checkout that requires explicit `--rebind` for scheduler writes.
+ *   2. Absolute Node plus the public `dist/akm` package launcher.
+ *   3. Absolute runtime plus the source/build CLI entry of a checkout.
+ *
+ * `via` names which one was used. `checkout` — a package launcher inside a
+ * git work tree, or a source/build entry — runs whatever the checkout holds
+ * when the scheduler fires; `task sync` says so once when it writes one.
  *
  * Returns the argv array the scheduler should execute (e.g.
- * `["/usr/local/bin/node", "/repo/dist/cli-node.mjs"]`). The caller appends
- * subcommand args (`"task", "run", "<id>"`).
+ * `["/usr/local/bin/node", "/usr/lib/node_modules/akm-cli/dist/akm"]`). The
+ * caller appends subcommand args (`"task", "run", "<id>"`).
  */
 
 import { spawnSync } from "node:child_process";
@@ -34,11 +33,12 @@ import { mainPath as runtimeMainPath } from "../runtime";
 export interface ResolvedAkmInvocation {
   /** Argv prefix the OS scheduler should execute (one shell-safe path per element). */
   argv: string[];
-  /** Source of the resolution, surfaced by `task doctor`. */
-  via: "npm" | "standalone" | "checkout" | "package-local";
-  kind: "npm" | "standalone" | "checkout" | "package-local";
-  eligible: boolean;
+  /** How the invocation was resolved, surfaced by `task doctor`. */
+  via: "npm" | "standalone" | "checkout";
 }
+
+/** A source entry or local build run by a runtime: `src/cli.ts`, `dist/cli.js`, `dist/cli-node.mjs`. */
+const CHECKOUT_ENTRY = /(?:^|[\\/])src[\\/]cli\.ts$|(?:^|[\\/])dist[\\/](?:cli\.js|cli-node\.mjs)$/i;
 
 /** True only for Bun's virtual main path inside a compiled standalone executable. */
 export function isBunStandaloneMain(mainPath: string | undefined = runtimeMainPath): boolean {
@@ -56,8 +56,6 @@ export function resolveAkmInvocation(
     mainPath?: string;
     launcherPath?: string;
     nodePath?: string;
-    resolveNpmGlobalRoot?: (nodePath: string) => string | undefined;
-    isPathWritable?: (dir: string) => boolean;
   } = {},
 ): ResolvedAkmInvocation {
   const env = options.env ?? process.env;
@@ -65,43 +63,22 @@ export function resolveAkmInvocation(
   const runtime = options.runtime ?? (process.versions.bun ? "bun" : "node");
   const execPath = options.execPath ?? process.execPath;
   const mainPath = options.mainPath ?? runtimeMainPath;
-  const isStandaloneMain = isBunStandaloneMain(mainPath);
-  if (runtime === "bun" && isStandaloneMain && execPath) {
-    return { argv: [absoluteInvocationPath(execPath)], via: "standalone", kind: "standalone", eligible: true };
+  if (runtime === "bun" && isBunStandaloneMain(mainPath) && execPath) {
+    return { argv: [absoluteInvocationPath(execPath)], via: "standalone" };
   }
 
   const launcherPath = options.launcherPath ?? env.AKM_LAUNCHER_PATH?.trim();
   const nodePath = options.nodePath ?? env.AKM_LAUNCHER_NODE?.trim() ?? (runtime === "node" ? execPath : undefined);
   if (launcherPath && nodePath && isPublicPackageLauncher(launcherPath)) {
-    const checkout = isCheckoutLauncher(launcherPath);
-    let npmGlobalRoot: string | undefined;
-    if (!checkout) {
-      try {
-        npmGlobalRoot = (options.resolveNpmGlobalRoot ?? ((node) => resolveNpmGlobalRoot(node, env)))(nodePath);
-      } catch {
-        // An unprovable package installation is intentionally ineligible.
-      }
-    }
-    const npmGlobal = !checkout && packageBelongsToNpmGlobalRoot(launcherPath, npmGlobalRoot);
-    const readOnlyInstall =
-      !checkout && !npmGlobal && !(options.isPathWritable ?? isPathWritable)(path.dirname(launcherPath));
-    const kind = checkout ? "checkout" : npmGlobal ? "npm" : "package-local";
     return {
       argv: [absoluteInvocationPath(nodePath), absoluteInvocationPath(launcherPath)],
-      via: kind,
-      kind,
-      eligible: npmGlobal || readOnlyInstall,
+      via: isCheckoutLauncher(launcherPath) ? "checkout" : "npm",
     };
   }
 
   const checkoutEntry = resolveCheckoutEntry(options.cliEntryUrl ?? import.meta.url, runtime, mainPath);
   if (checkoutEntry && execPath) {
-    return {
-      argv: [absoluteInvocationPath(execPath), absoluteInvocationPath(checkoutEntry)],
-      via: "checkout",
-      kind: "checkout",
-      eligible: false,
-    };
+    return { argv: [absoluteInvocationPath(execPath), absoluteInvocationPath(checkoutEntry)], via: "checkout" };
   }
 
   throw new ConfigError(
@@ -109,6 +86,11 @@ export function resolveAkmInvocation(
     "INVALID_CONFIG_FILE",
     "Run the npm-global launcher or a standalone akm executable.",
   );
+}
+
+/** Whether an installed launcher argv runs akm out of a source checkout. */
+export function isCheckoutInvocation(argv: readonly string[]): boolean {
+  return argv.some((part) => CHECKOUT_ENTRY.test(part) || (isPublicPackageLauncher(part) && isCheckoutLauncher(part)));
 }
 
 function resolveCheckoutEntry(
@@ -151,6 +133,7 @@ function isPublicPackageLauncher(file: string): boolean {
   );
 }
 
+/** A package launcher whose package root is a git work tree (`npm link`, a local clone). */
 function isCheckoutLauncher(file: string): boolean {
   let launcher = path.resolve(file);
   try {
@@ -162,54 +145,8 @@ function isCheckoutLauncher(file: string): boolean {
   return fs.existsSync(path.join(packageRoot, ".git"));
 }
 
-/** Whether this process can write to `dir` — false also covers a read-only mount. */
-function isPathWritable(dir: string): boolean {
-  try {
-    fs.accessSync(dir, fs.constants.W_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function packageBelongsToNpmGlobalRoot(launcherPath: string, npmGlobalRoot: string | undefined): boolean {
-  if (!npmGlobalRoot) return false;
-  try {
-    const packageRoot = path.dirname(path.dirname(fs.realpathSync(launcherPath)));
-    const globalRoot = fs.realpathSync(npmGlobalRoot);
-    const metadata = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf8")) as { name?: unknown };
-    return metadata.name === "akm-cli" && samePath(path.dirname(packageRoot), globalRoot);
-  } catch {
-    return false;
-  }
-}
-
-function samePath(left: string, right: string): boolean {
-  const normalize = (value: string) => {
-    const resolved = path.resolve(value);
-    return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-  };
-  return normalize(left) === normalize(right);
-}
-
-// #901: the global root can't change within a process lifetime, and every
-// `resolveAkmInvocation()` call in a scheduler-sync process re-derives the
-// same `nodePath` — so this spawns `npm root --global` at most once per
-// process instead of once per call. Keyed by nodePath (rather than a bare
-// once-only flag) so a differently-invoked probe later in the same process
-// still gets its own answer instead of a stale one.
-let cachedNpmGlobalRoot: { nodePath: string; value: string | undefined } | undefined;
-
+/** `npm root --global` for the npm that ships with `nodePath`; `akm upgrade` uses it to detect a global install. */
 export function resolveNpmGlobalRoot(nodePath: string, env: NodeJS.ProcessEnv): string | undefined {
-  if (cachedNpmGlobalRoot && cachedNpmGlobalRoot.nodePath === nodePath) {
-    return cachedNpmGlobalRoot.value;
-  }
-  const value = resolveNpmGlobalRootUncached(nodePath, env);
-  cachedNpmGlobalRoot = { nodePath, value };
-  return value;
-}
-
-function resolveNpmGlobalRootUncached(nodePath: string, env: NodeJS.ProcessEnv): string | undefined {
   const npmCli = resolveAssociatedNpmCli(nodePath);
   if (!npmCli) return undefined;
   const result = spawnSync(absoluteInvocationPath(nodePath), [npmCli, "root", "--global"], {

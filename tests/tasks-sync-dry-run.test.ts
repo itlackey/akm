@@ -25,15 +25,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
 import { taskSyncDryRunExitCode, taskValidateExitCode } from "../src/commands/tasks/tasks-cli";
+import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { shapeForCommand } from "../src/output/shapes";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../src/tasks/backends/cron";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../src/tasks/scheduler-invocation";
 import type { Cleanup } from "./_helpers/sandbox";
-import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome } from "./_helpers/sandbox";
+import { sandboxStashDir, sandboxXdgConfigHome, sandboxXdgStateHome, writeSandboxConfig } from "./_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
 let stashDir = "";
@@ -60,9 +57,10 @@ function spyingMemoryExec(initial = ""): CronExec & { current: () => string; wri
 function writeTask(id: string, schedule: string, enabled = true): void {
   fs.writeFileSync(
     path.join(tasksDir, `${id}.yml`),
-    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n    enabled: ${enabled}\n`,
+    `version: 4\nrun: echo ${id}\nname: ${id}\nschedule:\n  - cron: "${schedule}"\n`,
     "utf8",
   );
+  setSchedulerRefEnabled(`stash//tasks/${id}`, enabled);
 }
 
 beforeEach(() => {
@@ -74,6 +72,7 @@ beforeEach(() => {
   cleanup = stash.cleanup;
   tasksDir = path.join(stashDir, "tasks");
   fs.mkdirSync(tasksDir, { recursive: true });
+  writeSandboxConfig({ bundles: { stash: { path: stashDir, writable: true } }, defaultBundle: "stash" });
 });
 
 afterEach(() => {
@@ -84,10 +83,6 @@ afterEach(() => {
 });
 
 const backendFor = (exec: CronExec) => {
-  // Mirrors tests/integration/tasks-sync.test.ts's `backendFor`: write a
-  // real scheduler-context descriptor matching CRON_BACKEND's default
-  // context so belongsToBundle can resolve the installed entries' owner.
-  writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
   return CRON_BACKEND({
     exec,
     fs: { ensureDir() {} },
@@ -131,6 +126,9 @@ describe("akmTasksSyncPlan — dry-run", () => {
 
     expect(preview.adds).toEqual([]);
     expect(preview.updates.map((op) => op.id)).toEqual(["alpha"]);
+    expect(preview.updates[0]?.installedFingerprint).toContain("*/15 * * * *");
+    expect(preview.updates[0]?.expectedFingerprint).toContain("45 */6 * * *");
+    expect(preview.updates[0]?.installedFingerprint).not.toBe(preview.updates[0]?.expectedFingerprint);
     expect(preview.removes).toEqual([]);
     expect(preview.hasRemovals).toBe(false);
 
@@ -174,6 +172,36 @@ describe("akmTasksSyncPlan — dry-run", () => {
     expect(exec.current()).toContain("task run gamma");
   });
 
+  test("a config without scheduler.enabled plans no removals and writes nothing on --dry-run", async () => {
+    const exec = spyingMemoryExec();
+    const backend = backendFor(exec);
+    writeTask("orphan", "*/15 * * * *");
+    await akmTasksSync({ backend });
+    const afterInstall = exec.current();
+    const writesAfterInstall = exec.writeCalls;
+    expect(afterInstall).toContain("task run orphan");
+
+    // A pre-0.9.17 config has no list at all: the installed row is the choice.
+    const { scheduler: _dropped, ...withoutList } = loadConfig();
+    saveConfig(withoutList);
+    resetConfigCache();
+
+    const preview = await akmTasksSyncPlan({ backend });
+    expect(preview.removes).toEqual([]);
+    expect(preview.hasRemovals).toBe(false);
+    // Dry-run never writes: the scheduler is untouched and the list is still unwritten.
+    expect(exec.writeCalls).toBe(writesAfterInstall);
+    expect(exec.current()).toBe(afterInstall);
+    expect(schedulerEnabledRefs(loadConfig())).toBeUndefined();
+
+    // An explicit empty list is a choice: the same state now plans the removal.
+    saveConfig({ ...loadConfig(), scheduler: { enabled: [] } });
+    resetConfigCache();
+    const previewEmpty = await akmTasksSyncPlan({ backend });
+    expect(previewEmpty.removes.map((op) => op.id)).toEqual(["orphan"]);
+    expect(previewEmpty.hasRemovals).toBe(true);
+  });
+
   test("reports unchanged with hasRemovals: false and zero writes on a no-op re-sync", async () => {
     const exec = spyingMemoryExec();
     const backend = backendFor(exec);
@@ -207,10 +235,9 @@ describe("akmTasksSyncPlan — dry-run", () => {
   // releases, mirroring tests/integration/tasks-sync.test.ts's "reconciles a
   // pre-`--bundle` native entry instead of refusing it as an unproven owner")
   // is now correctly recognized as akm-owned, so `akmTasksSyncPlan` computes
-  // a real preview for it instead of throwing "unproven owner" — and that
-  // preview is `Object.freeze`d by `renderSchedulerPlanPreview`. Routing it
+  // a real preview for it instead of throwing "unproven owner". Routing it
   // through `shapeForCommand`, exactly as `akm task sync --dry-run`'s CLI
-  // leaf does via `output()`, must not crash on the frozen result.
+  // leaf does via `output()`, must not throw.
   test("previews a pre-`--bundle` native entry through the CLI output path without crashing", async () => {
     const exec = spyingMemoryExec();
     const backend = backendFor(exec);
@@ -224,7 +251,6 @@ describe("akmTasksSyncPlan — dry-run", () => {
     const preview = await akmTasksSyncPlan({ backend }, undefined, {});
 
     expect(preview.updates.map((op) => op.id)).toEqual(["alpha"]);
-    expect(Object.isFrozen(preview)).toBe(true);
 
     let shaped: Record<string, unknown> | undefined;
     expect(() => {
@@ -261,16 +287,11 @@ describe("taskSyncDryRunExitCode — CLI exit-code contract", () => {
   });
 });
 
-// #907: `akm task validate`'s exit-code contract — `valid`/`converts` are
-// successful outcomes, `blocked`/`invalid`/`not-a-task` are diagnosed
-// defects the caller must act on.
+// #907: `akm task validate`'s exit-code contract — only current-schema
+// `valid` succeeds; migration-required and invalid inputs are non-zero.
 describe("taskValidateExitCode — CLI exit-code contract", () => {
   test("is undefined (leaves the default success exit code) for 'valid'", () => {
     expect(taskValidateExitCode({ outcome: "valid" })).toBeUndefined();
-  });
-
-  test("is undefined (leaves the default success exit code) for 'converts'", () => {
-    expect(taskValidateExitCode({ outcome: "converts" })).toBeUndefined();
   });
 
   test("is EXIT_CODES.GENERAL (non-zero) for 'blocked'", () => {
@@ -298,6 +319,7 @@ describe("akmTasksSync / akmTasksSyncPlan — degrade on a bad source (#867)", (
       `version: 2\nschedule: '*/15 * * * *'\ncommand: echo unconvertible\n`,
       "utf8",
     );
+    setSchedulerRefEnabled(`stash//tasks/${id}`, true);
   }
 
   test("akmTasksSyncPlan --dry-run reconciles the tasks that parse and reports the one that doesn't", async () => {

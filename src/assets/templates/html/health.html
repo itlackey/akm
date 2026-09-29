@@ -325,7 +325,7 @@
 
       <div class="chart-panel full-width">
         <h3>Per-Phase Wall Time Decomposition (stacked, min)</h3>
-        <div id="chartPhases" class="ec tall" role="img" aria-label="Stacked area chart decomposing wall time per run into consolidation, memory inference, graph extraction, and unattributed phases"></div>
+        <div id="chartPhases" class="ec tall" role="img" aria-label="Stacked area chart decomposing wall time per run into consolidation, memory inference, and unattributed phases"></div>
         <div class="empty-overlay" id="emptyPhases">No runs in the selected slice.</div>
       </div>
 
@@ -390,7 +390,7 @@
       <div class="table-wrap">
       <table>
         <thead>
-          <tr><th>Started</th><th>Task</th><th>Strategy</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Entities</th><th>Lint Fixed</th><th>Status</th></tr>
+          <tr><th>Started</th><th>Task</th><th>Strategy</th><th>Wall</th><th>Promoted</th><th>Merged</th><th>Contradicted</th><th>MI Written</th><th>Lint Fixed</th><th>Status</th></tr>
         </thead>
         <tbody id="lastRunsTable"></tbody>
       </table>
@@ -539,7 +539,7 @@ mkChart('chartWallTime', {
 // ── 2. Per-phase wall time decomposition (stacked area) ──────────────────────
 mkChart('chartPhases', {
   tooltip: baseTooltip,
-  legend: { ...baseLegend, data: ['Consolidation', 'Memory inference', 'Graph extraction', 'Unattributed'] },
+  legend: { ...baseLegend, data: ['Consolidation', 'Memory inference', 'Unattributed'] },
   grid: denseGrid,
   dataZoom: denseZoom,
   xAxis: { type: 'category', data: xLabels, ...baseAxis },
@@ -547,7 +547,6 @@ mkChart('chartPhases', {
   series: [
     { name: 'Consolidation',    type: 'line', stack: 'p', areaStyle: { color: 'rgba(88,166,255,0.55)' },  lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.consDurationMs)) },
     { name: 'Memory inference', type: 'line', stack: 'p', areaStyle: { color: 'rgba(63,185,80,0.55)' },   lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.miDurationMs)) },
-    { name: 'Graph extraction', type: 'line', stack: 'p', areaStyle: { color: 'rgba(188,140,255,0.55)' }, lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.geDurationMs)) },
     { name: 'Unattributed',     type: 'line', stack: 'p', areaStyle: { color: 'rgba(210,153,34,0.45)' },  lineStyle: { width: 0 }, showSymbol: false, data: rs.map(r => toMin(r.otherMs)) },
   ],
 });
@@ -695,7 +694,6 @@ tbody.innerHTML = '';
     <td>${r.merged || 0}</td>
     <td style="color:${(r.contradicted||0)>5?'var(--yellow)':'var(--text)'};">${r.contradicted || 0}</td>
     <td style="color:var(--green);">${r.miWritten || 0}</td>
-    <td>${r.geEntities || 0}</td>
     <td>${r.lintFixed || 0}</td>
     <td>${badge}</td>
   `;

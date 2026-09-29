@@ -6,8 +6,7 @@ import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../.
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
-import { lowerResolvedExecutionRequest } from "../../integrations/agent/execution-lowering";
-import { prepareInlineExecution } from "../../integrations/agent/inline-execution";
+import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
 type ImproveExecutionLayer = Pick<ImproveProfileConfig, "engine" | "model" | "timeoutMs" | "llm">;
@@ -41,6 +40,12 @@ export interface ResolveImproveExecutionOptions {
   processName: string;
   profile?: ImproveProfileConfig;
   process?: ImproveProcessConfig;
+  /**
+   * The process's standing `index.<pass>` settings, when the process has one:
+   * nearer than the strategy-wide layer, farther than the strategy's own
+   * process settings.
+   */
+  index?: ImproveExecutionLayer;
   /** Nearer one-shot selection, such as an explicit CLI engine/timeout. */
   current?: ImproveExecutionLayer;
 }
@@ -51,28 +56,31 @@ export interface ResolvedImproveExecution {
 }
 
 /**
- * Resolve improve-owned model work through the canonical execution cascade.
- * The legacy improve precedence is preserved exactly:
- * defaults.llmEngine -> strategy -> process -> current invocation.
+ * Resolve improve-owned model work through the canonical execution cascade:
+ * defaults.llmEngine -> strategy -> index.<pass> -> process -> current invocation.
  */
 export function resolveImproveExecution(options: ResolveImproveExecutionOptions): ResolvedImproveExecution | null {
   const defaultEngine = options.config.defaults?.llmEngine;
   const profileDefaults = cascadeDefaults(options.profile);
+  const indexDefaults = cascadeDefaults(options.index);
   const processDefaults = cascadeDefaults(options.process);
   const currentDefaults = cascadeDefaults(options.current);
-  const selectedEngine = currentDefaults.engine ?? processDefaults.engine ?? profileDefaults.engine ?? defaultEngine;
+  const selectedEngine =
+    currentDefaults.engine ?? processDefaults.engine ?? indexDefaults.engine ?? profileDefaults.engine ?? defaultEngine;
   if (selectedEngine === undefined || selectedEngine === null) return null;
 
-  const invocationDefaults = mergeDefaults(defaultEngine ? { engine: defaultEngine } : {}, profileDefaults);
+  const invocationDefaults = mergeDefaults(
+    mergeDefaults(defaultEngine ? { engine: defaultEngine } : {}, profileDefaults),
+    indexDefaults,
+  );
   const current = mergeDefaults(processDefaults, currentDefaults);
-  const prepared = prepareInlineExecution({
+  const prepared = resolveExecution({
     content: `improve ${options.processName} execution selection`,
     config: options.config,
-    invocationKind: "direct",
     invocationDefaults,
     current,
   });
-  const lowered = lowerResolvedExecutionRequest(prepared.request, prepared.config);
+  const lowered = buildExecution(prepared.request, prepared.runner);
   return Object.freeze({ runner: lowered.runner, notices: lowered.notices });
 }
 

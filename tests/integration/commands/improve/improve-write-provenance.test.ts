@@ -26,11 +26,12 @@ import { afterEach, beforeEach, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { writeEvalCase } from "../../../../src/commands/improve/eval-cases";
 import { akmImprove, resolveSyncPathSet } from "../../../../src/commands/improve/improve";
+import { RETIRE_GRACE_DAYS } from "../../../../src/commands/improve/memory/memory-improve";
 import { parseRefInput } from "../../../../src/core/asset/resolve-ref";
 import type { AkmConfig, SourceConfigEntry } from "../../../../src/core/config/config";
-import { getEvalCasesDir } from "../../../../src/core/paths";
+import { getStateDir } from "../../../../src/core/paths";
+import { recordWrittenPath } from "../../../../src/core/write-provenance";
 import { deleteAssetFromSource, type WriteTargetSource, writeAssetToSource } from "../../../../src/core/write-source";
 import { saveGitStash } from "../../../../src/sources/providers/git";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
@@ -62,7 +63,6 @@ const config = {
             "distill",
             "consolidate",
             "memoryInference",
-            "graphExtraction",
             "extract",
             "validation",
             "triage",
@@ -184,7 +184,6 @@ async function runImprove(
     runImprovePostLoopStageFn: (async () => ({
       allWarnings: [],
       memoryInferenceDurationMs: 0,
-      graphExtractionDurationMs: 0,
     })) as never,
   });
 }
@@ -268,29 +267,51 @@ test("auto-sync stages a deletion the run performed", async () => {
   expect(result.writtenPaths).toEqual(["memories/human.md"]);
 });
 
-test("an eval case captured by the run lands under $STATE, not the stash, is still reported as written, and is never auto-synced (itlackey/akm#890)", async () => {
+test("item 4: the purge sweep deletes an archived retirement past its grace period, and the deletion is committed by the auto-sync", async () => {
+  initRepo();
+  // A retirement archived well past RETIRE_GRACE_DAYS, seeded and committed
+  // BEFORE the run starts — the purge sweep runs at improve-run start, ahead
+  // of every other pass, so it must find and delete this on its own.
+  const archiveDir = path.join(stashDir, ".akm", "memory-cleanup", "archive", "2026-01-01-memories-stale");
+  fs.mkdirSync(path.join(archiveDir, "memories"), { recursive: true });
+  const retiredAt = new Date(Date.now() - (RETIRE_GRACE_DAYS + 1) * 86_400_000).toISOString();
+  fs.writeFileSync(
+    path.join(archiveDir, "cleanup.md"),
+    `---\nkind: memory-cleanup-archive\nref: memories/stale\nretiredAt: "${retiredAt}"\noriginalPath: memories/stale.md\n---\n\nArchived.\n`,
+    "utf8",
+  );
+  fs.writeFileSync(path.join(archiveDir, "memories", "stale.md"), "---\ndescription: old\n---\n\nOld body.\n", "utf8");
+  git("add", "-A");
+  git("commit", "-m", "seed an old archived retirement");
+
+  const result = await runImprove(async () => {});
+
+  expect(result.ok).toBe(true);
+  expect(fs.existsSync(path.join(archiveDir, "memories", "stale.md"))).toBe(false);
+  expect(fs.existsSync(path.join(archiveDir, "cleanup.md"))).toBe(true); // the tombstone survives
+  expect(result.sync?.committed).toBe(true);
+  expect(lastCommitPaths()).toEqual([".akm/memory-cleanup/archive/2026-01-01-memories-stale/memories/stale.md"]);
+  expect(statusPaths()).toEqual([]); // nothing left dirty
+});
+
+test("a journaled write under $STATE, outside the stash, is still reported as written and is never auto-synced (itlackey/akm#890)", async () => {
   initRepo();
   const before = headCount();
 
+  // An out-of-stash write: mkdir + writeFileSync under $STATE, then journal it.
+  const stateDir = path.join(getStateDir(), "improve");
+  const statePath = path.join(stateDir, "run-note.md");
   const result = await runImprove(() => {
-    writeEvalCase(stashDir, {
-      ref: "memories/human",
-      failureReason: "quality gate rejected",
-      assetType: "memory",
-      rejectedAt: 1,
-      source: "proposal_rejected",
-      slug: "human-rejected",
-    });
+    fs.mkdirSync(stateDir, { recursive: true });
+    fs.writeFileSync(statePath, "---\nnote: outside the stash\n---\n\nNote.\n", "utf8");
+    recordWrittenPath(statePath);
   });
 
-  // Written under $STATE/improve/eval-cases/<stash>/, never under $STASH/.akm/.
-  const evalCasePath = path.join(getEvalCasesDir(stashDir), "human-rejected.md");
-  expect(fs.existsSync(evalCasePath)).toBe(true);
-  expect(fs.existsSync(path.join(stashDir, ".akm", "eval-cases"))).toBe(false);
-  // Still journaled and reported on the result — writeEvalCase records it —
-  // but as an absolute path, since describeRunWrittenPaths only reports a
-  // stash-relative path for a write that landed INSIDE the stash.
-  expect(result.writtenPaths).toEqual([evalCasePath]);
+  expect(fs.existsSync(statePath)).toBe(true);
+  // Still journaled and reported on the result — but as an absolute path,
+  // since describeRunWrittenPaths only reports a stash-relative path for a
+  // write that landed INSIDE the stash.
+  expect(result.writtenPaths).toEqual([statePath]);
   // It lives outside the stash's git repo entirely, so auto-sync's own
   // containment check drops it and there is nothing to commit.
   expect(result.sync?.committed).toBe(false);

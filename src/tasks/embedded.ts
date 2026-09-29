@@ -28,6 +28,7 @@ import { parseTaskSource } from "./source/parse-task-source";
 
 /** Directory holding the bundled task template categories. */
 const TASKS_ASSETS_DIR = path.join(getDirname(import.meta.url), "../assets/tasks");
+const DEFAULT_DISABLED_TASKS = new Set(["improve/akm-improve-catchup"]);
 
 export interface EmbeddedTask {
   /**
@@ -93,10 +94,8 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
       } catch {
         continue;
       }
-      // Shipped templates are task source v4 (spec docs/plans/specs/p4-deletions-closeout.md
-      // §3.2.6, row B-24): a template's `enabled` is per schedule-binding, so
-      // the single-cron display shape here reads the FIRST schedule entry —
-      // every shipped template authors exactly one.
+      // Setup defaults are trusted application metadata, not bundle-authored
+      // task data. Task source can describe a schedule but cannot activate it.
       const task = parsed.v4;
       const [firstSchedule] = task.schedule;
       if (task.target.kind !== "run" || !firstSchedule) continue;
@@ -106,7 +105,7 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
         command: task.target.run,
         schedule: firstSchedule.cron,
         description: task.description ?? "",
-        enabled: firstSchedule.enabled,
+        enabled: !DEFAULT_DISABLED_TASKS.has(`${category}/${id}`),
         yaml,
       });
     }

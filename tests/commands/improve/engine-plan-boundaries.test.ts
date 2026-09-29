@@ -11,7 +11,6 @@ import { resolveImprovePlan } from "../../../src/commands/improve/improve-strate
 import { runImproveLoopStage, runImproveMaintenancePasses } from "../../../src/commands/improve/loop-stages";
 import { runImprovePreparationStage, runValidationAndRepairPass } from "../../../src/commands/improve/preparation";
 import { akmReflect } from "../../../src/commands/improve/reflect";
-import { createRunContext } from "../../../src/commands/improve/run-context";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { makeStashDir, withMockedFetch } from "../../_helpers/sandbox";
 
@@ -27,7 +26,6 @@ function disabledProcesses(overrides: Record<string, unknown> = {}): ImproveProf
     distill: { enabled: false },
     consolidate: { enabled: false },
     memoryInference: { enabled: false },
-    graphExtraction: { enabled: false },
     extract: { enabled: false },
     validation: { enabled: false },
     triage: { enabled: false },
@@ -139,7 +137,7 @@ describe("improve engine-plan boundaries", () => {
     }
   });
 
-  test("nested contradiction remains a reported plan capability without invoking its writer", async () => {
+  test("a legacy nested contradictionDetection key is tolerated and invokes no writer", async () => {
     const stash = makeStashDir();
     try {
       const config: AkmConfig = {
@@ -163,15 +161,7 @@ describe("improve engine-plan boundaries", () => {
         },
       };
       const plan = resolveImprovePlan("contradictions", config);
-      const contradictionDetectionFn = mock(async () => ({
-        familiesExamined: 0,
-        pairsChecked: 0,
-        edgesWritten: 0,
-        warnings: [],
-      }));
-
       expect(plan.processes.consolidate.enabled).toBe(true);
-      expect(plan.strategy.config.processes?.consolidate?.contradictionDetection?.enabled).toBe(true);
       expect(configuredDirectAutonomyLanes()).toEqual(["memoryCleanup"]);
 
       await expect(
@@ -185,14 +175,11 @@ describe("improve engine-plan boundaries", () => {
             memorySummary: { eligible: 1, derived: 1 },
             strategyFilteredRefs: [],
           })) as never,
-          contradictionDetectionFn,
           runImprovePreparationStageFn: (async () => {
             throw new Error("stop after contradiction boundary");
           }) as never,
         }),
       ).rejects.toThrow("stop after contradiction boundary");
-
-      expect(contradictionDetectionFn).not.toHaveBeenCalled();
     } finally {
       stash.cleanup();
     }
@@ -238,14 +225,7 @@ describe("improve engine-plan boundaries", () => {
       let distillOptions: Record<string, unknown> | undefined;
       const dispatchedModels: string[] = [];
       await runImproveLoopStage({
-        ctx: createRunContext({
-          stashDir: stash.dir,
-          config,
-          eventsCtx: {},
-          proposalsCtx: {},
-          sourceRun: "test-run",
-          dryRun: false,
-        }),
+        eventsCtx: {},
         primaryStashDir: stash.dir,
         scope: { mode: "ref", value: "memories/source" },
         options: { config, stashDir: stash.dir },
@@ -292,8 +272,6 @@ describe("improve engine-plan boundaries", () => {
         distillCooledRefs: new Set(),
         distillOnlyRefs: [],
         recentErrors: {},
-        rejectedProposalsByRef: new Map(),
-        utilityMap: new Map(),
         startMs: Date.now(),
         budgetMs: 60_000,
         improveProfile: plan.strategy.config,
@@ -314,74 +292,6 @@ describe("improve engine-plan boundaries", () => {
       );
       expect(distillOptions?.llmConfig).toBeUndefined();
       expect(distillOptions?.config).toBe(config);
-    } finally {
-      stash.cleanup();
-    }
-  });
-
-  test("improve graph extraction passes process-owned includeTypes, batchSize, and topN", async () => {
-    const stash = makeStashDir();
-    try {
-      const config: AkmConfig = {
-        configVersion: "0.9.0",
-        semanticSearchMode: "off",
-        bundles: { stash: { path: stash.dir, writable: true } },
-        defaultBundle: "stash",
-        engines: { graph: llm("graph-model") },
-        index: {
-          graph: { graphExtractionIncludeTypes: ["knowledge"], graphExtractionBatchSize: 99 },
-        },
-        improve: {
-          strategies: {
-            graph: {
-              processes: disabledProcesses({
-                graphExtraction: {
-                  enabled: true,
-                  engine: "graph",
-                  fullScan: true,
-                  includeTypes: ["memory"],
-                  batchSize: 2,
-                  topN: 7,
-                },
-              }),
-            },
-          },
-        },
-      };
-      const plan = resolveImprovePlan("graph", config, { repairValidationFailures: false });
-      let seenOptions: Record<string, unknown> | undefined;
-      await runImproveMaintenancePasses({
-        options: {
-          config,
-          stashDir: stash.dir,
-          graphExtractionFn: async (ctx) => {
-            seenOptions = ctx.options as unknown as Record<string, unknown>;
-            return {
-              considered: 0,
-              extracted: 0,
-              totalEntities: 0,
-              totalRelations: 0,
-              written: false,
-              quality: {
-                consideredFiles: 0,
-                extractedFiles: 0,
-                entityCount: 0,
-                relationCount: 0,
-                extractionCoverage: 0,
-                density: 0,
-              },
-            };
-          },
-        },
-        primaryStashDir: stash.dir,
-        actionableRefs: [],
-        memoryRefsForInference: new Set(),
-        allWarnings: [],
-        reindexFn: async () => undefined,
-        improveProfile: plan.strategy.config,
-        resolvedPlan: plan,
-      });
-      expect(seenOptions).toMatchObject({ includeTypes: ["memory"], batchSize: 2, topN: 7 });
     } finally {
       stash.cleanup();
     }
@@ -408,13 +318,12 @@ describe("improve engine-plan boundaries", () => {
         actionableRefs: [],
         memoryRefsForInference: new Set(),
         allWarnings: [],
-        reindexFn: async () => undefined,
         budgetSignal: controller.signal,
         improveProfile: plan.strategy.config,
         resolvedPlan: plan,
       });
 
-      expect(result).toEqual({ memoryInferenceDurationMs: 0, graphExtractionDurationMs: 0 });
+      expect(result).toEqual({ memoryInferenceDurationMs: 0 });
     } finally {
       stash.cleanup();
     }

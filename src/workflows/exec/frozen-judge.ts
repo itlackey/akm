@@ -3,46 +3,16 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The gate judge built from the workflow's frozen current execution target.
- *
- * Two contracts this module owns, both of which the rest of the engine already
- * enforces for ordinary units and neither of which the judge may opt out of:
- *
- *  1. **Redaction.** A judge response IS journaled — `journalGateEvaluationFinish`
- *     (exec/step-work.ts) writes the parsed verdict into the gate row's
- *     `result_json`, and a judge failure's message becomes the blocked step's
- *     notes. So the judge outcome goes through the SAME scrub every unit outcome
- *     goes through: {@link collectWorkflowDispatchSensitiveValues} +
- *     {@link withDispatchRedaction} (exec/dispatch-redaction.ts). Nothing about
- *     a judge call reaches durable state before that scrub. Agent and direct-LLM
- *     judges share one prepared/lowered dispatch request; the manual completion
- *     path uses the same config-free dispatcher without opening an executor
- *     import cycle.
- *
- *  2. **Identity.** The dispatch request carries the REAL run/step and the gate's
- *     real node/unit ids — the same ids `journalGateEvaluationStart/Finish` write
- *     (`<stepId>.gate` / `<stepId>.gate:l<loop>`) — so per-dispatch telemetry and
- *     harness-side correlation describe the same thing the gate row describes.
- *     The identity is threaded in from the caller that writes the row
- *     ({@link SummaryJudge}'s `identity` argument); it is never synthesized here.
- *
- * A judge dispatch carries NO `env` bindings: the normalized gate target has
- * no environment key, so there is nothing authored to thread — and a step's
- * unit environment is scoped to the WORK,
- * not to the verifier. Redaction is unaffected: the sensitive-value set below
- * still covers the judge engine's credential and unsafe passthrough values.
- * Lowering notices are live execution metadata: units expose a typed result,
- * while judges retain their public string contract and emit only the common
- * lowerer's prompt/body-free notice projection through `warn()`. Current
- * result/evidence journal writers intentionally exclude these diagnostics;
- * this boundary makes no claim about future persistence ownership.
- *
- * @module workflows/exec/frozen-judge
+ * The gate judge built from the step's frozen judge target. Its outcome is
+ * journaled (the gate row, or a blocked step's notes), so it goes through the
+ * same dispatch redaction as every unit; its dispatch carries the real
+ * run/step and gate unit ids the gate row records. A judge carries no `env:`
+ * bindings (a step's environment belongs to the work, not the verifier).
  */
 
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { FrozenWorkflowCommandTarget } from "../ir/schema-v4";
+import type { FrozenWorkflowCommandTarget } from "../plan";
 import type { JudgeCallIdentity, SummaryJudge } from "../validate-summary";
 import { collectWorkflowDispatchSensitiveValues, withDispatchRedaction } from "./dispatch-redaction";
 import {
@@ -52,12 +22,7 @@ import {
   type UnitDispatchRequest,
 } from "./unit-dispatch";
 
-/**
- * The run/step a judge belongs to, known when the judge is BUILT. Callers that
- * also journal a gate row (the engine's completion path) additionally pass the
- * exact row identity per call; callers that journal no row (the manual
- * `akm workflow step complete` path) fall back to this.
- */
+/** The run/step a judge belongs to; a caller that journals a gate row also passes its exact identity per call. */
 export interface JudgeOwner {
   runId: string;
   stepId: string;
@@ -68,13 +33,7 @@ export function gateNodeId(stepId: string): string {
   return `${stepId}.gate`;
 }
 
-/**
- * Identity for one judge dispatch: the journaling caller's exact row identity
- * when it supplied one, else the owning run/step with the gate's node id as the
- * unit id. Either way the request names the REAL run — never a synthetic
- * `"gate"` placeholder, which made every judge dispatch indistinguishable from
- * every other one.
- */
+/** Identity for one judge dispatch: the caller's row identity, else the run/step with the gate node id. */
 function dispatchIdentity(owner: JudgeOwner, identity: JudgeCallIdentity | undefined): JudgeCallIdentity {
   return identity ?? { ...owner, unitId: gateNodeId(owner.stepId) };
 }
@@ -91,23 +50,7 @@ function warnLoweringNotices(...groups: readonly (readonly Readonly<LoweringNoti
   }
 }
 
-/**
- * Build a gate judge from the normalized frozen target without consulting live
- * config.
- *
- * `eventSource` (P1b spec §5.2 point 2, gap closed — code review): the task
- * runner's resolved provenance event source, threaded through exactly like
- * `executeStepSubgraph`'s units so a workflow-task run's judge dispatch is not
- * the one dispatch left silently unstamped. Spread onto the built
- * {@link UnitDispatchRequest} the same way every other optional field here is
- * — `undefined` for the manual `akm workflow step complete` judge
- * (`runtime/runs.ts`, which passes no 5th argument) and for `akm workflow run`
- * (no task context), so both stay byte-identical. When present, it flows
- * through the same `forwardedDispatchEventSource` precedence gate every other
- * "command"-kind dispatch uses (`unit-dispatch.ts`): the module doc above
- * already establishes a judge request never carries an authored `env:`
- * binding, so the gate always forwards it here.
- */
+/** Build a gate judge from the frozen target without consulting live config; `eventSource` stamps it like a unit. */
 export function frozenSummaryJudge(
   target: FrozenWorkflowCommandTarget | null | undefined,
   signal: AbortSignal | undefined,

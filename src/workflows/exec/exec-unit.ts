@@ -3,21 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The `exec` unit runner — the ONE place a frozen workflow spawns a shell
- * command as a unit: argv-only (never a shell string), non-blocking,
- * detached with a SIGTERM→SIGKILL ladder against the whole process group,
- * cwd-contained by a resolved-path recheck, resource-bounded (timeout,
- * output bytes, context size), and allowlisted-environment (see
- * {@link childEnv}). `env` values reaching this module are already resolved
- * from `env:` bindings by NAME — the caller scrubs the outcome with
- * `redactUnitOutcome` before anything is journaled. A LEAF module by
- * layering (Node built-ins, `core/spawn-env`, `core/subprocess`, `core/warn`,
- * the import-free `workflows/resource-limits` only).
- *
- * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md
- * for the full per-invariant design history.
- *
- * @module workflows/exec/exec-unit
+ * The `exec` unit runner — the one place a frozen workflow spawns a command:
+ * argv-only, detached with a SIGTERM→SIGKILL ladder against the process group,
+ * cwd-contained by a resolved-path recheck, bounded (timeout, output bytes,
+ * context size), with an allowlisted environment ({@link childEnv}). The
+ * caller redacts the outcome before anything is journaled.
+ * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md.
  */
 
 import fs from "node:fs";
@@ -32,7 +23,7 @@ import {
   streamCaptureFailure,
 } from "../../core/subprocess";
 import { warn } from "../../core/warn";
-import type { IrExecSpec } from "../ir/schema";
+import type { WorkflowExecSpec } from "../plan";
 import {
   type ExecContextLimits,
   execContextLimits,
@@ -44,31 +35,17 @@ import {
 import type { UnitDispatchResult } from "./unit-dispatch";
 
 /**
- * Max characters of a failed command's stderr retained in the unit's `error`
- * diagnostic.
- *
- * Deliberately BELOW {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP}: the composed
- * diagnostic reads `<what happened>. stderr (last N chars): <tail>`, and the
- * journal clips that COMPOSED string head-first. Reserving 500 characters for
- * the prefix keeps the whole stderr tail — the part that actually says why the
- * command failed — inside the journaled and displayed diagnostic, instead of
- * losing its final few hundred characters to the outer clip.
+ * Max characters of a failed command's stderr tail kept in its diagnostic —
+ * below {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP} so the journal's head-first clip
+ * of the composed message never cuts the tail.
  */
 const EXEC_STDERR_DIAGNOSTIC_CLIP = WORKFLOW_UNIT_DIAGNOSTIC_CLIP - 500;
 
 /**
- * The DEFAULT environment allowlist for an exec unit's child — the single
- * definition of the EXEC list; `exec.passEnv` extends it per unit. Extends
- * {@link COMMON_SPAWN_ENV_PASSTHROUGH} (the same baseline agent-harness
- * children use) plus POSIX/Windows names load-bearing for ordinary commands
- * (PATH, HOME, USER/LOGNAME, SHELL, locale, TERM, TZ, TMPDIR, the
- * {@link WIN32_SPAWN_ENV_FLOOR}, Windows toolchain roots) and
- * `AKM_EVENT_SOURCE` (provenance, DRIFT-6). Deliberately ABSENT and reachable
- * only through `exec.passEnv` / `env:`: credentials, cloud/CI vars, and the
- * proxy family.
- *
- * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md
- * for the per-entry rationale and why the default is an allowlist at all.
+ * The default environment allowlist for an exec unit's child (`exec.passEnv`
+ * extends it): the agent-harness baseline plus names ordinary commands need
+ * and `AKM_EVENT_SOURCE`. Credentials, cloud/CI vars, and proxies reach a
+ * child only through `pass_env` or `env:`.
  */
 export const EXEC_DEFAULT_ENV_PASSTHROUGH: readonly string[] = [
   // PATH, HOME, USER, LANG, LC_ALL, TERM, TMPDIR, AKM_EVENT_SOURCE
@@ -92,7 +69,7 @@ export const EXEC_DEFAULT_ENV_PASSTHROUGH: readonly string[] = [
 export interface RunExecUnitInput {
   /** Journal id of the attempt, for diagnostics. */
   unitId: string;
-  exec: IrExecSpec;
+  exec: WorkflowExecSpec;
   /**
    * Base working directory the unit's `cwd` resolves inside: the unit's fresh
    * detached worktree under `isolation: worktree`, otherwise the engine's work
@@ -122,33 +99,16 @@ export interface RunExecUnitInput {
   spawnFn?: SpawnFn;
   /** Test seam: the platform whose spawn ceilings the context check uses. Defaults to the host's. */
   platform?: string;
-  /**
-   * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 2): the
-   * task runner's resolved provenance event source. Typed as a bare `string`
-   * (not `UsageEventSource`) to keep this module's LEAF import discipline —
-   * see the module doc's Layering note. Applied to `childEnv`'s allowlisted
-   * BASE only when the name is absent there, so an ambient AKM_EVENT_SOURCE
-   * and an authored `env:` binding both still win (D5 clause d).
-   */
+  /** The task runner's provenance event source; ambient and authored values still win. */
   eventSource?: string;
 }
 
 /**
- * Run one exec unit and map its process outcome onto the dispatch vocabulary:
- * non-zero exit → `non_zero_exit`, wall-clock expiry → `timeout`, cancellation
- * → `aborted`, a child that never started → `spawn_failed` (all pre-existing
- * `AgentFailureReason` members, so `retry.on` keeps working). The
- * out-of-taxonomy `exec_cwd_escape`, `exec_output_limit`,
- * `exec_context_too_large` and `exec_capture_incomplete` are deliberate: each
- * is tampering, a runaway, an authoring bug, or work that ALREADY RAN — never
- * a transient — so no `retry.on` value can ever re-dispatch one. An
- * INCOMPLETE stdout capture is always a failure, never a partial artifact;
- * output OVERFLOW past {@link WORKFLOW_MAX_EXEC_OUTPUT_BYTES} does not fail a
- * command that otherwise passed unless the unit declared an `output:` schema
- * (a truncated JSON prefix cannot parse).
- *
- * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md
- * for the full capture/overflow reasoning.
+ * Run one exec unit and map its outcome onto the dispatch vocabulary
+ * (`non_zero_exit`, `timeout`, `aborted`, `spawn_failed` — retryable). The
+ * `exec_*` reasons (cwd escape, output limit, context too large, incomplete
+ * capture) are deliberately outside `retry.on`. Output overflow fails only a
+ * unit that declared an `output:` schema.
  */
 export async function runExecUnit(input: RunExecUnitInput): Promise<UnitDispatchResult> {
   const cwd = await resolveExecCwd(input);
@@ -161,11 +121,7 @@ export async function runExecUnit(input: RunExecUnitInput): Promise<UnitDispatch
     cwd: cwd.path,
     env: childEnv(input.exec, input.env, input.context, input.eventSource),
     timeoutMs: input.timeoutMs,
-    // stdout IS this unit's artifact, so RETENTION is BOUNDED: an unbounded
-    // capture is memory the akm process spends on a command's behalf with no
-    // ceiling at all until it exits or the (default 10-minute) budget expires.
-    // The cap discards past the bound rather than killing — the command's own
-    // outcome is not akm's memory problem to solve.
+    // stdout is the artifact; retention is bounded (discarding past the cap, never killing).
     maxOutputBytes: WORKFLOW_MAX_EXEC_OUTPUT_BYTES,
     ...(input.signal ? { signal: input.signal } : {}),
     ...(input.spawnFn ? { spawnFn: input.spawnFn } : {}),
@@ -238,22 +194,11 @@ export async function runExecUnit(input: RunExecUnitInput): Promise<UnitDispatch
   if (result.stdoutRead.overflowed && input.hasOutputSchema) {
     return outputLimitFailure(input, display, result);
   }
-  // The promoted artifact is STDOUT. Trailing newlines are stripped, exactly
-  // like shell command substitution `$(…)`, so a one-line command's artifact is
-  // the value an author expects rather than the value plus a `\n`. stderr is a
-  // diagnostic channel only and never contributes to the artifact. When stdout
-  // overflowed, `stdout` already carries the truncation marker (which is
-  // deliberately the LAST thing in the artifact, so it survives the strip).
+  // The artifact is stdout with trailing newlines stripped, like `$(…)`; stderr is diagnostic only.
   return { ok: true, text: stripTrailingNewlines(stdout) };
 }
 
-/**
- * A drain report with nothing wrong in it, passed as the OTHER pipe so
- * {@link streamCaptureFailure} classifies exactly one of them.
- *
- * The classifier stays shared with the agent path — what a failed drain means
- * must not drift — while each caller decides which pipes are fatal for IT.
- */
+/** A clean drain report, passed as the other pipe so {@link streamCaptureFailure} classifies one. */
 const DRAINED_CLEAN: StreamReadResult = {
   text: "",
   timedOut: false,
@@ -262,14 +207,7 @@ const DRAINED_CLEAN: StreamReadResult = {
   retainedBytes: 0,
 };
 
-/**
- * Report a stderr drain that did not finish on an otherwise successful unit.
- *
- * Warn-only by construction: the artifact is stdout, which was captured whole,
- * so there is nothing wrong with the unit's RESULT — only with how much of its
- * log tail akm holds. A dispatch result has no channel for a non-fatal note, so
- * the operator surface is the warn stream.
- */
+/** Warn about an unfinished stderr drain on an otherwise successful unit (its stdout artifact is whole). */
 function reportStderrCaptureFailure(input: RunExecUnitInput, display: string, result: ManagedSubprocessResult): void {
   const stderrFailure = streamCaptureFailure(DRAINED_CLEAN, result.stderrRead);
   if (!stderrFailure) return;
@@ -289,14 +227,7 @@ function truncationNote(read: StreamReadResult): string {
   );
 }
 
-/**
- * The captured stdout, with an unmistakable truncation block appended when the
- * retention cap discarded part of it.
- *
- * Truncated data must never be mistakable for complete data. The block names
- * both byte counts, so a reader can see exactly how much is missing rather
- * than inferring it from a suspiciously round length.
- */
+/** The captured stdout, with a truncation block naming both byte counts when the cap discarded some. */
 function markTruncatedStdout(result: ManagedSubprocessResult): string {
   const read = result.stdoutRead;
   if (!read.overflowed) return result.stdout;
@@ -310,17 +241,7 @@ function markTruncatedStdout(result: ManagedSubprocessResult): string {
   );
 }
 
-/**
- * The output-cap failure for a unit that declared an `output:` schema —
- * deliberately UNMISTAKABLE.
- *
- * `text` is emptied rather than carrying the partial capture: for a failed unit
- * `text` is only a diagnostic (the durable evidence graph keeps a failure's
- * `failureReason` alone), and handing back several megabytes of a runaway
- * command's output as "the text" would just move the memory problem one layer
- * up. The byte counts go in the message instead, so the operator can see how far
- * past the cap the command ran.
- */
+/** The output-cap failure for a unit with an `output:` schema: no partial text, byte counts in the message. */
 function outputLimitFailure(
   input: RunExecUnitInput,
   display: string,
@@ -340,31 +261,9 @@ function outputLimitFailure(
 }
 
 /**
- * Refuse to spawn when the engine-authored `AKM_*` context would not fit in the
- * child's environment ON THIS PLATFORM.
- *
- * A workflow artifact has no bound comparable to an OS environment entry, so a
- * perfectly legitimate declared input can serialize into an `AKM_INPUTS` far
- * past what `execve` accepts. Left unchecked that surfaces as a bare `E2BIG`
- * from the spawn syscall — reported as `spawn_failed` with a message about
- * "argument list too long" that names neither the variable nor the artifact
- * that produced it. Checking here converts it into a located, actionable
- * failure BEFORE process creation is attempted.
- *
- * ## The ceiling is the CURRENT platform's, never the smallest one
- *
- * That translation is this check's ONLY job, which fixes its bound exactly: the
- * limits come from {@link execContextLimits} for the platform the run is on. A
- * guard that applied Windows' 32 767-character ceiling on Linux would fail
- * spawns the kernel would happily have accepted — inventing a failure instead of
- * explaining an inevitable one, which is a tripwire and not a guard. Workflows
- * that must also run on Windows should stay under the smaller bound; that is
- * documented guidance (`docs/reference/workflow-schema.md`), not something a
- * Linux host enforces.
- *
- * Only the engine-authored context is measured. The unit's `env:` bindings are
- * authored values a human wrote and sized; this is the surface where the SIZE
- * is data-dependent and therefore surprising.
+ * Name the `AKM_*` variable that would not fit in the child's environment on
+ * this platform ({@link execContextLimits}), instead of a bare E2BIG from the
+ * spawn. Only the engine-authored context is measured.
  */
 function checkExecContextSize(input: RunExecUnitInput): UnitDispatchResult | undefined {
   const limits = execContextLimits(input.platform ?? process.platform);
@@ -416,12 +315,8 @@ type ResolvedCwd = { ok: true; path: string } | { ok: false; failureReason: stri
 
 /**
  * Resolve `exec.cwd` inside `baseDir` and prove containment against the
- * RESOLVED base (symlinks included). The syntactic checks the parser and the
- * decoder already ran are necessary but not sufficient: `reports` can be a
- * symlink to `/etc`, and only a realpath comparison catches that.
- *
- * Async on purpose: this runs once per unit — up to 10 000 times for one map
- * step — on the dispatch path that must never block (see the module note).
+ * resolved base (a symlinked `reports` could point at `/etc`). Async: it runs
+ * per unit on the dispatch path.
  */
 async function resolveExecCwd(input: RunExecUnitInput): Promise<ResolvedCwd> {
   const base = path.resolve(input.baseDir);
@@ -454,27 +349,18 @@ async function isExistingDirectory(candidate: string): Promise<boolean> {
 }
 
 /**
- * The child's environment, in three layers with fixed precedence: (1) the
- * BASE — {@link EXEC_DEFAULT_ENV_PASSTHROUGH} plus the unit's `exec.passEnv`
- * names; (2) the unit's resolved `env:` bindings; (3) the engine-authored
- * `AKM_*` context, LAST so a workflow-supplied binding can never shadow the
- * ids/item the engine is telling the command the truth about.
- *
- * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md
- * for why the default is an allowlist rather than full inheritance.
+ * The child's environment, in precedence order: the allowlist plus
+ * `exec.passEnv`; the resolved `env:` bindings; then the engine's `AKM_*`
+ * context, last so a binding cannot shadow it.
  */
 function childEnv(
-  exec: IrExecSpec,
+  exec: WorkflowExecSpec,
   bindings: Record<string, string> | undefined,
   context: Record<string, string> | undefined,
   eventSource: string | undefined,
 ): Record<string, string> {
   const env = collectAllowlistedEnv(execAllowlist(exec));
-  // F-1 (spec §5.2 point 2): applied to the allowlisted BASE only when the
-  // ambient passthrough above left the name absent — an ambient
-  // AKM_EVENT_SOURCE already collected into `env` still wins, and this runs
-  // strictly BEFORE the bindings/context overlays below, so an authored
-  // `env:` binding (or the engine-authored context) still wins too.
+  // Only when absent from the base, and before the overlays, so ambient and authored values win.
   if (eventSource !== undefined && env.AKM_EVENT_SOURCE === undefined) {
     env.AKM_EVENT_SOURCE = eventSource;
   }
@@ -484,7 +370,7 @@ function childEnv(
 }
 
 /** The unit's effective allowlist: the shared default plus its own `passEnv` names. */
-function execAllowlist(exec: IrExecSpec): string[] {
+function execAllowlist(exec: WorkflowExecSpec): string[] {
   return exec.passEnv ? [...EXEC_DEFAULT_ENV_PASSTHROUGH, ...exec.passEnv] : [...EXEC_DEFAULT_ENV_PASSTHROUGH];
 }
 

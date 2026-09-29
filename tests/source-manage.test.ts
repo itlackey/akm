@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { addStash, removeStash } from "../src/commands/sources/source-manage";
-import { getSources, loadConfig, saveConfig } from "../src/core/config/config";
+import { getSources, loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
+import { getConfigPath } from "../src/core/paths";
+import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
 import { type Cleanup, sandboxStashDir, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -65,6 +67,66 @@ describe("addStash", () => {
     expect(result.entry?.name).toBe("my-stash");
   });
 
+  test("an illegal or taken --name fails instead of being replaced", () => {
+    const taken = createTmpDir("akm-fs-name-taken-");
+    addStash({ target: taken, name: "taken" });
+
+    expect(() => addStash({ target: "https://a.example.com", providerType: "website", name: "my.bundle" })).toThrow(
+      "is not a legal bundle name",
+    );
+    expect(() => addStash({ target: "lodash", providerType: "npm", name: "taken" })).toThrow(
+      'Bundle name "taken" already exists',
+    );
+    expect(() => addStash({ target: createTmpDir("akm-fs-name-bad-"), name: "a/b" })).toThrow(
+      "is not a legal bundle name",
+    );
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["taken"]);
+  });
+
+  test("re-adding a source under another --name points at bundle rename", () => {
+    addStash({ target: "https://docs.example.com", providerType: "website", name: "docs" });
+
+    expect(() => addStash({ target: "https://docs.example.com", providerType: "website", name: "other" })).toThrow(
+      "akm bundle rename docs other",
+    );
+    const again = addStash({ target: "https://docs.example.com", providerType: "website", name: "docs" });
+    expect(again.added).toBe(false);
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["docs"]);
+  });
+
+  test("inserts a new bundle before or after an existing bundle (#982)", () => {
+    const first = createTmpDir("akm-fs-order-first-");
+    const second = createTmpDir("akm-fs-order-second-");
+    const middle = createTmpDir("akm-fs-order-middle-");
+    addStash({ target: first, name: "first" });
+    addStash({ target: second, name: "second" });
+    addStash({ target: middle, name: "middle", before: "second" });
+    addStash({ target: "https://last.example.com", providerType: "website", name: "last", after: "second" });
+
+    expect(Object.keys(loadConfig().bundles ?? {})).toEqual(["first", "middle", "second", "last"]);
+  });
+
+  test("rejects ambiguous or missing bundle position targets (#982)", () => {
+    const source = createTmpDir("akm-fs-order-invalid-");
+    expect(() => addStash({ target: source, name: "source", before: "a", after: "b" })).toThrow(
+      "Only one of --before or --after",
+    );
+    expect(() => addStash({ target: source, name: "source", before: "missing" })).toThrow(
+      'Bundle position target "missing" is not configured',
+    );
+  });
+
+  test("bundle add persists only authored settings instead of schema defaults (#972)", () => {
+    fs.writeFileSync(getConfigPath(), `${JSON.stringify({ configVersion: "0.9.0" }, null, 2)}\n`, "utf8");
+    resetConfigCache();
+
+    addStash({ target: "lodash", providerType: "npm", name: "lodash" });
+
+    const raw = JSON.parse(fs.readFileSync(getConfigPath(), "utf8")) as Record<string, unknown>;
+    expect(Object.keys(raw).sort()).toEqual(["bundles", "configVersion"]);
+    expect(raw.bundles).toEqual({ lodash: { npm: "lodash" } });
+  });
+
   test("rejects duplicate filesystem paths", () => {
     const stashPath = createTmpDir("akm-fs-dup-");
     addStash({ target: stashPath });
@@ -119,6 +181,38 @@ describe("addStash", () => {
     expect(result.added).toBe(true);
     expect(result.entry?.name).toBe("my-source");
     expect(result.entry?.options).toEqual({ searchType: "text" });
+  });
+
+  test("stores only a symbolic credential reference for a git source (#977)", () => {
+    const result = addStash({
+      target: "https://git.example.com/private/repo.git",
+      providerType: "git",
+      name: "private-repo",
+      credential: "$GIT_READ_TOKEN",
+    });
+
+    expect(result.added).toBe(true);
+    expect(loadConfig().bundles?.["private-repo"]?.credential).toBe("$GIT_READ_TOKEN");
+  });
+
+  test("rejects literal and non-git credentials before writing config (#977)", () => {
+    expect(() =>
+      addStash({
+        target: "https://git.example.com/private/repo.git",
+        providerType: "git",
+        name: "literal-token",
+        credential: "literal-secret-token",
+      }),
+    ).toThrow(/credential must be a \$VAR/);
+    expect(() =>
+      addStash({
+        target: "https://docs.example.com",
+        providerType: "website",
+        name: "website-token",
+        credential: "$GIT_READ_TOKEN",
+      }),
+    ).toThrow(/credential is only supported on git/);
+    expect(loadConfig().bundles).toBeUndefined();
   });
 
   test("throws when URL source has no provider type", () => {
@@ -288,6 +382,16 @@ describe("removeStash", () => {
     expect(result.entry?.name).toBe("my-source");
   });
 
+  test("revokes scheduler grants owned by the removed bundle", () => {
+    const fsPath = createTmpDir("akm-rm-scheduled-");
+    addStash({ target: fsPath, name: "scheduled" });
+    setSchedulerRefEnabled("scheduled//tasks/nightly", true);
+
+    removeStash("scheduled");
+
+    expect(schedulerEnabledRefs(loadConfig()) ?? []).toEqual([]);
+  });
+
   test("returns removed: false for non-existent source", () => {
     const result = removeStash("/nonexistent/path");
     expect(result.removed).toBe(false);
@@ -321,17 +425,6 @@ describe("removeStash", () => {
     const config = loadConfig();
     expect(getSources(config)).toHaveLength(1);
     expect(getSources(config)[0]!.name).toBe("other-source");
-  });
-
-  test("prefers path match over name match", () => {
-    const fsPath = createTmpDir("akm-rm-prio-");
-    addStash({ target: fsPath, name: "path-source" });
-    addStash({ target: "https://other.example.com", providerType: "website", name: fsPath });
-
-    // Should match by path (first entry), not by name (second entry)
-    const result = removeStash(fsPath);
-    expect(result.removed).toBe(true);
-    expect(result.entry?.type).toBe("filesystem");
   });
 
   test("removes http:// URL source", () => {

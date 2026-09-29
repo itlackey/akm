@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
-import type { WorkflowPlanGraphV4 as WorkflowPlanGraph } from "../../../src/workflows/ir/schema-v4";
+import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 
 export const RUNNER = path.join(__dirname, "workflow-chaos-runner.ts");
 
@@ -128,21 +128,6 @@ export function allDispatchPids(markerDir: string): Set<number> {
     }
   }
   return pids;
-}
-
-/**
- * Force the engine lease to expire (simulate its 90s TTL elapsing) so a fresh
- * invocation can reclaim a run whose driver was SIGKILLed without releasing it.
- * Uses the holder-guarded `renewEngineLease` with a past expiry — the exact
- * crash-recovery contract (a dead holder's lease becomes claimable at TTL),
- * without a 90s wall-clock wait.
- */
-export async function expireLease(runId: string): Promise<void> {
-  await withWorkflowRunsRepo((repo) => {
-    const holder = repo.getRunById(runId)?.engine_lease_holder;
-    if (!holder) return;
-    repo.renewEngineLease(runId, holder, new Date(Date.now() - 5_000).toISOString());
-  });
 }
 
 /**

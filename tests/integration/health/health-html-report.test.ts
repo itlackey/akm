@@ -85,13 +85,6 @@ function seedImproveRun(id = "run-html-1", ok = true): void {
           durationMs: 30_000,
         },
         memoryInferenceDurationMs: 30_000,
-        graphExtraction: {
-          quality: { extractedFiles: 2 },
-          totalEntities: 12,
-          totalRelations: 7,
-          telemetry: { cacheHits: 3, cacheMisses: 1, truncationCount: 0, failureCount: 0, retryAttempts: 0 },
-        },
-        graphExtractionDurationMs: 20_000,
       } as unknown as AkmImproveResult,
     });
   } finally {
@@ -192,8 +185,6 @@ describe("buildHealthHtmlReplacements", () => {
     expect(replacements["%%RUNS_JS_CONST%%"]).toContain('"promoted":2');
     expect(replacements["%%RUNS_JS_CONST%%"]).toContain('"miWritten":2');
     expect(replacements["%%DISTILL_REASONS_JSON%%"]).toBe('["type-filter"]');
-    expect(replacements["%%KPI_CARDS_HTML%%"]).toContain("Graph Entities");
-    expect(replacements["%%KPI_CARDS_HTML%%"]).toContain("12");
     // GENERATED_AT derives from the latest run, not wall-clock — deterministic.
     expect(replacements["%%GENERATED_AT%%"]).not.toBe("");
     const again = buildHealthHtmlReplacements(await healthResult(), buildOpts());

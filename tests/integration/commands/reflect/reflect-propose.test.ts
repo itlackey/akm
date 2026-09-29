@@ -260,7 +260,7 @@ describe("akm reflect", () => {
     expect(prompt).toContain("[negative] qualified feedback");
   });
 
-  test("redacts an echoed engine environment credential before proposal persistence", async () => {
+  test("rejects an echoed engine environment credential instead of persisting redacted proposal text", async () => {
     const sentinel = "REFLECT-ECHO-SENTINEL";
     const stash = makeStashDir();
     const echoed = VALID_LESSON_PAYLOAD.replace("Prefer rg.", `Prefer rg. ${sentinel}`);
@@ -273,10 +273,12 @@ describe("akm reflect", () => {
       }),
     );
 
-    expect(result.ok).toBe(true);
-    const durable = JSON.stringify({ result, proposals: listProposals(stash), events: readEvents().events });
-    expect(durable).not.toContain(sentinel);
-    expect(durable).toContain("[REDACTED]");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected unsafe content rejection");
+    expect(result.reason).toBe("parse_error");
+    expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+    expect(result.error).not.toContain(sentinel);
+    expect(listProposals(stash)).toEqual([]);
   });
   test("happy path: produces a queued proposal with source=reflect", async () => {
     const stash = makeStashDir();
@@ -556,7 +558,7 @@ describe("akm propose", () => {
     expect(fs.existsSync(path.join(stash, "proposals"))).toBe(false);
   });
 
-  test("redacts an echoed engine environment credential before proposal persistence", async () => {
+  test("rejects an echoed engine environment credential instead of persisting redacted proposal text", async () => {
     const sentinel = "PROPOSE-ECHO-SENTINEL";
     const stash = makeStashDir();
     const echoed = VALID_SKILL_PAYLOAD.replace("Say hi politely.", `Say hi politely. ${sentinel}`);
@@ -571,9 +573,12 @@ describe("akm propose", () => {
       }),
     );
 
-    expect(result.ok).toBe(true);
-    expect(JSON.stringify(listProposals(stash))).not.toContain(sentinel);
-    expect(JSON.stringify(listProposals(stash))).toContain("[REDACTED]");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected unsafe content rejection");
+    expect(result.reason).toBe("parse_error");
+    expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+    expect(result.error).not.toContain(sentinel);
+    expect(listProposals(stash)).toEqual([]);
   });
   test("happy path: produces a queued proposal with source=propose", async () => {
     const stash = makeStashDir();

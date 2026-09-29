@@ -62,7 +62,6 @@ async function seedTwoUnits(): Promise<void> {
       unitId: completed.unit_id,
       attempt: completed.attempt,
       dispatchId: completed.dispatch_id,
-      claimHolder: completed.claim_holder,
       status: "completed",
       resultJson: JSON.stringify("the answer is 42"),
       tokens: 10,
@@ -77,7 +76,6 @@ async function seedTwoUnits(): Promise<void> {
       unitId: failed.unit_id,
       attempt: failed.attempt,
       dispatchId: failed.dispatch_id,
-      claimHolder: failed.claim_holder,
       status: "failed",
       resultJson: JSON.stringify("boom: connection refused at line 12"),
       tokens: 3,
@@ -88,14 +86,7 @@ async function seedTwoUnits(): Promise<void> {
   });
 }
 
-function reserveUnit(
-  repo: WorkflowRunsRepository,
-  unitId: string,
-  inputHash: string,
-  now: string,
-  claimHolder = `direct:${unitId}`,
-  claimExpiresAt = new Date(Date.parse(now) + 90_000).toISOString(),
-) {
+function reserveUnit(repo: WorkflowRunsRepository, unitId: string, inputHash: string, now: string) {
   return repo.reserveUnitAttempt({
     runId: RUN_ID,
     unitId,
@@ -108,9 +99,6 @@ function reserveUnit(
     model: "deep",
     inputHash,
     now,
-    claimHolder,
-    claimExpiresAt,
-    leaseMode: "direct",
   }).attempt;
 }
 
@@ -149,59 +137,6 @@ describe("workflow status --units diagnostic surface (#22)", () => {
     expect(text).toContain("diagnostic: boom: connection refused at line 12");
   });
 
-  // ── Codex round-3 finding B — a `running` claim gone silent past the check-in
-  //    window must surface as STALE on `status --units`, matching `brief`. Before
-  //    the fix, status --units only mapped raw rows, so a dead driver's unit stayed
-  //    a bare `running` diagnostic with no stale flag or claim info.
-  async function seedStaleClaim(claimedAtMs: number): Promise<void> {
-    await withWorkflowRunsRepo((repo) => {
-      const claimedAt = new Date(claimedAtMs).toISOString();
-      // A driver claimed this unit `running` and never heartbeated again.
-      reserveUnit(
-        repo,
-        "work:dead",
-        "hash-claim",
-        claimedAt,
-        "driver-ghost",
-        new Date(claimedAtMs + 90_000).toISOString(),
-      );
-    });
-  }
-
-  test("finding B: an expired `running` claim surfaces as stale with its claim holder", async () => {
-    await seedTwoUnits();
-    const claimedAtMs = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedStaleClaim(claimedAtMs);
-    // Evaluate well past the 90s window (deterministic `now` injection).
-    const now = claimedAtMs + 200_000;
-    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true, now });
-    const byId = new Map((detail.units ?? []).map((u) => [u.unitId, u]));
-
-    const dead = byId.get("work:dead");
-    expect(dead?.status).toBe("running");
-    expect(dead?.stale).toBe(true);
-    expect(dead?.claimHolder).toBe("driver-ghost");
-    expect((dead?.staleIdleMs ?? 0) >= 90_000).toBe(true);
-
-    // A terminal unit is never stale — the flag is scoped to live claims.
-    expect(byId.get("work:solo")?.stale).toBe(false);
-
-    // Plain-text formatter renders the stale line + holder.
-    const text = formatWorkflowStatusPlain(detail as unknown as Record<string, unknown>) ?? "";
-    expect(text).toContain("stale:");
-    expect(text).toContain("claimed by driver-ghost");
-  });
-
-  test("finding B: a freshly-heartbeated claim is NOT stale (within the window)", async () => {
-    const claimedAtMs = Date.parse("2026-01-01T00:00:00.000Z");
-    await seedStaleClaim(claimedAtMs);
-    // Evaluate 10s later — inside the 90s window.
-    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true, now: claimedAtMs + 10_000 });
-    const dead = (detail.units ?? []).find((u) => u.unitId === "work:dead");
-    expect(dead?.stale).toBe(false);
-    expect(dead?.claimHolder).toBe("driver-ghost");
-  });
-
   test("large result_json is clipped on the diagnostic surface", async () => {
     await withWorkflowRunsRepo((repo) => {
       const now = new Date().toISOString();
@@ -211,7 +146,6 @@ describe("workflow status --units diagnostic surface (#22)", () => {
         unitId: reserved.unit_id,
         attempt: reserved.attempt,
         dispatchId: reserved.dispatch_id,
-        claimHolder: reserved.claim_holder,
         status: "completed",
         resultJson: JSON.stringify("x".repeat(5000)),
         tokens: null,

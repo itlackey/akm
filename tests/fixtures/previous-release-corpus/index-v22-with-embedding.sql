@@ -1,6 +1,6 @@
--- Real-shaped v22 derived index with a live embedding present, used by
--- #955: a generation bump must salvage the embedding across the v22->v23
--- rebuild rather than silently discarding it and forcing a re-embed.
+-- Real-shaped v22 derived index with a live embedding present: the upgrade
+-- must keep the embedding (migrated in place, labelled with the model it was
+-- generated under) rather than discarding it and forcing a re-embed.
 CREATE TABLE index_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT INTO index_meta VALUES ('version', '22');
 INSERT INTO index_meta VALUES ('embeddingFingerprint', 'local:test-model');

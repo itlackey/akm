@@ -20,7 +20,6 @@ import { clearEmbeddingCache } from "../../src/llm/embedder";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { getEmbeddableEntryCount, getEntryCount } from "../../src/storage/repositories/index-entries-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
-import { EMBEDDING_DIM } from "../../src/storage/repositories/index-schema";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import {
   type Cleanup,
@@ -318,7 +317,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
     // from embeddings any more — embeddable count == full entry count — and the
     // index verifies ok and lands in a ready status.
     expect(result.verification.ok).toBe(true);
-    expect(["ready-js", "ready-vec"]).toContain(result.verification.semanticStatus);
+    expect(result.verification.semanticStatus).toBe("ready-js");
     // Every indexed entry is embeddable, so the verification entry count equals
     // the embedding count.
     expect(result.verification.entryCount).toBe(result.verification.embeddingCount);
@@ -365,7 +364,7 @@ describe.skipIf(!SEMANTIC_TESTS)("Semantic search end-to-end (real embeddings)",
 
       for (const row of rows) {
         const f32 = new Float32Array(row.embedding.buffer, row.embedding.byteOffset, row.embedding.byteLength / 4);
-        expect(f32.length).toBe(EMBEDDING_DIM);
+        expect(f32.length).toBe(384);
         // Verify embeddings are non-zero (not degenerate)
         const norm = Math.sqrt(Array.from(f32).reduce((s, v) => s + v * v, 0));
         expect(norm).toBeGreaterThan(0.5);

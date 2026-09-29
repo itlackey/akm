@@ -21,10 +21,11 @@
  *
  * The ONE local-vs-remote answer for concurrency defaults — the workflow
  * engine's frozen engine concurrency (`workflows/concurrency-policy.ts`) and
- * the indexer's LLM pool (`indexer/indexer.ts` `getDefaultLlmConcurrency`)
- * both classify through here. NOT shared with the website snapshot fetcher's
- * SSRF policy (`sources/snapshot-fetchers/host-guard.ts`), which deliberately
- * draws different lines for a different threat model.
+ * the embedding pool (`resolveEmbeddingConcurrency`,
+ * `src/llm/embedders/remote.ts`) both classify through here. NOT shared with
+ * the website snapshot fetcher's SSRF policy
+ * (`sources/snapshot-fetchers/host-guard.ts`), which deliberately draws
+ * different lines for a different threat model.
  *
  * @module core/loopback
  */
@@ -93,14 +94,8 @@ export function isLoopbackEndpoint(endpoint: string | undefined): boolean {
  * endpoint: 1 for a loopback endpoint (a local model server serves one
  * inference at a time; concurrent requests thrash it — reload thrash, HTTP
  * 500 "Model reloaded"), 2 for a remote one (enough to overlap request
- * latency without hammering a rate-limited API). A leaf helper so both
- * callers — the indexer's LLM enrichment pool (`getDefaultLlmConcurrency`,
- * `src/indexer/indexer.ts`) and the embedding pool
- * (`resolveEmbeddingConcurrency`, `src/llm/embedders/remote.ts`) — share one
- * definition instead of mirroring it; `src/llm/embedders/remote.ts` cannot
- * import `getDefaultLlmConcurrency` directly (`src/indexer/indexer.ts`
- * already depends on this module transitively through
- * materialize-embeddings.ts).
+ * latency without hammering a rate-limited API). Used by the embedding pool
+ * (`resolveEmbeddingConcurrency`, `src/llm/embedders/remote.ts`).
  */
 export function defaultConcurrencyForEndpoint(endpoint: string | undefined): 1 | 2 {
   return isLoopbackEndpoint(endpoint) ? 1 : 2;

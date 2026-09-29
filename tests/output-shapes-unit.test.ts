@@ -145,67 +145,6 @@ describe("shapeSearchHit — local stash hits", () => {
   test("full passes the hit through verbatim", () => {
     expect(shapeSearchHit(fullHit, "full")).toEqual(fullHit);
   });
-
-  // Issue #856: matchStage reports which stage of the progressive AND->OR
-  // lexical ladder produced the hit ("exact" | "prefix" | "relaxed").
-  describe("matchStage", () => {
-    const hitWithStage = { ...fullHit, matchStage: "relaxed" as const };
-
-    test("brief omits matchStage", () => {
-      expect(shapeSearchHit(hitWithStage, "brief")).not.toHaveProperty("matchStage");
-    });
-
-    test("normal surfaces matchStage when present", () => {
-      const out = shapeSearchHit(hitWithStage, "normal");
-      expect(out.matchStage).toBe("relaxed");
-    });
-
-    test("normal omits matchStage when absent from the hit", () => {
-      const out = shapeSearchHit(fullHit, "normal");
-      expect(out).not.toHaveProperty("matchStage");
-    });
-
-    test("full passes matchStage through verbatim", () => {
-      expect(shapeSearchHit(hitWithStage, "full")).toEqual(hitWithStage);
-    });
-  });
-
-  test("fragment provenance survives brief, normal, and agent projections", () => {
-    const fragmentHit = {
-      ...fullHit,
-      ref: "knowledge/guide#akm-fragment-3-abc",
-      selectedRef: "knowledge/guide#akm-fragment-3-abc",
-      parentRef: "knowledge/guide",
-      fragmentOrdinal: 3,
-      fragmentCount: 5,
-      startLine: 40,
-      endLine: 47,
-      previousRef: "knowledge/guide#akm-fragment-2-def",
-      nextRef: "knowledge/guide#akm-fragment-4-ghi",
-      fragmentChars: 400,
-      fragmentEstimatedTokens: 100,
-      parentChars: 8000,
-      parentEstimatedTokens: 2000,
-    };
-
-    expect(shapeSearchHit(fragmentHit, "brief")).toMatchObject({
-      selectedRef: fragmentHit.selectedRef,
-      parentRef: fragmentHit.parentRef,
-      fragmentOrdinal: 3,
-      fragmentCount: 5,
-      parentEstimatedTokens: 2000,
-    });
-    expect(shapeSearchHit(fragmentHit, "normal")).toMatchObject({
-      startLine: 40,
-      endLine: 47,
-      fragmentEstimatedTokens: 100,
-    });
-    expect(shapeSearchHitForAgent(fragmentHit)).toMatchObject({
-      selectedRef: fragmentHit.selectedRef,
-      previousRef: fragmentHit.previousRef,
-      nextRef: fragmentHit.nextRef,
-    });
-  });
 });
 
 describe("shapeSearchHit — registry hits", () => {
@@ -295,25 +234,6 @@ describe("shapeSearchHitForAgent", () => {
       editHint: "akm clone team//skills/deploy",
     });
     expect(readOnly.editHint).toBe("akm clone team//skills/deploy");
-  });
-
-  // Issue #856: agents are the primary consumer named by the issue, so
-  // matchStage must survive the agent projection.
-  test("includes matchStage when present, omits it when absent", () => {
-    const withStage = shapeSearchHitForAgent({
-      type: "skill",
-      name: "deploy",
-      ref: "skills/deploy",
-      matchStage: "prefix",
-    });
-    expect(withStage.matchStage).toBe("prefix");
-
-    const withoutStage = shapeSearchHitForAgent({
-      type: "skill",
-      name: "deploy",
-      ref: "skills/deploy",
-    });
-    expect(withoutStage).not.toHaveProperty("matchStage");
   });
 });
 
@@ -784,6 +704,67 @@ describe("shapeProposal* — proposal commands", () => {
     const out = shapeProposalEntry(fullProposal, "full");
     expect(out).toHaveProperty("payload");
     expect((out.payload as Record<string, unknown>).content).toBe("BODY");
+  });
+
+  // alpha.9: a consolidate retire proposal's payload.content is empty by
+  // design (it deletes, it does not write) — `retirement` is the field a
+  // reviewer needs instead, so it must survive shaping at normal AND full,
+  // the same way confidence/gateDecision already do.
+  const retireProposal: Record<string, unknown> = {
+    ...fullProposal,
+    source: "consolidate-pair",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      cosine: 0.94,
+      judgeLabel: "duplicate",
+      judgeReason: "same durable facts",
+      retiredContentHash: "a".repeat(64),
+      successorContentHash: "b".repeat(64),
+      reason: "duplicate",
+    },
+    retiredArchive: { dirs: [".akm/memory-cleanup/archive/x"] },
+    promotionSource: "memories/some-source",
+    promotionSourceHash: "c".repeat(64),
+  };
+
+  test("shapeProposalEntry normal keeps retirement; drops retiredArchive/promotionSource(Hash)", () => {
+    const out = shapeProposalEntry(retireProposal, "normal");
+    expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
+    expect(out).not.toHaveProperty("retiredArchive");
+    expect(out).not.toHaveProperty("promotionSource");
+    expect(out).not.toHaveProperty("promotionSourceHash");
+  });
+
+  test("shapeProposalEntry full keeps retirement, retiredArchive and promotionSource(Hash)", () => {
+    const out = shapeProposalEntry(retireProposal, "full");
+    expect(out.retirement).toEqual(retireProposal.retirement as Record<string, unknown>);
+    expect(out.retiredArchive).toEqual(retireProposal.retiredArchive as Record<string, unknown>);
+    expect(out.promotionSource).toBe("memories/some-source");
+    expect(out.promotionSourceHash).toBe("c".repeat(64));
+  });
+
+  test("shapeProposalEntry brief drops retirement — brief is id/ref/status/source/createdAt only", () => {
+    const out = shapeProposalEntry(retireProposal, "brief");
+    expect(out).not.toHaveProperty("retirement");
+    expect(out).not.toHaveProperty("continuityRisk"); // this fixture is not flagged
+  });
+
+  test("shapeProposalEntry brief projects a minimal continuityRisk marker for a flagged retire proposal (round 3)", () => {
+    // `proposal list`'s DEFAULT detail level is "brief" (no --detail flag
+    // given projects here) — retirement itself is not restored until
+    // "normal", so without this marker a flagged proposal would be
+    // indistinguishable from a clean one in the default listing.
+    const flagged: Record<string, unknown> = {
+      ...retireProposal,
+      retirement: {
+        ...(retireProposal.retirement as Record<string, unknown>),
+        continuityRisk: { failingQueries: 1, ranks: [{ query: "q", retiredRank: 1, successorRank: null }] },
+      },
+    };
+    const out = shapeProposalEntry(flagged, "brief");
+    expect(out.continuityRisk).toBe(true);
+    expect(out).not.toHaveProperty("retirement"); // still brief otherwise — no other retirement field leaks through
   });
 
   test("shapeProposalListOutput shapes nested proposals + carries totalCount", () => {

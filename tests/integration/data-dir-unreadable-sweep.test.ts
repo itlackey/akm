@@ -16,8 +16,8 @@
  *     lock records with it
  *   - `--clean` DELETING index rows for files it merely cannot look at
  *   - improve reporting "nothing eligible", feedback advising "run 'akm index'",
- *     `bundle list` reporting zero items, the graph loaders reporting no graph,
- *     and the write-path indexer reporting a successful no-op
+ *     `bundle list` reporting zero items, and the write-path indexer reporting
+ *     a successful no-op
  *
  * Every case here is written so it FAILS against the pre-sweep code — each one
  * was mutation-checked by reverting its call site. On the fixture technique
@@ -34,7 +34,6 @@ import { ConfigError } from "../../src/core/errors";
 import { getDataDir, getDbPath } from "../../src/core/paths";
 import { getStateDbPath } from "../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { loadGraphFilesOnly, loadStoredGraphMeta } from "../../src/indexer/db/graph-db";
 import { indexWrittenAssets } from "../../src/indexer/index-written-assets";
 import { akmIndex } from "../../src/indexer/indexer";
 import { removeLockEntry, upsertLockEntry } from "../../src/integrations/lockfile";
@@ -118,32 +117,6 @@ describe("the lockfile write paths refuse to overwrite what they cannot read (#7
     expect(fs.existsSync(getDataDir())).toBe(false);
     await removeLockEntry("demo");
     expect(fs.existsSync(getDataDir())).toBe(false);
-  });
-});
-
-// ── The graph loaders ───────────────────────────────────────────────────────
-
-describe("the graph loaders separate 'no graph' from 'no access' (#791)", () => {
-  test("loadStoredGraphMeta raises instead of returning null", () => {
-    unreadableIndexDb();
-    let raised: unknown;
-    try {
-      loadStoredGraphMeta("/some/stash");
-    } catch (error) {
-      raised = error;
-    }
-    expect(raised).toBeInstanceOf(ConfigError);
-    expect((raised as ConfigError).code).toBe("DATA_DIR_UNREADABLE");
-  });
-
-  test("loadGraphFilesOnly raises instead of returning []", () => {
-    unreadableIndexDb();
-    expect(() => loadGraphFilesOnly("/some/stash")).toThrow(ConfigError);
-  });
-
-  test("a genuinely absent index still reads as 'nothing extracted yet'", () => {
-    expect(loadStoredGraphMeta("/some/stash")).toBeNull();
-    expect(loadGraphFilesOnly("/some/stash")).toEqual([]);
   });
 });
 

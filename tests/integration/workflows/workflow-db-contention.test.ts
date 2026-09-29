@@ -73,7 +73,7 @@ describe.skipIf(!BUN)("cross-process reader vs fan-out writer", () => {
     const files = Array.from({ length: 40 }, (_, i) => `f${i}.ts`);
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const started = await startWorkflowRun("workflows/db-contention", { files });
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
 
     const driver = spawnRunner({ CHAOS_RUN_ID: runId, CHAOS_MARKER_DIR: markerDir });
@@ -138,7 +138,7 @@ describe("writer queue resilience (fault-injected write failure)", () => {
     writeProgram(storage.stashDir, "db-contention", WIDE_FANOUT_WF);
     const files = ["a.ts", "b.ts", "c.ts"];
     const started = await startWorkflowRun("workflows/db-contention", { files });
-    expect(started.run.planIrVersion).toBe(5);
+    expect(started.run.planIrVersion).toBe(6);
     const runId = started.run.id;
     const [ua, ub, uc] = await unitIds(runId, { files });
 
@@ -158,9 +158,6 @@ describe("writer queue resilience (fault-injected write failure)", () => {
             model: null,
             inputHash: `hash-${unitId}`,
             now,
-            claimHolder: `direct:${unitId}`,
-            claimExpiresAt: new Date(Date.parse(now) + 90_000).toISOString(),
-            leaseMode: "direct",
           }),
         ),
       );

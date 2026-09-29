@@ -2,32 +2,32 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { freezeExecutableIdentity } from "../../../execution/executable-identity";
+import fs from "node:fs";
 import { prepareScriptTarget } from "../../../tasks/prepare/prepare-script-target";
 import type { PreparedTaskV3Execution } from "../../../tasks/prepare/prepared-execution";
-import type { FrozenWorkflowEnvironmentBinding, FrozenWorkflowScriptTarget } from "../../ir/schema-v4";
-import type { ProgramExec, ProgramUnit } from "../../program/schema";
-import type { WorkflowSourceStep } from "../../source-ir/schema";
-import { captureOwned, freezeEnvironment, resolveOwnedAsset } from "../environment";
+import type { FrozenWorkflowEnvironmentBinding, FrozenWorkflowScriptTarget, WorkflowExec } from "../../plan";
+import { freezeEnvironment, resolveOwnedAsset } from "../environment";
 import { gitIdentity, scriptExecutable } from "../identity";
-import { freezeExecSpec, type ResolutionContext, type ResolvedDispatch } from "../step-values";
+import {
+  type BaseUnit,
+  type FreezeStep,
+  freezeExecSpec,
+  type ResolutionContext,
+  type ResolvedDispatch,
+} from "../step-values";
 
 export async function directScript(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
+  source: FreezeStep,
+  baseUnit: BaseUnit,
   refInput: string,
   context: ResolutionContext,
 ): Promise<ResolvedDispatch> {
   const owned = await resolveOwnedAsset(refInput, "script", context);
-  captureOwned(owned, context.collector);
-  // Typed preparer (P1b spec §4.3) — no synthetic task YAML, no parseTaskV3Yaml
-  // call, no fabricated schedule/filePath/taskId/taskRef. The script's own
-  // owned identity (ref/file/bundleRoot) is all prepareScriptTarget needs.
   const captured = prepareScriptTarget({
     ref: owned.ref,
     file: owned.file,
     bundleRoot: owned.root,
-    readFile: () => context.collector.readBytes(owned.file, owned.root),
+    readFile: () => fs.readFileSync(owned.file),
   });
   return scriptResult(
     source,
@@ -46,28 +46,20 @@ export async function directScript(
   );
 }
 
-/**
- * The subset of a script projection scriptResult() actually reads — shared by
- * taskDispatch's prepareTaskV3Execution-produced PreparedTaskV3Script (which
- * structurally satisfies this narrower shape) and directScript's
- * prepareScriptTarget()-produced PreparedScriptTarget above (field-mapped:
- * PreparedScriptTarget.ref -> sourceRef).
- */
+/** The fields of a captured script `scriptResult` reads (from a task's or a direct script's preparation). */
 type FrozenScriptCapture = Pick<
   Extract<PreparedTaskV3Execution, { kind: "script" }>,
   "sourceRef" | "interpreter" | "extension" | "bytesBase64" | "byteLength" | "sha256" | "cwdIdentity"
 >;
 
 export function scriptResult(
-  source: WorkflowSourceStep,
-  baseUnit: ProgramUnit,
+  source: FreezeStep,
+  baseUnit: BaseUnit,
   prepared: FrozenScriptCapture,
   context: ResolutionContext,
   literals: readonly FrozenWorkflowEnvironmentBinding[],
 ): ResolvedDispatch {
-  const requestedExecutable = scriptExecutable(prepared.interpreter);
-  const executable = freezeExecutableIdentity(requestedExecutable, { cwd: prepared.cwdIdentity.realCwd });
-  const authoredExec: ProgramExec = { command: [executable.absolutePath, "<frozen-script>"] };
+  const authoredExec: WorkflowExec = { command: [scriptExecutable(prepared.interpreter), "<frozen-script>"] };
   const exec = freezeExecSpec(source, authoredExec, context);
   const environment = Object.freeze([...literals, ...freezeEnvironment(source, authoredExec, context)]);
   const target: FrozenWorkflowScriptTarget = Object.freeze({
@@ -81,7 +73,6 @@ export function scriptResult(
     byteLength: prepared.byteLength,
     cwdIdentity: prepared.cwdIdentity,
     materialization: "ephemeral-0700-delete",
-    executable,
     ...gitIdentity(baseUnit, prepared.cwdIdentity.realRoot),
   });
   return {

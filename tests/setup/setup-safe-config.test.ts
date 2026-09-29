@@ -228,8 +228,8 @@ describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
     // exited 0.
     await runSetupFromConfig({
       configJson: JSON.stringify({
-        index: { metadataEnhance: { enabled: false } },
-        search: { minScore: 0.5 },
+        index: { memory: { enabled: false } },
+        search: { defaultExcludeTypes: ["session"] },
         feedback: { requireReason: true },
         archiveRetentionDays: 30,
         workflow: { maxConcurrency: 4 },
@@ -239,8 +239,8 @@ describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
     });
 
     const written = readWrittenConfig();
-    expect(written.index).toEqual({ metadataEnhance: { enabled: false } });
-    expect(written.search).toEqual({ minScore: 0.5 });
+    expect(written.index).toEqual({ memory: { enabled: false } });
+    expect(written.search).toEqual({ defaultExcludeTypes: ["session"] });
     expect(written.feedback).toEqual({ requireReason: true });
     expect(written.archiveRetentionDays).toBe(30);
     expect(written.workflow).toEqual({ maxConcurrency: 4 });

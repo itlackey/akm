@@ -3,10 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { LlmUsageCrossTabRow } from "../commands/health/types";
-import type { EngineUnavailableProcess, ProcessRoutingRow } from "../commands/improve/improve-strategies";
+import type {
+  EngineProbeOutcome,
+  EngineUnavailableProcess,
+  ProcessRoutingRow,
+} from "../commands/improve/improve-strategies";
 import type { EligibilitySource, Proposal } from "../commands/proposal/proposal-types";
 import type { LoweringNotice } from "../execution/resolved-request";
-import type { GraphExtractionResult } from "../indexer/graph/graph-extraction";
 import type { MemoryInferenceResult } from "../indexer/passes/memory-inference";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import type { AgentFailureReason } from "../integrations/agent/spawn";
@@ -17,13 +20,24 @@ import { assertNever } from "./assert";
 // ImproveMemoryCleanupResult needs these shapes, so they live here rather
 // than being imported UP from the command module that consumes this file.
 export type MemoryPruneReason = "duplicate-derived" | "superseded-derived" | "obsolete-derived";
+/**
+ * Retire-proposal-caused archive reasons (0.9.17-alpha.9): the consolidate
+ * pair pass's `duplicate` / `subsumed` / `supersedes-translated-to-superseded`
+ * judgements, and O1's `promoted` (a promotion retiring its source memory).
+ */
+export type RetireArchiveReason = "duplicate" | "subsumed" | "superseded" | "promoted";
 export type MemoryBeliefState = "active" | "asserted" | "deprecated" | "superseded" | "contradicted" | "archived";
 
 export interface MemoryPruneCandidate {
   ref: string;
-  parentRef: string;
-  reason: MemoryPruneReason;
+  /** Absent for a retire-proposal-caused archive (alpha.9): it has no `.derived` family to key by. */
+  parentRef?: string;
+  reason: MemoryPruneReason | RetireArchiveReason;
   survivorRef?: string;
+  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  proposalId?: string;
+  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  successorRefs?: string[];
 }
 
 export interface MemoryConsolidationCandidate {
@@ -92,8 +106,8 @@ export interface DeadUrlCoverage {
 
 export interface ArchivedMemoryCleanupRecord {
   ref: string;
-  parentRef: string;
-  reason: MemoryPruneReason;
+  parentRef?: string;
+  reason: MemoryPruneReason | RetireArchiveReason;
   beliefState: "archived";
   previousBeliefState: Exclude<MemoryBeliefState, "archived">;
   survivorRef?: string;
@@ -101,6 +115,17 @@ export interface ArchivedMemoryCleanupRecord {
   archivedPath: string;
   auditPath: string;
   archivedAt: string;
+  /** Retire-proposal path only (alpha.9): the proposal that caused this archive. */
+  proposalId?: string;
+  /** Retire-proposal path only (alpha.9): refs that supersede/replace the retired asset. */
+  successorRefs?: string[];
+  /**
+   * Retire-proposal path only (alpha.9): same instant as `archivedAt`, named
+   * per the plan so the (later) purge sweep can key its 30-day grace off one
+   * stable field name without caring whether an archive came from memory
+   * cleanup or a retire proposal.
+   */
+  retiredAt?: string;
 }
 
 export interface ImproveEligibleRef {
@@ -133,7 +158,8 @@ export interface ImproveEligibleRef {
 export type ImprovePlanLane = EligibilitySource | "distill-only";
 
 export interface ImprovePlanGate {
-  name: "profile" | "cleanup" | "validation" | "signal" | "disk" | "limit";
+  /** `retrieval` is absent from plans stored before 0.9.17-alpha.7 (#986). */
+  name: "profile" | "cleanup" | "validation" | "retrieval" | "signal" | "disk" | "limit";
   removed: number;
   reason: string;
 }
@@ -196,7 +222,6 @@ export interface ImproveExecutionPlan {
       minPoolSize?: number;
       limit?: number;
       maxChunkSize?: number;
-      incrementalSince?: string;
     };
     effective: { enabled: boolean; minPoolSize: number; limit?: number; chunkSize: number };
     poolSize: number;
@@ -211,7 +236,7 @@ export interface ImproveExecutionPlan {
     estimatedChunks: number;
   };
   stages: Array<{
-    name: "consolidation" | "extract" | "graph-extraction" | "memory-inference";
+    name: "consolidation" | "extract" | "memory-inference";
     wouldRun: boolean;
     reason: string;
   }>;
@@ -243,7 +268,6 @@ export type ImproveActionMode =
   | "distill-skipped"
   | "memory-prune"
   | "memory-inference"
-  | "graph-extraction"
   | "error";
 
 /** Coarse audit bucket an {@link ImproveActionMode} contributes to. */
@@ -279,7 +303,6 @@ export function classifyImproveAction(mode: ImproveActionMode): ImproveActionCla
     case "reflect":
     case "distill":
     case "memory-inference":
-    case "graph-extraction":
       return "accepted";
     case "reflect-cooldown":
     case "reflect-skipped":
@@ -328,10 +351,9 @@ export interface ConsolidateResult {
   /** Number of contradiction edges written (C-3 / #382). */
   contradicted: number;
   /**
-   * R5 §4.2 — merges that failed the ADVISORY merge-information floor this run
-   * (provenance shrank or specificity retention below the configured floor).
-   * The merges still proceeded in v1; the count feeds the collapse detector's
-   * cycle metrics and the health advisory.
+   * R5 §4.2 — merges that failed the ADVISORY merge-information floor. The
+   * floor is retired and nothing sets this any more; it stays optional so
+   * results an older release persisted still read.
    */
   mergeFloorViolations?: number;
   /**
@@ -394,11 +416,14 @@ export interface ConsolidateResult {
   /** Memories deferred by the pre-embedding budget cap. Deferred runs do not advance the completion watermark. */
   deferredMemories?: number;
   /**
-   * Planned consolidate ops. Only the op-kind discriminant is used by core
-   * consumers (e.g. the `op !== "promote"` advisory-op check in
-   * `preparation.ts`); the full `ConsolidateOperation` shape lives in
-   * commands/improve/consolidate/types.ts, which core must not import.
+   * Memories dropped before chunking because their body already exists
+   * verbatim in `knowledge/` (R5 (b)). Distinct from the post-LLM
+   * `promote_superseded`/duplicate skip reasons — this is a pre-LLM pool
+   * narrowing count, so `processed` no longer includes these memories at
+   * all. Surfaced so health/report readers see why `processed` dropped.
    */
+  prefilteredAlreadyPromoted?: number;
+  /** Planned consolidate ops; core reads only the op-kind discriminant. */
   planned?: { op: ConsolidateOpKind }[];
   warnings: string[];
   durationMs: number;
@@ -411,6 +436,39 @@ export interface ConsolidateResult {
    * tidy.
    */
   perfTelemetry?: ConsolidatePerfTelemetry;
+  /** The pair pass's own report (alpha.9); absent when consolidate is disabled. */
+  pairPass?: ConsolidatePairPassResult;
+}
+
+/** The consolidate pair pass's six relation labels (plan Appendix A, the calibrated prompt). */
+export type ConsolidatePairJudgeLabel =
+  | "duplicate"
+  | "subsumed"
+  | "supersedes"
+  | "contradicts"
+  | "overlap"
+  | "unrelated";
+
+/**
+ * The pair pass's per-run report (alpha.9): initiators found, pairs judged,
+ * label counts and the retire proposals minted — the fields the brief's
+ * MEASURE step reports (refs and counts only, never asset text).
+ */
+export interface ConsolidatePairPassResult {
+  /** Initiators after retrieval-scope and ledger filtering. */
+  initiators: number;
+  /** Of `initiators`, those with no prior pair-pass ledger attempt (judged at `BACKFILL_FLOOR`). */
+  initiatorsBacklog: number;
+  /** Candidate pairs after neighbour lookup and threshold, before `MAX_PAIRS_PER_RUN`; 0 when no initiators. */
+  pairsConsidered?: number;
+  /** Pairs actually sent to the judge (excludes pairs skipped for the run cap or an existing pending retire proposal). */
+  pairsJudged: number;
+  /** Contradictions stay human: `labelCounts.contradicts`, not a separate count, is what the brief's MEASURE step reports. */
+  labelCounts: Record<ConsolidatePairJudgeLabel, number>;
+  /** Retire proposal ids minted this run (or, in a dry run, `retiredRef -> successorRef` preview strings). */
+  retired: string[];
+  /** Judge calls that failed or returned an unparseable verdict. */
+  failedJudgments: number;
 }
 
 /**
@@ -420,13 +478,13 @@ export interface ConsolidateResult {
  */
 export interface ConsolidatePerfTelemetry {
   /**
-   * Pool size BEFORE incremental/limit narrowing.
+   * Pool size BEFORE limit narrowing.
    * Measures the raw candidate set loaded from disk this run.
    */
   dedupPoolSize?: number;
   /**
-   * Pool size AFTER incremental and limit filtering — the memories actually
-   * sent to the LLM for a fresh judgment.
+   * Pool size AFTER limit filtering — the memories actually sent to the LLM
+   * for a fresh judgment.
    */
   llmPoolSize?: number;
   /**
@@ -490,7 +548,10 @@ export interface AkmDistillResult {
   proposalRef: string;
   /** Type of proposal the invocation targeted or queued. */
   proposalKind?: "lesson" | "knowledge";
-  /** Proposal id when `outcome === "queued"`. */
+  /**
+   * Proposal id when `outcome === "queued"`, or (R10) when a `proposals` row
+   * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
+   */
   proposalId?: string;
   /** Human-readable hint surfaced when the call was skipped. */
   message?: string;
@@ -498,7 +559,11 @@ export interface AkmDistillResult {
   skipReason?: string;
   /** Validation findings when `outcome === "validation_failed"`. */
   findings?: { kind: string; field: string; message: string }[];
-  /** The full proposal object when `outcome === "queued"`. */
+  /**
+   * The full proposal object when `outcome === "queued"`, or (R10) when a
+   * `proposals` row was minted for `outcome === "quality_rejected"` (status
+   * `rejected`) / `"review_needed"` (status `pending`).
+   */
   proposal?: Proposal;
   /**
    * Diagnostic — number of feedback events filtered out by
@@ -684,7 +749,6 @@ export interface ImproveActionResult {
     | AkmReflectResult
     | AkmDistillResult
     | MemoryInferenceResult
-    | GraphExtractionResult
     | { ok: true; pruned: boolean; reason: MemoryPruneCandidate["reason"] }
     | { ok: true; reason: string }
     | { ok: false; error: string };
@@ -829,6 +893,16 @@ export interface AkmImproveResult {
    * why the scheduler's stripped-down environment does not.
    */
   skippedProcesses?: readonly Readonly<EngineUnavailableProcess>[];
+  /**
+   * R17 — `--require-engines`'s reachability probe outcomes (one row per
+   * probed target: process, engine, endpoint, reachable, latencyMs).
+   * A failing probe already aborts the run (exit 78) before this result is
+   * ever built, so every row present here is `reachable: true` — this
+   * exists so a slow or flapping gateway that still passed leaves a trace.
+   * Sourced verbatim from `AkmImproveOptions.engineProbe`. Omitted entirely
+   * when `--require-engines` was not passed.
+   */
+  engineProbe?: readonly Readonly<EngineProbeOutcome>[];
   actions?: ImproveActionResult[];
   /**
    * C1 (13-bus-factor) — bounded aggregate of the per-ref `distill-skipped`
@@ -857,7 +931,6 @@ export interface AkmImproveResult {
   lintSummary?: { fixed: number; flagged: number };
   memoryIndexHealth?: { lineCount: number; overBudget: boolean };
   coverageGaps?: string[];
-  evalCasesWritten?: number;
   deadUrls?: DeadUrl[];
   /**
    * Coverage of the dead-link check (#892): present whenever `checkDeadUrls`
@@ -868,7 +941,6 @@ export interface AkmImproveResult {
   /** Number of reflect calls that had at least one error in the rolling window at call time. */
   reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
-  graphExtraction?: GraphExtractionResult;
   /**
    * Wall-clock duration of the memory-inference pass (ms). Surfaced at the
    * top level (not inside `memoryInference`) because both
@@ -878,12 +950,14 @@ export interface AkmImproveResult {
    */
   memoryInferenceDurationMs?: number;
   /**
-   * Wall-clock duration of the graph-extraction pass (ms). Same surfacing
-   * convention as `memoryInferenceDurationMs` — top-level so the
-   * `wallTime.byPhase.graphExtraction` aggregator in health.ts picks it up.
-   * Omitted entirely when the pass did not run.
+   * R6: wall-clock duration of the start-of-run implicit reindex (ms), when
+   * `ensureIndex` actually ran one — the previous no-op call discarded this
+   * entirely, hiding blocking rebuilds (tens of minutes on a large stash)
+   * from the ledger. Same top-level surfacing convention as
+   * `memoryInferenceDurationMs`. Omitted when the index was already fresh
+   * and no inline rebuild ran.
    */
-  graphExtractionDurationMs?: number;
+  ensureIndexDurationMs?: number;
   /** Number of pending proposals purged because their target ref no longer exists on disk. */
   orphansPurged?: number;
   /**
@@ -929,12 +1003,6 @@ export interface AkmImproveResult {
    * `neverReflected` is the subset of the due pool never previously reflected.
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number; selectedRefs: string[] };
-  /**
-   * R5 — the collapse/churn detector's cycle snapshot (mirrors one
-   * improve_cycle_metrics row), present when this run qualified (consolidate
-   * processed work) and the detector is enabled.
-   */
-  cycleMetrics?: import("../storage/repositories/canaries-repository").CycleMetricsRow;
   /**
    * Run identifier minted by the CLI (`buildImproveRunId()`) and threaded
    * through `options.runId`. Surfaced on the result so health/run records and

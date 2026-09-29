@@ -22,28 +22,25 @@
  *      (LD_PRELOAD, PATH, GIT_SSH_COMMAND, BASH_FUNC_*, …) is BLOCKED when the
  *      env comes from a third-party stash (one installed from a registry, i.e.
  *      `source.registryId` is set) and only WARNED for the operator's own
- *      first-party stash, an explicit `--allow-insecure`, or a key from the
+ *      first-party stash, an explicit `--allow-dangerous-env-keys`, or a key from the
  *      interactive-tool group (EDITOR/VISUAL/PAGER — high-FP, and never
  *      actually invoked by akm's own env-injection path). → {@link decideDangerousEnvInjection}
  *
  *   2. **Freshly-installed stash dangerous-key scan** (`add-cli.ts`). When a
  *      just-installed stash carries env files with dangerous keys, the install
  *      is GATED (blocked unless the operator confirms interactively or passed
- *      `--allow-insecure`). → {@link decideDangerousKeyInstall}
+ *      `--allow-dangerous-env-keys`). → {@link decideDangerousKeyInstall}
  *
  *   3. **Write activation** (`search/search-source.ts`, `installations.ts`). A
  *      registry-cached (installed, read-only) source is never written in place —
  *      only the primary stash and sources explicitly marked `writable: true`
  *      are write-activated. → {@link isSourceWriteActivated}
  *
- * A fourth rule — task activation (installing a task registered it disabled;
- * the scheduler skipped it at fire time until the operator set `enabled:
- * true`) — was retired in P4 (spec docs/plans/specs/p4-deletions-closeout.md
- * §3.2.7, P4-N6): task source v4 has no document-level `enabled` to gate at
- * fire time — enablement is per schedule binding, decided once at
- * `scheduler-sync.ts` sync time (a disabled binding is simply never
- * installed with the OS scheduler), not re-checked when the scheduler fires
- * it.
+ * Scheduler activation is now a separate host-local allow-list
+ * (`scheduler.enabled`) rather than a predicate in this module. Authored
+ * task/workflow sources cannot grant it. Sync installs only allow-listed refs,
+ * and scheduled task fire re-checks the same local grant so a stale native
+ * entry cannot bypass a later disable.
  *
  * These are behavior-preserving PORTS of the pre-0.9.0 rules. This module ships
  * **no new trust / approval / security machinery** (2026-07-14 decision, §1.3):
@@ -60,7 +57,7 @@
  *   - `"allow"` — no dangerous keys present; inject normally.
  *   - `"warn"`  — first-party stash, or a third-party stash whose only
  *                 findings are the interactive-tool group, or an explicit
- *                 `--allow-insecure`; warn the operator but inject anyway.
+ *                 `--allow-dangerous-env-keys`; warn the operator but inject anyway.
  *   - `"block"` — a third-party stash injects a genuine RCE-class key with no
  *                 bypass given.
  */
@@ -88,7 +85,7 @@ const INTERACTIVE_TOOL_ENV_KEYS = new Set(["EDITOR", "VISUAL", "PAGER"]);
  * genuine RCE-class key; first-party stashes warn. The interactive-tool
  * group (see {@link INTERACTIVE_TOOL_ENV_KEYS}) only ever warns, since akm's
  * own env-injection path never invokes those keys as a command. An explicit
- * `--allow-insecure` (threaded through by the caller, same override
+ * `--allow-dangerous-env-keys` (threaded through by the caller, same override
  * `decideDangerousKeyInstall`'s `"warn-allow"` already honors for rule 2)
  * downgrades a remaining block to a warning too — the operator is not racing
  * themselves. See rule 1 above.
@@ -97,17 +94,17 @@ const INTERACTIVE_TOOL_ENV_KEYS = new Set(["EDITOR", "VISUAL", "PAGER"]);
  *   (already filtered by the caller via `isDangerousEnvKey`).
  * @param thirdParty `true` when the env's source is a third-party stash — i.e.
  *   its origin carries a `registryId`.
- * @param allowInsecure `true` when the operator passed `--allow-insecure` (or
+ * @param allowDangerousEnvKeys `true` when the operator passed `--allow-dangerous-env-keys` (or
  *   its equivalent) for this injection. Defaults to `false`.
  */
 export function decideDangerousEnvInjection(input: {
   dangerousKeys: readonly string[];
   thirdParty: boolean;
-  allowInsecure?: boolean;
+  allowDangerousEnvKeys?: boolean;
 }): DangerousEnvInjectionDecision {
   if (input.dangerousKeys.length === 0) return "allow";
   if (!input.thirdParty) return "warn";
-  if (input.allowInsecure) return "warn";
+  if (input.allowDangerousEnvKeys) return "warn";
   const onlyInteractiveTool = input.dangerousKeys.every((key) => INTERACTIVE_TOOL_ENV_KEYS.has(key));
   return onlyInteractiveTool ? "warn" : "block";
 }
@@ -119,7 +116,7 @@ export function decideDangerousEnvInjection(input: {
  * keys.
  *   - `"allow"`      — no findings; install proceeds silently.
  *   - `"warn-allow"` — findings present but the operator passed
- *                      `--allow-insecure`; warn and proceed.
+ *                      `--allow-dangerous-env-keys`; warn and proceed.
  *   - `"gate"`       — findings present and no bypass; block the install unless
  *                      the interactive TTY confirmation (which stays in
  *                      `add-cli.ts`) explicitly overrides it.
@@ -134,10 +131,10 @@ export type DangerousKeyInstallStance = "allow" | "warn-allow" | "gate";
  */
 export function decideDangerousKeyInstall(input: {
   findingsPresent: boolean;
-  allowInsecure: boolean;
+  allowDangerousEnvKeys: boolean;
 }): DangerousKeyInstallStance {
   if (!input.findingsPresent) return "allow";
-  return input.allowInsecure ? "warn-allow" : "gate";
+  return input.allowDangerousEnvKeys ? "warn-allow" : "gate";
 }
 
 // ── Rule 3: write activation (search-source.ts, installations.ts) ────────────

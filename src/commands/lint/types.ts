@@ -13,6 +13,7 @@ export type LintIssueType =
   | "missing-skill-md"
   | "invalid-task-yaml"
   | "missing-ref"
+  | "redacted-content"
   | "dangerous-env-key"
   | "invalid-workflow-structure"
   | "missing-category"

@@ -27,7 +27,7 @@ import {
 } from "../website-url";
 import { htmlToMarkdownAndLinks } from "./content-extract";
 import { escapeMarkdownStructure } from "./fetcher-util";
-import { assertResolvedHostAllowed, assertWebsiteRequestUrl } from "./host-guard";
+import { assertResolvedHostAllowed, assertWebsiteRequestUrl, type HostnameResolver } from "./host-guard";
 import { loadWikiSnapshotFetchers } from "./registry";
 import {
   createAllowAllRobotsPolicy,
@@ -116,6 +116,8 @@ export interface FetchSnapshotOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   allowPrivateHosts?: boolean;
+  /** Test-only DNS seam for deterministic private-host classification. */
+  resolveHostname?: HostnameResolver;
   /**
    * Secret-store reader for fetchers that need credentials. Injected by
    * command-layer callers (which can import `core/env-secret-ref`); this
@@ -172,13 +174,11 @@ export async function ensureWebsiteMirror(
     wallClockCapMs?: number;
     /** See {@link FetchSnapshotOptions.resolveSecret}. */
     resolveSecret?: SecretResolveFn;
-    /** Internal update staging root. Omitted by ordinary provider hydration. */
-    cacheRootDir?: string;
   },
 ): Promise<ReturnType<typeof getWebsiteCachePaths>> {
   const rawUrl = config.url ?? "";
   const normalizedUrl = validateWebsiteUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
-  const cachePaths = getWebsiteCachePaths(normalizedUrl, options?.cacheRootDir);
+  const cachePaths = getWebsiteCachePaths(normalizedUrl);
   const requireStashDir = options?.requireStashDir === true;
 
   await withFreshnessCache({
@@ -514,7 +514,11 @@ export async function fetchWebsiteMarkdownSnapshot(
 ): Promise<WebsiteMarkdownSnapshot> {
   const normalizedUrl = validateWebsiteInputUrl(rawUrl, { allowPrivateHosts: options?.allowPrivateHosts });
   const parsedUrl = new URL(normalizedUrl);
-  const allowPrivateHosts = await resolveAllowPrivateStartHost(parsedUrl, options?.allowPrivateHosts);
+  const allowPrivateHosts = await resolveAllowPrivateStartHost(
+    parsedUrl,
+    options?.allowPrivateHosts,
+    options?.resolveHostname,
+  );
   const stashDir = resolveFetcherStashDir(options?.stashDir);
   const context: FetcherContext = {
     stashDir: stashDir ?? "",
@@ -742,10 +746,14 @@ async function assertStartUrlAllowedByRobots(robots: RobotsPolicy, start: URL, r
  * before it ever reaches a guard, so this never extends trust to a host the
  * fetched content merely points at.
  */
-async function resolveAllowPrivateStartHost(start: URL, requested: boolean | undefined): Promise<boolean> {
+async function resolveAllowPrivateStartHost(
+  start: URL,
+  requested: boolean | undefined,
+  resolveHostname?: HostnameResolver,
+): Promise<boolean> {
   if (requested) return true;
   try {
-    await assertResolvedHostAllowed(start.hostname);
+    await assertResolvedHostAllowed(start.hostname, { resolveHostname });
     return false;
   } catch {
     warnOnce(

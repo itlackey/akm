@@ -5,12 +5,14 @@
  * Drives a single-source, two-sandbox ablation:
  *
  *   1. Build two sandboxes from the same source stash via createSandbox().
- *      `graphOn`  — default akm config; FEATURE_DEFAULTS.graph_extraction = true.
- *      `graphOff` — writes <sandbox>/.config/akm/config.json (under the HOME
- *                   carve-out) that turns BOTH the locked v1 feature gate
- *                   (`llm.features.graph_extraction: false`) AND the per-pass
- *                   opt-out (`index.graph.llm: false`) off. This is the dual
- *                   gate documented in `src/indexer/graph-extraction.ts`.
+ *      `graphOn`  — default akm config; `index.graph.enabled` defaults to true
+ *                   (`FEATURE_LOCATION.graph_extraction`, src/llm/feature-gate.ts).
+ *      `graphOff` — writes <sandbox-stash>/.akm/config.json (the path akm
+ *                   actually resolves config from: createSandbox() sets
+ *                   AKM_CONFIG_DIR to `<stash>/.akm`, and AKM_CONFIG_DIR wins
+ *                   over XDG_CONFIG_HOME/HOME) with `index.graph.enabled:
+ *                   false` — the one gate `isProcessEnabled("index",
+ *                   "graph_extraction", config)` reads.
  *   2. For each side: `akm index` + `akm improve --json-to-stdout`.
  *   3. Run the suite's retrieval cases against each sandbox (delegates to the
  *      shared `runRetrievalCase` runner — same scoring used everywhere else).
@@ -87,7 +89,7 @@ function tokenize(s: string): string[] {
   let cur = "";
   let quote: '"' | "'" | null = null;
   for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
+    const ch = s[i]!; // i < s.length, so always in range.
     if (quote) {
       if (ch === quote) {
         quote = null;
@@ -220,19 +222,28 @@ function loadCases(casesRoot: string, suite: string): EvalCase[] {
 }
 
 /**
- * Plant the dual-gate-off config under the sandbox's HOME carve-out, so the
- * `graphOff` side has both `llm.features.graph_extraction: false` AND
- * `index.graph.llm: false`. akm resolves config via XDG_CONFIG_HOME or HOME;
- * sandbox.env.HOME points inside the sandbox root, so this file fully shadows
- * the user's real config.
+ * Plant the graph-off config where the sandboxed `akm` actually reads it.
+ *
+ * `createSandbox()` sets `AKM_CONFIG_DIR=<stashDir>/.akm` (sources/sandbox.ts),
+ * and `getConfigDir()` (src/core/paths.ts) returns `AKM_CONFIG_DIR` verbatim
+ * when set — ahead of XDG_CONFIG_HOME/HOME. So the config file must land at
+ * `<stashDir>/.akm/config.json`, not under a `.config/akm` home carve-out
+ * (GR-D4: the old path was never read, so the `graphOff` side silently ran
+ * with graph extraction still on).
+ *
+ * `index.graph.enabled: false` is the one gate that matters:
+ * `isProcessEnabled("index", "graph_extraction", config)` (src/llm/feature-gate.ts)
+ * resolves to `cfg.index?.graph?.enabled ?? true`. The previous content
+ * (`llm.features.graph_extraction`, a key retired in 0.8.0, and
+ * `index.graph.llm: false`, which sets the per-pass LLM-invocation-overrides
+ * object to a boolean) never gated anything even where it might be read.
  */
-function writeGraphOffConfig(sandbox: Sandbox): string {
-  const configDir = path.join(sandbox.root, ".config", "akm");
+export function writeGraphOffConfig(sandbox: Sandbox): string {
+  const configDir = path.join(sandbox.stashDir, ".akm");
   fs.mkdirSync(configDir, { recursive: true });
   const configPath = path.join(configDir, "config.json");
   const cfg = {
-    llm: { features: { graph_extraction: false } },
-    index: { graph: { llm: false } },
+    index: { graph: { enabled: false } },
   };
   fs.writeFileSync(configPath, `${JSON.stringify(cfg, null, 2)}\n`);
   return configPath;
@@ -249,11 +260,12 @@ function countContradictionEdges(stashDir: string): number {
     const raw = fs.readFileSync(file, "utf8");
     const m = raw.match(/^---\n([\s\S]*?)\n---/);
     if (!m) continue;
-    const fm = m[1];
+    // The group is mandatory (no `?`), so a successful match always fills it.
+    const fm = m[1] ?? "";
     // Match `contradictedBy:` followed by either inline `[a, b]` or a YAML list.
     const inline = fm.match(/^contradictedBy:\s*\[([^\]]*)\]/m);
     if (inline) {
-      count += inline[1]
+      count += (inline[1] ?? "")
         .split(",")
         .map((s) => s.trim())
         .filter((s) => s.length > 0).length;
@@ -261,8 +273,9 @@ function countContradictionEdges(stashDir: string): number {
     }
     const blockHeader = fm.match(/^contradictedBy:\s*$/m);
     if (blockHeader) {
-      const idx = fm.indexOf(blockHeader[0]);
-      const rest = fm.slice(idx + blockHeader[0].length).split("\n");
+      const header = blockHeader[0] ?? "";
+      const idx = fm.indexOf(header);
+      const rest = fm.slice(idx + header.length).split("\n");
       for (const line of rest) {
         if (/^\s*-\s+/.test(line)) count += 1;
         else if (line.trim() !== "" && !/^\s/.test(line)) break;
@@ -447,7 +460,8 @@ function median(xs: number[]): number {
   if (xs.length === 0) return 0;
   const sorted = [...xs].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+  // xs.length > 0, so mid and mid-1 (when used) are always in range.
+  return sorted.length % 2 === 0 ? (sorted[mid - 1]! + sorted[mid]!) / 2 : sorted[mid]!;
 }
 
 function medianNullable(xs: Array<number | null>): number | null {
@@ -478,7 +492,8 @@ function aggregateSide(samples: SideSample[]): SideAggregate {
 
   // Last seed's improve envelope is representative for the telemetry blocks
   // (entity/relation counts are deterministic enough that we don't average them).
-  const last = samples[samples.length - 1];
+  // `--seeds` is always >= 1, so `samples` is never empty here.
+  const last = samples[samples.length - 1]!;
   return {
     improveDurationMs: {
       median: median(improveDur),
@@ -787,7 +802,7 @@ async function main(): Promise<number> {
     notes.push("Single-seed run; numbers are point estimates with no range. Re-run with `--seeds 3` (or more) for decision-quality results.");
   }
   if (deltaTokens === 0) {
-    notes.push("Token-cost proxy delta is zero — likely because no LLM provider is configured (the dual-gate also blocks graph extraction at the resolver layer when no provider exists).");
+    notes.push("Token-cost proxy delta is zero — likely because no LLM provider is configured (the feature gate also blocks graph extraction at the resolver layer when no provider exists).");
   }
 
   const envelope: AblationEnvelope = {
@@ -853,10 +868,14 @@ function stripSandbox(s: SideSample & { sandbox: Sandbox }): SideSample {
   return rest;
 }
 
-try {
-  const code = await main();
-  process.exit(code);
-} catch (err) {
-  process.stderr.write(`[graph-ablation] ${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(2);
+// Guarded so the module can be imported (e.g. from tests, to exercise
+// writeGraphOffConfig) without triggering a full ablation run and exit.
+if (import.meta.main) {
+  try {
+    const code = await main();
+    process.exit(code);
+  } catch (err) {
+    process.stderr.write(`[graph-ablation] ${err instanceof Error ? err.message : String(err)}\n`);
+    process.exit(2);
+  }
 }

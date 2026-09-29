@@ -4,10 +4,10 @@ import path from "node:path";
 import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
-import { compileResolveFreezeWorkflowV4 } from "../../../src/workflows/ir/freeze-v4";
+import { freezeWorkflow } from "../../../src/workflows/freeze/freeze";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
@@ -63,6 +63,10 @@ const GATED_EXEC_WORKFLOW = [
   "",
 ].join("\n");
 
+// Keep the workflow's `true` executable resolvable while deliberately hiding
+// ambient agent CLIs such as opencode. These cases assert the no-engine path.
+const NO_AGENT_PATH = path.dirname(Bun.which("true") ?? process.execPath);
+
 describe("resolveJudge falls back to the default engine when workflow.judgeEngine is unset", () => {
   test("a configured defaults.engine is used for the gate's judge", async () => {
     writeSandboxConfig({
@@ -73,7 +77,7 @@ describe("resolveJudge falls back to the default engine when workflow.judgeEngin
     write("workflows/gated.md", GATED_WORKFLOW);
 
     const asset = await loadWorkflowAsset("workflows/gated");
-    const frozen = await compileResolveFreezeWorkflowV4(asset, loadConfig());
+    const frozen = await freezeWorkflow(asset, loadConfig());
     const step = frozen.plan.steps.find((s) => s.stepId === "work");
     expect(step?.gate.criteria.length).toBeGreaterThan(0);
     expect(step?.gate.frozenJudge).not.toBeNull();
@@ -89,13 +93,15 @@ describe("resolveJudge freezes frozenJudge: null (never refuses) when no engine 
 
     const warnCalls: string[] = [];
     const asset = await loadWorkflowAsset("workflows/gated");
-    const frozen = await withSeam(
-      _setWarnSinkForTests,
-      (level, args) => {
-        if (level !== "warn") return;
-        warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
-      },
-      () => compileResolveFreezeWorkflowV4(asset, loadConfig()),
+    const frozen = await withEnv({ PATH: NO_AGENT_PATH }, () =>
+      withSeam(
+        _setWarnSinkForTests,
+        (level, args) => {
+          if (level !== "warn") return;
+          warnCalls.push(args.map((value) => (typeof value === "string" ? value : JSON.stringify(value))).join(" "));
+        },
+        () => freezeWorkflow(asset, loadConfig()),
+      ),
     );
 
     const step = frozen.plan.steps.find((s) => s.stepId === "work");
@@ -109,21 +115,23 @@ describe("resolveJudge freezes frozenJudge: null (never refuses) when no engine 
     resetConfigCache();
     write("workflows/gated.md", GATED_EXEC_WORKFLOW);
 
-    const started = await startWorkflowRun("workflows/gated");
-    expect(started.run.status).toBe("active");
+    await withEnv({ PATH: NO_AGENT_PATH }, async () => {
+      const started = await startWorkflowRun("workflows/gated");
+      expect(started.run.status).toBe("active");
 
-    const result = await runWorkflowSteps({
-      target: started.run.id,
-      dispatcher: async () => ({ ok: true, text: "did the work" }),
-      summaryJudge: null,
+      const result = await runWorkflowSteps({
+        target: started.run.id,
+        dispatcher: async () => ({ ok: true, text: "did the work" }),
+        summaryJudge: null,
+      });
+
+      expect(result.run.status).toBe("blocked");
+      expect(result.judgeFailure?.stepId).toBe("work");
+      expect(result.judgeFailure?.message).toContain("no verification judge is available");
+      const status = await getWorkflowStatus(started.run.id);
+      expect(status.run.status).toBe("blocked");
+      expect(status.workflow.steps[0]?.status).toBe("blocked");
+      expect(status.workflow.steps[0]?.evidence?.output).toBe("did the work");
     });
-
-    expect(result.run.status).toBe("blocked");
-    expect(result.judgeFailure?.stepId).toBe("work");
-    expect(result.judgeFailure?.message).toContain("no verification judge is available");
-    const status = await getWorkflowStatus(started.run.id);
-    expect(status.run.status).toBe("blocked");
-    expect(status.workflow.steps[0]?.status).toBe("blocked");
-    expect(status.workflow.steps[0]?.evidence?.output).toBe("did the work");
   }, 30_000);
 });

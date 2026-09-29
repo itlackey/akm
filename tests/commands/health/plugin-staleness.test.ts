@@ -53,6 +53,16 @@ function fakeTags(tags: string[] | undefined): ListRemoteTagsFn {
   return () => tags;
 }
 
+/**
+ * A guaranteed-empty OpenCode cache root, so these Claude-plugin-only tests
+ * never pick up a real `~/.cache/opencode` on the host running them — `os.
+ * homedir()` under bun does not honor a sandboxed `HOME`, same reason
+ * `claudePluginsDir()` needs `AKM_CLAUDE_PLUGINS_DIR`.
+ */
+function noOpencode(pluginsRoot: string): string {
+  return path.join(pluginsRoot, "no-opencode-cache");
+}
+
 describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
   test("stale plugin detected: installed 0.9.1, newest tag 0.9.1202608250804", () => {
     const pluginsRoot = makeTempDir("akm-plugin-stale-");
@@ -63,6 +73,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2",
       listRemoteTags: fakeTags(["0.9.1", "0.9.1202608250804"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.name).toBe("plugin-version");
@@ -82,6 +93,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2",
       listRemoteTags: fakeTags(["0.9.1", "0.9.1202608250804"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.status).toBe("pass");
@@ -98,6 +110,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2-alpha.3",
       listRemoteTags: fakeTags(["0.9.1"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.status).toBe("warn");
@@ -115,6 +128,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2",
       listRemoteTags: fakeTags(["0.9.1"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.status).toBe("pass");
@@ -123,13 +137,21 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
 
   test("nothing installed degrades benignly (empty plugins root)", () => {
     const pluginsRoot = makeTempDir("akm-plugin-empty-");
-    const result = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.2" });
+    const result = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.2",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
     expect(result).toEqual([]);
   });
 
   test("no Claude plugins directory at all degrades benignly", () => {
     const pluginsRoot = path.join(os.tmpdir(), `akm-plugin-missing-${Date.now()}-${Math.random()}`);
-    const result = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.2" });
+    const result = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.2",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
     expect(result).toEqual([]);
   });
 
@@ -146,6 +168,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
         calls += 1;
         return ["9.9.9"]; // if this were ever consulted, it would (wrongly) look newer
       },
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(calls).toBe(0);
@@ -163,6 +186,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2",
       listRemoteTags: fakeTags(undefined),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.status).toBe("pass");
@@ -176,7 +200,11 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
     fs.mkdirSync(pluginDir, { recursive: true });
     fs.writeFileSync(path.join(pluginDir, "plugin.json"), "{not valid json");
 
-    const result = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.2" });
+    const result = collectPluginStalenessAdvisories({
+      pluginsRoot,
+      cliVersion: "0.9.2",
+      opencodeCacheRoot: noOpencode(pluginsRoot),
+    });
     expect(result).toEqual([]);
   });
 
@@ -189,6 +217,7 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2-alpha.3",
       listRemoteTags: fakeTags(["0.9.1"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.status).toBe("pass");
@@ -205,10 +234,83 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       pluginsRoot,
       cliVersion: "0.9.2-alpha.3",
       listRemoteTags: fakeTags(["0.9.1"]),
+      opencodeCacheRoot: noOpencode(pluginsRoot),
     });
 
     expect(adv?.status).toBe("pass");
     expect(adv?.evidence?.admitted).toBeNull();
     expect(adv?.evidence?.versionRange).toBeNull();
+  });
+
+  // OpenCode's bundled akm-cli, checked independently of any
+  // Claude harness plugin.
+  describe("opencode-plugin-version", () => {
+    function installOpencodeBundledAkm(cacheRoot: string, version: string): void {
+      const pkgDir = path.join(cacheRoot, "packages", "akm-opencode", "node_modules", "akm-cli");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "akm-cli", version }));
+    }
+
+    test("no OpenCode plugin installed: no advisory, no crash", () => {
+      const pluginsRoot = makeTempDir("akm-plugin-noopencode-");
+      const result = collectPluginStalenessAdvisories({
+        pluginsRoot,
+        cliVersion: "0.9.2",
+        opencodeCacheRoot: noOpencode(pluginsRoot),
+      });
+      expect(result).toEqual([]);
+    });
+
+    test("stale bundled akm-cli: warn naming both versions, never executed", () => {
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-stale-");
+      const opencodeCacheRoot = path.join(pluginsRoot, "opencode-cache");
+      installOpencodeBundledAkm(opencodeCacheRoot, "0.9.15");
+
+      const [adv] = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(adv?.name).toBe("opencode-plugin-version");
+      expect(adv?.status).toBe("warn");
+      expect(adv?.message).toContain("0.9.15");
+      expect(adv?.message).toContain("0.9.17");
+      expect(adv?.evidence).toMatchObject({ bundledVersion: "0.9.15", cliVersion: "0.9.17" });
+    });
+
+    test("matching bundled akm-cli: pass", () => {
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-match-");
+      const opencodeCacheRoot = path.join(pluginsRoot, "opencode-cache");
+      installOpencodeBundledAkm(opencodeCacheRoot, "0.9.17");
+
+      const [adv] = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(adv?.status).toBe("pass");
+    });
+
+    test("unreadable/malformed package.json is skipped, not a crash", () => {
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-badmanifest-");
+      const opencodeCacheRoot = path.join(pluginsRoot, "opencode-cache");
+      const pkgDir = path.join(opencodeCacheRoot, "packages", "akm-opencode", "node_modules", "akm-cli");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.json"), "{not valid json");
+
+      const result = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+      expect(result).toEqual([]);
+    });
+
+    test("coexists with a stale Claude plugin as a second, independent result", () => {
+      const pluginsRoot = makeTempDir("akm-plugin-opencode-both-");
+      installPlugin(pluginsRoot, { version: "0.9.1" });
+      makeMarketplaceDir(pluginsRoot);
+      const opencodeCacheRoot = path.join(pluginsRoot, "opencode-cache");
+      installOpencodeBundledAkm(opencodeCacheRoot, "0.9.15");
+
+      const results = collectPluginStalenessAdvisories({
+        pluginsRoot,
+        cliVersion: "0.9.17",
+        listRemoteTags: fakeTags(["0.9.1"]),
+        opencodeCacheRoot,
+      });
+
+      expect(results.map((r) => r.name)).toEqual(["plugin-version", "opencode-plugin-version"]);
+    });
   });
 });

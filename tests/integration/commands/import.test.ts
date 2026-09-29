@@ -23,7 +23,6 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
-import { resetGraphBoostCache } from "../../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../../src/llm/embedder";
 import { runCliCapture } from "../../_helpers/cli";
 import { withEnv } from "../../_helpers/sandbox";
@@ -49,7 +48,7 @@ function writeConfig(configDir: string, body: Record<string, unknown>): void {
 /**
  * In-process CLI runner. Pins the test's isolated stash + config dirs for the
  * duration of the call (via the allowlisted withEnv helper) and resets the
- * embedder/graph singletons so the run reads the pinned env, matching what a
+ * embedder singletons so the run reads the pinned env, matching what a
  * fresh subprocess got for free. runCliCapture resets the config and
  * output-mode singletons itself.
  */
@@ -69,7 +68,6 @@ async function runCli(args: string[], options: { stashDir?: string; configDir: s
     async () => {
       clearEmbeddingCache();
       resetLocalEmbedder();
-      resetGraphBoostCache();
       const { stdout, stderr, code } = await runCliCapture(args);
       return { status: code, stdout, stderr };
     },

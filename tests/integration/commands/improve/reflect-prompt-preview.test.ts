@@ -15,7 +15,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { improveCommand } from "../../../../src/commands/improve/improve-cli";
 import { akmReflect, renderReflectPromptPreview } from "../../../../src/commands/improve/reflect";
+import { archiveProposal, createProposal } from "../../../../src/commands/proposal/repository";
 import { appendEvent } from "../../../../src/core/events";
+import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
 import { writeLesson } from "../../../_helpers/assets";
 import { makeConfig } from "../../../_helpers/factories";
@@ -146,5 +148,112 @@ describe("renderReflectPromptPreview (#952)", () => {
   test("`akm improve` registers --show-prompt (#952)", () => {
     const args = improveCommand.args as Record<string, { type?: string; default?: unknown }>;
     expect(args["show-prompt"]).toMatchObject({ type: "boolean", default: false });
+  });
+});
+
+// (R1) A legacy rejected proposal (metadata_json has no `changes`
+// key at all — the pre-#858/#859 archive shape) must not throw before
+// reflect dispatch. `readRejectedProposals` used `proposalContent(p)`, which
+// throws when `changes[0]?.after` is undefined; `storedToChanges` deliberately
+// returns `[]` for these rows, so every legacy rejected proposal made the
+// whole prompt-gathering step throw. Reading the preview from
+// `p.payload.content` instead (always populated) fixes it.
+describe("readRejectedProposals tolerates legacy rows with no persisted changes (R1)", () => {
+  test("a rejected proposal with no metadata_json.changes does not throw and its content still reaches the prompt", async () => {
+    const stashDir = storage.stashDir;
+    writeLesson(stashDir, "test-lesson", "existing description", "existing usage");
+
+    const rejectedContent =
+      "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nThe rejected candidate body, verbatim.\n";
+    const rejected = createProposal(stashDir, {
+      ref: "lessons/test-lesson",
+      source: "reflect",
+      payload: { content: rejectedContent },
+    });
+    archiveProposal(stashDir, rejected.id, "rejected", "not a real improvement");
+
+    const db = openStateDatabase(getStateDbPath());
+    try {
+      const row = db.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(rejected.id) as {
+        metadata_json: string;
+      };
+      const metadata = JSON.parse(row.metadata_json) as Record<string, unknown>;
+      delete metadata.changes;
+      db.prepare("UPDATE proposals SET metadata_json = ? WHERE id = ?").run(JSON.stringify(metadata), rejected.id);
+    } finally {
+      db.close();
+    }
+
+    const config = withTestImproveLlm(makeConfig(stashDir));
+    const preview = await withMockedFetch(
+      () =>
+        renderReflectPromptPreview({
+          ref: "lessons/test-lesson",
+          improveProfile: {},
+          config,
+          stashDir,
+        }),
+      () => {
+        throw new Error("renderReflectPromptPreview must never call fetch — it makes no engine call");
+      },
+    );
+
+    expect(preview.prompt).toContain("Previously Rejected Proposals");
+    expect(preview.prompt).toContain("The rejected candidate body, verbatim.");
+  });
+});
+
+// readRejectedProposals (reflect.ts) excludes the drain's stale-target
+// auto-rejects from the Reflexion "don't repeat this" context: that rejection
+// is a procedural refusal (the target changed after mint), not a judgement on
+// the content, and would mislead the LLM into avoiding content it was never
+// actually judged on. An ordinary rejection stays in the context.
+describe("readRejectedProposals excludes stale-target auto-rejects from the Reflexion context (STALE, R20)", () => {
+  test("a stale-target auto-reject's reason and content preview do not reach the prompt; an ordinary rejection's do", async () => {
+    const stashDir = storage.stashDir;
+    writeLesson(stashDir, "test-lesson", "existing description", "existing usage");
+
+    const staleRejected = createProposal(stashDir, {
+      ref: "lessons/test-lesson",
+      source: "reflect",
+      payload: {
+        content:
+          "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nSTALE_TARGET_REJECTED_BODY_MARKER.\n",
+      },
+    });
+    archiveProposal(stashDir, staleRejected.id, "rejected", "stale-target: STALE_TARGET_REASON_MARKER", undefined, {
+      outcome: "auto-rejected",
+      reason: "stale-target",
+      gate: "triage:personal-stash",
+    });
+
+    const ordinaryRejected = createProposal(stashDir, {
+      ref: "lessons/test-lesson",
+      source: "reflect",
+      payload: {
+        content:
+          "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nORDINARY_REJECTED_BODY_MARKER.\n",
+      },
+    });
+    archiveProposal(stashDir, ordinaryRejected.id, "rejected", "ORDINARY_REJECTION_REASON_MARKER");
+
+    const config = withTestImproveLlm(makeConfig(stashDir));
+    const preview = await withMockedFetch(
+      () =>
+        renderReflectPromptPreview({
+          ref: "lessons/test-lesson",
+          improveProfile: {},
+          config,
+          stashDir,
+        }),
+      () => {
+        throw new Error("renderReflectPromptPreview must never call fetch — it makes no engine call");
+      },
+    );
+
+    expect(preview.prompt).toContain("ORDINARY_REJECTED_BODY_MARKER");
+    expect(preview.prompt).toContain("ORDINARY_REJECTION_REASON_MARKER");
+    expect(preview.prompt).not.toContain("STALE_TARGET_REJECTED_BODY_MARKER");
+    expect(preview.prompt).not.toContain("STALE_TARGET_REASON_MARKER");
   });
 });

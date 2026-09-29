@@ -53,12 +53,17 @@
     {
       "id": "enabled-false-akm-schedule",
       "file": "deterministic/enabled-false-akm-schedule.yml",
-      "represents": ["enabled:false-distributes-to-single-schedule-entry"]
+      "represents": ["enabled:false-is-removed"]
     },
     {
       "id": "enabled-false-on-schedule",
       "file": "deterministic/enabled-false-on-schedule.yml",
-      "represents": ["enabled:false-distributes-to-every-schedule-entry"]
+      "represents": ["enabled:false-is-removed"]
+    },
+    {
+      "id": "enabled-false-without-schedule",
+      "file": "blocked/enabled-false-without-schedule.yml",
+      "represents": ["enabled:false-is-removed-from-manual-task"]
     }
   ],
   "blocked": [
@@ -71,11 +76,6 @@
       "id": "with-on-workflow-target",
       "file": "blocked/with-on-workflow-target.yml",
       "reasonCode": "with-on-non-command-target"
-    },
-    {
-      "id": "enabled-false-without-schedule",
-      "file": "blocked/enabled-false-without-schedule.yml",
-      "reasonCode": "enabled-false-has-no-schedule-entry"
     }
   ]
 }

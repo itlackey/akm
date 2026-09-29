@@ -2,7 +2,7 @@
 
 AKM learns from outcomes, but changes remain reviewable. Every time an agent
 uses a capability and reports back whether it helped, AKM folds that signal
-into the asset's ranking and — over time — proposes concrete edits. Nothing
+into the asset's utility score and — over time — proposes concrete edits. Nothing
 lands in your bundle automatically: every generated change queues as a
 proposal you (or an explicit policy) accept, reject, or revert.
 
@@ -78,11 +78,16 @@ akm improve --limit 10                # Base cap; configured replay slots are ad
 
 Selection defaults to assets with recent feedback signals first, with a
 retrieval-count fallback for high-traffic assets that have no feedback yet.
+Improve reworks only what gets read: without fresh feedback, an asset is
+picked (and a memory is judged for consolidation) only if `search`, `curate`
+or `show` returned it, or feedback named it, in the last 90 days — the usage
+log's retention — or if it is new material no improve stage has processed
+yet. An explicit ref (`akm improve skills/code-review`) is always reworked.
 Full flag reference: [CLI Reference — improve](../reference/cli.md#improve).
 
 `--dry-run` is an execution-plan preview, not a raw scope listing. Its
-`plannedRefs` are the final ranked refs after validation, signal, disk, and
-limit gates. The accompanying `plan` keeps the pre-gate `rawInScope` count,
+`plannedRefs` are the final ranked refs after validation, retrieval, signal,
+disk, and limit gates. The accompanying `plan` keeps the pre-gate `rawInScope` count,
 per-gate removal counts and reasons, configured versus effective limits, and
 the selection lane for each final ref. `plan.snapshot` explains whether the
 existing index was readable; a missing or incompatible index produces an
@@ -90,7 +95,7 @@ explicit empty snapshot without creating or migrating it. The plan reports the
 ordinary base cap as `limits.effective`, the separate additive replay budget as
 `limits.additiveReplayAllowance`, and their finite sum as
 `limits.totalCeiling`. It also reports proactive-maintenance due statistics,
-consolidation pool gates and chunk estimate, extract/graph/memory-inference
+consolidation pool gates and chunk estimate, extract/memory-inference
 stage decisions, and proposal-triage mode and caps. The plan has
 `mode: "estimate"` and `dispatch: false`; producing it does not acquire the
 improve lock, invoke an LLM, create state, or write proposals, events, assets,
@@ -192,9 +197,9 @@ autonomy gate that governs the few lanes that can act without one.
 
 ## See also
 
-- [Discover & Load](discover-and-load.md) — feedback improves ranking over time
+- [Discover & Load](discover-and-load.md) — finding and loading assets
 - [Knowledge Management](knowledge-management.md) — capturing memories and docs
 - [Agent Integration](use-with-any-agent.md) — wiring feedback into agent workflows
 - [CLI Reference](../reference/cli.md) — full flag documentation for `feedback`, `log`, `improve`, `proposal`
 - [Architecture: The Improvement Loop](../architecture/improvement.md) — utility scoring, strategies, autonomy gates, auto-sync, and session extraction
-- [Concepts](../guides/concepts.md) — how utility scores affect search ranking
+- [Concepts](../guides/concepts.md) — bundles, refs and the index

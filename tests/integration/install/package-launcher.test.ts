@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { realNodeExecutable } from "../../_helpers/node-runtime";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../../..");
 const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm package launcher "));
@@ -128,9 +129,7 @@ beforeAll(async () => {
     throw new Error(`npm fixture install failed: ${new TextDecoder().decode(installed.stderr)}`);
   }
 
-  const node = Bun.which("node");
-  if (!node) throw new Error("Node.js is required for the package launcher contract test");
-  fs.symlinkSync(fs.realpathSync(node), isolatedNode);
+  fs.symlinkSync(realNodeExecutable(), isolatedNode);
 
   fakeBun(oldBunPathDir, "0.9.9");
   fakeBun(unusableBunPathDir, "bun probe failed", 1);

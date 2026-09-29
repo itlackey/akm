@@ -34,7 +34,7 @@
  *
  * Sandbox/freeze pattern follows tests/workflows/characterization-with-drop.ts
  * (withIsolatedAkmStorage + writeWorkflowTestConfig + akmIndex +
- * startWorkflowRun + withWorkflowRunsRepo + decodeWorkflowPlanV4).
+ * startWorkflowRun + withWorkflowRunsRepo + decodeWorkflowPlan).
  *
  * P2b FLIP (docs/plans/specs/p2b-input-bindings.md §7 F-A3, A-N5): P1a's
  * unconditional "task-call inputs are not supported yet" rejection is
@@ -71,9 +71,10 @@ import { resetConfigCache } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import { decodeWorkflowPlanV4, type FrozenWorkflowTarget } from "../../src/workflows/ir/schema-v4";
+import { compileWorkflowSource } from "../../src/workflows/compile";
+import type { FrozenWorkflowTarget } from "../../src/workflows/plan";
+import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
-import { compileGithubWorkflowSource } from "../../src/workflows/source-ir/compile";
 import { EXECUTION_CONTRACT_FIXTURES } from "../_helpers/execution-contracts";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 
@@ -125,13 +126,13 @@ describe("with-on-task-composition rejected fixture — registered, and accepted
   // PRESERVED (B-01 companion): pins that decode/compile is unaffected by
   // P1a — schema.ts:144 still accepts with: on every uses target; only
   // taskDispatch's freeze-time behavior changes. Already green today.
-  test("the fixture compiles cleanly via compileGithubWorkflowSource — decode/compile is unaffected by P1a", () => {
+  test("the fixture compiles cleanly via compileWorkflowSource — decode/compile is unaffected by P1a", () => {
     const { yaml } = readRejectedFixture(FIXTURE_ID);
-    const result = compileGithubWorkflowSource(yaml, { path: `workflows/rejected/${FIXTURE_ID}.yml` });
+    const result = compileWorkflowSource(yaml, { path: `workflows/rejected/${FIXTURE_ID}.yml` });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
-    expect(result.ir.jobs[0]?.steps[0]?.uses).toBe(TASK_REF);
-    expect(result.ir.jobs[0]?.steps[0]?.with).toEqual({ scope: "all" });
+    expect(result.plan.steps[0]?.spec?.uses).toBe(TASK_REF);
+    expect(result.plan.steps[0]?.spec?.with).toEqual({ scope: "all" });
   });
 });
 
@@ -168,7 +169,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
     return withWorkflowRunsRepo((repo) => repo.getRunById(runId));
   }
 
-  function firstTarget(plan: ReturnType<typeof decodeWorkflowPlanV4>): FrozenWorkflowTarget | undefined {
+  function firstTarget(plan: ReturnType<typeof decodeWorkflowPlan>): FrozenWorkflowTarget | undefined {
     const root = plan.steps[0]?.root;
     if (!root) return undefined;
     return root.kind === "map" ? root.template.frozenTarget : root.frozenTarget;
@@ -314,7 +315,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
 
     const started = await startWorkflowRun("workflows/without-with-task-composition");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     expect(firstTarget(plan)?.kind).toBe("command");
   });
 
@@ -345,7 +346,7 @@ describe("P1a Lane A — with: on uses: tasks/<ref> rejects at freeze (COMPOSITI
 
     const started = await startWorkflowRun("workflows/builtin-with-consumed");
     const row = await planRow(started.run.id);
-    const plan = decodeWorkflowPlanV4(JSON.parse(row?.plan_json ?? "null"));
+    const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = firstTarget(plan);
     expect(target?.kind).toBe("command");
     if (target?.kind !== "command") return;

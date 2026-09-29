@@ -19,10 +19,11 @@ describe("current engine and runtime boundary", () => {
     defaults: { engine: "reviewer", llmEngine: "fast" },
   };
 
-  test("current architecture defines named engines and RunnerSpec lowering", () => {
+  test("current architecture defines named engines and the RunnerSpec pipeline", () => {
     expect(section).toContain("named `engines`");
     expect(section).toContain("RunnerSpec");
-    expect(section).toContain("executeRunner()");
+    expect(section).toContain("runExecution()");
+    expect(section).toContain("buildExecutionFromWire()");
   });
 
   test("documents the current OpenCode SDK module and exported runner", () => {

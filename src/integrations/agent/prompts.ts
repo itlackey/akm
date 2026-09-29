@@ -458,7 +458,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
 
   if (input.avoidPatterns && input.avoidPatterns.length > 0) {
     sections.push(
-      `## Avoid These Patterns\nPrevious assets in this run produced these errors — do not repeat them:\n${input.avoidPatterns.map((e) => `- ${e}`).join("\n")}`,
+      `## Avoid These Patterns\nRun-only guidance: do not copy this heading, explanation, or any diagnostic below into the proposed asset.\nPrevious assets in this run produced these errors — do not repeat them:\n${input.avoidPatterns.map((e) => `- ${e}`).join("\n")}`,
     );
   }
 

@@ -16,15 +16,10 @@ import { warn } from "../../core/warn";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
 import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
-import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
+import { type AgentProfile, getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "./profiles";
 
-// RunnerSpec referenced via an inline `import("./runner")` TYPE QUERY (WI-9.8
-// KILL 3) rather than a top-level `import type`: `./runner.ts` imports real
-// VALUES from this module (resolveEngine, resolveLlmEngineUse,
-// materializeLlmConnection), so a top-level type import here would close a
-// 2-file cycle (this file needs RunnerSpec only as a return-type annotation,
-// never a value). Same pattern as `builder-shared.ts`'s `AgentRunResult`
-// query — erased at compile time, invisible to the static import graph.
+// `./runner.ts` imports values from this module, so RunnerSpec is referenced
+// through an erased type query instead of a top-level import (no cycle).
 type RunnerSpec = import("./runner").RunnerSpec;
 
 export interface LlmInvocationOverrides {
@@ -85,48 +80,38 @@ export interface CredentialDescriptor {
   required: boolean;
 }
 
+/**
+ * One selected LLM engine with overlays applied. Credentials stay symbolic
+ * here — an env descriptor, a file path (#905), or a `secret://` reference
+ * (#953) — and are read only at dispatch by {@link resolveLlmCredentialValue}.
+ */
 export interface ResolvedLlmUse {
   engine: string;
-  /** Frozen connection fields only; resolution never places apiKey or timeoutMs here. */
   connection: LlmConnectionConfig;
   credential?: CredentialDescriptor;
-  /**
-   * Home-expanded, but NOT YET READ, path to a file-backed credential (#905).
-   * Mutually exclusive with `credential` at the schema level — read lazily by
-   * {@link resolveLlmCredentialValue} only when no env credential value is
-   * supplied, so the frozen resolution/plan objects never carry the secret
-   * itself.
-   */
   apiKeyFile?: string;
-  /**
-   * The raw `secret://<name>` reference (#953) — NOT resolved. Mutually
-   * exclusive with `credential`/`apiKeyFile` at the schema level — read
-   * lazily by {@link resolveLlmCredentialValue} only when neither an env
-   * credential value nor `apiKeyFile` supplies one, so the frozen
-   * resolution/plan objects never carry the secret itself.
-   */
   apiKeySecretRef?: string;
   timeoutMs: number | null;
 }
 
-function hasOwn(value: object, key: PropertyKey): boolean {
-  return Object.hasOwn(value, key);
-}
-
-function ownValue<T extends object, K extends keyof T>(value: T, key: K): T[K] | undefined {
-  return hasOwn(value, key) ? value[key] : undefined;
-}
-
-function sterileRecord<T extends object>(value: T): T {
-  return Object.assign(Object.create(null), value) as T;
-}
+const LLM_CONNECTION_FIELDS = [
+  "provider",
+  "endpoint",
+  "model",
+  "temperature",
+  "maxTokens",
+  "supportsJsonSchema",
+  "extraParams",
+  "contextLength",
+  "enableThinking",
+  "reasoningEffort",
+] as const;
 
 function envName(reference: string): string | undefined {
   const match = /^\$(?:\{)?([A-Za-z_][A-Za-z0-9_]*)(?:\})?$/.exec(reference);
   return match?.[1];
 }
 
-/** Expand a leading `~` the same way `loadSetupConfigFromFile` does for `--from <file>`. */
 function expandHomePath(filePath: string): string {
   return filePath.startsWith("~") ? path.join(os.homedir(), filePath.slice(1)) : filePath;
 }
@@ -136,12 +121,7 @@ function trimTrailingNewline(raw: string): string {
   return raw.replace(/\r?\n$/, "");
 }
 
-/**
- * Read a file-backed credential (#905) at the dispatch boundary. Never
- * includes the file's content in a thrown message — only the engine name and
- * path, so a misconfigured `apiKeyFile` cannot leak its (partial) contents
- * into a log or error report.
- */
+/** Read a file-backed credential; errors name the engine and path, never the contents. */
 function readApiKeyFile(engineName: string, filePath: string): string {
   let raw: string;
   try {
@@ -158,12 +138,7 @@ function readApiKeyFile(engineName: string, filePath: string): string {
   return value;
 }
 
-/**
- * Best-effort, non-throwing read of a file-backed credential's current value
- * (#905), for redaction inventories and health probes that must never fail
- * just because a value collector ran ahead of the real dispatch — a missing
- * or empty file is reported by {@link readApiKeyFile} at the actual call.
- */
+/** Best-effort, non-throwing read of a file-backed credential for redaction and health. */
 export function lookupApiKeyFileValue(filePath: string): string | undefined {
   try {
     const value = trimTrailingNewline(fs.readFileSync(filePath, "utf8"));
@@ -173,13 +148,7 @@ export function lookupApiKeyFileValue(filePath: string): string | undefined {
   }
 }
 
-/**
- * Best-effort, non-throwing read of a secret-store-backed credential's
- * current value (#953), for redaction inventories and health probes that
- * must never fail just because a value collector ran ahead of the real
- * dispatch — an unresolvable reference is reported by
- * {@link resolveLlmCredentialValue} at the actual call.
- */
+/** Best-effort, non-throwing read of a secret-store credential for redaction and health. */
 export function lookupApiKeySecretRefValue(ref: string): string | undefined {
   try {
     return resolveSecret(ref, resolveSecretFromStore);
@@ -194,21 +163,16 @@ function selectedEngineName(
   llmOnly: boolean,
 ): string | undefined {
   for (let index = layers.length - 1; index >= 0; index--) {
-    const layer = layers[index];
-    if (!layer) continue;
-    const engine = ownValue(layer, "engine");
+    const engine = layers[index]?.engine;
     if (engine !== undefined) return engine;
   }
-  const defaults = ownValue(config, "defaults");
-  return defaults ? ownValue(defaults, llmOnly ? "llmEngine" : "engine") : undefined;
+  return llmOnly ? config.defaults?.llmEngine : config.defaults?.engine;
 }
 
-function resolveEngineConfig(name: string, config: EngineResolutionConfig): EngineConfig {
-  const engines = ownValue(config, "engines");
-  const engine = engines && hasOwn(engines, name) ? engines[name] : undefined;
-  if (!engine) {
-    throw new ConfigError(`Engine "${name}" is not configured.`, "INVALID_CONFIG_FILE");
-  }
+/** The configured engine of this name; an unconfigured name is an error. */
+export function configuredEngine<E = EngineConfig>(name: string, config: { readonly engines?: Record<string, E> }): E {
+  const engine = config.engines && Object.hasOwn(config.engines, name) ? config.engines[name] : undefined;
+  if (!engine) throw new ConfigError(`Engine "${name}" is not configured.`, "INVALID_CONFIG_FILE");
   return engine;
 }
 
@@ -217,31 +181,23 @@ function resolveCredential(
   engine: LlmEngineConfig,
   config: EngineResolutionConfig,
 ): CredentialDescriptor | undefined {
-  const apiKey = ownValue(engine, "apiKey");
-  if (apiKey !== undefined) {
-    const explicit = envName(apiKey);
+  if (engine.apiKey !== undefined) {
+    const explicit = envName(engine.apiKey);
     if (explicit) return { names: [explicit], required: true };
-    // #953: a secret-store reference has no env descriptor — resolved
-    // separately onto `ResolvedLlmUse.apiKeySecretRef` — mirroring how
-    // apiKeyFile above is its own credential source.
-    if (SECRET_STORE_REFERENCE_PATTERN.test(apiKey)) return undefined;
+    // A secret-store reference is carried as `apiKeySecretRef` instead.
+    if (SECRET_STORE_REFERENCE_PATTERN.test(engine.apiKey)) return undefined;
     throw new ConfigError(`Engine "${name}" has an invalid symbolic apiKey reference.`, "INVALID_CONFIG_FILE");
   }
-  // #905: an explicit apiKeyFile is its own credential source — resolved
-  // separately onto `ResolvedLlmUse.apiKeyFile` — so it does not also fall
-  // through to the implicit AKM_ENGINE_<NAME>_API_KEY convention below.
-  if (ownValue(engine, "apiKeyFile") !== undefined) return undefined;
+  // An explicit apiKeyFile is its own credential source; it does not also
+  // fall through to the implicit AKM_ENGINE_<NAME>_API_KEY convention.
+  if (engine.apiKeyFile !== undefined) return undefined;
   const specific = `AKM_ENGINE_${name.toUpperCase().replaceAll("-", "_")}_API_KEY`;
-  const defaults = ownValue(config, "defaults");
-  return (defaults ? ownValue(defaults, "llmEngine") : undefined) === name
+  return config.defaults?.llmEngine === name
     ? { names: [specific, "AKM_LLM_API_KEY"], required: false }
     : { names: [specific], required: false };
 }
 
-/**
- * Lookup-only credential projection used by redaction inventories. Returns the
- * first non-empty trimmed value without enforcing a required descriptor.
- */
+/** Lookup-only credential projection used by redaction inventories. */
 export function lookupCredentialFromEnv(
   credential: CredentialDescriptor | undefined,
   envSource: NodeJS.ProcessEnv = process.env,
@@ -253,10 +209,7 @@ export function lookupCredentialFromEnv(
   return undefined;
 }
 
-/**
- * The enforcing env-credential seam. Live and frozen dispatch use the same
- * ordered lookup; a missing required descriptor names its primary variable.
- */
+/** The enforcing env-credential lookup; a missing required descriptor names its primary variable. */
 export function resolveCredentialFromEnv(
   credential: CredentialDescriptor | undefined,
   envSource: NodeJS.ProcessEnv = process.env,
@@ -270,12 +223,9 @@ export function resolveCredentialFromEnv(
 }
 
 /**
- * The enforcing credential seam for one resolved LLM engine or SDK fallback
- * (#905): the symbolic env-var descriptor first (throws if a required one is
- * missing), then the file-backed alternative when no env descriptor applies.
- * Call this once per operation — lease acquisition, or direct materialize —
- * so a whole operation observes one stable credential value instead of
- * re-reading the file on every dispatch within it.
+ * Resolve one LLM credential value at the dispatch boundary: the env
+ * descriptor first, then the file-backed value, then the secret-store
+ * reference. Nothing before dispatch reads any of them.
  */
 export function resolveLlmCredentialValue(
   engine: string,
@@ -287,29 +237,16 @@ export function resolveLlmCredentialValue(
   const envValue = resolveCredentialFromEnv(credential, envSource);
   if (envValue !== undefined) return envValue;
   if (apiKeyFile !== undefined) return readApiKeyFile(engine, apiKeyFile);
-  // #953: a secret-store reference is the last fallback tier, reusing the
-  // same resolveSecret() helper llm/client.ts and embedders/remote.ts call
-  // directly — throws SECRET_REFERENCE_UNRESOLVED naming only the reference.
   return apiKeySecretRef !== undefined ? resolveSecret(apiKeySecretRef, resolveSecretFromStore) : undefined;
 }
 
-/** Non-throwing credential-presence result: available, or unavailable with the unresolved reference named (#957). */
+/** Non-throwing credential-presence result: available, or unavailable with the unresolved reference named. */
 export type LlmCredentialAvailability = { available: true } | { available: false; reference: string; reason: string };
 
 /**
- * Non-throwing credential-presence check for `akm health`, the
- * improve-strategy probe (#953), and improve's own plan builder (#957): an env
- * value is present, or a file-backed credential is readable and non-empty, or
- * a secret-store reference resolves. Never reads env/disk/store speculatively
- * beyond what's needed to answer "is something here", and never throws on a
- * broken/missing source — that is reported by {@link resolveLlmCredentialValue}
- * at the real dispatch.
- *
- * On failure, `reference` and `reason` name WHICH env var / file / secret
- * reference is missing (never its value) — the operator's own shell often
- * passes the same check a scheduler's stripped-down environment fails, so the
- * caller needs to say which reference is the problem. Callers that must never
- * name the reference (`akm health`'s evidence/message) use only `.available`.
+ * Non-throwing credential-presence check for `akm health` and improve's
+ * strategy probe. Names WHICH env var / file / secret reference is missing,
+ * never its value; a broken source is reported by the real dispatch.
  */
 export function describeLlmCredentialAvailability(
   resolved: Pick<ResolvedLlmUse, "credential" | "apiKeyFile" | "apiKeySecretRef">,
@@ -339,11 +276,6 @@ export function describeLlmCredentialAvailability(
   return { available: true };
 }
 
-/**
- * Thin boolean wrapper over {@link describeLlmCredentialAvailability} for
- * callers (`akm health`'s engine-reachability probes) that only need a
- * yes/no answer and never surface the reference.
- */
 export function isLlmCredentialAvailable(
   resolved: Pick<ResolvedLlmUse, "credential" | "apiKeyFile" | "apiKeySecretRef">,
   env: NodeJS.ProcessEnv = process.env,
@@ -351,30 +283,26 @@ export function isLlmCredentialAvailable(
   return describeLlmCredentialAvailability(resolved, env).available;
 }
 
-/** Collect materialized engine credentials for output and persistence redaction. */
+/** Collect every configured engine's current credential value for output and persistence redaction. */
 export function collectEngineCredentialValues(
   config: EngineResolutionConfig,
   envSource: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const values = new Set<string>();
-  for (const [name, engine] of Object.entries(ownValue(config, "engines") ?? {})) {
+  for (const [name, engine] of Object.entries(config.engines ?? {})) {
     if (engine.kind !== "llm") continue;
     for (const envVar of resolveCredential(name, engine, config)?.names ?? []) {
       const value = envSource[envVar]?.trim();
       if (value) values.add(value);
     }
-    // #905: file-backed credential — best-effort, so a broken apiKeyFile on
-    // one engine never stops redaction from collecting every other engine's
-    // credential too.
-    const apiKeyFile = ownValue(engine, "apiKeyFile");
-    if (apiKeyFile !== undefined) {
-      const value = lookupApiKeyFileValue(expandHomePath(apiKeyFile));
+    // File and secret-store lookups are best-effort so one broken engine never
+    // stops redaction from collecting every other engine's value.
+    if (engine.apiKeyFile !== undefined) {
+      const value = lookupApiKeyFileValue(expandHomePath(engine.apiKeyFile));
       if (value) values.add(value);
     }
-    // #953: secret-store-backed credential — best-effort for the same reason.
-    const apiKey = ownValue(engine, "apiKey");
-    if (apiKey !== undefined && SECRET_STORE_REFERENCE_PATTERN.test(apiKey)) {
-      const value = lookupApiKeySecretRefValue(apiKey);
+    if (engine.apiKey !== undefined && SECRET_STORE_REFERENCE_PATTERN.test(engine.apiKey)) {
+      const value = lookupApiKeySecretRefValue(engine.apiKey);
       if (value) values.add(value);
     }
   }
@@ -387,26 +315,16 @@ function effectiveTimeout(
   fallback: number,
 ): number | null {
   for (let index = layers.length - 1; index >= 0; index--) {
-    if (hasOwn(layers[index] ?? {}, "timeoutMs")) return layers[index]?.timeoutMs ?? null;
+    const layer = layers[index];
+    if (layer && Object.hasOwn(layer, "timeoutMs")) return layer.timeoutMs ?? null;
   }
-  return hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : fallback;
+  return Object.hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : fallback;
 }
 
 function rawLlmConnection(engine: LlmEngineConfig): Record<string, unknown> {
-  const connection: Record<string, unknown> = {
-    provider: ownValue(engine, "provider"),
-    endpoint: ownValue(engine, "endpoint"),
-    model: ownValue(engine, "model"),
-    temperature: ownValue(engine, "temperature"),
-    maxTokens: ownValue(engine, "maxTokens"),
-    supportsJsonSchema: ownValue(engine, "supportsJsonSchema"),
-    extraParams: ownValue(engine, "extraParams"),
-    contextLength: ownValue(engine, "contextLength"),
-    enableThinking: ownValue(engine, "enableThinking"),
-    reasoningEffort: ownValue(engine, "reasoningEffort"),
-  };
-  for (const key of Object.keys(connection)) {
-    if (connection[key] === undefined) delete connection[key];
+  const connection: Record<string, unknown> = {};
+  for (const key of LLM_CONNECTION_FIELDS) {
+    if (engine[key] !== undefined) connection[key] = engine[key];
   }
   return connection;
 }
@@ -432,11 +350,10 @@ export function resolveLlmEngineUse(
     if (options.optional) return undefined;
     throw new ConfigError("No LLM engine is selected. Set defaults.llmEngine or specify engine.", "LLM_NOT_CONFIGURED");
   }
-  const engine = resolveEngineConfig(name, config);
+  const engine = configuredEngine(name, config);
   if (engine.kind !== "llm") {
-    const defaults = ownValue(config, "defaults");
-    const fallbackName = ownValue(engine, "llmEngine") ?? (defaults ? ownValue(defaults, "llmEngine") : undefined);
-    const fallbackEngine = fallbackName ? resolveEngineConfig(fallbackName, config) : undefined;
+    const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
+    const fallbackEngine = fallbackName ? configuredEngine(fallbackName, config) : undefined;
     if (!fallbackEngine || fallbackEngine.kind !== "llm") {
       if (options.optional) return undefined;
       throw new ConfigError(
@@ -456,40 +373,30 @@ export function resolveLlmEngineUse(
 
   let connection = rawLlmConnection(engine);
   for (const layer of layers) {
-    const llm = ownValue(layer, "llm");
-    const model = ownValue(layer, "model");
-    if (llm) connection = deepMergeConfig(connection, llm as Record<string, unknown>);
-    if (model !== undefined) connection.model = model;
+    if (layer.llm) connection = deepMergeConfig(connection, layer.llm as Record<string, unknown>);
+    if (layer.model !== undefined) connection.model = layer.model;
   }
   for (const key of Object.keys(connection)) {
     if (connection[key] === undefined) delete connection[key];
   }
-  const apiKeyFile = ownValue(engine, "apiKeyFile");
-  const apiKeyRaw = ownValue(engine, "apiKey");
   const apiKeySecretRef =
-    apiKeyRaw !== undefined && SECRET_STORE_REFERENCE_PATTERN.test(apiKeyRaw) ? apiKeyRaw : undefined;
+    engine.apiKey !== undefined && SECRET_STORE_REFERENCE_PATTERN.test(engine.apiKey) ? engine.apiKey : undefined;
   return {
     engine: name,
-    connection: sterileRecord(connection) as LlmConnectionConfig,
+    connection: connection as LlmConnectionConfig,
     credential: resolveCredential(name, engine, config),
-    ...(apiKeyFile !== undefined ? { apiKeyFile: expandHomePath(apiKeyFile) } : {}),
+    ...(engine.apiKeyFile !== undefined ? { apiKeyFile: expandHomePath(engine.apiKeyFile) } : {}),
     ...(apiKeySecretRef !== undefined ? { apiKeySecretRef } : {}),
     timeoutMs: effectiveTimeout(engine, layers, DEFAULT_LLM_TIMEOUT_MS),
   };
 }
 
-/**
- * Inject an already-resolved credential value into a connection. Callers
- * resolve the value themselves via {@link resolveLlmCredentialValue} (or its
- * lease-cached equivalent) — this function never reads env or disk itself, so
- * a frozen `ResolvedLlmUse`/`RunnerSpec` plan object can be materialized
- * repeatedly without re-triggering I/O per call.
- */
+/** Inject an already-resolved credential value into a connection; reads nothing itself. */
 export function materializeLlmConnectionWithCredential(
   resolved: ResolvedLlmUse,
   credentialValue: string | undefined,
 ): LlmConnectionConfig {
-  const extraParams = ownValue(resolved.connection, "extraParams");
+  const extraParams = resolved.connection.extraParams;
   if (extraParams !== undefined) {
     const issue = validateExtraParams(extraParams)[0];
     if (issue) {
@@ -499,18 +406,14 @@ export function materializeLlmConnectionWithCredential(
       );
     }
   }
-  return sterileRecord({
+  return {
     ...resolved.connection,
     ...(credentialValue ? { apiKey: credentialValue } : {}),
     timeoutMs: resolved.timeoutMs,
-  }) as LlmConnectionConfig;
+  } as LlmConnectionConfig;
 }
 
-/**
- * Read and inject one resolved credential at the runtime boundary: the
- * symbolic `$VAR` reference, or the file-backed alternative (#905) when the
- * engine has no env descriptor.
- */
+/** Read and inject one resolved credential at the runtime boundary. */
 export function materializeLlmConnection(
   resolved: ResolvedLlmUse,
   envSource: NodeJS.ProcessEnv = process.env,
@@ -538,33 +441,29 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
   const platform = harness.id;
   const sdk = platform === "opencode-sdk";
   const builtin = getBuiltinAgentProfile(platform);
-  const bin = ownValue(engine, "bin");
-  const args = ownValue(engine, "args");
-  const workspace = ownValue(engine, "workspace");
-  const model = ownValue(engine, "model");
-  const profile = sterileRecord<AgentProfile>({
+  const profile: AgentProfile = {
     name,
     platform,
     personaChannel: sdk ? "native" : (harness.agentBuilder?.personaChannel ?? "prompt"),
-    bin: bin ?? builtin?.bin ?? (sdk ? "opencode" : platform),
-    args: args ?? builtin?.args ?? [],
+    bin: engine.bin ?? builtin?.bin ?? (sdk ? OPENCODE_SDK_SERVER_BIN : platform),
+    args: engine.args ?? builtin?.args ?? [],
     stdio: "captured",
     ...(builtin?.env ? { env: builtin.env } : {}),
     envPassthrough: builtin?.envPassthrough ?? [],
     parseOutput: "text",
-    ...(workspace ? { workspace: path.resolve(workspace) } : {}),
-    ...(model ? { model } : {}),
-  });
+    ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
+    ...(engine.model ? { model: engine.model } : {}),
+  };
+  const ownTimeout = Object.hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : undefined;
   if (!sdk) {
     return {
       kind: "agent",
       engine: name,
       profile,
-      timeoutMs: hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : DEFAULT_AGENT_TIMEOUT_MS,
+      timeoutMs: ownTimeout !== undefined ? ownTimeout : DEFAULT_AGENT_TIMEOUT_MS,
     };
   }
-  const defaults = ownValue(config, "defaults");
-  const fallbackName = ownValue(engine, "llmEngine") ?? (defaults ? ownValue(defaults, "llmEngine") : undefined);
+  const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
   const fallback = fallbackName
     ? resolveLlmEngineUse(config, [{ engine: fallbackName }], { optional: true })
     : undefined;
@@ -581,27 +480,25 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
           fallbackTimeoutMs: fallback.timeoutMs,
         }
       : {}),
-    timeoutMs: hasOwn(engine, "timeoutMs")
-      ? (engine.timeoutMs ?? null)
-      : (fallback?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),
+    timeoutMs: ownTimeout !== undefined ? ownTimeout : (fallback?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),
   };
 }
 
-/** Lower a named engine through the canonical harness platform. */
-export function resolveEngine(name: string, config: EngineResolutionConfig): RunnerSpec {
-  const engine = resolveEngineConfig(name, config);
-  if (engine.kind === "llm") {
-    const resolved = resolveLlmEngineUse(config, [{ engine: name }]);
-    if (!resolved) throw new ConfigError(`LLM engine "${name}" could not be resolved.`, "LLM_NOT_CONFIGURED");
-    return {
-      kind: "llm",
-      engine: name,
-      connection: resolved.connection,
-      ...(resolved.credential ? { credential: resolved.credential } : {}),
-      ...(resolved.apiKeyFile ? { apiKeyFile: resolved.apiKeyFile } : {}),
-      ...(resolved.apiKeySecretRef ? { apiKeySecretRef: resolved.apiKeySecretRef } : {}),
-      timeoutMs: resolved.timeoutMs,
-    };
-  }
-  return lowerAgentEngine(name, engine, config);
+/** Resolve a configured engine name to its runner: an LLM connection, a spawned agent, or the SDK. */
+export function resolveEngine(
+  name: string,
+  config: EngineResolutionConfig,
+  engine: EngineConfig = configuredEngine(name, config),
+): RunnerSpec {
+  if (engine.kind !== "llm") return lowerAgentEngine(name, engine, config);
+  const resolved = resolveLlmEngineUse(config, [{ engine: name }]);
+  return {
+    kind: "llm",
+    engine: name,
+    connection: resolved.connection,
+    ...(resolved.credential ? { credential: resolved.credential } : {}),
+    ...(resolved.apiKeyFile ? { apiKeyFile: resolved.apiKeyFile } : {}),
+    ...(resolved.apiKeySecretRef ? { apiKeySecretRef: resolved.apiKeySecretRef } : {}),
+    timeoutMs: resolved.timeoutMs,
+  };
 }

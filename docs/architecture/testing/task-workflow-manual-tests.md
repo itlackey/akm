@@ -464,7 +464,7 @@ manual-success`
 **Expected result (verified live, exact, both commands identical):** exit
 `2`;
 ```json
-{"ok":false,"error":"TASK_SCHEMA_VERSION_UNSUPPORTED: Task at <path> uses task schema version 2, which this release does not accept.","code":"TASK_SCHEMA_VERSION_UNSUPPORTED","hint":"Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`."}
+{"ok":false,"error":"TASK_SCHEMA_VERSION_UNSUPPORTED: Task at <path> uses task schema version 2; this release reads only version 4. Run `akm migrate apply` to convert it.","code":"TASK_SCHEMA_VERSION_UNSUPPORTED","hint":"Run `akm migrate apply --dry-run` to preview the task-v3 to task-source-v4 conversion, then run `akm migrate apply`."}
 ```
 The hint says "task-v3 to task-source-v4" even for a v2 file — that's the
 shipped wording (the v2→v3→v4 chain is one hint), not a bug.
@@ -726,9 +726,7 @@ workflows/parent --format json`
 "child"`, `.expansion.childRef == "bundle//workflows/child"`,
 `.expansion.childVia == "direct"`, `.expansion.childOutputs ==
 ["message"]`; `.steps[0].expansion.steps` contains the child's own frozen
-graph (one entry, `stepId: "greet"`, `targetKind: "shell"`);
-`.sourceReadSet` contains both `"workflows/child.md"` and
-`"workflows/parent.yml"`.
+graph (one entry, `stepId: "greet"`, `targetKind: "shell"`).
 
 **Part B — `run` (actually executes):** `akm workflow run workflows/parent
 --format json`, then `akm workflow status <run-id> --format json`
@@ -1228,9 +1226,7 @@ akm index
    "task"`, `.expansion.childTaskRef ==
    "bundle//tasks/akm-manual-test-wf-task"`, `.expansion.childRef ==
    "bundle//workflows/leaf"`, `.expansion.steps[0].stepId == "work"` and
-   `.targetKind == "shell"`; `.sourceReadSet` contains all three of
-   `tasks/akm-manual-test-wf-task.yml`, `workflows/leaf.yml`,
-   `workflows/task-wrapped.yml`; exit `0`.
+   `.targetKind == "shell"`; exit `0`.
 2. `akm workflow run workflows/task-wrapped --format json` (this DOES
    publish a run — acceptable, scoped to isolated bundle/state dirs, not
    the OS scheduler), then `akm workflow status <runId> --format json`.
@@ -1466,12 +1462,11 @@ akm index
    `.target.kind == "shell"`, `.description == "Manual recovery —
    consolidation + triage drain (run on demand via \`akm task run
    akm-improve-catchup\`)"`, `.schedule[0] == {"ordinal":0,"cron":"0 4 * * *","enabled":false,"source":"schedule[0].cron","inputs":{}}`
-   — the real shipped file installs disabled by default.
+   — the real shipped file describes a schedule but cannot activate itself;
+   this host's `scheduler.enabled` list does not name it.
 2. `akm workflow plan workflows/wrap-real-improve-task --format json` →
    `.steps[0].targetKind == "shell"`, `.steps[0].expansion ==
-   {"via":"task","taskRef":"tasks/akm-improve-catchup"}`,
-   `.sourceReadSet` contains `"tasks/akm-improve-catchup.yml"` — the real
-   shipped file's bytes are part of this plan's frozen identity.
+   {"via":"task","taskRef":"tasks/akm-improve-catchup"}`.
 
 **Do not** `workflow run` this composed workflow, and do not `task run
 akm-improve-catchup` directly — both would invoke the real `akm improve
@@ -1535,9 +1530,11 @@ Expected format (pattern only, confirmed live against this machine's
 existing real entries):
 ```
 # akm:task <TID> BEGIN
-<cron-expr> <absolute-node-or-bun-path> <absolute-akm-launcher> --scheduler-context <path> task run <TID> --scheduled >> <logDir>/<TID>.log 2>&1
+<cron-expr> AKM_BUNDLE_DIR=<working stash> <absolute-node-or-bun-path> <absolute-akm-launcher> task run <TID> --bundle <bundle> --scheduled > <logDir>/<TID>.log 2>&1
 # akm:task <TID> END
 ```
+(Rows written by 0.9.0 – 0.9.17-alpha.6 carry `--scheduler-context <path>`
+after the launcher instead of the inline `AKM_BUNDLE_DIR=`.)
 A disabled binding's line is prefixed `# akm:disabled ` instead of being a
 live cron line.
 
@@ -1661,8 +1658,10 @@ restore the mandatory backup and verify with `crontab -l`.
 **Why it matters:** alpha.5 could inspect and remove an unrelated scheduler
 entry when two primary bundles derived the same basename. Stable 0.9.2
 requires a name match *and* a resolved owner-path match before an entry is in
-scope, and refuses ownership when the scheduler-context descriptor is missing,
-unreadable, corrupt, or belongs to another OS user. This test reproduces the
+scope, and refuses ownership when the path cannot be established. (Since
+0.9.17-alpha.7 every row names the path inline as `AKM_BUNDLE_DIR=`; an
+older row names it in its `--scheduler-context` descriptor, and is refused
+when that file is missing or unreadable.) This test reproduces the
 original collision safely and proves task A survives bundle B's sync.
 
 **`UNVERIFIED` — even this fully self-contained, two-throwaway-bundle

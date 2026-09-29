@@ -216,6 +216,17 @@ This means ranking changes do not just affect UX. They also affect downstream im
 
 ## Graph Leverage
 
+> **Retired (0.9.17-alpha.9):** the LLM entity graph this section recommends
+> leveraging is gone — `graph-extraction`, `graph_meta`/`graph_files`/
+> `graph_file_entities`/`graph_file_relations`, and `akm show`'s `related`
+> block it fed are all deleted. It was already superseded before that: #935
+> (0.9.17-alpha.8) added the first-class asset->asset edge table this section
+> says doesn't exist (`asset_links`, declared links), and curate's support
+> refs (`buildCurateSupportRefs` in `src/commands/read/curate.ts`) come from
+> declared links now, not graph data — the implementation note at the top of
+> this document already flags that rename. Kept below for historical context
+> only; do not implement against it.
+
 Existing graph signal:
 
 - there is no first-class asset->asset edge table

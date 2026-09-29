@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { deriveEntryProvenance } from "../../../src/indexer/installations";
 import type { IndexDocument } from "../../../src/indexer/passes/metadata";
-import { buildSearchFields, buildSearchText } from "../../../src/indexer/search/search-fields";
+import { buildSearchFields } from "../../../src/indexer/search/search-fields";
 import type { Database } from "../../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../src/storage/repositories/index-entries-repository";
@@ -57,13 +57,13 @@ function makeEntry(overrides: Partial<IndexDocument> & { name: string; type: str
   };
 }
 
-function insertEntry(db: Database, key: string, entry: IndexDocument, searchText: string): number {
+function insertEntry(db: Database, key: string, entry: IndexDocument): number {
   const provenance = deriveEntryProvenance(
     { bundleId: "test-bundle", componentId: "test-bundle", adapterId: "akm" },
     entry.type,
     key,
   );
-  return upsertEntry(db, `/test/dir/${key}.ts`, entry, searchText, provenance);
+  return upsertEntry(db, `/test/dir/${key}.ts`, entry, provenance);
 }
 
 // ── Test 1: Name match ranks higher than description-only match ─────────────
@@ -78,7 +78,7 @@ describe("FTS5 field weighting", () => {
         type: "script",
         description: "Runs a production release process",
       });
-      insertEntry(db, "name-deploy", nameEntry, "deploy");
+      insertEntry(db, "name-deploy", nameEntry);
 
       // Entry with "deploy" only in the description
       const descEntry = makeEntry({
@@ -86,14 +86,14 @@ describe("FTS5 field weighting", () => {
         type: "script",
         description: "Used to deploy applications to staging servers",
       });
-      insertEntry(db, "desc-deploy", descEntry, "deploy");
+      insertEntry(db, "desc-deploy", descEntry);
 
       rebuildFts(db);
 
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
       // The name match should rank first (lower bm25 score = better in FTS5)
-      expect(results[0]!.entry.name).toBe("deploy");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/name-deploy");
     } finally {
       closeDatabase(db);
     }
@@ -110,7 +110,7 @@ describe("FTS5 field weighting", () => {
         type: "script",
         description: "Container orchestration management tool",
       });
-      insertEntry(db, "name-k8s", nameEntry, "kubernetes");
+      insertEntry(db, "name-k8s", nameEntry);
 
       // Entry with "kubernetes" only in tags
       const tagEntry = makeEntry({
@@ -119,13 +119,13 @@ describe("FTS5 field weighting", () => {
         description: "Manages container lifecycle operations",
         tags: ["kubernetes", "docker"],
       });
-      insertEntry(db, "tag-k8s", tagEntry, "kubernetes");
+      insertEntry(db, "tag-k8s", tagEntry);
 
       rebuildFts(db);
 
       const results = searchFts(db, "kubernetes", 10);
       expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("kubernetes");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/name-k8s");
     } finally {
       closeDatabase(db);
     }
@@ -142,7 +142,7 @@ describe("FTS5 field weighting", () => {
         type: "script",
         description: "Uses terraform to provision cloud infrastructure",
       });
-      insertEntry(db, "desc-tf", descEntry, "terraform");
+      insertEntry(db, "desc-tf", descEntry);
 
       // Entry with "terraform" only in content/TOC
       const contentEntry = makeEntry({
@@ -151,13 +151,13 @@ describe("FTS5 field weighting", () => {
         description: "Guide to cloud architecture patterns",
         toc: [{ text: "terraform setup", level: 2, line: 1 }],
       });
-      insertEntry(db, "content-tf", contentEntry, "terraform");
+      insertEntry(db, "content-tf", contentEntry);
 
       rebuildFts(db);
 
       const results = searchFts(db, "terraform", 10);
       expect(results.length).toBe(2);
-      expect(results[0]!.entry.name).toBe("infra-tool");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/desc-tf");
     } finally {
       closeDatabase(db);
     }
@@ -175,7 +175,7 @@ describe("FTS5 field weighting", () => {
         description: "Deploy applications to production deploy pipelines",
         tags: ["deploy"],
       });
-      insertEntry(db, "multi-deploy", multiEntry, "deploy");
+      insertEntry(db, "multi-deploy", multiEntry);
 
       // Entry with "deploy" only in name
       const nameOnlyEntry = makeEntry({
@@ -183,14 +183,14 @@ describe("FTS5 field weighting", () => {
         type: "script",
         description: "Lightweight release process for staging",
       });
-      insertEntry(db, "name-deploy", nameOnlyEntry, "deploy");
+      insertEntry(db, "name-deploy", nameOnlyEntry);
 
       rebuildFts(db);
 
       const results = searchFts(db, "deploy", 10);
       expect(results.length).toBe(2);
       // The multi-field match should rank first
-      expect(results[0]!.entry.name).toBe("deploy");
+      expect(results[0]!.itemRef).toBe("test-bundle//scripts/multi-deploy");
     } finally {
       closeDatabase(db);
     }
@@ -239,12 +239,7 @@ describe("FTS5 field weighting", () => {
         tags: ["deploy", "production"],
         searchHints: ["release management"],
       });
-      insertEntry(
-        db,
-        "deploy-tool",
-        entry,
-        "deploy tool deploy applications to production servers deploy production release management",
-      );
+      insertEntry(db, "deploy-tool", entry);
 
       rebuildFts(db);
 
@@ -282,13 +277,14 @@ describe("buildSearchFields", () => {
     const fields = buildSearchFields(entry);
     expect(fields.name).toContain("deploy");
     expect(fields.name).toContain("tool");
-    expect(fields.description).toContain("deploy applications to production");
+    expect(fields.description).toBe("Deploy applications to production");
     expect(fields.tags).toContain("deploy");
     expect(fields.tags).toContain("production");
     expect(fields.hints).toContain("release management");
     expect(fields.hints).toContain("rollout");
-    expect(fields.content).toContain("getting started");
-    expect(fields.content).toContain("configuration");
+    // Fields keep their case; FTS5 folds it and the embedder reads it.
+    expect(fields.content).toContain("Getting Started");
+    expect(fields.content).toContain("Configuration");
   });
 
   test("handles entry with minimal fields", () => {
@@ -299,7 +295,7 @@ describe("buildSearchFields", () => {
 
     const fields = buildSearchFields(entry);
     expect(fields.name).toBe("simple");
-    expect(fields.description).toBe("a test entry");
+    expect(fields.description).toBe("A test entry");
     expect(fields.tags).toBe("");
     expect(fields.hints).toBe("");
     expect(fields.content).toBe("");

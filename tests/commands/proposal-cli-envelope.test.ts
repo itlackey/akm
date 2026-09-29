@@ -15,7 +15,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { createProposal, isProposalSkipped } from "../../src/commands/proposal/repository";
+import { createProposal } from "../../src/commands/proposal/repository";
 import { slugForPath } from "../../src/indexer/installations";
 import { runCliStatusWithBundleDir as runCli } from "../_helpers/cli";
 import { durableItemRef } from "../_helpers/durable-ref";
@@ -48,10 +48,8 @@ function seedProposal(stash: string, ref = "lessons/rg-over-grep"): string {
   const result = createProposal(stash, {
     ref,
     source: "reflect",
-    force: true,
     payload: { content: VALID_LESSON },
   });
-  if (isProposalSkipped(result)) throw new Error("unexpected skip in seedProposal");
   return result.id;
 }
 

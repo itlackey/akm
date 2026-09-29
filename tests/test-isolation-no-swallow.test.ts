@@ -177,41 +177,6 @@ describe("registry/static-index — loadIndex surfaces guard violations", () => 
   });
 });
 
-describe("indexer/graph-db — loadStoredGraph* surface guard violations", () => {
-  test("loadStoredGraphMeta re-throws TEST_ISOLATION_MISSING instead of returning null", async () => {
-    const { loadStoredGraphMeta } = await import("../src/indexer/db/graph-db");
-    let caught: unknown;
-    try {
-      loadStoredGraphMeta("/no/such/stash");
-    } catch (err) {
-      caught = err;
-    }
-    expect(isTestIsolationError(caught)).toBe(true);
-  });
-
-  test("loadStoredGraphSnapshot re-throws TEST_ISOLATION_MISSING instead of returning null", async () => {
-    const { loadStoredGraphSnapshot } = await import("../src/indexer/db/graph-db");
-    let caught: unknown;
-    try {
-      loadStoredGraphSnapshot("/no/such/stash");
-    } catch (err) {
-      caught = err;
-    }
-    expect(isTestIsolationError(caught)).toBe(true);
-  });
-
-  test("loadGraphFilesOnly re-throws TEST_ISOLATION_MISSING instead of returning []", async () => {
-    const { loadGraphFilesOnly } = await import("../src/indexer/db/graph-db");
-    let caught: unknown;
-    try {
-      loadGraphFilesOnly("/no/such/stash");
-    } catch (err) {
-      caught = err;
-    }
-    expect(isTestIsolationError(caught)).toBe(true);
-  });
-});
-
 describe("integrations/lockfile — readLockfile surfaces guard violations", () => {
   test("readLockfile re-throws TEST_ISOLATION_MISSING via getDataDir", async () => {
     const { readLockfile } = await import("../src/integrations/lockfile");

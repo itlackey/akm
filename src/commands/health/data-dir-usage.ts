@@ -47,7 +47,7 @@ const DOMINANT_SUBDIR_PERCENT_THRESHOLD = 50;
  * cap the walk stops descending further and the advisory says its size
  * figures are a lower bound.
  */
-const MAX_WALK_ENTRIES = 100_000;
+export const MAX_WALK_ENTRIES = 100_000;
 
 /**
  * Below this the data dir is not worth an opinion. The advisory exists for
@@ -70,35 +70,53 @@ function liveDbBytesFor(name: string, sizes: ReadonlyMap<string, { bytes: number
   );
 }
 
-interface WalkResult {
+export interface WalkResult {
   bytes: number;
+  /** Regular files counted (a directory itself is never counted, only its leaves). */
+  files: number;
   truncated: boolean;
 }
 
 /**
- * Recursively sum file sizes under `root` (stat-only, symlinks not
- * followed so a cyclic or huge-target symlink can't blow up the walk).
- * `budget` is a shared mutable counter across the whole tree so the
- * `MAX_WALK_ENTRIES` cap applies to the walk as a whole, not per-branch.
+ * Recursively sum file sizes (and count files) under `root` (stat-only,
+ * symlinks not followed so a cyclic or huge-target symlink can't blow up the
+ * walk). `budget` is a shared mutable counter across the whole tree so the
+ * entry cap applies to the walk as a whole, not per-branch — callers
+ * typically pass {@link MAX_WALK_ENTRIES}, sized for this module's own data
+ * dir walk, but a smaller/larger budget is fine for a different tree.
+ * Shared with the `archive-usage` advisory (N2) — the same "don't let a
+ * pathological tree hang a health check" concern applies to both.
+ *
+ * `onFile`, when given, is called once per leaf file (path, bytes) as the
+ * walk visits it — `archive-usage` uses this to classify each file's git
+ * state without a second, separate walk of the same tree.
  */
-function sizeOfPath(root: string, budget: { remaining: number }): WalkResult {
+export function sizeOfPath(
+  root: string,
+  budget: { remaining: number },
+  onFile?: (filePath: string, bytes: number) => void,
+): WalkResult {
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(root);
   } catch {
-    return { bytes: 0, truncated: false };
+    return { bytes: 0, files: 0, truncated: false };
   }
-  if (stat.isSymbolicLink()) return { bytes: 0, truncated: false };
-  if (!stat.isDirectory()) return { bytes: stat.size, truncated: false };
+  if (stat.isSymbolicLink()) return { bytes: 0, files: 0, truncated: false };
+  if (!stat.isDirectory()) {
+    onFile?.(root, stat.size);
+    return { bytes: stat.size, files: 1, truncated: false };
+  }
 
   let entries: fs.Dirent[];
   try {
     entries = fs.readdirSync(root, { withFileTypes: true });
   } catch {
-    return { bytes: 0, truncated: false };
+    return { bytes: 0, files: 0, truncated: false };
   }
 
   let bytes = 0;
+  let files = 0;
   let truncated = false;
   for (const entry of entries) {
     if (budget.remaining <= 0) {
@@ -106,11 +124,12 @@ function sizeOfPath(root: string, budget: { remaining: number }): WalkResult {
       break;
     }
     budget.remaining--;
-    const sub = sizeOfPath(path.join(root, entry.name), budget);
+    const sub = sizeOfPath(path.join(root, entry.name), budget, onFile);
     bytes += sub.bytes;
+    files += sub.files;
     if (sub.truncated) truncated = true;
   }
-  return { bytes, truncated };
+  return { bytes, files, truncated };
 }
 
 /** `1610612736` -> `"1.5G"`. Values under 10 in a unit keep one decimal; 10+ round to an integer. */

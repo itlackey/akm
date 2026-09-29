@@ -45,8 +45,8 @@ describe("embedded exit-code hints", () => {
     for (const [command, replacement] of Object.entries(expected)) {
       expect(retiredCommandHint([], command)).toContain(replacement);
     }
-    expect(retiredCommandHint(["task"], "enable")).toContain("enabled: true");
-    expect(retiredCommandHint(["task"], "disable")).toContain("enabled: false");
+    expect(retiredCommandHint(["task"], "enable")).toBeUndefined();
+    expect(retiredCommandHint(["task"], "disable")).toBeUndefined();
     expect(retiredCommandHint(["workflow"], "start")).toContain("workflow run");
     expect(retiredCommandHint(["workflow"], "next")).toContain("workflow status");
     // `complete` must point at a command that EXISTS: the external-driver

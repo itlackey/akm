@@ -29,6 +29,7 @@ const COMMON_FIELDS = [
   "plan",
   "actions",
   "skippedProcesses",
+  "engineProbe",
   "distillSkipped",
   "validationFailures",
   "schemaRepairs",
@@ -37,14 +38,22 @@ const COMMON_FIELDS = [
   "lintSummary",
   "memoryIndexHealth",
   "coverageGaps",
+  // R10: no longer written (the write-only eval-cases path was removed),
+  // but kept in the allow-list so `decodeImproveResult` still reads
+  // improve-result envelopes a prior release wrote with this field —
+  // AGENTS.md "Reading persisted data".
   "evalCasesWritten",
   "deadUrls",
   "deadUrlCoverage",
   "reflectsWithErrorContext",
   "memoryInference",
+  // 0.9.17-alpha.9: no longer written (the LLM entity-graph extraction that
+  // wrote these was retired), kept readable for the same reason as
+  // `evalCasesWritten` above.
   "graphExtraction",
   "memoryInferenceDurationMs",
   "graphExtractionDurationMs",
+  "ensureIndexDurationMs",
   "orphansPurged",
   "proposalsExpired",
   "reflectCooldownActions",
@@ -125,10 +134,7 @@ function validateConsolidationPlan(value: unknown): void {
     ]),
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
-  requireExactFields(
-    value.configured,
-    new Set(["enabled", "minPoolSize", "limit", "maxChunkSize", "incrementalSince"]),
-  );
+  requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
   }
@@ -136,9 +142,6 @@ function validateConsolidationPlan(value: unknown): void {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
       fail(`plan.consolidation.configured.${field} must be a number`);
     }
-  }
-  if (value.configured.incrementalSince !== undefined && typeof value.configured.incrementalSince !== "string") {
-    fail("plan.consolidation.configured.incrementalSince must be a string");
   }
   if (!isRecord(value.effective)) fail("plan.consolidation.effective must be an object");
   requireExactFields(value.effective, new Set(["enabled", "minPoolSize", "limit", "chunkSize"]));
@@ -207,7 +210,17 @@ function validateProcessRoutingRows(value: unknown): void {
     );
     if (
       typeof row.process !== "string" ||
-      !(canonicalNames.includes(row.process) || row.process === "triage.judgment")
+      !(
+        canonicalNames.includes(row.process) ||
+        row.process === "triage.judgment" ||
+        // 0.9.17-alpha.9: "graphExtraction" is no longer a process a fresh
+        // plan can route (the LLM entity-graph extraction it named was
+        // retired), but every pre-alpha.9 run recorded one here — kept
+        // readable, same as `stageNames`' "graph-extraction" above and
+        // `graphExtraction` in COMMON_FIELDS, so a historical run still
+        // decodes for `akm health` instead of failing this row outright.
+        row.process === "graphExtraction"
+      )
     ) {
       fail("plan.processes.process is invalid");
     }
@@ -306,12 +319,16 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   }
 
   const gateNames = new Set(["profile", "cleanup", "validation", "signal", "disk", "limit"]);
+  // Plans stored before 0.9.17-alpha.7 (#986) have no retrieval gate.
+  const optionalGateNames = new Set(["retrieval"]);
   if (!Array.isArray(value.gates)) fail("plan.gates must be an array");
   const gateRemovedByName = new Map<string, number>();
   for (const gate of value.gates) {
     if (!isRecord(gate)) fail("plan.gates entries must be objects");
     requireExactFields(gate, new Set(["name", "removed", "reason"]));
-    if (typeof gate.name !== "string" || !gateNames.has(gate.name)) fail("plan.gates.name is invalid");
+    if (typeof gate.name !== "string" || !(gateNames.has(gate.name) || optionalGateNames.has(gate.name))) {
+      fail("plan.gates.name is invalid");
+    }
     requireCount(gate, "removed", "plan.gates entry");
     if (typeof gate.reason !== "string") fail("plan.gates.reason must be a string");
     if (gateRemovedByName.has(gate.name)) fail(`plan.gates must contain exactly one ${gate.name} gate`);
@@ -378,10 +395,17 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.limits.totalCeiling !== undefined && value.effectiveRefs.length > (value.limits.totalCeiling as number)) {
     fail("plan.effectiveRefs cannot exceed plan.limits.totalCeiling");
   }
-  validateProcessRoutingRows(value.processes);
+  // #947 added plan.processes (2026-09-09T09:03:19Z); every run recorded
+  // before it legitimately stored `plan` with no `processes` key at all —
+  // validate the rows only when present, same as `proactive` below, so a
+  // pre-#947 envelope still decodes (AGENTS.md "Reading persisted data").
+  if (value.processes !== undefined) validateProcessRoutingRows(value.processes);
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 
+  // "graph-extraction" is no longer a stage a fresh plan can name — retired
+  // 0.9.17-alpha.9 — but stays here so a historical envelope that captured a
+  // dry-run plan before the retirement still decodes.
   const stageNames = new Set(["consolidation", "extract", "graph-extraction", "memory-inference"]);
   if (!Array.isArray(value.stages)) fail("plan.stages must be an array");
   for (const stage of value.stages) {
@@ -433,6 +457,7 @@ function validateCommon(value: Record<string, unknown>): void {
   for (const field of [
     "actions",
     "skippedProcesses",
+    "engineProbe",
     "validationFailures",
     "schemaRepairs",
     "extract",
@@ -447,10 +472,12 @@ function validateCommon(value: Record<string, unknown>): void {
   }
   for (const field of [
     "cyclesRun",
+    // R10: retired write, kept readable — see the COMMON_FIELDS comment above.
     "evalCasesWritten",
     "reflectsWithErrorContext",
     "memoryInferenceDurationMs",
     "graphExtractionDurationMs",
+    "ensureIndexDurationMs",
     "orphansPurged",
     "proposalsExpired",
     "reflectCooldownActions",

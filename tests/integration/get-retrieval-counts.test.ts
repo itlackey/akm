@@ -137,7 +137,6 @@ describe("getRetrievalCounts", () => {
       db,
       `${stashDir}/skills/probe.md`,
       { type: "skill", name: "probe" } as never,
-      "probe",
       deriveEntryProvenance({ bundleId: "utility", componentId: "utility", adapterId: "akm" }, "skill", "probe"),
     );
     seed("search", "skills/probe", "user", entryId);
@@ -160,7 +159,6 @@ describe("getRetrievalCounts", () => {
       db,
       `${stashDir}/skills/probe.md`,
       { type: "skill", name: "probe" } as never,
-      "probe",
       deriveEntryProvenance({ bundleId: "omitted", componentId: "omitted", adapterId: "akm" }, "skill", "probe"),
     );
     upsertUtilityScore(db, entryId, {
@@ -209,14 +207,12 @@ describe("getRetrievalCounts", () => {
       db,
       `${selectedRoot}/skills/duplicate.md`,
       { type: "skill", name: "duplicate" } as never,
-      "selected",
       deriveEntryProvenance({ bundleId: "selected", componentId: "selected", adapterId: "akm" }, "skill", "duplicate"),
     );
     const otherId = upsertEntry(
       db,
       `${otherRoot}/skills/duplicate.md`,
       { type: "skill", name: "duplicate" } as never,
-      "other",
       deriveEntryProvenance({ bundleId: "other", componentId: "other", adapterId: "akm" }, "skill", "duplicate"),
     );
     upsertUtilityScore(db, selectedId, {

@@ -4,18 +4,8 @@
 
 /**
  * Leaf types for the OS-native scheduler backend contract (see
- * `tasks/backends/index.ts`).
- *
- * Split out of `index.ts` so that `cron.ts`/`launchd.ts`/`schtasks.ts` (which
- * `index.ts` imports by value to build the platform-selection barrel) do not
- * need a type-only import back into `index.ts` — that back-edge is a
- * static-graph cycle even though it is type-only (chunk 9 WI-9.8 KILL 7
- * sever). Backend consumers import these shared types directly.
+ * `tasks/backends/index.ts`). Split out so `cron.ts`/`launchd.ts`/`schtasks.ts`
+ * never import the platform-selection barrel that imports them.
  */
 
-export type {
-  InstalledSchedulerBinding,
-  RebindSchedulerBinding,
-  SchedulerBackend,
-  SchedulerInstallOptions,
-} from "../scheduler-binding";
+export type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptions } from "../scheduler-binding";

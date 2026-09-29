@@ -108,7 +108,7 @@ export const TASK_SOURCE_V4_TOP_LEVEL_KEYS = [
 ] as const;
 
 /** Closes one `schedule:` list entry (D2-N5). */
-export const TASK_SOURCE_V4_SCHEDULE_KEYS = ["cron", "enabled", "inputs"] as const;
+export const TASK_SOURCE_V4_SCHEDULE_KEYS = ["cron", "inputs"] as const;
 
 /**
  * The closed key set for one `inputs.<name>` declaration root (D2-N3). The
@@ -148,7 +148,6 @@ export type TaskSourceV4Target =
 
 export interface TaskSourceV4ScheduleBinding {
   readonly cron: string;
-  readonly enabled: boolean;
   readonly inputs: Readonly<Record<string, unknown>>;
   readonly source: string;
   readonly ordinal: number;
@@ -633,12 +632,6 @@ function parseScheduleEntry(
   const cron = stringField(entry.cron, ctx, [...entryPath, "cron"], { nonempty: true }) as string;
   noGithubExpression(cron, ctx, [...entryPath, "cron"]);
 
-  let enabled = true;
-  if (own(entry, "enabled")) {
-    if (typeof entry.enabled !== "boolean") sourceError(ctx, [...entryPath, "enabled"], "must be a boolean.");
-    enabled = entry.enabled;
-  }
-
   let inputsLiteral: Readonly<Record<string, unknown>> = Object.freeze({});
   if (own(entry, "inputs")) {
     const inputsValue = asRecord(presentJsonValue(entry.inputs, ctx, [...entryPath, "inputs"]), ctx, [
@@ -670,7 +663,7 @@ function parseScheduleEntry(
   }
   checkScheduleEntryRunnable(inputsLiteral, contract, ctx, entryPath);
 
-  return Object.freeze({ cron, enabled, inputs: inputsLiteral, source: `schedule[${index}].cron`, ordinal: index });
+  return Object.freeze({ cron, inputs: inputsLiteral, source: `schedule[${index}].cron`, ordinal: index });
 }
 
 function parseSchedule(
@@ -689,17 +682,11 @@ function parseSchedule(
     // runnability contract, at the `schedule` key's own field path (it has
     // neither an ordinal nor an `inputs:` sub-path to point at).
     checkScheduleEntryRunnable(Object.freeze({}), contract, ctx, ["schedule"]);
-    return Object.freeze([
-      Object.freeze({ cron, enabled: true, inputs: Object.freeze({}), source: "schedule", ordinal: 0 }),
-    ]);
+    return Object.freeze([Object.freeze({ cron, inputs: Object.freeze({}), source: "schedule", ordinal: 0 })]);
   }
 
   if (!Array.isArray(raw) || raw.length === 0) {
-    sourceError(
-      ctx,
-      ["schedule"],
-      "must be a non-empty string or a non-empty list of {cron, enabled?, inputs?} records.",
-    );
+    sourceError(ctx, ["schedule"], "must be a non-empty string or a non-empty list of {cron, inputs?} records.");
   }
   if (raw.length > TASK_V3_MAX_SCHEDULES) {
     sourceError(ctx, ["schedule"], `accepts at most ${TASK_V3_MAX_SCHEDULES} entries.`);

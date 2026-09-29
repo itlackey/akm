@@ -11,15 +11,16 @@ import {
   akmProposalRevert,
   akmProposalShow,
 } from "../../../src/commands/proposal/proposal";
+import { isProceduralRejection } from "../../../src/commands/proposal/proposal-types";
 import {
   AUTOMATED_PROPOSAL_SOURCES,
   archiveProposal,
   createProposal as createProposalImpl,
+  createRetireProposal,
   diffProposal,
   expireStaleProposals,
   getProposal,
   isAutomatedProposalSource,
-  isProposalSkipped,
   isValidProposalSource,
   listProposals,
   PROPOSAL_SOURCES,
@@ -36,6 +37,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { pkgVersion } from "../../../src/version";
 import { makeConfig } from "../../_helpers/factories";
@@ -119,10 +121,8 @@ describe("createProposal / listProposals / getProposal", () => {
       ref: "lessons/rg-over-grep",
       source: "distill",
       sourceRun: "run-123",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(createdResult)) throw new Error("unexpected skip");
     const created = createdResult;
 
     expect(created.id).toBeDefined();
@@ -157,6 +157,26 @@ describe("createProposal / listProposals / getProposal", () => {
     expect((events.events[0]?.metadata as Record<string, unknown> | undefined)?.proposalId).toBe(created.id);
   });
 
+  test("akmProposalList --generator filters by source (S4), matching accept/reject --generator", () => {
+    const stash = makeStashDir();
+    createProposal(stash, { ref: "lessons/from-reflect", source: "reflect", payload: { content: VALID_LESSON } });
+    createProposal(stash, { ref: "lessons/from-distill", source: "distill", payload: { content: VALID_LESSON } });
+
+    const reflectOnly = akmProposalList({ stashDir: stash, generator: "reflect" });
+    expect(reflectOnly.totalCount).toBe(1);
+    expect(reflectOnly.proposals[0]?.source).toBe("reflect");
+
+    const distillOnly = akmProposalList({ stashDir: stash, generator: "distill" });
+    expect(distillOnly.totalCount).toBe(1);
+    expect(distillOnly.proposals[0]?.source).toBe("distill");
+
+    const unfiltered = akmProposalList({ stashDir: stash });
+    expect(unfiltered.totalCount).toBe(2);
+
+    const noMatch = akmProposalList({ stashDir: stash, generator: "consolidate-pair" });
+    expect(noMatch.totalCount).toBe(0);
+  });
+
   test.each([
     {
       issue: "unquoted-colon",
@@ -180,10 +200,8 @@ describe("createProposal / listProposals / getProposal", () => {
     const createdResult = createProposal(stash, {
       ref: `lessons/${slug}`,
       source: "reflect",
-      force: true,
       payload: { content },
     });
-    if (isProposalSkipped(createdResult)) throw new Error("unexpected skip");
 
     const warnings: string[] = [];
     _setWarnSinkForTests((level, args) => {
@@ -212,10 +230,8 @@ describe("createProposal / listProposals / getProposal", () => {
     const createdResult = createProposal(stash, {
       ref: "lessons/wrapped-quoted-description",
       source: "reflect",
-      force: true,
       payload: { content },
     });
-    if (isProposalSkipped(createdResult)) throw new Error("unexpected skip");
 
     expect(akmProposalShow({ stashDir: stash, id: createdResult.id, config }).validation.ok).toBe(true);
     const accepted = await akmProposalAccept({ stashDir: stash, id: createdResult.id, config });
@@ -231,10 +247,8 @@ describe("createProposal / listProposals / getProposal", () => {
     const createdResult2 = createProposal(stash, {
       ref: "lessons/bad-idea",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(createdResult2)) throw new Error("unexpected skip");
     const created = createdResult2;
 
     const result = await akmProposalReject({ stashDir: stash, id: created.id, reason: "duplicate of existing lesson" });
@@ -265,16 +279,13 @@ describe("createProposal / listProposals / getProposal", () => {
     const aResult = createProposal(stash, {
       ref: "lessons/dup",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
     const bResult = createProposal(stash, {
       ref: "lessons/dup",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(aResult) || isProposalSkipped(bResult)) throw new Error("unexpected skip");
     const a = aResult;
     const b = bResult;
     expect(a.id).not.toBe(b.id);
@@ -297,7 +308,6 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
     createProposal(stash, {
       ref: "lessons/rg-over-grep",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
     // A retired legacy `type:name` filter no longer silently matches nothing.
@@ -312,7 +322,6 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
     createProposal(stash, {
       ref: "lessons/rg-over-grep",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
     const matched = listProposals(stash, { ref: "lessons/rg-over-grep" });
@@ -326,7 +335,6 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
     createProposal(stash, {
       ref: "lessons/rg-over-grep",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
     expect(() => resolveProposalId(stash, legacyRef)).toThrow(UsageError);
@@ -339,6 +347,40 @@ describe("ref-filter parse failures are LOUD (D-R3)", () => {
   });
 });
 
+describe("resolveProposalId skips retire proposals by ref (second review round, should-fix 7)", () => {
+  test("by-ref resolution skips a pending retire proposal and finds the reflect edit underneath it", () => {
+    const stash = makeStashDir();
+    fs.writeFileSync(path.join(stash, "lessons", "dup-target.md"), VALID_LESSON, "utf8");
+    const edit = createProposal(stash, {
+      ref: "lessons/dup-target",
+      source: "reflect",
+      payload: { content: VALID_LESSON },
+    });
+    // Minted after `edit`, so by creation time alone it is the "newest
+    // pending" match for the ref — accepting by ref would archive the asset
+    // instead of applying the reflect edit underneath it.
+    createRetireProposal(stash, {
+      ref: "lessons/dup-target",
+      source: "consolidate-pair",
+      target: { source: "stash", root: stash },
+      retirement: {
+        retiredRef: "lessons/dup-target",
+        successorRef: "lessons/dup-elsewhere",
+        cosine: 0.99,
+        judgeLabel: "duplicate",
+        judgeReason: "test",
+        retiredContentHash: "a".repeat(64),
+        successorContentHash: "b".repeat(64),
+        reason: "duplicate",
+      },
+    });
+
+    const resolved = resolveProposalId(stash, "lessons/dup-target");
+    expect(resolved.id).toBe(edit.id);
+    expect(resolved.source).toBe("reflect");
+  });
+});
+
 describe("diff path", () => {
   test("new asset: shows new-asset diff with /dev/null marker", () => {
     const stash = makeStashDir();
@@ -346,10 +388,8 @@ describe("diff path", () => {
     const proposalResult = createProposal(stash, {
       ref: "lessons/fresh",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(proposalResult)) throw new Error("unexpected skip");
     const proposal = proposalResult;
     const diff = diffProposal(stash, config, proposal.id);
     expect(diff.isNew).toBe(true);
@@ -370,10 +410,8 @@ describe("diff path", () => {
     const proposalResult2 = createProposal(stash, {
       ref: "lessons/rg-over-grep",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(proposalResult2)) throw new Error("unexpected skip");
     const proposal = proposalResult2;
 
     const diffResult = akmProposalDiff({ stashDir: stash, id: proposal.id, config });
@@ -399,7 +437,6 @@ describe("validation failure", () => {
       createProposal(stash, {
         ref: "tasks/queued-guard",
         source: "reflect",
-        force: true,
         payload: {
           content: 'version: 2\nschedule: "0 2 * * *"\nenabled: true\nprompt: invalid\ncommand: ["akm", "health"]\n',
         },
@@ -416,10 +453,8 @@ describe("validation failure", () => {
     const proposalResult3 = createProposal(stash, {
       ref: "lessons/no-fields",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(proposalResult3)) throw new Error("unexpected skip");
     const proposal = proposalResult3;
 
     // Simulate an invalid row queued before canonical lesson validation existed.
@@ -465,10 +500,8 @@ describe("validation failure", () => {
     const created = createProposal(stash, {
       ref: "tasks/nightly",
       source: "reflect",
-      force: true,
       payload: { content: original.replace("index", "health") },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const state = openStateDatabase();
     try {
       state
@@ -494,7 +527,6 @@ describe("validation failure", () => {
       createProposal(stash, {
         ref: "lessons/empty",
         source: "distill",
-        force: true,
         payload: { content: "" },
       });
     } catch (err) {
@@ -525,10 +557,8 @@ describe("validation failure", () => {
     const created = createProposal(stash, {
       ref: "workflows/ship-feature-from-spec",
       source: "reflect",
-      force: true,
       payload: { content: original.replace("Validate the specification.", "Validate the updated specification.") },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     // Simulate a structurally-invalid row queued before workflow proposal validation existed.
     const state = openStateDatabase();
@@ -555,10 +585,8 @@ describe("akmProposalReject — non-pending status (#284 HIGH 4)", () => {
     const createdResult3 = createProposal(stash, {
       ref: "lessons/once",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(createdResult3)) throw new Error("unexpected skip");
     const created = createdResult3;
     // First reject moves it to the archive.
     await akmProposalReject({ stashDir: stash, id: created.id });
@@ -615,10 +643,8 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
     const proposalResult5 = createProposal(stash, {
       ref: "lessons/invalid",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(proposalResult5)) throw new Error("unexpected skip");
     const proposal = proposalResult5;
     const state = openStateDatabase();
     try {
@@ -645,114 +671,77 @@ describe("akmProposalAccept — validation failure (#284 HIGH 6)", () => {
   });
 });
 
-// ── F-2 / #363 — dedup / cooldown guard ─────────────────────────────────────
+// ── The improve ledger: every mint and decision lands in improve_ledger ──────
 
-describe("createProposal dedup / cooldown guard (F-2 / #363)", () => {
-  test("fingerprint_match: a second mint with identical inputs is skipped without force", () => {
+function ledgerRow(stash: string, ref: string, source: string) {
+  const db = openStateDatabase();
+  try {
+    return getImproveLedgerRow(db, stash, ref, source);
+  } finally {
+    db.close();
+  }
+}
+
+describe("createProposal and proposal decisions record the improve ledger", () => {
+  const DAY = 86_400_000;
+  const NOW = Date.UTC(2026, 5, 1);
+
+  test("a mint records `proposed`; a second mint for the same ref still queues and the row follows it", () => {
     const stash = makeStashDir();
     const first = createProposal(stash, {
       ref: "lessons/dup-test",
       source: "reflect",
       payload: { content: VALID_LESSON },
     });
-    expect(isProposalSkipped(first)).toBe(false);
-
-    // Same target (absent), source, and (absent) model — the differing content
-    // is not a fingerprint term (§23.6: INPUT fingerprint).
     const second = createProposal(stash, {
       ref: "lessons/dup-test",
       source: "reflect",
       payload: { content: VALID_LESSON.replace("Prefer rg", "Prefer fd") },
     });
-    expect(isProposalSkipped(second)).toBe(true);
-    if (!isProposalSkipped(second)) throw new Error("type guard");
-    expect(second.reason).toBe("fingerprint_match");
+    expect(second.id).not.toBe(first.id);
+    expect(listProposals(stash)).toHaveLength(2);
+    expect(ledgerRow(stash, durableRef(stash, "lesson", "dup-test"), "reflect")).toMatchObject({
+      outcome: "proposed",
+      proposalId: second.id,
+    });
   });
 
-  test("fingerprint changes with the target's before-state: the second mint queues alongside", () => {
+  test("attemptedRefs keys the row by the input asset, and a rejection lands on it with the source window", () => {
     const stash = makeStashDir();
-    const first = createProposal(stash, {
-      ref: "lessons/hash-test",
-      source: "distill",
-      payload: { content: VALID_LESSON },
+    const created = createProposal(
+      stash,
+      {
+        ref: "lessons/from-memory",
+        source: "distill",
+        attemptedRefs: ["stash//memories/raw-note"],
+        payload: { content: VALID_LESSON },
+      },
+      { now: () => NOW },
+    );
+    expect(ledgerRow(stash, durableRef(stash, "lesson", "from-memory"), "distill")).toBeUndefined();
+    archiveProposal(stash, created.id, "rejected", "not novel", { now: () => NOW + DAY });
+    expect(ledgerRow(stash, "stash//memories/raw-note", "distill")).toMatchObject({
+      outcome: "rejected",
+      proposalId: created.id,
+      lastAttemptAt: new Date(NOW).toISOString(),
+      nextEligibleAt: new Date(NOW + 31 * DAY).toISOString(),
+      detail: "not novel",
     });
-    expect(isProposalSkipped(first)).toBe(false);
-
-    // Materialise the target so the mint-time before-hash (a fingerprint term)
-    // changes — the old ref+source duplicate_pending guard is retired.
-    const assetPath = path.join(stash, "lessons", "hash-test.md");
-    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-    fs.writeFileSync(assetPath, "On-disk target content.\n", "utf8");
-
-    const second = createProposal(stash, {
-      ref: "lessons/hash-test",
-      source: "distill",
-      payload: { content: VALID_LESSON },
-    });
-    expect(isProposalSkipped(second)).toBe(false);
   });
 
-  test("rejection_backoff: new inputs are skipped for ref+source within the window after rejection", () => {
+  test("an accepted proposal clears the window", async () => {
     const stash = makeStashDir();
-    const first = createProposal(stash, {
-      ref: "lessons/cooldown-test",
+    const config = makeConfig(stash);
+    const created = createProposal(stash, {
+      ref: "lessons/accept-ledger",
       source: "reflect",
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(first)) throw new Error("unexpected skip");
-    archiveProposal(stash, first.id, "rejected", "Test rejection for cooldown");
-
-    // Change the target so the second mint is a genuinely new fingerprint —
-    // the retained backoff (not the fingerprint) must fire.
-    const assetPath = path.join(stash, "lessons", "cooldown-test.md");
-    fs.mkdirSync(path.dirname(assetPath), { recursive: true });
-    fs.writeFileSync(assetPath, "On-disk target content.\n", "utf8");
-
-    const second = createProposal(stash, {
-      ref: "lessons/cooldown-test",
-      source: "reflect",
-      payload: { content: VALID_LESSON.replace("Prefer rg", "Prefer fd") },
+    await akmProposalAccept({ stashDir: stash, id: created.id, config });
+    expect(ledgerRow(stash, durableRef(stash, "lesson", "accept-ledger"), "reflect")).toMatchObject({
+      outcome: "accepted",
+      nextEligibleAt: null,
     });
-    expect(isProposalSkipped(second)).toBe(true);
-    if (!isProposalSkipped(second)) throw new Error("type guard");
-    expect(second.reason).toBe("rejection_backoff");
-    expect(second.message).toContain("14d window");
-  });
-
-  test("force:true bypasses all guards", () => {
-    const stash = makeStashDir();
-    const first = createProposal(stash, {
-      ref: "lessons/force-test",
-      source: "reflect",
-      payload: { content: VALID_LESSON },
-    });
-    expect(isProposalSkipped(first)).toBe(false);
-
-    const second = createProposal(stash, {
-      ref: "lessons/force-test",
-      source: "reflect",
-      force: true,
-      payload: { content: VALID_LESSON },
-    });
-    expect(isProposalSkipped(second)).toBe(false);
-  });
-
-  test("different sources for same ref are independent — no cross-source dedup", () => {
-    const stash = makeStashDir();
-    const reflectResult = createProposal(stash, {
-      ref: "lessons/cross-source",
-      source: "reflect",
-      payload: { content: VALID_LESSON },
-    });
-    const distillResult = createProposal(stash, {
-      ref: "lessons/cross-source",
-      source: "distill",
-      payload: { content: VALID_LESSON },
-    });
-    expect(isProposalSkipped(reflectResult)).toBe(false);
-    expect(isProposalSkipped(distillResult)).toBe(false);
-    const queue = listProposals(stash);
-    expect(queue.length).toBe(2);
   });
 });
 
@@ -791,7 +780,6 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
       sourceRun: "run-abc-123",
       payload: { content: VALID_LESSON },
     });
-    expect(isProposalSkipped(result)).toBe(false);
     const proposal = result as import("../../../src/commands/proposal/repository").Proposal;
     expect(proposal.source).toBe("reflect");
     expect(proposal.sourceRun).toBe("run-abc-123");
@@ -800,12 +788,11 @@ describe("F-4: source allow-list validation and sourceRun advisory (#385)", () =
   test("createProposal accepts unknown source strings (backward-compatible)", () => {
     const stash = makeStashDir();
     // Unknown source should NOT throw — it emits a warning but creates the proposal.
-    const result = createProposal(stash, {
+    createProposal(stash, {
       ref: "lessons/f4-unknown-source",
       source: "custom-extension",
       payload: { content: VALID_LESSON },
     });
-    expect(isProposalSkipped(result)).toBe(false);
   });
 });
 
@@ -818,11 +805,9 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
       ref: "lessons/confidence-valid",
       source: "reflect",
       sourceRun: "run-c1",
-      force: true,
       payload: { content: VALID_LESSON },
       confidence: 0.85,
     });
-    if (isProposalSkipped(result)) throw new Error("unexpected skip");
     expect(result.confidence).toBe(0.85);
 
     // Round-trip via getProposal so we know it survives JSON serialization.
@@ -835,18 +820,15 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
     const zero = createProposal(stash, {
       ref: "lessons/confidence-zero",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
       confidence: 0,
     });
     const one = createProposal(stash, {
       ref: "lessons/confidence-one",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
       confidence: 1,
     });
-    if (isProposalSkipped(zero) || isProposalSkipped(one)) throw new Error("unexpected skip");
     expect(zero.confidence).toBe(0);
     expect(one.confidence).toBe(1);
   });
@@ -856,10 +838,8 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
     const result = createProposal(stash, {
       ref: "lessons/confidence-undefined",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(result)) throw new Error("unexpected skip");
     expect(result.confidence).toBeUndefined();
     const reloaded = getProposal(stash, result.id);
     expect(reloaded.confidence).toBeUndefined();
@@ -877,11 +857,9 @@ describe("Phase 6A: createProposal validates and round-trips confidence", () => 
       const created = createProposal(stash, {
         ref,
         source: "reflect",
-        force: true,
         payload: { content: VALID_LESSON },
         confidence: value,
       });
-      if (isProposalSkipped(created)) throw new Error("unexpected skip");
       // All four invalid values must be silently dropped — no NaN persisted.
       expect(created.confidence).toBeUndefined();
     }
@@ -898,39 +876,33 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     // Three proposals: 60 days old, 31 days old, 1 day old (relative to fake now).
     const NOW = Date.UTC(2026, 5, 1);
     const DAY = 86_400_000;
-    const oldA = createProposal(
+    createProposal(
       stash,
       {
         ref: "lessons/expire-old-a",
         source: "reflect",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 60 * DAY },
     );
-    const oldB = createProposal(
+    createProposal(
       stash,
       {
         ref: "lessons/expire-old-b",
         source: "distill",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 31 * DAY },
     );
-    const fresh = createProposal(
+    createProposal(
       stash,
       {
         ref: "lessons/expire-fresh",
         source: "reflect",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 1 * DAY },
     );
-    if (isProposalSkipped(oldA) || isProposalSkipped(oldB) || isProposalSkipped(fresh)) {
-      throw new Error("unexpected skip");
-    }
 
     const result = expireStaleProposals(stash, config, { now: () => NOW });
     expect(result.expired).toBe(2);
@@ -954,6 +926,28 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     }
   });
 
+  test("records `expired` in the improve ledger — a one-day grace, never a content rejection", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 30 } as AkmConfig;
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    const created = createProposal(
+      stash,
+      { ref: "lessons/expire-ledger", source: "reflect", payload: { content: VALID_LESSON } },
+      { now: () => NOW - 60 * DAY },
+    );
+    expireStaleProposals(stash, config, { now: () => NOW });
+
+    const archived = getProposal(stash, created.id);
+    expect(archived.status).toBe("rejected");
+    expect(archived.gateDecision).toMatchObject({ outcome: "auto-rejected", reason: "expired" });
+    expect(isProceduralRejection(archived)).toBe(true);
+    expect(ledgerRow(stash, durableRef(stash, "lesson", "expire-ledger"), "reflect")).toMatchObject({
+      outcome: "expired",
+      nextEligibleAt: new Date(NOW + DAY).toISOString(),
+    });
+  });
+
   test("is idempotent: running twice does not double-archive already-archived entries", () => {
     const stash = makeStashDir();
     const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 7 } as AkmConfig;
@@ -964,7 +958,6 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
       {
         ref: "lessons/idem-1",
         source: "reflect",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 30 * DAY },
@@ -981,27 +974,24 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 7 } as AkmConfig;
     const NOW = Date.UTC(2026, 5, 1);
     const DAY = 86_400_000;
-    const a = createProposal(
+    createProposal(
       stash,
       {
         ref: "lessons/event-a",
         source: "reflect",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 30 * DAY },
     );
-    const b = createProposal(
+    createProposal(
       stash,
       {
         ref: "lessons/event-b",
         source: "distill",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 30 * DAY },
     );
-    if (isProposalSkipped(a) || isProposalSkipped(b)) throw new Error("unexpected skip");
 
     expireStaleProposals(stash, config, { now: () => NOW });
     const events = readEvents({ type: "proposal_expired" });
@@ -1022,7 +1012,6 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
       {
         ref: "lessons/ttl-off",
         source: "reflect",
-        force: true,
         payload: { content: VALID_LESSON },
       },
       { now: () => NOW - 1000 * DAY },
@@ -1031,6 +1020,46 @@ describe("Phase 6B: expireStaleProposals archives proposals past retention", () 
     expect(result.expired).toBe(0);
     expect(result.retentionDays).toBe(0);
     expect(listProposals(stash, { status: "pending" }).length).toBe(1);
+  });
+
+  test("never expires a pending retire proposal, however old (second review round, should-fix 8)", () => {
+    const stash = makeStashDir();
+    const config: AkmConfig = { ...makeConfig(stash), archiveRetentionDays: 30 } as AkmConfig;
+    const NOW = Date.UTC(2026, 5, 1);
+    const DAY = 86_400_000;
+    createProposal(
+      stash,
+      { ref: "lessons/expire-old-a", source: "reflect", payload: { content: VALID_LESSON } },
+      { now: () => NOW - 60 * DAY },
+    );
+    fs.writeFileSync(path.join(stash, "lessons", "retire-target.md"), VALID_LESSON, "utf8");
+    createRetireProposal(
+      stash,
+      {
+        ref: "lessons/retire-target",
+        source: "consolidate-pair",
+        target: { source: "stash", root: stash },
+        retirement: {
+          retiredRef: "lessons/retire-target",
+          successorRef: "lessons/expire-fresh-elsewhere",
+          cosine: 0.99,
+          judgeLabel: "duplicate",
+          judgeReason: "test",
+          retiredContentHash: "a".repeat(64),
+          successorContentHash: "b".repeat(64),
+          reason: "duplicate",
+        },
+      },
+      { now: () => NOW - 60 * DAY },
+    );
+
+    const result = expireStaleProposals(stash, config, { now: () => NOW });
+    expect(result.checked).toBe(2); // both pending proposals were examined
+    expect(result.expired).toBe(1); // only the reflect proposal — the retire proposal is exempt
+    const stillPending = listProposals(stash, { status: "pending" })
+      .map((p) => p.ref)
+      .sort();
+    expect(stillPending).toEqual([durableRef(stash, "lesson", "retire-target")]);
   });
 });
 
@@ -1043,7 +1072,7 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
   // needed for correctness and was a source of narrow-margin timing risk on
   // a loaded runner. `withAssetMutationLease` (src/indexer/index-writer-lock.ts,
   // `acquireAssetMutationLease`) makes its FIRST lock-acquisition attempt
-  // (`tryAcquireMaintenanceBarrier` + `tryAcquireLockSync` + `probeLock`,
+  // (`tryAcquireLockSync` + `probeLock`,
   // src/core/file-lock.ts) entirely synchronously — none of those calls
   // `await` anything. Per JS async-function semantics, that means by the
   // time `akmProposalAccept`/`akmProposalReject`/`akmProposalRevert` returns
@@ -1060,10 +1089,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/serialized-proposal",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const assetPath = path.join(stash, "lessons", "serialized-proposal.md");
     const lockPath = getIndexWriterLockPath();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -1081,10 +1108,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/serialized-reject",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const lockPath = getIndexWriterLockPath();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }), "utf8");
@@ -1108,10 +1133,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/backup-read-failure",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const originalRead = fs.readFileSync;
     const readSpy = spyOn(fs, "readFileSync").mockImplementation(((
       file: fs.PathOrFileDescriptor,
@@ -1137,10 +1160,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/serialized-revert",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
     const lockPath = getIndexWriterLockPath();
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
@@ -1162,13 +1183,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/immediate-index",
       source: "distill",
-      force: true,
       payload: {
         content:
           "---\ndescription: accepted zanzibar marker\nwhen_to_use: Verifying proposal indexing\n---\n\nIndexed immediately.\n",
       },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(indexedEntry(accepted.assetPath)?.description).toBe("accepted zanzibar marker");
@@ -1186,13 +1205,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/revert-index",
       source: "distill",
-      force: true,
       payload: {
         content:
           "---\ndescription: accepted zanzibar marker\nwhen_to_use: Verifying proposal revert indexing\n---\n\nAccepted.\n",
       },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     // Establish the accepted index state independently so this test isolates
     // the revert path rather than depending on the accept-path assertion above.
@@ -1215,13 +1232,11 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "workflows/revert-unindexable",
       source: "propose",
-      force: true,
       payload: {
         content:
           "---\ntype: workflow\ndescription: Valid accepted workflow\nsteps:\n  - id: first\n---\n\n# Accepted\n\n## first\n\nRun.\n",
       },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(indexedEntry(workflowPath)).toBeDefined();
 
@@ -1244,10 +1259,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       ref: "lessons/rg-over-grep",
       source: "distill",
       sourceRun: "run-backup",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const accepted = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(accepted.ok).toBe(true);
@@ -1267,10 +1280,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
       ref: "lessons/brand-new",
       source: "reflect",
       sourceRun: "run-new",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
     const reloaded = getProposal(stash, created.id);
@@ -1286,10 +1297,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/rg-over-grep",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
 
     // Confirm the file was rewritten by accept.
@@ -1327,20 +1336,16 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const proposalA = createProposal(stash, {
       ref: "lessons/stacked-proposals",
       source: "distill",
-      force: true,
       payload: { content: aContent },
     });
-    if (isProposalSkipped(proposalA)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: proposalA.id, config });
     expect(getProposal(stash, proposalA.id).acceptedTarget?.contentHash).toBeDefined();
 
     const proposalB = createProposal(stash, {
       ref: "lessons/stacked-proposals",
       source: "distill",
-      force: true,
       payload: { content: bContent },
     });
-    if (isProposalSkipped(proposalB)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: proposalB.id, config });
     // D2 (#730): promotion stamps OKF v0.2 provenance (generated/verified) onto
     // the written frontmatter, so the on-disk bytes are no longer expected to be
@@ -1367,10 +1372,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/missing-accepted-target",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
     // D2 (#730): promotion stamps OKF v0.2 provenance onto the written
     // frontmatter — snapshot what accept ACTUALLY wrote (rather than assuming
@@ -1412,11 +1415,9 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/bound-revert",
       source: "distill",
-      force: true,
       target: { source: "primary", root: stash },
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: created.id, config, target: "primary" });
     fs.writeFileSync(path.join(other, "lessons", "bound-revert.md"), VALID_LESSON, "utf8");
 
@@ -1433,10 +1434,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/not-accepted-revert",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     // Proposal is pending — revert should fail.
     let thrown: unknown;
     try {
@@ -1458,10 +1457,8 @@ describe("Phase 6C: promoteProposal captures backup; revertProposal restores it"
     const created = createProposal(stash, {
       ref: "lessons/no-backup-revert",
       source: "reflect",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     await akmProposalAccept({ stashDir: stash, id: created.id, config });
 
     let thrown: unknown;
@@ -1549,10 +1546,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "lessons/provenance-distill-human-accept",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({
       stashDir: stash,
@@ -1585,10 +1580,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "workflows/provenance-workflow-stamped",
       source: "distill",
-      force: true,
       payload: { content: VALID_WORKFLOW },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({
       stashDir: stash,
@@ -1611,10 +1604,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "lessons/provenance-distill-gate-accept",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({
       stashDir: stash,
@@ -1640,10 +1631,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "lessons/provenance-human-source",
       source: "propose",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({
       stashDir: stash,
@@ -1667,10 +1656,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "lessons/provenance-evidence-sources",
       source: "distill",
-      force: true,
       payload: { content: contentWithEvidence },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({ stashDir: stash, id: created.id, config });
 
@@ -1688,10 +1675,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "tasks/provenance-not-applicable",
       source: "distill",
-      force: true,
       payload: { content: taskContent },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({ stashDir: stash, id: created.id, config });
     expect(fs.readFileSync(result.assetPath, "utf8")).toBe(taskContent);
@@ -1705,10 +1690,8 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const created = createProposal(stash, {
       ref: "lessons/provenance-reindex-roundtrip",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const result = await akmProposalAccept({
       stashDir: stash,
@@ -1734,10 +1717,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/envelope-new",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     expect(created.changes).toHaveLength(1);
     const change = created.changes[0];
@@ -1759,10 +1740,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/envelope-existing",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created0)) throw new Error("unexpected skip");
     // Materialise the target at the exact mint-time path the envelope recorded.
     const abs = path.join(stash, created0.changes[0]?.path ?? "");
     fs.mkdirSync(path.dirname(abs), { recursive: true });
@@ -1772,10 +1751,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/envelope-existing",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     expect(created.changes[0]?.op).toBe("update");
     expect(created.changes[0]?.before).toBeUndefined();
@@ -1788,10 +1765,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/envelope-roundtrip",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     const reread = getProposal(stash, created.id);
     expect(reread.changes).toEqual(created.changes);
@@ -1813,10 +1788,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/envelope-legacy",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     // Strip the required current envelope to simulate a pre-feature row that
     // never captured `changes` (see #858/#859: ~89% of real archived rows).
     const state = openStateDatabase();
@@ -1840,10 +1813,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/envelope-corrupt",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     // Distinct from the legacy case above: `changes` is present but empty,
     // which never happens on real (pre- or post-feature) data — this is
     // genuine corruption, not a tolerated legacy gap.
@@ -1869,10 +1840,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/missing-target",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const state = openStateDatabase();
     const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
       metadata_json: string;
@@ -1892,10 +1861,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/malformed-target",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const state = openStateDatabase();
     const row = state.prepare("SELECT metadata_json FROM proposals WHERE id = ?").get(created.id) as {
       metadata_json: string;
@@ -1914,10 +1881,8 @@ describe("createProposal derives the FileChange[] envelope (WI-6.2)", () => {
       ref: "lessons/current-ref",
       source: "reflect",
       sourceRun: "run-envelope",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
     const state = openStateDatabase();
     const retiredRef = `stash//lesson:${"retired"}`;
     state.prepare("UPDATE proposals SET ref = ? WHERE id = ?").run(retiredRef, created.id);
@@ -1936,10 +1901,8 @@ describe("akmProposalAccept succeeds while a live index rebuild holds the lock (
     const created = createProposal(stash, {
       ref: "lessons/accept-during-rebuild",
       source: "distill",
-      force: true,
       payload: { content: VALID_LESSON },
     });
-    if (isProposalSkipped(created)) throw new Error("unexpected skip");
 
     // A live pid holds the index rebuild lock — indexWrittenAssets must skip
     // its inline upsert (the in-progress rebuild will pick up the change on

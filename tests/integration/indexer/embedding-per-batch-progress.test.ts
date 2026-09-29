@@ -24,7 +24,6 @@ import type { AkmConfig, EmbeddingConnectionConfig } from "../../../src/core/con
 import { resetVerbose, setVerbose } from "../../../src/core/warn";
 import { deriveEntryProvenance, deriveInstallations } from "../../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../../src/indexer/materialize-embeddings";
-import { buildSearchText } from "../../../src/indexer/search/search-fields";
 import { _setEmbedderForTests } from "../../../src/llm/embedder";
 import type { EmbeddingBatchCommit, EmbeddingSkipHandler } from "../../../src/llm/embedders/remote";
 import type { Database } from "../../../src/storage/database";
@@ -59,7 +58,7 @@ describe("generateEmbeddingsForDb: per-batch progress and final outcome line (#9
         "memories",
         name,
       );
-      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, buildSearchText(entry), provenance);
+      upsertEntry(db, `${storage.stashDir}/memories/${name}.md`, entry, provenance);
     }
   }
 
@@ -180,7 +179,6 @@ describe("generateEmbeddingsForDb: per-batch progress and final outcome line (#9
         onBatch?.(
           texts.map((_t, i) => i),
           texts.map(() => undefined),
-          undefined,
           {
             batchIndex: 1,
             batchCount: 1,

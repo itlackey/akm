@@ -3,79 +3,34 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The child workflow executor (P3b, spec docs/plans/specs/p3b-child-executor.md
- * §3). `driveChildWorkflowUnit` is the ONE place a `child-workflow`-targeted
- * unit is published (idempotently) and driven: no second executor, no second
- * scheduler, no second journal writer. It is reached from the ONE dispatch
- * seam in `native-executor.ts`'s `dispatchJournaledAttempt` (§3.2).
+ * The child workflow executor. `driveChildWorkflowUnit` is the one place a
+ * `child-workflow`-targeted unit is published (idempotently) and driven,
+ * reached from `native-executor.ts`'s dispatch seam: (1) validate the resolved
+ * `with:` bindings against the child's `params:`; (2) derive the deterministic
+ * invocation key; (3) publish the child run idempotently; (4) drive it with
+ * the same engine as a top-level run unless it is already `blocked`/`failed`;
+ * (5) map the child's final status onto this unit's outcome.
  *
- * Ordered algorithm (§3.3): (1) re-verify the embedded child plan's integrity;
- * (2) validate the resolved `with:` bindings against the child's declared
- * `params:`; (3) derive the deterministic invocation key; (4) publish the
- * child run idempotently (`publishChildWorkflowRun`, P3a); (5) read the
- * published row's status; (6) drive it with the SAME engine the top-level path
- * uses (`runWorkflowSteps`) unless it is already terminal-for-this-invocation
- * (`blocked`/`failed`, rows A-22/A-23); (7) map the child's FINAL status
- * through §3.4's table onto this unit's outcome.
- *
- * ## Why `runWorkflowSteps` is reached through a LAZY dynamic import, not a
- * static one (B-N5, and the §7 preservation-gate contingency)
- *
- * `native-executor.ts` must import `driveChildWorkflowUnit` FROM this file
- * (the dispatch seam calls it inline, §3.2) — that edge is fixed. `run-
- * workflow.ts` imports `native-executor.ts` (existing, load-bearing:
- * `executeStepPlan`). If this file ALSO imported `runWorkflowSteps` from
- * `./run-workflow` STATICALLY, the three edges would close a static cycle
- * (native-executor.ts -> child-workflow.ts -> run-workflow.ts ->
- * native-executor.ts), which `tests/architecture/import-cycle-ratchet.test.ts`
- * (shrink-only, EMPTY baseline — an absolute gate) forbids outright; adding an
- * entry to admit it is not an option the ratchet allows. Per this spec's own
- * §7 checklist ("if the ratchet objects, the drive is reached through an
- * injected function value, the pattern `ir/freeze-v4.ts`'s `ChildFreezeFn`
- * already establishes"), the drive is instead reached through
- * {@link driveWithRealEngine}'s `await import("./run-workflow")` — a
- * DYNAMIC import, invisible to the static-graph cycle ratchet by design (its
- * own doc: "dynamic `import()` is excluded because it is the repo's
- * sanctioned lazy-loading escape hatch"), registered in
- * `DYNAMIC_IMPORT_BASELINE` (scripts/lint-import-cycles.ts) as a genuine
- * lazy-load: the vast majority of workflow runs compose no child at all, so
- * loading `run-workflow.ts`'s full engine (lease heartbeat, retry loop) is
- * deferred until a `child-workflow` unit is actually dispatched. Bun/Node
- * cache a module on first dynamic import, so this costs nothing on repeat
- * calls, and it resolves the SAME module namespace object a test's
- * `import * as runWorkflowModule from "./run-workflow"` holds — a
- * `spyOn(runWorkflowModule, "runWorkflowSteps")` is therefore observed
- * exactly as if this module had imported it statically. Unlike a registered
- * function value (which would depend on `run-workflow.ts` having already
- * been loaded by SOME OTHER file — fragile for a test file exercising this
- * seam in isolation), a dynamic import always resolves correctly regardless
- * of what the rest of the process has loaded. This is the ONLY runtime
- * indirection in the whole drive: no second executor is created, and
- * `driveRun` itself is never exported (B-N5's "no second executor" holds).
+ * `runWorkflowSteps` is reached through a lazy dynamic import: a static one
+ * would close the cycle native-executor -> child-workflow -> run-workflow ->
+ * native-executor, and most runs compose no child at all.
  */
 
 import { randomUUID } from "node:crypto";
 import { TransientError } from "../../core/errors";
 import { type WorkflowRunRow, withWorkflowRunsRepo } from "../../storage/repositories/workflow-runs-repository";
 import { validateWorkflowParams } from "../ir/params";
-import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
-import type { FrozenChildWorkflowTarget } from "../ir/schema-v4";
-import { frozenStepRows } from "../runtime/plan-classifier";
+import { canonicalPlanJson } from "../ir/plan-hash";
+import type { FrozenChildWorkflowTarget } from "../plan";
 import { workflowRunExportedResult } from "../runtime/run-outputs";
+import { frozenStepRows } from "../runtime/run-plan";
 import { computeChildInvocationKey } from "./child-invocation";
 import type { UnitOutcome } from "./step-work";
 import type { UnitDispatcher, UnitDispatchRequest } from "./unit-dispatch";
 
-// ── The lazy dynamic-import seam (see the module doc above) ────────────────
-
 /**
  * The subset of `native-executor.ts`'s `StepExecutionContext` this module
- * reads. Defined LOCALLY — never imported from `native-executor.ts` — because
- * `native-executor.ts` imports `driveChildWorkflowUnit` FROM this file; an
- * import edge the other way would close a static cycle (see the module doc).
- * TypeScript's structural typing makes the real `StepExecutionContext`
- * assignable here without either type naming the other: every field below is
- * a same-named, same-typed field of `StepExecutionContext`.
+ * reads, defined locally so this module never imports `native-executor.ts`.
  */
 export interface DriveChildWorkflowContext {
   readonly runId: string;
@@ -83,29 +38,13 @@ export interface DriveChildWorkflowContext {
   readonly dispatcher?: UnitDispatcher;
   readonly maxConcurrency?: number;
   readonly eventSource?: string;
-  /**
-   * Unread by this module — present only so a test's inline `ctx` object
-   * literal (mirroring the full `StepExecutionContext` shape) does not trip
-   * excess-property checking. An index signature would fix that too, but
-   * then the REAL `StepExecutionContext` (native-executor.ts, no index
-   * signature of its own) stops being assignable here — TypeScript's excess-
-   * property exemption applies only to fresh object literals, not to a named
-   * type passed as a value. Naming the fields keeps both directions valid.
-   */
+  /** Unread here; named so an inline test `ctx` mirroring `StepExecutionContext` type-checks. */
   readonly workflowRef?: string;
   readonly params?: Record<string, unknown>;
   readonly evidence?: Record<string, Record<string, unknown> | undefined>;
-  readonly leaseHolder?: string;
 }
 
-/**
- * The subset of `run-workflow.ts`'s `RunWorkflowOptions` this module passes
- * to {@link driveWithRealEngine} (§3.3.1). Defined LOCALLY for the same
- * reason as {@link DriveChildWorkflowContext} — `RunWorkflowOptions` is a
- * structural superset (every field below is optional except `target`, so a
- * real `RunWorkflowOptions` value is always assignable to this type where
- * needed).
- */
+/** The subset of `run-workflow.ts`'s `RunWorkflowOptions` a child drive passes. */
 export interface ChildWorkflowDriveOptions {
   readonly target: string;
   readonly signal?: AbortSignal;
@@ -115,22 +54,14 @@ export interface ChildWorkflowDriveOptions {
   readonly disposeDispatchResources?: () => void | Promise<void>;
 }
 
-/**
- * The real engine's `runWorkflowSteps`, reached ONLY through a dynamic
- * import — see the module doc for why. The return value is deliberately
- * unused by the caller: this module always RE-READS the child run row from
- * the repository afterward (spec step 7) rather than trusting the driver's
- * return value, so no result shape needs to be shared across the seam.
- */
+/** The real engine, via a dynamic import (see the module doc). The caller re-reads the child row afterward. */
 async function driveWithRealEngine(options: ChildWorkflowDriveOptions): Promise<void> {
   const { runWorkflowSteps } = await import("./run-workflow");
   await runWorkflowSteps(options);
 }
 
-// ── The drive contract (spec §3.3) ──────────────────────────────────────────
-
 export interface DriveChildWorkflowInput {
-  /** `unitId` is the parent unit's `journalBaseId` (B-N8). */
+  /** `unitId` is the parent unit's `journalBaseId`. */
   readonly request: UnitDispatchRequest;
   readonly target: FrozenChildWorkflowTarget;
   readonly ctx: DriveChildWorkflowContext;
@@ -144,12 +75,12 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** `acquireRunLease`'s exact refusal shape (run-workflow.ts) — matched by text, since this module cannot import that private helper. */
+/** Another live process holds the child run's lock file (run-workflow.ts). */
 function isLeaseBusyError(err: unknown): boolean {
-  return err instanceof TransientError && err.message.includes("is already being driven by engine");
+  return err instanceof TransientError && err.code === "RUN_LEASE_HELD";
 }
 
-/** §3.4's exact `child_workflow_failed` message. */
+/** The `child_workflow_failed` message. */
 function childWorkflowFailedMessage(input: {
   childRunId: string;
   childRef: string;
@@ -163,34 +94,12 @@ function childWorkflowFailedMessage(input: {
   );
 }
 
-/**
- * Steps 1-3 (spec §3.3): integrity re-check, param validation, and the
- * deterministic invocation key. Returns either the key or an already-shaped
- * `child_workflow_publish_failed` outcome.
- */
+/** Param validation and the deterministic invocation key, or a `child_workflow_publish_failed` outcome. */
 function precheckAndDeriveInvocationKey(
   input: Pick<DriveChildWorkflowInput, "request" | "target" | "ctx" | "childParams" | "inputHash">,
 ): { ok: true; invocationKey: string } | { ok: false; outcome: UnitOutcome } {
   const { request, target, ctx, childParams, inputHash } = input;
 
-  // Step 1 — integrity re-check (row A-10).
-  const recomputedPlanHash = computePlanHash(target.frozenPlan);
-  if (recomputedPlanHash !== target.planHash) {
-    return {
-      ok: false,
-      outcome: {
-        unitId: request.unitId,
-        ok: false,
-        failureReason: "child_workflow_publish_failed",
-        error:
-          `Workflow step "${request.stepId}" composes child workflow ${target.ref}, but its embedded plan's ` +
-          `recomputed hash (${recomputedPlanHash}) does not match the frozen target's planHash (${target.planHash}). ` +
-          "The frozen plan has been corrupted or tampered with.",
-      },
-    };
-  }
-
-  // Step 2 — resolved params against the child's declared param schemas (row A-11).
   const paramErrors = validateWorkflowParams(target.frozenPlan, childParams);
   if (paramErrors.length > 0) {
     return {
@@ -206,7 +115,6 @@ function precheckAndDeriveInvocationKey(
     };
   }
 
-  // Step 3 — the deterministic invocation key (B-N8: parentUnitId is request.unitId, the parent unit's journalBaseId).
   return {
     ok: true,
     invocationKey: computeChildInvocationKey({
@@ -218,11 +126,8 @@ function precheckAndDeriveInvocationKey(
 }
 
 /**
- * Step 4/5 (spec §3.3): publish the child run idempotently and return the
- * pre-drive status read (the returned row IS that read). B-N16: no
- * transaction open on this connection — this seam is reached from
- * dispatchJournaledAttempt, outside resumeWorkflowRun's and
- * completeWorkflowStep's own transactions.
+ * Publish the child run idempotently and return the pre-drive row. Runs with
+ * no transaction open on this connection (reached from the dispatch seam).
  */
 async function publishChildRun(
   input: Pick<DriveChildWorkflowInput, "request" | "target" | "ctx" | "childParams">,
@@ -253,7 +158,6 @@ async function publishChildRun(
           updatedAt: now,
           agentHarness: parentRow.agent_harness,
           agentSessionId: parentRow.agent_session_id,
-          checkinArmedAt: now,
         },
         steps: frozenStepRows(target.frozenPlan).map((row) => ({ ...row, runId: childRunId })),
         planJson: canonicalPlanJson(target.frozenPlan),
@@ -275,11 +179,9 @@ async function publishChildRun(
 }
 
 /**
- * Step 6 (spec §3.3): drive the published child run with the real engine,
- * unless it is already terminal-for-this-invocation (`blocked`/`failed`,
- * rows A-22/A-23 — never re-driven, no lease taken). Returns the FINAL row
- * (re-read after the drive) or an already-shaped `child_workflow_busy` /
- * `child_workflow_drive_failed` outcome.
+ * Drive the published child run with the real engine unless it is already
+ * `blocked`/`failed` (never re-driven). Returns the final re-read row, or a
+ * `child_workflow_busy` / `child_workflow_drive_failed` outcome.
  */
 async function driveChildRun(
   input: Pick<DriveChildWorkflowInput, "request" | "target" | "ctx">,
@@ -297,27 +199,13 @@ async function driveChildRun(
     ...(ctx.dispatcher ? { dispatcher: ctx.dispatcher } : {}),
     ...(ctx.maxConcurrency !== undefined ? { maxConcurrency: ctx.maxConcurrency } : {}),
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
-    // B-N6: a no-op, distinct from the real registry drain — the PARENT's
-    // own `finally` remains the single owner of the process-lifecycle
-    // drain for the whole process (row A-24).
+    // The parent's own `finally` owns the process-lifecycle drain; no maxSteps/maxRetries.
     disposeDispatchResources: () => {},
-    // B-N7: deliberately no maxSteps, no maxRetries (rows A-25, A-26).
   };
   try {
-    // The re-read is INSIDE the same try as the drive (code-review round 4,
-    // finding 1; Review log R1): every throw between here and a mapped
-    // UnitOutcome — the drive itself, OR this immediately-following
-    // getRunById — must be caught. Left to escape, it skips past
-    // dispatchJournaledAttempt's finishJournaledDispatch (no try/catch
-    // wraps this seam there by design), so the parent's reserved attempt
-    // row is never finished; the throw then propagates through runUnit
-    // into concurrentMap's worker (src/core/concurrent.ts), which SWALLOWS
-    // it and leaves the unit's outcome slot `undefined`, which
-    // executeStepPlanInConnection then maps to the false diagnostic
-    // "unit was not dispatched (aborted or scheduler failure)" — losing
-    // the real cause and leaving the composing attempt row stuck
-    // `running` forever (unrecoverable by inspection; a resume + re-drive
-    // reproduces the identical false diagnostic).
+    // The re-read stays inside this try: an escaped throw would skip the
+    // parent attempt's finish and leave its row `running` with a false
+    // "not dispatched" diagnostic.
     await driveWithRealEngine(driveOptions);
     const finalRow = (await withWorkflowRunsRepo((repo) => repo.getRunById(childRow.id))) ?? childRow;
     return { ok: true, finalRow };
@@ -339,22 +227,8 @@ async function driveChildRun(
         },
       };
     }
-    // EVERY other throw is mapped here too — never rethrown. §3.5's
-    // original premise ("classified by the existing dispatch_error
-    // handling") was false: no handling exists at this seam
-    // (dispatchJournaledAttempt awaits this call with no try of its own),
-    // so an uncaught throw here escaped all the way into the scheduler and
-    // was silently swallowed (R1, above). Reachable causes include the
-    // child's own LeaseHeartbeat.assertAlive() firing mid-drive,
-    // requireExecutableWorkflowPlan rejecting a
-    // tampered child plan_json, and the child's status changing between
-    // this function's own step 5 read and the drive's internal
-    // getNextWorkflowStep re-read — none of which match
-    // isLeaseBusyError's text. child_workflow_drive_failed is a SIBLING of
-    // child_workflow_publish_failed (row A-10…A-12): same shape, same
-    // errorMessage(err) content, but naming the child run id and ref
-    // (already known at this point, unlike the publish arm above) since
-    // driving — not publishing — is what failed.
+    // Every other throw (a repository error mid-drive, a status race) maps
+    // to child_workflow_drive_failed — never rethrown into the scheduler.
     return {
       ok: false,
       outcome: {
@@ -375,10 +249,7 @@ async function driveChildRun(
   }
 }
 
-/**
- * `driveChildWorkflowUnit` — the ONE child drive (spec §3.3). Every failure
- * before step 6 (publication) produces `child_workflow_publish_failed`.
- */
+/** The one child drive. Every failure before the drive produces `child_workflow_publish_failed`. */
 export async function driveChildWorkflowUnit(input: DriveChildWorkflowInput): Promise<UnitOutcome> {
   const { request, ctx } = input;
 
@@ -406,10 +277,7 @@ export async function driveChildWorkflowUnit(input: DriveChildWorkflowInput): Pr
     currentStepId: finalRow.current_step_id,
   };
 
-  // A-28/A-29: the child did not reach a terminal state, and the parent's
-  // own dispatch signal is what aborted it — checked against the RE-READ
-  // status (not the signal alone) so an already-terminal child is never
-  // misreported as aborted.
+  // Checked against the re-read status, so an already-terminal child is never misreported as aborted.
   if (finalRow.status === "active" && ctx.signal?.aborted) {
     return {
       unitId: request.unitId,
@@ -456,12 +324,8 @@ export async function driveChildWorkflowUnit(input: DriveChildWorkflowInput): Pr
         childRun: childRunSummary,
       };
     default:
-      // The child's own gate loop exhausted without reaching a terminal
-      // status (a genuine gate rejection on the child's own step, never
-      // reached by this phase's fixtures — B-N7 forwards no maxSteps/
-      // maxRetries, so nothing else can leave a driven child non-terminal
-      // without an abort). Treated conservatively as a failure so the
-      // parent never silently advances on an unresolved child.
+      // A driven child left non-terminal (its own gate loop exhausted) fails
+      // the unit, so the parent never advances on an unresolved child.
       return {
         unitId: request.unitId,
         ok: false,

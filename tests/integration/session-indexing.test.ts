@@ -28,7 +28,6 @@ import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
-import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { akmIndex } from "../../src/indexer/indexer";
 import type {
   SessionData,
@@ -47,7 +46,6 @@ let envCleanup: Cleanup = () => {};
 beforeEach(() => {
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
   const cache = sandboxXdgCacheHome();
   const cfg = sandboxXdgConfigHome(cache.cleanup);
   const stash = sandboxStashDir(cfg.cleanup);
@@ -82,7 +80,6 @@ afterEach(() => {
   stashDir = "";
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
   resetConfigCache();
 });
 

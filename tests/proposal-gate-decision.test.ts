@@ -4,9 +4,9 @@
 
 // Per-proposal gate-decision persistence + rendering (#577) — drain-scoped.
 //
-// The deterministic drain/triage engine must stamp WHY each proposal landed
-// where it did (auto-accepted / deferred / auto-rejected, with reason +
-// thresholds) onto the proposal row, and the `proposal show` / `list` surfaces
+// The triage drain must stamp WHY each proposal landed where it did
+// (auto-accepted / deferred / auto-rejected, with a reason) onto the proposal
+// row, and the `proposal show` / `list` surfaces
 // must expose it. Proposals that have not passed through a gate omit the gate
 // fields from rendered output.
 //
@@ -18,21 +18,15 @@ import { afterEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { stageJudgedProposal } from "../src/commands/improve/stage";
 import { drainProposals } from "../src/commands/proposal/drain";
-import { PERSONAL_STASH } from "../src/commands/proposal/drain-policies";
 import {
   akmProposalReject,
   type ProposalAcceptResult,
   type ProposalRejectResult,
 } from "../src/commands/proposal/proposal";
-import {
-  createProposal,
-  getProposal,
-  isProposalSkipped,
-  type Proposal,
-  recordGateDecision,
-} from "../src/commands/proposal/repository";
-import { shapeProposalEntry } from "../src/output/shapes/helpers";
+import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";
+import { shapeProposalEntry, shapeProposalListOutput } from "../src/output/shapes/helpers";
 import { formatProposalListPlain, formatProposalShowPlain } from "../src/output/text/helpers";
 
 // ── Setup ─────────────────────────────────────────────────────────────────
@@ -57,12 +51,10 @@ function seed(stash: string, ref: string, source: string, content: string): Prop
   const result = createProposal(stash, {
     ref,
     source,
-    force: true,
     sourceRun: "run-x",
     target: { source: "stash", root: stash },
     payload: { content, frontmatter: { description: `${ref} fixture` } },
   });
-  if (isProposalSkipped(result)) throw new Error(`unexpected skip: ${result.message}`);
   return result;
 }
 
@@ -146,18 +138,18 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     );
   }
 
-  test("queue-mode deterministic accepts do not pre-stamp a terminal outcome", async () => {
+  test("queue-mode judge-passed accepts keep their staged stamp — no terminal outcome", async () => {
     const stash = makeStashDir();
-    const p = seed(stash, "lessons/ok", "extract", VALID_LESSON);
+    const p = stageJudgedProposal(stash, seed(stash, "lessons/ok", "extract", VALID_LESSON));
 
     await drainProposals(
-      { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
+      { stashDir: stash, applyMode: "queue", maxAccepts: 25, dryRun: false },
       fakeAccept(),
       fakeReject(),
     );
 
     const decision = getProposal(stash, p.id).gateDecision;
-    expect(decision).toBeUndefined();
+    expect(decision).toMatchObject({ outcome: "staged", reason: "quality-judge", gate: "quality-gate" });
   });
 
   test("a mocked empty-diff rejection does not pre-stamp a terminal outcome", async () => {
@@ -166,7 +158,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     const rejectFn = fakeReject();
 
     await drainProposals(
-      { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
+      { stashDir: stash, applyMode: "queue", maxAccepts: 25, dryRun: false },
       fakeAccept(),
       rejectFn,
     );
@@ -178,7 +170,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
         gateDecision: {
           outcome: "auto-rejected",
           reason: "empty-diff",
-          gate: "triage:personal-stash",
+          gate: "triage",
         },
       }),
     );
@@ -189,7 +181,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     const p = seed(stash, "lessons/terminal-reject", "extract", EMPTY_LESSON);
 
     await drainProposals(
-      { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
+      { stashDir: stash, applyMode: "queue", maxAccepts: 25, dryRun: false },
       fakeAccept(),
       akmProposalReject,
     );
@@ -197,36 +189,16 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     expect(getProposal(stash, p.id)).toMatchObject({
       status: "rejected",
       review: { outcome: "rejected", reason: "empty diff" },
-      gateDecision: { outcome: "auto-rejected", reason: "empty-diff", gate: "triage:personal-stash" },
+      gateDecision: { outcome: "auto-rejected", reason: "empty-diff", gate: "triage" },
     });
   });
 
-  test("deferred (max-diff-lines): over-band consolidate carries the threshold", async () => {
-    const stash = makeStashDir();
-    const p = seed(stash, "lessons/big", "consolidate", BIG_CONSOLIDATE);
-
-    await drainProposals(
-      { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
-      fakeAccept(),
-      fakeReject(),
-    );
-
-    const decision = getProposal(stash, p.id).gateDecision;
-    expect(decision?.outcome).toBe("deferred");
-    expect(decision?.reason).toBe("max-diff-lines");
-    // 200 is the personal-stash consolidate band — reconstructable later.
-    expect(decision?.thresholds?.maxDiffLines).toBe(200);
-    // The measured line count is persisted alongside the bound so the full
-    // "<measured> > 200" comparison stays reconstructable (#577 finding 4).
-    expect(decision?.measured).toBeGreaterThan(200);
-  });
-
-  test("deferred (no-judge-configured): defer-list source with no runner", async () => {
+  test("deferred (no-judge-configured): an unjudged proposal with no runner", async () => {
     const stash = makeStashDir();
     const p = seed(stash, "lessons/dup", "distill", VALID_LESSON);
 
     await drainProposals(
-      { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: false },
+      { stashDir: stash, applyMode: "queue", maxAccepts: 25, dryRun: false },
       fakeAccept(),
       fakeReject(),
     );
@@ -241,7 +213,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     const p = seed(stash, "lessons/dry", "consolidate", BIG_CONSOLIDATE);
 
     await drainProposals(
-      { stashDir: stash, policy: PERSONAL_STASH, applyMode: "queue", maxAccepts: 25, dryRun: true },
+      { stashDir: stash, applyMode: "queue", maxAccepts: 25, dryRun: true },
       fakeAccept(),
       fakeReject(),
     );
@@ -336,5 +308,100 @@ describe("proposal show / list expose the gate decision (#577)", () => {
     const ungatedLine = out.split("\n").find((l) => l.includes("uuid-ungated")) ?? "";
     expect(ungatedLine).not.toContain("gate=");
     expect(ungatedLine).not.toContain("undefined");
+  });
+});
+
+describe("proposal show / list expose retirement.continuityRisk (S4)", () => {
+  const flagged = {
+    id: "uuid-flagged",
+    ref: "memories/old-note",
+    status: "pending",
+    source: "consolidate-pair",
+    createdAt: "2026-09-01T00:00:00.000Z",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      judgeLabel: "duplicate",
+      judgeReason: "same content",
+      cosine: 0.98,
+      continuityRisk: {
+        failingQueries: 1,
+        ranks: [{ query: "how do I configure X", retiredRank: 1, successorRank: null }],
+      },
+    },
+  };
+  const unverified = {
+    id: "uuid-unverified",
+    ref: "memories/other-note",
+    status: "pending",
+    source: "consolidate-pair",
+    createdAt: "2026-09-02T00:00:00.000Z",
+    retirement: {
+      retiredRef: "memories/other-note",
+      successorRef: "memories/other-new",
+      judgeLabel: "duplicate",
+      judgeReason: "same content",
+      cosine: 0.97,
+      // S2: unverified-only risk — no rank failures at all, only an
+      // endpoint outage or fallback, so `ranks` is empty.
+      continuityRisk: { failingQueries: 0, ranks: [], unverifiedQueries: 1 },
+    },
+  };
+  const clean = {
+    id: "uuid-clean",
+    ref: "memories/clean-note",
+    status: "pending",
+    source: "consolidate-pair",
+    createdAt: "2026-09-03T00:00:00.000Z",
+    retirement: {
+      retiredRef: "memories/clean-note",
+      successorRef: "memories/clean-new",
+      judgeLabel: "duplicate",
+      judgeReason: "same content",
+      cosine: 0.99,
+    },
+  };
+
+  test("formatProposalListPlain marks a flagged retire proposal inline, and omits it for a clean one (S4)", () => {
+    const out = formatProposalListPlain({ totalCount: 2, proposals: [flagged, clean] });
+    const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
+    const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
+    expect(flaggedLine).toContain("continuity-risk");
+    expect(cleanLine).not.toContain("continuity-risk");
+  });
+
+  test("the marker survives `akm proposal list`'s DEFAULT (brief) shape, not just a hand-built fixture (round 3)", () => {
+    // The test above feeds formatProposalListPlain a raw fixture with
+    // `retirement` already attached, as if shaped at "normal" — but
+    // `proposal list` with no --detail flag shapes at "brief", which drops
+    // `retirement` entirely. Round through the REAL shape function first,
+    // at the REAL default detail level, to prove the marker still reaches
+    // the formatter when nothing else does.
+    const shaped = shapeProposalListOutput({ totalCount: 2, proposals: [flagged, clean] }, "brief");
+    expect((shaped.proposals as Record<string, unknown>[])[0]).not.toHaveProperty("retirement");
+    const out = formatProposalListPlain(shaped);
+    const flaggedLine = out.split("\n").find((l) => l.includes("uuid-flagged")) ?? "";
+    const cleanLine = out.split("\n").find((l) => l.includes("uuid-clean")) ?? "";
+    expect(flaggedLine).toContain("continuity-risk");
+    expect(cleanLine).not.toContain("continuity-risk");
+  });
+
+  test("formatProposalShowPlain lists the actual failing query text, not just a count (N3)", () => {
+    const out = formatProposalShowPlain({ proposal: flagged });
+    expect(out).toContain("retire.continuityRisk:");
+    expect(out).toContain("excluded from bulk accept");
+    expect(out).toContain('"how do I configure X": retired #1, successor absent from top 10');
+  });
+
+  test("formatProposalShowPlain reports unverifiedQueries even with zero rank failures (S2)", () => {
+    const out = formatProposalShowPlain({ proposal: unverified });
+    expect(out).toContain("retire.continuityRisk:");
+    expect(out).toContain("1 query unverified (search failed or used the keyword-only fallback)");
+    expect(out).not.toContain("of the retired asset's own quer"); // no rank-based failures to report
+  });
+
+  test("formatProposalShowPlain omits continuityRisk entirely for a clean retire proposal", () => {
+    const out = formatProposalShowPlain({ proposal: clean });
+    expect(out).not.toContain("continuityRisk");
   });
 });

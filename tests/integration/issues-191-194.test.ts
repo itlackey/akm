@@ -21,8 +21,8 @@
  * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
  * harness (tests/_helpers/cli.ts). The CLI-driving tests (#191, #192, #194)
  * allocate fresh isolated HOME/XDG/stash dirs per test and run the CLI
- * in-process; each runCli call re-pins that env + resets the config/embedder/
- * graph caches so back-to-back invocations re-read the test's tempdirs,
+ * in-process; each runCli call re-pins that env + resets the config/embedder
+ * caches so back-to-back invocations re-read the test's tempdirs,
  * restoring env in finally. The #193 tests never spawned the CLI — they
  * exercise openIndexDatabase via dynamic import and are unchanged.
  */
@@ -31,7 +31,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
-import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { runCliCapture } from "../_helpers/cli";
 import { WORKFLOW_TEST_CONFIG } from "../_helpers/workflow";
@@ -86,7 +85,6 @@ async function runCli(
   resetConfigCache();
   clearEmbeddingCache();
   resetLocalEmbedder();
-  resetGraphBoostCache();
   try {
     const res = await runCliCapture(args);
     return { status: res.code, stdout: res.stdout, stderr: res.stderr };
@@ -138,7 +136,7 @@ Do thing two.
 `;
 
 describe("issue #191 — memory search misses freshly-added memory", () => {
-  test("exact-phrase search returns the memory hit at high score", async () => {
+  test("exact-phrase search returns the memory as the top hit", async () => {
     const env = makeEnv();
     expect((await runCli(["bundle", "create"], env)).status).toBe(0);
 
@@ -151,9 +149,8 @@ describe("issue #191 — memory search misses freshly-added memory", () => {
     const json = JSON.parse(searched.stdout) as {
       hits: Array<{ type: string; name: string; score?: number }>;
     };
-    const memoryHit = json.hits.find((h) => h.type === "memory");
-    expect(memoryHit).toBeDefined();
-    expect(memoryHit?.score ?? 0).toBeGreaterThan(0.5);
+    expect(json.hits[0]?.type).toBe("memory");
+    expect(json.hits[0]?.score ?? 0).toBeGreaterThan(0);
   });
 });
 

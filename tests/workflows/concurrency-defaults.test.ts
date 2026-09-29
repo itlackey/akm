@@ -14,7 +14,7 @@ import {
   isLoopbackHost,
 } from "../../src/workflows/concurrency-policy";
 import { scheduleUnits } from "../../src/workflows/exec/scheduler";
-import type { IrMapNodeV4, WorkflowPlanGraphV4 } from "../../src/workflows/ir/schema-v4";
+import type { WorkflowMapNode, WorkflowPlan } from "../../src/workflows/plan";
 import { WORKFLOW_MAX_CONCURRENCY } from "../../src/workflows/resource-limits";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -50,7 +50,7 @@ function mapWorkflow(concurrency?: number): string {
   ].join("\n");
 }
 
-function mapNode(plan: WorkflowPlanGraphV4): IrMapNodeV4 {
+function mapNode(plan: WorkflowPlan): WorkflowMapNode {
   const root = plan.steps.find((step) => step.stepId === "review")?.root;
   if (!root || root.kind !== "map") throw new Error("expected current map node");
   return root;

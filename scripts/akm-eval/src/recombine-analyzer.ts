@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { isCanonicalIndexGeneration } from "../../../src/storage/repositories/index-entry-schema";
+import { hasCurrentEntriesTable } from "../../../src/storage/repositories/index-entry-schema";
 import { resolveIndexDbPath, resolveStateDbPath } from "./sources/paths";
 
 export type RecombineRelatedness = "tags" | "graph" | "both";
@@ -811,7 +811,14 @@ function projectFrom(conceptId: string, cwd: unknown): string | undefined {
 
 function graphFailureReason(error: unknown): string {
   const detail = (error instanceof Error ? error.message : String(error)).replace(/\s+/g, " ").trim().slice(0, 240);
-  return `graph schema/query unavailable${detail ? `: ${detail}` : ""}. Run \`akm index --full\` with the current akm version.`;
+  // The LLM entity-graph extraction tables (graph_files, graph_file_entities)
+  // are retired and unconditionally dropped from index.db (0.9.17-alpha.9) —
+  // `akm index` never repopulates them, so this is permanent, not transient.
+  // The main CLI entry point (parseArgs) refuses --relatedness graph/both
+  // before reaching here; this message only fires for a direct
+  // analyzeRecombineCandidates/readCurrentRecombineEntries call that still
+  // asks for graph relatedness.
+  return `graph schema/query unavailable${detail ? `: ${detail}` : ""}. The LLM entity graph was retired in 0.9.17-alpha.9 and cannot be repopulated — use tags relatedness instead.`;
 }
 
 function readGraphEntities(
@@ -1054,9 +1061,9 @@ export function readCurrentRecombineEntries(
     db = new Database(snapshot.databasePath, { readonly: true, create: false });
     db.exec("BEGIN");
     transactionOpen = true;
-    if (!isCanonicalIndexGeneration(db)) {
+    if (!hasCurrentEntriesTable(db)) {
       throw new Error(
-        "index database lacks the current canonical entries schema; rebuild it with `akm index --full`",
+        "index database has no entries table this akm reads; build it with `akm index`",
       );
     }
     const rows = db
@@ -1188,9 +1195,9 @@ explicit additional report file.
 
 Options:
   --index-db <path>          Current index.db (default: $AKM_DATA_DIR/index.db).
-  --relatedness <mode>       tags | graph | both (default: both). Graph fails
-                             when graph schema/query is unavailable; both
-                             reports degradation and falls back to tags.
+  --relatedness <mode>       tags | graph | both (default: tags). graph and
+                             both were retired in 0.9.17-alpha.9 with the LLM
+                             entity graph they read and now refuse.
   --min-cluster-size <n>     Minimum members (default: 3).
   --max-cluster-size <n>     Exclude larger clusters (default: no upper limit).
   --max-clusters <n>         Fair selected-cluster cap (default: 5).
@@ -1212,7 +1219,10 @@ function parseArgs(argv: string[]): CliOptions | undefined {
     stateDb: resolveStateDbPath(),
     minClusterSize: DEFAULT_MIN_CLUSTER_SIZE,
     maxClusters: DEFAULT_MAX_CLUSTERS,
-    relatedness: "both",
+    // "both" defaulted to graph+tags; graph is retired (0.9.17-alpha.9) and
+    // can never populate again, so the default is the one mode that still
+    // works, not a mode that always silently degrades.
+    relatedness: "tags",
     format: "md",
   };
   for (let index = 0; index < argv.length; index++) {
@@ -1230,6 +1240,15 @@ function parseArgs(argv: string[]): CliOptions | undefined {
         const value = next();
         if (value !== "tags" && value !== "graph" && value !== "both") {
           throw new Error(`--relatedness must be tags|graph|both (got ${value})`);
+        }
+        // graph/both refuse outright instead of silently degrading: the LLM
+        // entity graph they'd read was retired in 0.9.17-alpha.9 and the
+        // graph_files/graph_file_entities tables are unconditionally dropped
+        // from index.db, so neither mode can ever produce graph data again.
+        if (value === "graph" || value === "both") {
+          throw new Error(
+            `--relatedness ${value} was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it read — use --relatedness tags (now the default).`,
+          );
         }
         options.relatedness = value;
         break;

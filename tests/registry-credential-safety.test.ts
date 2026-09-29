@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { getConfigValue, listConfig } from "../src/commands/config-cli";
-import { collectEgressAdvisory } from "../src/commands/health/surfaces";
+import { collectEgressAdvisory } from "../src/commands/health/egress";
 import { resolveRegistries, searchRegistry } from "../src/commands/read/registry-search";
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import {

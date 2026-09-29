@@ -14,6 +14,7 @@ import path from "node:path";
 
 import { akmLint } from "../src/commands/lint/index";
 import { akmInit } from "../src/commands/sources/init";
+import { ensureStashGitignore, STASH_GITIGNORE_TRACK_SECRETS_MARKER } from "../src/commands/sources/stash-skeleton";
 import { loadUserConfig, primaryBundlePath, saveConfig } from "../src/core/config/config";
 import { resolveTypeConventions } from "../src/core/standards/resolve-type-conventions";
 import { type Cleanup, sandboxHome, sandboxXdgCacheHome, sandboxXdgConfigHome } from "./_helpers/sandbox";
@@ -91,6 +92,17 @@ describe("akmInit (akm bundle create)", () => {
     expect(gitignore).toMatch(/^env\/$/m);
     const markerCount = gitignore.split("# akm: keep secret material out of git by default").length - 1;
     expect(markerCount).toBe(1);
+  });
+
+  test("documented marker opts a private bundle out of secret ignore scaffolding (#981)", () => {
+    const stashDir = makeTempDir("akm-init-gitignore-optout-");
+    const gitignorePath = path.join(stashDir, ".gitignore");
+    const authored = `${STASH_GITIGNORE_TRACK_SECRETS_MARKER}\n!env/\n!secrets/\n`;
+    fs.writeFileSync(gitignorePath, authored);
+
+    ensureStashGitignore(stashDir);
+
+    expect(fs.readFileSync(gitignorePath, "utf8")).toBe(authored);
   });
 
   test("re-running on an existing stash is idempotent and keeps lessons/", async () => {

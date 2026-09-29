@@ -82,7 +82,7 @@ function unwrap(schema: z.ZodTypeAny): z.ZodTypeAny {
  * AkmConfig schema. Returns `undefined` if any path segment doesn't match a
  * known schema field.
  */
-function resolveSchemaAt(path: Path, config?: Record<string, unknown>, raw?: string): z.ZodTypeAny | undefined {
+export function resolveSchemaAt(path: Path, config?: Record<string, unknown>, raw?: string): z.ZodTypeAny | undefined {
   let schema: z.ZodTypeAny = AkmConfigBaseSchema;
   let existing: unknown = config;
   for (const [index, segment] of path.entries()) {

@@ -214,7 +214,7 @@ const setupCommand = defineCommand({
     // the work, matching the `sync --push/--no-push` pattern. A flag
     // DECLARED as `no-init` can never be negated: `--no-init` parses as
     // "negate `init`", a name nothing declared, leaving the real key at its
-    // default forever — see `search --no-project-context`'s identical fix.
+    // default forever — see `search --no-track-usage`'s identical fix.
     init: {
       type: "boolean",
       default: true,
@@ -607,20 +607,35 @@ const helpCommand = defineGroupCommand({
   },
 });
 
+// Root `--help` text for the exit-code table. `EXIT_CODES` (src/cli/shared.ts)
+// is the single source of the numbers; this only supplies the prose next to
+// each one, so there is no third, independently-drifting copy of the table
+// (the other copy is errors.ts's doc comment, which documents by reference
+// instead of repeating the numbers).
+const EXIT_CODE_DESCRIPTIONS: ReadonlyArray<readonly [number, string]> = [
+  [EXIT_CODES.SUCCESS, "success"],
+  [EXIT_CODES.GENERAL, "not found / command-reported failure"],
+  [EXIT_CODES.USAGE, "usage error"],
+  [EXIT_CODES.HEALTH_WARN, "health warn (akm health only)"],
+  [EXIT_CODES.INTERNAL, "internal / unclassified error"],
+  [
+    EXIT_CODES.TEMPFAIL,
+    "transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)",
+  ],
+  [EXIT_CODES.CONFIG, "config error"],
+];
+
+function renderExitCodesHelp(): string {
+  return EXIT_CODE_DESCRIPTIONS.map(([code, description]) => `  ${String(code).padEnd(4)}${description}`).join("\n");
+}
+
 export const main = defineCommand({
   meta: {
     name: "akm",
     version: pkgVersion,
     description:
       "Agent Knowledge Manager — search, show, and manage assets from your bundle.\n\n" +
-      "Exit codes:\n" +
-      "  0   success\n" +
-      "  1   not found / command-reported failure\n" +
-      "  2   usage error\n" +
-      "  4   health warn (akm health only)\n" +
-      "  70  internal / unclassified error\n" +
-      "  75  transient (retry shortly — another akm process holds a lock or is writing state.db or index.db)\n" +
-      "  78  config error",
+      `Exit codes:\n${renderExitCodesHelp()}`,
   },
   args: {
     // Single-sourced from GLOBAL_OUTPUT_ARGS (src/cli/shared.ts) so root help
@@ -687,6 +702,25 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   const configIndex = args.indexOf("config");
   const subcommand = args.slice(configIndex + 1).find((arg) => !arg.startsWith("-"));
   return subcommand === "path";
+}
+
+/**
+ * Whether `argv` resolves to the top-level `info` command — used by
+ * `runCli` (and mirrored in `tests/_helpers/cli.ts`) to scope the startup
+ * config read's best-effort fallback to `info` alone. `info` is NOT on
+ * {@link shouldBypassConfigStartup}'s allowlist: unlike a bare bypass, it
+ * still reads a valid config's `output.format`/`output.detail` like any
+ * other command, it just must not be aborted by one it cannot read (see
+ * `assembleInfo`'s doc comment, src/commands/sources/info.ts, for why).
+ * Every other command reads config exactly as before — a broken config
+ * throws here and the command never runs.
+ */
+export function isInfoCommand(argv: readonly string[]): boolean {
+  const userArgs = argv.slice(2);
+  const separator = userArgs.indexOf("--");
+  const args = separator === -1 ? userArgs : userArgs.slice(0, separator);
+  const commandIndex = findCittyTopLevelCommandIndex(args, MAIN_TOP_LEVEL_ARGS);
+  return (commandIndex >= 0 ? args[commandIndex] : undefined) === "info";
 }
 
 // ── Exit codes ──────────────────────────────────────────────────────────────
@@ -1038,7 +1072,32 @@ async function runCli(): Promise<void> {
   try {
     applyEarlyStderrFlags(process.argv);
     const bypassConfig = shouldBypassConfigStartup(process.argv);
-    initOutputMode(process.argv, bypassConfig ? (DEFAULT_CONFIG.output ?? {}) : (loadConfig().output ?? {}));
+    // Off the bypass allowlist, every command reads config here exactly as
+    // it always has: an invalid config.json throws, `emitJsonError` reports
+    // it, and the command never runs — no side effect of its own body ever
+    // happens (a lock taken, a network call made, a database opened
+    // read-write). `akm info` is the ONE exception (see `assembleInfo`'s
+    // doc comment, src/commands/sources/info.ts): only ITS read is
+    // best-effort, falling back to `DEFAULT_CONFIG.output` instead of
+    // throwing. Scoped narrowly on purpose — an earlier version of this fix
+    // made the read best-effort for every command, which silently changed
+    // outcomes across the CLI (some commands that should refuse at exit 78
+    // ran anyway; `health`/`index`/`config set`/`feedback` still failed,
+    // but only after already taking a lock, opening a database read-write,
+    // or making a network call).
+    let outputDefaults = DEFAULT_CONFIG.output ?? {};
+    if (!bypassConfig) {
+      if (isInfoCommand(process.argv)) {
+        try {
+          outputDefaults = loadConfig().output ?? {};
+        } catch {
+          outputDefaults = DEFAULT_CONFIG.output ?? {};
+        }
+      } else {
+        outputDefaults = loadConfig().output ?? {};
+      }
+    }
+    initOutputMode(process.argv, outputDefaults);
   } catch (error: unknown) {
     emitJsonError(error);
     return;

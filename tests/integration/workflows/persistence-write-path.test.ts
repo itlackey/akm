@@ -56,7 +56,6 @@ function seedRun(dbPath: string): void {
     seedWorkflowRun(db, {
       runId: RUN_ID,
       steps: [{ stepId: "step-1", stepTitle: "Do the thing" }],
-      checkinArmedAt: new Date().toISOString(),
     });
     storeFrozenWorkflowPlan(db, RUN_ID, PLAN);
   } finally {
@@ -193,7 +192,6 @@ describe("unit writer queue", () => {
         Array.from({ length: UNITS }, async (_, i) => {
           const unitId = `review:${i}`;
           const startedAt = new Date(1_700_000_000_000 + i).toISOString();
-          const claimHolder = `direct:${unitId}`;
 
           const attempt = await enqueueUnitWrite(() =>
             withWorkflowRunsRepo((repo) =>
@@ -209,9 +207,6 @@ describe("unit writer queue", () => {
                 model: null,
                 inputHash: `hash-${i}`,
                 now: startedAt,
-                claimHolder,
-                claimExpiresAt: new Date(Date.parse(startedAt) + 90_000).toISOString(),
-                leaseMode: "direct",
               }),
             ),
           );
@@ -225,7 +220,6 @@ describe("unit writer queue", () => {
                 unitId,
                 attempt: attempt.attempt.attempt,
                 dispatchId: attempt.attempt.dispatch_id,
-                claimHolder,
                 status: "completed",
                 resultJson: JSON.stringify({ index: i }),
                 tokens: i,
@@ -346,7 +340,6 @@ function seedFlowRun(): void {
       runId: FLOW_RUN_ID,
       params: { chunks: Array.from({ length: CHUNK_COUNT }, (_, i) => `seed-${i}`) },
       steps: [{ stepId: "produce" }, { stepId: "consume" }],
-      checkinArmedAt: new Date().toISOString(),
     });
     storeFrozenWorkflowPlan(db, FLOW_RUN_ID, FLOW_PLAN);
   } finally {

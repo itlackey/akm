@@ -4,7 +4,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { dominantAgentFailureReason } from "../src/commands/health/checks";
-import { summarizePhaseDurations } from "../src/commands/health/improve-metrics";
 import { matchImproveTaskId } from "../src/commands/health/task-runs";
 import type { WindowResult } from "../src/commands/health/types";
 import { computeDeltas, readNumericPath } from "../src/commands/health/windows";
@@ -25,17 +24,6 @@ describe("readNumericPath", () => {
   test("returns 0 for null root and for non-finite values", () => {
     expect(readNumericPath(null, "a")).toBe(0);
     expect(readNumericPath({ a: Number.NaN }, "a")).toBe(0);
-  });
-});
-
-describe("summarizePhaseDurations", () => {
-  test("empty samples yield all-zero stats", () => {
-    expect(summarizePhaseDurations([])).toEqual({ count: 0, totalMs: 0, medianMs: 0, p95Ms: 0 });
-  });
-
-  test("nearest-rank median and p95 over sorted samples", () => {
-    // sorted [10,20,30]: median = idx floor(0.5*3)=1 → 20; p95 = idx min(2, floor(0.95*3)=2) → 30.
-    expect(summarizePhaseDurations([30, 10, 20])).toEqual({ count: 3, totalMs: 60, medianMs: 20, p95Ms: 30 });
   });
 });
 

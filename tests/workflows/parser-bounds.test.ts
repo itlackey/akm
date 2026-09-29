@@ -13,7 +13,6 @@
 
 import { describe, expect, test } from "bun:test";
 import { parseWorkflow } from "../../src/workflows/parser";
-import type { ProgramMap } from "../../src/workflows/program/schema";
 import { WORKFLOW_MAX_CONCURRENCY, WORKFLOW_MAX_TIMEOUT_MS } from "../../src/workflows/resource-limits";
 import { parseErrors, workflowDoc as workflowWith } from "../_helpers/workflow";
 
@@ -39,8 +38,7 @@ describe("bug 9 — parser enforces the decoder's bounds with line anchors", () 
     const result = parseWorkflow(markdown, { path: "workflows/test.md" });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected parse to succeed");
-    const map = result.document.steps[0]!.map as ProgramMap;
-    expect(map.concurrency).toBe(WORKFLOW_MAX_CONCURRENCY);
+    expect(result.plan.steps[0]!.spec?.map?.concurrency).toBe(WORKFLOW_MAX_CONCURRENCY);
   });
 
   test("map.concurrency at the bound still parses unclamped", () => {

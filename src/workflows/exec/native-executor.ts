@@ -3,122 +3,35 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Native executor — executes one frozen step subgraph (`IrStepPlan.root`) on
- * the local machine: fan-out through the scheduler, schema-validated
- * structured output through `runStructured` (core/structured.ts), per-unit
- * persistence through the serialized writer queue, and `workflow_unit_*`
- * events for observability.
+ * Native executor — executes one frozen step subgraph (`WorkflowPlanStep.root`)
+ * locally: fan-out through the scheduler, structured output through
+ * `runStructured`, per-unit journaling through the serialized writer queue,
+ * and `workflow_unit_*` events. It never writes step rows; advancing the spine
+ * is `run-workflow.ts`'s job.
  *
- * Data flow: there is no interpolation language — a unit's instructions are
- * the step's body prose byte-exact, and data reaches it as attached
- * structured context instead. References resolve once per step, only in the
- * closed frontmatter positions, against the promoted step-output artifact.
- * See docs/architecture/decisions/0001-no-interpolation-attached-structured-context.md
- * for the full design history (peer review R1, the P1 injection class it closes).
- *
- * Empty free-text outputs (peer review): a SUCCESSFUL schemaless unit that
- * returns the empty string is normalized to "no output" — {@link dispatchUnit}
- * drops the falsy `text`, `finishUnitAttempt` journals `result_json = NULL`, and
- * durable-row reuse rehydrates the same absence (`unitOutcomeFromRow`). This is
- * the ONLY empty-output resolution: `''` never survives into the journal, so the
- * live artifact cannot diverge from the artifact a resume rebuilds from the same
- * rows (the byte-identical-graph cardinal rule). Consequences that follow from
- * "empty == absent", not special-cased anywhere:
- *   - a SOLO empty step promotes `output = null` (the unit's absent text ??
- *     null); a `collect` fan-out promotes `null` in that item's slot.
- *   - A downstream `steps.x.output` reference to an empty solo step therefore
- *     resolves against `null` and fails LOUDLY at reference resolution
- *     (`… resolved to null`) — a deterministic whole-step failure, never a
- *     silent empty string.
- *   - A SCHEMA unit is unaffected by this normalization: an empty response is
- *     not parseable JSON, so `runStructured` fails it (`parse_error`) — an
- *     empty output can never satisfy a declared schema as a silent `null`.
- *
- * Typed artifacts (addendum, R2): when the step declares an `output` schema
- * (`IrStepPlan.outputSchema`), the promoted artifact is validated with the
- * JSON-schema-subset validator BEFORE the step can complete. A mismatch fails
- * the step (fail-fast) with the validation errors in the summary — a
- * downstream consumer must never receive an artifact the author's contract
- * says cannot exist. The failure is flagged (`artifactSchemaFailure` on the
- * result) so the engine's bounded gate loop can re-run the step with the
- * validation errors as feedback ("gate loops can re-run it") — a step with
- * loop budget left regenerates instead of killing the run.
- *
- * Unit identity (addendum, R2): CONTENT-DERIVED, never positional. A fan-out
- * unit's id is `<node_id>:<sha256(canonicalJson(item))[:12]>`; a solo unit's
- * is `<node_id>:solo`. Identity therefore survives item-list regeneration and
- * reordering — resuming a run whose producer re-emitted the same items in a
- * different order reuses every journaled result. Consequences:
- *   - DUPLICATE items in one fan-out list collide on identity. That is an
- *     authoring error (the same work dispatched twice under one id): the step
- *     fails deterministically after resolving the item list, naming the
- *     duplicate, before anything dispatches.
- *   - REPLAY DIVERGENCE: a journaled COMPLETED row whose unit_id matches but
- *     whose `input_hash` differs is a hard step failure ("replay divergence"),
- *     never a silent re-dispatch — under a frozen plan the same identity must
- *     reproduce the same inputs, so a mismatch means the journal (or params
- *     row) was tampered with. Failed/running/missing rows dispatch live.
- *   - Rows with unrelated ids never match a content-derived id and are ignored.
- *
- * Gate loops (addendum, R2 `gate.max_loops`): when the engine re-executes a
- * step subgraph after a gate rejection, it threads the judge's feedback in as
- * `ctx.gateFeedback` (appended to every unit prompt — the input hash changes,
- * so re-dispatch is natural) and marks the attempt with `ctx.gateLoop` (>= 2).
- * Loop attempts journal under `<unitId>~l<loop>` — like `~r<n>` retries, pure
- * journal bookkeeping on top of the content-derived identity, so loop 1's
- * rows are never clobbered. Because gate feedback is JUDGE-authored (a fresh
- * LLM output per invocation, not a pure function of the frozen plan), a
- * journaled loop row whose hash no longer matches re-dispatches live instead
- * of raising replay divergence — the divergence guarantee applies to loop-1
- * rows, whose inputs ARE pure functions of (plan, params, journaled results).
- *
- * Failure policy (addendum, "explicit surface, fail-fast default"):
- *   - `onError: "fail"` (default) fails the step on any unit failure;
- *     `"continue"` records failures in the evidence and lets the gate decide.
- *   - `retry: { max, on }` re-dispatches a failed unit up to `max` extra
- *     times when its `failureReason` is in `on`. Every retry journals its OWN
- *     row under `<unitId>~r<attempt>` so no attempt's record is clobbered.
- *
- * Worktree isolation (addendum, R2 `isolation: worktree`): each journaled
- * attempt of an isolated agent/sdk unit runs in a FRESH detached git worktree
- * of the engine's working directory (`ctx.workDir`, default `process.cwd()`),
- * minted under a run-scoped tmp dir (`worktree.ts`) and passed to dispatch as
- * the child's cwd. The path is journaled on the unit row (`worktree_path`);
- * after the unit finishes, a clean worktree is removed and a dirty one is
- * retained + logged (uncollected work is never destroyed). "Clean" is
- * `git status --porcelain` WITHOUT `--ignored`, so a worktree whose only
- * residue is `.gitignore`-matched files (build outputs, `node_modules`) counts
- * as clean and IS removed — those files are disposable by the repo's own
- * declaration, and retaining a worktree per build would blow up disk
- * (`worktree.ts` contract). A non-git base directory fails the step cleanly
- * before any dispatch, and llm units reject isolation loudly — there is no
- * child process to isolate.
- *
- * Budget ceilings (addendum, R2): a frozen plan's `budget` block
- * (`max_units` / `max_tokens`) is enforced per RUN. The engine seeds
- * `ctx.unitsDispatched` (journal row count) and `ctx.tokensUsed` (journaled
- * token sum) and threads the running totals across steps; this executor
- * consumes both per ACTUAL dispatch. Hitting a ceiling aborts pending and
- * in-flight dispatches through an AbortController chained onto `ctx.signal`
- * and fails the step with a "budget exceeded (<which> ceiling)" summary —
- * hard, regardless of `on_error`, exactly like the lifetime cap.
- *
- * Layering (see the plan's *Reconciliation* section):
- *   - Dispatch goes through ONE injected {@link UnitDispatcher} seam. The
- *     default dispatcher adapts the frozen snapshot into the common resolved
- *     request, lowers it through the registered harness/direct-LLM adapter,
- *     and reaches transport only through the central lowered-dispatch seam.
- *   - This module NEVER writes step rows: advancing the gated spine is the
- *     engine loop's job (`run-workflow.ts`) via `completeWorkflowStep`.
+ *  - Data flow: instructions are the step's prose byte-exact; data reaches a
+ *    unit as attached context (docs/architecture/decisions/0001-…).
+ *  - An empty successful free-text output is journaled as absent, so a live
+ *    run and a resume promote the same artifact.
+ *  - A declared step `output` schema is validated before the step completes;
+ *    a mismatch fails the step with `artifactSchemaFailure`, which the gate
+ *    loop may retry.
+ *  - Unit ids are content-derived (`<node>:<sha(item)>` / `<node>:solo`), so a
+ *    resume reuses every completed row whatever the item order; retries and
+ *    gate loops journal under `~r<n>` / `~l<n>`.
+ *  - `onError: "fail"` fails on any unit failure, `"continue"` lets the gate
+ *    decide; `retry: { max, on }` re-dispatches listed failure reasons.
+ *  - `isolation: worktree` runs each attempt of an agent/sdk unit in a fresh
+ *    detached worktree (removed when clean, kept when dirty); llm units reject it.
+ *  - Run `budget` ceilings are consumed per actual dispatch and abort the step
+ *    when crossed, regardless of `on_error`.
  */
 
-import { randomUUID } from "node:crypto";
 import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
-import { assertFrozenExecutableIdentity } from "../../execution/executable-identity";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import {
   type WorkflowRunUnitAttemptRowV4,
@@ -127,11 +40,9 @@ import {
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
 import type { TaskV3ScriptInterpreter } from "../../tasks/prepare/prepared-execution";
-import { materializeFrozenWorkflowEnvironment } from "../ir/environment-v4";
-import type { IrBudget } from "../ir/schema";
-import type { IrStepPlanV4, IrUnitNodeV4 } from "../ir/schema-v4";
+import type { WorkflowBudget, WorkflowPlanStep, WorkflowUnitNode } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
-// The ONE child-workflow drive (P3b §3.2) — publishes and drives a
+// The ONE child-workflow drive — publishes and drives a
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
 // production caller.
 import { driveChildWorkflowUnit } from "./child-workflow";
@@ -139,10 +50,12 @@ import { driveChildWorkflowUnit } from "./child-workflow";
 // (exec/frozen-judge.ts). Consumers import the leaf directly — this module is
 // not a second front door onto the seam.
 import { collectWorkflowDispatchSensitiveValues, redactUnitOutcome } from "./dispatch-redaction";
+import { materializeFrozenWorkflowEnvironment } from "./environment";
 // The exec (shell) unit runner — a leaf that owns argv spawning, containment,
 // and the process-outcome → failure-reason mapping.
 import { runExecUnit } from "./exec-unit";
 import { mergeLoweringNotices } from "./lowering-notices";
+import { secretShapedParamValues } from "./param-secrets";
 import { scheduleUnits } from "./scheduler";
 // Shared step semantics — the ONE implementation consumed by the engine
 // (this module + run-workflow.ts) on both the fresh-execution and the resume
@@ -174,8 +87,6 @@ import { assertGitWorkTree, cleanupUnitWorktree, createUnitWorktree } from "./wo
 export interface StepExecutionContext {
   runId: string;
   workflowRef: string;
-  /** Engine lease holder expected to own this run when a dispatch result commits. */
-  leaseHolder?: string;
   params: Record<string, unknown>;
   /** Evidence of prior steps, keyed by step id — fan-out `over:` sources. */
   evidence: Record<string, Record<string, unknown> | undefined>;
@@ -190,16 +101,7 @@ export interface StepExecutionContext {
   signal?: AbortSignal;
   /** Test seam / backend override; defaults to the runner-substrate dispatcher. */
   dispatcher?: UnitDispatcher;
-  /**
-   * F-1 (spec docs/plans/specs/p1b-model-extraction.md §5.2 point 2): the
-   * task runner's resolved provenance event source, threaded from
-   * RunWorkflowOptions.eventSource. Undefined for every non-task caller.
-   * Forwarded to an exec unit's child env via UnitDispatchRequest.eventSource
-   * -> exec-unit.ts's childEnv (applied to the allowlisted base only, so an
-   * ambient value and an authored env: binding both still win). Typed as a
-   * bare `string` (not `UsageEventSource`) — see run-workflow.ts's
-   * RunWorkflowOptions.eventSource for why.
-   */
+  /** The task runner's provenance event source (`AKM_EVENT_SOURCE`); undefined for non-task callers. */
   eventSource?: string;
   /**
    * Dispatch attempts already journaled for this run (lifetime-cap
@@ -209,12 +111,12 @@ export interface StepExecutionContext {
   unitsDispatched?: number;
   /**
    * Declared run-level budget ceilings from the frozen plan
-   * (`WorkflowPlanGraph.budget`, addendum R2). When present, `unitsDispatched`
+   * (`WorkflowPlan.budget`). When present, `unitsDispatched`
    * counts against `maxUnits` and `tokensUsed` against `maxTokens`; hitting a
    * ceiling aborts pending dispatches (an AbortController chained onto
    * `signal`) and fails the step hard, regardless of `on_error`.
    */
-  budget?: IrBudget;
+  budget?: WorkflowBudget;
   /**
    * Run-total tokens already spent BEFORE this step: the journal-seeded sum
    * of `workflow_run_units.tokens` plus this invocation's earlier steps'
@@ -262,18 +164,11 @@ export interface StepExecutionResult {
    * that never reached dispatch, where the input total is unchanged.
    */
   tokensUsed?: number;
-  /**
-   * Set when `ok` is false BECAUSE the promoted artifact failed the step's
-   * declared output schema (typed artifacts, R2). This is the one failure the
-   * engine may retry through the bounded gate loop (`gate.max_loops`): the
-   * validation errors become gate feedback and the subgraph re-executes —
-   * the pinned decision's "fail-fast — gate loops can re-run it". Every other
-   * failure (dispatch errors, replay divergence, cap) stays a hard stop.
-   */
+  /** Set when the promoted artifact failed the step's output schema — the one failure the gate loop may retry. */
   artifactSchemaFailure?: true;
   /**
    * Set when `ok` is false BECAUSE a composed child workflow is `blocked`
-   * (P3b, spec docs/plans/specs/p3b-child-executor.md §3.4). Threaded through
+   *. Threaded through
    * from {@link reduceStepOutcomes}'s `ExecutedStepOutcome.childBlocked` via
    * the `...reduced` spread below — never set independently here.
    */
@@ -285,16 +180,9 @@ export interface StepExecutionResult {
 }
 
 /**
- * Mutable per-step dispatch budget: the declared run-level budget ceilings
- * (`budget.max_units` / `budget.max_tokens`, addendum R2). Consumed once per
- * journaled dispatch attempt (including retries); durable-row reuses never
- * touch it — the peer-review fix that keeps large partially-completed
- * fan-outs resumable instead of tripping a pre-batch check on
- * `journaled + items`. Token usage accumulates per actual dispatch on top of
- * the journal-seeded run total (reused rows' tokens are already in the
- * seed). Check-and-increment is synchronous, so concurrent units cannot race
- * it; crossing a declared ceiling fires `onExceeded` ONCE (the executor's
- * chained AbortController), aborting pending and in-flight dispatches.
+ * Per-step dispatch budget against the run's `budget` ceilings, seeded from
+ * the journal and consumed per actual dispatch (never by a reused row).
+ * Crossing a ceiling fires `onExceeded` once, aborting pending dispatches.
  */
 class DispatchBudget {
   used: number;
@@ -306,7 +194,10 @@ class DispatchBudget {
   private readonly maxTokens: number | undefined;
   private readonly onExceeded: (() => void) | undefined;
 
-  constructor(alreadyDispatched: number, opts?: { tokensUsed?: number; budget?: IrBudget; onExceeded?: () => void }) {
+  constructor(
+    alreadyDispatched: number,
+    opts?: { tokensUsed?: number; budget?: WorkflowBudget; onExceeded?: () => void },
+  ) {
     this.used = alreadyDispatched;
     this.tokens = opts?.tokensUsed ?? 0;
     this.maxUnits = opts?.budget?.maxUnits;
@@ -352,49 +243,17 @@ class DispatchBudget {
   }
 }
 
-/**
- * Per-unit durable-row reuse decision. Shared by {@link runUnit} (which ACTS on
- * it) and {@link stepWillDispatch} (executeStepPlan's pre-dispatch gate, which
- * asks "will ANY unit dispatch?" to decide whether env resolution + worktree
- * preflight are needed at all — reviewer finding #2). Both go through this one
- * function so the preflight gate can never disagree with what runUnit does:
- *   - `reuse`    — a completed row with the matching input hash IS the result;
- *   - `diverge`  — a completed loop-1 row with a DIFFERENT hash is replay
- *                  divergence (a hard step failure, NOT a dispatch — needs no
- *                  env/worktree);
- *   - `dispatch` — no reusable row (or a stale gate-loop row that re-dispatches
- *                  live): this unit will actually issue work.
- */
-type UnitReuseDecision =
-  | { kind: "reuse"; row: WorkflowRunUnitRow }
-  | { kind: "diverge"; attemptId: string }
-  | { kind: "dispatch" };
+/** Per-unit reuse decision shared by {@link runUnit} and the dispatch preflight: a completed row is the result. */
+type UnitReuseDecision = { kind: "reuse"; row: WorkflowRunUnitRow } | { kind: "dispatch" };
 
-function classifyUnitReuse(
-  workUnit: StepWorkUnit,
-  completedRows: CompletedRowIndex | undefined,
-  gateLoop: number,
-): UnitReuseDecision {
-  const inputHash = workUnit.inputHash;
+function classifyUnitReuse(workUnit: StepWorkUnit, completedRows: CompletedRowIndex | undefined): UnitReuseDecision {
   // Scan EVERY journaled attempt row of this unit (`<base>` / `<base>~r<N>`
-  // for ANY N), not just the attempts the CURRENT retry policy allows:
-  // retry/onError are deliberately excluded from the input hash (step-work.ts)
-  // precisely so completed rows stay valid across policy changes — a run
+  // for ANY N), not just the attempts the CURRENT retry policy allows: a run
   // re-invoked with a lowered retry.max must still find the `~rN` row a prior
   // invocation completed beyond the new max, never re-dispatch finished work.
-  // A completed hash-matching row anywhere wins (reuse); a completed loop-1
-  // row with a DIFFERENT hash — and no matching sibling — is replay divergence.
-  let divergedAttemptId: string | undefined;
-  for (const prior of completedRows?.get(workUnit.journalBaseId) ?? []) {
-    if (prior.input_hash === inputHash) return { kind: "reuse", row: prior };
-    // Gate-loop rows are NOT replay-deterministic (the prompt embeds a fresh
-    // judge output): a stale loop-N row with a different hash re-dispatches
-    // live. Divergence only guards loop-1 rows, whose inputs ARE a pure
-    // function of (frozen plan, params, journaled results).
-    if (gateLoop <= 1) divergedAttemptId ??= prior.unit_id;
-  }
-  if (divergedAttemptId !== undefined) return { kind: "diverge", attemptId: divergedAttemptId };
-  return { kind: "dispatch" };
+  // The row's `input_hash` is informational — resume skips completed units.
+  const prior = completedRows?.get(workUnit.journalBaseId)?.[0];
+  return prior ? { kind: "reuse", row: prior } : { kind: "dispatch" };
 }
 
 /**
@@ -419,38 +278,17 @@ function indexCompletedRows(rows: Iterable<WorkflowRunUnitRow>): CompletedRowInd
 }
 
 /**
- * Execute one step plan natively. Never throws for unit-level failures.
- *
- * The whole step runs inside ONE state.db connection scope
- * ({@link withWorkflowRunsConnection}): the journal read, every unit's
- * insert/finish transaction, and every `workflow_unit_*` event share a single
- * handle for the step's lifetime instead of opening and closing state.db twice
- * per unit plus twice per unit's events. The scope closes the handle when the
- * step settles (success, failure, or throw), so there is no handle to leak and
- * no lifetime that outlives the step. Everything inside keeps its existing
- * transaction boundaries — see `core/state-db-scope.ts` for why sharing a
- * handle across concurrently-scheduled units is safe here.
+ * Execute one step plan natively. Never throws for unit-level failures. The
+ * whole step shares one state.db connection scope ({@link withWorkflowRunsConnection}).
  */
-export function executeStepPlan(plan: IrStepPlanV4, ctx: StepExecutionContext): Promise<StepExecutionResult> {
+export function executeStepPlan(plan: WorkflowPlanStep, ctx: StepExecutionContext): Promise<StepExecutionResult> {
   return withWorkflowRunsConnection(() => executeStepPlanInConnection(plan, ctx));
 }
 
 /**
- * Open the step's dispatch budget and the abort signal it trips.
- *
- * Budget ceilings (addendum R2): when the frozen plan declares a budget,
- * dispatch runs under an AbortController CHAINED onto `ctx.signal` — hitting a
- * ceiling aborts pending and in-flight dispatches, and the step fails hard.
- * Without a budget the context signal passes through untouched (the no-budget
- * path is byte-identical to pre-R2 behavior).
- *
- * The returned {@link DispatchBudget} is seeded with the run's journaled
- * dispatch count and token total and consumed per ACTUAL dispatch inside
- * `runUnit` — never for durable-row reuses, so resuming a large
- * partially-completed fan-out works.
- *
- * `unchainSignal` MUST be called when dispatch finishes (the caller's
- * `finally`) so the upstream abort listener is removed.
+ * Open the step's dispatch budget and the abort signal it trips: with a
+ * declared budget, dispatch runs under an AbortController chained onto
+ * `ctx.signal`. The caller must call `unchainSignal` when dispatch finishes.
  */
 function openDispatchBudget(
   ctx: StepExecutionContext,
@@ -495,8 +333,8 @@ type StepDispatchPrerequisites =
 
 /** Resolve the live-at-dispatch prerequisites once, after durable-row reuse is known. */
 async function prepareStepDispatchPrerequisites(input: {
-  plan: IrStepPlanV4;
-  template: IrUnitNodeV4;
+  plan: WorkflowPlanStep;
+  template: WorkflowUnitNode;
   workUnits: readonly StepWorkUnit[];
   ctx: StepExecutionContext;
   willDispatch: boolean;
@@ -562,18 +400,13 @@ async function prepareStepDispatchPrerequisites(input: {
 }
 
 async function executeStepPlanInConnection(
-  plan: IrStepPlanV4,
+  plan: WorkflowPlanStep,
   ctx: StepExecutionContext,
 ): Promise<StepExecutionResult> {
   const dispatched = ctx.unitsDispatched ?? 0;
 
-  // Work-list computation is the SHARED, PURE decision (step-work.ts): resolve
-  // the fan-out list, derive content-derived unit ids, assemble each unit's
-  // prompt, and hash its resolved input. A resume recomputes the identical list
-  // from the same frozen plan — that shared pure implementation is what lets
-  // journaled rows be matched instead of re-executed. This module owns only the
-  // impure remainder: env/worktree preflight, durable-row reuse, dispatch,
-  // journaling, budget.
+  // The work list is the shared pure decision (step-work.ts), so a resume
+  // recomputes the identical list and matches journaled rows.
   const workList = computeStepWorkList(plan, {
     runId: ctx.runId,
     params: ctx.params,
@@ -596,29 +429,15 @@ async function executeStepPlanInConnection(
 
   const dispatcher = ctx.dispatcher ?? defaultUnitDispatcher;
 
-  // Durable-row resume: load the step's journaled unit rows FIRST — before
-  // resolving env or preflighting worktrees. A unit whose previous attempt
-  // completed with the SAME input hash (the canonical envelope in step-work.ts)
-  // is reused, not re-dispatched — a crash-resume must never double-issue
-  // side-effecting work. Loading the rows up front is what lets us skip the
-  // dispatch prerequisites below when nothing will actually dispatch.
+  // Load journaled rows first: a completed unit is reused, never re-dispatched.
   const completedRows = indexCompletedRows(
     await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(ctx.runId, plan.stepId)),
   );
 
-  // Reviewer finding #2: env resolution and worktree preflight are DISPATCH
-  // prerequisites, so they must run only when a unit will actually dispatch. A
-  // fully-journaled step whose units all reuse completed rows must resume to
-  // completion even if an env asset was deleted, a secret is unavailable, the
-  // cwd is no longer a git worktree, or git is missing — none of that is needed
-  // to hand back a cached result. The predicate mirrors runUnit's reuse
-  // decision exactly (shared classifyUnitReuse).
-  const gateLoop = ctx.gateLoop ?? 1;
-  // Classify every unit ONCE. The gate below and each unit's own dispatch then
-  // read the SAME decision rather than recomputing it from inputs that must be
-  // identical — the agreement the gate depends on is structural, not a property
-  // two call sites have to keep re-establishing.
-  const reuseDecisions = workUnits.map((unit) => classifyUnitReuse(unit, completedRows, gateLoop));
+  // Env resolution and worktree preflight run only when some unit will
+  // dispatch, so a fully-journaled step resumes even if an env asset or git is
+  // gone. Every unit is classified once; the preflight and dispatch share it.
+  const reuseDecisions = workUnits.map((unit) => classifyUnitReuse(unit, completedRows));
   const willDispatch = reuseDecisions.some((decision) => decision.kind === "dispatch");
 
   const prerequisites = await prepareStepDispatchPrerequisites({
@@ -677,9 +496,9 @@ async function executeStepPlanInConnection(
   }
 
   // Capture live-only diagnostics BEFORE any hard reduction replaces the unit
-  // list with a failed-step envelope. Budget/cap, replay divergence, and
-  // journal-write failures must not erase notices already observed from real
-  // dispatches; durable row reuses naturally contribute none.
+  // list with a failed-step envelope. Budget/cap and journal-write failures
+  // must not erase notices already observed from real dispatches; durable row
+  // reuses naturally contribute none.
   const notices = mergeLoweringNotices(...outcomes.map((outcome) => outcome?.notices));
 
   // A declared budget ceiling is a hard backstop: a step that hit one FAILS
@@ -699,26 +518,8 @@ async function executeStepPlanInConnection(
       },
   );
 
-  // Replay divergence is a HARD failure regardless of on_error: a journal
-  // whose completed row disagrees with the frozen plan's inputs must stop the
-  // run loudly (module doc), never be tolerated as "just a failed unit".
-  const diverged = units.filter((u) => u.failureReason === "replay_divergence");
-  if (diverged.length > 0) {
-    return failedStep(
-      budget.used,
-      diverged
-        .map((u) => u.error ?? `replay divergence: unit "${u.unitId}" was journaled with different inputs`)
-        .join(" "),
-      notices,
-    );
-  }
-
-  // A journal-write failure is likewise HARD regardless of on_error: the
-  // unit dispatched (spent tokens, ran side effects) but its result could not
-  // be persisted, so completing the step would promote an artifact the
-  // journal cannot rebuild on resume — and the stuck-`running` row would
-  // wedge or double-dispatch a later invocation. The summary carries the
-  // per-unit cause verbatim.
+  // A journal-write failure fails the step regardless of on_error: the unit ran
+  // but its result could not be persisted, so no artifact can be promoted.
   const unjournaled = units.filter((u) => u.failureReason === "journal_write_failed");
   if (unjournaled.length > 0) {
     return {
@@ -731,15 +532,7 @@ async function executeStepPlanInConnection(
     };
   }
 
-  // Failure policy + reducer + typed-artifact validation are the SHARED
-  // post-dispatch decision (`reduceStepOutcomes`): `onError: "fail"` (default)
-  // fails the step on any unit failure, `"continue"` records failures and lets
-  // the gate decide, a vote reducer with no majority fails under either policy,
-  // and the promoted artifact is validated against the step's declared output
-  // schema (fail-fast; the `artifactSchemaFailure` marker lets the bounded gate
-  // loop retry that ONE failure class with the errors as feedback). The report
-  // path (R3) reduces journal-replayed outcomes through the same function, so a
-  // step promotes the SAME artifact whichever surface drove it.
+  // Failure policy, reducer, and artifact schema check: the shared `reduceStepOutcomes`.
   const reduced = reduceStepOutcomes(plan, reducer, isFanOut, template.onError, units);
 
   return {
@@ -753,11 +546,11 @@ async function executeStepPlanInConnection(
 // ── One unit ─────────────────────────────────────────────────────────────────
 
 interface RunUnitInput {
-  plan: IrStepPlanV4;
+  plan: WorkflowPlanStep;
   /** The precomputed work unit (id, resolved prompt + input hash, node metadata) from step-work. */
   workUnit: StepWorkUnit;
   env?: Record<string, string>;
-  /** Current values sampled from v4 symbolic descriptors, for terminal scrub. */
+  /** Current values sampled from frozen env descriptors, for terminal scrub. */
   sensitiveValues?: readonly string[];
   /** Git repo worktrees are minted from — set exactly when the unit declares `isolation: worktree`. */
   worktreeBase?: string;
@@ -811,9 +604,9 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     ...(env ? { env } : {}),
     ...(sensitiveValues ? { sensitiveValues } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
-    // F-1 (spec §5.2 point 2): forwarded to exec-unit.ts's childEnv for a
+    // F-1: forwarded to exec-unit.ts's childEnv for a
     // "script"/"shell" unit, and to dispatchWorkflowExecution's
-    // dispatchLoweredExecutionRequest eventSource option (unit-dispatch.ts)
+    // runExecution eventSource option (unit-dispatch.ts)
     // for a "command" unit — both arms observe it.
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
   };
@@ -827,30 +620,15 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
 
   // Durable-row reuse — literally the decision executeStepPlan's preflight gate
   // counted, handed down rather than recomputed, so the gate cannot disagree
-  // with what happens here. A completed row with the matching input hash IS the
-  // result: return it without touching rows, dispatching, or re-emitting events
-  // (a crash-resume must never double-issue work). A completed loop-1 row with
-  // a DIFFERENT hash is replay divergence (under a frozen plan the same
-  // content-derived identity must reproduce the same inputs — the journal was
-  // tampered with; executeStepPlan promotes this to a hard step failure
-  // regardless of on_error). Stale gate-loop rows, failed/running/missing rows,
-  // and pre-release R1 positional ids all fall through and dispatch live.
+  // with what happens here. A completed row IS the result: return it without
+  // touching rows, dispatching, or re-emitting events (a crash-resume must
+  // never double-issue work). Failed/running/missing rows dispatch live.
   const reuse = input.reuse;
   if (reuse.kind === "reuse") {
     // Identity in the durable step evidence is the CONTENT-derived base id, not
     // the `~r<n>` attempt row it was reused from — the work list only ever knows
     // base ids, so evidence.units[].unitId stays stable across retries+resumes.
     return reuseCompletedUnit(unitId, reuse.row, workUnit.schema !== undefined);
-  }
-  if (reuse.kind === "diverge") {
-    return {
-      unitId,
-      ok: false,
-      failureReason: "replay_divergence",
-      error:
-        `replay divergence: unit "${reuse.attemptId}" was journaled with different inputs ` +
-        `(journaled input_hash does not match this invocation's) — refusing to re-dispatch.`,
-    };
   }
 
   let outcome: UnitOutcome | undefined;
@@ -894,7 +672,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     // Attempts use `~r<n>` journal suffixes while durable step evidence remains
     // attached to the content-derived base identity.
     outcome.unitId = unitId;
-    // Budget token accounting (addendum R2): every actual dispatch's reported
+    // Budget token accounting: every actual dispatch's reported
     // usage counts against the run's max_tokens ceiling; crossing it aborts
     // pending dispatches via the chained controller. Reuses never reach here
     // (their tokens are already in the journal-seeded total).
@@ -909,7 +687,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
 }
 
 interface JournaledAttemptInput {
-  plan: IrStepPlanV4;
+  plan: WorkflowPlanStep;
   workUnit: StepWorkUnit;
   ctx: StepExecutionContext;
   dispatcher: UnitDispatcher;
@@ -928,45 +706,15 @@ interface JournaledAttemptInput {
 }
 
 /**
- * What a finished attempt writes to `workflow_run_steps`' unit row
- * `result_json` — the ONE durable, human-facing surface for a dispatch outcome
- * (`akm workflow status --units` reads exactly this, and the step summary is
- * built from the same text).
- *
- * A SUCCESS journals its promoted value, unchanged.
- *
- * A FAILURE journals its DIAGNOSTIC. Before this, only `result`/`text` were
- * written: `outcome.error` — the one field that says WHY — reached nothing
- * durable, because `buildEvidence` deliberately drops it from the deterministic
- * evidence graph and nothing else persisted it. For an engine unit that mostly
- * cost detail; for an `exec` unit it lost the diagnostic entirely, since a
- * command that fails and explains itself on stderr with empty stdout left
- * `status --units` showing a bare `non_zero_exit`.
- *
- * Three constraints hold:
- *
- *   - REDACTION — the caller journals only `redactUnitOutcome(...)` output, so
- *     `error` has already been through the shared dispatch redaction contract
- *     (`exec/dispatch-redaction.ts`) with this dispatch's resolved `env:`
- *     values. It is scrubbed by construction, exactly like `text`.
- *   - BOUNDS — clipped to {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP}, the same bound
- *     `status --units` renders with, so a runaway command cannot use the journal
- *     as its log file.
- *   - HASHES — `result_json` is an OUTPUT. The unit input hash
- *     (`computeUnitInputHash`) is computed from plan-frozen INPUTS only
- *     (template bytes, item, declared inputs, params, dispatch/invocation/exec
- *     snapshots, env ref names, isolation), and reuse compares the stored
- *     `input_hash` against that. Nothing here is a hash preimage input, so no
- *     completed unit re-dispatches because of it.
- *
- * Partial output on a failed unit is kept ALONGSIDE the diagnostic rather than
- * replacing it: a tool that fails after printing its real complaint on stdout
- * is common, and the reason lives on whichever stream that tool chose.
+ * What an attempt journals as the unit row's `result_json` (what `status
+ * --units` shows): a success's promoted value, or a failure's diagnostic plus
+ * any partial output. The caller passes an already-redacted outcome; clipped
+ * to {@link WORKFLOW_UNIT_DIAGNOSTIC_CLIP}.
  */
 function journaledUnitResultJson(outcome: UnitOutcome): string | null {
   if (outcome.result !== undefined) return JSON.stringify(outcome.result);
   if (outcome.ok) return outcome.text ? JSON.stringify(outcome.text) : null;
-  const parts = [outcome.error, outcome.text].filter((part): part is string => Boolean(part && part.trim()));
+  const parts = [outcome.error, outcome.text].filter((part): part is string => Boolean(part?.trim()));
   if (parts.length === 0) return null;
   return JSON.stringify(clip(parts.join("\n--- unit output ---\n"), WORKFLOW_UNIT_DIAGNOSTIC_CLIP));
 }
@@ -981,15 +729,7 @@ async function prepareAttemptWorktree(input: JournaledAttemptInput): Promise<Pre
     input.worktreeBase,
     input.ctx.runId,
     input.attemptId,
-    // A child-workflow target (P3a, schema-v4.ts) carries no gitCommitOid of
-    // its own — it is a composition target, never a worktree-isolated exec
-    // one. This arm IS reachable — a step that composes a child workflow and
-    // also declares `isolation: worktree` gets a worktree prepared here
-    // (worktree prep runs ahead of dispatch), but the child executor
-    // (child-workflow.ts, P3b §3.2) never dispatches through it: driving a
-    // child publishes and drives a RUN, not a command/exec unit, so the
-    // prepared worktree is simply unused by the drive. This ternary keeps the
-    // field access total over the frozen-target union either way.
+    // A child-workflow target has no commit of its own (its prepared worktree goes unused).
     input.workUnit.frozenTarget.kind === "child-workflow" ? undefined : input.workUnit.frozenTarget.gitCommitOid,
   );
   if (created.preservedLeftover !== undefined) {
@@ -1022,8 +762,7 @@ async function reserveJournaledDispatch(
   await enqueueUnitWrite(async () => {
     await withWorkflowRunsRepo((repo) => {
       const target = workUnit.frozenTarget;
-      const holder = ctx.leaseHolder ?? `direct:${randomUUID()}`;
-      const reserved = repo.reserveUnitAttempt({
+      durableAttempt = repo.reserveUnitAttempt({
         runId: ctx.runId,
         unitId: attemptId,
         stepId: plan.stepId,
@@ -1035,17 +774,8 @@ async function reserveJournaledDispatch(
         model: target.kind === "command" ? (target.request.model?.resolved ?? null) : null,
         inputHash,
         worktreePath: worktreePath ?? null,
-        claimHolder: holder,
-        claimExpiresAt: new Date(Date.parse(startedAt) + 90_000).toISOString(),
         now: startedAt,
-        leaseMode: ctx.leaseHolder === undefined ? "direct" : "engine",
-      });
-      if (reserved.kind === "busy") {
-        throw new Error(
-          `unit "${attemptId}" already has a live durable attempt held by ${reserved.attempt.claim_holder}`,
-        );
-      }
-      durableAttempt = reserved.attempt;
+      }).attempt;
     });
   });
   if (!durableAttempt) throw new Error(`unit "${attemptId}" did not reserve a durable attempt`);
@@ -1067,7 +797,6 @@ async function finishJournaledDispatch(input: {
         unitId: attemptId,
         attempt: durableAttempt.attempt,
         dispatchId: durableAttempt.dispatch_id,
-        claimHolder: durableAttempt.claim_holder,
         status: outcome.ok ? "completed" : "failed",
         resultJson: journaledUnitResultJson(outcome),
         tokens: outcome.tokens ?? null,
@@ -1083,8 +812,8 @@ async function finishJournaledDispatch(input: {
         }
         warn(
           `Workflow unit ${attemptId} (run ${ctx.runId}) ${outcome.ok ? "completed" : `failed (${outcome.failureReason ?? "error"})`}, ` +
-            `but its durable attempt was reclaimed or finished by another engine invocation — refusing to overwrite ` +
-            `the CAS winner. This dispatch's result is not journaled.`,
+            "but its durable attempt was already finished — refusing a duplicate terminal write. " +
+            "This dispatch's result is not journaled.",
         );
       }
     }),
@@ -1149,17 +878,8 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     dispatchId: durableAttempt.dispatch_id,
   };
 
-  // P3b §3.2: the ONE dispatch-seam branch. A `child-workflow`-targeted unit
-  // never reaches `UnitDispatcher` — it is routed to the child executor
-  // instead (src/workflows/exec/child-workflow.ts), which publishes the
-  // child idempotently and drives it with the SAME engine
-  // (`runWorkflowSteps`) the top-level path uses. Placed HERE — after
-  // `reserveJournaledDispatch` claims this attempt row, before
-  // `finishJournaledDispatch`/the worktree epilogue below — so a
-  // child-workflow unit is journaled exactly like any other unit, and a
-  // crash between reservation and child publication leaves a `running`
-  // parent row with no child, recovered by resume (which re-dispatches the
-  // parent unit and republishes the child idempotently).
+  // A child-workflow unit goes to the child executor instead of the
+  // dispatcher, after its attempt row is reserved, so it journals like any unit.
   const dispatched =
     request.frozenTarget.kind === "child-workflow"
       ? await driveChildWorkflowUnit({
@@ -1174,27 +894,25 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   // Credential and passthrough values are intentionally sampled only AFTER
   // the default dispatcher has authorized/lowered the frozen request and
   // materialized credentials at its terminal dispatch boundary. Custom test
-  // dispatchers receive the same post-dispatch journal scrub.
+  // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
+  // run params join the set: they must reach the prompt in clear (the unit
+  // needs them), but nothing about them needs to reach the journal.
   const sensitiveValues = collectWorkflowDispatchSensitiveValues(
     {
       ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
-      ...(request.sensitiveValues ? { sensitiveValues: request.sensitiveValues } : {}),
+      sensitiveValues: [...(request.sensitiveValues ?? []), ...secretShapedParamValues(ctx.params)],
     },
     request.env,
   );
   const outcome = redactUnitOutcome(dispatched, sensitiveValues);
 
   const finishedAt = new Date().toISOString();
-  // A dispatched unit's outcome is NEVER silently discarded. The single-driver
-  // guard lives on the append-only attempt row: attempt number, dispatch id,
-  // claim holder, and running status must all match. A stale driver's finish
-  // therefore cannot clobber a reclaimed or retried dispatch. An attempt that
-  // IS still ours is finished with the real
-  // result even when the run went non-active or the lease moved mid-flight —
-  // dropping it would leave the row `running` and make a later resume
-  // re-dispatch side-effecting work that already ran and already spent tokens.
-  // Persisting a unit result never advances the run; spine advancement stays
-  // lease-guarded in completeWorkflowStep.
+  // A dispatched unit's outcome is NEVER silently discarded: the attempt is
+  // finished with the real result even when the run went non-active
+  // mid-flight — dropping it would leave the row `running` and make a later
+  // resume re-dispatch side-effecting work that already ran and already spent
+  // tokens. Persisting a unit result never advances the run; that is
+  // completeWorkflowStep's job.
   let journalError: unknown;
   try {
     await finishJournaledDispatch({
@@ -1207,14 +925,8 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
     journalError = err;
   }
 
-  // Worktree lifecycle epilogue: a CLEAN worktree is removed; a DIRTY one is
-  // retained and logged — the unit left uncollected work, and its journaled
-  // worktree_path says where. Cleanup is best-effort observability, never a
-  // unit failure, so it is STARTED here and awaited at the step barrier: the
-  // removal serializes on the same per-repo chain as every sibling's
-  // `git worktree add`, and awaiting it in this unit's scheduler slot made a
-  // finished unit wait out other units' full checkouts before its worker could
-  // claim the next item.
+  // A clean worktree is removed, a dirty one kept and logged. Cleanup starts
+  // here and is awaited at the step barrier, never holding this scheduler slot.
   queueAttemptWorktreeCleanup(input, worktreePath);
 
   // A journal-write failure AFTER a successful dispatch is its own loud
@@ -1273,7 +985,7 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
   let tokens = 0;
   let sawUsage = false;
   let loweringNotices: UnitDispatchResult["notices"];
-  // Harness-native session id revealed by dispatch (P2). Captured across
+  // Harness-native session id revealed by dispatch. Captured across
   // structured-output retries (last one wins) so it survives into the
   // UnitOutcome and gets journaled by finishUnitAttempt — the seam's
   // contract ("stored opportunistically on the unit row for resume").
@@ -1382,9 +1094,6 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   const frozenTarget = request.frozenTarget;
   if (frozenTarget.kind === "script") {
     assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    if (frozenTarget.executable) {
-      assertFrozenExecutableIdentity(frozenTarget.executable, `unit ${request.unitId} executable`);
-    }
     const materialized = materializeFrozenScript({
       sourceRef: frozenTarget.ref,
       interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
@@ -1405,7 +1114,6 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
         },
         materialized.file,
       );
-      if (frozenTarget.executable) command[0] = frozenTarget.executable.absolutePath;
       return await runExecUnit({
         unitId: request.unitId,
         exec: {
@@ -1426,14 +1134,9 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
   }
   if (frozenTarget.kind === "shell") {
     if (frozenTarget.cwdIdentity) assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    if (frozenTarget.executable) {
-      assertFrozenExecutableIdentity(frozenTarget.executable, `unit ${request.unitId} executable`);
-    }
-    const command = [...frozenTarget.exec.command];
-    if (frozenTarget.executable) command[0] = frozenTarget.executable.absolutePath;
     return runExecUnit({
       unitId: request.unitId,
-      exec: { ...frozenTarget.exec, command: command as [string, ...string[]] },
+      exec: frozenTarget.exec,
       baseDir: request.cwd ?? frozenTarget.cwdIdentity?.realCwd ?? process.cwd(),
       ...(request.env ? { env: request.env } : {}),
       ...(request.execContext ? { context: request.execContext } : {}),

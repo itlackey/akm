@@ -6,18 +6,21 @@
  * `--format html` rendering primitives (#582).
  *
  * Templates live in `src/assets/templates/html/` (mirrored to
- * `dist/assets/templates/html/` by `scripts/copy-assets.ts`). `--format html`
- * is health-only (chunk-9 WI-9.4c / Decision 4): `akm health` ships the sole
- * bespoke `<command>.html` template; every other command rejects `--format
- * html` with a `UsageError` before reaching this module (see
- * `src/cli/shared.ts`'s `output()`). Substitution is plain `%%TOKEN%%` string
- * replacement — no template engine, by design.
+ * `dist/assets/templates/html/` by `scripts/copy-assets.ts`). `akm health` is
+ * the only command with a bespoke `<command>.html` template (substituted here
+ * via plain `%%TOKEN%%` string replacement — no template engine, by design);
+ * `src/cli/shared.ts`'s `output()` calls it directly for `command === "health"`
+ * and every other command falls back to `renderGenericHtml` (`./generic-render`).
+ * `--format html` therefore works for every command (D7) — this module's
+ * template path is just health's opt-in bespoke rendering, not a format-wide
+ * gate.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import healthTemplate from "../assets/templates/html/health.html" with { type: "text" };
 import { getDirname } from "../runtime";
+import { writeStdout } from "./stdout";
 
 const TEMPLATES_DIR = path.join(getDirname(import.meta.url), "../assets/templates/html");
 
@@ -87,10 +90,11 @@ function readTemplate(templatePath: string): string {
 }
 
 /**
- * Minimal HTML entity escaping for text interpolated into templates. Escapes
- * the single quote as well as the double quote so escaped values are safe in
- * both `"…"` and `'…'` attribute contexts, not only the double-quoted
- * attributes the bundled templates use today.
+ * Minimal HTML entity escaping for text interpolated into a document — a
+ * template substitution here, or a value placed into `generic-render.ts`'s
+ * envelope rendering. Escapes the single quote as well as the double quote so
+ * escaped values are safe in both `"…"` and `'…'` attribute contexts, not only
+ * the double-quoted attributes the bundled templates use today.
  */
 export function escapeHtml(value: string): string {
   return value
@@ -111,5 +115,5 @@ export function deliverRendered(content: string, outputPath: string | undefined)
     fs.writeFileSync(outputPath, content.endsWith("\n") ? content : `${content}\n`);
     return;
   }
-  console.log(content);
+  writeStdout(content);
 }

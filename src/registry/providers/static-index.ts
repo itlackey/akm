@@ -2,18 +2,19 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { jsonWithByteCap } from "../../core/common";
 import type { RegistryConfigEntry } from "../../core/config/config";
+import { NotFoundError } from "../../core/errors";
 import {
   formatRegistryCredentialWarning,
   formatRegistryError,
   formatRegistryLabel,
   hasRegistryUrlCredentials,
 } from "../../core/registry-url";
+import { warnOnce } from "../../core/warn";
 import { asString } from "../../integrations/github";
-import { fetchCachedJson } from "../../storage/repositories/registry-cache";
+import { fetchCachedJson } from "../../storage/repositories/registry-index-cache-repository";
 import { registerRegistryProvider } from "../factory";
-import { allowPrivateRegistryFixtureForTests, cancelRegistryResponse, fetchRegistryResponse } from "../network";
+import { fetchRegistryJson } from "../network";
 import { buildInstallRef } from "../resolve";
 import type { InstallKind, RegistryAssetEntry, RegistryAssetSearchHit, RegistrySearchHit } from "../types";
 import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOptions } from "./types";
@@ -23,11 +24,15 @@ import type { RegistryProvider, RegistryProviderResult, RegistryProviderSearchOp
 /** Cache TTL in milliseconds (1 hour). */
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
+/** Index format versions this reader was written against; both use the same `stashes[]` wire format. */
+const KNOWN_INDEX_VERSIONS = new Set([2, 3]);
+
 // ── Types ───────────────────────────────────────────────────────────────────
 
 export interface RegistryIndex {
-  version: number;
-  updatedAt: string;
+  /** Format version as published. Any value is read; an unknown one is warned about once. */
+  version?: number;
+  updatedAt?: string;
   stashes: RegistryBundleEntry[];
 }
 
@@ -81,6 +86,12 @@ class StaticIndexProvider implements RegistryProvider {
     try {
       const index = await loadIndex(this.config);
       if (index) {
+        if (!KNOWN_INDEX_VERSIONS.has(index.version ?? Number.NaN)) {
+          warnOnce(
+            `registry-index-version:${this.config.url}`,
+            `Registry ${formatRegistryLabel(this.config)}: index version ${index.version ?? "(missing)"} is not one this akm was written against (2 or 3); reading the entries it can.`,
+          );
+        }
         const regName = this.config.name;
         for (const stash of index.stashes) {
           if (stash.source === "git") {
@@ -113,39 +124,31 @@ async function loadIndex(entry: RegistryConfigEntry): Promise<RegistryIndex | nu
     // cache row lets JSON.parse throw out of the load.
     parseCache: (json) => parseRegistryIndex(JSON.parse(json) as unknown) ?? undefined,
     fetchFresh: async () => {
-      const response = await fetchRegistryResponse(entry.url, undefined, {
-        policy: { kind: "public-registry" },
-        timeoutMs: 10_000,
-        allowPrivateHostsForTesting: allowPrivateRegistryFixtureForTests(entry.url),
-      });
-      if (!response.ok) {
-        await cancelRegistryResponse(response);
-        throw new Error(`HTTP ${response.status}`);
-      }
-      // Cap at 50 MB — registry indexes can grow large but unbounded
-      // responses from a compromised server would OOM us.
-      const data = await jsonWithByteCap<unknown>(response, 50 * 1024 * 1024, { bodyTimeoutMs: 10_000 });
+      // Registry indexes can grow large; 50 MB is the cap on what one is
+      // allowed to send.
+      const data = await fetchRegistryJson<unknown>(entry.url, { timeoutMs: 10_000, maxBytes: 50 * 1024 * 1024 });
       const index = parseRegistryIndex(data);
       if (!index) {
-        throw new Error("Invalid registry index format");
+        throw new NotFoundError(
+          `Registry index at ${formatRegistryLabel(entry)} has no stashes array`,
+          "REGISTRY_RESPONSE_INVALID",
+        );
       }
-      const etag = response.headers.get("etag") ?? undefined;
-      const lastModified = response.headers.get("last-modified") ?? undefined;
-      return { value: index, cacheJson: JSON.stringify(index), cacheOpts: { etag, lastModified } };
+      return { value: index, cacheJson: JSON.stringify(index) };
     },
   });
 }
 
 // ── Index parsing (exported for reuse) ──────────────────────────────────────
 
+/**
+ * Read whatever the index carries: the only requirement is a `stashes` array.
+ * Entries that lack an id, name, ref or known source are skipped; `version`
+ * and `updatedAt` are carried through as published.
+ */
 export function parseRegistryIndex(data: unknown): RegistryIndex | null {
   if (typeof data !== "object" || data === null || Array.isArray(data)) return null;
   const obj = data as Record<string, unknown>;
-
-  // Accept version 2 and 3 — both use the same stashes[] wire format.
-  // The live official registry currently publishes version 2.
-  if (typeof obj.version !== "number" || (obj.version !== 2 && obj.version !== 3)) return null;
-  if (typeof obj.updatedAt !== "string") return null;
   if (!Array.isArray(obj.stashes)) return null;
 
   const stashes = obj.stashes.flatMap((raw): RegistryBundleEntry[] => {
@@ -153,7 +156,11 @@ export function parseRegistryIndex(data: unknown): RegistryIndex | null {
     return stash ? [stash] : [];
   });
 
-  return { version: obj.version, updatedAt: obj.updatedAt, stashes };
+  return {
+    version: typeof obj.version === "number" ? obj.version : undefined,
+    updatedAt: asString(obj.updatedAt),
+    stashes,
+  };
 }
 
 // ── Stash entry parsing ───────────────────────────────────────────────────────

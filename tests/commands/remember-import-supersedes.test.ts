@@ -10,8 +10,7 @@
  *     `supersededBy: [<new ref>]` — a metadata edit only: every other
  *     frontmatter key and the body are preserved byte-for-byte.
  *   - The demotion is immediately live: the mutated old asset is reindexed,
- *     so `--belief current` hides it and the beliefStateBoost (-0.25) ranks
- *     the correction above the stale incumbent.
+ *     so `--belief current` hides it.
  *   - Re-running the correction is idempotent (no duplicated supersededBy
  *     entry); `writeSupersededEdge` sorted-set-appends across corrections.
  *   - An unresolvable ref is INPUT VALIDATION: UsageError → exit 2 with the
@@ -25,8 +24,7 @@
  *     tests/integration/supersedes-git-target.test.ts (real git fixture).
  *   - The flag is declared in each command's help meta (citty args def →
  *     rendered usage).
- *   - New helper `writeSupersededEdge(filePath, supersededByRef)` lives as a
- *     sibling of `writeContradictEdge` in
+ *   - New helper `writeSupersededEdge(filePath, supersededByRef)` lives in
  *     src/commands/improve/memory/memory-belief.ts (loaded via dynamic import
  *     below so its absence fails only the unit tests, not the module graph).
  *
@@ -39,7 +37,6 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { renderUsage } from "citty";
-import { writeContradictEdge } from "../../src/commands/improve/memory/memory-belief";
 import { writeMarkdownAsset } from "../../src/commands/read/knowledge";
 import { rememberCommand } from "../../src/commands/read/remember-cli";
 import { importKnowledgeCommand } from "../../src/commands/sources/stash-cli";
@@ -211,14 +208,12 @@ describe("remember --supersedes", () => {
     expect(currentRefs).toContain(conceptId(newRef));
     expect(currentRefs).not.toContain(conceptId(old.ref));
 
-    // Unfiltered search still returns both, with the correction ranked above
-    // the superseded incumbent (beliefStateBoost demotion, -0.25).
+    // Unfiltered search still returns both.
     const all = await runCliCapture(["search", "quantum rotation", "--type", "memory"]);
     expect(all.code).toBe(0);
     const allRefs = ((JSON.parse(all.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => conceptId(h.ref));
     expect(allRefs).toContain(conceptId(newRef));
     expect(allRefs).toContain(conceptId(old.ref));
-    expect(allRefs.indexOf(conceptId(newRef))).toBeLessThan(allRefs.indexOf(conceptId(old.ref)));
   });
 
   test("re-running the correction is idempotent: supersededBy is not duplicated", async () => {
@@ -671,7 +666,7 @@ describe("--supersedes qualified bundle literals", () => {
 
 // ── writeSupersededEdge (unit) ───────────────────────────────────────────────
 
-describe("writeSupersededEdge — sibling of writeContradictEdge in memory-belief", () => {
+describe("writeSupersededEdge in memory-belief", () => {
   /**
    * Dynamic import so a missing export fails THESE tests with a clear
    * assertion instead of breaking the whole file's module graph.
@@ -758,79 +753,9 @@ describe("writeSupersededEdge — sibling of writeContradictEdge in memory-belie
     expect(parsed.data.beliefState).toBe("superseded");
   });
 
-  test("writeContradictEdge preserves a pre-existing SCALAR contradictedBy edge (finding #14)", () => {
-    const dir = makeDir("akm-contradict-edge");
-    const filePath = path.join(dir, "old.md");
-    fs.writeFileSync(
-      filePath,
-      [
-        "---",
-        "contradictedBy: stash//memories/first-dispute",
-        "beliefState: contradicted",
-        "---",
-        "",
-        "Body.",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    writeContradictEdge(filePath, "stash//memories/second-dispute");
-
-    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
-    expect(parsed.data.contradictedBy).toEqual(["stash//memories/first-dispute", "stash//memories/second-dispute"]);
-    expect(parsed.data.beliefState).toBe("contradicted");
-  });
-
-  test("writeContradictEdge repairs a MISSING demotion: edge already present but no beliefState (R2-4)", () => {
-    // Regression from the #14 scalar promotion: the guard fired on
-    // `existing.includes(ref)` ALONE, so a file carrying the edge without the
-    // demotion (hand-written scalar, beliefState lost to a partial edit) was
-    // a permanent no-op — while consolidate's handleContradictOp counted the
-    // op as applied. The guard must be state-aware like writeSupersededEdge.
-    const dir = makeDir("akm-contradict-edge");
-    const filePath = path.join(dir, "old.md");
-    fs.writeFileSync(
-      filePath,
-      ["---", "contradictedBy: stash//memories/disputer", "---", "", "Body.", ""].join("\n"),
-      "utf8",
-    );
-
-    writeContradictEdge(filePath, "stash//memories/disputer");
-
-    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
-    expect(parsed.data.beliefState).toBe("contradicted");
-    expect(parsed.data.contradictedBy).toEqual(["stash//memories/disputer"]);
-
-    // Idempotent once repaired: a repeat call leaves the file byte-identical.
-    const afterFirst = fs.readFileSync(filePath, "utf8");
-    writeContradictEdge(filePath, "stash//memories/disputer");
-    expect(fs.readFileSync(filePath, "utf8")).toBe(afterFirst);
-  });
-
-  test("writeContradictEdge never weakens archived: the edge appends, beliefState stays archived (R2-4)", () => {
-    // Severity parity with writeSupersededEdge: archived (0.15) ranks BELOW
-    // contradicted (0.2) — overwriting it would RAISE the incumbent's rank.
-    const dir = makeDir("akm-contradict-edge");
-    const filePath = path.join(dir, "old.md");
-    fs.writeFileSync(filePath, ["---", "beliefState: archived", "---", "", "Body.", ""].join("\n"), "utf8");
-
-    writeContradictEdge(filePath, "stash//memories/new-dispute");
-
-    const parsed = parseFrontmatter(fs.readFileSync(filePath, "utf8"));
-    expect(parsed.data.beliefState).toBe("archived");
-    expect(parsed.data.contradictedBy).toEqual(["stash//memories/new-dispute"]);
-
-    // Idempotent under the kept state too.
-    const afterFirst = fs.readFileSync(filePath, "utf8");
-    writeContradictEdge(filePath, "stash//memories/new-dispute");
-    expect(fs.readFileSync(filePath, "utf8")).toBe(afterFirst);
-  });
-
   test("never weakens a stronger demotion: contradicted/archived keep their state, edge still appends", async () => {
-    // Severity order (BELIEF_STATE_SCORE_CEILINGS, ranking-contributors.ts):
-    // superseded 0.25 > contradicted 0.2 > archived 0.15 — overwriting
-    // contradicted/archived with superseded would RAISE the incumbent's rank.
+    // contradicted and archived are stronger demotions than superseded;
+    // overwriting them with superseded would weaken the incumbent's state.
     const writeSupersededEdge = await loadWriteSupersededEdge();
     for (const state of ["contradicted", "archived"] as const) {
       const dir = makeDir("akm-superseded-edge-state");

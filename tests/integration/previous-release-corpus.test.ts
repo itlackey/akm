@@ -7,13 +7,11 @@
  *
  * POLICY: a schema bump (task source v2/v3/v4, the proposals `metadata_json`
  * envelope, or anything else a prior release wrote to disk/state.db) must
- * NEVER turn into a headless upgrade break — a user's real, already-scheduled
- * artifact reading successfully today must keep reading successfully after
- * `npm i -g akm@latest` (or the container image bump), even if the release
- * notes say "run the migrator." Deterministic transforms are the tool's job,
- * not the user's; the migrator (`akm migrate apply`) stays available to
- * rewrite the file on disk and silence the resulting deprecation warning,
- * but it must never be REQUIRED just to keep reading.
+ * have an explicit upgrade path backed by real-shaped fixtures. Persisted
+ * state normally remains read-compatible. Task source is the deliberate
+ * exception (#987): the runtime reads only task source v4, and refuses each
+ * older file on its own, naming `akm migrate apply`, which owns the
+ * deterministic v2/v3 -> v4 rewrite and removal of v4 source enablement.
  *
  * Every fixture below is a REAL-SHAPED artifact from a prior release — not a
  * synthetic minimal case. When a future schema bump lands, add the OLD shape
@@ -24,10 +22,17 @@
  * spelled out in the commit message.
  *
  * Current coverage:
- *   - task source v2 (`fixtures/task-v2.yml`) — read via the in-memory
- *     v2->v3->v4 migration shim in `src/tasks/source/parse-task-source.ts`.
- *   - task source v3 (`fixtures/task-v3.yml`) — read via the in-memory v3->v4
- *     migration shim, same file.
+ *   - task source v2 (`fixtures/task-v2.yml`) — refused at runtime naming
+ *     `akm migrate apply`, and convertible on disk through that command's
+ *     v2->v3->v4 migrator.
+ *   - task source v3 (`fixtures/task-v3.yml`) — refused at runtime naming
+ *     `akm migrate apply`, and convertible on disk through its v3->v4
+ *     migrator.
+ *   - task source v4 with a retired `schedule[].enabled`
+ *     (`fixtures/task-v4-schedule-enabled.yml`, exactly as 0.9.15's `akm
+ *     task add --disabled` wrote it) — refused at runtime naming
+ *     `akm migrate apply`, and converted through the explicit
+ *     `akm-migrate` v4->v4 pass.
  *   - pre-envelope proposal rows (`metadata_json` missing `changes`,
  *     `proposedTarget`, `beforeHash`, `eligibilitySource`, `backupContent` —
  *     the REAL shape pulled from a live 24,358-row archive during the #859
@@ -51,30 +56,34 @@
  *     instead of double-enumerating and throwing `duplicate task migration
  *     file path`.
  *   - a real-shaped 0.8 config carrying the retired `stashDir`/`sources[]`/
- *     `installed[]` trio together (#863) — deliberately NOT read-shimmed
- *     (unlike every fixture above); this one instead guards that the break
- *     stays loud and actionable (`src/core/config/config-schema.ts`) rather
- *     than degrading into a silent load or an opaque crash.
+ *     `installed[]` trio together (#863) — read via the in-memory bundles
+ *     shim (`legacy-source-shape-shim.ts`), with
+ *     `akm migrate apply` as the on-disk rewrite path rather than a
+ *     precondition for reading.
  *   - downstream-consumer fixtures for OpenPalm (a real, if unofficial,
  *     integration point, #880): a `config.json` `bundles` shape and four
  *     task source v4 files exercising its grammar (`run:`/`shell:`,
  *     `uses:`/`with:`, `timeout:`, optional `schedule:`) — static files
  *     proving akm doesn't tighten its schema in a way that breaks a real
  *     consumer.
- *   - a v22 derived index carrying a LIVE embedding (#955, `index-v22-with-
- *     embedding.sql`) — the v22->v23 generation rebuild
- *     (`rebuildIncompatibleIndexGeneration`, `index-schema.ts`) salvages the
- *     vector into `embedding_salvage` before dropping `embeddings`, and the
- *     next embedding pass (`generateEmbeddingsForDb`) hands it straight back
- *     to the re-walked entry with zero provider calls.
+ *   - a v22 derived index carrying a LIVE embedding (`index-v22-with-
+ *     embedding.sql`) — the writable opener (`ensureSchema`,
+ *     `index-schema.ts`) migrates it in place, keeping the entry and its
+ *     vector (labelled with the model it was generated under), so the next
+ *     embedding pass (`generateEmbeddingsForDb`) makes zero provider calls.
+ *   - a layout-25 derived index as 0.9.17-alpha.7 wrote it (`index-v25.sql`),
+ *     whose relations sat only in `document_json` — a reader serves it as-is,
+ *     and the writable opener derives its declared links (#935) in place,
+ *     re-reading only the directories that hold workflows and tasks.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
- *     BEGIN/END` sentinels but predates the `--scheduler-context` marker
- *     `extractCronInvocation` otherwise requires — read via
- *     `CRON_BACKEND().inspectBindings()`/`akmTasksSync`
- *     (`src/tasks/backends/cron.ts`), which recognizes the row from inside
- *     its own sentinel and reconciles it instead of treating it as absent
- *     and colliding with the still-present artifact.
+ *     BEGIN/END` sentinels but predates `--bundle` and the
+ *     `--scheduler-context` marker 0.9.0 – 0.9.17-alpha.6 wrote — read via
+ *     `CRON_BACKEND().list()`/`akmTasksSync` (`src/tasks/backends/cron.ts`),
+ *     which recognizes the row from inside its own sentinel and reconciles
+ *     it instead of treating it as absent and colliding with the
+ *     still-present artifact. (The `--scheduler-context` rows themselves are
+ *     covered in `tests/tasks-sync.test.ts` and the upgrade rehearsal.)
  */
 
 import { Database } from "bun:sqlite";
@@ -82,30 +91,40 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { inspectMigrationPlan } from "../../scripts/akm-migrate/task-migrate";
+import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
-import { createProposal as createProposalImpl, isProposalSkipped } from "../../src/commands/proposal/repository";
-import { akmTasksSync } from "../../src/commands/tasks/tasks";
-import { loadConfig, loadUserConfig, parseAndValidateConfigText, resetConfigCache } from "../../src/core/config/config";
+import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
+import { akmTasksSync, akmTasksSyncPlan } from "../../src/commands/tasks/tasks";
+import {
+  loadConfig,
+  normalizeConfigFile,
+  parseAndValidateConfigText,
+  resetConfigCache,
+  updateConfig,
+} from "../../src/core/config/config";
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { resetQuiet, setQuiet } from "../../src/core/warn";
+import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
-import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import {
+  closeDatabase,
+  openIndexDatabase,
+  openReadonlyExistingDatabase,
+} from "../../src/storage/repositories/index-connection";
 import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
+import { searchFts } from "../../src/storage/repositories/index-fts-repository";
+import { countLinksByKind, readEntryLinks } from "../../src/storage/repositories/index-links-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
+import { VACUUM_PENDING_META } from "../../src/storage/repositories/index-schema";
 import { getEmbeddingCount } from "../../src/storage/repositories/index-vec-repository";
 import { listStateProposals } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
+import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import { readTaskHistory } from "../../src/tasks/run/task-history";
-import {
-  resolveScheduledTaskContext,
-  schedulerContextDescriptor,
-  writeSchedulerContextDescriptor,
-} from "../../src/tasks/scheduler-invocation";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
+import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   type IsolatedAkmStorage,
   sandboxStashDir,
@@ -122,8 +141,16 @@ function readFixture(name: string): string {
   return fs.readFileSync(path.join(FIXTURES_DIR, name), "utf8");
 }
 
+function migrateLegacyTask(filePath: string, yaml: string) {
+  const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
+  const v4 = planTaskToV4File(input);
+  expect(v4.status).toBe("changed");
+  if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
+  return parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
+}
+
 describe("previous-release corpus — upgrade must not break reads", () => {
-  test("v22 parent-only index is rebuilt as v23 fragment-capable derived state", () => {
+  test("v22 parent-only index is migrated in place: its entries stay searchable and the fragment source table is added", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-index-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -133,12 +160,11 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(
-          upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments_fts'").get(),
-        ).toBeDefined();
-        // index.db is regenerable: no v22 parent row survives to be queried
-        // under a mixed schema; the following index walk re-populates both.
-        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 0 });
+        expect(upgraded.prepare("SELECT name FROM sqlite_master WHERE name = 'entry_fragments'").get()).toEqual({
+          name: "entry_fragments",
+        });
+        expect(upgraded.prepare("SELECT count(*) AS count FROM entries").get()).toEqual({ count: 1 });
+        expect(searchFts(upgraded, "evidence", 10).map((hit) => hit.itemRef)).toEqual(["stash//knowledge/v22-note"]);
       } finally {
         closeDatabase(upgraded);
       }
@@ -147,7 +173,7 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     }
   });
 
-  test("#955: a v22 embedding survives the v23 generation bump via salvage and is reused with zero provider calls", async () => {
+  test("a v22 embedding survives the upgrade in place, labelled with its model, with zero provider calls", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v22-embedding-"));
     try {
       const dbPath = path.join(root, "index.db");
@@ -155,53 +181,25 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       legacy.exec(readFixture("index-v22-with-embedding.sql"));
       legacy.close();
 
-      // Opening under the current binary rebuilds entries/embeddings/FTS
-      // (index.db is regenerable) but the embedding_salvage table is exempt
-      // from the drop list — the vector salvaged just before `embeddings`
-      // was dropped survives the rebuild.
       const upgraded = openIndexDatabase(dbPath);
       try {
         expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 1 });
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 1 });
+        expect(upgraded.prepare("SELECT model FROM embeddings").all()).toEqual([{ model: "local:test-model" }]);
 
-        // The next index run re-walks the stash and re-inserts the SAME
-        // (unchanged) content — same search_text, new id.
-        upgraded
-          .prepare(
-            `INSERT INTO entries
-               (item_ref, bundle_id, component_id, concept_id, adapter_id, type,
-                file_path, content_hash, document_json, search_text, derived_from)
-             VALUES (?, 'stash', 'stash', 'knowledge/v22-embedded', 'akm', 'knowledge',
-                     '/fixture/v22-embedded.md', NULL, ?, ?, NULL)`,
-          )
-          .run(
-            "stash//knowledge/v22-embedded",
-            JSON.stringify({ name: "v22-embedded", type: "knowledge" }),
-            "v22-embedded prior release parent row with an embedding whole body evidence",
-          );
-
-        // A throwing embedder proves the vector came back from salvage, not
-        // a provider call — `rebuildIncompatibleIndexGeneration` clears
-        // `embeddingFingerprint` along with the rest of `index_meta`, so this
-        // relies only on the fingerprint the config below derives matching
-        // what the fixture salvaged under ("local:test-model").
         overrideSeam(_setEmbedderForTests, {
           embedBatch: async () => {
-            throw new Error("the provider must never be called — the vector should come back from salvage");
+            throw new Error("the provider must never be called — the stored vector is still current");
           },
         });
-        const messages: string[] = [];
         const result = await generateEmbeddingsForDb(
           upgraded,
           { semanticSearchMode: "auto", embedding: { localModel: "test-model" } },
-          (event) => messages.push(event.message),
+          () => {},
         );
 
         expect(result.success).toBe(true);
-        expect(messages.some((m) => m.includes("Reused 1 embedding"))).toBe(true);
         expect(getEmbeddingCount(upgraded)).toBe(1);
-        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM embedding_salvage").get()).toEqual({ count: 0 });
         const row = upgraded.prepare("SELECT embedding FROM embeddings LIMIT 1").get() as
           | { embedding: Buffer }
           | undefined;
@@ -216,42 +214,136 @@ describe("previous-release corpus — upgrade must not break reads", () => {
     }
   });
 
-  describe("task source v2/v3 (auto-shimmed to v4)", () => {
-    let warnSpy: ReturnType<typeof spyOn>;
+  test("a layout-25 index (0.9.17-alpha.7) migrates in place: its stored relations become links, with no reparse", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v25-index-"));
+    try {
+      const dbPath = path.join(root, "index.db");
+      const legacy = new Database(dbPath);
+      legacy.exec(readFixture("index-v25.sql"));
+      legacy.close();
 
-    beforeEach(() => {
-      // The harness sets quiet=true by default (tests/_preload.ts); opt into
-      // real warn() output so the spy actually observes the deprecation line.
-      setQuiet(false);
-      warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    });
+      // A reader serves the older layout as-is: no links yet, and no failure.
+      const reader = openReadonlyExistingDatabase(dbPath);
+      if (!reader) throw new Error("expected a read handle");
+      try {
+        expect(readEntryLinks(reader, "stash//memories/deploy-window")).toEqual({ outgoing: [], incoming: [] });
+        expect(countLinksByKind(reader)).toEqual({});
+      } finally {
+        closeDatabase(reader);
+      }
 
-    afterEach(() => {
-      warnSpy.mockRestore();
-      resetQuiet();
-    });
+      const upgraded = openIndexDatabase(dbPath);
+      try {
+        expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+        expect(getMeta(upgraded, VACUUM_PENDING_META)).toBe("1");
+        expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 10 });
 
-    test("a real-shaped task v2 file (schedule/command/enabled/timeoutMs/tags) reads without error", () => {
+        // Every relation alpha.7 kept in document_json is now a link; targets
+        // resolve against the index, and legacy spellings convert in memory.
+        const links = (
+          upgraded
+            .prepare(
+              `SELECT o.item_ref AS owner, l.kind AS kind, l.raw AS raw, t.item_ref AS target
+                 FROM asset_links l
+                 JOIN entries o ON o.id = l.entry_id
+                 LEFT JOIN entries t ON t.item_ref = COALESCE(l.dst_bundle, o.bundle_id) || '//' || l.dst_concept
+                ORDER BY owner, l.ord`,
+            )
+            .all() as Array<{ owner: string; kind: string; raw: string; target: string | null }>
+        ).map((row) => `${row.owner} ${row.kind} ${row.raw} -> ${row.target}`);
+        expect(links).toEqual([
+          "stash//knowledge/release-guide xref knowledge/missing-page -> null",
+          "stash//knowledge/release-guide superseded_by stash//knowledge/release-guide-v2 -> stash//knowledge/release-guide-v2",
+          "stash//knowledge/wikis/notes/pages/release-train xref wiki:notes/raw/train-source -> stash//knowledge/wikis/notes/raw/train-source",
+          "stash//knowledge/wikis/notes/pages/release-train cites raw/train-source.md -> stash//knowledge/wikis/notes/raw/train-source",
+          "stash//memories/deploy-window xref memories/release-checklist -> null",
+          "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//knowledge/wikis/notes/pages/release-train",
+          "stash//memories/deploy-window contradicted_by memory:deploy-window-moved -> stash//memories/deploy-window-moved",
+          "stash//memories/deploy-window-moved.derived derived_from memories/deploy-window-moved -> stash//memories/deploy-window-moved",
+        ]);
+
+        // alpha.7 never stored workflow and task targets, so only their
+        // directories re-drain on the next `akm index`; every other directory
+        // keeps its cursor.
+        const dirs = (
+          upgraded.prepare("SELECT dir_path FROM index_dir_state ORDER BY dir_path").all() as Array<{
+            dir_path: string;
+          }>
+        ).map((row) => row.dir_path);
+        expect(dirs).toEqual([
+          "/fixture/stash/commands",
+          "/fixture/stash/knowledge",
+          "/fixture/stash/memories",
+          "/fixture/stash/wikis/notes/pages",
+          "/fixture/stash/wikis/notes/raw",
+        ]);
+      } finally {
+        closeDatabase(upgraded);
+      }
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  // The runtime reads only task source v4 (#987): each older shape is refused
+  // on its own, naming `akm migrate apply`, and that command converts it.
+  function expectRefusedNamingMigrate(yaml: string, filePath: string): void {
+    let error: unknown;
+    try {
+      parseTaskSource({ yaml, filePath });
+    } catch (cause) {
+      error = cause;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain("akm migrate apply");
+  }
+
+  describe("task source v2/v3 (refused at runtime, and explicitly migrated to v4)", () => {
+    test("a real-shaped task v2 file is refused naming `akm migrate apply` and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2.yml");
       const yaml = readFixture("task-v2.yml");
-      const result = parseTaskSource({ yaml, filePath });
+      expectRefusedNamingMigrate(yaml, filePath);
+
+      const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("run");
-      // Deprecation warning on stderr, never on the return value / stdout path.
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("schema v2");
+      expect(Object.hasOwn(result.v4, "enabled")).toBe(false);
     });
 
-    test("a real-shaped task v3 file (akm.schedule/akm/command/with) reads without error", () => {
+    test("a real-shaped task v3 file is refused naming `akm migrate apply` and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v3.yml");
       const yaml = readFixture("task-v3.yml");
-      const result = parseTaskSource({ yaml, filePath });
+      expectRefusedNamingMigrate(yaml, filePath);
+
+      const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("uses");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("schema v3");
+      expect(Object.hasOwn(result.v4, "enabled")).toBe(false);
+    });
+  });
+
+  describe("task source v4 with a retired schedule[].enabled (0.9.15's own grammar)", () => {
+    test("a real-shaped 0.9.15 `task add --disabled` file is refused naming `akm migrate apply` and converts via akm-migrate", () => {
+      const filePath = path.join(FIXTURES_DIR, "task-v4-schedule-enabled.yml");
+      const yaml = readFixture("task-v4-schedule-enabled.yml");
+      expectRefusedNamingMigrate(yaml, filePath);
+
+      // `akm-migrate`'s second generation (task v3 -> task source v4) reaches
+      // a declared `version: 4` file directly through `planTaskToV4File` —
+      // there is no v3 hop for a file already declaring version 4, unlike
+      // `migrateLegacyTask` above.
+      const input = { filePath, bytes: Buffer.from(yaml), mode: 0o640, writable: true };
+      const v4 = planTaskToV4File(input);
+      expect(v4.status).toBe("changed");
+      if (v4.status !== "changed") throw new Error(`expected migration to v4: ${v4.reason}`);
+      expect(v4.reason).toBe("source-enablement-removed");
+      const migrated = parseTaskSource({ yaml: v4.after.toString("utf8"), filePath });
+      expect(migrated.version).toBe(4);
+      expect(migrated.v4.schedule.length).toBeGreaterThan(0);
+      expect(migrated.v4.target.kind).toBe("run");
+      for (const entry of migrated.v4.schedule) expect(Object.hasOwn(entry, "enabled")).toBe(false);
     });
   });
 
@@ -290,7 +382,6 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           {
             ref: "lessons/corpus-healthy",
             source: "reflect",
-            force: true,
             payload: {
               content:
                 "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos\n---\n\nPrefer rg over grep.\n",
@@ -299,7 +390,6 @@ describe("previous-release corpus — upgrade must not break reads", () => {
           },
           undefined,
         );
-        if (isProposalSkipped(healthy)) throw new Error("unexpected skip for the healthy fixture");
 
         // Insert real-shaped legacy rows directly (createProposal always
         // mints the full current envelope — it cannot produce these shapes;
@@ -468,31 +558,18 @@ describe("previous-release corpus — upgrade must not break reads", () => {
   // plain `command: /path/to/akm ...` shape. On a real 0.9.4 install, every
   // v2 task whose `command:` started with `env NAME=value... cmd args...`
   // (a common, ordinary way to write a cron command) hit
-  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being auto-shimmed — this is
-  // exactly the gap that shipped in 0.9.4. Kept as its own block per #867's
-  // instructions (other agents may be editing the describes above).
+  // TASK_SCHEMA_VERSION_UNSUPPORTED instead of being migratable — this is
+  // exactly the gap that shipped in 0.9.4. `akm migrate apply` converts it.
   describe("task source v2 — env-prefixed command (#867)", () => {
-    let warnSpy: ReturnType<typeof spyOn>;
-
-    beforeEach(() => {
-      setQuiet(false);
-      warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    });
-
-    afterEach(() => {
-      warnSpy.mockRestore();
-      resetQuiet();
-    });
-
-    test("a real-shaped task v2 file whose command starts with `env NAME=value...` reads without error", () => {
+    test("a real-shaped env-prefixed task is refused naming `akm migrate apply` and converts via akm-migrate", () => {
       const filePath = path.join(FIXTURES_DIR, "task-v2-env-prefixed.yml");
       const yaml = readFixture("task-v2-env-prefixed.yml");
-      const result = parseTaskSource({ yaml, filePath });
+      expectRefusedNamingMigrate(yaml, filePath);
+
+      const result = migrateLegacyTask(filePath, yaml);
       expect(result.version).toBe(4);
       expect(result.v4.schedule.length).toBeGreaterThan(0);
       expect(result.v4.target.kind).toBe("run");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-      expect(String(warnSpy.mock.calls[0]?.[0])).toContain("schema v2");
     });
   });
 });
@@ -506,13 +583,11 @@ describe("previous-release corpus — upgrade must not break reads", () => {
 // Fixed by matching registration on the resolved content root
 // (`bundleContentRoot`/`bundleKeyForContentRoot` in
 // `src/core/config/config-sources.ts`) instead of the bare configured
-// `path`; `scripts/akm-migrate/task-migrate.ts`'s `taskRoots` reconciles the
-// two ids on the read/enumeration side. See
-// `tests/migrate/duplicate-bundle-registration.test.ts` for the mechanism's
-// full unit coverage — this corpus entry proves the exact real-shaped,
-// on-disk `config.json` (both bundle ids literally named `openpalm`/`stash`,
-// `defaultBundle: "stash"`) converges through `akm migrate`'s inspection
-// instead of throwing `duplicate task migration file path`.
+// `path`. The current architecture rejects aliases at config load because
+// source ownership and grants cannot depend on which id a caller used. This
+// corpus entry proves the exact old shape fails with actionable identities,
+// rather than reaching the former opaque `duplicate task migration file
+// path` error.
 describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#870)", () => {
   let storage: IsolatedAkmStorage;
 
@@ -524,7 +599,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
     storage.cleanup();
   });
 
-  test("a home with a pre-#870 duplicate 'stash' bundle entry converges instead of throwing", () => {
+  test("a home with a pre-#870 duplicate 'stash' bundle entry names both aliases and their shared root", () => {
     fs.mkdirSync(path.join(storage.stashDir, "tasks"), { recursive: true });
     fs.writeFileSync(
       path.join(storage.stashDir, "tasks", "demo.yml"),
@@ -539,14 +614,7 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
       },
     });
 
-    let plan: ReturnType<typeof inspectMigrationPlan> | undefined;
-    expect(() => {
-      plan = inspectMigrationPlan();
-    }).not.toThrow();
-    // Reconciled: the shared task file is enumerated once, not once per
-    // duplicate bundle id.
-    expect(plan?.taskV3Migration.files).toHaveLength(1);
-    expect(plan?.taskV3Migration.files[0]?.filePath).toBe(path.join(storage.stashDir, "tasks", "demo.yml"));
+    expect(() => inspectTaskFilesMigration()).toThrow(/openpalm.*stash.*same physical content root/i);
   });
 });
 
@@ -590,15 +658,352 @@ describe("previous-release corpus — retired 0.8 source-config keys (configVers
     // `stashDir` becomes the `stash` bundle and the default write target.
     expect(config.defaultBundle).toBe("stash");
     expect(config.bundles?.stash).toMatchObject({ path: "/home/user/.akm-stash", writable: true });
-    // The duplicate `sources[]` entry (the same directory, under its own
-    // `primary` name) also converts — one bundle per legacy entry, even when
-    // it overlaps with `stashDir`'s.
-    expect(config.bundles?.primary).toMatchObject({ path: "/home/user/.akm-stash", writable: true });
+    // The duplicate `sources[]` entry is folded into the canonical stash
+    // entry so the compatibility shim cannot synthesize a config the current
+    // physical-owner invariant rejects.
+    expect(config.bundles?.primary).toBeUndefined();
     // `installed[]` has no 0.9 equivalent (the index tracks installed assets
     // now) and is dropped rather than guessed at.
     expect((config as unknown as Record<string, unknown>).installed).toBeUndefined();
     expect((config as unknown as Record<string, unknown>).stashDir).toBeUndefined();
     expect((config as unknown as Record<string, unknown>).sources).toBeUndefined();
+  });
+
+  test("an empty sources[] (what 0.8.9's `akm source remove` wrote after removing the last source) loads without an Unknown-config-key warning", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.9.0", sources: [] }));
+
+    const warnings: string[] = [];
+    _resetWarnOnceForTests();
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      expect(() => loadConfig()).not.toThrow();
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.some((w) => w.includes("Unknown config key") && w.includes("sources"))).toBe(false);
+  });
+});
+
+describe("previous-release corpus — retired experimental.workflowEngine key", () => {
+  let warnSpy: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    resetConfigCache();
+    // The warning is once-per-process; an earlier test loading the same key
+    // would otherwise consume it before this describe asserts it.
+    _resetWarnOnceForTests();
+    setQuiet(false);
+    warnSpy = spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warnSpy.mockRestore();
+    resetQuiet();
+    resetConfigCache();
+  });
+
+  test("a real-shaped 0.9.15 config (experimental.workflowEngine alongside improveAutonomy) loads, improveAutonomy is honored, and a one-time warning names the key", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        experimental: { improveAutonomy: true, workflowEngine: true },
+      }),
+    );
+
+    const config = loadConfig();
+    expect(config.experimental?.improveAutonomy).toBe(true);
+    const warned = (warnSpy.mock.calls as unknown[][]).some((call) => call.join(" ").includes("workflowEngine"));
+    expect(warned).toBe(true);
+  });
+
+  test("experimental.workflowEngine alongside a retired top-level key both load, both are dropped, and both are named in the warning (the generalized stripRetiredConfigKeys shim, src/core/config/retired-config-keys-shim.ts)", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        features: { improve: { reflect: { mode: "llm" } } },
+        experimental: { improveAutonomy: true, workflowEngine: true },
+      }),
+    );
+
+    const config = loadConfig();
+    expect(config.experimental?.improveAutonomy).toBe(true);
+
+    const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
+    expect(messages.some((m) => m.includes("workflowEngine"))).toBe(true);
+    expect(messages.some((m) => m.includes("features"))).toBe(true);
+  });
+
+  test("after `akm migrate apply` removes every retired key from config.json, loadConfig emits no retired-keys warning", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        features: { improve: { reflect: { mode: "llm" } } },
+        experimental: { improveAutonomy: true, workflowEngine: true },
+      }),
+    );
+
+    const result = normalizeConfigFile(configPath, { apply: true });
+    expect(result.applied).toBe(true);
+    expect(result.keys).toEqual(expect.arrayContaining(["experimental", "features"]));
+
+    resetConfigCache();
+    _resetWarnOnceForTests();
+    warnSpy.mockClear();
+    const config = loadConfig();
+    expect(config.experimental?.improveAutonomy).toBe(true);
+    expect((config as unknown as Record<string, unknown>).features).toBeUndefined();
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  test("an unknown experimental key is dropped with a warning, never fatal", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        experimental: { improveAutonomyy: true },
+      }),
+    );
+
+    const config = loadConfig();
+    const messages = (warnSpy.mock.calls as unknown[][]).map((call) => call.join(" "));
+    expect(messages.some((m) => m.includes("experimental.improveAutonomyy"))).toBe(true);
+  });
+});
+
+describe("previous-release corpus — retired index.graph.lazyGraphExtraction key", () => {
+  beforeEach(() => {
+    resetConfigCache();
+    _resetWarnOnceForTests();
+  });
+
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+  });
+
+  test("a 0.9.17-alpha.5 config that sets it still loads; alpha.9 retiring the whole pass supersedes the old per-field warning, sub-fields stay kept in memory", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true, graphExtractionBatchSize: 2 } },
+      }),
+    );
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+
+    const config = loadConfig();
+
+    // 0.9.17-alpha.9 retires the whole `index.graph` pass (see the describe
+    // block below), not just these two alpha.5-era sub-fields. The unknown-
+    // key walk now stops at `index.graph` itself, so the coarser whole-key
+    // warning supersedes the old per-field "lazyGraphExtraction" message —
+    // one warning, not two.
+    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes("lazyGraphExtraction"))).toHaveLength(0);
+    const graph = config.index?.graph as Record<string, unknown> | undefined;
+    expect(graph?.graphExtractionBatchSize).toBe(2);
+    expect(graph?.lazyGraphExtraction).toBe(true);
+  });
+});
+
+describe("previous-release corpus — retired index.graph key (whole pass, 0.9.17-alpha.9)", () => {
+  beforeEach(() => {
+    resetConfigCache();
+    _resetWarnOnceForTests();
+  });
+
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+  });
+
+  test("a config that still sets index.graph loads with exactly one warning naming it", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true } },
+      }),
+    );
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+
+    const config = loadConfig();
+
+    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(1);
+    expect((config.index?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+  });
+
+  test("index.graph survives an unrelated ordinary config write", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true } },
+      }),
+    );
+
+    // A value that clearly differs from the schema default, so the write is
+    // not pruned away as a no-op change (unlike e.g. semanticSearchMode:
+    // "off", which equals the default and would disappear again — #972).
+    updateConfig({ bundles: { extra: { path: "/tmp/extra-bundle" } } });
+
+    const raw = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const index = raw.index as Record<string, unknown> | undefined;
+    expect((index?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+    expect((raw.bundles as Record<string, unknown> | undefined)?.extra).toEqual({ path: "/tmp/extra-bundle" });
+  });
+
+  test("only `akm migrate apply` drops index.graph from config.json", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        index: { graph: { lazyGraphExtraction: true } },
+      }),
+    );
+
+    // `akm migrate status` (apply: false) reports the change without writing.
+    const status = normalizeConfigFile(configPath, { apply: false });
+    expect(status.applied).toBe(false);
+    expect(status.keys).toContain("index");
+    const stillThere = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const stillIndex = stillThere.index as Record<string, unknown> | undefined;
+    expect((stillIndex?.graph as Record<string, unknown> | undefined)?.lazyGraphExtraction).toBe(true);
+
+    // `akm migrate apply` (apply: true) writes the drop.
+    const result = normalizeConfigFile(configPath, { apply: true });
+    expect(result.applied).toBe(true);
+    expect(result.keys).toContain("index");
+
+    const after = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const afterIndex = after.index as Record<string, unknown> | undefined;
+    expect(afterIndex?.graph).toBeUndefined();
+
+    resetConfigCache();
+    _resetWarnOnceForTests();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    loadConfig();
+    expect(warnings.filter((w) => w.includes("index.graph"))).toHaveLength(0);
+  });
+});
+
+describe("previous-release corpus — leftover improve.strategies['graph-refresh'] override (0.9.17-alpha.9)", () => {
+  beforeEach(() => {
+    resetConfigCache();
+    _resetWarnOnceForTests();
+  });
+
+  afterEach(() => {
+    _setWarnSinkForTests(undefined);
+    resetConfigCache();
+  });
+
+  test("a config with a leftover override for the deleted graph-refresh built-in still loads, unread", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        improve: { strategies: { "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } } } },
+      }),
+    );
+
+    const config = loadConfig();
+
+    // Schema-valid (any name is a legal custom-strategy key) — it loads and
+    // is kept in memory, same as any other config data. It is simply never
+    // resolved: resolveImproveStrategy refuses "graph-refresh" unconditionally.
+    expect((config.improve?.strategies as Record<string, unknown> | undefined)?.["graph-refresh"]).toEqual({
+      processes: { graphExtraction: { mode: "llm" } },
+    });
+  });
+
+  test("only `akm migrate apply` drops the leftover graph-refresh override from config.json", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        improve: { strategies: { "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } } } },
+      }),
+    );
+
+    // `akm migrate status` (apply: false) reports the change without writing.
+    const status = normalizeConfigFile(configPath, { apply: false });
+    expect(status.applied).toBe(false);
+    expect(status.keys).toContain("improve");
+    const stillThere = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const stillImprove = stillThere.improve as Record<string, unknown> | undefined;
+    expect((stillImprove?.strategies as Record<string, unknown> | undefined)?.["graph-refresh"]).toBeDefined();
+
+    // `akm migrate apply` (apply: true) writes the drop.
+    const result = normalizeConfigFile(configPath, { apply: true });
+    expect(result.applied).toBe(true);
+    expect(result.keys).toContain("improve");
+
+    const after = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const afterImprove = after.improve as Record<string, unknown> | undefined;
+    expect((afterImprove?.strategies as Record<string, unknown> | undefined)?.["graph-refresh"]).toBeUndefined();
+  });
+
+  test("a sibling custom strategy in improve.strategies survives the drop untouched", () => {
+    const configPath = getConfigPath();
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        improve: {
+          strategies: {
+            "graph-refresh": { processes: { graphExtraction: { mode: "llm" } } },
+            "my-custom-strategy": { processes: { reflect: { enabled: true } } },
+          },
+        },
+      }),
+    );
+
+    normalizeConfigFile(configPath, { apply: true });
+
+    const after = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
+    const afterStrategies = (after.improve as Record<string, unknown> | undefined)?.strategies as
+      | Record<string, unknown>
+      | undefined;
+    expect(afterStrategies?.["graph-refresh"]).toBeUndefined();
+    expect(afterStrategies?.["my-custom-strategy"]).toEqual({ processes: { reflect: { enabled: true } } });
   });
 });
 
@@ -659,43 +1064,6 @@ describe("previous-release corpus — downstream consumer: OpenPalm (#880)", () 
   });
 });
 
-// ── configVersion (#863) ─────────────────────────────────────────────────
-//
-// SYNTHETIC entry, appended as its own top-level block per the merge note in
-// #863: `"0.9.0"` is the only `configVersion` akm has ever shipped, so there
-// is no REAL prior-release shape to add here yet (unlike every fixture
-// above). `config-0.0.1.json` stands in for one to prove out the
-// `configVersion` read-shim mechanism (`src/core/config/config-version-shim.ts`)
-// BEFORE a real bump ever needs it — see that file's module doc and
-// `tests/fixtures/previous-release-corpus/README.md`. Replace this fixture
-// with a real one, and this comment, the day a real `configVersion` bump ships.
-describe("previous-release corpus — configVersion (#863, synthetic placeholder)", () => {
-  beforeEach(() => resetConfigCache());
-  afterEach(() => resetConfigCache());
-
-  test("a synthetic pre-0.9.0 config.json (root-level defaultEngine) reads via `loadUserConfig()` without throwing", () => {
-    const fixture = readFixture("config-0.0.1.json");
-    const configPath = getConfigPath();
-    fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, fixture);
-
-    setQuiet(false);
-    const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      let config: ReturnType<typeof loadUserConfig> | undefined;
-      expect(() => {
-        config = loadUserConfig();
-      }).not.toThrow();
-      expect(config?.configVersion).toBe("0.9.0");
-      expect(config?.defaults?.llmEngine).toBe("fast");
-      expect(warnSpy).toHaveBeenCalledTimes(1);
-    } finally {
-      warnSpy.mockRestore();
-      resetQuiet();
-    }
-  });
-});
-
 // ── pre-`--scheduler-context` crontab row (akm < 0.9.2, #881) ──────────────
 //
 // The REAL shape a pre-0.9.2 install wrote to the user's crontab: the row is
@@ -734,15 +1102,12 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
       fs.mkdirSync(tasksDir, { recursive: true });
       fs.writeFileSync(
         path.join(tasksDir, "ping.yml"),
-        'version: 4\nrun: echo ping\nname: ping\nschedule:\n  - cron: "*/15 * * * *"\n    enabled: true\n',
+        'version: 4\nrun: echo ping\nname: ping\nschedule:\n  - cron: "*/15 * * * *"\n',
         "utf8",
       );
-
-      // Matches the `backendFor` setup in tasks-sync.test.ts: this backend
-      // never routes through the real launcher-eligibility path, so install
-      // operations fall back to CRON_BACKEND's own default context — write
-      // that descriptor for real so it resolves on sync.
-      writeSchedulerContextDescriptor(schedulerContextDescriptor(resolveScheduledTaskContext(), ""));
+      const defaultBundle = path.basename(stash.dir).toLowerCase();
+      setSchedulerRefEnabled(`${defaultBundle}//tasks/ping`, true);
+      expect(loadConfig().scheduler?.enabled).toEqual([`${defaultBundle}//tasks/ping`]);
 
       // The real pre-0.9.2 shape: akm's own sentinels wrap a scheduled
       // invocation with no `--scheduler-context <path>` marker at all.
@@ -762,17 +1127,28 @@ describe("previous-release corpus — pre-`--scheduler-context` crontab row (#88
         envPath: false,
       });
 
-      const inspected = await backend.inspectBindings?.({});
-      expect(inspected?.installed.map((entry) => entry.id)).toEqual(["ping"]);
+      const inspected = await backend.list();
+      expect(inspected.map((entry) => entry.id)).toEqual(["ping"]);
 
+      const preview = await akmTasksSyncPlan({ backend });
+      expect(preview).toMatchObject({
+        adds: [],
+        updates: [{ id: "ping", kind: "update" }],
+        removes: [],
+        failures: [],
+      });
       const result = await akmTasksSync({ backend });
       expect(result.installed).toEqual([]);
       expect(result.updated).toEqual(["ping"]);
       expect(result.failures).toEqual([]);
       // The crontab now carries a current row for the same task, not a
-      // second, colliding one.
+      // second, colliding one: the sandbox stash is configured nowhere, so the
+      // row names it inline.
       expect((exec.current().match(/# akm:task ping BEGIN/g) ?? []).length).toBe(1);
-      expect(exec.current()).toContain("--scheduler-context");
+      expect(exec.current()).toContain(
+        `AKM_BUNDLE_DIR=${path.resolve(stash.dir)} /usr/local/bin/akm task run ping --bundle ${defaultBundle} --scheduled`,
+      );
+      expect(exec.current()).not.toContain("--scheduler-context");
     } finally {
       stash.cleanup();
     }

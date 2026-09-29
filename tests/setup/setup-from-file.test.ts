@@ -20,7 +20,6 @@ import os from "node:os";
 import path from "node:path";
 
 import { ConfigError } from "../../src/core/errors";
-import { resetGraphBoostCache } from "../../src/indexer/graph/graph-boost";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { loadSetupConfigFromFile } from "../../src/setup/setup";
 import { runCliCapture } from "../_helpers/cli";
@@ -205,14 +204,13 @@ describe("loadSetupConfigFromFile", () => {
 
 /**
  * In-process CLI runner. Pins the supplied env for the duration of the call via
- * the allowlisted withEnv helper and resets the embedder/graph singletons.
+ * the allowlisted withEnv helper and resets the embedder singletons.
  * runCliCapture resets the config and output-mode singletons itself.
  */
 async function runCli(argv: string[], env: Record<string, string | undefined> = {}) {
   return withEnv(env, async () => {
     clearEmbeddingCache();
     resetLocalEmbedder();
-    resetGraphBoostCache();
     const { stdout, stderr, code } = await runCliCapture(argv);
     return { status: code, stdout, stderr };
   });

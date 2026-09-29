@@ -5,13 +5,12 @@
 import catchup from "../../assets/improve-strategies/catchup.json" with { type: "json" };
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import graphRefresh from "../../assets/improve-strategies/graph-refresh.json" with { type: "json" };
 import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
-import { parseRefInput } from "../../core/asset/resolve-ref";
-import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
+import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AkmConfig, type ImproveProcessConfig, type ImproveProfileConfig } from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -24,6 +23,7 @@ import { describeLlmCredentialAvailability } from "../../integrations/agent/engi
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
 import { resolveImproveExecution, resolveImproveLlmExecution } from "./execution";
+import { stripBundle } from "./ledger";
 
 /** 0.9 public name for the improve preset configuration. */
 export type ImproveStrategyConfig = ImproveProfileConfig;
@@ -48,6 +48,11 @@ export function resolveProcessEnabled(
   return processes?.[processName]?.enabled === true;
 }
 
+/** An `excludeRefPrefixes` entry as a bare conceptId without a trailing `/` (else `startsWith(".../raw//")` never matches). */
+function stripBundlePrefix(value: string): string {
+  return stripBundle(value).replace(/\/+$/, "");
+}
+
 export function shouldSkipRef(
   ref: string,
   processName: "reflect" | "distill" | "consolidate",
@@ -59,7 +64,35 @@ export function shouldSkipRef(
   const parsed = parseRefInput(ref);
   const allowed = process?.allowedTypes ?? DEFAULT_ALLOWED_TYPES[processName];
   if (!allowed.includes(parsed.type)) return { skip: true, reason: "type-filter" };
+
+  // R12: reflect only — raw wiki-ingest snapshots are type `knowledge`, so
+  // allowedTypes alone can't exclude them (distill/consolidate are memory-only).
+  if (processName === "reflect") {
+    const excludePrefixes = strategy.processes?.reflect?.excludeRefPrefixes;
+    if (excludePrefixes && excludePrefixes.length > 0) {
+      const conceptId = conceptIdFromTypeName(parsed.type, parsed.name);
+      const excluded = excludePrefixes.some((prefix) => {
+        const stripped = stripBundlePrefix(prefix);
+        return conceptId === stripped || conceptId.startsWith(`${stripped}/`);
+      });
+      if (excluded) return { skip: true, reason: "exclude-filter" };
+    }
+  }
+
   return { skip: false, reason: "" };
+}
+
+const REF_SCOPED_PROCESSES = new Set(["reflect", "distill", "consolidate"]);
+
+/** How many refs a ref-scoped process would act on (`undefined` for any other process). */
+export function eligibleRefCount(
+  refs: readonly { ref: string }[],
+  process: string,
+  strategy: ImproveProfileConfig,
+): number | undefined {
+  if (!REF_SCOPED_PROCESSES.has(process)) return undefined;
+  const name = process as "reflect" | "distill" | "consolidate";
+  return refs.filter((entry) => !shouldSkipRef(entry.ref, name, strategy).skip).length;
 }
 
 export function isStrategyFilteredForAllPasses(ref: string, strategy: ImproveProfileConfig): boolean {
@@ -70,7 +103,6 @@ const BUILTIN_STRATEGIES: Record<string, Record<string, unknown>> = {
   default: defaultStrategy,
   quick,
   thorough,
-  "graph-refresh": graphRefresh,
   consolidate,
   catchup,
   "reflect-distill": reflectDistill,
@@ -84,6 +116,32 @@ if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))
 export function resolveImproveStrategy(name: string | undefined, config: AkmConfig): SelectedStrategy {
   const selectedName = name ?? config.defaults?.improveStrategy ?? "default";
   const userStrategies = config.improve?.strategies ?? {};
+  // graph-refresh named a specific, common retirement — refuse it
+  // unconditionally, even when `improve.strategies["graph-refresh"]` still
+  // has an override block from when it customized the (now-deleted) built-in
+  // strategy of the same name. That override is a partial patch (e.g. just
+  // `processes.graphExtraction.mode`), not a full strategy definition —
+  // falling through to the generic "resolve as a user strategy" path below
+  // would silently merge it onto `default` and run a full, unplanned improve
+  // pass instead of refusing. `akm migrate apply` drops the leftover block
+  // (src/core/config/config.ts, normalizeConfigFile) since it can never
+  // apply again.
+  if (selectedName === "graph-refresh") {
+    const hasLeftoverOverride = Boolean(userStrategies["graph-refresh"]);
+    throw new ConfigError(
+      `Improve strategy "graph-refresh" was retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction it ran.` +
+        (hasLeftoverOverride
+          ? ' Your config still has a leftover `improve.strategies["graph-refresh"]` override for it — `akm migrate apply` removes it.'
+          : ""),
+      "UNKNOWN_IMPROVE_STRATEGY",
+      // Override CONFIG_HINTS.UNKNOWN_IMPROVE_STRATEGY (src/core/errors.ts):
+      // its "listed strategy names" phrase does not apply here (this message
+      // names no strategies), and its "define it under improve.strategies"
+      // suggestion is actively wrong — that is exactly the leftover-override
+      // shape this refusal exists to reject, not a way around it.
+      "Choose a different strategy. `graph-refresh` cannot be redefined under `improve.strategies` — it always refuses.",
+    );
+  }
   if (!(selectedName in BUILTIN_STRATEGIES) && !userStrategies[selectedName]) {
     const valid = [...new Set([...Object.keys(BUILTIN_STRATEGIES), ...Object.keys(userStrategies)])].sort();
     throw new ConfigError(
@@ -133,6 +191,21 @@ export interface EngineUnavailableProcess {
   engine?: string;
   model?: string;
   contextLength?: number;
+}
+
+/**
+ * R17 — one `--require-engines` reachability probe outcome, recorded on the
+ * improve run result so a passing (but slow or flaky) probe leaves a trace
+ * instead of vanishing the moment the run proceeds. Built in
+ * `improve-cli.ts`'s `assertRequiredEnginesReachable` from the same
+ * `RequiredEngineTarget` list the unreachable-abort path already computes.
+ */
+export interface EngineProbeOutcome {
+  process: EngineUnavailableProcessName;
+  engine: string;
+  endpoint: string;
+  reachable: boolean;
+  latencyMs: number;
 }
 
 /** Complete immutable process behavior for one improve invocation. */
@@ -231,7 +304,7 @@ export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): Proces
   return rows;
 }
 
-function cloneAndFreeze<T>(value: T): Readonly<T> {
+export function cloneAndFreeze<T>(value: T): Readonly<T> {
   const clone = structuredClone(value);
   const freeze = (item: unknown): void => {
     if (typeof item !== "object" || item === null || Object.isFrozen(item)) return;

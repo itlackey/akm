@@ -133,8 +133,7 @@ function formatAlreadyPreserved(inlineRefs: InlineRefMention[]): string {
 
 /**
  * Delimiters that fence the untrusted session transcript in the extract prompt.
- * Mirrors the `=== ASSET N ===` convention (`graph-extract.ts`): everything
- * between the markers is DATA to analyze, never instructions to obey. The
+ * Everything between the markers is DATA to analyze, never instructions to obey. The
  * transcript is external, attacker-influenceable content, so an explicit,
  * greppable boundary defuses prompt-injection that tries to pose as a command.
  */

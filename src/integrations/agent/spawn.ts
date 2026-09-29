@@ -52,7 +52,13 @@ import type { AgentParseMode, AgentProfile, AgentStdioMode } from "./profiles";
  * current asset (empty diff) or differs only cosmetically (whitespace
  * reflow, code-fence language hints, YAML scalar re-folding). Not an LLM
  * fault and not a queue-worthy proposal — routed to the `reflect-skipped`
- * action bucket like `unsupported_type`. */
+ * action bucket like `unsupported_type`.
+ *
+ * Note on `quality_rejected`: the LLM-as-judge quality gate rejected an
+ * otherwise well-formed, well-parsed proposal. Previously emitted as
+ * `parse_error`, which was false (the output parsed fine) and caused the
+ * judge's rejection text to be injected into later reflect prompts as
+ * learned "Avoid These Patterns" content, poisoning subsequent candidates. */
 export type AgentFailureReason =
   | "timeout"
   | "spawn_failed"
@@ -65,6 +71,7 @@ export type AgentFailureReason =
   | "content_policy_reject"
   | "unsupported_type"
   | "no_change"
+  | "quality_rejected"
   // Cooperative cancellation via RunAgentOptions.signal (P0.5 seam for the
   // workflow scheduler's budget preemption). Distinct from "timeout" so
   // callers can tell a budget/user abort from a wall-clock expiry.

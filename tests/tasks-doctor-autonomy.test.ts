@@ -69,7 +69,6 @@ describe("tasks doctor autonomy reporting", () => {
               distill: { enabled: false },
               consolidate: { enabled: true, contradictionDetection: { enabled: true } },
               memoryInference: { enabled: false },
-              graphExtraction: { enabled: false },
               extract: { enabled: false },
               validation: { enabled: false },
               triage: { enabled: false },

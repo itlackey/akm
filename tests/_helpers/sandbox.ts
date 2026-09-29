@@ -363,6 +363,8 @@ export interface IsolatedAkmStorage {
   readonly sessionLogsDir: string;
   /** Isolated Claude plugins root (`AKM_CLAUDE_PLUGINS_DIR`), empty by default. */
   readonly claudePluginsDir: string;
+  /** Isolated OpenCode cache root (`AKM_OPENCODE_CACHE_DIR`), empty by default. */
+  readonly opencodeCacheDir: string;
   /** The single per-call temp root that contains every dir above. */
   readonly root: string;
   /** Restore every overridden env var and remove the temp root. Idempotent. */
@@ -421,6 +423,9 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
   const claudePluginsDir = path.join(root, "claude-plugins");
   fs.mkdirSync(claudePluginsDir, { recursive: true });
 
+  const opencodeCacheDir = path.join(root, "opencode-cache");
+  fs.mkdirSync(opencodeCacheDir, { recursive: true });
+
   const env: Record<string, string> = {
     AKM_BUNDLE_DIR: stashDir,
     XDG_DATA_HOME: dataDir,
@@ -435,6 +440,10 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     // empty fixture dir means "no plugin installed" instead of scanning the
     // host's real `~/.claude/plugins` cache.
     AKM_CLAUDE_PLUGINS_DIR: claudePluginsDir,
+    // Same reasoning for the `opencode-plugin-version` advisory: an empty
+    // fixture dir means "no OpenCode plugin installed" instead of reading
+    // the host's real `~/.cache/opencode` package cache.
+    AKM_OPENCODE_CACHE_DIR: opencodeCacheDir,
   };
 
   // Snapshot + apply env (managed defaults first, then caller overrides so they
@@ -462,7 +471,18 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     }
   };
 
-  return { stashDir, dataDir, cacheDir, configDir, stateDir, sessionLogsDir, claudePluginsDir, root, cleanup };
+  return {
+    stashDir,
+    dataDir,
+    cacheDir,
+    configDir,
+    stateDir,
+    sessionLogsDir,
+    claudePluginsDir,
+    opencodeCacheDir,
+    root,
+    cleanup,
+  };
 }
 
 // ── Config writer ────────────────────────────────────────────────────────────

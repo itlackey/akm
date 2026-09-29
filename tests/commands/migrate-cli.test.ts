@@ -38,9 +38,14 @@ function capture(): { logs: string[]; errs: string[]; restore: () => void } {
   initOutputMode(["--format", "json"]);
   const logs: string[] = [];
   const errs: string[] = [];
-  const log = spyOn(console, "log").mockImplementation((...parts: unknown[]) => {
-    logs.push(parts.join(" "));
-  });
+  // stdout is captured at the stream, exactly like stderr below: result
+  // documents go through `writeStdout` (src/output/stdout.ts), not
+  // `console.log`, because Bun's `console.log` truncates a payload larger than
+  // the pipe buffer at 64 KiB.
+  const log = spyOn(process.stdout, "write").mockImplementation(((chunk: unknown) => {
+    logs.push(String(chunk));
+    return true;
+  }) as never);
   const err = spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
     errs.push(String(chunk));
     return true;

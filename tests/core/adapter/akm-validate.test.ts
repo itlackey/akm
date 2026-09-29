@@ -183,7 +183,11 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     expect(diags.find((d) => d.issue === "invalid-task-yaml")).toBeUndefined();
   });
 
-  test("a task with a non-boolean schedule[].enabled is flagged", async () => {
+  // The runtime reads only task source v4 (#987): what `akm migrate apply`
+  // rewrites — a retired schedule[].enabled, a v2/v3 document — is flagged
+  // naming that command. The migrator reports any shape it cannot convert
+  // itself (tests/tasks/migrate-v2-to-v3.test.ts).
+  test("a task with source-owned schedule[].enabled is flagged naming `akm migrate apply`", async () => {
     const ctx = overlayCtx(ROOT, {});
     const diags = await akmAdapter.validate(
       component({ root: ROOT }),
@@ -196,7 +200,8 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
       ctx,
     );
     const hit = diags.find((d) => d.issue === "invalid-task-yaml");
-    expect(hit?.detail).toMatch(/schedule.*enabled.*boolean/i);
+    expect(hit?.detail).toContain("schedule[].enabled");
+    expect(hit?.detail).toContain("akm migrate apply");
   });
 
   test("a task omitting `version` is flagged", async () => {
@@ -210,39 +215,14 @@ describe("akm adapter — validate fires each type's positive finding (§6)", ()
     expect(hit?.detail).toMatch(/version.*required.*4/i);
   });
 
-  test("a v3 task is flagged naming the reason it needs a human decision (row B-14)", async () => {
+  test.each([
+    ["a v3 task", "version: 3\nrun: echo hi\nschedule: '@daily'\n"],
+    ["a v2 task", "version: 2\nschedule: '@daily'\ncommand: [echo, hi]\n"],
+  ])("%s is flagged naming `akm migrate apply`", async (_label, yaml) => {
     const ctx = overlayCtx(ROOT, {});
-    const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
-      [change("tasks/legacy-v3.yml", "version: 3\nrun: echo hi\nschedule: '@daily'\n")],
-      ctx,
-    );
+    const diags = await akmAdapter.validate(component({ root: ROOT }), [change("tasks/legacy.yml", yaml)], ctx);
     const hit = diags.find((d) => d.issue === "invalid-task-yaml");
-    expect(hit?.detail).toContain("needs a human decision");
-  });
-
-  // A migratable v2 document (unlike the v3 case above) is auto-read through
-  // the in-memory v2->v3->v4 shim now, so it no longer surfaces as
-  // `invalid-task-yaml` here — this fixture uses an argv-array `command:`
-  // (task-to-v3.ts's `argv-array-has-no-portable-shell-string`), which the
-  // shim's deterministic planner genuinely cannot convert, so it still
-  // fires, naming that reason (issue #869). The reason code alone only names
-  // a cause, not a remedy — issue #902 requires the detail to also say
-  // manual conversion is required and what to change (v2 array `command:` ->
-  // v4 `run:` string + `shell:`), so both the stable reason code and that
-  // actionable text must appear.
-  test("a v2 task the migration planner cannot convert is flagged naming the reason and the remedy it needs a human decision for (row B-15)", async () => {
-    const ctx = overlayCtx(ROOT, {});
-    const diags = await akmAdapter.validate(
-      component({ root: ROOT }),
-      [change("tasks/legacy.yml", "version: 2\nschedule: '@daily'\ncommand: [echo, hi]\n")],
-      ctx,
-    );
-    const hit = diags.find((d) => d.issue === "invalid-task-yaml");
-    expect(hit?.detail).toContain("argv-array-has-no-portable-shell-string");
-    expect(hit?.detail).toMatch(/manual conversion/i);
-    expect(hit?.detail).toContain("run:");
-    expect(hit?.detail).toContain("shell:");
+    expect(hit?.detail).toContain("akm migrate apply");
   });
 
   test("dangerous-env-key — a dangerous key name in an env file (env dangerous-key scan)", async () => {

@@ -123,6 +123,24 @@ describe("akmTaskAdapter.looksLikeRoot() — a version: 4 root (akm-task-adapter
     if (!akmTaskAdapter.looksLikeRoot) throw new Error("akmTaskAdapter.looksLikeRoot must be defined");
     expect(akmTaskAdapter.looksLikeRoot(root)).toBe(true);
   });
+
+  // The runtime reads only v4 (#987), but a root of v2/v3 task files is still
+  // an akm-task root: `akm migrate apply` must find those files to convert
+  // them, and `akm task sync` must report them rather than lose their rows.
+  test.each([
+    ["version: 2", "version: 2\nschedule: '@daily'\ncommand: /bin/echo ok\n"],
+    ["version: 3", "version: 3\nrun: echo ok\nakm:\n  schedule: '@daily'\n"],
+  ])("a directory holding only a %s task file is detected as an akm-task root", (_label, yaml) => {
+    const root = tmpDir("akm-task-adapter-legacy-root-");
+    writeFile(path.join(root, "weekly.yml"), yaml);
+    expect(akmTaskAdapter.looksLikeRoot?.(root)).toBe(true);
+  });
+
+  test("YAML that declares a version but no task target is not a task root", () => {
+    const root = tmpDir("akm-task-adapter-compose-root-");
+    writeFile(path.join(root, "docker-compose.yml"), "version: 3\nservices:\n  web:\n    image: nginx\n");
+    expect(akmTaskAdapter.looksLikeRoot?.(root)).toBe(false);
+  });
 });
 
 // ── akm-metadata.ts:242 — foldRecognizedMetadata (B-37) ─────────────────────

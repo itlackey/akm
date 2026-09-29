@@ -22,7 +22,7 @@
  * The projection is DELIBERATELY LOSSY relative to the parsed
  * `TaskSourceV4Document` — this is not a bug this file should paper over:
  *
- *   - per-schedule-binding `enabled` is NOT projected into `akm.enabled`
+ *   - host-local activation has no task-source projection
  *     (D2-N5) — it is carried separately to the scheduler seam, which is
  *     Lane C's `scheduler-sync.ts` edit, not this function.
  *   - `inputs` (the document's typed input declarations) is NOT projected
@@ -106,7 +106,7 @@ const MANIFEST_FIXTURES = loadManifestFixtures();
 /**
  * Hand-derived from each fixture's YAML against §3.5's projection table —
  * NOT copied from manifest.json's own "expected" block, which pins the RAW
- * task-source-v4 PARSE shape (schedule[].enabled, schedule[].inputs,
+ * task-source-v4 PARSE shape (schedule[].inputs,
  * inputs:, target.uses nesting) for a DIFFERENT consumer
  * (tests/tasks/source-v4.test.ts's grammar assertions). This table pins the
  * PROJECTED `PreparableTaskDocument` shape instead, which deliberately
@@ -315,16 +315,13 @@ describe("projectTaskSourceV4 — every tests/fixtures/execution-contracts/tasks
     expect((projected.akm as Record<string, unknown> | undefined)?.inputs).toBeUndefined();
   });
 
-  test("per-binding enabled: false is NOT projected into akm.enabled — v3's ONE document-level akm.enabled has no analogue here (D2-N5)", () => {
+  test("host-local activation is absent from the projected source document", () => {
     const fixture = MANIFEST_FIXTURES.find((entry) => entry.id === "schedule-list-multiple");
-    if (!fixture)
-      throw new Error("fixture 'schedule-list-multiple' must exist — schedule[1].enabled is false in its source YAML");
+    if (!fixture) throw new Error("fixture 'schedule-list-multiple' must exist");
     const { projected } = loadCase(fixture);
     expect((projected.akm as Record<string, unknown> | undefined)?.enabled).toBeUndefined();
-    // The strict {cron, source, ordinal}-only equality above (the
-    // "projects schedule[]" test) already proves no schedule ENTRY carries
-    // `enabled`; this asserts the OTHER place v3 readers might look for it
-    // (the document-level akm.enabled v3 itself uses) is equally absent.
+    // The strict {cron, source, ordinal}-only equality above proves source
+    // projection contains schedule syntax, never local activation state.
   });
 
   test("never throws for any fixture the task source v4 parser accepts (manifest.json's own invariant)", () => {
@@ -352,7 +349,7 @@ describe("projectTaskSourceV4 — purity (spec §3.5: no YAML is fabricated, not
       name: "hand-built",
       target: { kind: "uses", uses: { kind: "command", ref: "commands/review" } },
       execution: { timeout: 5000 },
-      schedule: [{ cron: "0 0 * * *", enabled: true, inputs: {}, source: "schedule", ordinal: 0 }],
+      schedule: [{ cron: "0 0 * * *", inputs: {}, source: "schedule", ordinal: 0 }],
       manualOnly: false,
       source: { path: "/synthetic/hand-built.yml" },
     };

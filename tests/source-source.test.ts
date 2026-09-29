@@ -208,6 +208,20 @@ describe("resolveSourceEntries", () => {
     }
   });
 
+  test("a symlink spelling cannot index a disabled configured bundle", () => {
+    const alias = `${stashDir}-disabled-alias`;
+    try {
+      fs.symlinkSync(stashDir, alias, "dir");
+      saveConfig({
+        semanticSearchMode: "off",
+        bundles: { dormant: { path: alias, enabled: false } },
+      });
+      expect(() => resolveSourceEntries()).toThrow(/disabled.*dormant/i);
+    } finally {
+      fs.rmSync(alias, { force: true });
+    }
+  });
+
   test("keeps an explicit stash override ahead of env and default bundle", () => {
     const configuredDefault = fs.mkdtempSync(path.join(os.tmpdir(), "akm-configured-default-"));
     const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-explicit-override-"));
@@ -369,10 +383,7 @@ describe("isEditable", () => {
       bundleId: "stash",
       conceptId: "knowledge/guide",
       score: 1,
-      query: "guide",
-      rankingMode: "fts",
       defaultStashDir: stashDir,
-      allSourceDirs: sources.map((source) => source.path),
       sources,
       config: { semanticSearchMode: "off" },
     });
@@ -463,10 +474,7 @@ describe("isEditable", () => {
         bundleId: "team",
         conceptId: "knowledge/guide",
         score: 1,
-        query: "guide",
-        rankingMode: "fts",
         defaultStashDir: stashDir,
-        allSourceDirs: [stashDir, sourceDir],
         sources: [
           { path: stashDir, writable: true },
           { path: sourceDir, registryId: "team", type: "git", writable: false },
@@ -499,10 +507,7 @@ describe("isEditable", () => {
             bundleId: `bundle-${index + 1}`,
             conceptId: "knowledge/shared",
             score: 1,
-            query: "shared",
-            rankingMode: "fts",
             defaultStashDir: stashDir,
-            allSourceDirs: roots,
             sources: roots.map((sourceRoot, sourceIndex) => ({
               path: sourceRoot,
               registryId: `bundle-${sourceIndex + 1}`,

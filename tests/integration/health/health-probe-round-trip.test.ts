@@ -15,7 +15,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
-import { probeStateDbRoundTrip } from "../../../src/commands/health/metrics";
+import { probeStateDbRoundTrip } from "../../../src/commands/health";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
