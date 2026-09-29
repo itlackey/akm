@@ -593,7 +593,12 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   // durable half).
   const retiredKey = stripBundle(retired.asset.ref);
   const successorKey = stripBundle(successor.asset.ref);
-  if (ctx.retiredThisRun.has(retiredKey) || ctx.retiredThisRun.has(successorKey)) return { failed: false };
+  // Must-fix 1 (third review round): a retire-worthy verdict the same-run
+  // chain guard drops is not a settled "no action" — a LATER run, once the
+  // conflicting retirement has been reviewed, may well mint it. Counted as
+  // failed so its initiator gets no row (real data: night 1 alone judged 177
+  // duplicate verdicts into only 59 proposals — 118 silently abandoned).
+  if (ctx.retiredThisRun.has(retiredKey) || ctx.retiredThisRun.has(successorKey)) return { failed: true };
   ctx.retiredThisRun.add(retiredKey);
   ctx.retiredThisRun.add(successorKey);
 
@@ -633,12 +638,16 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     ctx.retired.push(proposal.id);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
+    return { failed: false };
   } catch (error) {
     ctx.warnings.push(
       `Pair pass: could not mint a retire proposal for ${retired.asset.ref}: ${error instanceof Error ? error.message : String(error)}`,
     );
+    // Must-fix 1: a mint failure is transient (a lock, a disk error, a
+    // validation hiccup) — treated the same as a same-run drop, so no row is
+    // written and the pair is retried next run instead of abandoned.
+    return { failed: true };
   }
-  return { failed: false };
 }
 
 const emptyLabelCounts = (): Record<ConsolidatePairJudgeLabel, number> => ({
@@ -784,7 +793,11 @@ export async function runConsolidatePairPass(
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {
-      if (r?.failed === true) {
+      // Must-fix 3: `concurrentMap` leaves an entry `undefined` for a call an
+      // aborted run never sent at all — `r?.failed === true` reads that as
+      // `undefined === true` (false), so an unsent call counted as a clean
+      // "no action" verdict. Explicit `undefined` check closes that gap.
+      if (r === undefined || r.failed === true) {
         failedJudgments++;
         failedInitiators.add(judgeable[idx]!.initiator.ref);
       }
@@ -822,7 +835,9 @@ export async function runConsolidatePairPass(
     initiators: initiators.length,
     initiatorsBacklog,
     pairsConsidered: candidates.length,
-    pairsJudged: judgeable.length,
+    // Must-fix 3: parsed verdicts only — judgeable.length counted pairs that
+    // were admitted, not pairs a verdict actually came back for.
+    pairsJudged: judgeable.length - failedJudgments,
     labelCounts: ctx.labelCounts,
     retired: ctx.retired,
     failedJudgments,

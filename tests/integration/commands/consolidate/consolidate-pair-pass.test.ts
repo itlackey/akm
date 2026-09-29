@@ -455,6 +455,39 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     // No two pending proposals target the same ref.
     const refs = listProposals(storage.stashDir).map((p) => p.ref);
     expect(new Set(refs).size).toBe(refs.length);
+
+    // Must-fix 1 (third review round): {B,C} was a genuine "duplicate"
+    // verdict, dropped only because the chain guard had already spent B this
+    // run — not a settled "no action". b-note gets no ledger row for it.
+    const stateDb = openStateDatabase();
+    try {
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/b-note", "consolidate-pair")).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
+
+    // Accept the single proposal (a-note archived), then run again: the two
+    // survivors (b-note, c-note) are judged again instead of being treated
+    // as already settled.
+    const { akmProposalAccept } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    await akmProposalAccept({
+      stashDir: storage.stashDir,
+      id: result.retired[0]!,
+      config: makeConfig(storage.stashDir),
+    });
+
+    let chatCalls2 = 0;
+    const result2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (...args) => {
+        chatCalls2++;
+        return fixedChat({ relation: "duplicate", redundant: null })(...args);
+      },
+    });
+    expect(chatCalls2).toBe(1); // the {B,C} pair, judged for the first time
+    expect(result2.retired).toHaveLength(1);
+    const retiredRefs2 = result2.retired.map((id) => getProposal(storage.stashDir, id).ref);
+    expect(retiredRefs2).toEqual(["stash//memories/b-note"]); // b (older of the two survivors) retires into c
   });
 
   test("contradicts: counted, no proposal, no belief write", async () => {
