@@ -407,10 +407,14 @@ one-time cutover guard from the June 2026 ranking-formula change, running on
 every run since. R5's 30-day event window (2026-08-30 to 2026-09-29, 47
 `improve_salience_rank_change` events, 5 refs flagged across 4 runs) found no
 marginal pick over the simpler baseline: 4 of the 5 flagged refs were also
-picked that same run by the signal-delta lane, and the 5th was never
-processed by anything, forgetting-safety included, in the retained history.
-It also protected `asset_salience.rank_score`, which only improve itself ever
-read. Both the per-run comparison and the injection are gone;
+picked that same run by the signal-delta lane, and the 5th has no
+`reflect_invoked`/`distill_invoked` event in the retained history, but that
+run's `improve_runs.plannedRefs` shows it, too, was planned under
+`signal-delta` — just not reflected (a dispatch/budget limit that run, not a
+lane-exclusive pick). All 5 flagged refs were signal-delta picks; zero were
+ever forgetting-safety-only. It also protected `asset_salience.rank_score`,
+which only improve itself ever read. Both the per-run comparison and the
+injection are gone;
 `buildRankChangeReport` survives as the continuity check's comparator, and
 `forgetting-safety` stays a valid `eligibilitySource`/event-type value so old
 proposals and events still decode.
@@ -423,11 +427,19 @@ tombstone (`cleanup.md`) resolves the ref from then on. `purgeGracedArchive`
 deterministically and with no LLM, once at the very start of every
 `akm improve` run — before index bootstrap, before triage. For a git-backed
 bundle it walks `.akm/memory-cleanup/archive/`, and for every tombstone whose
-`retiredAt` is more than `RETIRE_GRACE_DAYS` (30) days old, deletes the
-archived asset file(s) under that tombstone's own directory — never
-`cleanup.md` itself; git history keeps the bytes (D27). A memory-cleanup
-family-prune archive (not a pair-pass retirement) has no `retiredAt` in its
-tombstone at all, so this sweep never touches that older archive class.
+`retiredAt` is more than `RETIRE_GRACE_DAYS` (30) days old AND whose
+directory is entirely git-tracked and clean (one `git ls-files` plus one
+`git status --porcelain -uall` per sweep, not per directory — B1), deletes
+the archived asset file(s) under that tombstone's own directory — never
+`cleanup.md` itself; git history keeps the bytes (D27). `.git` presence
+alone does not prove a retirement was ever committed: `akm proposal accept`
+only commits for a `kind: "git"` write target, and improve's own auto-sync
+only stages the paths that same run wrote, so a directory with even one
+untracked or modified file (the tombstone included) is left whole for a
+later sweep rather than losing the only surviving copy of it. A
+memory-cleanup family-prune archive (not a pair-pass retirement) has no
+`retiredAt` in its tombstone at all, so this sweep never touches that older
+archive class.
 
 Every deleted file is journaled individually
 (`src/core/write-provenance.ts`), the same mechanism the archive move itself

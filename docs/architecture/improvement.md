@@ -284,12 +284,23 @@ the ref going forward. `purgeGracedArchive`
 at the very start of every `akm improve` invocation, deterministic, no LLM,
 before index bootstrap or triage. For a git-backed bundle, it deletes the
 archived asset file(s) — never `cleanup.md` — of every retirement whose
-tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`); git
-history keeps the bytes. Every deleted path is journaled individually, so the
-end-of-run auto-sync commits the removal the same way it commits the archive
-move itself. A bundle with no `.git` of its own has no history to fall back
-on, so its archive is left untouched — `akm health` reports its size and file
-count instead (`memory-cleanup-archive` advisory,
+tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`) AND
+whose archive directory is entirely git-tracked and clean (`git ls-files`
+plus `git status --porcelain -uall`, both checked once per sweep, not once
+per directory). `.git` presence alone does not guarantee a retirement was
+ever committed: `akm proposal accept` only commits for a `kind: "git"` write
+target (`commitWriteTargetBoundary` in `src/core/write-source.ts`), and `akm
+improve`'s own auto-sync only stages the paths that same run wrote — a
+standalone `akm proposal accept` call, or any accept on a `kind:
+"filesystem"` source that merely happens to have a `.git` directory on disk,
+can leave archived bytes sitting on disk with no commit behind them at all.
+A directory with even one untracked or modified file (the tombstone
+included) is left whole for a later sweep, so the purge only ever removes
+bytes git can already recover. Every deleted path is journaled individually,
+so the end-of-run auto-sync commits the removal the same way it commits the
+archive move itself. A bundle with no `.git` of its own has no history to
+fall back on, so its archive is left untouched — `akm health` reports its
+size and file count instead (`memory-cleanup-archive` advisory,
 `src/commands/health/archive-usage.ts`).
 
 ### Session extraction

@@ -132,7 +132,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   of every `akm improve` invocation, ahead of index bootstrap and triage.
   For a git-backed bundle, deletes the archived asset file(s) of a
   retirement — never its `cleanup.md` tombstone — once `retiredAt` is more
-  than 30 days old (`RETIRE_GRACE_DAYS`); git history keeps the bytes. A
+  than 30 days old (`RETIRE_GRACE_DAYS`) AND every file under that
+  retirement's archive directory is git-tracked and clean (`git ls-files`
+  plus `git status --porcelain -uall`, checked once per sweep); git history
+  keeps the bytes. `.git` presence alone is not enough: `proposal accept`
+  only commits for a `kind: "git"` write target, and improve's own
+  auto-sync stages only the paths its own run wrote, so a filesystem-kind
+  bundle can carry archived retirements that were never committed — the
+  tracked-and-clean check is what keeps the sweep from deleting the only
+  surviving copy of those. A directory with even one untracked or modified
+  file (tombstone included) is left whole for a later sweep. A
   memory-cleanup family-prune archive carries no `retiredAt`, so this sweep
   never touches that older archive class. Every deleted file is journaled
   individually, so the end-of-run auto-sync commits the removal the same
@@ -142,7 +151,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`memory-cleanup-archive` advisory), silent whenever the bundle is
   git-backed or the archive is empty or absent.
   (`src/commands/improve/memory/memory-improve.ts`,
-  `src/commands/improve/improve.ts`, `src/commands/health/archive-usage.ts`)
+  `src/sources/providers/git-stash.ts`, `src/commands/improve/improve.ts`,
+  `src/commands/health/archive-usage.ts`)
 
 ### Removed
 
@@ -157,9 +167,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the 5 flagged refs were also picked that same run by signal-delta
   (adjacent event ids/timestamps, 2–26 minutes after the rank-change
   event), and the 5th (`workflows/create-github-issues-from-spec`, flagged
-  09-05) has no `reflect_invoked` or `distill_invoked` event anywhere in
-  the retained history — it was flagged but never actually processed by
-  anything, forgetting-safety included. It also protected
+  09-05) has no `reflect_invoked` or `distill_invoked` event in the
+  retained history, but that run's `improve_runs.plannedRefs` shows it,
+  too, was planned under `signal-delta` — just not reflected (a
+  dispatch/budget limit that run, not a lane-exclusive pick). All 5
+  flagged refs were signal-delta picks; zero were forgetting-safety-only.
+  It also protected
   `asset_salience.rank_score`, which only improve itself ever read — a rank
   drop could not hide anything from search. `buildRankChangeReport`
   survives as the new retirement continuity check's comparator (see
