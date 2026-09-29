@@ -17,26 +17,16 @@ import type { SearchSource } from "../search/search-source";
  * identical; no branch, order, or lifecycle change.
  *
  * The memory-inference pass additionally accepts a `reEnrich` flag, an
- * `onProgress` callback, and a per-pass `options` bag. Those are modelled by
- * extending this base type via the generic parameters below.
+ * `onProgress` callback, and a per-pass `options` bag — modelled directly on
+ * `MemoryInferencePassContext` (memory-inference.ts). Those three fields used
+ * to be factored out into a generic `EnrichmentPassContext<TProgress,
+ * TOptions>` shared with the graph-extraction pass; with that pass retired
+ * (0.9.17-alpha.9) memory-inference is the only user, so the generic
+ * indirection was removed as unneeded abstraction for a single caller.
  */
 export interface PassContext {
   config: AkmConfig;
   sources: SearchSource[];
   signal?: AbortSignal;
   db?: Database;
-}
-
-/**
- * {@link PassContext} extended with the enrichment / progress / options fields
- * the memory-inference pass needs.
- *
- * @typeParam TProgress - the per-pass progress event shape.
- * @typeParam TOptions  - the per-pass options bag.
- */
-export interface EnrichmentPassContext<TProgress, TOptions> extends PassContext {
-  /** When true, re-run enrichment even for entries with a valid cache hit. */
-  reEnrich?: boolean;
-  onProgress?: (event: TProgress) => void;
-  options?: TOptions;
 }

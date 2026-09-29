@@ -888,14 +888,6 @@ export interface AkmImproveResult {
   reflectsWithErrorContext?: number;
   memoryInference?: MemoryInferenceResult;
   /**
-   * Retired in 0.9.17-alpha.9 along with the LLM entity-graph extraction that
-   * wrote it. Kept, loosely typed, only so this type still matches a
-   * historical `improve_runs` envelope an older release wrote —
-   * `decodeImproveResult` still accepts the field (AGENTS.md "Reading
-   * persisted data"). Nothing constructs or reads it any more.
-   */
-  graphExtraction?: Record<string, unknown>;
-  /**
    * Wall-clock duration of the memory-inference pass (ms). Surfaced at the
    * top level (not inside `memoryInference`) because both
    * `health.ts#summarizeImproveRuns` (wallTime.byPhase aggregator) and the
@@ -903,11 +895,6 @@ export interface AkmImproveResult {
    * Omitted entirely when the pass did not run.
    */
   memoryInferenceDurationMs?: number;
-  /**
-   * Retired in 0.9.17-alpha.9 with `graphExtraction` above — same read-compat
-   * reason, nothing writes it any more.
-   */
-  graphExtractionDurationMs?: number;
   /**
    * R6: wall-clock duration of the start-of-run implicit reindex (ms), when
    * `ensureIndex` actually ran one — the previous no-op call discarded this

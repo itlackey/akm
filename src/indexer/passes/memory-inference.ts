@@ -61,7 +61,7 @@ import type { StructuredLlmRunner } from "../../llm/structured-call";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
-import type { EnrichmentPassContext } from "./pass-context";
+import type { PassContext } from "./pass-context";
 
 /**
  * Frontmatter keys this pass cares about. Constants so a future rename only
@@ -157,10 +157,14 @@ export interface MemoryInferenceProgress {
 }
 
 /** Parameter object for {@link runMemoryInferencePass}. */
-export type MemoryInferencePassContext = EnrichmentPassContext<MemoryInferenceProgress, MemoryInferencePassOptions> & {
+export interface MemoryInferencePassContext extends PassContext {
+  /** When true, re-run enrichment even for entries with a valid cache hit. */
+  reEnrich?: boolean;
+  onProgress?: (event: MemoryInferenceProgress) => void;
+  options?: MemoryInferencePassOptions;
   /** Preferred invocation-owned symbolic runner. Omit only for standalone index passes. */
   llmRunner?: StructuredLlmRunner | null;
-};
+}
 
 interface MemoryRecord {
   /** Absolute path on disk. */
