@@ -369,6 +369,16 @@ interface PairPassContext {
   retired: string[];
   warnings: string[];
   chat?: PairJudgeChat;
+  /**
+   * ConceptIds (stripped of bundle) already given a retire decision earlier
+   * in THIS run — by an earlier pair, not a prior run (`pendingRetireRefs`
+   * covers that). One initiator can appear in more than one candidate pair
+   * (e.g. it is the nearest neighbour of two others); without this, two
+   * pairs judged concurrently could each decide to retire the same asset
+   * and mint two proposals for it. Checked and updated synchronously
+   * (no `await` in between), so it is race-safe under `concurrentMap`.
+   */
+  retiredThisRun: Set<string>;
 }
 
 /**
@@ -421,6 +431,13 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     if (fs.existsSync(parentPath)) return { failed: false }; // never retire a .derived memory whose parent still exists
   }
+  // One initiator can be the nearest neighbour of more than one other pair;
+  // an earlier pair in this same run may have already decided to retire
+  // this exact asset. Synchronous check-then-add — safe under concurrentMap
+  // (no await between them, so no other worker can interleave).
+  const retiredKey = stripBundle(retired.asset.ref);
+  if (ctx.retiredThisRun.has(retiredKey)) return { failed: false };
+  ctx.retiredThisRun.add(retiredKey);
 
   const reason = tombstoneReason(verdict.relation);
   const retirement: RetirementMetadata = {
@@ -556,6 +573,7 @@ export async function runConsolidatePairPass(
     perInitiatorJudged: new Set(),
     retired: [],
     warnings,
+    retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
   };
   const results = await concurrentMap(

@@ -267,6 +267,37 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   });
 
+  test("never mints two retire proposals for the same asset in one run, even when it loses two different pairs", async () => {
+    // A is the nearest neighbour of both B and C, and all three are mutually
+    // close enough to pair up — three candidate pairs total: {A,B}, {B,C},
+    // {A,C}. A "duplicate" judge on every pair would naively retire A twice
+    // (once via each of its two pairs) without the in-run dedup guard.
+    const aPath = writeAsset("memories/a-note.md", "description: a\ncreatedAt: 2026-01-01T00:00:00.000Z");
+    const bPath = writeAsset("memories/b-note.md", "description: b\ncreatedAt: 2026-02-01T00:00:00.000Z");
+    const cPath = writeAsset("memories/c-note.md", "description: c\ncreatedAt: 2026-03-01T00:00:00.000Z");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "a-note", aPath, 0);
+      indexAsset(db, "memory", "b-note", bPath, 3); // cosine(A,B) = cos(3deg), highest -> judged first
+      indexAsset(db, "memory", "c-note", cPath, 7); // cosine(A,C) = cos(7deg), lowest -> judged last
+    } finally {
+      closeDatabase(db);
+    }
+
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+    });
+
+    expect(result.labelCounts.duplicate).toBe(3); // all three pairs were judged
+    expect(result.retired).toHaveLength(2); // but only two distinct assets were actually retired
+    const retiredRefs = result.retired.map((id) => getProposal(storage.stashDir, id).ref).sort();
+    expect(retiredRefs).toEqual(["stash//memories/a-note", "stash//memories/b-note"]);
+    // No two pending proposals target the same ref.
+    const refs = listProposals(storage.stashDir).map((p) => p.ref);
+    expect(new Set(refs).size).toBe(refs.length);
+  });
+
   test("contradicts: counted, no proposal, no belief write", async () => {
     const oldPath = writeAsset("memories/claim-a.md", "description: claim a\ncreatedAt: 2026-01-01T00:00:00.000Z");
     writeAsset("memories/claim-b.md", "description: claim b\ncreatedAt: 2026-06-01T00:00:00.000Z");
