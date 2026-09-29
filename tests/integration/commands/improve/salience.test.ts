@@ -704,9 +704,8 @@ describe("plasticity: recordNoOp / resetConsecutiveNoOps / getConsecutiveNoOps",
   test("recordNoOp on a ref with no salience row leaves the table unchanged (no synthetic rank_score=0 row)", () => {
     // Invariant: recordNoOp must never fabricate a rank_score=0 row. If salience
     // persistence's best-effort try/catch swallowed an error, the asset will have
-    // no salience row. A synthetic INSERT would produce a false bottom-of-stash
-    // position that buildRankChangeReport could misread as a catastrophic-forgetting
-    // signal. The UPDATE-only path avoids this by doing nothing when changes === 0.
+    // no salience row, and a synthetic INSERT would fabricate one with nothing
+    // behind it. The UPDATE-only path avoids this by doing nothing when changes === 0.
     const { db, tmpDir } = openTestStateDb();
     try {
       recordNoOp(db, "skills/absent");

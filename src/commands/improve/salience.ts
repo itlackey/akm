@@ -123,7 +123,6 @@ export function computeSalience(inputs: SalienceInputs): SalienceVector {
 }
 
 export {
-  getAllRankScores,
   getAssetSalience,
   getConsecutiveNoOps,
   recordNoOp,
@@ -157,7 +156,12 @@ export interface RankChangeReport {
   allChanges: RankChangeEntry[];
 }
 
-/** Forgetting safety: compare 1-indexed rank positions between two rankings. */
+/**
+ * Compare 1-indexed rank positions between two rankings, flagging entries
+ * that fell from the old top `oldTopN` to below `forgettingThreshold`. Used
+ * by the retirement continuity check (`consolidate/continuity-check.ts`) to
+ * compare a retired asset's search rank against its successor's.
+ */
 export function buildRankChangeReport(
   oldRanks: Map<string, number>,
   newRanks: Map<string, number>,
