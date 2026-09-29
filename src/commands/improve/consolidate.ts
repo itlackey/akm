@@ -1039,6 +1039,12 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
   } catch (e) {
     return skip("promote_read_failed", `Promote: could not read ${op.ref}: ${String(e)}`);
   }
+  // O1 hash nit: the RAW body, before sanitization — accept re-reads the
+  // source with a plain fs.readFileSync and never re-sanitizes, so hashing
+  // anything else here would compare two different representations of the
+  // same unedited memory and report a false "changed since mint" (measured:
+  // 3 of 767 real memories sanitize to different bytes than their raw body).
+  const sourceRawBodyHash = contentHash(memoryContent, "body");
   const sanitized = sanitizeMergedContent(memoryContent);
   if (!sanitized.ok) {
     return skip(
@@ -1119,10 +1125,10 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
       // (and its .derived twin) so promotion no longer leaves a duplicate.
       promotionSource: op.ref,
       // B3: recorded so accept can refuse to archive a source that was
-      // edited after this promotion was queued — bodyHash is this same
-      // memoryContent's body hash, already computed above for the
-      // knowledge-dedup check.
-      promotionSourceHash: bodyHash,
+      // edited after this promotion was queued — the RAW body hash (see
+      // sourceRawBodyHash's own comment above), not `bodyHash`, which is the
+      // sanitized-for-knowledge representation accept never re-derives.
+      promotionSourceHash: sourceRawBodyHash,
     });
     ctx.promoted.push(proposal.id);
     ctx.promotedSourceRefs.add(op.ref);
