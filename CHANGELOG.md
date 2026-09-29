@@ -6,49 +6,53 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`scripts/test-unit.sh`/`test-integration.sh` shards fail fast and name
+  themselves on a hang.** Each process shard now runs under its own process
+  group (`exec setsid`) with a 600s ceiling — well above the ~3-minute CI
+  norm for a full shard. A shard still alive past it is killed by process
+  group (so a child process it spawned dies too, not just `bun test`
+  itself), its log tail is printed so the last test file header shows where
+  it hung, and the script fails with a clear message. Previously a hung
+  shard blocked `wait` forever, so the only thing that ever stopped it was
+  the CI job's own timeout — which kills the whole job and keeps no logs,
+  as happened during the alpha.9 release.
+
 ### Fixed
 
-- **`akm info` could refuse or hang instead of reporting.** It now behaves
-  like a help command: always exit 0 and print a report, in every format
-  (`json`/`text`/`yaml`) and with `--quiet`, whatever else is happening —
-  every other command is unaffected, and still refuses at startup (exit 78,
-  before any side effect) against the same broken config.
-  An invalid or unreadable `config.json` used to abort `info` outright at
-  startup; `assembleInfo` now degrades that to a new top-level `configError`
-  field, falling back to the same defaults a fresh install reports. The
-  CLI's own startup config read (which resolves `--format`/`--detail`
-  defaults before any command runs) is best-effort ONLY for `info` — every
-  other command reads it exactly as before, an unwrapped `loadConfig()` that
-  throws and stops the command before its body ever runs, so `search`,
-  `health`, `proposal list`, and everything else keep refusing up front with
-  no side effect (a lock taken, a database opened read-write, a network
-  call). A fresh install with no bundle directory yet used to throw
-  `STASH_DIR_NOT_FOUND`; `bundleDir` now reports
-  the platform-default location instead, and a bundle that IS configured
-  but doesn't resolve (or whose platform-default fallback ALSO can't
-  resolve, e.g. `HOME` unset) reports the real reason in a new
-  `bundleDirError` field rather than silently falling back with none.
-  Reading index.db opened a writable, schema-touching connection with no
-  time bound worth the name (the shared 30s `busy_timeout`), so a
-  concurrent `akm index`/`akm improve` writer under the DELETE/TRUNCATE
-  journal mode a network filesystem (or `AKM_SQLITE_JOURNAL_MODE`) can
-  select could make `info` wait the full 30s before settling at exit 0 with
-  unexplained zeros — a newer or corrupt index layout already degraded to
-  the same silent zeros, just without a reason. `info` now opens index.db
-  read-only (it never changes the index's schema or journal mode, though
-  SQLite may still create/touch its `-wal`/`-shm` sidecar files as any
-  reader does) with a ~1.5s bound, and reports the reason (locked, a newer
-  layout, or corrupt) in a new `indexStats.unavailable` field. An older
-  index layout is still served as before: as-is, without migrating. Every
-  path resolver `assembleInfo` calls (data/config/cache/state directory,
-  bundle directory) now degrades individually — `getDataDir()` refusing to
-  guess under a leaked `NODE_ENV=test` with no data-dir override is one real
-  example — so one failing lookup no longer blanks fields that resolved
-  fine; `infoCommand` itself still wraps the whole call as a final backstop
-  (a minimal report: `schemaVersion`, `version`, `error`, plus whatever else
-  is cheap and safe) for anything left over. `akm info` also now warns and
-  continues on an unrecognized flag instead of exiting 2, the same
-  tolerance `akm help` already had.
+- **`akm health` silently excluded every improve run recorded before #947
+  added `plan.processes`.** `decodeImproveResult` called
+  `validateProcessRoutingRows` unconditionally, so a `plan` object with no
+  `processes` key — legitimately written by every release before
+  2026-09-09T09:03:19Z — failed decode with "plan.processes must be an
+  array" and dropped the run from `--window-compare`, `--group-by run`, and
+  the HTML/MD reports. On a real owner `state.db`, 11 of 55 improve runs in
+  a 30-day window were affected; all 11 decode cleanly now. `plan.processes`
+  is validated only when present, the same guard already used for
+  `plan.proactive` and the `retrieval` gate (AGENTS.md "Reading persisted
+  data"). Also: a row `akm health` cannot decode — corrupt or otherwise —
+  now logs a warning naming the row id and the decode error, instead of
+  only incrementing `improve.resultRows.skipped.invalid` with no way to
+  tell why.
+- **`akm info` now always reports and exits 0, like a help command.**
+  Whatever else is running, and whatever state the config and databases
+  are in, it prints its report in every format (and with `--quiet`) and
+  names what it could not read:
+  - an invalid or unreadable `config.json` is reported in a new
+    `configError` field. Every other command still refuses at startup
+    (exit 78) before any side effect;
+  - a missing or unresolvable bundle directory is reported in
+    `bundleDirError`, and a fresh install reports the default location;
+  - `index.db` is opened read-only with a bound of about 1.5 s. A
+    concurrent `akm index` or `akm improve` writer (which under the DELETE
+    journal mode could make `info` wait the full 30 s busy timeout), a
+    newer layout, or a corrupt index is reported in
+    `indexStats.unavailable` instead of as unexplained zeros. An older
+    layout is served as-is, never migrated;
+  - each path field degrades on its own, with a last-resort report for
+    anything unexpected;
+  - an unrecognized flag warns instead of exiting 2, as `akm help` does.
 
 ## [0.9.17-alpha.9] - 2026-09-29
 
