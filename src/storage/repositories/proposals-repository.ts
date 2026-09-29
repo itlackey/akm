@@ -248,7 +248,6 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
       intent === null ||
       typeof intent.assetPath !== "string" ||
       intent.assetPath.length === 0 ||
-      (intent.twinPath !== undefined && typeof intent.twinPath !== "string") ||
       typeof intent.backupContent !== "string"
     ) {
       invalidPresentField("retireAcceptIntent");

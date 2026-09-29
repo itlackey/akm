@@ -1636,6 +1636,37 @@ function persistRetireAcceptance(
 }
 
 /**
+ * B2: throws a stale-retire `UsageError` unless the successor still exists
+ * and both sides' recorded body hashes still match their current files — the
+ * durable half of the chain guard. Used for a fresh accept, and (4b, third
+ * review round) to re-check a resumed accept whose intent was recorded but
+ * nothing has moved yet: a separate proposal accepted in between (e.g. this
+ * one's successor itself retired by a B->C accept) can make the decision
+ * stale even though nothing about the retired side's own file changed.
+ */
+function assertRetirementStillFresh(
+  proposalId: string,
+  proposalRef: string,
+  retirement: RetirementMetadata,
+  targetSource: WriteTargetSource,
+  retiredCurrentBytes: Buffer,
+): void {
+  const successorPath = resolveAssetFilePathSafe(targetSource, parseRefInput(retirement.successorRef));
+  const successorBytes = successorPath && fs.existsSync(successorPath) ? fs.readFileSync(successorPath) : undefined;
+  const retiredFresh = contentHash(retiredCurrentBytes, "body") === retirement.retiredContentHash;
+  const successorFresh =
+    successorBytes !== undefined && contentHash(successorBytes, "body") === retirement.successorContentHash;
+  if (!successorBytes || !retiredFresh || !successorFresh) {
+    throw new UsageError(
+      `Retire proposal ${proposalId} is stale — successor ${retirement.successorRef} ` +
+        `${successorBytes === undefined ? "no longer exists" : !successorFresh ? "changed" : `and ${proposalRef} changed`} ` +
+        "since judging; refusing to retire.",
+      "INVALID_FLAG_VALUE",
+    );
+  }
+}
+
+/**
  * Accept a `retire` proposal (0.9.17-alpha.9, the consolidate pair pass): no
  * new content is written. Should-fix 5 (second review round) makes this a
  * three-phase, resume-safe sequence: (1) record intent — `backupContent`
@@ -1644,11 +1675,13 @@ function persistRetireAcceptance(
  * (`archiveCleanupCandidate`), skipping any the tombstone scan shows a prior,
  * crashed attempt already moved; (3) finalize via
  * {@link persistRetireAcceptance}. A `supersedes` judgement writes the
- * supersede edge on the retired (older) side before phase 2, so the archived
- * copy preserves it. A target already gone with no recorded intent (raced
- * with something else) fails cleanly with a `UsageError`, the same
- * clean-error idiom every other staleness check in this file uses — never an
- * unhandled throw.
+ * supersede edge on the retired (older) side AFTER intent is recorded (4a,
+ * third review round — recording it first means a crash before the edge
+ * write can never cause a resume to re-read the file and capture its own
+ * edge into `backupContent`), so the archived copy still preserves it. A
+ * target already gone with no recorded intent (raced with something else)
+ * fails cleanly with a `UsageError`, the same clean-error idiom every other
+ * staleness check in this file uses — never an unhandled throw.
  */
 async function retireProposalWithLease(
   stashDir: string,
@@ -1703,28 +1736,18 @@ async function retireProposalWithLease(
       // createRetireProposal always sets this — a row without one is corrupt, not merely stale.
       throw new Error(`Retire proposal ${proposal.id} has no retirement metadata.`);
     }
-    // B2: refuse a stale retire as a clean error — the successor must still
-    // exist, and BOTH sides' recorded body hashes must still match their
-    // current files. A retire decision was judged against BOTH bodies, so
-    // either one moving under it — the retired side edited, or the successor
-    // edited, archived (by an accepted `supersedes`/`subsumed` proposal
-    // targeting IT) or gone — makes the decision stale, not just an edit to
-    // the retired side. This is the durable half of the chain guard (the
-    // same-run half is `retiredThisRun` in pair-pass.ts).
-    const successorPath = resolveAssetFilePathSafe(target.source, parseRefInput(retirement.successorRef));
-    const successorBytes = successorPath && fs.existsSync(successorPath) ? fs.readFileSync(successorPath) : undefined;
-    const retiredFresh = contentHash(currentBytes, "body") === retirement.retiredContentHash;
-    const successorFresh =
-      successorBytes !== undefined && contentHash(successorBytes, "body") === retirement.successorContentHash;
-    if (!successorBytes || !retiredFresh || !successorFresh) {
-      throw new UsageError(
-        `Retire proposal ${proposal.id} is stale — successor ${retirement.successorRef} ` +
-          `${successorBytes === undefined ? "no longer exists" : !successorFresh ? "changed" : `and ${proposal.ref} changed`} ` +
-          "since judging; refusing to retire.",
-        "INVALID_FLAG_VALUE",
-      );
-    }
+    // B2 (this is the durable half of the chain guard; the same-run half is
+    // `retiredThisRun` in pair-pass.ts):
+    assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, currentBytes);
     assertAkmAssetWrite(target.source);
+    // Phase 1: record intent BEFORE any move, and BEFORE the supersede edge
+    // (4a, third review round) — `backupContent` is `currentBytes`, read
+    // above, before any mutation of this file. Recording first means a crash
+    // between here and the edge write below can never cause a resume to
+    // re-read the file and capture the edge INTO backupContent as if it were
+    // the original.
+    intent = { assetPath, backupContent: currentBytes.toString("utf8") };
+    working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
     if (retirement.judgeLabel === "supersedes") {
       try {
         writeSupersededEdge(assetPath, retirement.successorRef);
@@ -1734,12 +1757,23 @@ async function retireProposalWithLease(
         );
       }
     }
-    const twin = derivedTwinPath(assetPath, ref.type);
-    intent = { assetPath, ...(twin ? { twinPath: twin } : {}), backupContent: currentBytes.toString("utf8") };
-    // Phase 1: record intent BEFORE any move.
-    working = recordRetireAcceptIntent(stashDir, proposal.id, intent, ctx);
   } else {
     assertAkmAssetWrite(target.source);
+    // 4b (third review round): intent was recorded but Phase 2 never moved
+    // anything yet — re-run the B2 freshness check before resuming. A
+    // separate proposal accepted in the meantime (this one's successor
+    // itself retired by a B->C accept) can make the decision stale even
+    // though nothing here changed. Once something has moved, it is too late
+    // to cleanly refuse — Phase 2 below already tolerates a partial move.
+    if (working.retirement && fs.existsSync(intent.assetPath)) {
+      assertRetirementStillFresh(
+        proposal.id,
+        proposal.ref,
+        working.retirement,
+        target.source,
+        fs.readFileSync(intent.assetPath),
+      );
+    }
   }
 
   // Phase 2: move, idempotently — a resumed call skips whichever file a
@@ -1764,11 +1798,16 @@ async function retireProposalWithLease(
       path.join(mutationTarget.source.path, record.auditPath),
     );
   }
-  if (intent.twinPath && !alreadyDone.has(path.resolve(intent.twinPath)) && fs.existsSync(intent.twinPath)) {
-    const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, intent.twinPath);
+  // 4d (third review round): the twin path is re-derived, not carried on the
+  // intent — it is a pure function of assetPath and the ref's type, and the
+  // tombstone scan above (`alreadyDone`) already finds one archived earlier,
+  // so storing it was redundant persisted state.
+  const twinPath = derivedTwinPath(intent.assetPath, ref.type);
+  if (twinPath && !alreadyDone.has(path.resolve(twinPath)) && fs.existsSync(twinPath)) {
+    const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twinPath);
     archiveDirs.push(path.dirname(twinRecord.auditPath));
     paths.push(
-      intent.twinPath,
+      twinPath,
       path.join(mutationTarget.source.path, twinRecord.archivedPath),
       path.join(mutationTarget.source.path, twinRecord.auditPath),
     );
@@ -1927,6 +1966,30 @@ async function unretireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
+    // Must-fix 2 (third review round): "original present, archived copy
+    // missing" is not necessarily our own earlier, crashed revert — once a
+    // purge can delete an archived copy on its own, a LATER, unrelated file
+    // can occupy this same path (a new memory reusing a retired one's name),
+    // and the write step below would overwrite it with the retired asset's
+    // pre-retire bytes. Only the primary has a recorded pre-retire hash
+    // (`retirement.retiredContentHash`) to tell the two apart; resume only
+    // when it matches the file actually sitting there, otherwise refuse
+    // exactly as the conflict case above does.
+    if (originalExists && !archivedExists && path.resolve(originalAbs) === path.resolve(assetPath)) {
+      const expectedHash = proposal.retirement?.retiredContentHash;
+      let currentHash: string | undefined;
+      try {
+        currentHash = contentHash(fs.readFileSync(originalAbs, "utf8"), "body");
+      } catch {
+        currentHash = undefined;
+      }
+      if (!expectedHash || currentHash !== expectedHash) {
+        throw new UsageError(
+          `Cannot revert proposal ${proposal.id}: ${originalRel} exists but its content does not match what was retired (its path may have been reused since); refusing to overwrite it.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+    }
     pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, alreadyDone: originalExists });
   }
   const restoredPaths: string[] = [];
@@ -2039,8 +2102,16 @@ async function revertProposalWithLease(
   }
   const target = prepareWriteTargetForMutation(boundTarget);
   if (!fs.existsSync(assetPath) || contentHash(fs.readFileSync(assetPath)) !== recorded.contentHash) {
+    // Nit (third review round): by-ref resolution skips retire proposals
+    // (should-fix 7), so reverting by ref when a SEPARATE retire proposal
+    // for the same ref exists (pending or already accepted) lands here with
+    // no clue that proposal is the real story — name it when one does.
+    const siblingRetire = listProposalsReadOnly(stashDir, { ref: proposal.ref, includeArchive: true }, ctx).find(
+      (p) => isRetireProposal(p) && (p.status === "pending" || p.status === "accepted"),
+    );
     throw new UsageError(
-      `asset content changed after proposal ${id} was accepted; refusing to clobber the newer content`,
+      `asset content changed after proposal ${id} was accepted; refusing to clobber the newer content` +
+        (siblingRetire ? ` (a retire proposal for this ref exists: ${siblingRetire.id})` : ""),
       "INVALID_FLAG_VALUE",
     );
   }

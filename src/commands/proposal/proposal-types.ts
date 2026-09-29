@@ -153,15 +153,16 @@ export interface RetiredArchiveRecord {
 /**
  * A retire accept's durable intent (should-fix 5), recorded on the still-
  * "pending" proposal BEFORE any file is moved: the exact bytes to preserve
- * as `backupContent` and which files are about to be archived (the twin's
- * path specifically, since once it is actually moved `derivedTwinPath` can
- * no longer find it at its original location to tell a crash recovery "yes,
- * there was one"). A crashed accept resumes from this record instead of
- * re-deriving it from whatever the archive happens to contain.
+ * as `backupContent`. A crashed accept resumes from this record instead of
+ * re-deriving it from whatever the archive happens to contain. No `twinPath`
+ * (4d, third review round, dropped as redundant): the twin, if any, is a
+ * pure function of `assetPath` and the ref's type (`derivedTwinPath`), and
+ * whether it was already archived by an earlier, crashed attempt is exactly
+ * what the tombstone scan (`alreadyArchivedOriginalPaths`) independently
+ * finds — nothing a stored path adds to either.
  */
 export interface RetireAcceptIntent {
   assetPath: string;
-  twinPath?: string;
   backupContent: string;
 }
 

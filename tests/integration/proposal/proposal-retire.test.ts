@@ -351,7 +351,7 @@ describe("akm proposal accept on a retire proposal", () => {
       try {
         upsertProposal(
           db,
-          { ...proposal, retireAcceptIntent: { assetPath: oldPath, twinPath, backupContent } },
+          { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } },
           storage.stashDir,
         );
       } finally {
@@ -401,6 +401,97 @@ describe("akm proposal accept on a retire proposal", () => {
         UsageError,
       );
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    });
+
+    test("a supersedes accept resumed from recorded intent restores edge-free content on revert (4a, third review round)", async () => {
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const original = fs.readFileSync(oldPath, "utf8");
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: oldPath,
+          retiredRef: "memories/old-note",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+          judgeLabel: "supersedes",
+          reason: "superseded",
+        }),
+      });
+      // Simulates the crash window 4a closes: intent recorded with the
+      // pre-edge bytes — exactly what the fixed ordering (record intent,
+      // THEN write the edge) always captures — while the file on disk still
+      // has no edge yet.
+      const db = openStateDatabase();
+      try {
+        upsertProposal(
+          db,
+          { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent: original } },
+          storage.stashDir,
+        );
+      } finally {
+        db.close();
+      }
+
+      const result = await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.backupContent).toBe(original); // the recorded intent wins, never a re-read
+
+      await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      const restored = fs.readFileSync(oldPath, "utf8");
+      expect(restored).toBe(original);
+      expect(parseFrontmatter(restored).data.supersededBy).toBeUndefined();
+    });
+
+    test("resuming A->B after B->C was separately accepted refuses instead of retiring a stale decision (4b, third review round)", async () => {
+      const aPath = writeAsset("memories/a.md", "description: a");
+      const bPath = writeAsset("memories/b.md", "description: b");
+      const cPath = writeAsset("memories/c.md", "description: c");
+      const config = makeConfig(storage.stashDir);
+      const pAB = createRetireProposal(storage.stashDir, {
+        ref: "memories/a",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: aPath,
+          retiredRef: "memories/a",
+          successorPath: bPath,
+          successorRef: "memories/b",
+        }),
+      });
+      // A->B's intent recorded (Phase 1 done), as if the process crashed
+      // right there — nothing has moved yet.
+      const aBackup = fs.readFileSync(aPath, "utf8");
+      const db = openStateDatabase();
+      try {
+        upsertProposal(
+          db,
+          { ...pAB, retireAcceptIntent: { assetPath: aPath, backupContent: aBackup } },
+          storage.stashDir,
+        );
+      } finally {
+        db.close();
+      }
+      expect(fs.existsSync(aPath)).toBe(true);
+
+      // A separate B->C proposal is accepted in the meantime — b is gone.
+      const pBC = createRetireProposal(storage.stashDir, {
+        ref: "memories/b",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: bPath,
+          retiredRef: "memories/b",
+          successorPath: cPath,
+          successorRef: "memories/c",
+        }),
+      });
+      await akmProposalAccept({ stashDir: storage.stashDir, id: pBC.id, config });
+      expect(fs.existsSync(bPath)).toBe(false);
+
+      // Resuming A->B must refuse — its successor no longer exists.
+      await expect(akmProposalAccept({ stashDir: storage.stashDir, id: pAB.id, config })).rejects.toThrow(/stale/);
+      expect(getProposal(storage.stashDir, pAB.id).status).toBe("pending");
+      expect(fs.existsSync(aPath)).toBe(true); // a survives — never archived
     });
   });
 
@@ -690,6 +781,39 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(fs.existsSync(parentPath)).toBe(true); // not re-moved, not an error
       expect(fs.existsSync(twinPath)).toBe(true); // the one still-pending move completes
       expect(fs.existsSync(archiveRootOf()) ? fs.readdirSync(archiveRootOf()) : []).toEqual([]);
+    });
+
+    test("archived copy purged, then the path reused by an unrelated file — revert refuses instead of overwriting it (must-fix 2, third review round)", async () => {
+      const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+      const config = makeConfig(storage.stashDir);
+      const proposal = createRetireProposal(storage.stashDir, {
+        ref: "memories/parent",
+        source: "consolidate-pair",
+        retirement: retirement({
+          retiredPath: parentPath,
+          retiredRef: "memories/parent",
+          successorPath: newPath,
+          successorRef: "memories/new-note",
+        }),
+      });
+      await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(fs.existsSync(parentPath)).toBe(false);
+
+      // A purge (not built yet) deletes the archived bytes; later, an
+      // unrelated new memory happens to reuse the exact same original path.
+      const primaryEntry = findArchiveEntry("memories/parent.md");
+      fs.rmSync(primaryEntry.archivedAbs);
+      const reusedContent = "---\ndescription: an unrelated new memory\n---\nCompletely different content.\n";
+      fs.mkdirSync(path.dirname(primaryEntry.originalAbs), { recursive: true });
+      fs.writeFileSync(primaryEntry.originalAbs, reusedContent, "utf8");
+
+      await expect(akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+        /path may have been reused/,
+      );
+      // The unrelated new file survives untouched — not overwritten with the old retired bytes.
+      expect(fs.readFileSync(parentPath, "utf8")).toBe(reusedContent);
+      expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
     });
   });
 });
@@ -1015,5 +1139,40 @@ describe("drain hard-skip is unconditional on the retire shape (S6: not on the s
     expect(result.promoted).not.toContain(proposal.id);
     expect(result.rejected).not.toContain(proposal.id);
     expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+  });
+});
+
+describe("revert by ref names a sibling retire proposal when refusing (nit, third review round)", () => {
+  test("reverting an older reflect proposal by ref, when a retire proposal for the same ref exists, names the retire proposal's id", async () => {
+    const targetPath = writeAsset("lessons/dup-target.md", "description: original\nwhen_to_use: originally");
+    const config = makeConfig(storage.stashDir);
+    const reflect = createProposal(storage.stashDir, {
+      ref: "lessons/dup-target",
+      source: "reflect",
+      payload: { content: "---\ndescription: edited\nwhen_to_use: now\n---\n\nEdited body.\n" },
+    });
+    await akmProposalAccept({ stashDir: storage.stashDir, id: reflect.id, config });
+
+    // A retire proposal for the SAME ref is minted and accepted afterwards —
+    // by-ref resolution skips it (should-fix 7), so a bare `revert
+    // lessons/dup-target` lands on the reflect proposal instead, whose
+    // target is now gone (archived by the retire).
+    const newPath = writeAsset("lessons/dup-elsewhere.md", "description: elsewhere");
+    const retireProposal = createRetireProposal(storage.stashDir, {
+      ref: "lessons/dup-target",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: targetPath,
+        retiredRef: "lessons/dup-target",
+        successorPath: newPath,
+        successorRef: "lessons/dup-elsewhere",
+      }),
+    });
+    await akmProposalAccept({ stashDir: storage.stashDir, id: retireProposal.id, config });
+    expect(fs.existsSync(targetPath)).toBe(false);
+
+    await expect(akmProposalRevert({ stashDir: storage.stashDir, id: "lessons/dup-target", config })).rejects.toThrow(
+      new RegExp(retireProposal.id),
+    );
   });
 });
