@@ -29,10 +29,24 @@ export function isGitBackedStash(stashDir: string): boolean {
   return fs.existsSync(path.join(stashDir, ".git"));
 }
 
-/** Return repo-relative dirty/staged paths without changing the index. */
-export function listGitChangedPaths(repoDir: string): string[] {
+/** {@link listGitChangedPaths}/{@link tryListGitTrackedPaths}'s result: the paths, and whether the underlying git call itself succeeded. */
+export interface GitPathQueryResult {
+  paths: string[];
+  /** `false` means `paths` is `[]` because the git call errored or exited nonzero — NOT because nothing matched. A caller that treats an empty result as "safe" (nothing dirty, nothing tracked) must check this first. */
+  ok: boolean;
+}
+
+/**
+ * Return repo-relative dirty/staged paths without changing the index, and
+ * whether `git status` itself succeeded. A broken submodule, a detached
+ * `GIT_DIR`, or git simply not being on `PATH` all exit nonzero here — a
+ * caller that would otherwise read the empty `paths` as "nothing is dirty"
+ * must check `ok` first (see {@link listGitChangedPaths}'s callers that
+ * cannot, and the archive purge sweep, which can and does).
+ */
+export function tryListGitChangedPaths(repoDir: string): GitPathQueryResult {
   const result = runGit(["-C", repoDir, "status", "--porcelain", "-z", "--untracked-files=all"]);
-  if (result.status !== 0) return [];
+  if (result.status !== 0) return { paths: [], ok: false };
   const records = result.stdout.split("\0");
   const paths: string[] = [];
   for (let i = 0; i < records.length; i++) {
@@ -45,16 +59,48 @@ export function listGitChangedPaths(repoDir: string): string[] {
       if (previousPath) paths.push(previousPath);
     }
   }
-  return paths;
+  return { paths, ok: true };
 }
 
-/** Return repo-relative paths git tracks at HEAD/index under `pathspec` (or the whole repo when omitted). */
-export function listGitTrackedPaths(repoDir: string, pathspec?: string): string[] {
+/** Return repo-relative dirty/staged paths without changing the index. `[]` on any git failure — see {@link tryListGitChangedPaths} for a caller that must tell that apart from "nothing is dirty". */
+export function listGitChangedPaths(repoDir: string): string[] {
+  return tryListGitChangedPaths(repoDir).paths;
+}
+
+/**
+ * Return repo-relative paths git tracks at HEAD/index under `pathspec` (or
+ * the whole repo when omitted), and whether `git ls-files` itself
+ * succeeded — see {@link tryListGitChangedPaths}, the same contract.
+ */
+export function tryListGitTrackedPaths(repoDir: string, pathspec?: string): GitPathQueryResult {
   const args = ["-C", repoDir, "ls-files", "-z"];
   if (pathspec) args.push("--", pathspec);
   const result = runGit(args);
-  if (result.status !== 0) return [];
-  return result.stdout.split("\0").filter((record) => record.length > 0);
+  if (result.status !== 0) return { paths: [], ok: false };
+  return { paths: result.stdout.split("\0").filter((record) => record.length > 0), ok: true };
+}
+
+/**
+ * Return repo-relative paths under `pathspec` that `git ls-files -v` tags as
+ * NOT verifiable against the worktree: `assume-unchanged` (a lowercase tag —
+ * `ls-files -v` lowercases a file's normal tag letter when that bit is set)
+ * or `skip-worktree` (the literal `S`). `git status` silently omits an edit
+ * to either kind of file — the index is telling git not to compare it — so a
+ * caller that trusts {@link tryListGitChangedPaths} alone would read a
+ * genuinely modified file as clean.
+ */
+export function tryListGitUnverifiablePaths(repoDir: string, pathspec?: string): GitPathQueryResult {
+  const args = ["-C", repoDir, "ls-files", "-v", "-z"];
+  if (pathspec) args.push("--", pathspec);
+  const result = runGit(args);
+  if (result.status !== 0) return { paths: [], ok: false };
+  const paths: string[] = [];
+  for (const record of result.stdout.split("\0")) {
+    if (!record) continue;
+    const tag = record.slice(0, 1);
+    if (tag === "S" || (tag >= "a" && tag <= "z")) paths.push(record.slice(2));
+  }
+  return { paths, ok: true };
 }
 
 export interface SaveGitStashResult {

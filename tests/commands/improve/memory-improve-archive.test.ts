@@ -24,6 +24,8 @@ import {
   RETIRE_GRACE_DAYS,
 } from "../../../src/commands/improve/memory/memory-improve";
 import type { MemoryPruneCandidate } from "../../../src/core/improve-types";
+import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { overrideSeam } from "../../_helpers/seams";
 
 const MS_PER_DAY = 86_400_000;
 
@@ -351,5 +353,94 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
     expect(fs.existsSync(path.join(victimDir, "victim.md"))).toBe(true);
     expect(fs.existsSync(path.join(victimDir, "cleanup.md"))).toBe(true);
+  });
+
+  test("a broken 'git status' (nonzero exit) purges NOTHING this sweep, even though 'git ls-files' still works, and warns once (G8, round-3 review)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    commitAll(stashDir, "archive retirement");
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+    const archivedFile = path.join(archiveRoot, dir, "memories", "stale.md");
+    // Dirty — but `git status` itself is about to be broken, so the ONLY
+    // safe outcome is "purge nothing", not "didn't see it, so it's clean".
+    fs.appendFileSync(archivedFile, "uncommitted edit\n");
+
+    // A fake `git` ahead of the real one on PATH that fails only `status`,
+    // delegating every other subcommand (ls-files, ls-files -v, ...) to the
+    // real binary — reproduces a broken submodule / detached worktree
+    // without needing one.
+    const realGit = spawnSync("which", ["git"], { encoding: "utf8" }).stdout.trim();
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fakegit-"));
+    fs.writeFileSync(
+      path.join(fakeBin, "git"),
+      `#!/bin/sh\nfor a in "$@"; do [ "$a" = status ] && { echo "fatal: simulated" >&2; exit 128; }; done\nexec ${realGit} "$@"\n`,
+      { mode: 0o755 },
+    );
+    const savedPath = process.env.PATH;
+    const warnings: string[] = [];
+    overrideSeam(_setWarnSinkForTests, (level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    process.env.PATH = `${fakeBin}:${savedPath}`;
+    let result: ReturnType<typeof purgeGracedArchive>;
+    try {
+      result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+    } finally {
+      process.env.PATH = savedPath;
+    }
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(archivedFile)).toBe(true);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("archive purge");
+  });
+
+  test("a broken submodule (gitlink) that fails 'git status' but not 'git ls-files' purges NOTHING (G9, round-3 review)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    commitAll(stashDir, "archive retirement");
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+    const archivedFile = path.join(archiveRoot, dir, "memories", "stale.md");
+
+    // A gitlink entry (the shape a submodule leaves in the index) whose
+    // target has no matching `.git/modules` entry — `git status` fails
+    // trying to inspect it, `git ls-files` does not (it only reads the
+    // index). Realistic, not synthetic: this is what a half-configured
+    // submodule looks like.
+    const sha = git(stashDir, "rev-parse", "HEAD").trim();
+    // `--add --cacheinfo` stages the gitlink entry directly into the index —
+    // a plain commit is enough; `git add -A` would also try (and fail) to
+    // make sense of `vendor/` as a real submodule checkout on disk.
+    git(stashDir, "update-index", "--add", "--cacheinfo", `160000,${sha},vendor`);
+    fs.mkdirSync(path.join(stashDir, "vendor"));
+    fs.writeFileSync(path.join(stashDir, "vendor", ".git"), "gitdir: ../.git/modules/vendor\n");
+    git(stashDir, "commit", "-m", "gitlink");
+    fs.appendFileSync(archivedFile, "uncommitted edit\n");
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(archivedFile)).toBe(true);
+  });
+
+  test("an assume-unchanged tracked file hides its own edit from 'git status' — kept, not purged (G10, round-3 review)", () => {
+    const stashDir = sandbox();
+    initGitRepo(stashDir);
+    archiveRetirement(stashDir, "memories/stale.md", "memories/stale");
+    commitAll(stashDir, "archive retirement");
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dir = fs.readdirSync(archiveRoot)[0]!;
+    const archivedFile = path.join(archiveRoot, dir, "memories", "stale.md");
+    fs.appendFileSync(archivedFile, "hidden edit\n");
+    git(stashDir, "update-index", "--assume-unchanged", path.relative(stashDir, archivedFile));
+
+    const result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
+
+    expect(result).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+    expect(fs.existsSync(archivedFile)).toBe(true);
   });
 });

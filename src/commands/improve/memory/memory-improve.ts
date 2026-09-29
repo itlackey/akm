@@ -23,7 +23,12 @@ import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warn } from "../../../core/warn";
 import { recordWrittenPath } from "../../../core/write-provenance";
 import { walkMarkdownFiles } from "../../../indexer/walk/walker";
-import { isGitBackedStash, listGitChangedPaths, listGitTrackedPaths } from "../../../sources/providers/git-stash";
+import {
+  isGitBackedStash,
+  tryListGitChangedPaths,
+  tryListGitTrackedPaths,
+  tryListGitUnverifiablePaths,
+} from "../../../sources/providers/git-stash";
 import { contentHash } from "../content-hash";
 import { isDerivedMemory, memoryIdentityRef, parseMemoryName, resolveParentRef } from "./derived-ref";
 
@@ -745,10 +750,17 @@ const EMPTY_ARCHIVE_PURGE_RESULT: ArchivePurgeResult = { purgedDirs: 0, purgedFi
  * repo that was never configured as a git source) can carry retirements
  * that were archived but never committed — deleting those would lose the
  * only surviving copy. So every archived file under a directory past grace
- * is checked against `git ls-files` (tracked) and `git status --porcelain
- * -uall` (clean) — computed ONCE per sweep, not per directory — before that
- * directory's bytes are purged; a directory with even one untracked or
- * modified file (tombstone included) is left whole for a later sweep.
+ * is checked against `git ls-files` (tracked), `git status --porcelain
+ * -uall` (clean), and `git ls-files -v` (verifiable — an assume-unchanged
+ * or skip-worktree file hides its own edits from `git status`, so it is
+ * never trusted as clean either) — each computed ONCE per sweep, not per
+ * directory; a directory with even one untracked, modified, or
+ * unverifiable file (tombstone included) is left whole for a later sweep.
+ * If any of those three git calls itself fails (a broken submodule can fail
+ * `git status` while `git ls-files` still succeeds, or git can be missing
+ * from `PATH` entirely), the whole sweep purges nothing and warns once —
+ * an empty result from a FAILED check is never treated the same as a
+ * verified-empty one.
  *
  * A memory-cleanup family-prune archive (not a retire proposal's) carries no
  * `retiredAt` in its tombstone at all, so it is never a candidate here —
@@ -764,12 +776,35 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
     return EMPTY_ARCHIVE_PURGE_RESULT; // no archive yet
   }
   const cutoffMs = now.getTime() - RETIRE_GRACE_MS;
-  // One git inspection per sweep, not per directory. Both sets are
+  // One git inspection per sweep, not per directory. All three sets are
   // repo-relative POSIX paths, matched below against each archived file's
   // own repo-relative path — a file is safe to delete only if it is in
-  // `tracked` and NOT in `dirty`.
-  const dirty = new Set(listGitChangedPaths(stashDir));
-  const tracked = new Set(listGitTrackedPaths(stashDir, MEMORY_ARCHIVE_REL));
+  // `tracked`, NOT in `dirty`, and NOT in `unverifiable`.
+  //
+  // Each of the three git calls can itself fail independently — a broken
+  // submodule can make `git status` exit nonzero while `git ls-files`
+  // succeeds, or vice versa (round-3 review, probes G8/G9). `[]` from a
+  // failed call is indistinguishable from a genuinely empty result once it
+  // is in a Set, so this checks `ok` FIRST: any failure purges nothing this
+  // sweep rather than silently trusting whichever check happened to
+  // succeed — a `dirty`/`unverifiable` set that came back empty ONLY
+  // because the call failed must never read as "nothing to protect".
+  const dirtyQuery = tryListGitChangedPaths(stashDir);
+  const trackedQuery = tryListGitTrackedPaths(stashDir, MEMORY_ARCHIVE_REL);
+  const unverifiableQuery = tryListGitUnverifiablePaths(stashDir, MEMORY_ARCHIVE_REL);
+  if (!dirtyQuery.ok || !trackedQuery.ok || !unverifiableQuery.ok) {
+    warn(
+      `[improve] archive purge: skipped this sweep — could not determine the archive's git state at ${stashDir} ` +
+        "(git status/ls-files failed); nothing was purged.",
+    );
+    return EMPTY_ARCHIVE_PURGE_RESULT;
+  }
+  const dirty = new Set(dirtyQuery.paths);
+  const tracked = new Set(trackedQuery.paths);
+  // G10: assume-unchanged / skip-worktree files never show up as dirty even
+  // when genuinely modified — treated the same as "not tracked" below, so
+  // such a file (and its whole retirement) is left for a later sweep.
+  const unverifiable = new Set(unverifiableQuery.paths);
   let purgedDirs = 0;
   let purgedFiles = 0;
   for (const entry of entries) {
@@ -794,9 +829,9 @@ export function purgeGracedArchive(stashDir: string, now: Date = new Date()): Ar
     const allFiles = listFilesRecursive(dir); // tombstone included — the whole entry must be a clean, committed unit
     const isSafeToPurge = allFiles.every((filePath) => {
       const key = toPosix(path.relative(stashDir, filePath));
-      return tracked.has(key) && !dirty.has(key);
+      return tracked.has(key) && !dirty.has(key) && !unverifiable.has(key);
     });
-    if (!isSafeToPurge) continue; // untracked or modified entry — skip the whole directory this sweep (B1)
+    if (!isSafeToPurge) continue; // untracked, modified, or unverifiable entry — skip the whole directory this sweep (B1, G10)
     let children: string[];
     try {
       children = fs.readdirSync(dir);
