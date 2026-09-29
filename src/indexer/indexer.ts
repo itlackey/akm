@@ -15,7 +15,6 @@ import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
 import { withStateDb } from "../core/state-db";
 import { isVerbose, warn, warnOnce, warnVerbose } from "../core/warn";
-import type { LoweringNotice } from "../execution/resolved-request";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 /**
  * Index consistency.
@@ -28,7 +27,6 @@ import { resolveSourcesForOrigin } from "../registry/origin-resolve";
  *   - entries / FTS: `entries.content_hash` per file plus the per-directory
  *     walk fingerprint (`index_dir_state`); the FTS rows are written in the
  *     same transaction as the entries row (`upsertEntry`), never separately.
- *   - LLM metadata: `llm_enrichment_cache` keyed by item ref + body hash.
  *   - embeddings: `embeddings.model` per row; a row whose search text changed
  *     is deleted by `upsertEntry`, a row whose model differs from the
  *     configured one is re-embedded by the next pass.
@@ -126,8 +124,6 @@ export interface IndexResponse {
   /** False when any configured source could not be scanned and LKG rows were preserved. */
   scanComplete: boolean;
   warnings?: string[];
-  /** Stable, secret-free execution-lowering diagnostics. */
-  notices?: readonly Readonly<LoweringNotice>[];
   verification: IndexVerification;
   /** Timing counters in milliseconds */
   timing?: {
@@ -154,7 +150,7 @@ export interface IndexResponse {
 }
 
 export interface IndexProgressEvent {
-  phase: "summary" | "preflight" | "scan" | "llm" | "embeddings" | "fts" | "finalize" | "verify";
+  phase: "summary" | "preflight" | "scan" | "embeddings" | "fts" | "finalize" | "verify";
   message: string;
   processed?: number;
   total?: number;
@@ -603,9 +599,9 @@ function detectAndPersistBundleAdapters(
 
 async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
   // R-022: `dryRun` only ever gated the `--clean` stale-entry removal pass
-  // (see `runCleanPass` below) — every other phase (walk, LLM enrichment,
-  // embeddings, FTS, the adapter-detection config write) ran for real
-  // regardless, so `akm index --dry-run` alone silently performed a full,
+  // (see `runCleanPass` below) — every other phase (walk, embeddings, FTS,
+  // the adapter-detection config write) ran for real regardless, so
+  // `akm index --dry-run` alone silently performed a full,
   // real index. The flag's own docs (`IndexOptions.dryRun` above, and the
   // CLI help in stash-cli.ts) already scope it to `--clean`; reject the
   // combination that was never implemented instead of quietly doing
@@ -736,9 +732,8 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const tWalkEnd = Date.now();
 
     // Metadata enhancement (the LLM pass that used to run here) is retired
-    // (RS-D, 0.9.17-alpha.9) — see CHANGELOG. The phase stays so timing and
-    // progress consumers keep a stable shape.
-    onProgress({ phase: "llm", message: "LLM enhancement disabled." });
+    // (RS-D, 0.9.17-alpha.9) — see CHANGELOG. `timing.llmMs` stays (always
+    // ~0 now) so the JSON shape is unchanged.
     const tLlmEnd = Date.now();
 
     if (complete) applyRemovedSources(db, sources, removedSources, isIncremental);

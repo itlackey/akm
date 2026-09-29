@@ -300,10 +300,8 @@ invokes `akm index` directly should pass `--skip-if-locked` so it steps
 aside instead of piling up behind a longer rebuild (the shipped
 `index-refresh` task does this).
 
-`akm index` always rebuilds the search index and keeps metadata in the index.
-When a selected named LLM engine (`defaults.llmEngine` or an indexing-pass
-override) is configured and the per-pass gate allows it, metadata
-enhancement runs during indexing. In text mode, the default CLI UI shows a
+`akm index` always rebuilds the search index and keeps metadata in the
+index, generated deterministically. In text mode, the default CLI UI shows a
 spinner with processed-versus-total source counts; structured output modes
 (`json`, `yaml`, `jsonl`) stay clean and machine-readable.
 

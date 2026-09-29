@@ -188,11 +188,12 @@ export interface IndexDocument {
   /**
    * Asset quality marker (v1 spec §4.2). Four values are well-known:
    * `"generated"` and `"curated"` are included in default search;
-   * `"enriched"` marks entries that have been LLM-enhanced (also included in
-   * default search, excluded from re-enrichment unless `--re-enrich` is set);
-   * `"proposed"` is excluded from default search and surfaced only with
-   * `--include-proposed`. Unknown string values parse with a one-time
-   * `console.warn` and remain searchable (treated as included-by-default).
+   * `"enriched"` marks entries the now-retired LLM metadata-enhancement pass
+   * (0.9.17-alpha.9) rewrote (also included in default search; nothing sets
+   * it anymore); `"proposed"` is excluded from default search and surfaced
+   * only with `--include-proposed`. Unknown string values parse with a
+   * one-time `console.warn` and remain searchable (treated as
+   * included-by-default).
    */
   quality?: "generated" | "curated" | "enriched" | "proposed" | (string & {});
   confidence?: number;

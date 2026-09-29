@@ -186,6 +186,9 @@ function buildLayout23Index(dbPath: string, stashRoot: string): void {
     db.prepare(
       "INSERT INTO llm_enrichment_cache VALUES ('stash//knowledge/alpha-deploy', '', 'bh', '{\"tags\":[\"x\"]}', 1)",
     ).run();
+    db.prepare("INSERT INTO llm_enrichment_cache VALUES (?, 'memory-inference-v2', 'bh2', '{\"draft\":true}', 1)").run(
+      path.join(stashRoot, "knowledge", "alpha-deploy.md"),
+    );
     db.prepare(
       "INSERT INTO graph_files VALUES (?, 'knowledge/alpha-deploy.md', 0, 'knowledge', 'bh', 0.9, 'extracted', NULL, 'run-1')",
     ).run(stashRoot);
@@ -275,13 +278,18 @@ describe("index.db layout 23 → 24", () => {
       );
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
 
-      // Graph and utility rows untouched; the salvage table is retired. The
-      // seeded llm_enrichment_cache row uses the default cache_variant —
-      // metadata-enhance's shape (retired 0.9.17-alpha.9) — so it is dropped
-      // on this writable open, unlike a graph/memory-inference row.
+      // Graph and utility rows untouched; the salvage table is retired. Of
+      // the two seeded llm_enrichment_cache rows, the default-cache_variant
+      // one is metadata-enhance's shape (retired 0.9.17-alpha.9) and is
+      // dropped on this writable open; the memory-inference-v2 row survives.
       expect(count(db, "graph_files")).toBe(1);
       expect(count(db, "graph_file_entities")).toBe(1);
-      expect(count(db, "llm_enrichment_cache")).toBe(0);
+      expect(db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all()).toEqual([
+        {
+          asset_ref: path.join(storage.stashDir, "knowledge", "alpha-deploy.md"),
+          cache_variant: "memory-inference-v2",
+        },
+      ]);
       expect(db.prepare("SELECT utility, show_count FROM utility_scores WHERE entry_id = 1").get()).toEqual({
         utility: 0.75,
         show_count: 4,

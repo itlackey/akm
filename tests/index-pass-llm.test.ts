@@ -302,7 +302,7 @@ describe("config loader: `index` block parsing", () => {
     });
     const config = loadUserConfig();
     expect(config.index?.defaults?.engine).toBe("primary");
-    expect(config.index?.enrichment?.enabled).toBe(false);
+    expect((config.index?.enrichment as Record<string, unknown> | undefined)?.enabled).toBe(false);
     expect(config.index?.graph?.engine).toBe("graph");
   });
 
@@ -334,7 +334,7 @@ describe("config loader: `index` block parsing", () => {
     });
     try {
       const config = loadUserConfig();
-      expect(config.index?.enrichment?.model).toBe("other-model");
+      expect((config.index?.enrichment as Record<string, unknown> | undefined)?.model).toBe("other-model");
       expect((config.index?.enrichment as Record<string, unknown> | undefined)?.endpoint).toBeUndefined();
       expect(warnings.some((w) => w.includes("index.enrichment.endpoint") && w.includes("retired"))).toBe(true);
     } finally {
@@ -396,7 +396,7 @@ describe("config loader: `index` block parsing", () => {
     });
     try {
       const config = loadUserConfig();
-      expect(config.index?.enrichment?.enabled).toBe(true);
+      expect((config.index?.enrichment as Record<string, unknown> | undefined)?.enabled).toBe(true);
       expect((config.index?.enrichment as Record<string, unknown> | undefined)?.foo).toBe(true);
       expect(warnings.filter((w) => w.includes("index.enrichment.foo"))).toHaveLength(1);
     } finally {

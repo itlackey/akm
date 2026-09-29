@@ -90,13 +90,12 @@ type IndexConfigOutput = {
   defaults?: z.infer<typeof IndexDefaultsSchema>;
   graph?: z.infer<typeof IndexPassConfigSchema>;
   memory?: z.infer<typeof IndexPassConfigSchema>;
-  enrichment?: z.infer<typeof IndexPassConfigSchema>;
 };
 
 /**
  * Index config is a union of reserved feature sections and per-pass entries.
  * Passthrough so per-pass entries (keyed by arbitrary pass names like `graph`,
- * `enrichment`) can live next to the reserved keys.
+ * `memory`) can live next to the reserved keys.
  * The outer preprocess emits the legacy parser's actionable error messages
  * for the two most common type-shape mistakes:
  *   - An array at the `index` block.
@@ -113,7 +112,7 @@ const IndexConfigRuntimeSchema = z.preprocess(
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message:
-          'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "enrichment": { "enabled": false } }`).',
+          'Invalid `index` config: expected an object keyed by pass name (e.g. `{ "memory": { "enabled": false } }`).',
       });
       return raw;
     }
@@ -124,12 +123,6 @@ const IndexConfigRuntimeSchema = z.preprocess(
         warnOnce("index:stalenessDetection", "`index.stalenessDetection` is a retired pass and is ignored.");
         cleaned ??= { ...(raw as Record<string, unknown>) };
         delete cleaned.stalenessDetection;
-        continue;
-      }
-      if (passName === "metadataEnhance") {
-        warnOnce("index:metadataEnhance", "`index.metadataEnhance` is retired and is ignored.");
-        cleaned ??= { ...(raw as Record<string, unknown>) };
-        delete cleaned.metadataEnhance;
         continue;
       }
       if (typeof value !== "object" || value === null || Array.isArray(value)) {

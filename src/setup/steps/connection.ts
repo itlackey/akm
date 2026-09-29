@@ -188,7 +188,7 @@ const LLM_PRESETS: LlmPreset[] = [
 
 /**
  * Step 3a: pick an LLM provider. Used for LLM-gated background features
- * (memory inference, graph extraction).
+ * (e.g. memory inference).
  *
  * @internal Exported for testing only.
  */
@@ -235,7 +235,7 @@ export async function stepLlm(
 
   const choice = await prompt(() =>
     p.select({
-      message: "Configure an LLM for richer metadata during indexing:",
+      message: "Configure an LLM for background features:",
       options,
       initialValue,
     }),

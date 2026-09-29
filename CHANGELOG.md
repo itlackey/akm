@@ -19,12 +19,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`src/llm/metadata-enhance.ts`), its `akm index` dispatch, and the
   `metadata_enhance` feature-gate key are gone; the deterministic metadata
   pass, `quality: "generated"`, and memory inference are unaffected. A
-  config that still sets `index.metadataEnhance` loads, named once as
-  retired, and the key is dropped by `akm migrate apply`. The pass's
-  `llm_enrichment_cache` rows (the default `cache_variant`; graph and memory
-  inference use their own named variants) are deleted on the next writable
-  open of `index.db`. (`src/indexer/indexer.ts`, `src/llm/feature-gate.ts`,
-  `src/core/config/schema/index-config.ts`,
+  config that still sets `index.metadataEnhance` loads, named once by the
+  same unknown-config-key path every other retired key uses: kept in
+  memory, round-trips through ordinary writes, and is dropped only by
+  `akm migrate apply`. The pass's `llm_enrichment_cache` rows (the default
+  `cache_variant`; graph and memory inference use their own named variants)
+  are deleted on the next writable open of `index.db`. An index built while
+  enrichment was on keeps its entries' LLM-written descriptions on
+  incremental runs — nothing rewrites an unchanged row; run
+  `akm index --full` once to replace them with the deterministic ones.
+  (`src/indexer/indexer.ts`, `src/llm/feature-gate.ts`,
+  `src/core/config/config.ts`, `src/core/config/schema/index-config.ts`,
   `src/storage/repositories/index-schema.ts`)
 
 ## [0.9.17-alpha.8] - 2026-09-28

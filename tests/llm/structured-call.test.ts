@@ -174,7 +174,7 @@ describe("callStructured contract", () => {
     const boom = new Error("ungated propagation");
     const onErrorCalls: LlmErrorClass[] = [];
     const promise = callStructured<string>({
-      feature: "graph_extraction",
+      feature: "memory_inference",
       akmConfig: undefined, // UNGATED: run directly, propagate errors
       runner: runner(),
       messages: MESSAGES,
@@ -434,7 +434,7 @@ describe("callStructured contract", () => {
     await withEnv({ AKM_STRUCTURED_SECRET: secret }, async () => {
       try {
         await callStructured<string>({
-          feature: "graph_extraction",
+          feature: "memory_inference",
           runner: runner(PROFILE, { credential: { names: ["AKM_STRUCTURED_SECRET"], required: true } }),
           messages: [{ role: "user", content: "redact failures" }],
           request: {

@@ -215,27 +215,27 @@ describe("computeBodyHash", () => {
 
 describe("getLlmCacheEntry / upsertLlmCacheEntry", () => {
   test("returns undefined when no entry exists", () => {
-    expect(getLlmCacheEntry(db, "some-ref", "abc123")).toBeUndefined();
+    expect(getLlmCacheEntry(db, "some-ref", "abc123", "v1")).toBeUndefined();
   });
 
   test("returns cached entry when hash matches", () => {
-    upsertLlmCacheEntry(db, "my-ref", "hashABC", JSON.stringify({ foo: "bar" }));
-    const entry = getLlmCacheEntry(db, "my-ref", "hashABC");
+    upsertLlmCacheEntry(db, "my-ref", "hashABC", JSON.stringify({ foo: "bar" }), "v1");
+    const entry = getLlmCacheEntry(db, "my-ref", "hashABC", "v1");
     expect(entry).not.toBeUndefined();
     expect(entry?.bodyHash).toBe("hashABC");
     expect(JSON.parse(entry?.resultJson ?? "null")).toEqual({ foo: "bar" });
   });
 
   test("returns undefined (cache miss) when body hash has changed", () => {
-    upsertLlmCacheEntry(db, "my-ref", "hashOLD", JSON.stringify({ foo: "bar" }));
+    upsertLlmCacheEntry(db, "my-ref", "hashOLD", JSON.stringify({ foo: "bar" }), "v1");
     // Different hash → cache miss
-    expect(getLlmCacheEntry(db, "my-ref", "hashNEW")).toBeUndefined();
+    expect(getLlmCacheEntry(db, "my-ref", "hashNEW", "v1")).toBeUndefined();
   });
 
   test("upsert overwrites an existing entry", () => {
-    upsertLlmCacheEntry(db, "my-ref", "hash1", JSON.stringify({ v: 1 }));
-    upsertLlmCacheEntry(db, "my-ref", "hash2", JSON.stringify({ v: 2 }));
-    const entry = getLlmCacheEntry(db, "my-ref", "hash2");
+    upsertLlmCacheEntry(db, "my-ref", "hash1", JSON.stringify({ v: 1 }), "v1");
+    upsertLlmCacheEntry(db, "my-ref", "hash2", JSON.stringify({ v: 2 }), "v1");
+    const entry = getLlmCacheEntry(db, "my-ref", "hash2", "v1");
     expect(entry).toBeDefined();
     expect(JSON.parse(entry?.resultJson ?? "null")).toEqual({ v: 2 });
   });
@@ -248,7 +248,7 @@ describe("ensureSchema — retired metadata-enhance cache rows", () => {
     // Metadata-enhance (retired 0.9.17-alpha.9) was the only writer that left
     // cache_variant at its default empty string; graph and memory inference
     // always pass a named variant.
-    upsertLlmCacheEntry(db, "some-bundle//knowledge/thing", "h1", "{}");
+    upsertLlmCacheEntry(db, "some-bundle//knowledge/thing", "h1", "{}", "");
     upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v2");
     closeDatabase(db);
 
@@ -263,8 +263,8 @@ describe("ensureSchema — retired metadata-enhance cache rows", () => {
 
 describe("clearStaleCacheEntries", () => {
   test("removes cache entries whose asset_ref is not in entries or file_path", () => {
-    upsertLlmCacheEntry(db, "/stash/memories/ghost.md", "h1", "{}");
-    upsertLlmCacheEntry(db, "/stash/memories/alive.md", "h2", "{}");
+    upsertLlmCacheEntry(db, "/stash/memories/ghost.md", "h1", "{}", "v1");
+    upsertLlmCacheEntry(db, "/stash/memories/alive.md", "h2", "{}", "v1");
 
     // Insert a live entry into the entries table so /stash/memories/alive.md is retained.
     upsertEntry(

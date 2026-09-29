@@ -302,6 +302,17 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
 }
 
 /**
+ * `index.*` is the one config subtree `resolveSchemaAt` cannot mark unknown
+ * on its own: it resolves any undeclared top-level key through
+ * `IndexPassConfigSchema`'s catchall (so `index.graph`, `index.memory`, and
+ * any future pass name validate), which means a retired top-level key with a
+ * pass-shaped value (`{ enabled: true }`) would resolve too and never reach
+ * this list. Named here instead, by dotted path, so it gets the same
+ * treatment as every other unknown key below.
+ */
+const INDEX_RETIRED_TOP_LEVEL_KEYS = new Set(["index.metadataEnhance"]);
+
+/**
  * Every dotted key in `raw` the schema does not know, at any depth (arrays
  * are not descended). Unknown keys are never an error: they are a typo, or a
  * key another release used. Reads keep them (they round-trip through
@@ -316,7 +327,7 @@ export function unknownConfigKeyPaths(
   const found: string[][] = [];
   for (const key of Object.keys(node).sort()) {
     const keyPath = [...prefix, key];
-    if (resolveSchemaAt(keyPath, root) === undefined) {
+    if (INDEX_RETIRED_TOP_LEVEL_KEYS.has(keyPath.join(".")) || resolveSchemaAt(keyPath, root) === undefined) {
       found.push(keyPath);
       continue;
     }

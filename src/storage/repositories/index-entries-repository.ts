@@ -68,8 +68,8 @@ export function upsertEntry(
   const derivedFrom =
     typeof entry.derivedFrom === "string" && entry.derivedFrom.trim() ? entry.derivedFrom.trim() : null;
   const hash = embedHash(entry);
-  // `content_hash` is optional on the LLM-enrichment re-upsert; a missing hash
-  // preserves the scan writer's current value.
+  // `content_hash` is optional; an upsert that omits it preserves the scan
+  // writer's current value.
   const apply = (): number => {
     const previous = stmts.findByItemRef.get(provenance.itemRef) as ExistingUpsertRow | undefined;
     const result = stmts.upsert.get(

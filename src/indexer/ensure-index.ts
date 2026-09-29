@@ -134,8 +134,8 @@ function hasNewerIndexableFiles(
       if (mtimeMs <= builtAtMs) continue;
       // Newer than the last full build — only stale if its current content
       // actually differs from what is indexed. No stored hash means the row
-      // predates content-hash tracking (or a hash-less enrichment pass), so
-      // fall back to the conservative mtime-stale answer.
+      // predates content-hash tracking, so fall back to the conservative
+      // mtime-stale answer.
       const indexedHash = indexedHashes.get(file);
       if (indexedHash === undefined) return true;
       let currentHash: string;

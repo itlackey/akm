@@ -75,7 +75,7 @@ function improveEnabled(config: AkmConfig, key: FeatureKey): boolean | undefined
 
 describe("isLlmFeatureEnabled", () => {
   test("returns false when no llm config is present", () => {
-    expect(isLlmFeatureEnabled(undefined, "graph_extraction")).toBe(false);
+    expect(isLlmFeatureEnabled(undefined, "memory_inference")).toBe(false);
   });
 
   test("returns feature defaults when the process block is missing", () => {
@@ -136,8 +136,8 @@ describe("tryLlmFeature", () => {
   test("returns the fallback on a synchronous throw", async () => {
     const events: { reason: string; error?: Error }[] = [];
     const result = await tryLlmFeature(
-      "graph_extraction",
-      configWith({ graph_extraction: true }),
+      "memory_inference",
+      configWith({ memory_inference: true }),
       () => {
         throw new Error("boom");
       },

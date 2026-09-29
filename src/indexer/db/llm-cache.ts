@@ -57,8 +57,8 @@ export async function withLlmCache<T>(
   reEnrich: boolean,
   llmFn: () => Promise<T | undefined>,
   validate: (raw: unknown) => T | undefined,
-  precomputedHash?: string,
-  cacheVariant = "",
+  precomputedHash: string | undefined,
+  cacheVariant: string,
   hooks?: WithLlmCacheHooks,
 ): Promise<T | undefined> {
   const bodyHash = precomputedHash ?? computeBodyHash(body);

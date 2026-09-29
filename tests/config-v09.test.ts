@@ -9,6 +9,7 @@ import type { AkmConfig } from "../src/core/config/config";
 import {
   bundlesToSourceEntries,
   loadUserConfig,
+  mutateConfig,
   normalizeConfigFile,
   resetConfigCache,
   resolveConfiguredSources,
@@ -370,10 +371,32 @@ describe("0.9 config contract", () => {
     );
   });
 
-  test("ignores retired index.metadataEnhance instead of failing config load", () => {
-    expect(validateConfigShape({ configVersion: "0.9.0", index: { metadataEnhance: { enabled: true } } }).ok).toBe(
-      true,
-    );
+  test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      index: { metadataEnhance: { enabled: true }, defaults: { engine: "index" } },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().index?.defaults?.engine).toBe("index");
+    });
+    const named = warnings.filter((w) => w.includes("index.metadataEnhance"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("dropped by `akm migrate apply`");
+
+    // An unrelated ordinary write (`akm config set`, the adapter-detection
+    // persist `akm index` does) is not the cleanup path — it must not
+    // silently strip the retired key.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    const afterOrdinaryWrite = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(afterOrdinaryWrite.index.metadataEnhance).toEqual({ enabled: true });
+    expect(afterOrdinaryWrite.archiveRetentionDays).toBe(30);
+
+    // Only an explicit `akm migrate apply` removes it.
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const afterMigrateApply = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(afterMigrateApply.index.metadataEnhance).toBeUndefined();
+    expect(afterMigrateApply.index.defaults).toEqual({ engine: "index" });
   });
 
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
