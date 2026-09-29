@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.10] - 2026-09-29
+
+`akm info` now behaves like a help command. It always prints a report and
+exits 0, naming whatever it could not read: a broken config, a missing
+bundle directory, or an index that another akm process holds or that has a
+newer layout. `akm health` again counts every improve run: 11 of the
+owner's last 55 runs, recorded before `plan.processes` existed, had been
+silently dropped from the health report. A hung test shard now fails within
+10 minutes and names itself, instead of stalling CI until the job times out.
+
 ### Changed
 
 - **`scripts/test-unit.sh`/`test-integration.sh` shards fail fast and name
