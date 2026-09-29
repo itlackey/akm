@@ -395,7 +395,11 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
   if (value.limits.totalCeiling !== undefined && value.effectiveRefs.length > (value.limits.totalCeiling as number)) {
     fail("plan.effectiveRefs cannot exceed plan.limits.totalCeiling");
   }
-  validateProcessRoutingRows(value.processes);
+  // #947 added plan.processes (2026-09-09T09:03:19Z); every run recorded
+  // before it legitimately stored `plan` with no `processes` key at all —
+  // validate the rows only when present, same as `proactive` below, so a
+  // pre-#947 envelope still decodes (AGENTS.md "Reading persisted data").
+  if (value.processes !== undefined) validateProcessRoutingRows(value.processes);
   if (value.proactive !== undefined) validateProactivePlan(value.proactive);
   validateConsolidationPlan(value.consolidation);
 

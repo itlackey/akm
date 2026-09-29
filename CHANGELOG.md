@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm health` silently excluded every improve run recorded before #947
+  added `plan.processes`.** `decodeImproveResult` called
+  `validateProcessRoutingRows` unconditionally, so a `plan` object with no
+  `processes` key — legitimately written by every release before
+  2026-09-09T09:03:19Z — failed decode with "plan.processes must be an
+  array" and dropped the run from `--window-compare`, `--group-by run`, and
+  the HTML/MD reports. On a real owner `state.db`, 11 of 55 improve runs in
+  a 30-day window were affected; all 11 decode cleanly now. `plan.processes`
+  is validated only when present, the same guard already used for
+  `plan.proactive` and the `retrieval` gate (AGENTS.md "Reading persisted
+  data"). Also: a row `akm health` cannot decode — corrupt or otherwise —
+  now logs a warning naming the row id and the decode error, instead of
+  only incrementing `improve.resultRows.skipped.invalid` with no way to
+  tell why.
+
 ## [0.9.17-alpha.9] - 2026-09-29
 
 `akm improve` now forgets, reversibly and under review. A consolidation pair

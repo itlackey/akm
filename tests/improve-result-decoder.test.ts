@@ -186,6 +186,34 @@ describe("decodeImproveResult", () => {
     ).toThrow(/exactly one retrieval/);
   });
 
+  // A real pre-#947 run record: `plan` existed but had no `processes` key at
+  // all — #947 ("project resolved process routing into plan.processes")
+  // added the field on 2026-09-09T09:03:19Z. Every run recorded before that
+  // stored `plan` without it. `akm health --group-by run` on a real owner
+  // state.db found 11 such rows in a 30d window, all silently excluded
+  // because `validateProcessRoutingRows` was called unconditionally instead
+  // of guarded like `proactive` below. Must not throw (AGENTS.md "Reading
+  // persisted data").
+  test("decodes a real pre-#947 run record with no plan.processes field (akm health must still count it)", () => {
+    const { processes: _processes, ...prePlan947 } = plan;
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan: prePlan947,
+    };
+
+    const decoded = decodeImproveResult(envelope);
+
+    // `prePlan947` (no `processes` key) models a historical shape outside the
+    // current `ImproveExecutionPlan` union (which requires `processes`), same
+    // as `alpha8Plan` below — compare through `unknown`, not the typed field.
+    expect(decoded.envelope.plan as unknown).toEqual(prePlan947);
+    expect((decoded.envelope.plan as unknown as Record<string, unknown>).processes).toBeUndefined();
+  });
+
   // A real 0.9.17-alpha.8 run record: the LLM entity-graph extraction pass
   // routed as a `plan.processes` row and ran as a `plan.stages` entry, and
   // the top-level result carried its `graphExtraction`/

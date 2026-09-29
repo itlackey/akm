@@ -70,6 +70,29 @@ export function countAgentFailureReasons(agentFailures: readonly TaskHistoryRow[
   return counts;
 }
 
+/**
+ * Decode one `improve_runs.result_json` envelope, warning once per row on
+ * failure (mirrors {@link taskFailureDetail}'s handling of the analogous
+ * `task_history` case) and returning `undefined` instead of throwing.
+ * Callers count the `undefined` case themselves (`resultRows.skipped.invalid`
+ * / `resultStatus: "invalid"`) so a decode failure is never silent — the
+ * warning names *why* (corrupt data, or a decoder too strict for a shape an
+ * older release legitimately wrote), the counters say *how many*.
+ */
+function decodeImproveResultRow(
+  row: Pick<ImproveRunSummaryRow, "id" | "started_at" | "result_json">,
+): Record<string, unknown> | undefined {
+  try {
+    return decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[akm] Skipping unparseable improve_runs row in health metrics (id=${row.id}, started_at=${row.started_at}): ${message}`,
+    );
+    return undefined;
+  }
+}
+
 /** A zeroed accumulator — also what health reports when it could not read state.db at all (#791). */
 export function emptyImproveMetrics(): ImproveHealthMetrics {
   return {
@@ -307,10 +330,8 @@ export function summarizeImproveRuns(
   let latest: { row: ImproveRunSummaryRow; memorySummary: ImproveHealthMetrics["memorySummary"] } | undefined;
 
   for (const row of rows) {
-    let result: Record<string, unknown>;
-    try {
-      result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
-    } catch {
+    const result = decodeImproveResultRow(row);
+    if (!result) {
       resultRows.skipped.invalid += 1;
       continue;
     }
@@ -338,12 +359,10 @@ export function projectImproveRunSummary(
   wallTimeMs: number,
   taskId: string,
 ): ImproveRunSummary {
-  let result: Record<string, unknown> = {};
-  let resultStatus: NonNullable<ImproveRunSummary["resultStatus"]> = "invalid";
-  try {
-    result = decodeImproveResult(row.result_json).envelope as unknown as Record<string, unknown>;
-    resultStatus = "valid";
-  } catch {
+  const decoded = decodeImproveResultRow(row);
+  const result: Record<string, unknown> = decoded ?? {};
+  const resultStatus: NonNullable<ImproveRunSummary["resultStatus"]> = decoded ? "valid" : "invalid";
+  if (!decoded) {
     // Keep the persisted row visible in per-run output, but do not project its
     // unknown payload or admit its duration to result-derived denominators.
     wallTimeMs = 0;
