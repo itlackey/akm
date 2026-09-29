@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.17-alpha.9] - 2026-09-29
+
+`akm improve` now forgets, reversibly and under review. A consolidation pair
+pass compares each new or changed memory, flat knowledge file or lesson with
+its nearest neighbours; where an LLM judge calls a pair duplicate, subsumed or
+superseding, it mints a retire proposal that a person reviews (`akm proposal
+list --generator consolidate-pair`). Accepting one archives the older or
+contained copy, and `akm proposal revert` restores it exactly; an accepted
+promotion now retires its source memory, so promotion no longer leaves a
+duplicate. A continuity check flags a retirement whose survivor does not rank
+where the retired asset did for its own past searches, and a flagged proposal
+is never bulk-accepted. Archived files are purged 30 days after retirement,
+only when git holds them unmodified. The per-run forgetting-safety lane, LLM
+metadata enrichment and LLM entity-graph extraction are removed: each measured
+no benefit. Decide pending retire proposals before downgrading to
+0.9.17-alpha.8.
+
 ### Added
 
 - **Consolidate pair pass: duplicate, subsumed and superseding memories are
