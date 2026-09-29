@@ -37,6 +37,7 @@ import {
 } from "../../src/storage/repositories/extract-sessions-repository";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { snapshotTree } from "../_helpers/snapshot-tree";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
 
@@ -53,25 +54,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
-}
-function snapshotTree(root: string): Map<string, string> {
-  const snapshot = new Map<string, string>();
-  if (!fs.existsSync(root)) return snapshot;
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const absolute = path.join(dir, entry.name);
-      const relative = path.relative(root, absolute);
-      if (entry.isDirectory()) {
-        snapshot.set(`${relative}/`, "directory");
-        visit(absolute);
-      } else if (entry.isFile()) {
-        const bytes = fs.readFileSync(absolute);
-        snapshot.set(relative, `${bytes.length}:${createHash("sha256").update(bytes).digest("hex")}`);
-      }
-    }
-  };
-  visit(root);
-  return snapshot;
 }
 beforeEach(() => {
   storage = withIsolatedAkmStorage();

@@ -1,5 +1,4 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,6 +28,7 @@ import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { mutateScopedEnv, withEnv } from "../../_helpers/sandbox";
+import { snapshotTree } from "../../_helpers/snapshot-tree";
 
 // ── Test setup ────────────────────────────────────────────────────────────
 //
@@ -51,24 +51,6 @@ function makeStashDir(): string {
     fs.mkdirSync(path.join(stash, dir), { recursive: true });
   }
   return stash;
-}
-
-function snapshotTree(root: string): Record<string, string> {
-  const snapshot: Record<string, string> = {};
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = path.join(dir, entry.name);
-      const relativePath = path.relative(root, fullPath).split(path.sep).join("/");
-      if (entry.isDirectory()) {
-        snapshot[`${relativePath}/`] = "directory";
-        visit(fullPath);
-      } else {
-        snapshot[relativePath] = createHash("sha256").update(fs.readFileSync(fullPath)).digest("hex");
-      }
-    }
-  };
-  visit(root);
-  return snapshot;
 }
 
 function eventsCtx(): EventsContext {

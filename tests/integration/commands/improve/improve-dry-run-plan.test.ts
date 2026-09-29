@@ -12,7 +12,6 @@
 
 import { Database } from "bun:sqlite";
 import { afterEach, describe, expect, mock, test } from "bun:test";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { computeSafeChunkSize } from "../../../../src/commands/improve/consolidate/chunking";
@@ -35,6 +34,7 @@ import { CANONICAL_INDEX_DB_VERSION } from "../../../../src/storage/repositories
 import { writeSkill } from "../../../_helpers/assets";
 import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/improve-config";
 import { type Cleanup, withEnv, withIsolatedAkmStorage, withMockedFetch } from "../../../_helpers/sandbox";
+import { snapshotTree } from "../../../_helpers/snapshot-tree";
 
 const cleanups: Cleanup[] = [];
 
@@ -102,26 +102,6 @@ function seedReplayRank(ref: string, rankScore: number, encodingSource?: "conten
   } finally {
     db.close();
   }
-}
-
-function snapshotTree(root: string): Map<string, string> {
-  const result = new Map<string, string>();
-  if (!fs.existsSync(root)) return result;
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const absolute = path.join(dir, entry.name);
-      const relative = path.relative(root, absolute);
-      if (entry.isDirectory()) {
-        result.set(`${relative}/`, "directory");
-        visit(absolute);
-      } else if (entry.isFile()) {
-        const bytes = fs.readFileSync(absolute);
-        result.set(relative, `${bytes.length}:${createHash("sha256").update(bytes).digest("hex")}`);
-      }
-    }
-  };
-  visit(root);
-  return result;
 }
 
 const okReflect = (ref: string): AkmReflectResult => ({
@@ -871,6 +851,12 @@ describe("#800 effective dry-run planner", () => {
       expect(fs.existsSync(`${dbPath}-wal`)).toBe(true);
       expect(fs.existsSync(`${dbPath}-shm`)).toBe(true);
       const before = snapshotTree(opencodeDir);
+      // snapshotTree skips -wal/-shm (their bytes legitimately change on an
+      // incidental checkpoint elsewhere — see its module doc). This test's
+      // whole point is the sidecars of THIS held-open, actively-written
+      // foreign db, so check their bytes directly too.
+      const walBefore = fs.readFileSync(`${dbPath}-wal`);
+      const shmBefore = fs.readFileSync(`${dbPath}-shm`);
       const provider = new OpenCodeProvider();
       const harness: SessionLogHarness = {
         name: provider.name,
@@ -893,6 +879,8 @@ describe("#800 effective dry-run planner", () => {
         reason: "1 new sessions satisfies minNewSessions 1",
       });
       expect(snapshotTree(opencodeDir)).toEqual(before);
+      expect(fs.readFileSync(`${dbPath}-wal`)).toEqual(walBefore);
+      expect(fs.readFileSync(`${dbPath}-shm`)).toEqual(shmBefore);
     } finally {
       writer.close();
     }
