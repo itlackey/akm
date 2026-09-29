@@ -5,12 +5,19 @@
 /**
  * `akm consolidate` — show the model the memory pool in chunks of similar
  * memories and queue a knowledge proposal for each memory it says should be
- * promoted. Promotion is the only operation: it emits a reviewable proposal and
- * never touches the memory. Memories the improve ledger judged recently and
+ * promoted. Promotion emits a reviewable proposal and never touches the
+ * memory directly; accepting it later retires the source memory (O1, in
+ * `proposal/repository.ts`). Memories the improve ledger judged recently and
  * that have not changed since are not judged again.
  *
- * Accounting invariant: `processed == promoted + judgedNoAction +
- * Σ(skipReasons) + failedChunkMemories`.
+ * Accounting invariant (the promote pass only): `processed == promoted +
+ * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
+ *
+ * A second pass, the pair pass (`consolidate/pair-pass.ts`, alpha.9), runs
+ * alongside this one and keeps its own separate counters (`pairPass` on the
+ * result) — it judges near-duplicate and superseding pairs across the wider
+ * memory tier and mints `retire` proposals; see that module's own doc
+ * comment.
  */
 
 import fs from "node:fs";
