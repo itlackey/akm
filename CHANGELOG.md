@@ -6,2106 +6,297 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.9.17-alpha.10] - 2026-09-29
-
-`akm info` now behaves like a help command. It always prints a report and
-exits 0, naming whatever it could not read: a broken config, a missing
-bundle directory, or an index that another akm process holds or that has a
-newer layout. `akm health` again counts every improve run: 11 of the
-owner's last 55 runs, recorded before `plan.processes` existed, had been
-silently dropped from the health report. A hung test shard now fails within
-10 minutes and names itself, instead of stalling CI until the job times out.
-
-### Changed
-
-- **`scripts/test-unit.sh`/`test-integration.sh` shards fail fast and name
-  themselves on a hang.** Each process shard now runs under its own process
-  group (`exec setsid`) with a 600s ceiling — well above the ~3-minute CI
-  norm for a full shard. A shard still alive past it is killed by process
-  group (so a child process it spawned dies too, not just `bun test`
-  itself), its log tail is printed so the last test file header shows where
-  it hung, and the script fails with a clear message. Previously a hung
-  shard blocked `wait` forever, so the only thing that ever stopped it was
-  the CI job's own timeout — which kills the whole job and keeps no logs,
-  as happened during the alpha.9 release.
-
-### Fixed
-
-- **`akm health` silently excluded every improve run recorded before #947
-  added `plan.processes`.** `decodeImproveResult` called
-  `validateProcessRoutingRows` unconditionally, so a `plan` object with no
-  `processes` key — legitimately written by every release before
-  2026-09-09T09:03:19Z — failed decode with "plan.processes must be an
-  array" and dropped the run from `--window-compare`, `--group-by run`, and
-  the HTML/MD reports. On a real owner `state.db`, 11 of 55 improve runs in
-  a 30-day window were affected; all 11 decode cleanly now. `plan.processes`
-  is validated only when present, the same guard already used for
-  `plan.proactive` and the `retrieval` gate (AGENTS.md "Reading persisted
-  data"). Also: a row `akm health` cannot decode — corrupt or otherwise —
-  now logs a warning naming the row id and the decode error, instead of
-  only incrementing `improve.resultRows.skipped.invalid` with no way to
-  tell why.
-- **`akm info` now always reports and exits 0, like a help command.**
-  Whatever else is running, and whatever state the config and databases
-  are in, it prints its report in every format (and with `--quiet`) and
-  names what it could not read:
-  - an invalid or unreadable `config.json` is reported in a new
-    `configError` field. Every other command still refuses at startup
-    (exit 78) before any side effect;
-  - a missing or unresolvable bundle directory is reported in
-    `bundleDirError`, and a fresh install reports the default location;
-  - `index.db` is opened read-only with a bound of about 1.5 s. A
-    concurrent `akm index` or `akm improve` writer (which under the DELETE
-    journal mode could make `info` wait the full 30 s busy timeout), a
-    newer layout, or a corrupt index is reported in
-    `indexStats.unavailable` instead of as unexplained zeros. An older
-    layout is served as-is, never migrated;
-  - each path field degrades on its own, with a last-resort report for
-    anything unexpected;
-  - an unrecognized flag warns instead of exiting 2, as `akm help` does.
-
-## [0.9.17-alpha.9] - 2026-09-29
-
-`akm improve` now forgets, reversibly and under review. A consolidation pair
-pass compares each new or changed memory, flat knowledge file or lesson with
-its nearest neighbours; where an LLM judge calls a pair duplicate, subsumed or
-superseding, it mints a retire proposal that a person reviews (`akm proposal
-list --generator consolidate-pair`). Accepting one archives the older or
-contained copy, and `akm proposal revert` restores it exactly; an accepted
-promotion now retires its source memory, so promotion no longer leaves a
-duplicate. A continuity check flags a retirement whose survivor does not rank
-where the retired asset did for its own past searches, and a flagged proposal
-is never bulk-accepted. Archived files are purged 30 days after retirement,
-only when git holds them unmodified. The per-run forgetting-safety lane, LLM
-metadata enrichment and LLM entity-graph extraction are removed: each measured
-no benefit. Decide pending retire proposals before downgrading to
-0.9.17-alpha.8.
+## [0.9.17] - 2026-09-29
 
 ### Added
 
-- **Consolidate pair pass: duplicate, subsumed and superseding memories are
-  now retired, review-gated.** A second pass inside `akmConsolidate`,
-  alongside the existing promote pass. It walks memory-tier assets (a
-  memory, base or `.derived`; a flat `knowledge/` asset; or a lesson) in the
-  retrieval scope that are new to the pass or whose body has changed since
-  their last full attempt — tracked by content hash, not a time window, so
-  an initiator the nightly cap or a pending-proposal collision leaves out
-  stays eligible rather than being marked settled, and the pass's own
-  ledger rows are never retrieval-scope evidence for the other improve
-  lanes — takes each one's nearest neighbours by stored vector (fetching 20,
-  keeping the first 5 that clear every filter; same bundle, memory tier
-  only — structured knowledge in subfolders is excluded), and judges every
-  pair at cosine >= `T_pair` (0.93) with one LLM call using the calibrated
-  relation prompt (`src/assets/prompts/consolidate-pair.md`, six labels:
-  `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap`,
-  `unrelated`). An initiator with no prior attempt is held to a higher
-  `T_pair` >= 0.95, unless it is new material (git first-added within the
-  last 7 days), which judges at the ordinary 0.93. "Older"/"newer" for the
-  judge's own A/B labelling comes from one `git log` per run over the
-  bundle (first-add time, following renames so a moved or renamed file
-  keeps its original date), not frontmatter or file mtime — mtime is only
-  the fallback for a file git does not know, or a bundle with no `.git` at
-  all. At most 300 pairs are judged a night, admitted a whole initiator at
-  a time rather than by flat cosine rank: new-or-changed initiators first,
-  then the existing backlog by its own best cosine, each admitted only if
-  every one of its candidate pairs fits in what remains of the 300 — so an
-  initiator blocked on another pending decision never spends a slot doing
-  nothing, and a smaller initiator further down still fits when a larger
-  one ahead of it does not. `duplicate`, `subsumed` and `supersedes` mint a
-  reviewed `retire` proposal for the losing side (owner-calibrated
-  precision 20/22 = 0.91 [0.72, 0.97] against a second-rater baseline of
-  0.17 for `supersedes` alone); `contradicts` is counted but stays a human
-  decision, and `overlap`/`unrelated` get no proposal. Guards: never a
-  `captureMode: hot` memory, never a `.derived` memory whose parent still
-  exists, never a pair where either side already has a pending retire
-  proposal (as the retired ref or its successor), and never retiring or
-  reusing as a successor an asset already spent earlier in the same run.
-  (`src/commands/improve/consolidate/pair-pass.ts`,
-  `src/commands/improve/retrieval-scope.ts`,
-  `src/storage/repositories/improve-ledger-repository.ts`,
-  `src/assets/prompts/consolidate-pair.md`)
-- **Retire proposals.** A pair-pass retire proposal mints under its own
-  source, `consolidate-pair` — kept apart from the promote pass's
-  `consolidate` proposals, so a bulk `accept`/`reject --generator
-  consolidate` never sweeps a retirement, and the reverse; a bare `akm
-  proposal accept <ref>` never resolves to one either (it matches the
-  newest non-retire proposal for the ref, if any — a retire is reached by
-  its own proposal id, or the bulk `--generator consolidate-pair` form),
-  and retention expiry never drops a pending one for age alone. A pair the owner
-  rejected or reverted is not proposed again while both sides are unchanged. Its primary
-  change deletes its target instead of writing content. Accepting one first
-  confirms the decision is still fresh — the successor still exists, and
-  both sides' recorded body hashes still match their current files, not
-  just the retired side's, so a decision a later accept elsewhere made
-  stale (an A->B/B->C chain, or A->B/B->A both minted) is refused cleanly
-  rather than partially applied — then archives the asset (and its
-  `.derived` twin, if one exists) through a generalized
-  `archiveCleanupCandidate` (now usable on any memory, knowledge or lesson
-  file, not only `.derived` memories): the same
-  `.akm/memory-cleanup/archive/` encoding memory cleanup already used,
-  never the dead `.akm/archive/`. A `supersedes` judgement first writes the
-  `supersededBy` edge on the older asset, then archives it. Triage never
-  auto-accepts a retire proposal, whatever `applyMode` says — it waits for
-  a direct `akm proposal accept`, reviewed the same way as any other
-  proposal (`akm proposal list`, `show`, `diff`, bulk `accept --generator
-  consolidate-pair`; `--max-diff-lines` counts a retire by its target's own
-  line count). `accept` is crash-safe: it records its full intent —
-  `backupContent` and which file is about to move — durably before moving
-  anything, so a crash partway through, including between a primary and its
-  `.derived` twin, resumes and finishes from what was recorded rather than
-  leaving an asset stranded or the decision unrecorded. `revert` needs no
-  intent of its own — it resumes from what `accept` already recorded, and
-  refuses instead of overwriting a path that was reused by an unrelated file
-  since (its current content no longer matching what was retired). `revert`
-  restores the archived file(s) byte-for-byte from the bytes recorded at
-  accept, even a file that had no trailing newline — YAML comments, key
-  order and any human-written edge all survive the round trip. A ref to a retired asset keeps resolving to its tombstone
-  (`isArchivedRelPath`) — fixed along the way: that resolver assumed only
-  memories are ever archived, so an xref to a retired knowledge or lesson
-  asset was wrongly reported `missing-ref` by `akm lint` until now. Pending
-  retire proposals must be accepted or rejected before downgrading to
-  0.9.17-alpha.8 or earlier — that release predates the retire shape
-  entirely and exits 70 on one in `show`/`diff`/`drain`, and drain's own
-  nightly pre-pass failing on the first one it meets stops that run's
-  auto-promotion for the whole stash. Downgrading also revives the
-  new-material starvation this same branch fixed forward-only: 0.9.17-alpha.8
-  counts a pair-pass ledger row as retrieval-scope evidence again, so its own
-  nightly attempts crowd new material back out of every other improve lane —
-  measured, two nights left only 341 of 2,183 new-only assets still in scope
-  once read under alpha.8
-  (`docs/architecture/persisted-data-compat.md`).
-  (`src/commands/proposal/repository.ts`,
-  `src/commands/improve/memory/memory-improve.ts`,
-  `src/commands/lint/base-linter.ts`)
-- **A promotion retires its source memory (O1).** When `akm proposal accept`
-  promotes a consolidate `promote` proposal — by a person or by triage
-  auto-promotion — it now archives the source memory (and its `.derived`
-  twin) through the same retire-archive path, tombstoned `reason: promoted`,
-  provided the source's body still matches the hash recorded when the
-  promotion was minted; an edit since then leaves the source alone (a
-  proposal minted before this hash existed is never archived, for the same
-  reason). A promotion no longer leaves a memory/knowledge duplicate behind.
-  Best-effort: a failure to archive the source only warns; the promotion
-  itself is not undone. (`src/commands/improve/consolidate.ts`,
-  `src/commands/proposal/repository.ts`)
+- **Declared links (#935).** `akm index` now records the relations a bundle
+  already declares — `xrefs:`, `supersededBy:`, `contradictedBy:`,
+  `currentBeliefRefs:`, a `.derived` memory's parent, a wiki's `sources:`,
+  resolved wiki/OKF page links, and a workflow step's or task's target — as
+  typed links, read from what it already parses, with no model call. `akm
+  show` lists an asset's links grouped `outgoing`/`incoming`/`unresolved` (up
+  to 10 per kind, with a total), and `akm info` reports link counts and how
+  many are unresolved. Curate's support refs (at most two per item) now come
+  from declared links instead of the LLM entity graph's `related` list (see
+  Removed): on a 23,979-entry snapshot, `related` supplied support refs for
+  5.4% of curate items against 29.6% for declared links, and judged
+  usefulness rose from about 7 to about 24 useful support refs per 100 items.
+- **Consolidate pair pass and retire proposals.** A second consolidation pass
+  compares each new-or-changed memory, flat `knowledge/` file, or lesson
+  against its nearest neighbours (the best 5 of 20 candidates, same bundle,
+  memory tier only) and has an LLM judge label each pair `duplicate`,
+  `subsumed`, `supersedes`, `contradicts`, `overlap`, or `unrelated` (judged
+  at cosine ≥ 0.93, or ≥ 0.95 for an asset the pass has never attempted —
+  unless git added it within the last 7 days, which still judges at 0.93).
+  The first three labels mint a reviewed `retire` proposal for the losing side
+  (owner-calibrated precision 20/22 = 0.91 [0.72, 0.97]); `contradicts` is
+  counted but left to a human; at most 300 pairs are judged a night. Retire
+  proposals mint under their own generator, `consolidate-pair` — kept apart
+  from the promote pass's `consolidate` proposals in bulk accept/reject — and
+  are reviewed like any other proposal (`akm proposal list --generator
+  consolidate-pair`, `show`, `diff`, `accept`, `reject`). Accepting one
+  archives the losing asset (and its `.derived` twin) instead of deleting it;
+  `akm proposal revert` restores the archived bytes exactly, including a file
+  with no trailing newline. Triage never auto-accepts a retire proposal,
+  whatever `applyMode` says.
 - **Retirement continuity check (rule R3).** Before the pair pass mints a
-  `retire` proposal, it replays up to five of the retired asset's own past
-  `search`/`curate` queries through akm's own search, in-process — the
-  ranking a user actually gets, no LLM. For every query where the retired
-  asset ranked in the top 10, the successor must too; compared directly,
-  since search itself returns at most the top 10 hits. A failing
-  query never blocks the mint — the
-  proposal's `retirement.continuityRisk` records the failing query count
-  and, per failing query, the retired asset's rank and the successor's
-  (`null` when the successor did not rank in the top 10 at all). A proposal
-  carrying `continuityRisk` is excluded from every bulk accept path (`accept
-  --generator …`, with or without `--yes`) but not from bulk reject —
-  declining a flagged proposal is always the safe direction; a person can
-  always accept one by id. An asset with no recorded queries is not checked
-  at all. A query that never ran (the search call threw) or that fell back
-  to keyword-only ranking (an unreachable embedding endpoint, most often)
-  is never silently trusted or silently dropped either: it counts as
-  "unverified" and, on its own, is enough to flag `continuityRisk` — an
-  endpoint outage reads as "risk unknown," never as "no risk found," for
-  every proposal checked while it stays down, not just the first. The
-  first fallback in a pair-pass run forces every later query in that same
-  run to skip the semantic attempt entirely, so a dead endpoint costs one
-  failed attempt total, not one per remaining query. Two fixes against false
-  flags, measured on a real night-1 admission (300 pairs, 6 flags, 3
-  spurious): replayed queries are the same cleaned set the retrieval
-  regression gate uses (`loadRetrievalQueries`) — stash-README boilerplate,
-  harness/tool envelopes, pastes over 2,000 characters, and near-duplicate
-  queries (equal once whitespace is collapsed) are dropped before replay,
-  not just capped at five raw entries; and the check does not run at all
-  when the retired and successor bodies are content-identical once
-  whitespace is collapsed — search's own content-dedupe already hides the
-  successor behind the retired asset for every such query, so a "successor
-  missing" finding would not be a real risk.
-  (`src/commands/improve/consolidate/continuity-check.ts`,
-  `src/commands/proposal/proposal-types.ts`,
-  `src/commands/proposal/proposal.ts`)
-- **Continuity-risk visibility, and a `--generator` filter for `proposal
-  list`.** A retire proposal carrying `retirement.continuityRisk` now
-  shows `⚠ continuity-risk` inline in the default `akm proposal list`
-  output (and `--format text`), not just in `proposal show`. `proposal
-  show`'s text output now lists the actual failing query text and rank per
-  query, not just a count, and separately reports `unverifiedQueries` when
-  the risk is (also, or only) an unverified query rather than a rank
-  failure. `akm proposal accept --generator … --dry-run` (and a real bulk
-  run) now reports `skippedForContinuityRisk`, the count of otherwise
-  matching proposals excluded specifically for this reason, apart from an
-  ordinary `--max-diff-lines`/`--older-than` miss. `akm proposal list` gains
-  a `--generator <name>` filter, the same value `accept`/`reject
-  --generator` already take, so the (potentially large) backlog of one
-  generator's retire proposals can be reviewed as its own list.
-  (`src/commands/proposal/proposal.ts`, `src/commands/proposal/proposal-cli.ts`,
-  `src/output/text/proposal-format.ts`, `src/output/shapes/helpers.ts`)
-- **Archive purge sweep.** Deterministic, no LLM, run once at the very start
-  of every `akm improve` invocation, ahead of index bootstrap and triage.
-  For a git-backed bundle, deletes the archived asset file(s) of a
-  retirement — never its `cleanup.md` tombstone — once `retiredAt` is more
-  than 30 days old (`RETIRE_GRACE_DAYS`) AND every file under that
-  retirement's archive directory is git-tracked, clean (`git ls-files` plus
-  `git status --porcelain -uall`), and verifiable (`git ls-files -v`: a
-  file marked `assume-unchanged` or `skip-worktree` hides its own edits
-  from `git status`, so it is never trusted as clean either) — each checked
-  once per sweep; git history keeps the bytes. `.git` presence alone is not
-  enough: `proposal accept` only commits for a `kind: "git"` write target,
-  and improve's own auto-sync stages only the paths its own run wrote, so a
-  filesystem-kind bundle can carry archived retirements that were never
-  committed — the tracked/clean/verifiable check is what keeps the sweep
-  from deleting the only surviving copy of those. A directory with even one
-  untracked, modified, or unverifiable file (tombstone included) is left
-  whole for a later sweep — and so is the ENTIRE archive for that sweep if
-  the underlying `git status` or `git ls-files` call itself fails (a broken
-  submodule, for instance, can fail `git status` while `git ls-files`
-  still succeeds): an empty result from a failed check is never treated as
-  "nothing to protect", and the sweep warns once rather than silently
-  purging nothing. A memory-cleanup family-prune archive carries no
-  `retiredAt`, so this sweep never touches that older archive class. Every
-  deleted file is journaled individually, so the end-of-run auto-sync
-  commits the removal the same way it commits the archive move itself.
-  (`src/commands/improve/memory/memory-improve.ts`,
-  `src/sources/providers/git-stash.ts`, `src/commands/improve/improve.ts`)
-- **`akm health`'s `memory-cleanup-archive` advisory now covers every
-  bundle**, not just one with no `.git` at all. A bundle with no `.git` of
-  its own keeps every retirement's archived bytes forever (there is no
-  history to fall back on, so the purge sweep never runs there), and its
-  size and file count are reported as before. A git-backed bundle can ALSO
-  carry archived bytes the purge sweep will never remove — `.git` presence
-  alone never proved a retirement was committed — so this now runs the same
-  tracked/clean/verifiable check the purge sweep itself uses and reports
-  how many files and bytes of the archive cannot currently be purged
-  (untracked, modified, or unverifiable), alongside the total. Silent
-  whenever there is nothing to say: the archive is empty or absent, or (for
-  a git-backed bundle) every byte in it is purgeable once it ages out.
-  (`src/commands/health/archive-usage.ts`, `src/commands/health/data-dir-usage.ts`)
-
-### Removed
-
-- **LLM metadata enrichment (`index.metadataEnhance`) is retired.** On 49
-  stratified queries, with every eligible candidate enriched (1,968
-  entries): search nDCG@10 moved −0.0092 [−0.0324, +0.0165], curate P@5
-  +0.000 [−0.037, +0.045], and long prompts lost −0.054 [−0.093, −0.012]. A
-  Doc2Query-- filter made it worse (P@5 −0.020 [−0.045, −0.004]). The pass
-  replaced authored descriptions on 89% of the entries it rewrote, and a
-  full pass costs about 27 B70-hours (RS-D, owner ruling 2026-09-28). It was
-  already off by default and off in the maintainer's config. The LLM call
-  (`src/llm/metadata-enhance.ts`), its `akm index` dispatch, and the
-  `metadata_enhance` feature-gate key are gone; the deterministic metadata
-  pass, `quality: "generated"`, and memory inference are unaffected. A
-  config that still sets `index.metadataEnhance` loads, named once by the
-  same unknown-config-key path every other retired key uses: kept in
-  memory, round-trips through ordinary writes, and is dropped only by
-  `akm migrate apply`. The pass's `llm_enrichment_cache` rows (the default
-  `cache_variant`; graph and memory inference use their own named variants)
-  are deleted on the next writable open of `index.db`. An index built while
-  enrichment was on keeps its entries' LLM-written descriptions on
-  incremental runs — nothing rewrites an unchanged row; run
-  `akm index --full` once to replace them with the deterministic ones.
-  (`src/indexer/indexer.ts`, `src/llm/feature-gate.ts`,
-  `src/core/config/config.ts`, `src/core/config/schema/index-config.ts`,
-  `src/storage/repositories/index-schema.ts`)
-- **The LLM entity-graph extraction pass.** `akm improve`'s per-file
-  entity/relation extraction, its persisted tables (`graph_meta`,
-  `graph_files`, `graph_file_entities`, `graph_file_relations`), and `akm
-  show`'s `related` list are gone. On the navigation eval, vector kNN beat
-  the LLM `related` list by 0.157 P@5 [0.051, 0.260]; the ranking boost it
-  once fed was already removed in 0.9.17-alpha.4. Declared links (#935,
-  alpha.8) are the only navigation surface `akm show` has now, and curate's
-  support refs already came from them, not the graph. index.db is a
-  regenerable cache, so the graph tables are dropped unconditionally on the
-  next writable open — nothing migrates or backs them up.
-- **The `graph-refresh` improve strategy** and the `akm-graph-refresh-weekly`
-  task template are deleted. Naming `graph-refresh` via `--strategy` or a task
-  now fails with a message naming the retirement, unconditionally — even when
-  `improve.strategies["graph-refresh"]` still has a leftover override block
-  from customizing the built-in (the message names it; `akm migrate apply`
-  drops it). `defaults.improveStrategy: "graph-refresh"` still loads config
-  successfully — the refusal happens lazily, when the strategy is actually
-  resolved, not at every command's config load.
-- **Retired config keys:** `index.graph.*` and every strategy's
-  `processes.graphExtraction.*`. An old config that still sets them keeps
-  loading and the keys are unread, but `index.graph` is now also named once
-  by the unknown-config-key warning (it previously validated silently
-  against the generic per-pass catchall) and, like any other retired key,
-  is dropped only by `akm migrate apply` — not by an ordinary config write.
-- **`akm health` drops every graph metric** — the KPI card, summary-table
-  rows, per-run duration/entity/relation columns, and the
-  `improve.graphExtraction.failures` window-compare delta. `--window-compare`
-  and `--group-by run` still count every run, including a pre-alpha.9 one:
-  its stored `graphExtraction`/`graphExtractionDurationMs` result fields and
-  its `graph-extraction` `plan.stages` / `graphExtraction` `plan.processes`
-  entries still decode, read-only, same as any other retired field (AGENTS.md
-  "Reading persisted data") — they are just no longer rendered. The
-  `improve_completed` event's `graphExtractionExtractedFiles`,
-  `graphExtractionDurationMs`, `graphCoverage`, `graphDensity`, and
-  `graphEntities` metadata fields are no longer emitted.
-- **The per-run forgetting-safety lane.** `scoreSalience`'s stash-wide
-  salience-rank comparison, `applyForgettingSafety`, and the
-  `improve_salience_rank_change` event are gone. It was a one-time WS-1
-  cutover guard from the June 2026 ranking-formula change that had kept
-  running on every improve run since; the last 30 days of events
-  (2026-08-30 to 2026-09-29: 47 `improve_salience_rank_change` events, 5
-  refs flagged across 4 runs — 09-05, 09-08 x2, 09-19, 09-28) showed no
-  marginal pick over the signal-delta lane and the retrieval scope: 4 of
-  the 5 flagged refs were also picked that same run by signal-delta
-  (adjacent event ids/timestamps, 2–26 minutes after the rank-change
-  event), and the 5th (`workflows/create-github-issues-from-spec`, flagged
-  09-05) has no `reflect_invoked` or `distill_invoked` event in the
-  retained history, but that run's `improve_runs.plannedRefs` shows it,
-  too, was planned under `signal-delta` — just not reflected (a
-  dispatch/budget limit that run, not a lane-exclusive pick). All 5
-  flagged refs were signal-delta picks; zero were forgetting-safety-only.
-  It also protected
-  `asset_salience.rank_score`, which only improve itself ever read — a rank
-  drop could not hide anything from search. `buildRankChangeReport` (its
-  comparator) is also gone: the new retirement continuity check (see
-  Added) compares ranks directly instead, and nothing else called it.
-  `forgetting-safety` stays a valid `eligibilitySource`/event-type
-  value so old proposals and events still decode, but nothing assigns or
-  emits it any more. (`src/commands/improve/preparation.ts`,
-  `src/commands/improve/salience.ts`, `src/core/events.ts`,
-  `src/storage/repositories/salience-repository.ts`)
-- **`improve.strategies.<name>.processes.consolidate.incrementalSince` and
-  `.neighborsPerChanged`.** The consolidate pair pass is now the candidate
-  generator, narrowing per initiator through the improve ledger rather than
-  a global time window; neither key was set anywhere in the owner's config.
-  `narrowToIncrementalCandidates` goes with them, along with its
-  now-orphaned `parseSinceToIsoLenient` helper. A config that still sets
-  either key keeps loading under the retired-key contract: named once as
-  unknown, it survives an ordinary config write, and only `akm migrate
-  apply` drops it. (`src/core/config/schema/improve-processes.ts`,
-  `src/commands/improve/consolidate.ts`, `src/core/time.ts`,
-  `docs/reference/configuration.md`)
-
-### Fixed
-
-- **Stale "advisory merge/delete/contradict" documentation.** Consolidation
-  stopped executing its merge/delete/contradict operations at `e82eec811`
-  (2026-07, #732; they had run in production until then, not "never
-  executed" as a couple of doc comments and `improve-workflow.md` claimed),
-  and 0.9.17-alpha.1 (`f4ebd763a`) dropped them from the prompt and schema,
-  which have offered `promote` only since. But `docs/architecture/
-  improvement.md`, `STABILITY.md` and `docs/architecture/internals/
-  improve-workflow.md` still described them as advisory planned output.
-  Corrected, and `improve-workflow.md` gains a section documenting the pair
-  pass, retire proposals and O1. Also corrected: the `default` strategy's
-  "advisory consolidation" description, two comments that still credited a
-  `beliefState` ranking boost alpha.4 removed (`memory-belief.ts`,
-  `knowledge.ts`), and D27's stale `archiveMemory` naming in the
-  architecture decision history. Deleted the unused
-  `src/assets/prompts/contradiction-judge.md` (no reader since
-  `e82eec811`).
-
-## [0.9.17-alpha.8] - 2026-09-28
-
-`akm index` now records the links a bundle already declares (`xrefs`,
-`supersededBy`, a `.derived` memory's parent, wiki sources, page links, and
-workflow and task targets) as typed links, with no model. `akm show` lists
-them, and curate's support refs come from them instead of the LLM entity
-graph. The index moves to layout 26 in place on its first writable open;
-0.9.17-alpha.4 through alpha.7 cannot open it. `index.graph.enabled: false`
-now stops graph extraction in `akm improve`, and a partly failed extraction is
-retried. `akm migrate` converts a v2 or v3 task file to v4 in one pass, and
-the launchers no longer lose a signal that arrives before their child starts.
-
-### Added
-
-- **Declared links (#935).** The relations a bundle already declares are now
-  stored as typed links: `xrefs:` (`xref`), `supersededBy:`
-  (`superseded_by`), `contradictedBy:` (`contradicted_by`),
-  `currentBeliefRefs:` (`belief_peer`), a `.derived` memory's parent
-  (`derived_from`), wiki `sources:` that name an asset (`cites`), the page
-  links an llm-wiki or OKF bundle resolves (`links_to`), and a workflow step's
-  or a task's target (`uses`). `akm index` reads them from what it already
-  parses, with no model, so an install without an LLM engine gets them. They
-  live in their own table (`asset_links`), apart from the LLM entity graph:
-  each link belongs to the entry that declares it and is written, replaced
-  and deleted with it, including on incremental and write-path (`akm
-  remember`) indexing. A target resolves when it is indexed, not when its
-  citer was, so a note that cites something added later links to it without
-  being reindexed. Retired spellings convert in memory (`memory:<name>`,
-  `wiki:<wiki>/<page>`, a `.md` suffix), and, as lint already allows (#882),
-  a memory whose own file is gone resolves to its `.derived` child.
-  `akm show` lists an asset's links grouped by kind: `outgoing`, `incoming`
-  and the `unresolved` tokens it names, at most 10 per kind with a `total`.
-  `akm info` reports links per kind with how many are unresolved. Links do
-  not change search ranking, and `related` is unchanged: on the retrieval
-  suite, against 0.9.17-alpha.7 on the same index with two runs per arm,
-  search nDCG@10 moved +0.002 [−0.005, +0.009] (a rerun of alpha.7 alone
-  moved +0.006) and curate P@5 +0.000 [−0.001, +0.001].
-  On the retrieval snapshot of the maintainer's 21 bundles (23,979 entries)
-  there are 14,917 links: 7,393 `contradicted_by`, 4,401 `xref`, 2,577
-  `derived_from`, 540 `cites` and 6 `superseded_by`. 1,801 are unresolved;
-  1,744 of those are `.derived` memories whose parent memory no longer
-  exists. (`src/indexer/links/declared-links.ts`,
-  `src/storage/repositories/index-links-repository.ts`,
-  `src/commands/read/show.ts`, `src/commands/sources/info.ts`)
+  retire proposal, it replays up to five of the retired asset's own past
+  `search`/`curate` queries and requires the successor to rank in the top 10
+  everywhere the retired asset did. A failing or unverifiable query
+  (including one where the embedding endpoint is unreachable) flags the
+  proposal's `retirement.continuityRisk`, which excludes it from every bulk
+  accept path — but not bulk reject, and a person can still accept it by id.
+  `akm proposal list`/`show` surface the flag and the failing queries;
+  `akm proposal accept --generator ... --dry-run` reports how many
+  otherwise-matching proposals were skipped for this reason. `akm proposal
+  list` also gained a `--generator <name>` filter.
+- **A promotion now retires its source memory (O1).** When `akm proposal
+  accept` promotes a consolidate `promote` proposal — by a person or by
+  triage auto-promotion — it archives the source memory (and its `.derived`
+  twin) through the same retire-archive path, provided the source is
+  unchanged since the promotion was minted. A promotion no longer leaves a
+  memory/knowledge duplicate behind. Best-effort: a failure to archive only
+  warns.
+- **Archive purge sweep.** At the very start of every `akm improve` run, a
+  deterministic pass with no LLM call deletes an archived retirement's files
+  (never its `cleanup.md` tombstone) once it is more than 30 days old and
+  every file under its archive directory is git-tracked, clean, and
+  verifiable; anything less than that — or a bundle with no git history at
+  all — is left in place for a later sweep. A new `akm health` advisory,
+  `memory-cleanup-archive`, reports how many archived files and bytes are
+  not yet purgeable — untracked, modified, or unverifiable for a git-backed
+  bundle; everything, forever, for one with no git history at all.
+- **`akm bundle rename <old> <new>`.** Properly re-keys a bundle instead of
+  requiring a hand-edit of `config.json`: it rewrites `bundles`,
+  `defaultBundle`/`defaultWriteTarget`, and every scheduler ref that name the
+  old id, re-keys the indexed entries and enrichment cache in `index.db`,
+  rewrites this tool's own state rows that name the old bundle, and re-syncs
+  native scheduler rows under the new name. Refs inside asset content
+  (cross-references, a task's `uses:`) are reported, never silently
+  rewritten. `--dry-run` shows the full plan without writing anything.
 
 ### Changed
 
-- **`akm migrate` converts a v2 or v3 task file straight to v4 in one pass.**
-  The chain that read every file as v2, converted it to an intermediate v3
-  shape, then converted that to v4 (`src/tasks/source/task-to-v3.ts` ->
-  `task-to-v4.ts`, composed by `scripts/akm-migrate/migrate/task-files.ts`)
-  is now one planner: `task-to-v4.ts` reads a file once and, for v2, builds
-  the v3-shape record in memory — never written to disk or reported as its
-  own outcome — before hoisting it to v4 through the same code path a real
-  v3 file goes through. `akm migrate status`/`apply` output shapes, and
-  every blocked/changed reason code, are unchanged, checked fixture by
-  fixture against the prior two-hop chain's actual output (one exception:
-  a v3 document that fails only the typed pre-check's own "exactly one
-  scheduling source" rule — unreachable through the real chain, which
-  always ran that same pre-check first — now reports `invalid-v3-task`
-  instead of the raw hoist stage's own `ambiguous-scheduling-source`,
-  matching what `akm migrate apply` already returned end to end). The
-  `already-v3` and `pending-v2-to-v3-migration` intermediate states are
-  gone with the generation split that produced them.
-  `src/tasks/source/task-to-v3.ts` (500 lines) is deleted; its logic moved
-  into `task-to-v4.ts`, which also drops the duplicate raw-YAML reader and
-  outcome-base helpers the two files each carried their own copy of.
-  (`src/tasks/source/task-to-v4.ts`, `scripts/akm-migrate/migrate/task-files.ts`)
-- **Curate's support refs come from declared links.** Each curated item's
-  support refs (at most two) are now assets its declared links name: what
-  it links to, then what links to it, in the order `akm show` lists them,
-  skipping assets curate already selected. They no longer come from the LLM
-  entity graph's `related` list. On the retrieval snapshot, `related` offered
-  support refs for 47 of 867 curate items (5.4%) and declared links for 257
-  (29.6%). The retrieval judge graded 157 of those items, asking whether each
-  support ref is worth opening next: 56% of declared support refs were useful
-  against 68% of `related`'s, so curate attaches about 24 useful support refs
-  per 100 items instead of 7. Curate's items are unchanged.
-  (`src/commands/read/curate.ts`)
-- **Index layout 26.** The first writable open of an older index derives
-  every entry's links from its stored `document_json` in place, reading no
-  file: on the 23,979-entry snapshot index that takes 0.8 s and adds 3.5 MB.
-  Earlier layouts never stored a workflow's or a task's targets, so only the
-  directories holding workflows and tasks re-read on the next `akm index`.
-  The open leaves `index_meta.vacuumPending` like every layout migration.
-  0.9.17-alpha.4 through alpha.7 refuse an index at layout 26
-  (`INDEX_SCHEMA_INCOMPATIBLE`, naming the upgrade), for writing as well as
-  reading, so going back to one of them needs a new index: move `index.db`
-  aside and run `akm index` under that release (the LLM graph and enrichment
-  cache it held are not rebuilt by `akm index`).
-  (`src/storage/repositories/index-schema.ts`,
-  `src/storage/repositories/index-entry-schema.ts`)
-
-### Fixed
-
-- **`index.graph.enabled: false` stops graph extraction in `akm improve`.**
-  The switch was read only when improve had no strategy plan, which is never
-  the case in a real run, so the nightly and weekly graph tasks kept
-  extracting with it set. Improve now skips its graph extraction stage
-  whenever `index.graph.enabled` is `false`, whatever the strategy enables.
-  This also makes the graph ablation harness's "graph off" arm, which sets
-  exactly this key, turn extraction off. Improve still does not read
-  `index.defaults` when it picks the engine for graph extraction.
-  (`src/commands/improve/loop-stages.ts`)
-- **Graph extraction never has more calls in flight than the run's
-  concurrency.** Batches run side by side up to the runner's concurrency, and
-  each batch also sent its per-file calls (long bodies, a non-array response)
-  up to that limit at once, so at a concurrency of 2 four calls could be in
-  flight. A batch now makes its per-file calls one at a time. At the default
-  concurrency of 1 nothing changes. (`src/llm/graph-extract.ts`)
-- **A long document whose extraction partly failed is extracted again.** A
-  body over 1,600 characters is extracted in chunks. When some chunks failed
-  (a timeout, an error, an empty response) and others found entities, the
-  file was recorded and cached as extracted, so the failed chunks were never
-  retried. Such a file is now recorded as failed and not cached, and the next
-  run extracts it again, every chunk: partial failures are rare outside
-  provider outages, and keeping per-chunk results to skip the chunks that
-  succeeded would need a second cache. Until then the entities the other
-  chunks found are stored when the file had no graph rows yet; a file with
-  rows keeps them. (`src/llm/graph-extract.ts`)
-- **`scripts/node-runtime/akm` could die from a raw signal instead of
-  forwarding it to its child.** The launcher registered its
-  SIGTERM/SIGINT/SIGHUP forwarding listeners only after spawning the child;
-  under load, a signal could arrive in that window and fall through to the
-  runtime's default (process-terminating) disposition, killing the launcher
-  before the child ever saw it. The listeners now go up before anything else
-  runs, with a small queue for a signal that arrives before the child exists.
-- **`scripts/node-runtime/akm-migrate` carried the same pre-spawn signal
-  race** as `scripts/node-runtime/akm` above, for the same reason (listeners
-  registered only after `spawn()`), with no test covering it. Fixed the same
-  way, and added `tests/integration/akm-migrate-signal-forwarding.test.ts`
-  (modelled on `launcher-signal-forwarding.test.ts`) for its forwarding.
-- **The launcher signal tests failed intermittently because of their own
-  fixture.** The fake child wrote its ready file before it registered its
-  signal handler, so a forwarded signal could reach it in between and kill it,
-  and the launcher then reported that signal. Each fixture now registers its
-  handler first. The launcher's pre-spawn window above could not cause this:
-  the tests signal only after the child is running.
-
-## [0.9.17-alpha.7] - 2026-09-28
-
-A scheduled task is now just a command and a schedule. Each native row
-carries its own `AKM_BUNDLE_DIR` instead of pointing at a descriptor file,
-and the runtime reads only v4 task files; older files convert once with
-`akm migrate apply`. The first `akm task sync` after upgrading rewrites each
-row once, keeping every task and schedule. `akm improve` reworks only assets
-that retrieval returned or that are new, and reflect refuses a rewrite that
-grades worse on the asset's own searches. `--require-engines` no longer
-skips a run because the LLM endpoint is busy.
-
-### Changed
-
-- **akm reads only task source v4.** A `version: 2` or `version: 3` task
-  file, or a `version: 4` file that still carries 0.9.15's retired
-  `schedule[].enabled`, now fails on its own with a message naming
-  `akm migrate apply`, which converts it once, under a backup (`akm upgrade`
-  runs it after an install). Until now every read converted such a file in
-  memory. `akm task sync` reports each one as a failure, leaves its installed
-  row as it is, and keeps reconciling every other task; `akm task run`,
-  `akm lint` and `akm task validate` report it the same way, and
-  `akm task validate`'s `converts` outcome is gone (such a file is
-  `blocked`). `akm migrate apply` now also converts the tasks of the stash
-  `AKM_BUNDLE_DIR` selects when no configured bundle names it, since the
-  runtime reads those too, and a root whose top-level task files are all
-  v2/v3 is still detected as an `akm-task` bundle, so they are found and
-  converted. A host whose task files are all v4 (`akm migrate status`
-  reports `current`) sees no difference.
-  (`src/tasks/source/parse-task-source.ts`, `src/commands/tasks/validate.ts`,
-  `scripts/akm-migrate/task-migrate.ts`,
-  `src/core/adapter/adapters/akm-task-adapter.ts`)
-- **A scheduled row is its command plus its schedule, and carries its own
-  context.** Rows no longer name a `--scheduler-context` descriptor file;
-  they set what it held themselves. Every row sets `AKM_BUNDLE_DIR` to the
-  working stash of the shell that ran `akm task sync`, plus any
-  `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` or `AKM_STATE_DIR` that
-  shell set explicitly: a `VAR=value` prefix in the crontab, an
-  `EnvironmentVariables` entry in a launchd plist, a `$env:VAR='value';`
-  assignment ahead of the command in Task Scheduler (its action has no
-  environment of its own). Scheduled runs see the same environment as
-  before, and sync still tells installations sharing a crontab apart by
-  that path (#846).
-  **What hosts see:** the first `akm task sync` after upgrading rewrites
-  every akm row once. `akm task sync --dry-run` lists each one as an update,
-  never an add or a remove; each keeps its launcher and its schedule, and
-  the `--scheduler-context <file>` argument becomes an inline
-  `AKM_BUNDLE_DIR=<working stash>`. On a host whose working stash is
-  `/home/u/akm` a row changes from
-
-  ```text
-  30 8 * * * /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm --scheduler-context /home/u/.local/share/akm/tasks/context/e898….json task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
-  ```
-
-  to
-
-  ```text
-  30 8 * * * AKM_BUNDLE_DIR=/home/u/akm /home/u/.bun/bin/bun /home/u/.bun/lib/node_modules/akm-cli/dist/akm task run capture --bundle akm --scheduled > /home/u/.cache/akm/tasks/logs/capture.log 2>&1
-  ```
-
-  Rows written by 0.9.0 through 0.9.17-alpha.6 keep firing until that sync:
-  the CLI still accepts `--scheduler-context <file>` and applies the file's
-  environment (PATH included, for a 0.9.16 row). The files under
-  `$DATA/tasks/context/` are no longer written, and the uid, mode, symlink
-  and content-hash checks made on every scheduled run are gone. A sync
-  leaves some rows as they are (one whose task file failed to load, one a
-  `--bundle` sync did not cover), and those still name their file: once
-  `akm task doctor` lists no binding with a `contextPath`, nothing reads
-  them and they can be deleted. `akm task prune` now
-  finds rows whose `AKM_BUNDLE_DIR` names a directory that is gone, and older
-  rows whose descriptor cannot be read; `akm task doctor` lists `contextPath`
-  only for an older row. (`src/tasks/scheduler-invocation.ts`,
-  `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
-  `src/tasks/backends/schtasks.ts`, `src/tasks/scheduler-sync.ts`,
-  `src/commands/tasks/tasks.ts`)
-- **`akm improve` reworks only what gets read (#986).** An asset with fresh
-  feedback, or one you name (`akm improve skills/x`), is handled as before.
-  Every other pick must now be in the retrieval scope. That covers the
-  proactive-maintenance, high-salience and forgetting-safety lanes, and the
-  memories consolidation judges. An asset is in scope if a user `search`,
-  `curate` or `show` returned it, or user `feedback` named it, in the last 90
-  days, which is the usage log's retention. A hit on a `.derived` memory counts
-  for its parent. New material that no improve stage has processed yet is also
-  in scope. There is no new config key.
-
-  Measured with `akm improve --dry-run` on a copy of the maintainer's bundle
-  (19,870 assets), against 0.9.17-alpha.6:
-  - The fallback lanes pick from 6,450 assets instead of 15,686, and 9,236
-    refs are left out. No lane setting can reach the unread tail any more. In
-    July the proactive lane rewrote 3,069 assets, and 3,059 of them had not
-    been retrieved since the usage log began on 1 July.
-  - Consolidation judges 59 memories instead of 69.
-  - The high-salience lane no longer admits distill outputs nobody has read (2
-    today).
-  - Under the scheduled caps, today's nightly work is unchanged. The default
-    strategy selects the same 50 feedback-driven refs, and weekly proactive
-    maintenance selects the same 25, because salience ranking already puts
-    retrieved assets first.
-
-  `akm improve --dry-run` and the run result report the left-out refs as a new
-  `retrieval` gate. Health reports them under the skip reason `not_retrieved`.
-  Improve results stored by earlier releases, which have no such gate, still
-  decode. (`src/commands/improve/retrieval-scope.ts`,
-  `src/commands/improve/preparation.ts`, `src/commands/improve/consolidate.ts`)
-
-- **Reflect refuses a rewrite that makes an asset worse for its own searches
-  (#722).** Before reflect proposes a rewrite of an existing asset, it grades
-  the old and the new content on up to five of the queries that actually
-  retrieved the asset (user `search` and `curate`). It uses the retrieval
-  eval's relevance prompt, which agrees with human grades at kappa 0.83. When
-  the new content grades lower on average, the rewrite is refused the same way
-  a quality-judge rejection is: `quality_rejected`, with the 14-day reflect
-  window. An asset without retrieval queries is not graded.
-
-  This was measured before it was built. Of 60 accepted rewrites since July,
-  judged this way, 14 graded lower (23%, 95% CI 14–35%) and 12 graded higher.
-  The gate was built because the lower bound cleared the 10% threshold set
-  before any judging. It costs two judge calls per query on the engine that
-  already runs the quality judge. On the maintainer's 2026-09-28 nightly run,
-  whose 30 rewrites had 102 usable queries, that is 204 calls, about 6 more
-  minutes on a 73-minute run. (`src/commands/improve/retrieval-gate.ts`,
-  `src/commands/improve/reflect.ts`)
-
-### Fixed
-
-- **A cron row too long for one line is seen by `akm task sync` again.** A
-  command over 1,000 bytes runs from a wrapper script, and sync could not
-  read which task such a row ran: every sync, and every `--dry-run`, showed
-  it as an add and wrote it again. Sync now reads the script, so the row is
-  unchanged or an update like any other. (`src/tasks/backends/cron.ts`)
-- **A `$` or a backslash in a scheduled row's value is kept.** launchd and
-  Task Scheduler rows passed their values through a string replacement that
-  read `$'`, `$&` and `$$` as patterns, so a path such as a Windows admin
-  share (`\\nas\share\akm$`) came out corrupted; reading a crontab row
-  back dropped a backslash inside a single-quoted value.
-  (`src/tasks/backends/launchd.ts`, `src/tasks/backends/schtasks.ts`,
-  `src/tasks/backends/cron.ts`)
-- **`akm improve --require-engines` no longer skips a run because the LLM
-  endpoint is busy.** Its reachability probe, one short completion, gave up
-  after 3 seconds, so a local server busy with another job looked
-  unreachable and the whole scheduled run failed (all four scheduled runs on
-  2026-09-27). The probe now waits up to the engine's own `timeoutMs`, at
-  most two minutes, so a busy server can answer while a hung one still fails
-  fast. The error's hint now says to check the endpoint rather than to run
-  `akm setup`.
-  (`src/commands/improve/improve-cli.ts`)
-
-## [0.9.17-alpha.6] - 2026-09-27
-
-Graph extraction stops losing and wasting work. A timed-out extraction is
-retried instead of cached as empty. Long documents are extracted once, and
-per-file calls respect the run's concurrency. `akm improve` honors
-`index.graph`. `akm curate` returns nothing for harness and tool envelopes,
-and search and curate show identical content once. Lazy graph extraction,
-which never ran under Bun, is removed.
-
-### Changed
-
-- **`akm curate` returns nothing, on purpose, for input that is not a task.**
-  A harness or tool envelope (input that starts with an XML-style tag and
-  contains a closing tag, such as `<task-notification>…</task-notification>`,
-  `<system-reminder>…` or `<cross-session-message …>…`) and the stash README
-  line each used to get `--limit` unrelated assets. Every caller of
-  `akm curate` (the CLI, the OpenCode plugin, other harnesses) now gets an
-  empty `items` list with a `summary` that starts with `Curate abstained` and
-  names the reason, and a `tip`. On the retrieval suite curate abstains on 57
-  of 60 recorded non-task inputs and on none of the 221 real queries (nor on
-  any of 5,725 mined task queries). Length is not a reason to abstain: the
-  other 3 are task prompts of 2,431–5,531 characters, and in a judged sample
-  of 30 inputs over 2,000 characters the top 5 held a relevant asset for 24
-  of them (P@5 0.42, against 0.46 for prompts of 400–2,000 characters).
-  (`src/commands/read/curate.ts`)
-- **Search and curate return identical content once.** Of entries whose
-  indexed content is identical (the same body saved under another name, as
-  both a memory and a knowledge doc, or in another bundle), only the
-  highest-ranked is kept, and the next candidate takes the freed slot. On the
-  retrieval suite such copies filled 7.5% of curate's top 5. Unique
-  precision@5, where a copy of a higher-ranked result earns nothing, rises
-  from 0.467 to 0.514 (+0.046, 95% CI [+0.028, +0.067]), and the share of
-  top-5 slots that repeat a higher-ranked result falls from 0.131 to 0.055.
-  Plain P@5 (0.553 → 0.551) and nDCG@10 stay within noise: they counted each
-  copy as another relevant result. Latency is unchanged.
-  (`src/indexer/search/db-search.ts`)
-
-### Removed
-
-- **The unused `utility_scores_scoped` index table is gone.** It shipped in
-  0.9.17-alpha.5 for per-project scoped utility scores, but no code ever read
-  or wrote a row. An index database drops it on its next writable open, the
-  same way other retired derived tables are dropped, with no layout-version
-  change. (`src/storage/repositories/index-schema.ts`)
-- **Lazy graph extraction in `akm show` and `akm curate`.** With
-  `index.graph.lazyGraphExtraction: true`, `show` extracted an asset's graph
-  after building its response, so only the next `show` saw it. `curate`
-  queued assets for a later pass, which drained only the working bundle's
-  queue, and extractions made this way wrote no cache entry. Under Bun neither
-  path ever ran: the "already has a graph" check read a missing row as
-  present. Graph extraction now runs only in `akm improve`. The
-  `graph_extraction_queue` table is dropped the next time the index is opened
-  for writing. A config that still sets the key loads, and the key is named
-  once as unknown. (`src/commands/read/show.ts`,
-  `src/commands/read/curate.ts`, `src/indexer/graph/graph-extraction.ts`,
-  `src/storage/repositories/index-schema.ts`)
-
-### Fixed
-
-- **`index.metadataEnhance`'s default is no longer contradicted by dead
-  code.** Metadata enhancement has always defaulted to off
-  (`isLlmFeatureEnabled`); a second, unreachable code path in
-  `isProcessEnabled` claimed the opposite default and had no caller. Removed,
-  so one default remains. (`src/llm/feature-gate.ts`)
-- **Eval tooling and docs catch up to the current config and index shape.**
-  `scripts/akm-eval/src/curate-bench.ts` wrote the retired `sources` config
-  key and called a nonexistent `akm index --dir`; it now seeds its sandbox
-  the same way the other akm-eval scripts and integration tests do, and
-  drops `--dir`. The graph A/B ablation harness
-  (`scripts/akm-eval/src/graph-ablation.ts`) planted its "graph off" config
-  where the sandboxed `akm` never read it, with config keys that didn't gate
-  anything (one of them a type error); it now writes
-  `index.graph.enabled: false` to the sandbox's actual `AKM_CONFIG_DIR`.
-  Updated `scripts/akm-eval/README.md` and `docs/maintainers/eval.md` to
-  match, and corrected stale `docs/architecture/architecture.md` references
-  to `db-backup`, `staleness-detect`, and `src/commands/graph/`.
-- **Scheduled graph extraction reads `index.graph`.** `akm improve` passed
-  graph extraction a batch size of 4 and the `memory` and `knowledge` types
-  whenever the strategy's `processes.graphExtraction` did not set them, so
-  `index.graph.graphExtractionBatchSize` and `graphExtractionIncludeTypes`
-  never applied. It did not read `index.graph`'s `engine`, `model`,
-  `timeoutMs` or `llm` either, so a setting such as
-  `index.graph.llm.enableThinking: false` had no effect on improve runs. A
-  value in the strategy's `processes.graphExtraction` still wins. A setting it
-  leaves unset now comes from `index.graph`, then from the built-in default.
-  Where `index.graph` asks for something improve did not use before, the
-  extractor changes and cached extractions stop applying, so those files are
-  extracted again. (`src/commands/improve/loop-stages.ts`,
-  `src/commands/improve/execution.ts`,
-  `src/commands/improve/improve-strategies.ts`)
-- **A graph extraction that times out is retried, not cached as empty.** A
-  call that ran past the engine's `timeoutMs` was recorded as "no entities"
-  and cached, so the file was never extracted again. It is now recorded as
-  failed, and the next run retries it; timeouts also count toward the run's
-  failure-rate abort. A batch that times out fails its files without then
-  calling the model once per file. An empty response is likewise recorded as
-  failed. (`src/llm/graph-extract.ts`)
-- **Long bodies are extracted once after batching turns itself off.** Two
-  non-array batch responses turn batching off for the rest of a run. From
-  then on, a body over 1,600 characters was extracted on its own and then
-  again with the rest of its batch. Each body is now extracted once.
-  (`src/llm/graph-extract.ts`)
-- **A batch's per-file calls respect the run's concurrency.** When a batch
-  fell back to one call per file (long bodies, a non-array response, batching
-  turned off), those calls all went out at once, up to the batch size. Local
-  endpoints serve one or two requests at a time. The calls now run within the
-  limit the run applies to its batches, one at a time by default.
-  (`src/llm/graph-extract.ts`)
-- **`related` counts a shared entity once.** `akm show`'s `related` list,
-  and curate's support refs taken from it, ranked files by the number of
-  matching entity rows. A file holding two case forms of one entity, as rows
-  from older extractors can, counted it twice and could outrank a file that
-  shared two entities. `related` now counts distinct entities. Extraction also
-  keeps one form of each entity before writing. The stored key `related`
-  matches on is now the one extraction deduplicates on, which also drops
-  surrounding quotes and backticks.
-  (`src/indexer/graph/graph-related.ts`,
-  `src/indexer/graph/graph-extraction.ts`, `src/indexer/db/graph-db.ts`)
-- **A config change that re-extracts the graph says so.** Cached graph
-  extractions are keyed by extractor: model, batch size, included asset types
-  and prompt version. Changing any of them made every cached file extract
-  again without a word. The first run after such a change now warns once,
-  naming the change and the number of cached files it will extract again, and
-  records the warning in the run's result.
-  (`src/indexer/graph/graph-extraction.ts`)
-- **Graph extraction reports what its parser filtered.** A run's graph
-  telemetry, part of `akm improve`'s result, now carries
-  `filteredGenericEntities`, `filteredInvalidRelations`,
-  `filteredLowConfidenceRelations` and `contextBatchRetries`. The pass
-  computed them and dropped them, and did not count batch responses at all.
-  (`src/indexer/graph/graph-extraction.ts`, `src/llm/graph-extract.ts`)
-- **An unknown key under `index.<pass>` is kept and named once.** It was
-  dropped from the loaded config and named twice. It is now handled like an
-  unknown key anywhere else in config. (`src/core/config/schema/index-config.ts`)
-
-## [0.9.17-alpha.5] - 2026-09-27
-
-`akm show` works again for a memory that has a `.derived.md` child (835 of them
-in one real bundle), and `akm bundle add --provider … --name` holds to the same
-`--name` contract as every other add.
-
-### Fixed
-
-- **`akm show` works for a memory that has a `.derived.md` child.** When
-  `memories/X.md` and `memories/X.derived.md` both existed, `akm show
-  memories/X`, with or without a `#fragment`, failed with
-  `RESOURCE_ALREADY_EXISTS` ("multiple physical owners"); `akm curate`
-  previewed such a memory from its description alone, and `akm curate --pack`
-  left it out. The index gives the derived child its own ref,
-  `memories/X.derived`, but the ref lookup also counted `X.derived.md` as a
-  file for `memories/X`. The lookup now follows the index: `memories/X` is
-  `X.md` and `memories/X.derived` is `X.derived.md`. A derived child whose
-  parent file is gone no longer answers for the parent's ref either, so it
-  cannot hide a real `X.md` in a lower-priority bundle. `akm lint` and
-  `--xref` / `--supersedes` validation still accept a ref to `memories/X`
-  when only `X.derived.md` remains. Broken since 0.9.7.
-  (`src/core/asset/asset-placement.ts`, `src/commands/lint/base-linter.ts`)
-- **`akm bundle add --provider … --name` keeps the `--name` contract too.**
-  Since 0.9.17-alpha.4 an explicit `--name` that is not a legal bundle slug,
-  or is taken by another bundle, fails with exit 2, and re-adding a source
-  under a different name points at `akm bundle rename`. A declarative add
-  (`akm bundle add <target> --provider npm|git|website`) still replaced such
-  a name with a derived one and exited 0. It now fails the same way, before
-  any write. (`src/commands/sources/source-manage.ts`)
-
-## [0.9.17-alpha.4] - 2026-09-27
-
-Search and curate are rebuilt on measured evidence. On a 221-query suite of real
-akm queries judged for relevance, search nDCG@10 goes from 0.346 to 0.556 and
-curate precision@5 from 0.350 to 0.551, with search p50 falling from 787 ms to
-about 400 ms and a fresh index shrinking from 560 MB to 340 MB.
-
-Upgrades stop breaking because the machinery that broke them is gone, not
-because more was added: this release removes the scheduler-grant layer, the
-filesystem transaction journals, the maintenance barrier and lock mutex, the
-strict config schemas and their retired-key registry, and every per-key
-config migration, and it lands with fewer lines in `src/` than 0.9.17-alpha.3.
-
-### Changed
-
-- **Search ranks by reciprocal rank fusion of BM25 and document vectors.**
-  Two candidate lists, 100 each, are fused with equal weights (k = 60): BM25
-  over whole documents (`entries_fts`) matching any of the query's
-  non-stopword words (every word when the query has nothing else), and the
-  document vectors nearest to the query embedding. Equal scores are ordered by
-  ref, so the ranking depends only on the index and the query's embedding
-  (keyword-only runs of the suite reproduce exactly). Filters (`--type`,
-  `--from`, `--filter`, `--belief`, the default session exclusion, proposed
-  quality) and one-hit-per-file deduplication narrow the fused list without
-  reordering it. A hit's `score` is its fused score (at most 2/61 ≈ 0.033),
-  and `--detail full`'s `whyMatched` lists its rank in each list
-  (`lexical rank 3`, `vector rank 12`). On the retrieval suite (221 real
-  queries over a 23k-document snapshot, LLM-judged) nDCG@10 rises from 0.347
-  to 0.566 and P@5 from 0.347 to 0.558, level with the lab reference design;
-  every query class improves, questions (0.20 → 0.44) and long prompts
-  (0.24 → 0.52) most. End to end, process start included, search p50/p95
-  fell from 787/4130 ms to 341/830 ms. BM25 weighs the five columns
-  equally: the previous 10/5/3/2/1 weights measured 0.011 lower P@5.
-  (`src/indexer/search/db-search.ts`,
-  `src/indexer/search/ranking.ts`, `src/indexer/search/fts-query.ts`,
-  `src/storage/repositories/index-fts-repository.ts`.)
-- **Queries are embedded the way the embedding model expects.** An embedding
-  profile picks query and document templates by model name: Qwen3-Embedding
-  gets its retrieval instruction on queries, nomic-embed `search_query: ` /
-  `search_document: `, the BGE English, mxbai and arctic models the
-  "Represent this sentence for searching relevant passages: " query prefix,
-  E5 `query: ` / `passage: `, and other models none; `embedding.queryTemplate`
-  and `embedding.documentTemplate` override the preset (`""` turns it off).
-  The document template is part of the embedding fingerprint, so a nomic or
-  E5 index re-embeds on the next `akm index`; Qwen3, BGE and the default local
-  model keep their vectors. Text reaches the embedder with its case: the query
-  is no longer lowercased, and an entry's embedded text keeps its case once
-  the entry is next re-indexed (`akm index --reembed` refreshes every vector
-  at once). The query embedding is requested before the keyword query runs,
-  and a search waits for it at most `embedding.queryTimeoutMs` (default 3000)
-  before serving keyword ranking alone with one warning — a hung endpoint
-  used to hold a search for up to 120 s. (`src/llm/embedders/profile.ts`,
-  `src/indexer/materialize-embeddings.ts`.)
-- **Curate is one search.** `akm curate` takes the top `--limit` hits of the
-  fused search in order and enriches each with its preview, run details and
-  up to two graph-related support refs, so curate's items are search's top
-  hits (P@5 0.350 → 0.556 on the retrieval suite; p50/p95 1082/4148 ms →
-  433/888 ms). The optional reranker (`search.curateRerank`, still off by
-  default) now reorders the top 30 fused candidates (`topN`, previously 8 but
-  applied only to the final `limit` items) and sends each as its name,
-  description and the start of its indexed content (2,000 characters in all)
-  instead of name and description. (`src/commands/read/curate.ts`.)
-- **Vectors are stored once (index layout 25).** Each entry's vector lives
-  only in `embeddings`, and search scores every current-model row by cosine
-  similarity in JavaScript. The sqlite-vec mirror `entries_vec` is gone with
-  its repair pass, readiness flag and width bookkeeping: sqlite-vec cannot
-  load in the standalone binaries (`bun build --compile` does not bundle the
-  optional package), under Bun on macOS (the system SQLite refuses
-  extensions) or wherever the optional dependency is missing, so those
-  installs always searched the BLOB rows anyway, and a mirror that fell out
-  of step returned wrong neighbours without an error. The scan now reads
-  float32 views of the rows instead of copying each into an array: 85 ms per
-  query for 24k 1,024-dimension vectors in a fresh process, against 460 ms for
-  the old fallback and 41 ms for sqlite-vec. The first writable open drops
-  `entries_vec` (100 MB on that index) and the `embeddingDim` and
-  `vecFastPathReady` meta keys; dropping a vec0 table needs the extension, so
-  sqlite-vec stays an optional dependency for that alone, and an install
-  without it leaves the unread table in place. `semanticStatus` is `ready-js`
-  whenever every entry has a vector (`ready-vec` is gone), the `vecAvailable`
-  field leaves `akm index` and `akm info` output, setup no longer probes for
-  sqlite-vec, and `embedding.dimension` loses its 4,096 cap, which only the
-  vec0 column needed. (`src/storage/repositories/index-vec-repository.ts`,
-  `src/storage/repositories/index-schema.ts`,
-  `src/indexer/materialize-embeddings.ts`.)
-- **The fragment full-text table is gone (index layout 25).** Nothing has
-  read `entry_fragments_fts` since fragments stopped competing as search
-  candidates, so an upsert no longer splits the body into fragment rows and
-  the first writable open drops the table (39 MB on a 24k-entry index).
-  `entry_fragments` stays: `akm show <ref>#akm-fragment-…` (#937) resolves the
-  selector from its stored safe Markdown.
-  (`src/storage/repositories/index-fts-repository.ts`,
-  `src/storage/repositories/index-schema.ts`.)
-- **The embedding input is derived, not stored (index layout 25).**
-  `entries.search_text` held a third copy of every body (74 MB on a
-  24k-entry index) only to feed the embedder and to notice when an entry's
-  vector went stale. The embedding pass now derives the text from
-  `document_json` when it embeds an entry, and `entries.embed_hash` keeps its
-  SHA-256: an upsert whose hash differs deletes the vector, exactly as a
-  changed `search_text` did. The first writable open hashes each stored
-  `search_text` before dropping the column, so every vector stays attached
-  until its entry's text really changes, and nothing is re-embedded by the
-  upgrade. (`src/storage/repositories/index-entries-repository.ts`,
-  `src/storage/repositories/index-vec-repository.ts`,
-  `src/storage/repositories/index-schema.ts`.)
-- **`akm index` reclaims index.db's free pages.** Nothing ever VACUUMed
-  `index.db`, so every table an upgrade rebuilt or dropped stayed on disk as
-  free pages: a 24k-entry index measured 979 MB, 427 MB of it free, against
-  560 MB for a fresh build of the same content. The run now ends with a
-  VACUUM when the writable open migrated the layout (it leaves
-  `index_meta.vacuumPending` for the next `akm index`, since the open may sit
-  inside a caller's transaction) and whenever more than half the pages are
-  free, the threshold and pass improve already apply to `state.db`
-  (`vacuumIfReclaimable`, formerly `vacuumStateDbIfReclaimable`). A busy
-  database skips the VACUUM instead of failing the run; each VACUUM prints
-  its page counts and appends an `index_db_vacuumed` event. With the three
-  layout-25 removals above, a fresh build of the 24k-entry retrieval snapshot
-  is 340 MB instead of 560 MB, and a copy of the 601 MB layout-24 build
-  migrates in 0.8 s with all 23,979 vectors kept byte for byte, then VACUUMs
-  to 377 MB. Retrieval is unchanged on the suite (search nDCG@10 0.5562 →
-  0.5560, Δ −0.0002 [−0.0014, +0.0009]; P@5 0.5507 → 0.5517; curate P@5
-  identical), and search p50/p95 moved from 374/912 ms to 401/870 ms.
-  (`src/indexer/indexer.ts`, `src/storage/state-db-integrity.ts`.)
-- **An index a newer akm wrote is refused, naming the upgrade.** Readers
-  used to serve a newer layout "as far as they could" and the writable open
-  continued at its own layout, setting the marker back so the two releases
-  alternated. A newer layout can lack a column an older reader selects —
-  layout 25 drops `entries.search_text` — so every opener now refuses it with
-  `INDEX_SCHEMA_INCOMPATIBLE` ("Upgrade akm to use this index.") and leaves
-  the file untouched; an older layout is still served as-is and migrated by
-  the next writable open, and `akm improve --dry-run` reports the refusal as
-  an incompatible snapshot. (`src/storage/repositories/index-connection.ts`,
-  `src/storage/repositories/index-schema.ts`.)
-  Downgrading to 0.9.17-alpha.3 or earlier is not supported for the index:
-  those releases select columns layout 25 dropped, so rebuild it with
-  `akm index --full` under the older release.
-- **Scheduled rows no longer freeze the syncing shell's directories or PATH.**
-  A `--scheduler-context` descriptor now carries the resolved bundle path
-  (sync's ownership signal, #846) plus only the `AKM_CONFIG_DIR`,
-  `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` values the process that
-  ran `task sync` had set explicitly; resolved defaults are left to resolve at
-  fire time, exactly as they do for an interactive command. It used to capture
-  every resolved directory and the whole PATH: one host's `task sync`, run from
-  inside a desktop app whose environment pointed `$STATE` at the app's own
-  config directory, froze that directory into eight cron rows on 2026-08-06,
-  every later sync preserved it, and the nightly improve run then held its
-  locks where no interactive command could see them. PATH moves into the
-  native artifact, where it is visible and editable: a `PATH=` line inside a
-  `# akm:env BEGIN`/`END` section written directly above the first akm task
-  block (cron applies it to the rows that follow it; akm rewrites the line on
-  every crontab write and removes it with the last task block), and an
-  `EnvironmentVariables` entry in each launchd plist. Task Scheduler runs a
-  task with the account's own environment and carries no PATH. Plain
-  `akm task sync` recomputes the descriptor on every run — an installed row
-  whose descriptor no longer matches is updated while its launcher is kept as
-  before (only `--rebind` moves that) — so one sync after upgrading rewrites
-  every row written under the old policy. Descriptors an older release wrote
-  still load, PATH included, until that sync. (`src/tasks/scheduler-invocation.ts`,
-  `src/tasks/backends/cron.ts`, `src/tasks/backends/launchd.ts`,
-  `src/tasks/scheduler-sync.ts`.)
-- **The write path keeps only what its callers use** (`src/core/write-source.ts`,
-  1,485 → 602 lines). The git transaction chain — publication identity capture,
-  path, worktree and commit snapshot validation, base-HEAD assertions,
-  transaction-commit discovery, a per-repo pending-mutation registry and a
-  plan/begin/publish API — lost its last callers when the proposal
-  transaction journals were removed and survived only because one test
-  imported it; its 15 exports and their private helpers are gone. A write to a
-  git-backed bundle now writes the file atomically inside the bundle root,
-  records the exact path, and the boundary commits exactly those paths and
-  pushes with `--force-with-lease`. A dirty or gitignored destination is no
-  longer refused: an ignored path stays local with a warning instead of the
-  command throwing after the file had already landed, and an upstream that
-  cannot be inspected during preparation warns instead of aborting. Path
-  containment, the symlink-escape refusal and the detached-HEAD refusal stay.
-- **Readers tolerate everything older releases wrote.** No config object is
-  strict any more: a key this release does not know — retired, misspelled,
-  or written by a newer release — is kept in memory and named once
-  (`unknownConfigKeyPaths`, `src/core/config/config.ts`, found by walking
-  the schema), round-trips through ordinary writes so a newer release's
-  settings survive a downgrade, and is dropped only by `akm migrate apply`.
-  The retired-keys registry, its read shim, and the schema-compatibility
-  lint are removed; nothing needs registering for a key to be tolerated.
-- **`akm migrate apply` has one config step.** `configFile`
-  (`normalizeConfigFile`) reads config.json through the same pipeline every
-  load runs (`configVersion` read, legacy source shape, `extraParams` lift)
-  and writes the current shape back under a backup, dropping unknown keys.
-  It replaces the per-key `configLegacySourceShape`, `configExtraParams`,
-  `configRetiredKeys` and `configSchedulerSourceIds` steps, the
-  `schedulerActivation` and `staleTxns` steps, and the `--host-local` mode. A
-  pending config lift is now `ready`, never a blocker for the other steps.
-  The `deadResidue` step also removes the transaction-journal,
-  maintenance-barrier, lock-mutex and version-stamp files older releases left
-  under `$DATA`, `$STATE` and `$CONFIG`, and runs whether or not a bundle is
-  configured.
-- **Scheduling is one list.** `scheduler.enabled` holds the fully-qualified
-  refs this host schedules (`bundle//tasks/x`). It is still written in the
-  `{kind, ref, sourceId}` shape 0.9.16 reads, so that release keeps working
-  against a config this one wrote; either shape is read as the ref.
-  A config with no list at all (every release before 0.9.17) means "keep
-  what is installed": the first `akm task sync` (or `setup`, `task enable`,
-  `task disable`, `task add`) takes the akm-written rows already in the
-  native scheduler as the host's choice, writes the list, and says so;
-  `task sync --dry-run` reports it without writing. An explicit list, empty
-  or not, is never second-guessed. Grants, source identities, the
-  carry-forward, the scheduler-activation and source-id migrations and the
-  fire-time re-check are gone (`src/tasks/activation-config.ts`).
-- **Proposal accept and revert write directly.** The asset file is written
-  (temp file + rename), committed through the ordinary write-target
-  boundary, then the proposal row and its event are recorded in one
-  state.db transaction and the file is indexed best-effort. A crash in
-  between leaves a re-acceptable pending proposal, nothing corrupt. The
-  filesystem transaction journals (`src/core/fs-txn.ts`) with their
-  recovery, quarantine, deferral and fencing are removed, along with the
-  `txn-quarantine`/`txn-awaiting-recovery` health advisories.
-- **`akm bundle update` publishes, records the lock entry, then reindexes —
-  with no rollback transaction.** An update still fetches into a staging
-  directory beside the cache and audits the staged bytes for dangerous env
-  keys before anything goes live; a blocked or failed audit changes nothing.
-  It then publishes with one rename (a fast-forward for a writable Git
-  checkout), writes the lock entry, and reindexes. If the reindex fails, the
-  new content and lock entry stay for the next `akm index`, and the previous
-  install directory is kept. The config, staged-content, lockfile-byte and
-  checkout-HEAD fences and the lockfile compare-and-swap restore are gone, so
-  an update no longer fails with "changed concurrently" or "changed after its
-  staged bytes were audited": it already runs under the asset-mutation lease,
-  and Git refuses a fast-forward that would overwrite local work. A website
-  source refreshes through its mirror's own snapshot staging, so a killed
-  refresh still keeps the previous mirror.
-- **A lock file is one `O_EXCL` create** (`src/core/file-lock.ts`). The
-  SQLite lock-operation mutex, the maintenance barrier (a lock guarding lock
-  registration) and its per-open activity registry — the source of the
-  lock-sidecar leak that grew `$STATE` by hundreds of megabytes — are
-  removed. `MAINTENANCE_BARRIER_BUSY` no longer exists; contention is
-  reported as `INDEX_DB_CONTENDED`, `STATE_DB_CONTENDED` or
-  `IMPROVE_LOCK_HELD`, as before.
-- **Removed from 0.9.17-alpha:** startup version reconciliation
-  (`version-reconcile.json`), the akm-install enumerator and `akm upgrade
-  --version`/`--tag` with its other-install mover, the `version-reconcile`,
-  `scheduler-grants`, `scheduled-startup-failures` and `akm-installs` health
-  advisories, and the `akm info` `compat` manifest with its
-  `PLUGIN_PROTOCOL_VERSION`. `akm upgrade` is what it was in 0.9.16.
-- **Documented the persisted-data compatibility contract.** Added
-  `docs/architecture/persisted-data-compat.md`: the four-sentence contract a
-  reader owes data an earlier release wrote, plus a per-format table (config,
-  `state.db`, `index.db`, task source, workflow IR, native scheduler rows,
-  proposal and task-history metadata, lock payloads, `.akm` residue) naming
-  where each is written, its version marker, its older/newer-data behavior,
-  and which gate covers it — with explicit `Gap:` notes where the code does
-  not meet the contract yet. Registered in `docs/architecture/README.md`.
-  `AGENTS.md`'s "Reading persisted data" section now points at this doc
-  instead of a deleted file.
-
-- **Scheduler writes hold one lock and apply row by row.** `akm task sync`,
-  `add`, `enable`, `disable` and `prune --yes` hold one `O_EXCL` lock,
-  `$STATE/locks/scheduler.lock` (`src/tasks/scheduler-lock.ts`), for the
-  whole read–plan–write; a second scheduler command exits 75
-  (`SCHEDULER_LOCK_HELD`), and a lock left by a dead process is reclaimed.
-  Under it, sync reads the installed rows once and diffs by native id: a
-  missing row is installed, a changed row rewritten, a row whose source is
-  gone or no longer enabled removed. A row that fails to install or remove,
-  or two sources claiming one native id, is reported in `failures` (exit 1)
-  while every other row applies; the per-row compare-and-swap expectations
-  and whole-set rollback are gone. A task whose source stops parsing keeps
-  its installed row instead of being unscheduled by a YAML typo.
-  (`src/tasks/scheduler-sync.ts`, `src/commands/tasks/tasks.ts`)
-- **`akm task add` is "write, enable, sync".** It validates the task and
-  refuses an id already scheduled from another bundle before writing
-  anything, then writes the source, adds the ref to `scheduler.enabled`
-  (unless `--disabled`) and syncs the bundle. When the row cannot be
-  installed, add fails naming the cause and the task stays written and
-  enabled for the next `akm task sync` to retry; it no longer restores the
-  prior source and rows byte-for-byte. `--force` with fewer schedules removes
-  the dropped schedules' rows through the same sync, and `--rebind` means
-  what it means for `task sync`.
-- **Improve records what it tried in one ledger** (`improve_ledger`,
-  `src/storage/repositories/improve-ledger-repository.ts`). One row per
-  stash, ref and stage holds the last attempt, its outcome and when the ref
-  is next eligible, from one cadence table:
-
-  | Outcome | Next eligible | Lifted early by newer feedback? |
-  | --- | --- | --- |
-  | rejected, quality_rejected | 14 d reflect, 30 d distill, 7 d other stages | no |
-  | expired | 1 d | no |
-  | proposed, review_needed, unchanged, judged_no_action | 7 d | yes |
-  | accepted, failed | immediately | — |
-
-  Every stage reads it before any LLM call. It replaces proposal
-  fingerprints, the per-stage cooldowns, the distill reject files and the
-  event-timestamp cursors, which disagreed with one another (quality
-  rejections never reached the fingerprints; consolidate re-judged promoted
-  memories). Distill and consolidate now key by their input refs, so each
-  such input may be attempted once more after upgrading. Schema repair paces
-  itself with the ledger too, replacing its private 7-day cooldown and
-  3-attempts-per-30-days cap. Every stage — reflect, distill, consolidate,
-  extract, triage, memory inference, graph extraction — runs through one
-  shared path (`src/commands/improve/stage.ts`): pick the runner, call the
-  model, judge the output, mint the proposal, record the usage.
-- **`akm proposal drain` has one rule.** A proposal the quality judge passed
-  (a `staged` gate decision whose content hash still matches) is accepted, an
-  empty diff is rejected, and everything else goes to the judgment tier
-  (`processes.triage.judgment`) or waits for review. Extract and consolidate
-  proposals, which the `personal-stash` policy auto-accepted on size alone,
-  carry no judge stamp, so they now go to the judgment tier — or wait for
-  review when none is configured — instead of being accepted. The policies
-  and their flags are retired (see Removed). `--dry-run` now predicts what a
-  real drain does: a proposal whose target already holds its content (an
-  accept that wrote the file but was interrupted before recording it) is
-  reported as promoted, as the real drain finishes it, instead of as a
-  stale-target rejection.
-- **State migration `028-improve-ledger` creates the ledger and drops six
-  tables.** It backfills the ledger from each ref's latest proposal and drops
-  `proposal_fingerprints`, `improve_gate_thresholds`, `proposal_fs_imports`,
-  `consolidation_judged`, `improve_cycle_metrics` and `canary_queries`.
-  Because it drops schema, the first open after upgrading copies the
-  database to `state.db.pre-028-improve-ledger.bak` before it runs.
-- **Upgrading no longer rebuilds or re-embeds the search index (index layout
-  24).** The first writable open applies a layout change in place — added
-  columns, and a one-time rebuild of the two full-text tables from the stored
-  entries (about 2–3 s for 24k entries); embeddings, utility scores, the
-  enrichment cache and the graph are never dropped, and only a corrupt file
-  is rebuilt from scratch (#865). Both FTS5 tables are contentless, so
-  indexed text is stored once (153 MB of a 980 MB index on a 23.9k-entry
-  stash; a SQLite older than 3.43 keeps the previous layout). Each vector
-  records its model (`embeddings.model`): a model change re-embeds only the
-  entries missing a vector for the configured model, per batch and
-  resumably, replacing the purge, the #955 re-embed canary and
-  `embedding_salvage`. `akm index --full` keeps unchanged entries' vectors,
-  and a one-file change in a large directory re-persists only that file.
-  Readers serve an older layout as-is and say so once on stderr. An akm
-  older than this release refuses a layout-24 index and asks to be upgraded.
-- **`--verbose` embedding output lists each document's size without a
-  predicted batch number.** The per-batch lines already report every
-  provider request's document and token counts, and skipped documents are
-  listed at the end of the pass.
-- **Workflow runs are never refused for their plan's version or hash.**
-  Markdown and the GitHub-shaped YAML subset compile straight to one plan
-  type, and new runs record plan `irVersion` 6. A stored plan that decodes
-  runs whatever release froze it — irVersion 4 and 5 plans are read
-  tolerantly, and a key this release does not know is ignored instead of
-  abandoning the run; one that does not decode is marked abandoned and `akm
-  workflow run <ref>` starts afresh; only a plan a newer akm froze is
-  refused, with "Upgrade akm" (`WORKFLOW_IR_VERSION_UNSUPPORTED` is gone).
-  One driver per run is a lock file,
-  `<data dir>/workflow-run-locks/<run id>.lock`: a second `akm workflow run`
-  exits 75 (`RUN_LEASE_HELD`) naming the holder's pid, and a dead pid's lock
-  is reclaimed at once — the database run lease, its heartbeat and the
-  check-ins are gone. Resume reuses every completed unit whatever its
-  recorded input hash, and warns once when the workflow file's sha256
-  differs from the one recorded at freeze, then continues on the frozen
-  plan. Executable identity (realpath, inode and hash captured at freeze,
-  checked at dispatch) is gone, so upgrading `claude` mid-run no longer
-  strands a run.
-- **Every execution goes through three plain functions:** `resolveExecution`
-  → `buildExecution` → `runExecution` (`src/integrations/agent/execution.ts`,
-  `runner-dispatch.ts`), replacing a 12-hop pipeline across 14 modules — the
-  cascade planner, authorized-plan and provenance checks, lowerer registry
-  and dispatch lease. Two behaviour changes: credentials are read at each
-  dispatch, so a key rotated mid-run is used on the next call instead of a
-  snapshot taken at the start; and an explicit `engine: null` in a task,
-  workflow or command layer means "no preference here" and falls through to
-  `defaults.engine` instead of forcing the `opencode-sdk` fallback.
-- **`state.db` opens on one connection.** The open creates the parent
-  directory, opens the file, applies the pragmas, reads the migration ledger
-  and runs every pending migration in one `BEGIN IMMEDIATE`; the read-only
-  preflight connection, the `/proc/self/fd` alias and the refusal of an empty
-  "unversioned" file are gone. Before a migration that drops schema runs on
-  an existing database, it is copied to `state.db.pre-<id>.bak`. Since any
-  open applies pending migrations, `akm health`'s `state-db-migrations` check
-  now reports what its own open applied (`evidence.applied`,
-  `evidence.backupPath`) and fails only when a migration could not be
-  applied.
-- **`akm health` drops checks nothing acted on.** Removed: the
-  `task-log-backing` hard check, the `pool-saturation` advisory, the six
+- **Search and curate are rebuilt on measured evidence.** Search now ranks by
+  reciprocal rank fusion (RRF) of two 100-candidate lists — whole-document
+  BM25 and nearest document vectors — replacing the previous require-every-
+  word keyword ladder plus a dozen additional ranking-signal boosts (exact-
+  name, type, belief-state, tag, graph, utility, and more): on a 221-query
+  LLM-judged retrieval suite, plain whole-document BM25 alone beat that whole
+  boosted pipeline by 0.156 nDCG@10. A hit's `score` is now its fused RRF
+  value (at most 2/61 ≈ 0.033, not comparable to an old score), keyword
+  matching no longer does prefix matching (a search for `dock` no longer
+  matches `docker`), and a slow embedding endpoint falls back to keyword-only
+  ranking after `embedding.queryTimeoutMs` (default 3000 ms) instead of
+  blocking the search. `akm curate` is now the top hits of that same fused
+  search, enriched with a preview and up to two support refs, rather than its
+  own layer of second-guessing fallback searches and nudges. Query embedding
+  now uses the template a model actually expects (Qwen3's retrieval
+  instruction, `search_query:`/`search_document:` for nomic,
+  `query:`/`passage:` for E5, and others — overridable with
+  `embedding.queryTemplate`/`documentTemplate`) instead of one generic
+  prefix; a nomic-embed or E5 configuration re-embeds every entry on the next
+  `akm index` because the new document template changes what gets embedded
+  (set `embedding.documentTemplate: ""` to keep the old vectors instead).
+  Measured on the suite: search nDCG@10 rises from 0.346 to 0.556 and curate
+  precision@5 from 0.350 to 0.551; search p50 latency falls from about 787 ms
+  to about 400 ms, and a freshly built index shrinks from 560 MB to 340 MB.
+  Content indexed under two names (a memory also promoted verbatim to
+  knowledge, say) now returns only the higher-ranked copy instead of both,
+  and `akm curate` returns an empty, explained result for input that is not
+  a real query (a harness/tool envelope, a bare stash README) instead of
+  `--limit` unrelated items.
+- **Index layout 26.** Vectors are stored once — the sqlite-vec mirror, the
+  fragment full-text table, and the stored embedding-input text are dropped
+  in favor of a derived hash — and every relation `akm index` already parses
+  is stored as a typed link (see Added). An index an older 0.9.17 prerelease
+  or 0.9.16 wrote migrates to layout 26 in place on the first writable open —
+  a 0.9.16 index also gets a one-time full-text rebuild along the way, a few
+  seconds for a 24k-entry index — and the run ends with a VACUUM that
+  reclaims the space the migration frees (in one measurement, a 601 MB index
+  built one layer short of layout 26 dropped to 377 MB; actual savings vary
+  with how much of an existing index was already free space). An index this
+  release cannot read (written by a newer akm) is refused, naming the
+  upgrade, instead of being silently reinterpreted.
+- **A scheduled task is just a command and a schedule.** Each native
+  crontab/launchd/Task Scheduler row now carries its own `AKM_BUNDLE_DIR`
+  (plus any `AKM_CONFIG_DIR`/`AKM_DATA_DIR`/`AKM_CACHE_DIR`/`AKM_STATE_DIR`
+  the syncing shell set explicitly) inline, instead of pointing at a
+  `--scheduler-context <file>` descriptor; a crontab now carries its PATH the
+  same way, in a `# akm:env` block akm writes and rewrites next to its task
+  rows, instead of inside each row's own descriptor file. The first `akm task
+  sync` after upgrading rewrites every akm-managed row once, in place — same
+  launcher, same schedule, nothing added or removed — and once `akm task
+  doctor` lists no binding still pointing at a descriptor, the old
+  `$DATA/tasks/context/` files it leaves behind can be deleted. Rows written
+  by 0.9.0 through 0.9.16 keep firing until that sync.
+- **`akm improve` reworks only what retrieval actually returned, or what's
+  new.** The proactive-maintenance and high-salience lanes, and the memory
+  consolidation judge, are now scoped to assets a real `search`, `curate`,
+  `show`, or `feedback` touched in the last 90 days, plus material no
+  improve stage has processed yet — not the whole stash.
+  Measured on a 19,870-asset copy of the maintainer's bundle: the fallback
+  lanes' candidate pool drops from 15,686 to 6,450 assets, and in July the
+  proactive lane had rewritten 3,069 assets, 3,059 of which had never been
+  retrieved since usage logging began. Left-out assets are reported under a
+  new `retrieval` gate (`akm improve --dry-run`, and health's `not_retrieved`
+  skip reason).
+- **Reflect refuses a rewrite that grades worse on the asset's own searches
+  (#722).** Before proposing a rewrite of existing content, reflect grades
+  the old and new versions on up to five queries that actually retrieved the
+  asset, using the same relevance judge the retrieval eval uses (kappa 0.83
+  against human grades); a rewrite that grades lower on average is refused as
+  `quality_rejected`. Of 60 accepted rewrites reviewed this way after the
+  fact, 23% [14-35%] graded lower than the content they replaced.
+- **Config is fully tolerant of what an older or newer release wrote.** No
+  config object is strict any more: an unknown key at any depth — retired,
+  misspelled, or written by a newer release — is kept in memory, named once,
+  round-trips through ordinary writes, and is dropped only by `akm migrate
+  apply`. `akm migrate apply` itself collapses to one config step that reads
+  `config.json` through the normal load pipeline and writes the current
+  shape back under a backup.
+- **Locking and writes are simpler.** A lock file is now one `O_EXCL`
+  create. A write to a git-backed bundle writes the file directly and
+  commits exactly that path. `akm proposal accept`/`revert` write the asset
+  file, then record the proposal and its event in one `state.db`
+  transaction, so a crash in between leaves a re-acceptable pending proposal
+  rather than something corrupt.
+- **Scheduling is one list.** `scheduler.enabled` in `config.json` holds the
+  fully-qualified refs a host schedules; it is still written and read in the
+  `{kind, ref, sourceId}` shape 0.9.16 used. A config with no list at all —
+  0.9.15 and earlier — is read on the first sync after upgrading as "keep
+  what's already installed," and the list is written from there.
+- **A frozen workflow plan carries `irVersion` 6.** Every workflow — Markdown
+  and the GitHub-shaped YAML subset alike — compiles to the one plan type
+  that was previously irVersion 4/5's target; a stored irVersion 4 or 5 plan
+  is still read and run tolerantly (an unrecognized key in it is ignored
+  instead of abandoning the run), and only a plan a *newer* akm froze is
+  refused. An explicit `engine: null` on a task, workflow, or command layer
+  now means "no preference here" and falls through to `defaults.engine`,
+  instead of forcing the `opencode-sdk` fallback.
+- **The quality judge that gates reflect and distill scores each criterion
+  separately** instead of one blended float, no longer scores an
+  ACTIONABILITY criterion that measured no better than chance (AUC 0.46), and
+  now runs at a pinned temperature of 0 — at the previous effective default
+  of 0.3, 10 of 16 identical inputs had flipped verdict. Consolidate's own
+  prompt and schema now ask only for `promote`; `merge`/`delete`/`contradict`
+  were advisory-only and had not actually executed since July regardless.
+- **A pasted credential in a search or curate query is redacted before it's
+  stored.** A password, bearer token, JWT, `ghp_…` token, PEM key, and
+  similar patterns are replaced with `[REDACTED]` in `state.db`'s usage and
+  event logs; a scan of mined queries had found 22 stored verbatim. Existing
+  rows are not rewritten.
+- **One bad item no longer aborts a whole `akm task sync` or `akm migrate`
+  run.** A binding or bundle that fails to reconcile, or a migration step
+  that throws, is now reported individually (`failures`/`failedSteps`) while
+  every other task, bundle, or step still completes.
+- **A one-file change in a large directory no longer costs `akm index` tens
+  of minutes.** Both full-text tables' per-entry deletes were unindexed table
+  scans; on a 23.9k-entry index, one touched file in a 13.7k-entry directory
+  took 26-31 minutes before this release and well under a minute after.
+- **Output shapes changed along with the features above.** A search hit
+  drops `selectedRef`, `parentRef`, `fragmentOrdinal`, `fragmentCount`, its
+  fragment line/size fields, `matchStage`, and `graph` (fragments no longer
+  compete as search candidates; `akm show <ref>#<fragment>` still resolves a
+  section). `akm index`/`akm info` drop `vecAvailable`, and
+  `semanticStatus` no longer reports `ready-vec`. `akm migrate status`'s
+  separate `taskV3Migration`/`taskV4Migration` sections are now one
+  `taskFiles` section. `akm workflow plan` drops its `sourceReadSet` block.
+- **`akm health` gets a new hard `state-db-integrity` check** (a read-only
+  SQLite `PRAGMA quick_check` against `state.db`, plus a freelist-ratio
+  warning above 50%), and drops eight checks nothing acted on: the
+  `task-log-backing` hard check, the `pool-saturation` advisory, and six
   research advisories (`outcome-proxy-adequacy`, `outcome-proxy-dead`,
   `salience-uniformity-collapse`, `enrichment-lane-minting`,
-  `improve-churn-ratio`, `collapse-churn-detector`) and the report's
-  coverage, degradation and minting rollups. The HTML report's embedded
-  `RUNS` data drops 11 per-run counters no chart or table read (scope mode,
-  consolidation `processed`/`failedChunks`/`totalChunks`, memory-inference
-  `considered`/`yieldRate`, graph-extraction `failures`, distill
-  `skipped`/`queued`/`llmFailed`, `orphansPurged`); `--group-by run` and
-  `--format md` are unchanged.
-- **`configVersion` is read, never gated on.** A missing field or `"0.9.0"`
-  loads silently; any other value is named once and read as `0.9.0`.
-  `UNSUPPORTED_CONFIG_VERSION` and `src/core/config/config-version-shim.ts`
-  are gone.
-- **`akm migrate` converts a task file in one step, whatever its version.**
-  One planner (`scripts/akm-migrate/migrate/task-files.ts`) takes a v2, v3 or
-  v4 file still carrying `schedule[].enabled` to v4 in one pass, with one
-  backup directory per run (`$DATA/backups/tasks/<ts>-<uuid>`); `akm migrate
-  status` reports one `taskFiles` section instead of
-  `taskV3Migration`/`taskV4Migration`. The per-generation steps, their
-  convergence checks and backup pruning, and the writer-relocation step are
-  gone.
-- **Registry requests use plain `fetch()`.** DNS pinning — a Node child
-  process per request that resolved each registry host, rejected private
-  addresses and pinned the connection — is removed: a registry URL is the
-  built-in one or one an operator configured. `src/registry/network.ts`
-  retries network failures, timeouts, 429 and 5xx with backoff, caps the
-  body, and reports every failure as a classified error, never exit 70:
-  `REGISTRY_NOT_FOUND` and `REGISTRY_RESPONSE_INVALID` exit 1,
-  `REGISTRY_UNREACHABLE` exits 75, `REGISTRY_URL_INVALID` exits 78. A static
-  index whose `version` is not 2 or 3 is read with one warning instead of
-  refused.
-
-### Added
-
-- **Upgrade rehearsal gate** (`tests/integration/upgrade-rehearsal/`,
-  `AKM_UPGRADE_REHEARSAL=1`): installs the previous published `akm-cli`
-  release as a real global npm package, drives it to build a realistic home
-  (a filesystem, git, website, and npm bundle; scheduled and manual tasks; a
-  synced fake crontab), then installs the candidate build OVER it in place —
-  the same prefix a real `npm i -g`/`bun add -g` upgrade replaces — and runs
-  the candidate against that home — `migrate status`/`apply`, `bundle list`
-  with every bundle confirmed enabled, `search`, `show`, plain `task sync`
-  (dry-run and real, no `--rebind`, as an upgrading user actually runs it),
-  executing the generated cron command and confirming it ran the candidate,
-  `health`, `improve --plan` — and finally installs a separate untouched copy
-  of the previous release and runs it back against the candidate-written
-  home. Wired into CI (`.github/workflows/ci.yml`'s new `upgrade-rehearsal`
-  job) and `tests/release-check.sh` (right after packing the release
-  candidate). `.github/workflows/ci.yml` also now runs on pushes to
-  `release/*` branches, which previously had no CI coverage at all.
-  It also proves the fix for the defect above (Fixed, below) two
-  ways: a new first assertion in the "previous"-origin suite runs
-  scheduled-a's generated cron command BEFORE any `migrate` call and
-  confirms `akm-migrate status --host-local` then reports `current` with no
-  manual step in between; and a second, dedicated origin,
-  `KNOWN_UPGRADE_ORIGINS`' fixed `"0.9.15"` (the last release before
-  source-bound scheduler grants), builds a minimal home whose crontab row
-  carries no host-local grant at all — the exact 2026-09-24 shape — and
-  confirms the candidate carries the grant forward and a plain `task sync`
-  afterward does not remove it.
-- **`akm bundle rename <old> <new>`.** Renaming a bundle used to mean
-  hand-editing the `bundles` key in `config.json`, which stranded every
-  durable ref the tool had minted under the old id — the index and state
-  databases kept the old `<old>//` prefix while config named the new one
-  (the exact hand-rename signature `warnOnBundleRenameDrift` already
-  detected and warned about, with "there is no rekey command in 0.9.0").
-  `akm bundle rename` is that command: under the config lock it rewrites the
-  `bundles` key, `defaultBundle`/`defaultWriteTarget` when they name the old
-  id, and every `scheduler.enabled[].ref` with the old `//` prefix; then it
-  renames the lockfile entry, re-keys every indexed entry's
-  `bundle_id`/`item_ref` and the metadata-enrichment LLM cache's
-  `asset_ref` (in the same `index.db` write, so a rename can't land between
-  the two and strand the cache — the next `akm index` would otherwise treat
-  every renamed asset as stale and re-enrich it through the LLM from
-  scratch), and rewrites this tool's own state rows that name the old bundle
-  (`proposals.ref`, a pending proposal's `proposedTarget.source`, and
-  workflow `task_history.target_ref`). It then re-syncs native scheduler
-  rows under the new name (`akmTasksSync`, run from the command handler and
-  reported in the result's `taskSync` field, never thrown, since
-  config/index/state are already renamed by then), so a scheduled task or
-  workflow stops invoking `<old>//…` the moment the rename applies instead of
-  waiting on a manual `akm task sync`. `taskSync.ok` is `false` both when
-  the sync call itself fails and when it comes back with one or more
-  `taskSync.result.failures` — a binding that failed to prepare has already
-  lost its old native row and is not scheduled again until a retry, so
-  `akm bundle rename` never reports a partial re-sync as a clean one. Refs
-  inside the bundle's own CONTENT
-  (cross-references, a task's `uses:`, `supersededBy`) are reported, never
-  rewritten — the result's `contentRefs` lists the indexed files that still
-  spell the old prefix. `--dry-run` shows the full plan (row counts,
-  scheduler refs, content files, and the installed native scheduler rows a
-  real run's sync would replace) without writing anything.
+  `improve-churn-ratio`, `collapse-churn-detector`). `processes.reflect` also
+  gains `excludeRefPrefixes: string[]` to skip a ref prefix (a raw
+  wiki-ingest snapshot tree, say) that a type-only `allowedTypes` filter
+  can't carve out on its own.
 
 ### Removed
 
-- **Every ranking signal besides the two fused lists.** Search no longer
-  applies exact-name tiers, type, belief-state, tag, search-hint, alias,
-  description, metadata, graph, capture-mode, lesson-strength, pinned-fact or
-  project-context boosts, the utility multiplier, the relaxed-query score
-  ceiling, or the cosine floor on vector-only hits, and it no longer loads
-  the graph snapshot. On the retrieval suite plain whole-document BM25 alone
-  beat the boosted pipeline by 0.156 nDCG@10, and applying the belief-state
-  weights to the fused score lowered nDCG@10 by 0.010 [−0.020, −0.001], so
-  `--belief current` is the way to leave out contradicted or superseded
-  entries. Usage events and utility scores are still recorded (improve's
-  salience and graph extraction read them), and the graph still backs
-  `akm show`'s `related` list and curate's support refs.
-- **The require-every-word keyword ladder and prefix matching.** The strict
-  AND query, its prefix-AND retry and the OR recovery behind them are gone
-  (OR matching measured 0.108 nDCG@10 better), so a word fragment such as
-  `dock` no longer matches `docker`.
-- **Fragment hits in search.** Markdown fragments no longer compete as search
-  candidates (whole documents measured 0.059 nDCG@10 better), so search
-  returns whole-document refs and its hits drop `selectedRef`, `parentRef`,
-  `fragmentOrdinal`, `fragmentCount`, the fragment line and size fields and
-  `matchStage`; `akm show <ref>#<fragment>` still selects a section.
-- **Curate's second-guessing of search:** the per-keyword fallback searches
-  and their max-score merge, the intent and type nudges, skill-family
-  collapse (and the family support refs it produced), and the close-score
-  comparator.
-- **Retired options.** `akm search --no-project-context` now fails as an
-  unknown flag (exit 2). The config keys `search.minScore`,
-  `search.graphBoost.*` and `improve.utilityDecay.*` have no effect and are
-  kept as unknown keys. Search hits no longer carry the `graph` field, and
-  usage events no longer record `graphExtraction` attribution.
-- **Guarded source reads around workflow runs.** `akm workflow run` no
-  longer records a read set of every source it touched or re-checks those
-  sources before publishing the run, so editing a command, task, script or
-  env file while a run is being created no longer fails creation; a source
-  that resolves outside its bundle is still refused. `akm workflow plan` no
-  longer prints a `read set:` block, and its JSON drops `sourceReadSet`. At
-  dispatch an env file is re-read from its recorded path (a changed key set
-  is still refused), so replacing or re-cloning the bundle directory no
-  longer fails a unit with "environment owner root physical identity
-  changed". The resume check that refused a run whose stored params row had
-  been edited is gone.
-- **Drain policies.** `processes.triage.policy` and
-  `processes.triage.maxDiffLines` (config) and `akm proposal drain --policy`
-  / `--max-diff-lines` are retired with `drain-policies.ts`; the flags now
-  fail as unknown (exit 2) and the keys are kept as unknown config keys.
-- **Improve machinery with no remaining reader:** the collapse detector with
-  its canary set (`scripts/refresh-canary-set.ts`) and cycle metrics, replay
-  selection, the outcome-proxy events, and the never-called anti-collapse
-  merge guards. Retired config keys (kept as unknown keys):
-  `processes.consolidate.antiCollapse.{maxGeneration, lexicalDiversityCheck,
-  mergeInformationFloor, minSpecificityRetention}`,
-  `processes.consolidate.contradictionDetection`,
-  `improve.salience.replayBudget` and `improve.collapseDetector`. Retired
-  events: `improve_salience_first_run`, `improve_replay_selected`,
-  `collapse_detector_alert`, `improve_cycle_metrics_purged`,
-  `outcome_proxy_dead` and `outcome_proxy_inverted`.
+- **The LLM entity-graph extraction pass.** `akm improve`'s per-file
+  entity/relation extraction, its tables, and `akm show`'s `related` list are
+  gone: on the navigation eval, vector kNN beat `related` by 0.157 P@5
+  [0.051, 0.260], and its only other consumer, curate's support refs, moved
+  to declared links (see Added). The tables are dropped unconditionally on
+  an index's next writable open. The `graph-refresh` improve strategy and its
+  `akm-graph-refresh-weekly` task template are retired with it — naming
+  `graph-refresh` (via `--strategy` or a task) now fails outright, naming the
+  retirement. `akm health` drops every graph metric (KPI card, summary rows,
+  per-run duration/entity/relation columns).
+- **LLM metadata enrichment (`index.metadataEnhance`).** On a 49-query,
+  1,968-entry measurement it moved search nDCG@10 by -0.0092 [-0.0324,
+  +0.0165] and long-prompt curate P@5 by -0.054 [-0.093, -0.012] — no
+  measurable benefit for a full pass costing about 27 B70-hours. It was
+  already off by default.
+- **The per-run forgetting-safety lane.** A one-time cutover guard from a
+  June 2026 ranking-formula change that had kept running on every improve run
+  since. Thirty days of events showed no marginal pick over the signal-delta
+  lane once the new retrieval scope (above) applied: 4 of its last 5 flagged
+  refs were also picked by signal-delta, and the 5th was independently
+  planned under signal-delta the same run.
+- **Removed flags and drain policies.** `akm search --no-project-context` and
+  `akm proposal drain --policy`/`--max-diff-lines` now fail as unknown flags
+  (exit 2), and the `personal-stash`/`conservative`/`manual` drain policies
+  are gone. Drain, and improve's triage pre-pass, now accept only a proposal
+  the quality judge passed on its exact content and reject an empty diff;
+  everything else goes to `processes.triage.judgment` or waits for review.
+  Extract and consolidate proposals, which `personal-stash` auto-accepted on
+  size alone, are no longer auto-accepted.
+- **Retired config keys** — kept and tolerated, dropped only by `akm migrate
+  apply`: `index.graph.*`, `index.metadataEnhance`, `search.minScore`,
+  `search.graphBoost.*`, `improve.utilityDecay.*`, `improve.collapseDetector`,
+  `improve.salience.replayBudget`, `processes.triage.policy`,
+  `processes.triage.maxDiffLines`, `processes.consolidate.contradictionDetection`,
+  the retired `processes.consolidate.antiCollapse` merge guards
+  (`maxGeneration`, `lexicalDiversityCheck`, `mergeInformationFloor`,
+  `minSpecificityRetention` — `antiCollapse` itself, and its
+  `randomClusterFraction` mixing, are unaffected), and every improve
+  strategy's `processes.graphExtraction.*` and
+  `processes.consolidate.incrementalSince`/`.neighborsPerChanged` (the pair
+  pass replaces incremental-window candidate selection with the improve
+  ledger). A leftover `improve.strategies["graph-refresh"]` override block is
+  also dropped this way; `defaults.improveStrategy: "graph-refresh"` is not —
+  change that one by hand.
+- **Also removed, superseded by the simpler mechanisms above:** the
+  scheduler source-grant layer and its fire-time re-check, the filesystem
+  transaction journals used by proposal accept/revert, the maintenance
+  barrier and its per-process activity registry, the SQLite lock-operation
+  mutex, the strict per-key config schemas and the retired-key registry, and
+  the health advisories tied to all of the above. `akm migrate apply` deletes
+  the files they left behind: `$DATA/txn/`, `$DATA/txn-quarantine/`,
+  `maintenance.barrier.lock`, and the `maintenance-activities/` registry,
+  which leaked an entry per process (one host had 229,943 entries, 927 MB).
 
 ### Fixed
 
-- **Re-extracting an unchanged note now replaces its stored graph rows.**
-  `replaceStoredGraph` refreshed only a file's status, reason and run id when
-  its body hash was unchanged, so an extraction of the same body — after a
-  model or prompt change, or after a failed first attempt — never reached
-  `graph_file_entities` or `graph_file_relations`. One install had 1,389 files
-  marked `extracted` with no entity rows while `llm_enrichment_cache` held
-  their extractions. A file's rows are now rewritten whenever its entities or
-  relations differ from the stored ones, so the next graph pass refills such
-  files from the cache without a model call. (`src/indexer/db/graph-db.ts`)
-- **A graph pass that stops early no longer shrinks the stored graph.** A
-  full scan wrote back only the files it reached, so a budget abort, a
-  failure-rate abort or `processes.graphExtraction.topN` deleted the stored
-  rows of every other file: the 2026-09-26 backfill hit its 4 h budget after
-  3,358 of 15,165 eligible files, and that prefix became the whole graph. The
-  pass now keeps the rows of every eligible file it did not reach, and of a
-  file whose extraction attempt failed. It drops rows only for a file that
-  left the eligible set — deleted, emptied, now `inferred: true`, or of a type
-  no longer included — which candidate-scoped runs never did; a scan that
-  could not read part of the stash drops nothing. Because kept rows can come
-  from an older extractor, the sweep no longer reuses a stored graph node as a
-  cache hit: only `llm_enrichment_cache`, keyed by extractor, answers for the
-  current one. (`src/indexer/graph/graph-extraction.ts`)
-- **`graph_meta` counts describe the stored rows.** The extraction pass
-  wrote counts from its in-memory graph (22,304 entities reported against
-  15,833 stored on one install), and deleting entries overwrote them with raw
-  row counts. Each write now derives them from the stored rows, one meaning
-  each: stored files, files with entity rows, distinct case-folded entities and
-  distinct case-folded relations. The pass result, and with it the
-  `akm improve` summary, reports the same counts. The entries-delete recompute
-  and the in-memory graph deduplicator (`src/indexer/graph/graph-dedup.ts`)
-  are gone. (`src/indexer/db/graph-db.ts`,
-  `src/indexer/graph/graph-extraction.ts`,
-  `src/storage/repositories/index-entries-repository.ts`)
-- **`akm health` counts graph-extracted files per run.** Its
-  `graphExtraction.extractedFiles` added the whole stored graph's file count
-  once per improve run in the window; it now adds the files each run
-  extracted, as `entities` and `relations` already did.
-  (`src/commands/health/improve-metrics.ts`)
-- **`akm show`'s `related` refs no longer depend on index row order.** When
-  two entries index the same file, the ref shown for it was whichever row
-  SQLite returned last; the lowest concept id now wins, and shared entity
-  names are read in a fixed order. The ranking itself (most shared entities,
-  then path) was already deterministic. (`src/indexer/graph/graph-related.ts`)
-- **`akm search`/`akm curate` no longer store a pasted credential verbatim in
-  `state.db`.** The Claude Code hook curates every user prompt, so a
-  credential pasted into a prompt (`PASSWORD=…`, `TOKEN=…`, `SECRET=…`, a
-  `Bearer` header, a JWT, a `ghp_…`/`xox…`/`AKIA…` token, a PEM private key, a
-  `user:pass@` URL, …) flowed straight into the query text and was persisted
-  as-is in both `usage_events.query` and the `events` table's
-  `metadata_json` — a scan of mined queries found 22 credential-like values
-  stored this way. `logSearchEvent`/`logCurateEvent` now redact the query
-  with `redactCredentialPatterns` (extended with the shapes above, plus a
-  `NAME=value`/`NAME: value` pass for names containing password, passwd,
-  secret, token, auth, credential(s), or an api/private key — the value is
-  replaced with `[REDACTED]`, the name is kept so queries stay useful for
-  evaluation) before either write, so a `show`/`select` event tracing back to
-  the search — which copies the search event's already-persisted `query`
-  metadata — inherits the same redacted text. Existing rows already written
-  are not rewritten. (`src/core/redaction.ts`, `src/commands/read/search.ts`,
-  `src/commands/read/curate.ts`)
-- **`engines.<name>.supportsJsonSchema` on a `kind: "llm"` engine is a known
-  key again.** `LlmConnectionConfigSchema` declares it and `llm/client.ts`
-  reads it, but the named-engine object (`LlmEngineSchema`) never listed it,
-  so this release's unknown-key walk named it on every load and `akm migrate
-  apply` would have deleted a live setting from config.json.
-  (`src/core/config/schema/engines.ts`)
-- **`akm migrate` finds the leaked activity registry where earlier releases
-  actually wrote it.** The `deadResidue` step looked for
-  `maintenance-activities/` under `$STATE`; the maintenance barrier created it
-  next to its own lock under `$DATA`, so the directory that had grown to
-  229,943 four-kilobyte sidecars (927 MB) on one host was never reported or
-  removed. Both roots are checked, the registry is reported as one entry rather
-  than once per sidecar, and a directory already listed whole is not descended
-  into by the sidecar scan. (`scripts/akm-migrate/migrate/dead-residue.ts`)
-- **`akm bundle add`'s `--name` is now a contract on every add path (local,
-  website, registry), not a hint.** An explicit `--name` that is not a legal
-  bundle slug, or that is already taken by a different bundle, used to fall
-  back silently — `deriveBundleId` minted a derived name, or a `-<hash>`
-  suffix — so `akm bundle add ... --name my.bundle` installed under a name
-  the caller never asked for, without saying so. It now fails with a
-  `UsageError` (exit 2) naming the rule, before any write (config, lock, or
-  network sync). Re-adding an already-installed ref under a *different*
-  `--name` than it already carries used to keep the existing key and say
-  nothing; it now fails the same way, naming the existing key and
-  `akm bundle rename <old> <new>`. A DERIVED name (no `--name` given) is
-  unaffected and keeps `deriveBundleId`'s forgiving `-<hash>` uniqueness
-  fallback. Every `akm bundle add` result (local, website, and registry) now
-  also carries `bundleId` (the resolved bundle key), and a registry add's
-  result always carries `registryId` (the registry install id) rather than
-  only when it happens to differ from `bundleId`, so a caller no longer has
-  to reconstruct the key from `sourceAdded`/`installed`.
-- **`akm bundle add <registry ref> --name <name>` now keys the bundle by
-  `<name>`.** For npm, `github:` and Git refs, `--name` was accepted and then
-  dropped before the bundle key was derived, so the bundle was keyed by the
-  basename of its materialized cache directory instead — `extracted`, or
-  `extracted-<hash>` once that was taken — and its assets were only
-  addressable as `extracted//…`. The name now goes through the same
-  slug-legality and uniqueness rules as a local or website add. The install's
-  registry id is still recorded as `registryId`, so `akm bundle update` and
-  `akm bundle remove` keep resolving the original ref. Re-adding a ref that is
-  already installed keeps its existing key, as local and website re-adds do.
-- **A registry bundle added without `--name` is keyed by its package or repo
-  name instead of `extracted`.** `akm bundle add npm:<pkg>` now creates bundle
-  `<pkg>` (`npm:@scope/pkg` → `pkg`), and `github:owner/repo` or a Git URL
-  ending in `/repo` creates `repo` — the mapping the bundle schema already
-  documented for `registryId`. The key used to come from the basename of the
-  cache directory the package was unpacked into, which is always `extracted`,
-  so every registry bundle after the first was `extracted-<hash>`. A dotted
-  or mixed-case name is slugged like a directory name (`Foo.js` → `foo-js`).
-  Bundles that are already installed keep their current key, including
-  `extracted`, because every recorded `extracted//…` ref depends on it.
-- **A one-file change in a large directory no longer costs `akm index` half
-  an hour.** Both full-text tables keyed their per-entry deletes on
-  `entry_id`, an unindexed FTS5 column, so every upsert scanned the whole
-  full-text index, twice per entry per run. On a 23.9k-entry index, one
-  touched file in a flat `knowledge/` directory of 13.7k entries took 26
-  minutes (task run `2026-09-24T20-30-01-663Z`); on backup copies of that
-  index the same rescan took 31 minutes before this change and takes 38 s
-  after it. FTS rows are keyed by rowid, and the
-  first writable open after upgrading realigns an existing index in place,
-  about 10 s and ~1.1 GB peak memory at that size, with no index-generation
-  bump, so an older binary keeps reading it. A writable open realigns again
-  if an older binary sharing the generation has written rows since.
-- **One bad scheduler-sync item, or one bad migration step, no longer fails
-  the whole operation.** `akm task sync` used to throw and abort the entire
-  reconciliation over one binding it could not reconcile or one bundle whose
-  sources failed to read; that binding or bundle is now reported in the sync
-  result's `failures: [{path, ref?, reason}]` (documented in
-  `docs/reference/cli.md`) while every other one still syncs (see Changed).
-  `akm-migrate`'s
-  `runMigration` (`scripts/akm-migrate/run-migrate.ts`) now runs every step
-  under its own catch too: a step's own throw (or, under `apply`, its
-  read-only fallback failing as well) is recorded in the plan's new
-  `failedSteps: [{step, error}]` and forces `status: "blocked"` instead of
-  ending the run with no plan at all — the remaining steps still run in
-  order. `akm migrate status|apply` (`scripts/akm-migrate/main.ts`) already
-  exits 1 for any blocked plan, so a poisoned step no longer exits the
-  internal-error code 70 with nothing printed.
-- **The legacy `stashDir`/`sources[]`/`installed` config shape is persisted
-  by `akm migrate apply`, and an empty one no longer fails every command**
-  (#863). `migrateLegacySourceShape`
-  (`src/core/config/legacy-source-shape-shim.ts`) has always converted a
-  usable `stashDir`/`sources[]`/`installed` in memory on every load and told
-  the user to run `akm migrate apply` to make that stick, but nothing on disk
-  ever did; the migrator's `configFile` step now writes that current shape
-  back once, under a backup. Separately, through 0.9.16 and 0.9.17-alpha.3 a
-  config whose `sources` was `[]` (what 0.8.9's `akm source remove` writes
-  after the last source is removed) or whose `stashDir` was empty or
-  unusable failed every command with exit 78; it now loads, with the shim's
-  one-time warning.
-- **A `version: 2` or `version: 3` task source reads and runs again instead
-  of failing closed on upgrade.** `e413af024` deleted the in-memory
-  v2/v3 -> v4 read shim on the argument that "untrusted source cannot carry
-  obsolete activation semantics" — but activation had already moved to
-  host-local `scheduler.enabled` in that same commit, so the shim never
-  carried activation in the first place, and deleting it just reintroduced
-  the exact upgrade break 0.9.4 originally shipped the shim to fix ("would
-  have broken every pre-0.9.4 scheduled task headlessly on upgrade").
-  `parseTaskSource` (`src/tasks/source/parse-task-source.ts`) once again
-  routes `version: 2`/`version: 3` through the SAME pure planners
-  `akm migrate apply` uses, entirely in memory, with a one-line stderr
-  deprecation warning (once per file per process) and no disk write; the
-  parsed document never carries a source-owned `enabled` field, since the
-  v3->v4 planner already never hoists `akm.enabled` or a schedule entry's
-  `enabled` key. Only a v2/v3 document the deterministic conversion itself
-  cannot resolve still fails with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
-  the specific blocked reason. The same in-memory shim now also tolerates a
-  declared `version: 4` document whose `schedule[]` still carries a
-  per-entry `enabled` key — 0.9.15's v4 grammar accepted it (`akm task add
-  --disabled` wrote it), this release's does not, and without this the
-  upgrade break above recurs for every 0.9.15-authored scheduled task. The
-  key is stripped without ever being read — `enabled: false` cannot
-  suppress a granted task and `enabled: true` cannot schedule an ungranted
-  one, since activation stays host-local `scheduler.enabled`. `akm task
-  validate` reports such a file `converts` (`sourceVersion` still `4`)
-  instead of `valid`, since it read through the shim rather than the direct
-  v4 path.
-- **Lock contention exits 75, like `state.db` contention.** Another process
-  holding `akm.lock`'s write sentinel (`LOCKFILE_CONTENDED`, was a config
-  error, exit 78) or the asset-mutation writer lease past its wait
-  (`ASSET_MUTATION_LEASE_HELD`, was an unclassified error, exit 70) is now a
-  retry-shortly `TransientError`, exit 75.
-- **`akm health`'s `state.db` repair steps no longer corrupt the rebuilt
-  file.** `state-db-integrity` used to suggest `.dump` into a new file with
-  no writer stop; it now says to back up `state.db`, `.recover` it into
-  `state.new.db`, confirm that passes `quick_check`, stop every akm process,
-  delete `state.db-wal` and `state.db-shm`, then swap the new file in — a
-  leftover WAL replays onto the new database and corrupts it.
-- **The package launcher (`dist/akm`) passes `--scheduler-context` through to
-  the CLI** instead of re-validating the descriptor with a stale copy of its
-  schema, which rejected every descriptor 0.9.17 writes.
-  (`scripts/node-runtime/akm`)
-- **A `task_history` row with a malformed `engine` value decodes.** The
-  decoder used to reject the whole row when `engine` was present but not a
-  string or `null`; it now drops the bad value and decodes the rest, the
-  tolerance it already applied to every other unrecognized field.
-  (`src/storage/repositories/task-history-repository.ts`)
-- **The LLM enrichment budget warning prints for every index run.** When the
-  metadata-enrichment pass ran out of its wall-clock budget during an index
-  another command started (`akm bundle update`, `akm setup`, `akm bundle
-  add`, improve's preflight, a read command's auto-index), it stopped
-  silently; it now prints the same "LLM enrichment budget exceeded" warning
-  `akm index` does.
-
-## [0.9.17-alpha.3] - 2026-09-24
-
-### Fixed
-
-- **Unscoped `akm task sync` no longer aborts the whole host on the first
-  bundle root that happens to contain any symlink.** `captureGuardedDirectoryManifest`
-  threw for every symbolic directory entry it listed, even one the scheduler
-  never reads (e.g. a third-party skill repo's `CLAUDE.md -> AGENTS.md`) —
-  `SchedulerSourceCollector` manifests every scanned bundle's root, so one
-  such bundle among many enabled ones failed sync entirely, dry-run included.
-  A symlink that stays inside its bundle root is now recorded in the guarded
-  directory manifest as its own `"symlink"` kind, identified without
-  following it (its `readlink` text plus its no-follow `lstat` identity), so
-  change detection still works; it is never read or descended into. A symlink
-  sitting exactly where a task or workflow source lives (a `.yml` under
-  `tasks/`, any `.yml` under an `akm-task` bundle, or a workflow-named file
-  under `workflows/`) is reported as its own per-source failure — "is a
-  symbolic source; guarded reads require a regular no-follow owner" — and its
-  ref is not scheduled, even when a real sibling file shares that ref, while
-  every other task and workflow still reconciles. A
-  symlink that resolves outside the bundle root, or one that is broken and
-  cannot be identified safely, is still refused, and a bundle root whose
-  `tasks` or `workflows` entry is itself a symlink still refuses loudly,
-  since that is a schedulable source location.
-
-## [0.9.17-alpha.2] - 2026-09-24
-
-### Fixed
-
-- **A config carrying the retired `experimental.workflowEngine` key no longer
-  fails to load.** `ExperimentalConfigSchema` moved from `.passthrough()` to
-  `.strict()` in 0.9.16 (`cc6152e02`), after `workflowEngine` had already been
-  removed from it in `e0655d13c`; a real config a 0.9.15 install wrote (whose
-  passthrough still accepted the key) then failed every command with
-  `Invalid config: experimental: Unrecognized key(s) in object: 'workflowEngine'`.
-  The config loader now strips known-retired `experimental.*` keys in memory
-  before validation, warning once and naming `akm migrate apply`; a genuinely
-  unknown/misspelled key (e.g. `improveAutonomyy`) still fails closed.
-  `akm migrate apply` removes the retired key from `config.json` on disk
-  (with the usual backup), and `--dry-run` reports the pending removal.
-- **Unscoped `akm task sync` no longer crashes when an enabled website or npm
-  bundle is configured.** The sync plan loop resolved every active source
-  through the write-target resolver, which rejects any kind other than
-  `filesystem`/`git` outright (writes, and therefore scheduler state, are
-  undefined for those kinds — the same rejection `akm task enable` already
-  hit). Unscoped sync now skips non-filesystem/git bundles when building
-  install operations — they never carried schedulable tasks — while
-  inactive-bundle removal/revocation still sees them. A scoped
-  `akm task sync --bundle <website-or-npm-bundle>` now fails with a clear
-  usage error instead of the write-target `ConfigError`.
-
-## [0.9.17-alpha.1] - 2026-09-24
-
-### Added
-
-- **`akm improve --require-engines` now records its reachability probe on the
-  run result (R17).** `assertRequiredEnginesReachable` only ever reported a
-  failure (abort, exit 78); a probe that passed — including a slow or
-  flapping gateway that still answered in time — left no trace once the run
-  proceeded. It now returns one outcome per probed target (`process`,
-  `engine`, `endpoint`, `reachable`, `latencyMs`), threaded through a new
-  `AkmImproveOptions.engineProbe` and copied onto the persisted result as
-  `AkmImproveResult.engineProbe`. Omitted entirely when `--require-engines`
-  was not passed; a result persisted without it (every run before this
-  change) still decodes. `--require-engines --dry-run` results carry it too.
-- **Reflect had no way to exclude raw wiki-ingest snapshots, which are the
-  longest generations in the ledger (89.5s/161.8s observed).** `wikis/articles/raw/*.md`
-  website snapshots index as `knowledge/wikis/articles/raw/<slug>`, and
-  reflect's `allowedTypes` filter is type-only, so it can't exclude a subset
-  of the `knowledge` type. `processes.reflect` now accepts an optional
-  `excludeRefPrefixes: string[]` — conceptId prefixes, matched after
-  stripping an optional `bundle//` from both the ref and each prefix.
-  `shouldSkipRef` skips a matching ref with reason `exclude-filter`, for
-  reflect only (distill and consolidate are memory-only and reject the key).
-  A trailing `/` on a prefix is ignored, so
-  `"knowledge/wikis/articles/raw/"` excludes the same refs as
-  `"knowledge/wikis/articles/raw"`.
-
-- **`akm health` now checks state.db's own SQLite integrity.** A new hard
-  `state-db-integrity` check runs a read-only `PRAGMA quick_check` against
-  `state.db` and fails, naming the returned diagnostic lines and the repair
-  steps (back up, dump/restore via `sqlite3`, verify, swap in), when it
-  reports anything other than `ok`. The same check reports state.db's
-  freelist ratio (the fraction of pages `VACUUM` could reclaim) and warns
-  above 50%. Previously nothing in `akm health` looked past a successful
-  append/read round trip, which stays true on a database that is corrupt at
-  the SQLite level.
-- **The retention purge (`akm improve`) now VACUUMs state.db when more than
-  half its pages are free**, immediately after the events/improve_runs/
-  cycle-metrics purge, recording a `state_db_vacuumed` event with pages
-  before/after. Opportunistic: a locked/busy database is skipped, not
-  raised, so it never fails the purge pass it follows.
-
-### Changed
-
-- **The orphan-state GC pass no longer probes index.db once per pending
-  row.** `runOrphanStateGcPass` used to call `getEntryByRef` (up to two
-  statements each, via its bare-ref fallback) for every pending
-  `asset_salience` / `asset_outcome` row — 2,101 pending rows cost 83–100s
-  per run. It now builds one snapshot of every live `item_ref` in index.db up
-  front and matches every pending row against it in memory: O(1) index.db
-  queries per run instead of one probe per row, with the same live/orphan
-  resolution (including the bundle-qualified-exact and bare-conceptId-suffix
-  fallback) as before.
-- **Memory inference no longer forces a full reindex for the file(s) it
-  writes.** The post-inference maintenance step used to call the full
-  `reindexFn` (42–220s per run, typically for one written derived fact)
-  whenever memory inference split a parent. `runMemoryInferencePass` now
-  reports the exact paths it wrote or rewrote (`writtenPaths`, sourced from
-  the run's write-provenance journal), and the maintenance pass indexes just
-  those files with `indexWrittenAssets` instead — closing and reopening the
-  shared index.db handle around the call with the same discipline the full
-  reindex used (#584). The separate post-consolidation full reindex is
-  removed outright rather than re-gated: it used to fire whenever
-  `consolidation.processed > 0` (memories the LLM judged), but
-  merge/delete/contradict ops are advisory and never auto-applied, and the
-  one op that does execute — promote — writes a proposal to state.db, not to
-  the stash. Consolidation therefore cannot change a file the index reads,
-  so the reindex had no precondition it could ever satisfy.
-- **The improve loop's reflect dispatch now checks the proposal
-  fingerprint/rejection-backoff guard *before* calling reflect, not just
-  after.** `fingerprint_match` and `rejection_backoff` were evaluated only
-  inside `createProposal`, which runs after reflect's full generation and
-  quality-judge call — so a ref already guaranteed to be skipped still paid
-  the LLM cost (measured: 2–16% of reflect LLM seconds spent on refs the
-  guard then discarded). The guard's fingerprint is an input fingerprint
-  (target ref, source, before-hash, model id), computable before dispatch, so
-  `checkProposalGuard` (`src/commands/proposal/repository.ts`) exposes the
-  identical check `createProposal` runs post-generation — the two share one
-  implementation and can never disagree. `runLoopReflectPass`
-  (`src/commands/improve/loop-stages.ts`) now calls it first; a hit skips
-  `reflectFn` entirely and lands in the existing `reflect-cooldown` bucket
-  with the same `reflect_invoked` event the signal-delta cursor
-  (`buildLatestProposalTsMap`) reads, so cursor advancement and run-result
-  classification are unchanged. `createProposal`'s post-generation check
-  remains the authoritative gate.
-- **Consolidate's plan schema and prompt are promote-only.** The apply loop
-  only ever executed `promote` — `merge`/`delete`/`contradict` were advisory
-  by design and never applied — but the schema still asked for all four ops
-  plus a free-text `warnings` array, and completion tokens rose from 7–8k to
-  21–30k per run after the 35B-A3B model switch with no change in
-  promotions. `CONSOLIDATE_PLAN_JSON_SCHEMA` and `consolidate-system.md` now
-  request only `promote` (with `reason` capped at 200 chars), and `isValidOp`
-  rejects any other op shape — e.g. from a model that ignores the schema —
-  with the existing "skipping invalid operation" warning instead of treating
-  it as an actionable plan entry. `ConsolidateResult.merged` / `deleted` /
-  `contradicted` and the `planned` op breakdown are unchanged in shape and
-  stay zero.
-- **`improve-maintenance-passes.test.ts` moved under `tests/integration/`.**
-  The suite opens a real `state.db` via `openStateDatabase`, which AGENTS.md's
-  ORG-03..06 rule places under `tests/integration/`, not `tests/`; no content
-  change. Also corrected
-  `docs/architecture/specs/improve-collapse-churn-detector-design.md` §2.5,
-  which described the post-loop collapse-detector gate as `consolidationRan
-  OR recombination.processed > 0` — no `recombination` value is plumbed into
-  `runImprovePostLoopStage` and no recombine pass exists in the codebase, so
-  the spec now matches the shipped `consolidationRan`-only gate and notes
-  that the recombine-triggered pass is not implemented.
-- **Graph-extraction relations are now compact `[from, type, to]` triples
-  instead of `{"from","to","type"}` objects, and the batch graph-extraction
-  call now sends a `responseSchema`.** The object-keyed form cost 10+ tokens
-  per relation for no signal, and completion tokens cost far more than
-  prompt tokens; a compact triple form measured −51% / −18% completion
-  tokens on two chunks. `graph-extract.ts`'s single-asset and batch prompts
-  and JSON schemas now ask for `["from", "type", "to"]` (`type` may be `""`);
-  `parseGraphExtraction` accepts both the triple form and the legacy object
-  form (a relation-level `confidence` is still read from a legacy object,
-  though the schema no longer offers it — the prompt never asked for one).
-  Separately, production runs graph extraction batched
-  (`processes.graphExtraction.batchSize`), and `extractGraphFromBodies` sent
-  no `responseSchema` at all, so the R12b output-bounding schema only ever
-  reached the single-asset path. The batch call now sends the same
-  `maxItems`-bounded schema (scoped to the batch's asset count) through the
-  same `supportsJsonSchema`-gated `responseSchema` field the single-asset
-  call uses. `GRAPH_EXTRACT_PROMPT_VERSION` bumps `v2` → `v3`, so every file
-  re-extracts once on the next graph pass — entity semantics, caps, chunking
-  and batch sizing are unchanged.
-
-### Removed
-
-- **The write-only distill/proposal eval-cases path.** `writeEvalCase`
-  (`src/commands/improve/eval-cases.ts`) wrote a Markdown file per rejection
-  under `$STATE/improve/eval-cases/<stash>/` that nothing ever read back, and
-  `countEvalCases` reported a cumulative on-disk file count as if it were a
-  per-run number (surfaced as `evalCasesWritten` on the improve result and in
-  `akm health`'s improve metrics). A rejected proposal row (see above) now
-  carries the same information through a path something actually reads.
-  Deleted `eval-cases.ts` and its two `loop-stages.ts` call sites, the
-  `evalCasesWritten` field from `AkmImproveResult` and every health-metrics
-  reader/aggregator, and the `improve_completed` event's `evalCasesWritten`
-  field. `decodeImproveResult` still accepts (and ignores) `evalCasesWritten`
-  on an envelope an older release wrote, and existing eval-case files on disk
-  are untouched — `getEvalCasesDir` (`core/paths.ts`) stays, since
-  `scripts/akm-migrate/migrate/writer-relocation.ts` still uses it to
-  relocate them from the legacy `$STASH/.akm/eval-cases/` path.
-
-### Fixed
-
-- **The lesson quality judge's ACTIONABILITY criterion carried no signal, and
-  the judge's request/parser let a differently-spelled or extra key change
-  the verdict (R16).** Splinter measured ACTIONABILITY at AUC 0.46 against
-  accept/reject outcomes — no better than chance — and averaging it into the
-  score pulled every verdict toward its 3.0 mode, i.e. the review band.
-  `buildJudgePrompt` no longer asks for it;
-  `LESSON_JUDGE_CRITERIA_KEYS` is now `novelty`/`nonRedundancy` only.
-  Separately, `runQualityJudge`'s request sent no `responseSchema` while the
-  prompt text spelled criteria as NON-REDUNDANCY / FEEDBACK ALIGNMENT, so a
-  model that echoed a differently-cased or -spelled key turned the verdict
-  into a parse failure routed to review; and `parseJudgeResponse` averaged
-  over every key present in `scores`, so an unexpected extra key changed the
-  score. `runQualityJudge` now sends a strict `responseSchema` — built from
-  the judge's own expected criteria keys, `additionalProperties: false` at
-  both levels — through the same `supportsJsonSchema`-gated
-  `request.responseSchema` path `src/llm/graph-extract.ts` uses, a no-op for
-  providers that don't opt in; and `parseJudgeResponse` now reads, validates,
-  and averages only the expected keys, silently ignoring any other key
-  instead of averaging or validating it. A missing expected key is still a
-  parse failure, unchanged.
-- **The reflect quality-gate's "no judge configured" warning named a config
-  key nothing reads.** It told users to set
-  `improve.strategies.<name>.processes.reflect.qualityGate.engine`, but
-  `qualityGate` is `{ enabled }` passthrough — `resolveReflectQualityJudgeRunner`
-  always uses the generation runner when it is an LLM, or falls back to
-  `defaults.llmEngine` via `resolveImproveLlmExecution` with no profile/process
-  layer, so that key was never read. The warning now names only
-  `defaults.llmEngine`.
-- **The distill/reflect LLM-as-judge quality gate inherited the generation
-  runner's temperature, and its averaged score hid which criterion actually
-  failed.** `runQualityJudge`'s request only pinned `enableThinking: false`,
-  so the judge ran at whatever temperature generation used — measured at 0.3,
-  the verdict flipped on 10/16 identical inputs, vs. 0/16 at temperature 0.
-  The request now also pins `temperature: 0`, for both the distill and
-  reflect judges that share this function, independent of the runner's
-  configured temperature. Separately, both judge prompts asked for one
-  averaged float, so a criterion carrying no signal was invisible in
-  production. They now ask for per-criterion integer scores
-  (`buildJudgePrompt`: novelty/actionability/nonRedundancy;
-  `buildReflectJudgePrompt`: feedbackAlignment/preservation/quality), averaged
-  in code to the same `score` the unchanged 3.5/2.5 thresholds gate on. The
-  parser accepts this new `{"scores": {...}, "reason"}` shape and still
-  accepts the old `{"score": <float>, "reason"}` shape a model may return;
-  each criterion (or the bare score) must be a finite number in 1..5 or the
-  response routes to review exactly as a parse failure does today. The
-  per-criterion scores, when present, are now carried through
-  `QualityJudgeResult.criteria` into the `distill_invoked` event metadata and
-  rejection-envelope frontmatter `writeQualityRejection` writes, and into
-  reflect's `reflect_completed` rejection event as `qualityCriteria`.
-- **The judge parser accepted a partial `scores` object and auto-passed it.**
-  `parseJudgeResponse` validated only that whatever criterion keys arrived
-  held finite 1-5 values, then averaged over those keys alone — so a
-  truncated judge response like `{"scores": {"novelty": 5}, "reason": "…"}`
-  parsed to `score: 5.0` and `pass: true`, promoting content the judge never
-  finished evaluating on its other criteria. `runQualityJudge` now passes the
-  criterion key set its prompt asked for (`buildJudgePrompt`:
-  novelty/actionability/nonRedundancy; `buildReflectJudgePrompt`:
-  feedbackAlignment/preservation/quality) down to `parseJudgeResponse`, which
-  returns a parse failure — routed to review, exactly as a malformed response
-  is today — when any expected key is missing from `scores`.
-- **The reflect pre-generation proposal-guard skip (R9) emitted `reflect_invoked` with no paired `reflect_completed`.** `runLoopReflectPass`'s guard-skip branch in `loop-stages.ts` appended a synthetic `reflect_invoked` event to advance the signal-delta cursor, but never called `reflectFn`, so `reflect.ts`'s own `reflect_completed` emission never ran either — a new, permanent source of unpaired `reflect_invoked` rows for every fingerprint/backoff hit, violating the invoke/complete pairing invariant `buildReflectEventEmitters` documents. The branch now also appends a matching `reflect_completed` (`ok:false`, `reason:"cooldown"`, `subreason:"pre_generation_guard"`), mirroring `emitFailed`'s shape.
-- **R9's pre-generation proposal guard covered reflect only — distill paid for a full generation + judge call before the same fingerprint/backoff guard could reject it.** `runLoopDistillPass` had no equivalent of `runLoopReflectPass`'s pre-check, even though `createProposal`'s post-generation guard (and every rejected row R10 now mints under `source: "distill"`) applies to distill just as much. `runLoopDistillPass` now calls `checkProposalGuard` against the derived lesson/knowledge ref (distill's real `createProposal` call never targets the input ref) before dispatching `distillFn`; a hit routes to the pass's existing `distill-skipped` bucket and emits `distill_invoked` with a `skipped` outcome so `buildLatestProposalTsMap`'s signal cursor still advances.
-- **The distill pre-generation proposal guard could suppress a legitimate dispatch by checking a ref distill would never target.** For a memory input, distill's real `createProposal` call targets one of two refs decided at dispatch time inside `planMemoryKnowledgePromotion` — the derived knowledge ref when the deterministic promotion heuristic fires, the derived lesson ref otherwise — but `runLoopDistillPass`'s pre-check checked both candidate refs and skipped on the FIRST guard hit, so a stale fingerprint/backoff hit on the ref distill would NOT have targeted silently suppressed dispatch until that ref's fingerprint happened to change. The pre-check now resolves the SAME target `planMemoryKnowledgePromotion` would via `wouldPromoteMemoryToKnowledge` (`distill/promote-memory.ts`) — a thin wrapper that delegates to `planMemoryKnowledgePromotion` itself so the classification can never drift from the real dispatch decision, with no LLM call — and checks only that ref; content and the classification's `durableInputRef` are read via `planned.ref` alone, matching `akmDistill`'s real dispatch, while `planned.itemRef ?? planned.ref` feeds only the feedback-events query.
-- **The `akm improve` triage pre-pass drain's judgment LLM calls were unattributed in the usage report.** `runTriagePrePass`'s `drainProposalsFn` call dispatched judgment calls with no `withLlmStage` wrapper, unlike the standalone `akm proposal drain` CLI path, so they landed in `byProcessEngineModel` as unattributed (5 calls, 24s per run) instead of under a `triage` stage. The pre-pass drain is now wrapped in `withLlmStage("triage", …, { engine, process: "triage.judgment" })`, mirroring the CLI path.
-- **The batch graph-extraction provider-storm guard only recognized one error
-  code.** After a failed batch call, `extractGraphFromBodies` skipped the
-  per-asset fallback retry only for `LlmCallError`s coded `provider_error` —
-  but a dead endpoint more often raises `network_error` (a dropped
-  connection) or `provider_html_error` (a provider serving an HTML error
-  page), both of which still paid the full per-asset fallback storm the
-  guard exists to prevent. The predicate is now `isTransportFailure`
-  (`src/llm/client.ts`), shared with `chatCompletion`'s retry classifier so
-  the two cannot drift apart, and covers `provider_error`, `network_error`,
-  and `provider_html_error`.
-- **`akm health`'s `state-db-integrity` check no longer crashes when the freelist/page-count read fails.** `getStateDbFreelistInfo` had a `finally` but no `catch` around its read-only open and pragma reads, unlike its sibling `runStateDbQuickCheck` — a throw there (e.g. an unopenable state.db) escaped `akm health` as an unclassified exit 70 on exactly the damaged database the check exists to report. It now returns a zeroed `StateDbFreelistInfo` with an `error` field, and the check renders that as a failed check instead of throwing.
-- **The post-purge VACUUM's `state_db_vacuumed` event now honors the caller's `EventsContext`.** `vacuumStateDbIfReclaimable` appended its event with a direct `insertEvent` call, bypassing `EventsContext.readOnly` and the injectable clock its sibling purge events (`events_purged`, `improve_runs_purged`, `improve_cycle_metrics_purged`) use in the same `runRetentionPurgePass` callback. It now appends the event via `appendEvent` with the caller's `EventsContext` plumbed through.
-- **Consolidate's per-chunk prompt excerpt truncated the raw file (frontmatter
-  + body) instead of the body.** `buildChunkPrompt` sliced `body.slice(0,
-  bodyTruncation)` off the unstripped file; a memory whose frontmatter alone
-  exceeded the excerpt length was judged on metadata only and never showed
-  its own body text. The excerpt now truncates `stripFrontmatterBody(body)`;
-  hot/queued detection is unchanged and still reads the raw body.
-- **Consolidate's chunk prompt carried an unused ~14k-char standards block and
-  a header the model sometimes echoed back as a bogus `ref`.** Every chunk
-  prompt resolved and injected a "Standards to follow" section
-  (`resolveStandardsContext("memories/_consolidated", ...)`), but the chunk
-  output is a promote-only op list that never reads it. Separately, the
-  chunk header (`Chunk N of M, memories <first>–<last>:`) named the chunk's
-  boundary memories with an en dash between two `memories/<name>` refs; on
-  2026-09-24 the judge model returned promote ops whose `ref` was exactly
-  that `memories/<first>–memories/<last>` range, naming a memory that does
-  not exist and losing the promotion. `buildChunkPrompt` no longer takes a
-  `standardsContext` and the header is now
-  `Chunk N of M (<count> memories):` — no refs in it.
-- **Consolidate re-judged memories that were already promoted verbatim into
-  `knowledge/`.** That duplication was previously discovered only after the
-  LLM (`shouldSkipPromotionBodyDuplicate`), so a pool where the large
-  majority of memories were already-promoted duplicates still paid the full
-  chunk/LLM cost on all of them before being skipped.
-  `inspectConsolidationPool` now drops those memories before any chunking or
-  LLM work, sharing one `loadExistingKnowledgeBodyHashes` call and the same
-  `cacheHash` domain with the post-LLM check so the two cannot disagree. The
-  dropped count is reported as `prefilteredAlreadyPromoted` on the
-  consolidate result and in a warning line. The pre-filter also now runs
-  *before* the `consolidate.limit` cap (previously after), so a run with a
-  limit set selects its oldest-modified window from the pre-filtered pool
-  instead of re-selecting and re-dropping the same permanently-undeletable
-  duplicates every run while fresh memories past the cap went unreached; the
-  preview/eligibility path (`preparation.ts`) computes and passes the same
-  hash set so the reported candidate pool agrees with what the run will act
-  on. A live (non-preview) `akm improve` run reuses that same hash set for
-  the actual `akmConsolidate` call instead of recomputing it, so a run still
-  walks `knowledge/` only once.
-- **`improve`'s start-of-run index rescan ran after triage dirtied the stash,
-  not before it.** Proposal triage promotes accepted proposals straight into
-  the flat `knowledge/` root, and the blocking `ensureIndex` call that is
-  supposed to give the run a current index ran only afterward (inside
-  `collectEligibleRefs`'s setup), so every triage promotion guaranteed the
-  very full rescan it should have preceded — up to ~27 minutes, holding the
-  index lock against co-scheduled writers. `ensureIndex` now runs before the
-  triage pre-pass, and triage's own writes are indexed incrementally
-  (`indexWrittenAssets`) so `collectEligibleRefs` still sees them without a
-  second full walk. Because `indexWrittenAssets` upserts a file's
-  `content_hash` without bumping `builtAt`, index staleness detection
-  (`ensure-index.ts`) is now per-file: a file newer than the last build is
-  only treated as stale when its current content actually differs from what
-  is indexed, so incrementally-reindexed content stops re-triggering the
-  same full rescan on every subsequent run. The implicit reindex's timing
-  breakdown (walk/llm/embed/finalize), previously discarded, is now logged
-  at verbose level and surfaced on the improve result as `ensureIndexDurationMs`.
-- **Distill quality rejections vanished instead of persisting, so backoff and
-  Reflexion never saw them and the same ref was re-selected and re-rejected
-  on every run** (two refs were rejected 11× and 10×). `writeQualityRejection`
-  wrote only a `$STATE`-side file and an event, never a `proposals` row, so
-  `rejection_backoff`/`fingerprint_match` (proposal/repository.ts) and the
-  Reflexion "previously rejected" context had nothing to find; the distill
-  signal-delta cursor (`buildLatestProposalTsMap`) also only advanced for
-  `queued`/`skipped`/`validation_failed` outcomes, so a rejected ref stayed
-  eligible forever. `writeQualityRejection` now mints a real proposal through
-  the same `createProposal`/`archiveProposal` path every other proposal
-  source uses: a `quality_rejected` outcome is minted pending then archived
-  to `rejected` carrying the judge's reason; a `review_needed` outcome stays
-  `pending` in the normal queue, where triage — a human, or the drain's
-  judgment tier when one is configured — decides, the same path every other
-  pending distill proposal (including quality-gate passes) already takes.
-  The cursor now also advances on both outcomes (still excluding
-  `llm_failed`, where no real attempt produced anything). A retry for the
-  same target, source, and model is skipped by `fingerprint_match` (the
-  input fingerprint recorded at mint, retained `archiveRetentionDays`,
-  default 90 days); the 30-day `rejection_backoff` window only applies once
-  the target's before-hash or the model differs. Because these machine
-  rejections are now real `rejected` rows under `source: "distill"`, `akm
-  health`'s distill accept rate (`computeAcceptRateBySource`,
-  src/commands/health/accept-rate.ts) drops relative to earlier releases and
-  no longer measures reviewer acceptance alone. Nothing gates on that
-  metric.
-- **`writeQualityRejection` could throw instead of returning a rejection
-  result.** Minting the proposal row above runs the mint-time canonical
-  validator (`createProposal` → `rejectProposal`,
-  `src/commands/proposal/repository.ts`), which throws `UsageError` for
-  structurally-invalid content — e.g. a `lessons/` ref whose body lacks
-  `description`/`when_to_use`. `writeQualityRejection` is the terminal,
-  non-throwing rejection path and none of its callers handled a throw. The
-  proposal row is bookkeeping for backoff/Reflexion, never the authoritative
-  record of the rejection, so a validator throw now degrades to "no row
-  minted" — the envelope file and `distill_invoked` event are still written,
-  matching the existing fingerprint/backoff skip behavior.
-- **A `review_needed` quality-gate rejection could be auto-promoted by the
-  triage drain's judgment tier with no human ever seeing it.**
-  `writeQualityRejection` minted a `review_needed` outcome as an ordinary
-  pending proposal under `source: "distill"` (knowledge promotions from
-  `promote-memory.ts` take the same path); the `personal-stash` drain policy
-  defers `distill` proposals to the judgment tier, which can auto-accept
-  under `applyMode: promote` + `experimental.improveAutonomy` — so content
-  the quality judge explicitly refused to auto-queue (the 2.5–3.5
-  review-needed band) could be promoted without a human in the loop.
-  `writeQualityRejection` now stamps a `review_needed` mint with a
-  `{ outcome: "deferred", reason: "quality-review", gate: "quality-gate" }`
-  gate decision (best-effort: a stamp failure warns and continues, like the
-  existing mint/archive tolerance), and `classifyPendingProposals`
-  (`proposal/drain.ts`) skips any pending row carrying it — leaving it
-  pending and untouched, before the drain's own policy-deferred re-stamp
-  loop would otherwise overwrite the stamp.
-- **Consolidate's post-LLM promote-dedup hash double-stripped frontmatter.**
-  `shouldSkipPromotionBodyDuplicate`'s `bodyHash` was computed as
-  `cacheHash(parseFrontmatter(memoryContent).content.trim())` — the body was
-  already frontmatter-stripped before being handed to `cacheHash`, which
-  strips it again internally — diverging from the single-strip
-  `cacheHash(raw)` domain `loadExistingKnowledgeBodyHashes` and the pre-filter
-  use for a source memory body that begins with its own `---` block. The
-  check now hashes `cacheHash(memoryContent)` directly, so the two sides of
-  the dedup comparison agree.
-- **Consolidate's per-chunk prompt still warned against proposing `delete`
-  for `(captureMode: hot)` memories.** The consolidate op schema and system
-  prompt dropped `delete` (along with `merge`/`contradict`), leaving
-  `buildChunkPrompt`'s top-of-prompt hot-ref block as the only remaining
-  mention of `delete` anywhere in the prompt — a retired op name that
-  `isValidOp` now rejects if the model echoes it back, wasting tokens on
-  "skipping invalid operation" warnings. The block and the `hotRefs`
-  collection that fed it are removed; the inline `(captureMode: hot)`
-  annotation on each memory line is unchanged.
-- **Graph extraction sent no `json_schema` and no per-asset chunk cap, so a
-  long file could pay for dozens of LLM calls whose output was then sliced
-  down to the same 32-entity/32-relation limit anyway** (one file spent 21 of
-  27 calls and 12.9k completion tokens this way). The single-asset extraction
-  call (`extractGraphFromBody`) now sends a `responseSchema` (entities/
-  relations capped at 32 each, `additionalProperties: false` otherwise), via
-  the same `supportsJsonSchema`-gated request path memory-infer.ts uses — no
-  `maxTokens` is sent; cost is bounded by the schema's `maxItems` caps alone,
-  per AGENTS.md's "LLM Defaults" (a hardcoded cap risked silent truncation
-  with zero headroom for JSON punctuation or reasoning tokens). A body
-  chunked beyond the new
-  `processes.graphExtraction.maxChunksPerAsset` (default 8) now stops after
-  the first N chunks instead of processing every one; the skipped chunks are
-  reported as `truncatedChunks` in the run's graph-extraction telemetry so
-  the coverage loss is visible rather than silently absorbed. The `improve`
-  loop's dispatch (`loop-stages.ts`) now also forwards a configured
-  `maxChunksPerAsset` to the extraction call, mirroring the existing
-  `topN`/`batchSize` wiring — without this the config key had no effect in a
-  real `akm improve` run and the default of 8 always applied.
-- **The graph-extraction `responseSchema` forbade the `confidence` field the
-  parser itself reads.** `additionalProperties: false` on both the root
-  object and each relation item made `confidence` impossible on a
-  `supportsJsonSchema` provider, even though `parseGraphExtraction` uses
-  `rel.confidence` to drop relations below `MIN_RELATION_CONFIDENCE` and
-  `item.confidence` to feed the merged extraction confidence — silently
-  turning the confidence filter into dead code on exactly the providers the
-  schema targets. `confidence: {"type": "number"}` is now allowed at both
-  levels; `additionalProperties: false` still forbids anything else.
-- **A pending proposal went stale the moment akm's own bookkeeping touched
-  its target, and promote refused it forever (R20).** `resolveProposalTargetInfo`
-  captured the target's raw `beforeHash` at mint; the SAME nightly run's
-  `writeSalienceToFrontmatter` (distill) and memory inference's
-  `inferenceProcessed` stamp then rewrote the target's frontmatter before
-  promote ran, so `promoteProposalWithLease`'s guard (`repository.ts` ~L2406)
-  and `drain.ts`'s dry-run mirror (`assertProposalTargetFresh`) refused every
-  affected proposal with "target changed after proposal was created" — the
-  same 11+ reflect proposals, every day, on splinter. `resolveProposalTargetInfo`
-  now also captures `beforeHashNormalized` (`core/asset/frontmatter.ts`'s new
-  `computeNormalizedContentHash`, over the target with
-  `BOOKKEEPING_FRONTMATTER_KEYS` — `salience`/`salienceInputs`/`inferenceProcessed`
-  — stripped and the remaining frontmatter canonically re-serialized); the
-  promote guard and its dry-run mirror both prefer it over the raw
-  `beforeHash` when present, so a bookkeeping-only rewrite no longer stales a
-  proposal out while a real content change still refuses. Promotion also now
-  carries the live target's bookkeeping keys forward
-  (`carryForwardBookkeepingFrontmatter`) when the proposal's own frontmatter
-  doesn't set them, so accepting never drops `inferenceProcessed` and forces
-  memory inference to reprocess the memory. A legacy proposal minted before
-  this field existed keeps its exact original raw-hash check.
-  `computeNormalizedContentHash` also normalizes the body boundary the same
-  way `assembleAssetFromString` does (leading newlines stripped, exactly one
-  trailing newline) before hashing, and treats an empty frontmatter block as
-  `{}` instead of falling back to the raw hash — both `writeSalienceToFrontmatter`
-  and the memory-inference `assembleAsset` rewrite shift where the body starts,
-  which without this normalization still staled a proposal out unless the
-  target's frontmatter was already in that exact on-disk shape.
-- **A stale-target promote failure was retried, and refused, identically
-  every drain run forever (R20).** The drain already categorized a
-  "target changed/was created after proposal" failure as `stale-target`
-  (`categorizeDrainFailure`), but left the row pending either way — so the
-  same proposals failed the same way on every subsequent `akm proposal
-  drain` / triage pass. Both promote-failure sites (`drainProposals`'s
-  deterministic loop and `runJudgmentTier`) now auto-reject a stale-target
-  failure once, stamping `gateDecision: { outcome: "auto-rejected", reason:
-  "stale-target" }` instead of leaving it to retry. This is not a merit
-  rejection, so `checkFingerprintAndBackoff`'s rejection-backoff window
-  (`repository.ts`) now excludes stale-target rows — the ref stays
-  re-proposable against its current content — and the Reflexion
-  "previously rejected" context (`reflect.ts`'s `readRejectedProposals`,
-  `distill.ts`'s `buildDistillMessages`) and the accept-rate health metric
-  (`health/accept-rate.ts`) now exclude stale-target rejections too, so a
-  procedural refusal doesn't misrepresent content quality. `--dry-run` now
-  predicts the same outcome: a stale-target promote failure it detects is
-  reported under `rejected`, matching what a real run does, instead of under
-  `failed`.
-
-- **Reflect quality-gate rejections were mislabelled `parse_error` and fed
-  back into later prompts as learned "avoid" patterns.** When the reflect
-  quality judge rejected an otherwise well-parsed proposal, the result
-  carried `reason: "parse_error"` — a real parse failure and a judge
-  rejection were indistinguishable. The improve loop injects non-excluded
-  reflect failures into the next reflect prompt's "Avoid These Patterns"
-  block, so a single gate rejection could poison every subsequent candidate
-  in the run. Judge rejections now carry a distinct `quality_rejected`
-  reason, stay in the `reflect-failed` metrics bucket, and are excluded from
-  that avoid-patterns injection like the existing deterministic skips.
-- **Legacy rejected proposals no longer throw before reflect/distill prompt
-  dispatch.** `readRejectedProposals` (reflect.ts) and the equivalent mapper
-  in distill.ts built their "previously rejected" context via
-  `proposalContent(p)`, which throws when a proposal's `changes[0]?.after` is
-  undefined — the shape `storedToChanges` deliberately returns for rows
-  archived before the `changes` field existed (the large majority of
-  real-world rejected-proposal history). The throw happened before the
-  signal cursor advanced, so a ref with any such legacy rejection errored on
-  every run instead of ever completing. Both call sites now read the preview
-  from `payload.content`, which is populated for every row regardless of
-  its `changes` shape.
-- **Failed graph extractions are no longer cached as permanent hits.** A
-  provider outage upserted thousands of `{"entities":[],"status":"failed"}`
-  results into `llm_enrichment_cache` and the persisted graph, and both
-  cache-hit paths (the DB lookup and reuse from the previous graph) treated
-  them as valid hits forever after — the affected files never retried.
-  `status: "failed"` results are now treated as a miss and are never written
-  to the cache; existing rows are left on disk and are overwritten naturally
-  on the next successful extraction. `src/llm/graph-extract.ts` also no
-  longer falls back to a per-asset retry for every body in a batch after a
-  `provider_error` — the provider has already demonstrated it is failing, so
-  each asset in that batch is recorded as failed directly. Graph extraction
-  now aborts the rest of the run (returning the partial results already
-  extracted) once the failure rate crosses 50% over at least 4 attempted
-  extraction dispatches, mirroring consolidate's existing failure-rate guard.
-  The abort counts one attempt per `extractGraphFromBodies` dispatch, not per
-  file inside its batch — per-file counting let a single batched
-  `provider_error` trip the guard after one HTTP failure whenever
-  `graphExtractionBatchSize` was at its default of 4.
-- **Memory consolidation's cooldown could never engage.** `consolidate_completed`
-  was only emitted when a run planned zero merge/delete/contradict operations —
-  advisory ops the model plans daily and that are never auto-applied — so the
-  event had, in practice, never fired and the pool-delta gate stayed
-  permanently in its bootstrap "run every time" state. The event now fires
-  whenever the LLM pass itself completes, recording the unapplied advisory op
-  count (`advisoryOpsUnapplied`) instead of withholding the event. Separately,
-  the memory-volume override (`memoryVolumeConsolidationThreshold`, forcing a
-  run when the eligible pool exceeds the threshold) is now bootstrap-only: once
-  a `consolidate_completed` event exists for the source, the pool-delta gate
-  governs on its own, even when the pool is large. `akm improve --plan`'s
-  `consolidation.gates.delta.reason` no longer reports "memory pool has work"
-  for both a real pool delta and the bootstrap case (no `consolidate_completed`
-  event yet, so no delta was evaluated) — bootstrap now reports its own reason.
+- **`akm info` now always reports and exits 0, like a help command.** An
+  invalid `config.json`, an unreadable or missing bundle directory, and a
+  locked, newer, or corrupt `index.db` are each named in the report instead
+  of failing the command or showing unexplained zeros.
+- **`akm health` no longer silently drops every improve run recorded before
+  #947** (2026-09-09): a `plan` object with no `processes` key failed to
+  decode entirely, excluding those runs from `--window-compare`, `--group-by
+  run`, and the HTML/MD reports. On a real 30-day window this had dropped 11
+  of 55 runs.
+- **`akm show` works again for a memory with a `.derived.md` child** (835 of
+  them on one real bundle) — broken since 0.9.7.
+- **`akm bundle add --name` is a contract on every add path, not a hint.**
+  An explicit `--name` that is not a legal bundle slug, or is already taken,
+  now fails before any write instead of silently falling back to a derived
+  name (`akm bundle add --provider ... --name` had its own gap in this same
+  check, now closed). A registry add with no `--name` is keyed by its
+  package or repo name instead of the fixed name `extracted` every registry
+  bundle after the first used to collide on.
+- **`akm improve --require-engines` no longer aborts a scheduled run because
+  a local LLM endpoint was merely busy.** Its reachability probe now waits up
+  to the engine's own timeout (at most two minutes) instead of a flat 3
+  seconds.
+- **A scheduled row's value survives a `$` or a backslash**, and a cron
+  command too long for one line is recognized by `akm task sync` again
+  instead of being rewritten on every sync.
 
 ## [0.9.16] - 2026-09-22
 
