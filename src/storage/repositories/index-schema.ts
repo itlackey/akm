@@ -396,8 +396,8 @@ export function ensureSchema(db: Database): void {
   ensureColumn(db, "index_dir_state", "index_variant", "TEXT");
 
   // LLM enrichment result cache, keyed by a stable asset_ref string (the
-  // absolute file path for graph/memory passes, `item_ref` for the
-  // metadata-enhance pass) plus the body hash the result was produced for.
+  // absolute file path for the graph and memory-inference passes) plus the
+  // body hash the result was produced for.
   db.exec(`
     CREATE TABLE IF NOT EXISTS llm_enrichment_cache (
       asset_ref     TEXT NOT NULL,
@@ -411,6 +411,12 @@ export function ensureSchema(db: Database): void {
      CREATE INDEX IF NOT EXISTS idx_llm_cache_updated
        ON llm_enrichment_cache(updated_at);
   `);
+  // Metadata-enhance retired (RS-D, 0.9.17-alpha.9): its rows were the only
+  // ones keyed by the default empty cache_variant (graph uses an
+  // extractor-specific variant, memory inference `memory-inference-v2`), so
+  // this is safe to run unconditionally on every writable open. The table
+  // itself stays — memory inference still reads it.
+  db.exec("DELETE FROM llm_enrichment_cache WHERE cache_variant = ''");
 
   ensureGraphTables(db);
 

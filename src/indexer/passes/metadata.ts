@@ -761,27 +761,6 @@ function mergeAliases(existing: string[] | undefined, generated: string[]): stri
   return merged.length > 0 ? merged : undefined;
 }
 
-// ── Enrichment Completeness ─────────────────────────────────────────────────
-
-/**
- * Returns `true` when a stash entry already has enough LLM-quality metadata
- * that calling the LLM would produce no meaningful improvement.
- *
- * An entry is considered complete when ALL of the following hold:
- * - `description` is a non-empty string
- * - `tags` is a non-empty array
- * - `searchHints` is a non-empty array
- *
- * This predicate is used by `enhanceDirsWithLlm` to skip the LLM call for
- * entries that were previously enriched and already carry all three fields.
- */
-export function isEnrichmentComplete(entry: IndexDocument): boolean {
-  const hasDescription = typeof entry.description === "string" && entry.description.trim().length > 0;
-  const hasTags = Array.isArray(entry.tags) && entry.tags.length > 0;
-  const hasSearchHints = Array.isArray(entry.searchHints) && entry.searchHints.length > 0;
-  return hasDescription && hasTags && hasSearchHints;
-}
-
 // ── Native Markdown search projection ──────────────────────────────────────
 
 /**

@@ -6,7 +6,6 @@ import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { LoweringNotice } from "../src/execution/resolved-request";
-import { createEnrichmentDeadline } from "../src/indexer/indexer";
 import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
@@ -131,9 +130,6 @@ describe("resolveIndexPassExecution", () => {
     };
 
     expect(resolveIndexPassExecution("enrichment", config).runner?.timeoutMs).toBeNull();
-    expect(
-      createEnrichmentDeadline(resolveIndexPassExecution("enrichment", config).runner?.timeoutMs, 3),
-    ).toBeUndefined();
   });
 
   describe("per-pass engines", () => {

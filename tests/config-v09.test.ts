@@ -370,6 +370,12 @@ describe("0.9 config contract", () => {
     );
   });
 
+  test("ignores retired index.metadataEnhance instead of failing config load", () => {
+    expect(validateConfigShape({ configVersion: "0.9.0", index: { metadataEnhance: { enabled: true } } }).ok).toBe(
+      true,
+    );
+  });
+
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
     // Illegal slug key (contains ':').
     expect(validateConfigShape({ configVersion: "0.9.0", bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(

@@ -141,8 +141,8 @@ export type OutputConfig = z.infer<typeof import("./config-schema").OutputConfig
 export type IndexPassConfig = z.infer<typeof import("./config-schema").IndexPassConfigSchema>;
 
 /**
- * Index-time configuration. Combines well-known feature sections
- * (`metadataEnhance`) with per-pass overrides keyed by pass name.
+ * Index-time configuration. Combines the reserved `defaults` block with
+ * per-pass overrides keyed by pass name.
  */
 export type IndexConfig = z.infer<typeof import("./config-schema").IndexConfigSchema>;
 

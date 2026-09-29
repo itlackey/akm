@@ -2,12 +2,12 @@
 
 `akm index` builds and refreshes the local SQLite search index.
 
-By default it builds the local index and keeps metadata in the index. When an
-LLM engine is selected (`defaults.llmEngine`, or `index.enrichment.engine`
-overriding it) and `index.enrichment.enabled` is not `false`, metadata
-enhancement runs during indexing. There is no top-level `llm` config key in
-0.9 — it is retired and hard-rejected at load; per-call tuning lives on each
-named engine under `engines.<name>.*`.
+By default it builds the local index and keeps metadata in the index.
+Metadata is generated deterministically (`src/indexer/passes/metadata.ts`);
+the LLM metadata-enhancement pass that used to run during indexing is
+retired (0.9.17-alpha.9, see CHANGELOG). There is no top-level `llm` config
+key in 0.9 — it is retired and hard-rejected at load; per-call tuning lives
+on each named engine under `engines.<name>.*`.
 
 ## High-Level Flow
 
@@ -70,9 +70,8 @@ or maintain alternate result collections.
 Each derived population keeps its own cursor, so a change to one pass's
 inputs re-runs only that pass: `entries.content_hash` for entries and their
 FTS rows (written in the same transaction), `embeddings.model` for vectors,
-`llm_enrichment_cache` (item ref + body hash) for metadata enrichment, and
-`graph_files` (root, path, body hash; plus prompt version and model in the
-cache variant) for the entity graph.
+and `graph_files` (root, path, body hash; plus prompt version and model in
+the cache variant) for the entity graph.
 
 ## Locks
 
@@ -164,40 +163,6 @@ refs from a name or source path. `item_ref` is the sole upsert conflict key;
 admit incomplete identity rows or retain an entry-key/path lookup fallback.
 This preserves bundle identity when multiple sources contain the same concept.
 
-## LLM Enrichment Pass
-
-When metadata enhancement is enabled, the enrichment pass runs after the
-filesystem-derived entries are upserted. Enhanced entries are written back
-through the same canonical entry/FTS mutation. Key properties:
-
-**Concurrency** — directories are enriched in parallel using a bounded
-concurrency pool (`concurrentMap` from `src/core/concurrent.ts`). The pool
-width defaults to 2 for remote LLM endpoints and 1 for local model servers
-(localhost endpoints — one loaded model at a time), auto-derived by
-`getDefaultLlmConcurrency` (`src/indexer/indexer.ts`). `engines.<name>.concurrency`
-is a valid schema field, but it is **not honored** on this path — the engine
-resolver used here (`resolveLlmEngineUse`) never copies `concurrency` into the
-resolved connection, so setting it in config.json has no effect on indexing
-concurrency. Individual entry failures within a directory are isolated; the
-pool continues with remaining work.
-
-**`quality: "enriched"` caching** — after a successful LLM enrichment call,
-the entry's `quality` field is set to `"enriched"` and written back to the
-index. On subsequent `akm index` runs, entries already marked `"enriched"`
-are skipped unless the caller explicitly requests re-enrichment.
-
-**Enrichment deadline** — the pass runs under an `AbortSignal.timeout()`
-deadline sized as a per-entry timeout (default 10 minutes; `engines.<name>.timeoutMs`,
-or an `index.enrichment.timeoutMs` / `index.defaults.timeoutMs` override,
-takes precedence) multiplied by the number of entries being enriched. Once the
-deadline fires, no new enrichment calls are started; entries that were not
-reached are left at `quality: "generated"` and will be picked up on the next
-eligible run.
-
-**Eligibility** — only entries with `quality: "generated"` are enriched by
-default. Entries with `quality: "curated"` or `quality: "enriched"` are
-skipped unless the caller explicitly requests re-enrichment.
-
 ## Embedding Phase
 
 Once entries are upserted, `generateEmbeddingsForDb`
@@ -251,11 +216,11 @@ instead of always waiting out the full configured budget.
 **Concurrency** — provider batches are dispatched through a bounded pool
 (`concurrentMap`) instead of strictly sequentially. Default width (unset
 `embedding.concurrency`) — `resolveEmbeddingConcurrency`
-(`src/llm/embedders/remote.ts`) derives it via the same shared
-`defaultConcurrencyForEndpoint` classifier (`src/core/loopback.ts`) that
-`getDefaultLlmConcurrency` above uses: **1** for a loopback endpoint (a
-local model server serves one inference at a time; parallel requests
-thrash it) and **2** for a remote one. `embedding.concurrency` (positive
+(`src/llm/embedders/remote.ts`) derives it via the shared
+`defaultConcurrencyForEndpoint` classifier (`src/core/loopback.ts`):
+**1** for a loopback endpoint (a local model server serves one inference at
+a time; parallel requests thrash it) and **2** for a remote one.
+`embedding.concurrency` (positive
 integer, 1-16, #954) overrides this default — added after
 field evidence that a multi-slot local server (llama.cpp `--parallel N`,
 vLLM) genuinely serves parallel requests and sat idle under the fixed
@@ -412,7 +377,7 @@ this is a purpose summary:
 | `utility_scores` | recomputed utility boost state (global) |
 | `index_meta` | schema/version/runtime metadata |
 | `index_dir_state` | incremental-indexing cache (per-directory hash + mtime) |
-| `llm_enrichment_cache` | cached LLM enrichment/graph-extraction/memory-inference results |
+| `llm_enrichment_cache` | cached graph-extraction/memory-inference results |
 | `registry_index_cache` | cached registry index JSON (replaces flat cache files) |
 | `graph_meta` | per-bundle knowledge-graph telemetry (model, prompt version, cache hits) |
 | `graph_files` | per-file graph-extraction status |
@@ -499,9 +464,9 @@ Well-known values (defined in `src/indexer/passes/metadata.ts`):
 | `"curated"` | metadata written or explicitly approved by a human |
 | `"proposed"` | metadata from a proposal awaiting review |
 
-The `"enriched"` marker is set by the indexer after a successful metadata
-enrichment pass during plain `akm index` and prevents unnecessary re-enrichment
-on the next run (see LLM Enrichment Pass above).
+The `"enriched"` marker was set by the now-retired LLM metadata-enhancement
+pass (see CHANGELOG, 0.9.17-alpha.9); it is still recognized on entries an
+earlier release enriched, but nothing sets it anymore.
 
 ## Utility Recomputation
 

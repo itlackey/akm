@@ -241,6 +241,24 @@ describe("getLlmCacheEntry / upsertLlmCacheEntry", () => {
   });
 });
 
+// ── ensureSchema — retired metadata-enhance cache rows ────────────────────────
+
+describe("ensureSchema — retired metadata-enhance cache rows", () => {
+  test("drops the default cache_variant on the next writable open but keeps named variants", () => {
+    // Metadata-enhance (retired 0.9.17-alpha.9) was the only writer that left
+    // cache_variant at its default empty string; graph and memory inference
+    // always pass a named variant.
+    upsertLlmCacheEntry(db, "some-bundle//knowledge/thing", "h1", "{}");
+    upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v2");
+    closeDatabase(db);
+
+    db = openIndexDatabase(tmpDbPath);
+
+    const rows = db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all();
+    expect(rows).toEqual([{ asset_ref: "/stash/memories/parent.md", cache_variant: "memory-inference-v2" }]);
+  });
+});
+
 // ── clearStaleCacheEntries ────────────────────────────────────────────────────
 
 describe("clearStaleCacheEntries", () => {

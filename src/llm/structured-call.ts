@@ -33,7 +33,7 @@
  *     caller's fallback on disablement/timeout.
  *   - `akmConfig === undefined` → UNGATED: run the chat+parse directly with no
  *     error funnel — errors PROPAGATE to the caller (pre-gate behaviour used by
- *     direct callers such as `enhanceMetadata`).
+ *     direct callers such as `splitMemoryIntoAtomicFacts`).
  */
 
 import type { AkmConfig } from "../core/config/config";

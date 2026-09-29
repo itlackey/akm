@@ -187,7 +187,8 @@ const LLM_PRESETS: LlmPreset[] = [
 ];
 
 /**
- * Step 3a: pick an LLM provider. Used for indexing-time metadata enhancement.
+ * Step 3a: pick an LLM provider. Used for LLM-gated background features
+ * (memory inference, graph extraction).
  *
  * @internal Exported for testing only.
  */
@@ -224,7 +225,7 @@ export async function stepLlm(
   }
   options.push({ value: "lmstudio", label: "LM Studio / local server", hint: lmStudioOptionHint(lmStudio) });
   options.push({ value: "custom", label: "Custom OpenAI-compatible endpoint" });
-  options.push({ value: "none", label: "Skip LLM", hint: "no metadata enhancement during indexing" });
+  options.push({ value: "none", label: "Skip LLM", hint: "LLM-gated background features stay disabled" });
   const currentLlm = readCurrentLlmEngine(current);
   if (currentLlm) {
     options.push(keepCurrentOption(currentLlm));
@@ -348,7 +349,7 @@ export interface SmallModelConnectionResult {
 }
 
 /**
- * Step 1/2: Configure the small model connection used for metadata and bounded LLM features.
+ * Step 1/2: Configure the small model connection used for bounded LLM features.
  *
  * Detects Ollama automatically and pre-selects it. The user may also choose
  * OpenAI, LM Studio, a custom endpoint, or skip the step entirely.
@@ -359,7 +360,6 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
   p.note(
     [
       "This connection is used for background processing:",
-      "  • akm index           (metadata enhancement)",
       "  • akm improve         (lesson distillation)",
       "  • akm remember --enrich (memory compression)",
     ].join("\n"),
@@ -417,7 +417,6 @@ export async function stepSmallModelConnection(current: AkmConfig): Promise<Smal
     p.note(
       [
         "Enrichment features disabled:",
-        "  • akm index           — metadata enhancement disabled",
         "  • akm improve         — lesson generation",
         "  • akm remember --enrich",
         "",

@@ -275,10 +275,13 @@ describe("index.db layout 23 → 24", () => {
       );
       expect(getEmbeddingCount(db, FINGERPRINT)).toBe(3);
 
-      // Graph, LLM cache and utility rows untouched; the salvage table is retired.
+      // Graph and utility rows untouched; the salvage table is retired. The
+      // seeded llm_enrichment_cache row uses the default cache_variant —
+      // metadata-enhance's shape (retired 0.9.17-alpha.9) — so it is dropped
+      // on this writable open, unlike a graph/memory-inference row.
       expect(count(db, "graph_files")).toBe(1);
       expect(count(db, "graph_file_entities")).toBe(1);
-      expect(count(db, "llm_enrichment_cache")).toBe(1);
+      expect(count(db, "llm_enrichment_cache")).toBe(0);
       expect(db.prepare("SELECT utility, show_count FROM utility_scores WHERE entry_id = 1").get()).toEqual({
         utility: 0.75,
         show_count: 4,

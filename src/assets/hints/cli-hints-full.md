@@ -308,8 +308,8 @@ akm bundle create                                      # Initialize working bund
 akm setup                                     # Interactive wizard: bundle + LLM/embedding + agent + registry config
 akm setup --dir ~/custom-bundle                # Run the wizard against a custom bundle path
 akm setup --yes                               # Non-interactive, accepts all defaults
-akm index                                     # Rebuild search index (metadata enrichment when configured)
-akm index --full                              # Full reindex (metadata enrichment when configured)
+akm index                                     # Rebuild search index
+akm index --full                              # Full reindex
 akm bundle list                                      # List all sources
 akm lint                                      # Structural lint over the bundle; exits 0 regardless of findings
 akm lint --fix                                # Auto-fix Tier 1 issues

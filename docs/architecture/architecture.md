@@ -455,10 +455,9 @@ Every helper under `src/llm/` is a **bounded, single-shot, stateless** call.
 Concretely:
 
 - Each public export is either a pure function (`chatCompletion`,
-  `enhanceMetadata`, `splitMemoryIntoAtomicFacts`,
-  `resolveIndexPassExecution`, `resolveIndexPassRunner`,
-  `parseJsonResponse`, …) or a factory that returns a one-shot client tied to
-  the symbolic runner/config the caller passes in.
+  `splitMemoryIntoAtomicFacts`, `resolveIndexPassExecution`,
+  `resolveIndexPassRunner`, `parseJsonResponse`, …) or a factory that returns
+  a one-shot client tied to the symbolic runner/config the caller passes in.
 - No module under `src/llm/` keeps session, conversation, or response state at
   module scope. The only module-level singleton is the local embedder
   pipeline in `src/llm/embedder.ts`, which is an expensive-to-build but
@@ -559,7 +558,6 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |
 | `src/llm/index-passes.ts` | per-pass LLM config resolution for `akm index` |
 | `src/llm/memory-infer.ts` | atomic-fact split helper (selected through `improve.strategies.<name>.processes.memoryInference`) |
-| `src/llm/metadata-enhance.ts` | metadata enhancement helper |
 | `src/llm/embedder.ts` | local + remote embedder facade with cached pipeline |
 | `src/integrations/agent/spawn.ts` | agent CLI shell-out entry point (`runAgent`) |
 | `src/integrations/harnesses/opencode-sdk/sdk-runner.ts` | embedded SDK runner selected by an SDK `RunnerSpec` |

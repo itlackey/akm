@@ -195,8 +195,8 @@ akm setup
 The setup wizard configures AKM in two steps:
 
 **Step 1 — Small model connection** (for background processing)
-Configures the OpenAI-compatible endpoint and model used for `akm index`
-metadata enhancement and `akm remember --enrich`. Supports Ollama,
+Configures the OpenAI-compatible endpoint and model used for `akm improve`
+and `akm remember --enrich`. Supports Ollama,
 OpenAI, LM Studio, or any custom endpoint. Skipping disables enrichment features.
 
 **Step 2 — Agent connection** (for agentic commands)

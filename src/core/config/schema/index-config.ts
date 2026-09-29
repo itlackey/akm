@@ -76,8 +76,6 @@ export const IndexPassConfigSchema = z.preprocess(
     .passthrough(),
 );
 
-const MetadataEnhanceSchema = z.object({ enabled: z.boolean().optional() }).passthrough();
-
 const IndexDefaultsSchema = z
   .object({
     engine: engineName.optional(),
@@ -90,7 +88,6 @@ const IndexDefaultsSchema = z
 type IndexConfigOutput = {
   [key: string]: unknown;
   defaults?: z.infer<typeof IndexDefaultsSchema>;
-  metadataEnhance?: z.infer<typeof MetadataEnhanceSchema>;
   graph?: z.infer<typeof IndexPassConfigSchema>;
   memory?: z.infer<typeof IndexPassConfigSchema>;
   enrichment?: z.infer<typeof IndexPassConfigSchema>;
@@ -129,6 +126,12 @@ const IndexConfigRuntimeSchema = z.preprocess(
         delete cleaned.stalenessDetection;
         continue;
       }
+      if (passName === "metadataEnhance") {
+        warnOnce("index:metadataEnhance", "`index.metadataEnhance` is retired and is ignored.");
+        cleaned ??= { ...(raw as Record<string, unknown>) };
+        delete cleaned.metadataEnhance;
+        continue;
+      }
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -142,7 +145,6 @@ const IndexConfigRuntimeSchema = z.preprocess(
   z
     .object({
       defaults: IndexDefaultsSchema.optional(),
-      metadataEnhance: MetadataEnhanceSchema.optional(),
     })
     .catchall(IndexPassConfigSchema),
 );

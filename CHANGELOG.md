@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **LLM metadata enrichment (`index.metadataEnhance`) is retired.** On 49
+  stratified queries, with every eligible candidate enriched (1,968
+  entries): search nDCG@10 moved −0.0092 [−0.0324, +0.0165], curate P@5
+  +0.000 [−0.037, +0.045], and long prompts lost −0.054 [−0.093, −0.012]. A
+  Doc2Query-- filter made it worse (P@5 −0.020 [−0.045, −0.004]). The pass
+  replaced authored descriptions on 89% of the entries it rewrote, and a
+  full pass costs about 27 B70-hours (RS-D, owner ruling 2026-09-28). It was
+  already off by default and off in the maintainer's config. The LLM call
+  (`src/llm/metadata-enhance.ts`), its `akm index` dispatch, and the
+  `metadata_enhance` feature-gate key are gone; the deterministic metadata
+  pass, `quality: "generated"`, and memory inference are unaffected. A
+  config that still sets `index.metadataEnhance` loads, named once as
+  retired, and the key is dropped by `akm migrate apply`. The pass's
+  `llm_enrichment_cache` rows (the default `cache_variant`; graph and memory
+  inference use their own named variants) are deleted on the next writable
+  open of `index.db`. (`src/indexer/indexer.ts`, `src/llm/feature-gate.ts`,
+  `src/core/config/schema/index-config.ts`,
+  `src/storage/repositories/index-schema.ts`)
+
 ## [0.9.17-alpha.8] - 2026-09-28
 
 `akm index` now records the links a bundle already declares (`xrefs`,

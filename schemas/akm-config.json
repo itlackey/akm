@@ -334,15 +334,6 @@
             }
           },
           "additionalProperties": true
-        },
-        "metadataEnhance": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": true
         }
       },
       "additionalProperties": {
@@ -1992,15 +1983,6 @@
                     }
                   },
                   "additionalProperties": true
-                }
-              },
-              "additionalProperties": true
-            },
-            "metadataEnhance": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
                 }
               },
               "additionalProperties": true

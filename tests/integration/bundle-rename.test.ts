@@ -20,16 +20,10 @@ import { akmTasksSync, type TasksSyncResult } from "../../src/commands/tasks/tas
 import { renameBundle } from "../../src/core/bundle-rename";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
-import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { readLockfile, upsertLockEntry } from "../../src/integrations/lockfile";
-import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
-import {
-  clearStaleCacheEntries,
-  getLlmCacheEntry,
-  upsertLlmCacheEntry,
-} from "../../src/storage/repositories/index-llm-cache-repository";
+import { closeDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertProposal } from "../../src/storage/repositories/proposals-repository";
 import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
@@ -350,31 +344,5 @@ describe("akm bundle rename — native scheduler sync", () => {
     // could not be installed in its place.
     expect(exec.current()).not.toContain("--bundle original");
     expect(exec.current()).not.toContain("--bundle renamed");
-  });
-});
-
-describe("akm bundle rename — LLM enrichment cache", () => {
-  test("a seeded cache row is renamed and survives clearStaleCacheEntries", async () => {
-    await seedBundleWithOneEntry();
-    const writeDb = openIndexDatabase(getDbPath());
-    try {
-      upsertLlmCacheEntry(writeDb, "original//knowledge/hello", "body-hash", JSON.stringify({ summary: "hi" }));
-    } finally {
-      closeDatabase(writeDb);
-    }
-
-    const backend = fakeCronBackend(memoryExec());
-    const result = await renameBundle("original", "renamed", {}, renameDeps(backend));
-    expect(result.applied).toBe(true);
-
-    const readDb = openIndexDatabase(getDbPath());
-    try {
-      clearStaleCacheEntries(readDb);
-      const entry = getLlmCacheEntry(readDb, "renamed//knowledge/hello", "body-hash");
-      expect(entry?.resultJson).toBe(JSON.stringify({ summary: "hi" }));
-      expect(getLlmCacheEntry(readDb, "original//knowledge/hello", "body-hash")).toBeUndefined();
-    } finally {
-      closeDatabase(readDb);
-    }
   });
 });

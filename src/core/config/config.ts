@@ -1181,17 +1181,9 @@ export function resolveSecret(value: string | undefined, resolveFromStore?: Secr
   });
 }
 
-/**
- * Read a per-pass {@link IndexPassConfig} entry from {@link IndexConfig},
- * filtering out the reserved feature-section keys so callers don't mistake
- * `metadataEnhance` for a pass.
- */
-/** Reserved well-known keys on IndexConfig that are NOT per-pass entries. */
-const INDEX_RESERVED_KEYS = new Set(["metadataEnhance"]);
-
+/** Read a per-pass {@link IndexPassConfig} entry from {@link IndexConfig}. */
 export function getIndexPassConfig(config: IndexConfig | undefined, passName: string): IndexPassConfig | undefined {
   if (!config) return undefined;
-  if (INDEX_RESERVED_KEYS.has(passName)) return undefined;
   const entry = config[passName];
   if (!entry || typeof entry !== "object") return undefined;
   return entry as IndexPassConfig;

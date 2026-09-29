@@ -228,7 +228,7 @@ describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
     // exited 0.
     await runSetupFromConfig({
       configJson: JSON.stringify({
-        index: { metadataEnhance: { enabled: false } },
+        index: { graph: { enabled: false } },
         search: { defaultExcludeTypes: ["session"] },
         feedback: { requireReason: true },
         archiveRetentionDays: 30,
@@ -239,7 +239,7 @@ describe("runSetupFromConfig — top-level key allowlist (R-017)", () => {
     });
 
     const written = readWrittenConfig();
-    expect(written.index).toEqual({ metadataEnhance: { enabled: false } });
+    expect(written.index).toEqual({ graph: { enabled: false } });
     expect(written.search).toEqual({ defaultExcludeTypes: ["session"] });
     expect(written.feedback).toEqual({ requireReason: true });
     expect(written.archiveRetentionDays).toBe(30);

@@ -116,8 +116,8 @@ interface ExistingUpsertRow {
 
 const upsertStmtsByDb = new WeakMap<Database, UpsertStmts>();
 
-// item_ref is the sole durable conflict target. `content_hash` COALESCEs so a
-// metadata-only enrichment pass cannot wipe a scan hash.
+// item_ref is the sole durable conflict target. `content_hash` COALESCEs so
+// an upsert that omits it (`contentHash` is optional) cannot wipe a scan hash.
 const UPSERT_SET_CLAUSE = `SET
         bundle_id = excluded.bundle_id,
         component_id = excluded.component_id,

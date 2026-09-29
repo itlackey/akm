@@ -261,8 +261,8 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 
 | Column | Type | Notes |
 |---|---|---|
-| `asset_ref` | TEXT NOT NULL | Absolute file path or `entryKey:passId` |
-| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Graph extraction uses an extractor-specific variant; other passes currently use the empty-string default. |
+| `asset_ref` | TEXT NOT NULL | Absolute file path |
+| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Graph extraction uses an extractor-specific variant; memory inference uses `memory-inference-v2`. |
 | `body_hash` | TEXT NOT NULL | SHA-256 hex digest of file body |
 | `result_json` | TEXT NOT NULL | Serialized LLM enrichment result |
 | `updated_at` | INTEGER NOT NULL | Unix ms timestamp |
@@ -273,7 +273,7 @@ Cache miss on body change or cache-variant change. Stale rows removed by
 `clearStaleCacheEntries()`. The cache can also be bypassed by internal forced
 re-enrichment callers.
 
-**What is cached:** metadata enhancement results, graph extraction (entities + relations), memory inference results.
+**What is cached:** graph extraction (entities + relations), memory inference results.
 
 #### Table: `utility_scores`
 
