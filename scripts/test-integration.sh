@@ -57,6 +57,14 @@ echo "── integration: ${N} shards over ${total} files; live logs: ${logdir}/
 # kill, and report before GitHub does.
 shard_timeout_secs=600
 
+# `setsid` (util-linux) isn't on macOS by default. When it's present, a
+# shard runs in its own process group and a hang is killed by group (below).
+# Otherwise, fall back to killing the shard's own pid plus its direct
+# children (`pkill -P`) — the 600s deadline and log-tail message are the
+# same either way.
+has_setsid=false
+command -v setsid >/dev/null 2>&1 && has_setsid=true
+
 declare -a pids tmps
 for k in $(seq 0 $((N - 1))); do
   slice=()
@@ -70,10 +78,14 @@ for k in $(seq 0 $((N - 1))); do
   # 120s per-test (vs 30s serial): under N-way process contention a heavy test
   # can legitimately run 3-4x its solo duration; the timeout exists to catch
   # HANGS, not to police performance, and 30s flaked real passes under load.
-  # `exec setsid` gives this shard its own process group (pgid == its pid,
-  # distinct from every sibling shard's), so the timeout below can kill it
-  # — and anything it spawned — without touching the others.
-  ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  if $has_setsid; then
+    # `exec setsid` gives this shard its own process group (pgid == its pid,
+    # distinct from every sibling shard's), so the timeout below can kill it
+    # — and anything it spawned — without touching the others.
+    ( exec setsid env HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  else
+    ( HOME="$runtime_home" bun test --timeout=120000 "${slice[@]}" >"$t" 2>&1 ) &
+  fi
   pids+=($!)
 done
 
@@ -96,9 +108,17 @@ for idx in "${!pids[@]}"; do
   kill -0 "$p" 2>/dev/null || continue
   t="${tmps[$idx]}"
   echo "── integration: shard $((idx + 1)) (pid ${p}) exceeded ${shard_timeout_secs}s — killing its process group (HANG)" >&2
-  kill -TERM -"$p" 2>/dev/null || true
-  sleep 2
-  kill -KILL -"$p" 2>/dev/null || true
+  if $has_setsid; then
+    kill -TERM -"$p" 2>/dev/null || true
+    sleep 2
+    kill -KILL -"$p" 2>/dev/null || true
+  else
+    pkill -TERM -P "$p" 2>/dev/null || true
+    kill -TERM "$p" 2>/dev/null || true
+    sleep 2
+    pkill -KILL -P "$p" 2>/dev/null || true
+    kill -KILL "$p" 2>/dev/null || true
+  fi
   echo "── shard $((idx + 1)) log tail (last 80 lines, TIMED OUT): ${t} ──"
   tail -80 "$t"
 done
