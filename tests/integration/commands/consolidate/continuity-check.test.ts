@@ -12,12 +12,25 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   CONTINUITY_MAX_QUERIES,
   CONTINUITY_TOP_N,
-  type ContinuityHit,
+  type ContinuitySearchResult,
   checkRetirementContinuity,
+  createContinuitySearch,
 } from "../../../../src/commands/improve/consolidate/continuity-check";
+import type { AkmConfig } from "../../../../src/core/config/config";
+import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
+import { deriveEntryProvenance } from "../../../../src/indexer/installations";
+import type { IndexDocument } from "../../../../src/indexer/passes/metadata";
 import { insertUsageEvent } from "../../../../src/indexer/usage/usage-events";
+import { _setEmbedderForTests } from "../../../../src/llm/embedder";
+import type { SearchExecutionMode } from "../../../../src/sources/types";
+import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
+import { rebuildFts } from "../../../../src/storage/repositories/index-fts-repository";
+import { setMeta } from "../../../../src/storage/repositories/index-meta-repository";
+import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
+import { overrideSeam } from "../../../_helpers/seams";
 
 let storage: IsolatedAkmStorage;
 
@@ -43,10 +56,14 @@ function recordQuery(ref: string, query: string): void {
  * A fixed ranking for every query: `refs[i]` ranks at position `i + 1`,
  * truncated to `CONTINUITY_TOP_N` — the same `limit` the real search call
  * uses, so a rank beyond it is genuinely absent from the hits, not merely
- * unlisted.
+ * unlisted. `mode` defaults to "semantic" (a verified query) — pass
+ * "fts-fallback" for S2's unverified-query tests.
  */
-function fixedRanking(refs: string[]): (query: string) => Promise<ContinuityHit[]> {
-  return async () => refs.slice(0, CONTINUITY_TOP_N).map((ref) => ({ ref: `stash//${ref}` }));
+function fixedRanking(
+  refs: string[],
+  mode: SearchExecutionMode = "semantic",
+): (query: string) => Promise<ContinuitySearchResult> {
+  return async () => ({ hits: refs.slice(0, CONTINUITY_TOP_N).map((ref) => ({ ref: `stash//${ref}` })), mode });
 }
 
 describe("checkRetirementContinuity", () => {
@@ -60,7 +77,7 @@ describe("checkRetirementContinuity", () => {
       ledgerAccess: {},
       search: async () => {
         searchCalls++;
-        return [];
+        return { hits: [], mode: "semantic" };
       },
     });
     expect(risk).toBeUndefined();
@@ -141,9 +158,11 @@ describe("checkRetirementContinuity", () => {
       search: async () => {
         call++;
         // First call: both rank top 10 (fine). Second call: successor absent (fails).
-        return call === 1
-          ? [{ ref: "stash//memories/old-note" }, { ref: "stash//memories/new-note" }]
-          : [{ ref: "stash//memories/old-note" }];
+        const hits =
+          call === 1
+            ? [{ ref: "stash//memories/old-note" }, { ref: "stash//memories/new-note" }]
+            : [{ ref: "stash//memories/old-note" }];
+        return { hits, mode: "semantic" as const };
       },
     });
     expect(call).toBe(2);
@@ -161,14 +180,14 @@ describe("checkRetirementContinuity", () => {
       ledgerAccess: {},
       search: async () => {
         searchCalls++;
-        return [{ ref: "stash//memories/old-note" }, { ref: "stash//memories/new-note" }];
+        return { hits: [{ ref: "stash//memories/old-note" }, { ref: "stash//memories/new-note" }], mode: "semantic" };
       },
     });
     expect(searchCalls).toBeLessThanOrEqual(CONTINUITY_MAX_QUERIES);
     expect(searchCalls).toBeGreaterThan(0);
   });
 
-  test("a search failure drops that one query instead of blocking the check", async () => {
+  test("a search failure drops that one query from the rank comparison, but still flags as unverified (S2)", async () => {
     recordQuery("memories/old-note", "query one");
     recordQuery("memories/old-note", "query two");
     let call = 0;
@@ -181,10 +200,148 @@ describe("checkRetirementContinuity", () => {
       search: async () => {
         call++;
         if (call === 1) throw new Error("simulated search failure");
-        return [{ ref: "stash//memories/old-note" }]; // second query: retired ranks, successor absent
+        // second query: retired ranks, successor absent
+        return { hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" };
       },
     });
     expect(call).toBe(2);
     expect(risk?.failingQueries).toBe(1);
+    expect(risk?.unverifiedQueries).toBe(1);
+  });
+
+  describe("S2: unverified queries never read as no-risk-found", () => {
+    test("every search throws: flagged as unverified, not undefined", async () => {
+      recordQuery("memories/old-note", "query one");
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        ledgerAccess: {},
+        search: async () => {
+          throw new Error("endpoint unreachable");
+        },
+      });
+      expect(risk).toEqual({ failingQueries: 0, ranks: [], unverifiedQueries: 1 });
+    });
+
+    test("a query that falls back to keyword-only ranking is unverified, not silently trusted", async () => {
+      recordQuery("memories/old-note", "query one");
+      // The retired asset ranks #1 and the successor is entirely absent —
+      // exactly the shape that would otherwise flag as a rank failure. S2:
+      // an fts-fallback hit is never compared at all, only counted unverified.
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        ledgerAccess: {},
+        search: fixedRanking(["memories/old-note"], "fts-fallback"),
+      });
+      expect(risk).toEqual({ failingQueries: 0, ranks: [], unverifiedQueries: 1 });
+    });
+
+    test("a mix of a verified rank failure and an unverified query reports both", async () => {
+      recordQuery("memories/old-note", "query one");
+      recordQuery("memories/old-note", "query two");
+      let call = 0;
+      const risk = await checkRetirementContinuity({
+        stashDir: storage.stashDir,
+        config: {} as never,
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        ledgerAccess: {},
+        search: async () => {
+          call++;
+          if (call === 1) return { hits: [{ ref: "stash//memories/old-note" }], mode: "fts-fallback" as const };
+          return { hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" as const }; // verified failure
+        },
+      });
+      expect(risk?.unverifiedQueries).toBe(1);
+      expect(risk?.failingQueries).toBe(1);
+      // Most-recent-first replay order: "query two" (call 1) is the
+      // fts-fallback/unverified one; "query one" (call 2) is the verified failure.
+      expect(risk?.ranks[0]?.query).toBe("query one");
+    });
+  });
+});
+
+describe("createContinuitySearch: keyword-only throttle after the first fallback (S2)", () => {
+  test("once a query falls back to keyword-only, every later call through the SAME instance skips the semantic attempt entirely", async () => {
+    const config: AkmConfig = {
+      semanticSearchMode: "auto",
+      embedding: { endpoint: "http://127.0.0.1:1/v1", model: "test-model" },
+    } as AkmConfig;
+
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const entryId = upsertEntry(
+        db,
+        `${storage.stashDir}/knowledge/deploy-guide.md`,
+        { type: "knowledge", name: "deploy-guide", description: "deploy applications safely" } as IndexDocument,
+        deriveEntryProvenance(
+          { bundleId: "stash", componentId: "stash", adapterId: "akm" },
+          "knowledge",
+          "deploy-guide",
+        ),
+      );
+      upsertEmbedding(db, entryId, [1, 0, 0, 0]);
+      rebuildFts(db);
+      setMeta(db, "hasEmbeddings", "1");
+      setMeta(db, "stashDir", storage.stashDir);
+    } finally {
+      closeDatabase(db);
+    }
+
+    let embedCalls = 0;
+    overrideSeam(_setEmbedderForTests, {
+      embed: async () => {
+        embedCalls++;
+        // Every call would fail if attempted — proves the throttle is what
+        // stops the second/third attempt, not a lucky success.
+        throw Object.assign(new TypeError("connection refused"), { code: "ECONNREFUSED" });
+      },
+    });
+
+    const search = createContinuitySearch(storage.stashDir, config);
+
+    const first = await search("deploy");
+    expect(first.mode).toBe("fts-fallback");
+    expect(embedCalls).toBe(1);
+
+    const second = await search("deploy");
+    expect(second.mode).toBe("keyword"); // forced semanticSearchMode: "off" — not another fallback
+    expect(embedCalls).toBe(1); // the embedder was never called again
+
+    const third = await search("deploy");
+    expect(third.mode).toBe("keyword");
+    expect(embedCalls).toBe(1);
+  });
+
+  test("a clean run (no fallback) never forces keyword-only", async () => {
+    const config: AkmConfig = { semanticSearchMode: "off" } as AkmConfig;
+    const db = openIndexDatabase(getDbPath());
+    try {
+      upsertEntry(
+        db,
+        `${storage.stashDir}/knowledge/deploy-guide.md`,
+        { type: "knowledge", name: "deploy-guide", description: "deploy applications safely" } as IndexDocument,
+        deriveEntryProvenance(
+          { bundleId: "stash", componentId: "stash", adapterId: "akm" },
+          "knowledge",
+          "deploy-guide",
+        ),
+      );
+      rebuildFts(db);
+      setMeta(db, "stashDir", storage.stashDir);
+    } finally {
+      closeDatabase(db);
+    }
+
+    const search = createContinuitySearch(storage.stashDir, config);
+    const first = await search("deploy");
+    const second = await search("deploy");
+    expect(first.mode).toBe("keyword");
+    expect(second.mode).toBe("keyword");
   });
 });

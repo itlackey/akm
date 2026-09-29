@@ -162,6 +162,14 @@ export interface RetirementContinuityRisk {
   /** Of the replayed queries, how many the successor failed to also rank top 10 for. */
   failingQueries: number;
   ranks: ContinuityRiskRank[];
+  /**
+   * Of the replayed queries, how many could not be verified (S2): the
+   * search call threw, or fell back to keyword-only ranking instead of the
+   * real one. Omitted when every query was verified. A proposal carrying
+   * this is excluded from bulk accept the same as a `failingQueries` one —
+   * an unverified query must never read as "no risk found".
+   */
+  unverifiedQueries?: number;
 }
 
 /**

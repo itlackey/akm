@@ -125,7 +125,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   --generator …`, with or without `--yes`) but not from bulk reject —
   declining a flagged proposal is always the safe direction; a person can
   always accept one by id. An asset with no recorded queries is not checked
-  at all. (`src/commands/improve/consolidate/continuity-check.ts`,
+  at all. A query that never ran (the search call threw) or that fell back
+  to keyword-only ranking (an unreachable embedding endpoint, most often)
+  is never silently trusted or silently dropped either (S2): it counts as
+  "unverified" and, on its own, is enough to flag `continuityRisk` — an
+  endpoint outage reads as "risk unknown," never as "no risk found." The
+  first fallback in a pair-pass run forces every later query in that same
+  run to skip the semantic attempt entirely, so a dead endpoint costs one
+  failed attempt total, not one per remaining query.
+  (`src/commands/improve/consolidate/continuity-check.ts`,
   `src/commands/proposal/proposal-types.ts`,
   `src/commands/proposal/proposal.ts`)
 - **Archive purge sweep.** Deterministic, no LLM, run once at the very start

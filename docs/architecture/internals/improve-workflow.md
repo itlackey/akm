@@ -401,6 +401,19 @@ lane's old purpose (see below), now measured against search rank instead of
 a stash-wide salience rank, and only at the moment an asset would actually
 stop resolving.
 
+A query that never ran (the search call threw) or that fell back to
+keyword-only ranking (`mode: "fts-fallback"`) is "unverified" (S2): dropped
+from the rank comparison — its hits are not the ranking a user actually
+gets, so they are never compared — but tracked in
+`retirement.continuityRisk.unverifiedQueries`, and on its own enough to set
+`continuityRisk` even when every verified query passed. A search failure or
+fallback must never look like "no risk found." `createContinuitySearch`
+(`src/commands/improve/consolidate/continuity-check.ts`) is stateful across
+one pair-pass run: the first `fts-fallback` it sees forces
+`semanticSearchMode: "off"` for every later query that same run, so a down
+embedding endpoint pays its failed-connection cost once per run, not once
+per remaining query.
+
 **The retired forgetting-safety lane.** Before alpha.9, `scoreSalience`
 compared the whole stash's salience ranking before and after every improve
 run, and a ref that fell from the top 200 to below 500 was injected into that

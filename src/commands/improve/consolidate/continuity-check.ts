@@ -19,6 +19,7 @@
 import type { AkmConfig } from "../../../core/config/config";
 import { type SearchLocalInput, searchLocal } from "../../../indexer/search/db-search";
 import { listRetrievalQueries } from "../../../indexer/usage/usage-events";
+import type { SearchExecutionMode } from "../../../sources/types";
 import type { RetirementContinuityRisk } from "../../proposal/proposal-types";
 import { type LedgerAccess, readLedgerDb, stripBundle } from "../ledger";
 import { buildRankChangeReport } from "../salience";
@@ -33,18 +34,41 @@ export interface ContinuityHit {
   ref: string;
 }
 
-/** Test seam: replaces the real `searchLocal` call. Production callers omit it. */
-export type ContinuitySearch = (query: string) => Promise<readonly ContinuityHit[]>;
+/** One search call's result: the hits, and which ranking actually produced them (S2). */
+export interface ContinuitySearchResult {
+  hits: readonly ContinuityHit[];
+  mode: SearchExecutionMode;
+}
 
-function defaultSearch(stashDir: string, config: AkmConfig): ContinuitySearch {
-  const base: Omit<SearchLocalInput, "query"> = {
+/** Test seam: replaces the real `searchLocal` call. Production callers get {@link createContinuitySearch}. */
+export type ContinuitySearch = (query: string) => Promise<ContinuitySearchResult>;
+
+/**
+ * Builds the real search call the continuity check uses, stateful across
+ * every query asked of ONE instance (S2): the first time a query falls back
+ * to keyword-only ranking (`mode: "fts-fallback"` — most often a down or
+ * unreachable embedding endpoint), every later call through THIS instance
+ * forces `semanticSearchMode: "off"` instead of attempting semantic search
+ * again, so a dead endpoint costs one failed attempt per run, not one per
+ * remaining query (a hanging endpoint at ~3s/query, 300 proposals x 5
+ * queries, would otherwise cost on the order of an hour). Construct exactly
+ * one instance per pair-pass run and reuse it for every proposal judged, so
+ * the throttle covers the whole run, not just one proposal's own queries.
+ */
+export function createContinuitySearch(stashDir: string, config: AkmConfig): ContinuitySearch {
+  const base: Omit<SearchLocalInput, "query" | "config"> = {
     searchType: "any",
     limit: CONTINUITY_TOP_N,
     stashDir,
     sources: [{ path: stashDir, isDefault: true }],
-    config,
   };
-  return async (query) => (await searchLocal({ ...base, query })).hits;
+  let keywordOnly = false;
+  return async (query) => {
+    const callConfig: AkmConfig = keywordOnly ? { ...config, semanticSearchMode: "off" } : config;
+    const result = await searchLocal({ ...base, query, config: callConfig });
+    if (result.mode === "fts-fallback") keywordOnly = true;
+    return { hits: result.hits, mode: result.mode };
+  };
 }
 
 /** 1-indexed position of `conceptId` in `hits`, or `undefined` if it is not among them. */
@@ -57,10 +81,19 @@ function rankOf(hits: readonly ContinuityHit[], conceptId: string): number | und
  * Replay `retiredRef`'s own past queries and check that `successorRef` ranks
  * in the top {@link CONTINUITY_TOP_N} for every one where the retired asset
  * did. Returns `undefined` when there is nothing to flag: no recorded
- * queries, the retired asset never ranked top 10 for any of them, or the
- * survivor always did too. Never throws — a search failure just drops that
- * one query from the sample, the same as a query the retired asset did not
- * rank for.
+ * queries, or every query ran on the real ranking and either the retired
+ * asset never ranked top 10 for it, or the survivor always did too. Never
+ * throws.
+ *
+ * S2: a query that never ran (the search call threw) or ran on the
+ * keyword-only fallback (`mode: "fts-fallback"` — the real ranking was
+ * attempted and failed, most often a down or unreachable embedding
+ * endpoint) is "unverified" — it is dropped from the rank comparison below
+ * (its hits cannot be trusted as "the ranking a user actually gets"), but
+ * unlike a query the retired asset simply did not rank for, it can never by
+ * itself lead to a silent `undefined` — at least one unverified query
+ * always produces a `continuityRisk`, so a dead endpoint reads as "risk
+ * unknown", never as "no risk found".
  */
 export async function checkRetirementContinuity(args: {
   stashDir: string;
@@ -78,16 +111,23 @@ export async function checkRetirementContinuity(args: {
   );
   if (queries.length === 0) return undefined; // no queries recorded: no check, no flag
 
-  const search = args.search ?? defaultSearch(args.stashDir, args.config);
+  const search = args.search ?? createContinuitySearch(args.stashDir, args.config);
   const oldRanks = new Map<string, number>();
   const newRanks = new Map<string, number>();
   const rankByQuery = new Map<string, { retiredRank: number; successorRank: number | null }>();
+  let unverifiedQueries = 0;
   for (const query of queries) {
     let hits: readonly ContinuityHit[];
     try {
-      hits = await search(query);
+      const result = await search(query);
+      if (result.mode === "fts-fallback") {
+        unverifiedQueries++; // S2: never silently compare keyword-only ranks
+        continue;
+      }
+      hits = result.hits;
     } catch {
-      continue; // a search failure never blocks minting — just drop this query from the sample
+      unverifiedQueries++; // S2: a query that never ran cannot be "no risk"
+      continue;
     }
     const retiredRank = rankOf(hits, args.retiredRef);
     if (retiredRank === undefined) continue; // the retired asset itself did not rank top 10 here — nothing to protect
@@ -98,14 +138,22 @@ export async function checkRetirementContinuity(args: {
     newRanks.set(query, successorRank ?? CONTINUITY_TOP_N + 1);
     rankByQuery.set(query, { retiredRank, successorRank: successorRank ?? null });
   }
-  if (oldRanks.size === 0) return undefined; // the retired asset never ranked top 10 for its own queries
+  // Every query verified, and the retired asset never ranked top 10 for any
+  // of them: nothing to protect, and nothing left unverified to flag either.
+  if (unverifiedQueries === 0 && oldRanks.size === 0) return undefined;
 
   const report = buildRankChangeReport(oldRanks, newRanks, CONTINUITY_TOP_N, CONTINUITY_TOP_N);
-  if (report.forgettingCandidates.length === 0) return undefined; // the survivor stayed top 10 everywhere the retired asset did
+  // Every query verified, and the survivor stayed top 10 everywhere the
+  // retired asset did: still nothing to flag.
+  if (unverifiedQueries === 0 && report.forgettingCandidates.length === 0) return undefined;
 
   const ranks = report.forgettingCandidates.map((c) => {
     const found = rankByQuery.get(c.ref);
     return { query: c.ref, retiredRank: found?.retiredRank ?? c.oldRank, successorRank: found?.successorRank ?? null };
   });
-  return { failingQueries: ranks.length, ranks };
+  return {
+    failingQueries: ranks.length,
+    ranks,
+    ...(unverifiedQueries > 0 ? { unverifiedQueries } : {}),
+  };
 }

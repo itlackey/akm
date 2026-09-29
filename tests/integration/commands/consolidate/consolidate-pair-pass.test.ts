@@ -451,7 +451,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       chat: fixedChat({ relation: "duplicate", redundant: null }),
       // old-note ranks #1 for its own past query; new-note never shows up —
       // a real continuity failure.
-      continuitySearch: async () => [{ ref: "stash//memories/old-note" }],
+      continuitySearch: async () => ({ hits: [{ ref: "stash//memories/old-note" }], mode: "semantic" }),
     });
 
     expect(result.retired).toHaveLength(1); // flagged, but still minted — never blocked

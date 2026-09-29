@@ -58,7 +58,7 @@ import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
 import { callStage, type LlmRunner } from "../stage";
-import { type ContinuitySearch, checkRetirementContinuity } from "./continuity-check";
+import { type ContinuitySearch, checkRetirementContinuity, createContinuitySearch } from "./continuity-check";
 
 export { PAIR_PASS_LEDGER_SOURCE };
 
@@ -537,8 +537,13 @@ interface PairPassContext {
   retired: string[];
   warnings: string[];
   chat?: PairJudgeChat;
-  /** Test seam for the continuity check's search call (item 1). Production callers omit it. */
-  continuitySearch?: ContinuitySearch;
+  /**
+   * The continuity check's search call (item 1) — one shared instance for
+   * the whole run (S2), production or test. `runConsolidatePairPass` builds
+   * the real one via {@link createContinuitySearch} unless a test seam
+   * overrides it.
+   */
+  continuitySearch: ContinuitySearch;
   /**
    * {@link rejectedPairKey} of every rejected OR reverted `consolidate-pair`
    * retirement on record (item 0, S1), so a pair the owner already declined
@@ -658,7 +663,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     retiredRef: retired.asset.ref,
     successorRef: successor.asset.ref,
     ledgerAccess: { proposalsCtx: ctx.opts.proposalsCtx },
-    ...(ctx.continuitySearch ? { search: ctx.continuitySearch } : {}),
+    search: ctx.continuitySearch,
   });
   const retirement: RetirementMetadata = {
     retiredRef: retired.asset.ref,
@@ -852,7 +857,10 @@ export async function runConsolidatePairPass(
     rejectedPairKeys,
     retiredThisRun: new Set(),
     ...(seams.chat ? { chat: seams.chat } : {}),
-    ...(seams.continuitySearch ? { continuitySearch: seams.continuitySearch } : {}),
+    // S2: one instance for the whole run (not one per proposal), so its
+    // "fell back once, go keyword-only from here" throttle actually covers
+    // every remaining query in this run, not just one proposal's own five.
+    continuitySearch: seams.continuitySearch ?? createContinuitySearch(stashDir, config),
   };
 
   let failedJudgments = 0;

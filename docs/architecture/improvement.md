@@ -185,6 +185,18 @@ flagged proposal is excluded from every bulk accept path (`accept
 Bulk *reject* is unaffected, since declining a flagged proposal is always the
 safe direction.
 
+A query that never ran (the search call threw) or that fell back to
+keyword-only ranking instead of the real one (`mode: "fts-fallback"` — most
+often a down or unreachable embedding endpoint) is "unverified": it is never
+compared for rank at all, and on its own it is enough to set
+`continuityRisk` (`unverifiedQueries` alongside the usual `ranks`), so an
+endpoint outage reads as "risk unknown," never as the silent "no risk
+found" a search that quietly used a degraded ranking would otherwise
+produce. Once any query in a pair-pass run falls back, every later query in
+that same run skips the semantic attempt entirely and goes straight to
+keyword-only — a dead endpoint costs one failed attempt for the whole run,
+not one per remaining query.
+
 This check replaces the old per-run forgetting-safety lane (a one-time WS-1
 cutover guard that compared improve's own salience ranking before and after
 each run). The 30-day event window showed it made no pick the signal-delta
