@@ -27,8 +27,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   against its nearest neighbours (the best 5 of 20 candidates, same bundle,
   memory tier only) and has an LLM judge label each pair `duplicate`,
   `subsumed`, `supersedes`, `contradicts`, `overlap`, or `unrelated` (judged
-  at cosine ≥ 0.93, or ≥ 0.95 for material with no prior attempt). The first
-  three labels mint a reviewed `retire` proposal for the losing side
+  at cosine ≥ 0.93, or ≥ 0.95 for an asset the pass has never attempted —
+  unless git added it within the last 7 days, which still judges at 0.93).
+  The first three labels mint a reviewed `retire` proposal for the losing side
   (owner-calibrated precision 20/22 = 0.91 [0.72, 0.97]); `contradicts` is
   counted but left to a human; at most 300 pairs are judged a night. Retire
   proposals mint under their own generator, `consolidate-pair` — kept apart
@@ -62,9 +63,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (never its `cleanup.md` tombstone) once it is more than 30 days old and
   every file under its archive directory is git-tracked, clean, and
   verifiable; anything less than that — or a bundle with no git history at
-  all — is left in place for a later sweep. `akm health`'s
-  `memory-cleanup-archive` advisory now also reports, for a git-backed
-  bundle, how many archived files and bytes cannot yet be purged.
+  all — is left in place for a later sweep. A new `akm health` advisory,
+  `memory-cleanup-archive`, reports how many archived files and bytes are
+  not yet purgeable — untracked, modified, or unverifiable for a git-backed
+  bundle; everything, forever, for one with no git history at all.
 - **`akm bundle rename <old> <new>`.** Properly re-keys a bundle instead of
   requiring a hand-edit of `config.json`: it rewrites `bundles`,
   `defaultBundle`/`defaultWriteTarget`, and every scheduler ref that name the
@@ -77,53 +79,63 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Search and curate are rebuilt on measured evidence.** Search now ranks by
-  reciprocal rank fusion of two 100-candidate lists — whole-document BM25 and
-  nearest document vectors — replacing the previous require-every-word
-  keyword ladder plus a dozen additional ranking-signal boosts (exact-name,
-  type, belief-state, tag, graph, utility, and more), all of which measured
-  worse, or noise-level, on a 221-query LLM-judged retrieval suite. `akm
-  curate` is now the top hits of that same fused search, enriched with a
-  preview and up to two support refs, rather than its own layer of
-  second-guessing fallback searches and nudges. Query embedding now uses the
-  template a model actually expects (Qwen3's retrieval instruction,
-  `search_query:`/`search_document:` for nomic, `query:`/`passage:` for E5,
-  and others) instead of one generic prefix. Measured on the suite: search
-  nDCG@10 rises from 0.346 to 0.556 and curate precision@5 from 0.350 to
-  0.551; search p50 latency falls from about 787 ms to about 400 ms, and a
-  freshly built index shrinks from 560 MB to 340 MB. Content indexed under
-  two names (a memory also promoted verbatim to knowledge, say) now returns
-  only the higher-ranked copy instead of both, and `akm curate` returns an
-  empty, explained result for input that is not a real query (a harness/tool
-  envelope, a bare stash README) instead of `--limit` unrelated items.
+  reciprocal rank fusion (RRF) of two 100-candidate lists — whole-document
+  BM25 and nearest document vectors — replacing the previous require-every-
+  word keyword ladder plus a dozen additional ranking-signal boosts (exact-
+  name, type, belief-state, tag, graph, utility, and more): on a 221-query
+  LLM-judged retrieval suite, plain whole-document BM25 alone beat that whole
+  boosted pipeline by 0.156 nDCG@10. A hit's `score` is now its fused RRF
+  value (at most 2/61 ≈ 0.033, not comparable to an old score), keyword
+  matching no longer does prefix matching (a search for `dock` no longer
+  matches `docker`), and a slow embedding endpoint falls back to keyword-only
+  ranking after `embedding.queryTimeoutMs` (default 3000 ms) instead of
+  blocking the search. `akm curate` is now the top hits of that same fused
+  search, enriched with a preview and up to two support refs, rather than its
+  own layer of second-guessing fallback searches and nudges. Query embedding
+  now uses the template a model actually expects (Qwen3's retrieval
+  instruction, `search_query:`/`search_document:` for nomic,
+  `query:`/`passage:` for E5, and others — overridable with
+  `embedding.queryTemplate`/`documentTemplate`) instead of one generic
+  prefix; a nomic-embed or E5 configuration re-embeds every entry on the next
+  `akm index` because the new document template changes what gets embedded
+  (set `embedding.documentTemplate: ""` to keep the old vectors instead).
+  Measured on the suite: search nDCG@10 rises from 0.346 to 0.556 and curate
+  precision@5 from 0.350 to 0.551; search p50 latency falls from about 787 ms
+  to about 400 ms, and a freshly built index shrinks from 560 MB to 340 MB.
+  Content indexed under two names (a memory also promoted verbatim to
+  knowledge, say) now returns only the higher-ranked copy instead of both,
+  and `akm curate` returns an empty, explained result for input that is not
+  a real query (a harness/tool envelope, a bare stash README) instead of
+  `--limit` unrelated items.
 - **Index layout 26.** Vectors are stored once — the sqlite-vec mirror, the
   fragment full-text table, and the stored embedding-input text are dropped
   in favor of a derived hash — and every relation `akm index` already parses
   is stored as a typed link (see Added). An index an older 0.9.17 prerelease
   or 0.9.16 wrote migrates to layout 26 in place on the first writable open —
-  well under a second for a 24k-entry index — and the run ends with a VACUUM
-  that reclaims the space the migration frees (a 601 MB index measured 377 MB
-  after). An index this release cannot read (written by a newer akm) is
-  refused, naming the upgrade, instead of being silently reinterpreted.
+  a 0.9.16 index also gets a one-time full-text rebuild along the way, a few
+  seconds for a 24k-entry index — and the run ends with a VACUUM that
+  reclaims the space the migration frees (in one measurement, a 601 MB index
+  built one layer short of layout 26 dropped to 377 MB; actual savings vary
+  with how much of an existing index was already free space). An index this
+  release cannot read (written by a newer akm) is refused, naming the
+  upgrade, instead of being silently reinterpreted.
 - **A scheduled task is just a command and a schedule.** Each native
   crontab/launchd/Task Scheduler row now carries its own `AKM_BUNDLE_DIR`
   (plus any `AKM_CONFIG_DIR`/`AKM_DATA_DIR`/`AKM_CACHE_DIR`/`AKM_STATE_DIR`
   the syncing shell set explicitly) inline, instead of pointing at a
-  `--scheduler-context <file>` descriptor. The first `akm task sync` after
-  upgrading rewrites every akm-managed row once, in place — same launcher,
-  same schedule, nothing added or removed. Rows written by 0.9.0 through
-  0.9.16 keep firing until that sync.
-- **akm reads only task source v4.** A `version: 2`/`version: 3` file, or a
-  `version: 4` file still carrying 0.9.15's retired `schedule[].enabled`, now
-  fails on its own naming `akm migrate apply`, which converts it once, under
-  a backup (`akm upgrade` runs this automatically after an install). `akm
-  task sync` reports such a file as a failure and leaves its installed row
-  as it is while reconciling every other task; a host already on v4 sees no
-  difference.
+  `--scheduler-context <file>` descriptor; a crontab now carries its PATH the
+  same way, in a `# akm:env` block akm writes and rewrites next to its task
+  rows, instead of inside each row's own descriptor file. The first `akm task
+  sync` after upgrading rewrites every akm-managed row once, in place — same
+  launcher, same schedule, nothing added or removed — and once `akm task
+  doctor` lists no binding still pointing at a descriptor, the old
+  `$DATA/tasks/context/` files it leaves behind can be deleted. Rows written
+  by 0.9.0 through 0.9.16 keep firing until that sync.
 - **`akm improve` reworks only what retrieval actually returned, or what's
-  new.** The proactive-maintenance, high-salience, and forgetting-safety
-  lanes, and the memory consolidation judge, are now scoped to assets a real
-  `search`, `curate`, `show`, or `feedback` touched in the last 90 days, plus
-  material no improve stage has processed yet — not the whole stash.
+  new.** The proactive-maintenance and high-salience lanes, and the memory
+  consolidation judge, are now scoped to assets a real `search`, `curate`,
+  `show`, or `feedback` touched in the last 90 days, plus material no
+  improve stage has processed yet — not the whole stash.
   Measured on a 19,870-asset copy of the maintainer's bundle: the fallback
   lanes' candidate pool drops from 15,686 to 6,450 assets, and in July the
   proactive lane had rewritten 3,069 assets, 3,059 of which had never been
@@ -153,8 +165,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Scheduling is one list.** `scheduler.enabled` in `config.json` holds the
   fully-qualified refs a host schedules; it is still written and read in the
   `{kind, ref, sourceId}` shape 0.9.16 used. A config with no list at all —
-  every release before 0.9.17 — is read on the first sync after upgrading as
-  "keep what's already installed," and the list is written from there.
+  0.9.15 and earlier — is read on the first sync after upgrading as "keep
+  what's already installed," and the list is written from there.
+- **A frozen workflow plan carries `irVersion` 6.** Every workflow — Markdown
+  and the GitHub-shaped YAML subset alike — compiles to the one plan type
+  that was previously irVersion 4/5's target; a stored irVersion 4 or 5 plan
+  is still read and run tolerantly (an unrecognized key in it is ignored
+  instead of abandoning the run), and only a plan a *newer* akm froze is
+  refused. An explicit `engine: null` on a task, workflow, or command layer
+  now means "no preference here" and falls through to `defaults.engine`,
+  instead of forcing the `opencode-sdk` fallback.
 - **The quality judge that gates reflect and distill scores each criterion
   separately** instead of one blended float, no longer scores an
   ACTIONABILITY criterion that measured no better than chance (AUC 0.46), and
@@ -175,6 +195,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   of minutes.** Both full-text tables' per-entry deletes were unindexed table
   scans; on a 23.9k-entry index, one touched file in a 13.7k-entry directory
   took 26-31 minutes before this release and well under a minute after.
+- **Output shapes changed along with the features above.** A search hit
+  drops `selectedRef`, `parentRef`, `fragmentOrdinal`, `fragmentCount`, its
+  fragment line/size fields, `matchStage`, and `graph` (fragments no longer
+  compete as search candidates; `akm show <ref>#<fragment>` still resolves a
+  section). `akm index`/`akm info` drop `vecAvailable`, and
+  `semanticStatus` no longer reports `ready-vec`. `akm migrate status`'s
+  separate `taskV3Migration`/`taskV4Migration` sections are now one
+  `taskFiles` section. `akm workflow plan` drops its `sourceReadSet` block.
+- **`akm health` gets a new hard `state-db-integrity` check** (a read-only
+  SQLite `PRAGMA quick_check` against `state.db`, plus a freelist-ratio
+  warning above 50%), and drops eight checks nothing acted on: the
+  `task-log-backing` hard check, the `pool-saturation` advisory, and six
+  research advisories (`outcome-proxy-adequacy`, `outcome-proxy-dead`,
+  `salience-uniformity-collapse`, `enrichment-lane-minting`,
+  `improve-churn-ratio`, `collapse-churn-detector`). `processes.reflect` also
+  gains `excludeRefPrefixes: string[]` to skip a ref prefix (a raw
+  wiki-ingest snapshot tree, say) that a type-only `allowedTypes` filter
+  can't carve out on its own.
 
 ### Removed
 
@@ -199,20 +237,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lane once the new retrieval scope (above) applied: 4 of its last 5 flagged
   refs were also picked by signal-delta, and the 5th was independently
   planned under signal-delta the same run.
+- **Removed flags and drain policies.** `akm search --no-project-context` and
+  `akm proposal drain --policy`/`--max-diff-lines` now fail as unknown flags
+  (exit 2), and the `personal-stash`/`conservative`/`manual` drain policies
+  are gone. Drain, and improve's triage pre-pass, now accept only a proposal
+  the quality judge passed on its exact content and reject an empty diff;
+  everything else goes to `processes.triage.judgment` or waits for review.
+  Extract and consolidate proposals, which `personal-stash` auto-accepted on
+  size alone, are no longer auto-accepted.
 - **Retired config keys** — kept and tolerated, dropped only by `akm migrate
-  apply`: `index.graph.*`, `index.metadataEnhance`, and every improve
+  apply`: `index.graph.*`, `index.metadataEnhance`, `search.minScore`,
+  `search.graphBoost.*`, `improve.utilityDecay.*`, `improve.collapseDetector`,
+  `improve.salience.replayBudget`, `processes.triage.policy`,
+  `processes.triage.maxDiffLines`, `processes.consolidate.contradictionDetection`,
+  the retired `processes.consolidate.antiCollapse` merge guards
+  (`maxGeneration`, `lexicalDiversityCheck`, `mergeInformationFloor`,
+  `minSpecificityRetention` — `antiCollapse` itself, and its
+  `randomClusterFraction` mixing, are unaffected), and every improve
   strategy's `processes.graphExtraction.*` and
   `processes.consolidate.incrementalSince`/`.neighborsPerChanged` (the pair
   pass replaces incremental-window candidate selection with the improve
-  ledger).
+  ledger). A leftover `improve.strategies["graph-refresh"]` override block is
+  also dropped this way; `defaults.improveStrategy: "graph-refresh"` is not —
+  change that one by hand.
 - **Also removed, superseded by the simpler mechanisms above:** the
   scheduler source-grant layer and its fire-time re-check, the filesystem
   transaction journals used by proposal accept/revert, the maintenance
   barrier and its per-process activity registry, the SQLite lock-operation
-  mutex, the strict per-key config schemas and the retired-key registry,
-  startup version reconciliation and `--host-local`, the akm-install
-  enumerator, `akm upgrade --version`/`--tag`, and the health advisories tied
-  to all of the above.
+  mutex, the strict per-key config schemas and the retired-key registry, and
+  the health advisories tied to all of the above.
 
 ### Fixed
 
@@ -226,9 +279,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   run`, and the HTML/MD reports. On a real 30-day window this had dropped 11
   of 55 runs.
 - **`akm show` works again for a memory with a `.derived.md` child** (835 of
-  them on one real bundle) — broken since 0.9.7. `akm bundle add --provider
-  ... --name` now honors the same `--name` contract (fail before writing,
-  rather than silently deriving a different name) as every other add path.
+  them on one real bundle) — broken since 0.9.7.
+- **`akm bundle add --name` is a contract on every add path, not a hint.**
+  An explicit `--name` that is not a legal bundle slug, or is already taken,
+  now fails before any write instead of silently falling back to a derived
+  name (`akm bundle add --provider ... --name` had its own gap in this same
+  check, now closed). A registry add with no `--name` is keyed by its
+  package or repo name instead of the fixed name `extracted` every registry
+  bundle after the first used to collide on.
 - **`akm improve --require-engines` no longer aborts a scheduled run because
   a local LLM endpoint was merely busy.** Its reachability probe now waits up
   to the engine's own timeout (at most two minutes) instead of a flat 3
