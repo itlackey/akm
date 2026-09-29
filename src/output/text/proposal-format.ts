@@ -104,11 +104,15 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
     // #577: surface the gate verdict inline so the queue explains itself.
     const gate = formatGateDecisionSummary(p.gateDecision);
     const gateSuffix = gate ? `  ${gate}` : "";
-    // S4: a retire proposal's continuityRisk excludes it from bulk accept —
+    // A retire proposal's continuityRisk excludes it from bulk accept —
     // visible in the default list, not just `proposal show`, since the owner
-    // reviews the backlog list-first.
+    // reviews the backlog list-first. `list`'s default (brief) shape
+    // projects a `continuityRisk: true` marker instead of the full
+    // `retirement` object (only present from `--detail normal` up), so both
+    // shapes are checked here.
     const retirement = p.retirement as Record<string, unknown> | undefined;
-    const continuitySuffix = retirement?.continuityRisk ? "  ⚠ continuity-risk" : "";
+    const flagged = p.continuityRisk === true || Boolean(retirement?.continuityRisk);
+    const continuitySuffix = flagged ? "  ⚠ continuity-risk" : "";
     lines.push(`${id}  [${status}] ${ref}  source=${source}  ${created}${gateSuffix}${continuitySuffix}`);
   }
   return lines.join("\n").trimEnd();
