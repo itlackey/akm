@@ -639,11 +639,6 @@ export function archiveCleanupCandidate(
   const archiveDir = createArchiveDir(stashDir, candidate.ref, archivedAt);
   const archivedPath = path.join(archiveDir, originalPath);
   fs.mkdirSync(path.dirname(archivedPath), { recursive: true });
-  fs.renameSync(filePath, archivedPath);
-  // #652: an archive is a delete + a create. BOTH ends are journaled so the
-  // sync stages the removal of the original alongside the archived copy.
-  recordWrittenPath(filePath);
-  recordWrittenPath(archivedPath);
 
   const retiring = isRetireCandidate(candidate);
   const archiveRef = path.relative(stashDir, archivedPath).replace(/\\/g, "/");
@@ -669,8 +664,22 @@ export function archiveCleanupCandidate(
     },
     "Archived derived memory for recoverable cleanup.\n",
   );
+  // 4c (third review round): write the tombstone BEFORE moving the file — a
+  // crash in between used to leave a file already at archivedPath with no
+  // cleanup.md to explain it (unrecoverable: revert refuses on a missing
+  // tombstone, and nothing else knows this archive dir exists). Reordered,
+  // a crash here instead leaves, at worst, a tombstone describing a move
+  // that has not happened yet, with the file still at its original
+  // location — the ordinary "nothing archived yet" state every caller
+  // already handles.
   fs.writeFileSync(auditPath, auditAsset, "utf8");
   recordWrittenPath(auditPath);
+
+  fs.renameSync(filePath, archivedPath);
+  // #652: an archive is a delete + a create. BOTH ends are journaled so the
+  // sync stages the removal of the original alongside the archived copy.
+  recordWrittenPath(filePath);
+  recordWrittenPath(archivedPath);
 
   return {
     ref: candidate.ref,

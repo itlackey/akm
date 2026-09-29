@@ -97,6 +97,24 @@ describe("archiveCleanupCandidate — generalized for retire proposals (alpha.9)
     expect(tombstone).not.toContain("successorRefs:");
     expect(tombstone).not.toContain("retiredAt:");
   });
+
+  test("the tombstone is written before the file is moved — a failed move still leaves it behind (4c, third review round)", () => {
+    const stashDir = sandbox();
+    const filePath = writeAsset(stashDir, "memories/old-note.md", "description: an old note");
+    const candidate: MemoryPruneCandidate = { ref: "memories/old-note", reason: "duplicate" };
+    // Removed out from under it: the rename this call makes will fail
+    // (ENOENT), simulating a crash right where the rename would happen.
+    // Under the OLD ordering (move, then write the tombstone) this failure
+    // would leave no trace at all. Under the fixed ordering, the tombstone
+    // is already on disk by the time the rename is even attempted.
+    fs.rmSync(filePath);
+    expect(() => archiveCleanupCandidate(stashDir, candidate, filePath)).toThrow();
+
+    const archiveRoot = path.join(stashDir, ".akm", "memory-cleanup", "archive");
+    const dirs = fs.readdirSync(archiveRoot);
+    expect(dirs).toHaveLength(1);
+    expect(fs.existsSync(path.join(archiveRoot, dirs[0]!, "cleanup.md"))).toBe(true);
+  });
 });
 
 describe("derivedTwinPath", () => {
