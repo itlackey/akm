@@ -697,6 +697,12 @@ export function shouldBypassConfigStartup(argv: readonly string[]): boolean {
   // `setup`/`migrate` do, or the recovery instructions are themselves
   // unreachable.
   if (command === "help" || command === "hints") return true;
+  // `akm info` must behave like a help command (owner ruling): it always
+  // prints a report and exits 0, even against a config.json this akm cannot
+  // load. `assembleInfo()` already reads config for itself and degrades that
+  // read the same way (reports the failure as a field instead of throwing),
+  // so startup's own load must not throw first and pre-empt that.
+  if (command === "info") return true;
   if (isTaskRunWithId(argv)) return true;
   if (command !== "config") return false;
   const configIndex = args.indexOf("config");

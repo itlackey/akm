@@ -6,18 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Changed
+### Fixed
 
-- **`scripts/test-unit.sh`/`test-integration.sh` shards fail fast and name
-  themselves on a hang.** Each process shard now runs under its own process
-  group (`exec setsid`) with a 600s ceiling — well above the ~3-minute CI
-  norm for a full shard. A shard still alive past it is killed by process
-  group (so a child process it spawned dies too, not just `bun test`
-  itself), its log tail is printed so the last test file header shows where
-  it hung, and the script fails with a clear message. Previously a hung
-  shard blocked `wait` forever, so the only thing that ever stopped it was
-  the CI job's own timeout — which kills the whole job and keeps no logs,
-  as happened during the alpha.9 release.
+- **`akm info` could refuse or hang instead of reporting.** It now behaves
+  like a help command: always exit 0 and print a report, in every format
+  (`json`/`text`/`yaml`) and with `--quiet`, whatever else is happening.
+  Three concrete failure modes are fixed. An invalid or unreadable
+  `config.json` used to abort the command before it even ran, through the
+  CLI's own startup config load — `info` is now allowlisted in
+  `shouldBypassConfigStartup` (src/cli.ts), and `assembleInfo` itself
+  degrades a load failure to a new top-level `configError` field instead of
+  throwing, falling back to the same defaults a fresh install reports. A
+  fresh install with no bundle directory yet used to throw
+  `STASH_DIR_NOT_FOUND`; `bundleDir` now reports the platform-default
+  location instead. And reading index.db opened a writable,
+  schema-touching connection bounded by the shared 30s `busy_timeout`, so a
+  concurrent `akm index`/`akm improve` writer — or a newer or corrupt index
+  layout — could make `info` wait up to 30s or refuse outright; it now
+  opens index.db strictly read-only (never a schema/journal-mode write)
+  with a ~750ms bound, and reports the reason (locked, a newer layout, or
+  corrupt) in a new `indexStats.unavailable` field rather than throwing. An
+  older index layout is still served as-is, without migrating.
 
 ## [0.9.17-alpha.9] - 2026-09-29
 

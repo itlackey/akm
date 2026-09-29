@@ -31,7 +31,7 @@ import { ensureSchema, newerIndexLayoutError } from "./index-schema";
  * schema problem. Matched on both `code` (bun:sqlite, better-sqlite3) and
  * message text, since driver error shapes are not perfectly uniform.
  */
-function isCorruptionError(error: unknown): boolean {
+export function isCorruptionError(error: unknown): boolean {
   const code = (error as { code?: unknown } | undefined)?.code;
   if (code === "SQLITE_CORRUPT") return true;
   const message = error instanceof Error ? error.message : String(error);
@@ -174,7 +174,7 @@ function openIsolatedSnapshotOrFallBack(resolvedPath: string): Database | undefi
  */
 export function openReadonlyExistingDatabase(
   dbPath?: string,
-  options?: { isolatedSnapshot?: boolean },
+  options?: { isolatedSnapshot?: boolean; busyTimeoutMs?: number },
 ): Database | undefined {
   const resolvedPath = dbPath ?? getDbPath();
   // `undefined` means "no index" — reserve it for a genuinely absent one, and
@@ -189,9 +189,13 @@ export function openReadonlyExistingDatabase(
   // never block — but in the DELETE/TRUNCATE modes the network-FS fallback and
   // AKM_SQLITE_JOURNAL_MODE can select, a concurrent writer makes every read
   // fail instantly with SQLITE_BUSY. busy_timeout is legal on a read-only
-  // connection, so apply just that one.
+  // connection, so apply just that one. `busyTimeoutMs` defaults to the
+  // shared 30s constant; a caller that must never sit behind another akm
+  // process's write lock for long (e.g. `akm info`, which has to behave like
+  // a help command and always report within a couple of seconds) can pass a
+  // much shorter bound instead.
   try {
-    db.exec(`PRAGMA busy_timeout = ${SQLITE_BUSY_TIMEOUT_MS}`);
+    db.exec(`PRAGMA busy_timeout = ${options?.busyTimeoutMs ?? SQLITE_BUSY_TIMEOUT_MS}`);
     checkIndexLayout(db, resolvedPath);
     return db;
   } catch (error) {

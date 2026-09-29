@@ -28,6 +28,7 @@ export function formatInfoPlain(r: Record<string, unknown>): string {
   if (r.defaultBundle !== undefined) {
     lines.push(`defaultBundle: ${r.defaultBundle === null ? "(none)" : String(r.defaultBundle)}`);
   }
+  if (typeof r.configError === "string") lines.push(`configError: ${r.configError}`);
   if (Array.isArray(r.assetTypes) && r.assetTypes.length > 0) {
     lines.push(`assetTypes: ${(r.assetTypes as unknown[]).join(", ")}`);
   }

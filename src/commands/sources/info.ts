@@ -4,18 +4,40 @@
 
 import { placementTypes } from "../../core/asset/asset-placement";
 import { resolveStashDir } from "../../core/common";
-import { getSources, loadConfig } from "../../core/config/config";
+import type { AkmConfig } from "../../core/config/config";
+import { DEFAULT_CONFIG, getSources, loadConfig } from "../../core/config/config";
+import { ConfigError } from "../../core/errors";
 import { classifyPathAccess, describeInaccessiblePath } from "../../core/path-access";
-import { getCacheDir, getConfigDir, getDataDir, getDbPath, getStateDir } from "../../core/paths";
+import { getCacheDir, getConfigDir, getDataDir, getDbPath, getDefaultStashDir, getStateDir } from "../../core/paths";
 import { formatRegistryUrl } from "../../core/registry-url";
 import { error } from "../../core/warn";
 import type { InfoResponse } from "../../sources/types";
 import type { Database } from "../../storage/database";
-import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import {
+  closeDatabase,
+  isCorruptionError,
+  openReadonlyExistingDatabase,
+} from "../../storage/repositories/index-connection";
 import { getEntryCount, getEntryCountByType } from "../../storage/repositories/index-entries-repository";
 import { countLinksByKind } from "../../storage/repositories/index-links-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
+import { isSqliteContentionError } from "../../storage/sqlite-transaction";
 import { pkgVersion } from "../../version";
+
+/**
+ * Bound for `akm info`'s diagnostic index.db read. `akm info` must behave
+ * like a help command (owner ruling): it always reports within a couple of
+ * seconds and never sits behind another akm process's write lock, unlike the
+ * shared 30s `SQLITE_BUSY_TIMEOUT_MS` every write-capable opener uses.
+ *
+ * `openReadonlyExistingDatabase`'s own layout check (`checkIndexLayout`)
+ * swallows a busy error on its one SELECT rather than surfacing it, so a
+ * genuinely locked database costs this timeout TWICE before the first real
+ * query here (`countLinksByKind`) throws for real — 750ms keeps that ~1.5s
+ * worst case well clear of the 3s bound integration tests hold this to, on a
+ * loaded CI box, while still being "about 1 second" per read.
+ */
+const INFO_INDEX_BUSY_TIMEOUT_MS = 750;
 
 /**
  * Assemble system info describing the current capabilities, configuration,
@@ -24,12 +46,31 @@ import { pkgVersion } from "../../version";
  * @param options.dbPath - Override the database path (useful for testing)
  */
 export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
-  const config = loadConfig();
+  // `akm info` must behave like a help command (owner ruling): it always
+  // prints a report and exits 0, whatever else is happening. Config and the
+  // stash directory are read best-effort so an invalid/missing one degrades
+  // to a reported reason instead of throwing and aborting the command.
+  let config: AkmConfig;
+  let configError: string | undefined;
+  try {
+    config = loadConfig();
+  } catch (err) {
+    config = DEFAULT_CONFIG;
+    configError = err instanceof Error ? err.message : String(err);
+  }
 
   // Primary stash directory + default bundle name — same resolution
   // `akm sources list` uses (R-057), so `akm info` and `akm sources list`
-  // agree on which stash is primary.
-  const stashDir = resolveStashDir();
+  // agree on which stash is primary. No bundle created yet (or the
+  // configured one is unusable) reports where a fresh `akm setup`/`akm
+  // bundle create` would put it — the same "report the defaults" treatment
+  // a missing config gets, not a refusal.
+  let stashDir: string;
+  try {
+    stashDir = resolveStashDir();
+  } catch {
+    stashDir = getDefaultStashDir();
+  }
   const defaultBundle = config.defaultBundle ?? null;
 
   // Asset types (copy into a mutable array — `placementTypes()` returns readonly)
@@ -75,6 +116,7 @@ export function assembleInfo(options?: { dbPath?: string }): InfoResponse {
     version: pkgVersion,
     bundleDir: stashDir,
     defaultBundle,
+    ...(configError ? { configError } : {}),
     dataDir: getDataDir(),
     configDir: getConfigDir(),
     cacheDir: getCacheDir(),
@@ -113,7 +155,15 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
 
   let db: Database | undefined;
   try {
-    db = openExistingDatabase(resolvedPath);
+    // Strictly read-only — no schema/journal-mode writes — and bounded to
+    // INFO_INDEX_BUSY_TIMEOUT_MS rather than the shared 30s busy_timeout
+    // every write-capable opener uses: `akm info` must always report within
+    // a couple of seconds, never wait behind another akm process's write
+    // lock. A newer index layout is reported below rather than refused
+    // (checkIndexLayout throws; an older layout just warns and is served
+    // as-is, never migrated — both already true of this opener).
+    db = openReadonlyExistingDatabase(resolvedPath, { busyTimeoutMs: INFO_INDEX_BUSY_TIMEOUT_MS });
+    if (!db) return EMPTY; // raced away (deleted) between the access check above and here
     const links = countLinksByKind(db);
     return {
       entryCount: getEntryCount(db),
@@ -128,7 +178,7 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
     // Routed through core/warn's `error()` (not a raw process.stderr.write)
     // so `--quiet`/`setQuiet()` actually gate this line (R-057).
     error(`[akm info] failed to read index stats from ${resolvedPath}: ${String(err)}`);
-    return EMPTY;
+    return { ...EMPTY, unavailable: describeIndexReadFailure(err) };
   } finally {
     if (db) {
       try {
@@ -138,4 +188,18 @@ function readIndexStats(resolvedPath: string): InfoResponse["indexStats"] {
       }
     }
   }
+}
+
+/**
+ * Turn a caught index-read failure into a short, stable reason for
+ * `indexStats.unavailable`. Contention and a too-new layout get their own
+ * clear wording (the layout error from `checkIndexLayout` is already
+ * descriptive); on-disk corruption is named explicitly; anything else falls
+ * back to the driver's own message.
+ */
+function describeIndexReadFailure(err: unknown): string {
+  if (err instanceof ConfigError && err.code === "INDEX_SCHEMA_INCOMPATIBLE") return err.message;
+  if (isSqliteContentionError(err)) return "index.db is locked by another akm process";
+  if (isCorruptionError(err)) return `index.db is corrupt: ${err instanceof Error ? err.message : String(err)}`;
+  return err instanceof Error ? err.message : String(err);
 }

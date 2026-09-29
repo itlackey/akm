@@ -548,6 +548,17 @@ export interface InfoResponse {
   /** Name of the primary bundle from config, or `null` when none is configured (R-057). */
   defaultBundle: string | null;
   /**
+   * Set only when config.json exists but could not be loaded (parse or schema
+   * failure) — `akm info` must behave like a help command (owner ruling: never
+   * refuse, always report), so an invalid config degrades to the same
+   * defaults a fresh install reports rather than aborting the whole command.
+   * Every config-derived field above/below reflects those defaults while this
+   * is set. Absent on every healthy run and when there is simply no config
+   * file yet (a fresh install, which needs no error — it already reports the
+   * defaults), so no existing consumer sees a new key.
+   */
+  configError?: string;
+  /**
    * Resolved per-platform directories (#951) — XDG on Linux/macOS,
    * APPDATA/LOCALAPPDATA on Windows (see `src/core/paths.ts`) — so a script
    * can read akm's paths with `akm info --format json | jq -r .dataDir`
@@ -587,5 +598,16 @@ export interface InfoResponse {
      * Absent on every healthy run, so no existing consumer sees a new key.
      */
     unreadable?: string;
+    /**
+     * Set only when the index exists AND is filesystem-readable, but the
+     * SQLite-level read did not complete: locked by another akm process past
+     * `akm info`'s bounded wait (about 1s — it must never sit behind a
+     * writer's lock for long), or a newer index layout this akm cannot
+     * understand (reported here, not refused). A genuinely corrupt database
+     * file also lands here rather than throwing. Absent on every healthy run
+     * (including a merely older, unmigrated layout, which is still readable
+     * as-is), so no existing consumer sees a new key.
+     */
+    unavailable?: string;
   };
 }
