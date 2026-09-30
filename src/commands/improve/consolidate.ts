@@ -8,7 +8,10 @@
  * promoted. Promotion emits a reviewable proposal and never touches the
  * memory directly; accepting it later retires the source memory (O1, in
  * `proposal/repository.ts`). Memories the improve ledger judged recently and
- * that have not changed since are not judged again.
+ * that have not changed since are not judged again, and a memory whose
+ * promotion was accepted or rejected waits until its body changes. A memory
+ * that a neighbouring knowledge doc already covers is not promoted
+ * (`consolidate/coverage.ts`).
  *
  * Accounting invariant (the promote pass only): `processed == promoted +
  * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
@@ -54,11 +57,12 @@ import {
   validateProposalFrontmatter,
 } from "../proposal/validators/proposal-quality-validators";
 import { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { type CoveringKnowledgeFinder, openKnowledgeCoverage } from "./consolidate/coverage";
 import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
+import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import { callStage, type LlmRunner, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
 
@@ -482,7 +486,10 @@ export interface ConsolidationPoolSnapshot {
   memories: MemoryEntry[];
   /** Memories whose body already exists verbatim in `knowledge/`. */
   prefilteredAlreadyPromoted: number;
-  /** Memories the ledger skipped: judged within their revisit window and unchanged since. */
+  /**
+   * Memories the ledger skipped: judged within their revisit window, or
+   * decided as a promotion (accepted or rejected), and unchanged since.
+   */
   judgedUnchanged: number;
   /** Memories left out because retrieval did not return them and they are not new (#986). */
   outsideRetrievalScope: number;
@@ -550,19 +557,31 @@ export function inspectConsolidationPool(
   }
   memories = memories.filter((memory) => fs.existsSync(memory.filePath));
   const poolSize = memories.length;
-  // A memory judged within its revisit window comes back once it is edited.
+  // A memory judged within its revisit window comes back once it is edited. A
+  // promotion that was accepted or rejected holds its memory until the body
+  // changes, however long that takes (#998).
   const ledger = loadLedgerSnapshot({ proposalsCtx: opts.proposalsCtx, readOnly }, stashDir, ["consolidate"]);
   if (ledger.size > 0) {
     const nowIso = new Date().toISOString();
     memories = memories.filter((memory) => {
       const row = ledger.get(ledgerKey("consolidate", conceptIdFromTypeName("memory", memory.name)));
+      if (!row) return true;
+      if (isContentDrivenRow(row)) {
+        let bodyHash: string | undefined;
+        try {
+          bodyHash = contentHash(fs.readFileSync(memory.filePath, "utf8"), "body");
+        } catch {
+          bodyHash = undefined;
+        }
+        return row.contentHash !== bodyHash;
+      }
       let changedAt: string | undefined;
       try {
         changedAt = fs.statSync(memory.filePath).mtime.toISOString();
       } catch {
         changedAt = undefined;
       }
-      return !row || !isLedgerBlocked(row, nowIso, changedAt);
+      return !isLedgerBlocked(row, nowIso, changedAt);
     });
   }
   const judgedUnchanged = poolSize - memories.length;
@@ -829,7 +848,7 @@ async function consolidate(
   const plural = (n: number) => `memor${n === 1 ? "y" : "ies"}`;
   if (pool.judgedUnchanged > 0) {
     warnings.push(
-      `Consolidation: skipped ${pool.judgedUnchanged} ${plural(pool.judgedUnchanged)} judged within the revisit window and unchanged since.`,
+      `Consolidation: skipped ${pool.judgedUnchanged} ${plural(pool.judgedUnchanged)} judged within the revisit window, or already promoted or rejected, and unchanged since.`,
     );
   }
   if (pool.outsideRetrievalScope > 0) {
@@ -847,8 +866,8 @@ async function consolidate(
   // sees .derived memories, flat knowledge and lessons, not just the
   // promote pool above), so it runs regardless of whether the promote pool
   // is empty — every return path below carries its result.
-  const pairPassBundleId = resolveConsolidationSourceOwner(opts, stashDir)?.bundleId;
-  const pairPass = await runConsolidatePairPass(opts, config, stashDir, pairPassBundleId, warnings);
+  const bundleId = resolveConsolidationSourceOwner(opts, stashDir)?.bundleId;
+  const pairPass = await runConsolidatePairPass(opts, config, stashDir, bundleId, warnings);
   if (memories.length === 0) {
     return makeConsolidateResult({
       dryRun: opts.dryRun ?? false,
@@ -901,7 +920,13 @@ async function consolidate(
     warnings,
     pushSkipReason: (op, ref, reason) => pushSkipReason(acc, op, ref, reason),
   };
-  for (const op of plan.allOps) await emitPromotionProposal(op, ctx);
+  const coverage = plan.allOps.length > 0 ? openKnowledgeCoverage(bundleId) : undefined;
+  if (coverage) ctx.coveringKnowledge = coverage.find;
+  try {
+    for (const op of plan.allOps) await emitPromotionProposal(op, ctx);
+  } finally {
+    coverage?.close();
+  }
   // Every other judged memory waits out its revisit window (or its next edit);
   // a promotion that failed to persist is retried next run.
   recordLedgerAttempt(
@@ -940,6 +965,11 @@ export interface PromoteContext {
   promoted: string[];
   promotedSourceRefs: Set<string>;
   existingKnowledgeBodyHashes: Set<string>;
+  /**
+   * Finds the knowledge doc that already covers a memory's body (#998).
+   * Absent when there is no index to look in: the gate then does nothing.
+   */
+  coveringKnowledge?: CoveringKnowledgeFinder;
   promotionFailures: { count: number };
   warnings: string[];
   pushSkipReason: (op: ConsolidateOpKind | "unknown", ref: string, reason: string) => void;
@@ -971,7 +1001,8 @@ const PROMOTE_BODY_MIN_CHARS = 100;
 /**
  * Queue one promotion as a proposal. Refused (with a skip reason) when the
  * memory is unknown, already promoted this run, already pending or present
- * as knowledge (by concept, body hash or slug variant), unreadable, fails
+ * as knowledge (by concept, body hash or slug variant), already covered by a
+ * neighbouring knowledge doc (`coverage.ts`), unreadable, fails
  * sanitization, is superseded, has a body too small to be knowledge, or has
  * no valid description.
  * @internal Exported for promotion-path integration tests.
@@ -1065,6 +1096,15 @@ export async function emitPromotionProposal(op: ConsolidatePromoteOp, ctx: Promo
     return skip(
       "dedup_pending_proposal",
       `Skipping promote: identical body already pending as proposal ${sameBody.id} (ref: ${sameBody.ref}); skipping duplicate for ${op.ref} → ${knowledgeRef}`,
+    );
+  }
+  // #998: the copies the two exact checks above cannot see — an earlier
+  // promotion that was edited or re-slugged, a doc that quotes the memory.
+  const covering = ctx.coveringKnowledge?.(entry.filePath, sourceBody);
+  if (covering) {
+    return skip(
+      "dedup_covered_by_knowledge",
+      `Skipping promote: ${op.ref} → ${knowledgeRef} is already covered by ${covering.ref} (${Math.round(covering.containment * 100)}% of its text appears there).`,
     );
   }
   try {

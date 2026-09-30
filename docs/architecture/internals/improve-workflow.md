@@ -134,7 +134,7 @@ flowchart TD
         CON_DRY -- no --> PHASE_B
 
         subgraph PHASE_B["Phase B — Proposal emission"]
-            PHASE_B_PRO[For each promote op:\nidempotency check and emitProposal\nsource: consolidate]
+            PHASE_B_PRO[For each promote op:\nidempotency and coverage checks,\nthen emitProposal\nsource: consolidate]
         end
 
         PHASE_B_PRO --> CON_DONE
@@ -238,7 +238,11 @@ per-asset loop.
 
 **Phase A — Plan generation:**
 
-1. Load eligible non-`.derived` memory assets from the SQLite index.
+1. Load eligible non-`.derived` memory assets from the SQLite index, minus
+   those the improve ledger holds: a memory judged within its 7-day revisit
+   window and unchanged since, and a memory whose promotion was accepted or
+   rejected and whose body has not changed since (see **Re-eligibility**
+   below).
 2. Chunk memories using the selected strategy's configured limit. For each
    chunk, call `chatCompletion` with the frozen consolidate LLM connection and
    `CONSOLIDATE_SYSTEM_PROMPT`, requesting a JSON plan of `promote`
@@ -252,13 +256,42 @@ per-asset loop.
 **Phase B — Proposal emission:**
 
 1. For each promote op, perform idempotency checks and emit a reviewable
-   proposal with `source: "consolidate"`.
+   proposal with `source: "consolidate"`. The checks run cheapest first and
+   each records a skip reason: the same knowledge slug or a pending proposal
+   for it, an identical body already in `knowledge/` or already pending, and
+   then the coverage check (`consolidate/coverage.ts`, #998): the 20
+   `knowledge/` docs in the same bundle nearest to the memory by stored vector
+   (`getNeighborsByEntryId` scoped to that bundle's knowledge entries, the
+   fetch depth the pair pass uses; no similarity floor, only that rank) are
+   compared with it, and the memory is skipped as `dedup_covered_by_knowledge`
+   when one of them holds at least half of its distinct 5-word shingles. A
+   covering doc that ranks lower goes unseen, so the gate removes fewer
+   proposals than the rule does against every knowledge doc (122 of 224
+   rejected in #998's sample); its recall over the 20 is unmeasured. The rule
+   and its evidence are in the module's header comment. With no stored vector
+   (semantic search off, or the memory not yet indexed) the check does
+   nothing and nothing throws.
 2. Advance the consolidation watermark only when every chunk completed and
    every promotion proposal was emitted or deterministically deduplicated.
 
 **What it writes:**
 - A durable row in the `proposals` table in `state.db` for each emitted
   `promote` op, partitioned by bundle path.
+
+**Re-eligibility (#998):** the promote pass keys its ledger row by the source
+memory (`memories/<name>`). A memory the model saw and left alone
+(`judged_no_action`) or one with a pending proposal is revisited after 7 days,
+or at once when the file is edited. An accepted or rejected promotion is
+different: the row carries no `next_eligible_at`, and records the body hash
+(`contentHash(_, "body")`, frontmatter excluded) the promotion was decided
+against, taken from the proposal's `promotionSourceHash`. The memory is
+selected again only when its current body hash differs, the same content-driven
+rule the pair pass uses. A rejection is therefore no longer re-asked after 7
+days, and the memory of an accepted promotion that is still on disk (O1 could
+not archive it, or the same text was restored) is no longer eligible again at
+once. A promotion decided before the hash was recorded (an older release's
+proposal) has no hash to compare, and keeps the old windows. An expired
+proposal still waits one day: nobody judged the text.
 
 **Promotion retires its source (O1, alpha.9):** when an `akm proposal accept`
 promotes a consolidate `promote` proposal — by a person or by triage
@@ -576,6 +609,7 @@ and can report `ok: false` for terminated runs:
 | `promote_source_too_small` | Source body too short to warrant a promotion proposal. |
 | `merge_content_too_short` | Secondary body too short to be a meaningful merge candidate. |
 | `dedup_pending_proposal` | Ref already has a pending proposal. Clears as triage drains the queue. |
+| `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. The memory stays in the ledger as `judged_no_action` (7-day revisit, or at once on an edit). |
 
 ### Fixed bugs — should be 0 in steady state
 

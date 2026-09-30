@@ -34,6 +34,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lesson that contradicts its source still reaches a human through the
   optional fidelity check, and every other `review_needed` reason is
   unchanged. `TODO:` lines already in a memory are not removed.
+- **Consolidation stops re-proposing memories that `knowledge/` already
+  covers (#998).** The promote pass copied a memory into a new `knowledge/`
+  proposal with no notion of what `knowledge/` already held: the model never
+  sees it, the mint-time checks only caught the same slug or a byte-identical
+  body, and an accepted promotion's memory was eligible again at once (a
+  rejected one after 7 days). On one bundle 88% of a run's proposals came from
+  memories promoted before, one of them 14 times, and 215 of 224 rejections
+  read "covered by an existing knowledge doc". Two changes, no new setting:
+  before queuing a promotion, consolidate now compares the memory with the 20
+  `knowledge/` docs in its bundle nearest to it by stored vector (the lookup
+  the pair pass uses) and skips it, with skip reason
+  `dedup_covered_by_knowledge`, when one of them holds at least half of the
+  memory's distinct 5-word shingles (measured against every knowledge doc,
+  that share was at least 0.5 for 122 of the 224 rejected proposals and for
+  none of the 103 accepted ones; a covering doc past the 20 nearest goes
+  unseen); and a memory whose promotion was accepted or rejected is offered
+  again only when its body changes, the same content-driven rule the pair pass
+  uses, instead of at once or after 7 days. A promotion decided by an older
+  release recorded no body hash and keeps its old windows. With no stored
+  vector (semantic search off) the coverage check does nothing.
 
 ## [0.9.18] - 2026-09-29
 

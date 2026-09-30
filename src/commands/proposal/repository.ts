@@ -46,6 +46,7 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
+  CONSOLIDATE_LEDGER_SOURCE,
   type ImproveLedgerOutcome,
   recordImproveLedger,
   recordImproveLedgerDecision,
@@ -675,6 +676,28 @@ function ledgerOutcomeForDecision(
   return "rejected";
 }
 
+/**
+ * What a decision's ledger row is about. A promotion's row is keyed by its
+ * source memory, so a decision on it names that memory, together with the body
+ * hash the promotion was queued against — this is what holds the memory back
+ * until it changes (`isContentDrivenDecision`). Any other proposal, and a
+ * promotion minted before the hash was recorded, is keyed by its own ref.
+ * Every decision that can create a row when none carries the proposal id — a
+ * reject, an accept and a drain deferral alike — must key it this way: a stray
+ * row under the knowledge ref carries the proposal id, so a later verdict
+ * updates that one and never reaches the memory's own row.
+ */
+function decisionLedgerSubject(proposal: Proposal): { ref: string; contentHash?: string } {
+  if (
+    proposal.source === CONSOLIDATE_LEDGER_SOURCE &&
+    proposal.promotionSource !== undefined &&
+    proposal.promotionSourceHash !== undefined
+  ) {
+    return { ref: proposal.promotionSource, contentHash: proposal.promotionSourceHash };
+  }
+  return { ref: proposal.ref };
+}
+
 /** Archive a pending proposal as accepted/rejected, recording the decision in the ledger in the same transaction. */
 export function archiveProposal(
   stashDir: string,
@@ -705,7 +728,7 @@ export function archiveProposal(
       recordImproveLedgerDecision(db, {
         proposalId: updated.id,
         stashDir,
-        ref: updated.ref,
+        ...decisionLedgerSubject(updated),
         source: updated.source,
         outcome: ledgerOutcomeForDecision(status, gateDecision),
         at: decidedAt,
@@ -739,7 +762,7 @@ export function recordGateDecision(
         recordImproveLedgerDecision(db, {
           proposalId: updated.id,
           stashDir,
-          ref: updated.ref,
+          ...decisionLedgerSubject(updated),
           source: updated.source,
           outcome: "review_needed",
           at: decidedAt,
@@ -954,7 +977,7 @@ function persistProposalDecision(
       recordImproveLedgerDecision(db, {
         proposalId: next.id,
         stashDir,
-        ref: next.ref,
+        ...decisionLedgerSubject(next),
         source: next.source,
         outcome: ledgerOutcomeForDecision(accept ? "accepted" : "reverted"),
         at: decision.decidedAt,

@@ -20,6 +20,7 @@ import { rebuildFts } from "../../src/storage/repositories/index-fts-repository"
 import { setMeta } from "../../src/storage/repositories/index-meta-repository";
 import {
   getAllEntriesForEmbedding,
+  getNeighborsByEntryId,
   searchVec,
   upsertEmbedding,
 } from "../../src/storage/repositories/index-vec-repository";
@@ -285,6 +286,58 @@ describe("cosine ranking over the BLOB table", () => {
       // Query for top 2 only
       const results = searchVec(db, [1, 0, 0, 0], 2);
       expect(results.length).toBe(2);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+// ── Scoped scans: one type in one bundle ───────────────────────────────────
+
+describe("searchVec and getNeighborsByEntryId with a scope (#998)", () => {
+  /** A unit vector `deg` degrees from the 0° vector: cos(deg) is the exact cosine to it. */
+  const at = (deg: number): number[] => [Math.cos((deg * Math.PI) / 180), Math.sin((deg * Math.PI) / 180), 0, 0];
+
+  function insertScoped(db: Database, key: string, type: string, bundleId: string, deg?: number): number {
+    const id = upsertEntry(
+      db,
+      path.join("/test/stash", `${key}.md`),
+      makeEntry({ name: key, type }),
+      deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, type, key),
+    );
+    if (deg !== undefined) upsertEmbedding(db, id, at(deg));
+    return id;
+  }
+
+  test("scans only that bundle's entries of that type, and k counts the nearest of those, not of everything", () => {
+    const db = openIndexDatabase(tmpDbPath("scoped"));
+    try {
+      const query = insertScoped(db, "query-memory", "memory", "stash", 0);
+      insertScoped(db, "near-memory", "memory", "stash", 1);
+      insertScoped(db, "near-lesson", "lesson", "stash", 2);
+      insertScoped(db, "foreign-knowledge", "knowledge", "other", 5);
+      const first = insertScoped(db, "first-knowledge", "knowledge", "stash", 10);
+      const second = insertScoped(db, "second-knowledge", "knowledge", "stash", 20);
+      const noVector = insertScoped(db, "no-vector-knowledge", "knowledge", "stash");
+      const scope = { type: "knowledge", bundleId: "stash" };
+
+      // Unscoped is unchanged: every stored vector, the query's own first.
+      expect(searchVec(db, at(0), 10)).toHaveLength(6);
+
+      const hits = searchVec(db, at(0), 10, scope);
+      expect(hits.map((hit) => hit.id)).toEqual([first, second]);
+      // Distances keep their meaning: sqrt(2 * (1 - cosine)).
+      expect(hits[0]?.distance).toBeCloseTo(Math.sqrt(2 * (1 - Math.cos((10 * Math.PI) / 180))), 6);
+
+      // Three entries are nearer than the first knowledge doc, yet k = 1 returns it.
+      expect(searchVec(db, at(0), 1, scope).map((hit) => hit.id)).toEqual([first]);
+      expect(searchVec(db, at(0), 10, { type: "knowledge", bundleId: "nowhere" })).toEqual([]);
+      expect(searchVec(db, at(0), 10, { type: "skill", bundleId: "stash" })).toEqual([]);
+
+      expect(getNeighborsByEntryId(db, query, 10, scope).map((hit) => hit.id)).toEqual([first, second]);
+      expect(getNeighborsByEntryId(db, query, 10)).toHaveLength(6);
+      // An entry with no stored vector has no neighbours, scoped or not.
+      expect(getNeighborsByEntryId(db, noVector, 10, scope)).toEqual([]);
     } finally {
       closeDatabase(db);
     }

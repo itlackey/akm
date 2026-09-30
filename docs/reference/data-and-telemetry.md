@@ -295,7 +295,10 @@ with each asset — one row per bundle, asset ref and stage: the outcome
 (`proposed`, `accepted`, `rejected`, `quality_rejected`, `review_needed`,
 `expired`, `unchanged`, `failed`, `judged_no_action`), when it was attempted,
 and the earliest time the stage may try that asset again. It holds refs,
-timestamps, a proposal id and a short reason — never asset content.
+timestamps, a proposal id and a short reason — never asset content. A row whose
+next attempt depends on the asset changing rather than on a clock (the
+consolidate pair pass, and a consolidate promotion once accepted or rejected)
+also holds a hash of the asset's body, and no earliest-retry time.
 
 ### 4. Task History Table
 

@@ -66,11 +66,13 @@ everything else routes through `akm proposal accept`.
 4. Reflect and distill each emit at most one proposal per asset per run;
    consolidate runs two passes alongside each other — the promote pass emits
    a proposal turning a memory into knowledge (and, once accepted, retires
-   the source memory), and the pair pass judges near-duplicate and
-   superseding pairs in the memory tier and emits a reviewed `retire`
-   proposal for the `duplicate`/`subsumed`/`supersedes` classes; `overlap`,
-   `unrelated` and `contradicts` are recorded as `judged_no_action` with no
-   proposal.
+   the source memory) unless a neighbouring `knowledge/` doc already covers
+   the memory, and it offers a memory whose promotion was accepted or
+   rejected again only after the memory's body changes; the pair pass judges
+   near-duplicate and superseding pairs in the memory tier and emits a
+   reviewed `retire` proposal for the `duplicate`/`subsumed`/`supersedes`
+   classes; `overlap`, `unrelated` and `contradicts` are recorded as
+   `judged_no_action` with no proposal.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
