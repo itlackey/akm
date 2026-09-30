@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.19-alpha.2] - 2026-09-30
+
 ### Changed
 
 - **Distill's grounding check vetoes only a score of 1; a 2 goes to a person.**
