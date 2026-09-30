@@ -86,7 +86,7 @@ export type EventType =
   // Phase 4 Team C event gaps:
   /** Emitted when `akm show <ref>` follows a recent `akm search` that returned the same ref. */
   | "select"
-  /** Emitted when a cooldown guard or budget exhaustion in `akm improve` skips an asset. */
+  /** Emitted when `akm improve` leaves a ref, a lane, or a group of refs out (no new signal, not retrieved, budget, autonomy gate, ...). */
   | "improve_skipped"
   /**
    * Layer 2 — emitted once per `akm improve` run when the proactive-maintenance

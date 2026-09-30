@@ -35,7 +35,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { resolveWritable, resolveWriteTarget } from "../../core/write-source";
+import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
@@ -366,6 +366,9 @@ interface ImproveReadSource {
   source: { name: string; path: string };
 }
 
+/** How `akm improve` spells its destination flag: the shared target resolvers name it in their errors. */
+export const IMPROVE_TARGET_FLAG = "--bundle";
+
 /**
  * The source a dry run (or `--show-prompt`) inspects, without adapting it into
  * a write target.
@@ -378,13 +381,18 @@ export function resolveImproveReadSource(
 ): ImproveReadSource {
   if (scopedRef?.origin && explicitTarget && scopedRef.origin !== explicitTarget) {
     throw new UsageError(
-      `Qualified ref bundle "${scopedRef.origin}" conflicts with --target "${explicitTarget}".`,
+      `Qualified ref bundle "${scopedRef.origin}" conflicts with ${IMPROVE_TARGET_FLAG} "${explicitTarget}".`,
       "INVALID_FLAG_VALUE",
-      `Drop --target or use --target ${scopedRef.origin}.`,
+      `Drop ${IMPROVE_TARGET_FLAG} or use ${IMPROVE_TARGET_FLAG} ${scopedRef.origin}.`,
     );
   }
   const selector = scopedRef?.origin ?? explicitTarget ?? config.defaultWriteTarget;
   if (!selector && fallbackStashDir) return { source: { name: "stash", path: fallbackStashDir } };
+  if (!selector && process.env.AKM_BUNDLE_DIR?.trim()) {
+    // A live run's working bundle starts from AKM_BUNDLE_DIR (`resolveWorkingStashTarget`), so its preview does too.
+    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
+    return { source: { name: source.name, path: source.path } };
+  }
   const configuredSelector = selector ?? config.defaultBundle;
   if (configuredSelector) {
     const entry = bundlesToSourceEntries(config)?.find((source) => source.name === configuredSelector);
@@ -452,10 +460,12 @@ function resolveImproveRunSetup(options: AkmImproveOptions) {
   const writeTarget = options.dryRun
     ? undefined
     : scopedRef?.origin
-      ? resolveMutationTarget(config, scopedRef, options.writeTarget?.source.name ?? options.target).target
+      ? resolveMutationTarget(config, scopedRef, options.writeTarget?.source.name ?? options.target, {
+          flag: IMPROVE_TARGET_FLAG,
+        }).target
       : (options.writeTarget ??
         (options.target || config.defaultWriteTarget || !options.stashDir
-          ? resolveWriteTarget(config, options.target)
+          ? resolveWriteTarget(config, options.target, { flag: IMPROVE_TARGET_FLAG })
           : {
               source: { kind: "filesystem" as const, name: "stash", path: options.stashDir },
               config: { type: "filesystem" as const, name: "stash", path: options.stashDir, writable: true },

@@ -1058,6 +1058,78 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(allForY[0]!.status).toBe("reverted");
   });
 
+  test("#997: a rejected pair settles only while it stays rejected — reopened, it is pending, so it is neither re-judged nor minted twice", async () => {
+    // Same I/Y/Z shape as item 0's test above: I claims (I,Y) and (I,Z), Y and
+    // Z on opposite sides so (Y,Z) never pairs; Z's judge call fails in run 1,
+    // so I gets no ledger row and every later run regenerates both of its pairs.
+    const iPath = writeAsset("memories/i-note.md", "description: i");
+    dateAsset(iPath, 1);
+    const yPath = writeAsset("memories/y-note.md", "description: y");
+    const zPath = writeAsset("memories/z-note.md", "description: z");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "i-note", iPath, 0);
+      indexAsset(db, "memory", "y-note", yPath, angleForCosine(0.95));
+      indexAsset(db, "memory", "z-note", zPath, -angleForCosine(0.94));
+    } finally {
+      closeDatabase(db);
+    }
+    const warnings: string[] = [];
+    const r1 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async (_connection, messages) => {
+        const text = messages.map((m) => m.content).join("\n");
+        if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(r1.retired).toHaveLength(1);
+    const proposalId = r1.retired[0]!;
+    const stateDb = openStateDatabase();
+    try {
+      // Seed the usage signal that keeps i-note in the retrieval scope (as item 0's test does).
+      insertUsageEvent(stateDb, { event_type: "search", entry_ref: "stash//memories/i-note", source: "user" });
+    } finally {
+      stateDb.close();
+    }
+
+    const { akmProposalReject, akmProposalReopen } = await import("../../../../src/commands/proposal/proposal");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    const { loadRejectedPairKeys } = await import("../../../../src/commands/improve/consolidate/pair-pass");
+    await akmProposalReject({
+      stashDir: storage.stashDir,
+      id: proposalId,
+      reason: "would destroy content (generator bug)",
+      config: makeConfig(storage.stashDir),
+    });
+    expect(loadRejectedPairKeys(storage.stashDir, undefined).size).toBe(1); // rejected: the pair is settled
+
+    await akmProposalReopen({
+      stashDir: storage.stashDir,
+      ids: [proposalId],
+      reason: "the diff was misrendered",
+      config: makeConfig(storage.stashDir),
+    });
+    expect(loadRejectedPairKeys(storage.stashDir, undefined).size).toBe(0); // reopened: it no longer is
+
+    // Run 2 re-selects I. The reopened (I,Y) is pending, so the pair pass
+    // leaves its whole group alone — no judge call, and above all no second
+    // proposal for a pair that already has one waiting for a person.
+    let chatCalls = 0;
+    const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => {
+        chatCalls++;
+        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+      },
+    });
+    expect(chatCalls).toBe(0);
+    expect(r2.retired).toHaveLength(0);
+    const forY = listProposals(storage.stashDir, { includeArchive: true }).filter(
+      (p) => p.retirement?.successorRef === "memories/y-note",
+    );
+    expect(forY.map((p) => [p.id, p.status])).toEqual([[proposalId, "pending"]]);
+    expect(fs.existsSync(yPath) && fs.existsSync(iPath)).toBe(true); // reopening moved nothing
+  });
+
   test("a cap-cut initiator gets no ledger row and is picked back up next run (S1)", async () => {
     // Three assets close enough to pair, but MAX_PAIRS_PER_RUN is patched
     // (via a throwaway db read) is impractical here — instead this proves

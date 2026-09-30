@@ -10,6 +10,8 @@ import {
   formatProposalDrainPlain,
   formatProposalListPlain,
   formatProposalRejectPlain,
+  formatProposalReopenBatchPlain,
+  formatProposalReopenPlain,
   formatProposalShowPlain,
 } from "../helpers";
 import type { TextFormatterEntry } from "../registry";
@@ -19,6 +21,8 @@ export const proposalFormatters: TextFormatterEntry[] = [
   { command: "proposal-show", handler: (r) => formatProposalShowPlain(r) },
   { command: "proposal-accept", handler: (r) => formatProposalAcceptPlain(r) },
   { command: "proposal-reject", handler: (r) => formatProposalRejectPlain(r) },
+  { command: "proposal-reopen", handler: (r) => formatProposalReopenPlain(r) },
+  { command: "proposal-reopen-batch", handler: (r) => formatProposalReopenBatchPlain(r) },
   { command: "proposal-diff", handler: (r) => formatProposalDiffPlain(r) },
   { command: "proposal-drain", handler: (r) => formatProposalDrainPlain(r) },
 ];

@@ -962,7 +962,9 @@ function taskAssetRef(id: string): AssetRef {
 /** The bundle `task add` writes into: its write target, config, stash path, and name. */
 function resolveTaskBundle(target: string | undefined) {
   const config = loadConfig();
-  const resolved = prepareWriteTargetForMutation(resolveWriteTarget(config, target, { requireWritable: true }));
+  const resolved = prepareWriteTargetForMutation(
+    resolveWriteTarget(config, target, { requireWritable: true, flag: "--bundle" }),
+  );
   return { resolved, config, stashDir: resolved.source.path, bundleName: resolved.source.name };
 }
 
@@ -975,7 +977,8 @@ function taskProjectionAssetResolver(
     if (bundle === bundleName) {
       return { file: await resolveAssetPath(bundleRoot, type, name), bundleRoot };
     }
-    const target = resolveWriteTarget(config, bundle, { requireWritable: false });
+    // `bundle` is the qualifier of an asset ref in the task, not a flag.
+    const target = resolveWriteTarget(config, bundle, { requireWritable: false, flag: "The asset ref's bundle" });
     return {
       file: await resolveAssetPath(target.source.path, type, name),
       bundleRoot: target.source.path,
@@ -1008,7 +1011,13 @@ export function resolveTaskReadBundle(
   } else {
     const configured = resolveActiveConfiguredSources(config).some((source) => source.name === selector);
     const implicit = configured ? undefined : resolveImplicitScheduledBundleTarget(config, selector);
-    resolved = implicit ?? resolveWriteTarget(config, selector, { requireWritable: false });
+    resolved =
+      implicit ??
+      resolveWriteTarget(config, selector, {
+        requireWritable: false,
+        // The selector is `--bundle` when given, else the task ref's own bundle qualifier.
+        flag: flagBundle !== undefined ? "--bundle" : "The task ref's bundle",
+      });
   }
   if (refBundle && resolved.source.name !== refBundle) {
     throw new UsageError(

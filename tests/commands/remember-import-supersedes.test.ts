@@ -382,7 +382,7 @@ describe("remember --supersedes", () => {
     expect(newParsed.data.xrefs).toContain(oldRef);
   });
 
-  test("old asset in a WRITABLE non-target source: demotion skipped with a --target remedy (not misreported as read-only)", async () => {
+  test("old asset in a WRITABLE non-target source: demotion skipped with a --bundle remedy (not misreported as read-only)", async () => {
     const teamDir = makeDir("akm-supersedes-writable-team");
     const oldPath = seedAsset(teamDir, "memories/team-note.md", "Team note from the shared writable stash.\n");
     const oldRaw = fs.readFileSync(oldPath, "utf8");
@@ -415,7 +415,9 @@ describe("remember --supersedes", () => {
     // the reason must not misdiagnose the source as read-only, and must name
     // the actual remedy.
     expect(reason).not.toContain("read-only");
-    expect(reason).toContain("--target team");
+    // `remember` takes --bundle; its remedy must not send the user to --target.
+    expect(reason).toContain("--bundle team");
+    expect(reason).not.toContain("--target");
     expect(fs.readFileSync(oldPath, "utf8")).toBe(oldRaw);
   });
 
@@ -619,6 +621,34 @@ describe("import --supersedes", () => {
     expect(oldParsedAfter.data.description).toBe("Legacy auth guide");
     expect(oldParsedAfter.data.tags).toEqual(["auth"]);
     expect(oldParsedAfter.content).toBe(oldParsedBefore.content);
+  });
+
+  test("old doc in a WRITABLE non-target source: demotion skipped with a --target remedy (import's own flag)", async () => {
+    const teamDir = makeDir("akm-import-supersedes-writable-team");
+    const oldPath = seedAsset(teamDir, "knowledge/team-guide.md", "Team guide from the shared writable stash.\n");
+    const oldRaw = fs.readFileSync(oldPath, "utf8");
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      bundles: { team: { path: teamDir, writable: true } },
+    });
+    const sourcePath = makeSourceFile("team-guide-fix.md", "# Team guide fix\n\nCorrected advice.\n");
+
+    const { code, stdout, stderr } = await runCliCapture([
+      "import",
+      sourcePath,
+      "--name",
+      "team-guide-fix",
+      "--supersedes",
+      "knowledge/team-guide",
+    ]);
+    expect(code, stderr).toBe(0);
+
+    const json = JSON.parse(stdout) as WriteOutput;
+    expect(json.superseded?.[0]?.applied).toBe(false);
+    const reason = json.superseded?.[0]?.reason ?? "";
+    expect(reason).toContain("--target team");
+    expect(reason).not.toContain("--bundle");
+    expect(fs.readFileSync(oldPath, "utf8")).toBe(oldRaw);
   });
 
   test("unresolvable --supersedes fails with exit 2 usage envelope and imports nothing", async () => {

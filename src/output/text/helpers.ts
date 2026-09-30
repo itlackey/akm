@@ -58,6 +58,8 @@ export {
   formatProposalListPlain,
   formatProposalProducerPlain,
   formatProposalRejectPlain,
+  formatProposalReopenBatchPlain,
+  formatProposalReopenPlain,
   formatProposalShowPlain,
 } from "./proposal-format";
 export { formatShowPlain } from "./show-format";

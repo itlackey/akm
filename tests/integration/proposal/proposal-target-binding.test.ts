@@ -6,6 +6,7 @@ import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal, listProposals, resolveProposalId } from "../../../src/commands/proposal/repository";
 import { type AkmConfig, resetConfigCache } from "../../../src/core/config/config";
 import { openStateDatabase } from "../../../src/core/state-db";
+import { durableItemRef } from "../../_helpers/durable-ref";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const VALID_LESSON = `---\ndescription: Proposal with a stable bound destination\nwhen_to_use: Testing proposal destinations\n---\n\nBound content.\n`;
@@ -205,6 +206,54 @@ describe("proposal queue target binding", () => {
     ).toThrow(/conflicts with queue target/i);
     expect(fs.existsSync(path.join(primary, "lessons", "wrong-root.md"))).toBe(false);
     expect(fs.existsSync(path.join(team, "lessons", "wrong-root.md"))).toBe(false);
+  });
+
+  test("a rewrite of an asset another bundle owns is refused instead of filed in this queue (#1000)", () => {
+    const primary = stash("akm-proposal-owner-primary-");
+    const team = stash("akm-proposal-owner-team-");
+    writeSandboxConfig(config(primary, team));
+    resetConfigCache();
+    fs.writeFileSync(path.join(team, "lessons", "owned-by-team.md"), VALID_LESSON, "utf8");
+    fs.writeFileSync(path.join(team, "lessons", "in-both.md"), VALID_LESSON, "utf8");
+    fs.writeFileSync(
+      path.join(primary, "lessons", "in-both.md"),
+      VALID_LESSON.replace("Bound", "Primary's own"),
+      "utf8",
+    );
+    const rewrite = (name: string, queue: { source: string; root: string }, itemRef: string) =>
+      createProposal(queue.root, {
+        ref: `lessons/${name}`,
+        itemRef,
+        source: "propose",
+        target: queue,
+        payload: { content: VALID_LESSON },
+      });
+    const primaryQueue = { source: "primary", root: primary };
+
+    // A `create` fork of team's asset, and an `update` of primary's own copy built from team's.
+    expect(() => rewrite("owned-by-team", primaryQueue, "team//lessons/owned-by-team")).toThrow(
+      /rewrites team\/\/lessons\/owned-by-team, which bundle "team" owns/,
+    );
+    expect(() => rewrite("in-both", primaryQueue, "team//lessons/in-both")).toThrow(/bundle "team" owns/);
+    expect(listProposals(primary)).toEqual([]);
+    expect(fs.existsSync(path.join(primary, "lessons", "owned-by-team.md"))).toBe(false);
+
+    // The owning bundle's own queue, and an `itemRef` in the queue's own bundle, are unaffected.
+    expect(rewrite("owned-by-team", { source: "team", root: team }, "team//lessons/owned-by-team").ref).toBe(
+      "team//lessons/owned-by-team",
+    );
+    expect(rewrite("in-both", primaryQueue, "primary//lessons/in-both").ref).toBe("primary//lessons/in-both");
+
+    // One bundle under two spellings is not two bundles: this root is unconfigured, so the index
+    // names it by a path slug while the improve loop calls its implicit working target "stash".
+    const unconfigured = stash("akm-proposal-owner-unconfigured-");
+    expect(
+      rewrite(
+        "spelled-twice",
+        { source: "stash", root: unconfigured },
+        durableItemRef(unconfigured, "lesson", "spelled-twice"),
+      ).ref,
+    ).toBe("stash//lessons/spelled-twice");
   });
 
   test("qualified filters preserve bundle identity while a short ref scopes to all duplicates in the queue", () => {

@@ -233,11 +233,11 @@ interface WriteRefRoot {
   mutable: boolean;
 }
 
-function resolveWriteRefRoots(target?: string): { roots: WriteRefRoot[] } {
+function resolveWriteRefRoots(target?: string, targetFlag?: string): { roots: WriteRefRoot[] } {
   const cfg = loadConfig();
   let writeTarget: ResolvedWriteTarget;
   try {
-    writeTarget = resolveWriteTarget(cfg, target);
+    writeTarget = resolveWriteTarget(cfg, target, { flag: targetFlag });
   } catch (error) {
     if (!target) throw error;
     try {
@@ -371,11 +371,11 @@ export const XREF_SOFT_CAP = 5;
  * {@link XREF_SOFT_CAP} refs emits a stderr warning (soft cap) but still
  * returns them all.
  */
-export function resolveXrefsForWrite(rawXrefs: string[], target?: string): string[] {
+export function resolveXrefsForWrite(rawXrefs: string[], target?: string, targetFlag?: string): string[] {
   const parsedRefs = parseWriteRefs(rawXrefs, "--xref");
   if (parsedRefs.length === 0) return [];
 
-  const { roots } = resolveWriteRefRoots(target);
+  const { roots } = resolveWriteRefRoots(target, targetFlag);
 
   const unresolved: ParsedWriteRef[] = [];
   const xrefs: string[] = [];
@@ -494,7 +494,11 @@ export interface SupersededTarget {
 }
 
 /** Resolve any qualified supersedes ref as the mutation target for remember/import. */
-export function resolveSupersedesWriteTarget(rawRefs: string[], target?: string): string | undefined {
+export function resolveSupersedesWriteTarget(
+  rawRefs: string[],
+  target?: string,
+  targetFlag?: string,
+): string | undefined {
   const config = loadConfig();
   let effectiveTarget = target;
   for (const parsed of parseWriteRefs(rawRefs, "--supersedes")) {
@@ -503,6 +507,7 @@ export function resolveSupersedesWriteTarget(rawRefs: string[], target?: string)
       config,
       { type: parsed.type, name: parsed.name, origin: parsed.origin },
       effectiveTarget,
+      { flag: targetFlag },
     ).target;
     effectiveTarget = resolved.selector ?? resolved.source.name;
   }
@@ -541,17 +546,17 @@ const SUPERSEDE_REJECTED_TYPES: ReadonlySet<string> = new Set(["secret", "env", 
  * constraint (and never dirtying a non-target source outside its boundary
  * commit). A ref that resolves only in another configured source — read-only
  * OR writable-but-not-the-target — is returned with `writable: false` and a
- * reason (naming the `--target` remedy when the source is writable); the
+ * reason (naming the target-flag remedy when the source is writable); the
  * caller writes the correction anyway and reports the demotion as not
  * applied.
  *
  * Returns the deduplicated plan in argv order; empty input returns [].
  */
-export function resolveSupersedesForWrite(rawRefs: string[], target?: string): SupersededTarget[] {
+export function resolveSupersedesForWrite(rawRefs: string[], target?: string, targetFlag?: string): SupersededTarget[] {
   const parsedRefs = parseWriteRefs(rawRefs, "--supersedes");
   if (parsedRefs.length === 0) return [];
 
-  const { roots } = resolveWriteRefRoots(target);
+  const { roots } = resolveWriteRefRoots(target, targetFlag);
 
   const plan: SupersededTarget[] = [];
   const unresolved: ParsedWriteRef[] = [];
@@ -618,7 +623,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string): S
         : {
             reason: namedWritableSource
               ? `resolves outside the write target and the working stash, in writable source "${namedWritableSource}" at ${root}; ` +
-                `re-run with --target ${namedWritableSource} to demote it there`
+                `re-run with ${targetFlag ?? "--target"} ${namedWritableSource} to demote it there`
               : `resolves outside the write target and the working stash, in a read-only source at ${root}; ` +
                 "demotion only applies to assets in the write target or the working stash",
           }),
@@ -650,6 +655,8 @@ export async function writeMarkdownAsset(options: {
   force?: boolean;
   /** Optional explicit `--target` override naming a configured source. */
   target?: string;
+  /** The flag that carried `target`, as the caller's command spells it in errors (default `--target`). */
+  targetFlag?: string;
   /**
    * Optional `--path`: a relative directory under the type root in which to
    * place the asset. The filename still comes from `name` (or the content
@@ -682,7 +689,9 @@ export async function writeMarkdownAsset(options: {
     inferAssetName(options.content, options.fallbackPrefix, options.preferredName),
   );
   const normalizedName = combineCreatePath(subPath, baseName);
-  const resolved = resolveMutationTarget(cfg, { type: options.type, name: normalizedName }, options.target);
+  const resolved = resolveMutationTarget(cfg, { type: options.type, name: normalizedName }, options.target, {
+    flag: options.targetFlag,
+  });
   const { target } = resolved;
   const { source, config } = target;
   const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");

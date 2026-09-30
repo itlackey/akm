@@ -6,6 +6,141 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.19-alpha.1] - 2026-09-30
+
+### Added
+
+- **`akm proposal reopen <id...> [--reason <text>]` (#997).** A rejection was
+  final: nothing undid it, and a rejected `consolidate-pair` retire proposal
+  also kept the pair pass from ever proposing that retirement again while both
+  documents were unchanged. Reopen moves rejected proposals back to `pending`,
+  keeping the rejection (and the gate verdict that came with it) in the
+  proposal's new `reviewHistory`, which `proposal show` prints; the verdict
+  itself is cleared so the drain sees the proposal as undecided, except a
+  `deferred` one (the quality gate's hand-off to a person), which stays. It is
+  refused unless the proposal is `rejected` and `accept` would not refuse it as
+  stale (an update's target unchanged; a create's target still absent; a retire
+  proposal's successor present and both documents' body hashes as recorded),
+  and a retire proposal is refused while another pending retire proposal
+  involves either of its documents. Several ids are all-or-nothing. The pair pass
+  follows the status: a reopened proposal is no longer a settled pair and,
+  pending, is not minted twice. Its `improve_ledger` row is reset (a retire
+  proposal's rejection row is dropped, any other goes back to `proposed`), the
+  age that retention expiry and `--older-than` (bulk accept/reject, `drain`)
+  see restarts at the reopen, so a scheduled sweep does not take a proposal a
+  person just put back, and a `proposal_reopened` event is appended.
+  `akm proposal reject`'s confirmation prompt no longer says a rejection
+  cannot be undone.
+
+### Fixed
+
+- **A tool failure recorded with `akm feedback` no longer becomes a lesson
+  about the error or a `TODO` placeholder in a memory (#999).** Agents
+  recorded `akm show` failing on a memory with a `.derived.md` child (fixed in
+  0.9.17) as negative feedback, and distill and reflect read it as evidence
+  about the memory's content. On one bundle, 9 such events on 8 memories
+  produced 4 distill lessons about "duplicate physical owners" for memories on
+  unrelated subjects (one auto-accepted and live), and a reflect proposal,
+  also auto-accepted, that added a `TODO: verify physical owner` section to a
+  memory, on which a fifth lesson was then built. The shipped hints had told
+  agents to record `--negative` "when it fails"; they, and the help for
+  `akm feedback --reason`, now say a failed akm command is not feedback on the
+  asset. Reflect's feedback caveat no longer offers a `TODO: verify …`
+  placeholder: when feedback asks for information the asset lacks, it says
+  only to leave the section unchanged. The distill quality judge now also
+  scores **grounding**, whether the lesson is about what its source is about
+  (1–2 only for a different subject; a lesson that corrects its source from
+  feedback is not off-subject), and a grounding score of 2 or less is
+  `quality_rejected` (an `improve_ledger` row and a `distill_invoked` event, no
+  proposal) whatever the mean of novelty and non-redundancy is. Such a lesson
+  reads as novel and non-redundant, so it used to pass or, in the review band,
+  be minted as a pending `review_needed` proposal. The judge also reads the
+  same slice of the source the lesson was generated from (its body without
+  frontmatter, first 3000 characters) instead of the raw file's first 2000. A
+  lesson that contradicts its source still reaches a human through the
+  optional fidelity check (`processes.distill.fidelityCheck.enabled`, off by
+  default), and every other `review_needed` reason is unchanged. `TODO:`
+  lines already in a memory are not removed.
+- **Consolidation stops re-proposing memories that `knowledge/` already
+  covers (#998).** The promote pass copied a memory into a new `knowledge/`
+  proposal with no notion of what `knowledge/` already held: the model never
+  sees it, the mint-time checks only caught the same slug or a byte-identical
+  body, and an accepted promotion's memory was eligible again at once (a
+  rejected one after 7 days). On one bundle 88% of a run's proposals came from
+  memories promoted before, one of them 14 times, and 215 of 224 rejections
+  read "covered by an existing knowledge doc". Two changes, no new setting:
+  before queuing a promotion, consolidate now compares the memory with the 20
+  `knowledge/` docs in its bundle nearest to it by stored vector (the lookup
+  the pair pass uses) and skips it, with skip reason
+  `dedup_covered_by_knowledge`, when one of them holds at least half of the
+  memory's distinct 5-word shingles (measured against every knowledge doc,
+  that share was at least 0.5 for 122 of the 224 rejected proposals and for
+  none of the 103 accepted ones; a covering doc past the 20 nearest goes
+  unseen); and a memory whose promotion was accepted or rejected is offered
+  again only when its body changes, the same content-driven rule the pair pass
+  uses, instead of at once or after 7 days. A promotion decided by an older
+  release recorded no body hash and keeps its old windows. With no stored
+  vector (semantic search off) the coverage check does nothing.
+- **`akm improve` no longer files one bundle's assets into another (#1000).**
+  Candidate selection admitted assets from every writable bundle, but every
+  proposal is filed in the run's write target and reflect reads each asset
+  from the bundle that owns it. An asset owned by another bundle therefore
+  came back as a `create` fork in the write target, or as an `update` of the
+  write target's own copy built from the other bundle's copy. A run now plans
+  only the bundle it writes to (`--bundle`, else `defaultWriteTarget`, else
+  the working bundle), and a bare ref scope (`akm improve skills/x`) resolves
+  inside that bundle. Distill's memory-to-knowledge promotion likewise merges
+  only with a doc that already exists in the write target. As a second line of
+  defence, `createProposal` refuses a rewrite whose `itemRef` names an asset
+  owned by a different configured bundle than the queue's. **Narrowed
+  behaviour:** a run no longer picks up assets from your other writable
+  bundles (it used to read them and queue the result in its own write target),
+  so a scheduled `akm improve` now covers only its write target: add one
+  `akm improve --bundle <name>` run per other bundle you want improved.
+  `akm improve <ref>` for an asset that lives only in another bundle now fails
+  with a not-found error whose hint names the remedy (`--bundle team`, or
+  `akm improve team//skills/x`). Proposals the old behaviour already queued
+  stay in the queue; review them with `akm proposal list`. `--bundle`'s help
+  text now says it selects the bundle a run improves and writes to.
+- **`akm improve --dry-run`/`--plan` previews the bundle a live run improves.**
+  With no `--bundle` and no `defaultWriteTarget`, a live run starts from
+  `AKM_BUNDLE_DIR` before `defaultBundle`, but a dry run read `defaultBundle`
+  only, so the two could plan different bundles. The preview now resolves the
+  working bundle the same way.
+- **`akm proposal diff` shows a retire proposal as a retirement (#997).** It
+  rendered the retired file as replaced by one blank line (`----`, a lone `+`,
+  then every other line as a removal, under an `(update: <ref>)` header) and
+  said nothing about the retirement, so one reviewer rejected all 65 of a
+  bundle's `consolidate-pair` proposals as "would destroy content". The diff
+  now lists only the removed lines, under a `(retire: <retired> -> <successor>)`
+  header and `+++ /dev/null (retired: archived; successor <ref>)`, and its JSON
+  result gains `op: "delete"`, a `retirement` block under the keys `proposal
+  show` uses (`retiredRef`, `successorRef`, `judgeLabel`, `judgeReason`,
+  `cosine`, and `continuityRisk` when the pair was flagged, which the text
+  output prints as well) and a `note` that accepting archives the file under
+  `.akm/memory-cleanup/archive/` and `akm proposal revert` restores it
+  byte-exactly. The new fields are additive and appear on retire proposals
+  only. `akm proposal show --detail full` also stops ending a retire proposal
+  with a bare `payload:` heading over nothing.
+- **Errors name the flag the command takes, not the retired `--target`
+  (`improve`, `remember`, `clone`, `task`, `proposal --queue`).** A `--bundle`
+  that names no configured bundle, names a read-only one, or differs from a
+  bundle-qualified ref (`akm improve team//skills/x --bundle stash`) failed with
+  "--target must reference a source name", "or pass --target to a different
+  source" or "conflicts with --target". `akm improve`, `remember`, `clone` and
+  every `task` verb reject `--target` (renamed `--bundle` in 0.9), and
+  `proposal --queue` takes `--queue`, so each message sent the user to a flag
+  that does not work. They now name the flag the command takes, and the
+  remedy in `akm remember --supersedes` says "re-run with --bundle" instead of
+  "--target". A bundle that came from a ref inside a task (`ghost//workflows/x`)
+  is described as such rather than blamed on a flag. The commands that really
+  take `--target` (`import`, `env`, `secret`, `proposal accept`) are unchanged.
+  Separately, the help for `akm improve --skip-if-locked` said a lock collision
+  without the flag exits 78. It exits 75 (`IMPROVE_LOCK_HELD`), as the CLI
+  reference says. The `--limit` help says "highest salience first" (it said
+  utility), and the `task add --command` help example uses
+  `--strategy reflect-distill` (the `frequent` strategy no longer exists).
+
 ## [0.9.18] - 2026-09-29
 
 ### Fixed

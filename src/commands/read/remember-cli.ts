@@ -55,6 +55,9 @@ async function fetchSimilarMemories(
   }
 }
 
+/** The flag `remember` takes for its destination, as its errors spell it. */
+const TARGET_FLAG = "--bundle";
+
 /**
  * `--target` was renamed to `--bundle` on `remember` in 0.9 (S8). citty is
  * non-strict, so the retired spelling is silently absorbed rather than
@@ -186,8 +189,8 @@ export const rememberCommand = defineJsonCommand({
     // untouched. Refs resolvable only in a configured extra stash source are
     // accepted (cross-stash provenance).
     const rawSupersedes = parseAllFlagValues("--supersedes");
-    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle);
-    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget);
+    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle, TARGET_FLAG);
+    const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget, TARGET_FLAG);
 
     // Collect and validate --supersedes occurrences (repeatable). Same
     // before-any-write validation contract: an unresolvable ref exits 2 with
@@ -196,7 +199,7 @@ export const rememberCommand = defineJsonCommand({
     // (correction provenance per the back-linking conventions); the demotion
     // itself runs inside writeMarkdownAsset, ordered before the git boundary
     // commit.
-    const supersedes = resolveSupersedesForWrite(rawSupersedes, writeTarget);
+    const supersedes = resolveSupersedesForWrite(rawSupersedes, writeTarget, TARGET_FLAG);
     for (const s of supersedes) {
       if (!xrefs.includes(s.ref)) xrefs.push(s.ref);
     }
@@ -241,6 +244,7 @@ export const rememberCommand = defineJsonCommand({
         preferredName: inferAssetName(body, "memory"),
         force: args.force,
         target: writeTarget,
+        targetFlag: TARGET_FLAG,
         path: args.path,
         supersedes,
       });
@@ -351,6 +355,7 @@ export const rememberCommand = defineJsonCommand({
       preferredName: inferAssetName(body, "memory"),
       force: args.force,
       target: writeTarget,
+      targetFlag: TARGET_FLAG,
       path: args.path,
       supersedes,
     });

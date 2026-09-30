@@ -100,8 +100,9 @@ akm feedback memories/deployment-notes --positive # Works for memories too
 akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
 
-Use `akm feedback` whenever an asset materially helps or fails so future search
-ranking can learn from actual usage.
+Use `akm feedback` whenever an asset's content materially helps, or proves wrong,
+stale or unhelpful, so future search ranking can learn from actual usage. An akm
+command that fails says nothing about the asset; don't record it as feedback.
 
 ## LLM Wiki bundles
 
@@ -340,6 +341,7 @@ akm proposal accept 7c115132                            # Accept by UUID prefix
 akm proposal accept <id> --target team-bundle            # Accept to a named writable bundle source
 akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."                 # Archive with a reason
+akm proposal reopen <id> --reason "..."                 # Undo a rejection: back to pending (refused if the target changed)
 akm proposal revert <id>                                # Restore the pre-promotion content
 akm proposal new <type> <name> --task "..."             # Agent-author a NEW asset as a proposal
 akm proposal extract --auto                             # Mine native session files into proposals

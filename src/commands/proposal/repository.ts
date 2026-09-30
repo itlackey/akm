@@ -23,7 +23,7 @@ import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-seri
 import { carryForwardBookkeepingFrontmatter, parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
@@ -46,9 +46,12 @@ import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
+  CONSOLIDATE_LEDGER_SOURCE,
+  forgetImproveLedgerDecision,
   type ImproveLedgerOutcome,
   recordImproveLedger,
   recordImproveLedgerDecision,
+  reopenImproveLedgerDecision,
 } from "../../storage/repositories/improve-ledger-repository";
 import {
   getStateProposal,
@@ -63,7 +66,7 @@ import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
-import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
+import { formatNewAssetDiff, formatRetireDiff, formatUnifiedDiff } from "./diff-format";
 import {
   ASSET_MISSING_GATE_REASON,
   type EligibilitySource,
@@ -77,6 +80,7 @@ import {
   type ProposalPayload,
   type ProposalSource,
   type ProposalStatus,
+  proposalWaitingSince,
   type RetireAcceptIntent,
   type RetirementMetadata,
   STALE_TARGET_GATE_REASON,
@@ -114,7 +118,8 @@ type ProposalRejectionReason =
   | "unknown_type"
   | "empty_content"
   | "missing_description"
-  | "invalid_canonical_structure";
+  | "invalid_canonical_structure"
+  | "cross_bundle";
 
 export interface OrphanPurgeResult {
   checked: number;
@@ -163,6 +168,13 @@ export interface CreateProposalInput {
   ref: string;
   /** The queue's bundle name and materialized root; derived from the stash when omitted. */
   target?: { source: string; root: string };
+  /**
+   * The durable `bundle//conceptId` of the existing asset this proposal rewrites,
+   * when the caller read it from a specific bundle. The proposal must be filed in
+   * that bundle: another queue would fork the asset (a `create`) or overwrite its
+   * own copy with content derived from the other bundle's (#1000).
+   */
+  itemRef?: string;
   /** One of {@link PROPOSAL_SOURCES}; an unknown value warns. */
   source: ProposalSource | string;
   /** The automated run that made it (PROV-DM); an automated source without one warns. */
@@ -300,6 +312,27 @@ export function resolveProposalQueueTarget(
 }
 
 /**
+ * The configured bundle that owns the asset `itemRef` names when it is not the
+ * bundle rooted at `target`; otherwise `undefined`. A differing name is
+ * confirmed by the owner's root, so one bundle known by two spellings is never
+ * taken for two, and an owner that cannot be resolved is never refused on.
+ */
+function otherOwningBundle(itemRef: string, target: { source: string; root: string }): string | undefined {
+  try {
+    const owner = parseBundleRef(itemRef).bundle;
+    if (owner === undefined || owner === target.source) return undefined;
+    const sources = resolveSourceEntries(target.root, loadConfig());
+    const ownerSource = sources[deriveInstallations(sources).findIndex((installation) => installation.id === owner)];
+    return ownerSource !== undefined && path.resolve(ownerSource.path) !== path.resolve(target.root)
+      ? owner
+      : undefined;
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return undefined;
+  }
+}
+
+/**
  * Create a pending proposal (a random UUID id). Obviously invalid input is
  * refused with a typed `proposal_creation_rejected` event. The mint and its
  * `proposed` ledger rows commit in one transaction; whether a ref may be
@@ -364,9 +397,17 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
     }
   }
 
+  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
+  const owner = input.itemRef ? otherOwningBundle(input.itemRef, proposalTarget) : undefined;
+  if (owner) {
+    return rejectProposal(
+      "cross_bundle",
+      `Proposal for "${input.ref}" rewrites ${input.itemRef}, which bundle "${owner}" owns, but its queue target is bundle "${proposalTarget.source}". Filing it there would fork the asset out of "${owner}" or overwrite this bundle's copy with content taken from the other. Improve it in its own bundle instead (\`akm improve --bundle ${owner}\`).`,
+    );
+  }
+
   // The FileChange envelope, and the target's before-hashes as of mint (the
   // freshness check at accept compares against them).
-  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
   const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
   const targetRoot = path.resolve(proposalTarget.root);
   let targetRelPath: string;
@@ -675,6 +716,28 @@ function ledgerOutcomeForDecision(
   return "rejected";
 }
 
+/**
+ * What a decision's ledger row is about. A promotion's row is keyed by its
+ * source memory, so a decision on it names that memory, together with the body
+ * hash the promotion was queued against — this is what holds the memory back
+ * until it changes (`isContentDrivenDecision`). Any other proposal, and a
+ * promotion minted before the hash was recorded, is keyed by its own ref.
+ * Every decision that can create a row when none carries the proposal id — a
+ * reject, an accept and a drain deferral alike — must key it this way: a stray
+ * row under the knowledge ref carries the proposal id, so a later verdict
+ * updates that one and never reaches the memory's own row.
+ */
+function decisionLedgerSubject(proposal: Proposal): { ref: string; contentHash?: string } {
+  if (
+    proposal.source === CONSOLIDATE_LEDGER_SOURCE &&
+    proposal.promotionSource !== undefined &&
+    proposal.promotionSourceHash !== undefined
+  ) {
+    return { ref: proposal.promotionSource, contentHash: proposal.promotionSourceHash };
+  }
+  return { ref: proposal.ref };
+}
+
 /** Archive a pending proposal as accepted/rejected, recording the decision in the ledger in the same transaction. */
 export function archiveProposal(
   stashDir: string,
@@ -705,7 +768,7 @@ export function archiveProposal(
       recordImproveLedgerDecision(db, {
         proposalId: updated.id,
         stashDir,
-        ref: updated.ref,
+        ...decisionLedgerSubject(updated),
         source: updated.source,
         outcome: ledgerOutcomeForDecision(status, gateDecision),
         at: decidedAt,
@@ -739,7 +802,7 @@ export function recordGateDecision(
         recordImproveLedgerDecision(db, {
           proposalId: updated.id,
           stashDir,
-          ref: updated.ref,
+          ...decisionLedgerSubject(updated),
           source: updated.source,
           outcome: "review_needed",
           at: decidedAt,
@@ -797,9 +860,10 @@ export function purgeOrphanProposals(
 
 /**
  * Archive pending proposals older than `archiveRetentionDays` (default 90;
- * 0 disables) as rejected with an `expired` gate decision and a
- * `proposal_expired` event. The ledger records `expired` — a short grace, not
- * the rejection window, since nobody judged the content.
+ * 0 disables; counted from the last reopen, if any) as rejected with an
+ * `expired` gate decision and a `proposal_expired` event. The ledger records
+ * `expired` — a short grace, not the rejection window, since nobody judged the
+ * content.
  */
 export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: ProposalsContext): ExpireStaleResult {
   const t0 = Date.now();
@@ -817,7 +881,9 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
     // permanently drop a still-fresh pair nobody has reviewed yet, with no
     // way back short of the pair pass finding it again from scratch.
     if (isRetireProposal(p)) continue;
-    const createdMs = new Date(p.createdAt).getTime();
+    // A reopened proposal's wait starts over at the reopen (#997): expiring it
+    // on its original age would undo the reopen at the next sweep.
+    const createdMs = new Date(proposalWaitingSince(p)).getTime();
     if (!Number.isFinite(createdMs) || nowMs - createdMs < retentionDays * MS_PER_DAY) continue;
     try {
       archiveProposal(stashDir, p.id, "rejected", "expired: no action within retention window", ctx, {
@@ -954,7 +1020,7 @@ function persistProposalDecision(
       recordImproveLedgerDecision(db, {
         proposalId: next.id,
         stashDir,
-        ref: next.ref,
+        ...decisionLedgerSubject(next),
         source: next.source,
         outcome: ledgerOutcomeForDecision(accept ? "accepted" : "reverted"),
         at: decision.decidedAt,
@@ -2132,6 +2198,196 @@ async function revertProposalWithLease(
   return { proposal: reverted, assetPath, ref: proposal.ref };
 }
 
+export interface ReopenOptions {
+  queueTarget?: ResolvedWriteTarget;
+  /** Why the rejection is being undone: kept in the review history, the ledger row and the event. */
+  reason?: string;
+}
+
+/** The message of the stale-target refusal `check` raises, else `undefined`. */
+function staleRefusal(check: () => void): string | undefined {
+  try {
+    check();
+    return undefined;
+  } catch (error) {
+    if (error instanceof UsageError) return error.message;
+    throw error;
+  }
+}
+
+/**
+ * Why `proposal` cannot be reopened, or `undefined` when it can. Only a
+ * rejected proposal comes back, and only one accept would not refuse as stale:
+ * a retire proposal needs its successor and both recorded body hashes to still
+ * match (B2), any other its target to be what it was minted against
+ * (STALE, R20) — so a reopened proposal is never one the next accept refuses.
+ */
+function reopenRefusal(config: AkmConfig, proposal: Proposal, queueTarget?: ResolvedWriteTarget): string | undefined {
+  if (proposal.status !== "rejected") {
+    return `it is not rejected (current status: ${proposal.status}); only a rejected proposal can be reopened.`;
+  }
+  if (proposal.changes.length === 0 || proposal.proposedTarget === undefined) {
+    // A pending row must carry both (proposalToRowValues), which a row from
+    // before the change envelope existed cannot.
+    return "it was recorded before proposals carried their change envelope, so it cannot go back in the queue.";
+  }
+  const target = resolveProposalWriteTarget(config, proposal, undefined, queueTarget);
+  const assetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
+  if (!assetPath) return "its target cannot be resolved.";
+  if (!isRetireProposal(proposal)) {
+    return staleRefusal(() => void readFreshProposalTarget(proposal, assetPath, proposalContent(proposal)));
+  }
+  if (!proposal.retirement) return "it has no retirement metadata.";
+  if (!fs.existsSync(assetPath)) {
+    return "its retired file no longer exists (already retired, or removed by something else).";
+  }
+  const { retirement } = proposal;
+  return staleRefusal(() =>
+    assertRetirementStillFresh(proposal.id, proposal.ref, retirement, target.source, fs.readFileSync(assetPath)),
+  );
+}
+
+/** The assets a retire proposal speaks for — the one it retires and its successor — as bundle-less concept ids, the way the pair pass keys them. */
+function retireHeldRefs(proposal: Proposal): string[] {
+  return [proposal.ref, proposal.retirement?.successorRef].flatMap((ref) => {
+    const conceptId = ref === undefined ? undefined : proposalRefIdentity(ref)?.conceptId;
+    return conceptId === undefined ? [] : [conceptId];
+  });
+}
+
+const REOPEN_REFUSED_HINT =
+  "Only a rejected proposal whose target is unchanged can be reopened; `akm proposal list --status rejected` lists the candidates.";
+const REOPEN_RETIRE_CONFLICT_HINT =
+  "Only one pending retire proposal can involve a document: accept or reject the pending one (or reopen just one of a clashing pair), then reopen the other.";
+
+/**
+ * The pair pass never has two pending retire proposals speak for one asset
+ * (`pendingRetireRefs`): accepting one would strand the other. Reopening must
+ * not break that either — a rejected pair can meanwhile have been re-paired
+ * with something else. `held` maps each asset to the pending retire proposal
+ * that has it; a proposal that clears this claims its assets, so two in one
+ * batch that clash refuse the later.
+ */
+function retireConflict(proposal: Proposal, held: Map<string, string>): string | undefined {
+  if (!isRetireProposal(proposal)) return undefined;
+  const refs = retireHeldRefs(proposal);
+  for (const ref of refs) {
+    const holder = held.get(ref);
+    if (holder !== undefined) {
+      return `${ref} is already part of retire proposal ${holder}, which is pending or being reopened with this one; only one pending retire proposal may involve an asset.`;
+    }
+  }
+  for (const ref of refs) held.set(ref, proposal.id);
+  return undefined;
+}
+
+/**
+ * Put rejected proposals back in the queue (`akm proposal reopen`, #997): a
+ * rejection is otherwise final, and it also suppresses the pair pass from ever
+ * re-proposing a retirement (its record keys the pair), so a mistaken one
+ * could not be undone. Each proposal returns to `pending` with the rejection —
+ * and the gate verdict that came with it — kept in `reviewHistory` (the verdict
+ * itself is cleared, unless it is a `deferred` hand-off to a person), its
+ * ledger row reset (the pair pass keys off proposal status, so the pair is no
+ * longer suppressed and, while pending, cannot be minted twice), and a
+ * `proposal_reopened` event recorded, all in one transaction.
+ *
+ * All-or-nothing: every id is checked (see {@link reopenRefusal} and
+ * {@link retireConflict}) before any is reopened, and one refusal leaves the
+ * whole batch untouched.
+ */
+export function reopenProposals(
+  stashDir: string,
+  config: AkmConfig,
+  ids: readonly string[],
+  options: ReopenOptions = {},
+  ctx?: ProposalsContext,
+): Proposal[] {
+  return withProposalsDb(ctx, (db) =>
+    withImmediateTransaction(db, () => {
+      const proposals = [...new Set(ids)].map((id) => requireProposal(db, stashDir, id));
+      const held = new Map<string, string>();
+      for (const pending of listStateProposals(db, { stashDir, status: "pending" })) {
+        if (isRetireProposal(pending)) for (const ref of retireHeldRefs(pending)) held.set(ref, pending.id);
+      }
+      const refusals = proposals.flatMap((proposal) => {
+        const refusal = reopenRefusal(config, proposal, options.queueTarget);
+        const conflict = refusal === undefined ? retireConflict(proposal, held) : undefined;
+        const reason = refusal ?? conflict;
+        return reason === undefined
+          ? []
+          : [{ proposal: `${proposal.id} (${proposal.ref})`, reason, isConflict: conflict !== undefined }];
+      });
+      if (refusals.length > 0) {
+        // A retire conflict is not about the target changing, so it gets its own hint.
+        const hints = [
+          ...(refusals.some((refusal) => !refusal.isConflict) ? [REOPEN_REFUSED_HINT] : []),
+          ...(refusals.some((refusal) => refusal.isConflict) ? [REOPEN_RETIRE_CONFLICT_HINT] : []),
+        ];
+        throw new UsageError(
+          proposals.length === 1
+            ? `Proposal ${refusals[0]?.proposal} cannot be reopened: ${refusals[0]?.reason}`
+            : `Cannot reopen ${refusals.length} of ${proposals.length} proposals; none were reopened:\n${refusals
+                .map((refusal) => `  - ${refusal.proposal}: ${refusal.reason}`)
+                .join("\n")}`,
+          "INVALID_FLAG_VALUE",
+          hints.join(" "),
+        );
+      }
+      const decidedAt = nowIso(ctx);
+      return proposals.map((existing) => {
+        const reopened: Proposal = {
+          ...existing,
+          status: "pending",
+          updatedAt: decidedAt,
+          review: undefined,
+          // A reopened proposal is adjudicated afresh: a `staged` verdict would
+          // let the drain accept it unseen, and another gate's `auto-rejected`
+          // would have the drain skip it. A `deferred` one is the quality
+          // gate's hand-off to a person, which the drain must keep honouring
+          // (drainProposals leaves it alone), so it stays.
+          gateDecision: existing.gateDecision?.outcome === "deferred" ? existing.gateDecision : undefined,
+          reviewHistory: [
+            ...(existing.reviewHistory ?? []),
+            {
+              ...(existing.review !== undefined ? { review: existing.review } : {}),
+              ...(existing.gateDecision !== undefined ? { gateDecision: existing.gateDecision } : {}),
+              reopenedAt: decidedAt,
+              ...(options.reason !== undefined ? { reopenReason: options.reason } : {}),
+            },
+          ],
+        };
+        upsertProposal(db, reopened, stashDir);
+        if (isRetireProposal(existing)) {
+          // A retire mint writes no ledger row, so the one its rejection wrote goes.
+          forgetImproveLedgerDecision(db, stashDir, existing.id);
+        } else {
+          reopenImproveLedgerDecision(db, {
+            proposalId: existing.id,
+            stashDir,
+            source: existing.source,
+            at: decidedAt,
+            detail: options.reason !== undefined ? `reopened: ${options.reason}` : "reopened",
+          });
+        }
+        insertEventOnce(db, {
+          eventType: "proposal_reopened",
+          ts: decidedAt,
+          ref: reopened.ref,
+          metadata: {
+            proposalId: reopened.id,
+            source: reopened.source,
+            ...(reopened.sourceRun !== undefined ? { sourceRun: reopened.sourceRun } : {}),
+            ...(options.reason !== undefined ? { reason: options.reason } : {}),
+          },
+          idempotencyKey: `${reopened.id}:reopened:${decidedAt}`,
+        });
+        return reopened;
+      });
+    }),
+  );
+}
+
 export interface ProposalDiff {
   /** The asset currently at the target, if any. */
   existing: string | null;
@@ -2154,11 +2410,20 @@ export function diffProposal(
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   const targetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
   const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;
-  // A retire proposal's primary change deletes its target rather than
-  // writing content: "proposed" is empty and the diff shows the whole body
-  // being removed, reusing the ordinary unified-diff formatter instead of
-  // proposalContent() (which has nothing to read for a delete).
-  const proposed = isRetireProposal(proposal) ? "" : proposalContent(proposal);
+  if (isRetireProposal(proposal)) {
+    // A retire proposal's primary change deletes its target rather than
+    // writing content (proposalContent() has nothing to read for a delete):
+    // accept archives the file, it never replaces it with a blank one, so the
+    // diff shows the file leaving — not a "proposed" side (#997).
+    return {
+      existing,
+      proposed: "",
+      unified: formatRetireDiff(proposal.ref, existing, proposal.retirement?.successorRef),
+      isNew: false,
+      ...(targetPath ? { targetPath } : {}),
+    };
+  }
+  const proposed = proposalContent(proposal);
   return {
     existing,
     proposed,

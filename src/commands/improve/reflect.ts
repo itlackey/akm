@@ -1326,7 +1326,7 @@ async function finalizeReflectProposal(args: {
       payload: { content: payload.content, ...(Object.keys(frontmatter).length > 0 ? { frontmatter } : {}) },
       ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
       ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
-      ...(options.itemRef ? { attemptedRefs: [options.itemRef] } : {}),
+      ...(options.itemRef ? { itemRef: options.itemRef, attemptedRefs: [options.itemRef] } : {}),
     },
     reviewReasons.length > 0
       ? {

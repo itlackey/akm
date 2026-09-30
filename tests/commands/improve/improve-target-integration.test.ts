@@ -5,11 +5,18 @@ import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
+import { resolveWriteTarget } from "../../../src/core/write-source";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { seedLockEntries } from "../../_helpers/lockfile";
-import { type Cleanup, makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
+import {
+  type Cleanup,
+  makeStashDir,
+  mutateScopedEnv,
+  type SandboxedDir,
+  sandboxXdgDataHome,
+} from "../../_helpers/sandbox";
 
 const sandboxes: SandboxedDir[] = [];
 let envCleanup: Cleanup = () => {};
@@ -69,7 +76,33 @@ describe("improve named target integration", () => {
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
   });
 
-  test("a qualified scope selects its bundle and conflicts with a different --target", async () => {
+  test("a dry run without a selector previews the working bundle the live run writes to (AKM_BUNDLE_DIR first)", async () => {
+    const primary = stash();
+    const team = stash();
+    // No `defaultWriteTarget`, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
+    const config = withTestImproveLlm({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      bundles: { primary: { path: primary, writable: true }, team: { path: team, writable: true } },
+      defaultBundle: "primary",
+    } as AkmConfig);
+    mutateScopedEnv("AKM_BUNDLE_DIR", team);
+    let selectedRoot: string | undefined;
+
+    await akmImprove({
+      dryRun: true,
+      config,
+      collectEligibleRefsFn: async (_scope, stashDir) => {
+        selectedRoot = stashDir;
+        return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+      },
+    });
+
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(resolveWriteTarget(config).source.path));
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
+  });
+
+  test("a qualified scope selects its bundle and conflicts with a different --bundle", async () => {
     const primary = stash();
     const team = stash();
     const vendor = stash();
@@ -92,6 +125,56 @@ describe("improve named target integration", () => {
         collectEligibleRefsFn,
       }),
     ).rejects.toBeInstanceOf(UsageError);
+  });
+
+  // `akm improve` spells its destination flag `--bundle` (`--target` was renamed in 0.9), so
+  // every error a wrong bundle raises, in a dry run and a live one, must say so.
+  describe("names --bundle, never --target, when the selected bundle is wrong", () => {
+    const failure = async (run: () => Promise<unknown>): Promise<{ message: string; hint: string }> => {
+      try {
+        await run();
+      } catch (error) {
+        const { message } = error as Error;
+        return { message, hint: (error as { hint?: () => string | undefined }).hint?.() ?? "" };
+      }
+      throw new Error("expected akmImprove to throw");
+    };
+    const settled = {
+      collectEligibleRefsFn: async () => ({
+        plannedRefs: [],
+        memorySummary: { eligible: 0, derived: 0 },
+        strategyFilteredRefs: [],
+      }),
+    };
+
+    test("a qualified scope against a different bundle, dry run and live", async () => {
+      const config = targetConfig(stash(), stash(), stash());
+      const scope = "team//memories/shared";
+      for (const dryRun of [true, false]) {
+        const { message, hint } = await failure(() =>
+          akmImprove({ scope, target: "primary", dryRun, config, ...settled }),
+        );
+        expect(message).toBe('Qualified ref bundle "team" conflicts with --bundle "primary".');
+        expect(hint).toContain("Drop --bundle");
+        expect(`${message} ${hint}`).not.toContain("--target");
+      }
+    });
+
+    test("an unknown bundle", async () => {
+      const config = targetConfig(stash(), stash(), stash());
+      const { message } = await failure(() => akmImprove({ target: "ghost", config, ...settled }));
+      expect(message).toContain('--bundle must reference a source name from your config. No source named "ghost"');
+      expect(message).not.toContain("--target");
+    });
+
+    test("a read-only bundle, named by --bundle or by a qualified scope", async () => {
+      const config = targetConfig(stash(), stash(), stash());
+      for (const options of [{ target: "vendor" }, { scope: "vendor//knowledge/guide" }]) {
+        const { hint } = await failure(() => akmImprove({ ...options, config, ...settled }));
+        expect(hint).toContain("or pass --bundle to a different source");
+        expect(hint).not.toContain("--target");
+      }
+    });
   });
 
   test("consolidation isolates the selected source when another source has the same bare ref", async () => {

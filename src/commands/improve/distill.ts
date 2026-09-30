@@ -22,7 +22,7 @@ import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/f
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { resolveStashDir } from "../../core/common";
+import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -586,7 +586,9 @@ async function judgeAndQueue(
   let confidence: number | undefined;
   if (qualityGateEnabled(run)) {
     const similarLessons = await run.similar(content.slice(0, 500), 3);
-    const verdict = await runLessonQualityJudge(run.config, content, out.source ?? "", run.options.chat, {
+    // The judge reads what the generator read: the source body, without its frontmatter (buildDistillPrompt).
+    const source = out.source ? parseFrontmatter(out.source).content.trim() : "";
+    const verdict = await runLessonQualityJudge(run.config, content, source, run.options.chat, {
       ...(similarLessons.length > 0 ? { similarLessons } : {}),
       ...(run.runner ? { llmRunner: run.runner } : {}),
       ...(run.options.signal ? { signal: run.options.signal } : {}),
@@ -807,7 +809,10 @@ async function planPromotion(
   const existingPath = await run.lookup(assessment.knowledgeRef);
   let existing: string | null = null;
   try {
-    if (existingPath && fs.existsSync(existingPath)) existing = fs.readFileSync(existingPath, "utf8");
+    // The promotion is filed in run.stash, so only that bundle's doc is its destination (#1000).
+    if (existingPath && fs.existsSync(existingPath) && isWithin(existingPath, run.stash)) {
+      existing = fs.readFileSync(existingPath, "utf8");
+    }
   } catch {
     existing = null;
   }

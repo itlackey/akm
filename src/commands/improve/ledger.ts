@@ -16,6 +16,7 @@ import type { Database } from "../../storage/database";
 import {
   type ImproveLedgerOutcome,
   type ImproveLedgerRow,
+  isContentDrivenRow,
   isLedgerBlocked,
   listImproveLedgerRows,
   PAIR_PASS_LEDGER_SOURCE,
@@ -25,7 +26,7 @@ import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
 
 export type { ImproveLedgerOutcome, ImproveLedgerRow };
-export { isLedgerBlocked, PAIR_PASS_LEDGER_SOURCE };
+export { isContentDrivenRow, isLedgerBlocked, PAIR_PASS_LEDGER_SOURCE };
 
 /** An improve candidate's durable state key: its index item_ref, else its conceptId. */
 export function stateKey(ref: string, itemRef?: string): string {
