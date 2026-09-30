@@ -2887,6 +2887,13 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 forwarded into feedback metadata and consumed by improve/distill proposal
 prompts. Negative feedback requires a reason by default.
 
+Write the reason about the asset's content. Reflect treats it as an unverified
+report to investigate, not a fact to insert, and leaves a section unchanged when
+the reason asks for information the asset lacks. Distill's quality gate rejects
+a lesson that is off-subject for the asset it was distilled from. A command that
+failed (`akm show` erroring on the ref, say) says nothing about the asset, so
+it is not a reason to record against it.
+
 ### task
 
 `akm task` is the scheduling surface for workflows, agent prompts, and

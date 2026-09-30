@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A tool failure recorded with `akm feedback` no longer becomes a lesson
+  about the error or a `TODO` placeholder in a memory (#999).** Agents
+  recorded `akm show` failing on a memory with a `.derived.md` child (fixed in
+  0.9.17) as negative feedback, and distill and reflect read it as evidence
+  about the memory's content. On one bundle, 9 such events on 8 memories
+  produced 5 distill lessons about "duplicate physical owners" for memories on
+  unrelated subjects (one auto-accepted and live), and a reflect proposal,
+  also auto-accepted, that added a `TODO: verify physical owner` section to a
+  memory, which a later distill pass built a lesson on. Reflect's feedback
+  caveat no longer offers a `TODO: verify …` placeholder: when feedback asks
+  for information the asset lacks, it says only to leave the section
+  unchanged. The distill quality judge now also scores **grounding**, whether
+  the lesson is about what its source is about, and a grounding score of 2 or
+  less is `quality_rejected` (an `improve_ledger` row and a `distill_invoked`
+  event, no proposal) whatever the mean of novelty and non-redundancy is.
+  Such a lesson reads as novel and non-redundant, so it used to pass or, in
+  the review band, be minted as a pending `review_needed` proposal. Every
+  other `review_needed` reason is unchanged. `TODO:` lines already in a
+  memory are not removed.
+
 ## [0.9.18] - 2026-09-29
 
 ### Fixed

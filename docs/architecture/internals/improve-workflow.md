@@ -93,10 +93,15 @@ flowchart TD
             DISTILL_E -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
             DISTILL_F --> DISTILL_G{findings?}
             DISTILL_G -- yes --> DISTILL_FAIL[appendEvent: outcome=validation_failed\nthrow UsageError]
-            DISTILL_G -- no --> DISTILL_H[createProposal lessons/slug-lesson\nor knowledge/slug\nsource: distill\nappendEvent: outcome=queued]
+            DISTILL_G -- no --> DISTILL_J{quality gate judge:\nnovelty, non-redundancy, grounding}
+            DISTILL_J -- pass --> DISTILL_H[createProposal lessons/slug-lesson\nor knowledge/slug\nsource: distill\nappendEvent: outcome=queued]
+            DISTILL_J -- mean in the review band --> DISTILL_REVIEW[createProposal, gate decision deferred\nappendEvent: outcome=review_needed]
+            DISTILL_J -- mean too low or grounding 2 or less --> DISTILL_REJECT[improve_ledger row, no proposal\nappendEvent: outcome=quality_rejected]
             DISTILL_PROMOTE --> DISTILL_RETURN
             DISTILL_SKIP --> DISTILL_RETURN
             DISTILL_H --> DISTILL_RETURN([return AkmDistillResult])
+            DISTILL_REVIEW --> DISTILL_RETURN
+            DISTILL_REJECT --> DISTILL_RETURN
         end
 
         SKIP_DISTILL --> NEXT_ASSET
@@ -192,7 +197,7 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
 
 **What it writes:** one durable proposal row in `state.db`. It never writes asset files directly.
 
-**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt normally constrains the agent to schema/structural improvements only. The exception is `skills/*` refs with related distilled lessons: in that case the prompt allows substantive changes justified by those lessons and explicitly asks whether durable guidance should stay in `SKILL.md` or be promoted into a companion `knowledge/skills/<skill>/references/<topic>` doc. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after. Non-empty feedback is always preceded by a caveat (`reflect-feedback-framing.md`) framing it as an unverified signal to investigate, not a fact to insert — feedback claims a model treated as ground truth were fabricating whole sections asserting details the asset never contained (#952).
+**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt normally constrains the agent to schema/structural improvements only. The exception is `skills/*` refs with related distilled lessons: in that case the prompt allows substantive changes justified by those lessons and explicitly asks whether durable guidance should stay in `SKILL.md` or be promoted into a companion `knowledge/skills/<skill>/references/<topic>` doc. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after. Non-empty feedback is always preceded by a caveat (`reflect-feedback-framing.md`) framing it as an unverified signal to investigate, not a fact to insert — feedback claims a model treated as ground truth were fabricating whole sections asserting details the asset never contained (#952). When feedback asks for information the asset lacks, the caveat's only instruction is to leave the section unchanged. It used to offer a `TODO: verify …` placeholder as an alternative, and a model inserted one into a memory from a feedback line reporting that `akm show` had failed; a later distill pass then built a lesson on that line (#999).
 
 **Asset content cap:** the asset content section is capped to keep the prompt well under OS ARG_MAX when it travels through CLI argv (agent/SDK runners always use the flat `REFLECT_CONTENT_CAP`, 12 000 chars). The direct-LLM (`kind: "llm"`) path never touches argv, so its cap is instead computed from the resolved engine's `contextLength` (chars-per-token estimate × the reserve actually used by the rest of that prompt, measured per call rather than guessed), halved to reserve the other half of the usable context window for the model's response — a reflect rewrite returns a body roughly the size of the input, so the request must leave room to receive one — and never dropping below the flat floor. When content is truncated, a `REFLECT_TRUNCATION_MARKER` notice is appended; the output contracts explicitly forbid echoing that marker back, and `sanitizeReflectPayload` still detects a leaked marker in the response and defers the proposal for review (`reflect-truncation-leak`) rather than queuing it silently (#952).
 
@@ -213,8 +218,11 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
    - Returns `null` on gate-disabled, timeout, or error — treated as a graceful skip (exit 0, no proposal).
 6. Strip markdown fences and `<think>` blocks from the raw LLM output.
 7. Validate: `lintLessonContent` for lesson proposals; `validateKnowledgeContent` for knowledge proposals. Failure emits `distill_invoked` with `outcome: "validation_failed"` and throws `UsageError`.
-8. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
-9. Emit `distill_invoked` event with `outcome: "queued"`.
+8. Quality gate (`processes.distill.qualityGate`, on unless disabled): one judge call scores the lesson against its source asset from 1 to 5 on **novelty**, **non-redundancy** and **grounding**. The mean of novelty and non-redundancy picks the outcome: 3.5 or more passes, 2.5 up to 3.5 is `review_needed`, below 2.5 is `quality_rejected`. Grounding asks whether the lesson is about what its source is about (a lesson that is off-subject for its source, or contradicts it, scores 1–2); it is not part of the mean, and a grounding score of 2 or less is `quality_rejected` whatever the mean is. This keeps a lesson about a tool error recorded as feedback — `akm show` failing on the ref — from being minted for a memory on an unrelated subject, which the mean of the other two criteria would pass or send to review (#999).
+   - `quality_rejected` writes an `improve_ledger` row for the input (30-day distill rejection window) and a `distill_invoked` event carrying `score`, the per-criterion `criteria` and the `reason`. It mints no proposal.
+   - `review_needed` mints a pending proposal stamped `deferred` / `quality-gate` for a human; the triage drain leaves it alone. It is the outcome for a mean in the review band, a judge that times out or returns something unparseable, the optional fidelity check's contradiction, and a heuristic lesson-quality finding (for example an invalid `description`), which is found before the judge is called. Grounding changes none of these.
+9. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
+10. Emit `distill_invoked` event with `outcome: "queued"`.
 
 **Lesson-ref derivation rule:** `lessons/<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skills/deploy` → `lessons/skill-deploy-lesson`.
 
