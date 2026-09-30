@@ -151,6 +151,17 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     if (review.reason) lines.push(`review.reason: ${String(review.reason)}`);
     if (review.decidedAt) lines.push(`review.decidedAt: ${String(review.decidedAt)}`);
   }
+  // `akm proposal reopen` (#997): the rejection each reopen undid, so a
+  // pending proposal that was once rejected says so.
+  const history = Array.isArray(p.reviewHistory) ? (p.reviewHistory as Array<Record<string, unknown>>) : [];
+  for (const entry of history) {
+    const undone = entry.review as Record<string, unknown> | undefined;
+    const was = undone
+      ? `${String(undone.outcome ?? "?")}${undone.reason ? `: ${String(undone.reason)}` : ""} (${String(undone.decidedAt ?? "?")})`
+      : "an unrecorded review";
+    const why = entry.reopenReason ? ` (${String(entry.reopenReason)})` : "";
+    lines.push(`reopened: ${String(entry.reopenedAt)}${why}, undoing ${was}`);
+  }
   // alpha.9: a consolidate retire proposal writes no content (`payload.content`
   // is empty by design) — this is the reason a reviewer needs instead. `diff`
   // shows the body being retired.
@@ -234,6 +245,20 @@ export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
 export function formatProposalRejectPlain(r: Record<string, unknown>): string {
   const reason = r.reason ? ` (${String(r.reason)})` : "";
   return `Rejected proposal ${String(r.id)} (${String(r.ref)})${reason}`;
+}
+
+export function formatProposalReopenPlain(r: Record<string, unknown>): string {
+  const reason = r.reason ? ` (${String(r.reason)})` : "";
+  return `Reopened proposal ${String(r.id)} (${String(r.ref)}) [pending]${reason}`;
+}
+
+export function formatProposalReopenBatchPlain(r: Record<string, unknown>): string {
+  const results = Array.isArray(r.results) ? (r.results as Array<Record<string, unknown>>) : [];
+  const reason = results[0]?.reason ? ` (${String(results[0].reason)})` : "";
+  return [
+    `Reopened ${results.length} proposal(s) [pending]${reason}`,
+    ...results.map((result) => `  ${String(result.id)}  ${String(result.ref)}`),
+  ].join("\n");
 }
 
 export function formatProposalDrainPlain(r: Record<string, unknown>): string {

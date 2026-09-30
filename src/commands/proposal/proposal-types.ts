@@ -86,6 +86,22 @@ export interface ProposalReview {
 }
 
 /**
+ * A rejection `akm proposal reopen` undid, kept on the proposal so reopening
+ * it never erases what happened. The rejection's `gateDecision` moves in here
+ * too and is cleared from the proposal: a reopened proposal is adjudicated
+ * afresh, whereas a stale `staged` verdict would let the drain accept it
+ * unseen and another gate's `auto-rejected` would have the drain skip it.
+ */
+export interface ProposalReviewHistoryEntry {
+  /** The rejection that was undone, as recorded when it was made. */
+  review?: ProposalReview;
+  gateDecision?: ProposalGateDecision;
+  reopenedAt: string;
+  /** The `--reason` given to `akm proposal reopen`. */
+  reopenReason?: string;
+}
+
+/**
  * A gate's verdict (#577): `staged` means a judge passed this exact content
  * (a promote run may accept it without judging again); `deferred` leaves it
  * for review.
@@ -226,6 +242,8 @@ export interface Proposal {
    */
   beforeHashNormalized?: string;
   review?: ProposalReview;
+  /** Rejections undone by `akm proposal reopen`, oldest first; absent on a proposal never reopened. */
+  reviewHistory?: ProposalReviewHistoryEntry[];
   /** Self-estimated confidence in [0, 1], for reviewers. */
   confidence?: number;
   gateDecision?: ProposalGateDecision;

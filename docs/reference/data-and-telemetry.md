@@ -172,6 +172,7 @@ the set of types the code actually emits at HEAD (verified against every
 |---|---|---|
 | `promoted` | `akm proposal accept <id>` | `ref` |
 | `rejected` | `akm proposal reject <id>` | `ref` |
+| `proposal_reopened` | `akm proposal reopen <id>` (a rejected proposal goes back to pending) | `ref`, `proposalId`, `source`, `reason` (when given) |
 | `proposal_reverted` | `akm proposal revert <id>` (undoes a previously-accepted proposal, restores prior content) | `ref` |
 | `proposal_expired` | A pending proposal aged past the retention window and was auto-expired | `ref` |
 | `proposal_expiration_pass` | Summary emitted once per `akm improve` maintenance run after per-proposal `proposal_expired` events | expiry counts |

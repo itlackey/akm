@@ -32,6 +32,7 @@ import { proposalDiffShapes } from "./shapes/proposal/diff";
 import { proposalListShapes } from "./shapes/proposal/list";
 import { proposalProducerShapes } from "./shapes/proposal/producer";
 import { proposalRejectShapes } from "./shapes/proposal/reject";
+import { proposalReopenShapes } from "./shapes/proposal/reopen";
 import { proposalShowShapes } from "./shapes/proposal/show";
 import { getOutputShapeHandler, type OutputShapeEntry, registerOutputShapes } from "./shapes/registry";
 import { registrySearchShapes } from "./shapes/registry-search";
@@ -55,6 +56,7 @@ const BUILT_IN_OUTPUT_SHAPES: OutputShapeEntry[] = [
   ...proposalShowShapes,
   ...proposalAcceptShapes,
   ...proposalRejectShapes,
+  ...proposalReopenShapes,
   ...proposalDiffShapes,
   ...proposalProducerShapes,
   ...envListShapes,

@@ -89,6 +89,43 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(formatRetireDiff("r", null, "s")).toBe("--- r (missing)\n+++ /dev/null (retired: archived; successor s)");
   });
 
+  test("reviewHistory round-trips through the row; a malformed one is refused (#997)", () => {
+    const base = proposalRowToProposal({
+      ...historicalRow,
+      metadata_json: JSON.stringify({
+        changes: [{ path: "lessons/history.md", op: "update" }],
+        proposedTarget: { source: "team", root: "/tmp/stash" },
+      }),
+    });
+    const reviewHistory = [
+      {
+        review: { outcome: "rejected" as const, reason: "no", decidedAt: "2026-01-02T00:00:00.000Z" },
+        gateDecision: { outcome: "auto-rejected" as const, reason: "expired", decidedAt: "2026-01-02T00:00:00.000Z" },
+        reopenedAt: "2026-01-03T00:00:00.000Z",
+        reopenReason: "second look",
+      },
+    ];
+    const values = proposalToRowValues({ ...base, reviewHistory }, historicalRow.stash_dir);
+    expect(proposalRowToProposal({ ...historicalRow, ...values }).reviewHistory).toEqual(reviewHistory);
+    // Never written when absent, so a row that was never reopened is byte-identical to before.
+    expect(proposalToRowValues(base, historicalRow.stash_dir).metadata_json).not.toContain("reviewHistory");
+
+    const withHistory = (history: unknown) => ({
+      ...historicalRow,
+      metadata_json: JSON.stringify({
+        changes: [{ path: "lessons/history.md", op: "update" }],
+        proposedTarget: { source: "team", root: "/tmp/stash" },
+        reviewHistory: history,
+      }),
+    });
+    expect(() => proposalRowToProposal(withHistory("nope"))).toThrow(/reviewHistory/);
+    expect(() => proposalRowToProposal(withHistory([{ reopenedAt: 5 }]))).toThrow(/reviewHistory/);
+    expect(() => proposalRowToProposal(withHistory([{ reopenedAt: "t", review: { outcome: "rejected" } }]))).toThrow(
+      /reviewHistory/,
+    );
+    expect(proposalRowToProposal(withHistory([])).reviewHistory).toEqual([]);
+  });
+
   test("tolerates a row without the current proposal envelope (#859)", () => {
     // historicalRow has an entirely empty metadata_json — missing both
     // `changes` and `proposedTarget`. Per the #859 reopening, both are

@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm proposal {list,show,accept,reject,diff}` — review surface for the
+ * `akm proposal {list,show,accept,reject,reopen,diff}` — review surface for the
  * proposal substrate (#225).
  *
  * Each function returns a plain JSON envelope; the CLI dispatcher in
@@ -16,6 +16,7 @@
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { NotFoundError } from "../../core/errors";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
@@ -30,6 +31,7 @@ import {
   promoteProposal,
   proposalContent,
   rejectProposalDurably,
+  reopenProposals,
   resolveProposalId,
   revertProposal,
 } from "./repository";
@@ -239,6 +241,69 @@ export async function akmProposalReject(options: ProposalRejectOptions): Promise
       ...(options.reason !== undefined ? { reason: options.reason } : {}),
       proposal: updated,
     };
+  });
+}
+
+// ── reopen ──────────────────────────────────────────────────────────────────
+
+export interface ProposalReopenOptions {
+  stashDir?: string;
+  /** Proposal ids (full uuid) or asset refs; every one must be a rejected proposal. */
+  ids: readonly string[];
+  queue?: string;
+  /** Why the rejection is being undone; kept in the proposal's review history. */
+  reason?: string;
+  ctx?: ProposalsContext;
+  config?: AkmConfig;
+}
+
+/** One reopened proposal, in the envelope shape `reject` uses (`reason` here is the reopen reason). */
+export interface ProposalReopenResult {
+  schemaVersion: 1;
+  ok: true;
+  id: string;
+  ref: string;
+  reason?: string;
+  proposal: Proposal;
+}
+
+/**
+ * Put rejected proposals back in the queue as `pending` (#997) — the undo the
+ * proposal queue lacked. All-or-nothing: see {@link reopenProposals}. An
+ * archived proposal is found by its full id (a prefix only matches the pending
+ * queue), the same as `revert`.
+ */
+export async function akmProposalReopen(options: ProposalReopenOptions): Promise<ProposalReopenResult[]> {
+  return withAssetMutationLease("proposal-reopen", async () => {
+    const config = options.config ?? loadConfig();
+    const queue = resolveProposalQueue(options.stashDir, options.queue, config);
+    const ids = options.ids.map((id) => {
+      try {
+        return resolveProposalId(queue.stashDir, id, options.ctx).id;
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+        throw new NotFoundError(
+          error.message,
+          error.code,
+          "A rejected proposal is addressed by its full id (a prefix only matches pending proposals): `akm proposal list --status rejected` lists them.",
+        );
+      }
+    });
+    const reopened = reopenProposals(
+      queue.stashDir,
+      config,
+      ids,
+      { queueTarget: queue.target, ...(options.reason !== undefined ? { reason: options.reason } : {}) },
+      options.ctx,
+    );
+    return reopened.map((proposal) => ({
+      schemaVersion: 1 as const,
+      ok: true as const,
+      id: proposal.id,
+      ref: proposal.ref,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      proposal,
+    }));
   });
 }
 

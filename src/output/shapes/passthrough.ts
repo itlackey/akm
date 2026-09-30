@@ -59,6 +59,7 @@ const PASSTHROUGH_COMMANDS = [
   "proposal-accept-batch",
   "proposal-drain",
   "proposal-reject-batch",
+  "proposal-reopen-batch",
   "proposal-revert",
   "registry-add",
   "registry-list",

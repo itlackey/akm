@@ -102,6 +102,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
       "confidence",
       "gateDecision",
       "review",
+      "reviewHistory",
       "retirement",
     ]);
   }
@@ -118,6 +119,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "gateDecision",
     "payload",
     "review",
+    "reviewHistory",
     "retirement",
     "retiredArchive",
     "promotionSource",

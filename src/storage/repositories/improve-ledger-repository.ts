@@ -279,6 +279,36 @@ export function recordImproveLedgerDecision(db: Database, input: RecordImproveLe
 }
 
 /**
+ * A rejected proposal was reopened (`akm proposal reopen`): put the rows
+ * {@link recordImproveLedgerDecision} found by `proposal_id` back to what the
+ * mint wrote — `proposed`, on the revisit cadence from the reopen — so the
+ * rejection's hard window stops reporting (and blocking) a proposal that is
+ * pending again. `last_attempt_at` is kept, as a decision keeps it. A proposal
+ * with no such row (its mint wrote none, or a later attempt took the key over)
+ * changes nothing.
+ */
+export function reopenImproveLedgerDecision(
+  db: Database,
+  input: { proposalId: string; stashDir: string; source: string; at: string; detail?: string },
+): void {
+  db.prepare(
+    `UPDATE improve_ledger
+     SET outcome = 'proposed', next_eligible_at = ?, detail = ?
+     WHERE stash_dir = ? AND proposal_id = ?`,
+  ).run(nextEligibleAt(input.source, "proposed", input.at), trimDetail(input.detail), input.stashDir, input.proposalId);
+}
+
+/**
+ * The same reopen for a proposal whose mint deliberately wrote no ledger row (a
+ * retire proposal — see `createRetireProposal`): the row its rejection created
+ * is dropped, returning the ledger to what the mint left. Found by
+ * `proposal_id`, like {@link recordImproveLedgerDecision}.
+ */
+export function forgetImproveLedgerDecision(db: Database, stashDir: string, proposalId: string): void {
+  db.prepare("DELETE FROM improve_ledger WHERE stash_dir = ? AND proposal_id = ?").run(stashDir, proposalId);
+}
+
+/**
  * Should-fix 6 (second review round): a read-only or dry-run open never
  * migrates, so it can land on a state.db from before migration 029 added
  * `content_hash` — reading it there threw "no such column", which

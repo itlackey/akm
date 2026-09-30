@@ -114,7 +114,7 @@ akm improve --limit 20       # base cap; configured replay slots may be appended
 akm proposal list            # review what was generated
 ```
 
-## akm proposal (list, show, diff, accept, reject, revert)
+## akm proposal (list, show, diff, accept, reject, reopen, revert)
 
 `akm proposal list` lists pending proposals in the queue. Each proposal is an
 AI-generated suggested change — an edit to an existing asset, a new lesson, a
@@ -139,7 +139,9 @@ akm proposal reject <uuid-or-prefix> --reason "duplicates existing workflow"
 Accepts full UUIDs, 8-character UUID prefixes, or asset refs. `akm proposal accept` runs
 full validation before promoting the proposal into your bundle.
 `akm proposal revert` restores the prior content of an accepted proposal from
-its captured backup. Full flag reference:
+its captured backup, and `akm proposal reopen <id>` undoes a rejection (it puts
+a rejected proposal back to pending unless its target has changed since). Full
+flag reference:
 [CLI Reference — proposal](../reference/cli.md#proposal).
 
 **Example: review and accept a memory consolidation**

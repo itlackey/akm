@@ -872,6 +872,37 @@ describe("shapeProposal* — proposal commands", () => {
     expect(ordinary).not.toHaveProperty("note");
   });
 
+  test("shapeProposalEntry projects reviewHistory from `normal` up, never in brief (#997)", () => {
+    const reopened = {
+      ...fullProposal,
+      reviewHistory: [
+        {
+          review: { outcome: "rejected", reason: "no", decidedAt: "2026-04-27T00:00:00Z" },
+          reopenedAt: "2026-04-28T00:00:00Z",
+        },
+      ],
+    };
+    expect(shapeProposalEntry(reopened, "brief")).not.toHaveProperty("reviewHistory");
+    expect(shapeProposalEntry(reopened, "normal")).toHaveProperty("reviewHistory", reopened.reviewHistory);
+    expect(shapeProposalEntry(reopened, "full")).toHaveProperty("reviewHistory", reopened.reviewHistory);
+  });
+
+  test("proposal-reopen shapes like a reject envelope; the batch is a passthrough", () => {
+    const reopened = shapeForCommand(
+      "proposal-reopen",
+      { schemaVersion: 1, ok: true, id: "uuid-1", ref: "lessons/x", reason: "second look", proposal: fullProposal },
+      "brief",
+    ) as Record<string, unknown>;
+    expect(reopened).toMatchObject({ ok: true, id: "uuid-1", ref: "lessons/x", reason: "second look" });
+    expect((reopened.proposal as Record<string, unknown>).status).toBe("pending");
+    const batch = shapeForCommand(
+      "proposal-reopen-batch",
+      { reopened: 1, results: [{ id: "uuid-1" }] },
+      "brief",
+    ) as Record<string, unknown>;
+    expect(batch).toMatchObject({ ok: true, reopened: 1, shape: "proposal-reopen-batch", schemaVersion: 1 });
+  });
+
   test("shapeForCommand routes proposal-* arms through their dedicated shapers", () => {
     const list = shapeForCommand(
       "proposal-list",

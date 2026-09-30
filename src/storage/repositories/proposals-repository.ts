@@ -130,6 +130,23 @@ const GATE_OUTCOMES: Record<ProposalGateDecisionOutcome, true> = {
   "auto-rejected": true,
 };
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** One undone rejection in `metadata_json.reviewHistory` (see `ProposalReviewHistoryEntry`): only the fields readers rely on are checked. */
+function isReviewHistoryEntry(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  const { review, gateDecision, reopenedAt, reopenReason } = value;
+  return (
+    typeof reopenedAt === "string" &&
+    (reopenReason === undefined || typeof reopenReason === "string") &&
+    (review === undefined ||
+      (isRecord(review) && typeof review.outcome === "string" && typeof review.decidedAt === "string")) &&
+    (gateDecision === undefined || isRecord(gateDecision))
+  );
+}
+
 function validatePresentMetadata(meta: Record<string, unknown>): void {
   const stringFields = ["sourceRun", "beforeHash", "beforeHashNormalized", "backupContent"] as const;
   for (const field of stringFields) {
@@ -154,6 +171,12 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
       (review.reason !== undefined && typeof review.reason !== "string")
     ) {
       invalidPresentField("review");
+    }
+  }
+  if (Object.hasOwn(meta, "reviewHistory")) {
+    const history = meta.reviewHistory;
+    if (!Array.isArray(history) || history.some((entry) => !isReviewHistoryEntry(entry))) {
+      invalidPresentField("reviewHistory");
     }
   }
   if (Object.hasOwn(meta, "gateDecision")) {
@@ -333,6 +356,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(typeof meta.beforeHash === "string" ? { beforeHash: meta.beforeHash } : {}),
     ...(typeof meta.beforeHashNormalized === "string" ? { beforeHashNormalized: meta.beforeHashNormalized } : {}),
     ...(meta.review !== undefined ? { review: meta.review as Proposal["review"] } : {}),
+    ...(meta.reviewHistory !== undefined ? { reviewHistory: meta.reviewHistory as Proposal["reviewHistory"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
     ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
@@ -396,6 +420,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.beforeHashNormalized !== undefined) metaObj.beforeHashNormalized = proposal.beforeHashNormalized;
   if (proposal.sourceRun !== undefined) metaObj.sourceRun = proposal.sourceRun;
   if (proposal.review !== undefined) metaObj.review = proposal.review;
+  if (proposal.reviewHistory !== undefined) metaObj.reviewHistory = proposal.reviewHistory;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
   if (proposal.gateDecision !== undefined) metaObj.gateDecision = proposal.gateDecision;
   if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;

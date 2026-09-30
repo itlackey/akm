@@ -340,7 +340,11 @@ duplicate, subsumed and superseding retirement, review-gated.
    "retired") are checked against every rejected or reverted
    `consolidate-pair` proposal on record, and a match is counted as a settled
    no-action (so the initiator's row still gets written this run) at no LLM
-   cost at all.
+   cost at all. Those keys follow each proposal's current status: `akm
+   proposal reopen` (#997) moves a rejected proposal back to `pending`, so it
+   is no longer settled, and while it is pending a pair pass leaves both of its
+   documents alone (step 4's pending-retire guard) instead of minting the
+   pair a second time.
 
 **Retire proposals (`akm proposal accept`/`revert`):** minted under their own
 source, `consolidate-pair` — kept apart from the promote pass's
@@ -384,7 +388,12 @@ consolidate-pair`. A proposal carrying `continuityRisk` (below) is excluded
 from that bulk accept, whatever the generator or `--yes` — visible inline in
 `list`'s default output and in `show`'s text output (the specific
 failing/unverified queries, not just a count) — bulk reject is unaffected,
-and a person can always accept one by id.
+and a person can always accept one by id. A rejection is not final:
+`akm proposal reopen <id>` puts a rejected retire proposal back to `pending`
+(refused if the retired document, or the successor, changed since the pair was
+judged, or if another pending retire proposal now involves either of them),
+and accepting it then archives the file exactly as for any other retire
+proposal.
 
 ### Retirement continuity check (rule R3)
 

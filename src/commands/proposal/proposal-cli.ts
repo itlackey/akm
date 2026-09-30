@@ -33,6 +33,7 @@ import {
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
+  akmProposalReopen,
   akmProposalRevert,
   akmProposalShow,
   bulkAdjudicateProposals,
@@ -314,6 +315,41 @@ const proposalRejectCommand = defineJsonCommand({
   },
 });
 
+// `proposal reopen` (#997): the undo a rejection lacked. Unlike `reject` it is
+// reversible (reject again), so it asks no confirmation.
+const proposalReopenCommand = defineJsonCommand({
+  meta: {
+    name: "reopen",
+    description:
+      "Reopen rejected proposals: move them back to pending, keeping the rejection in their history. " +
+      "Takes full proposal ids; refused (and none reopened) if any is not rejected or its target changed since it was created.",
+  },
+  args: {
+    id: {
+      type: "positional",
+      description: "Rejected proposal id (full uuid); repeat it to reopen several at once",
+      required: true,
+    },
+    reason: {
+      type: "string",
+      description: "Why the rejection is being undone (kept in the proposal's review history)",
+    },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
+  },
+  async run({ args }) {
+    // citty keeps every positional token in `_`, though it declares only `id`.
+    const ids = (Array.isArray(args._) && args._.length > 0 ? args._ : [args.id]).map(String);
+    const reason = typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined;
+    const results = await akmProposalReopen({
+      ids,
+      queue: args.queue as string | undefined,
+      ...(reason !== undefined ? { reason } : {}),
+    });
+    if (results.length === 1) output("proposal-reopen", results[0]);
+    else output("proposal-reopen-batch", { reopened: results.length, results });
+  },
+});
+
 const proposalDiffCommand = defineJsonCommand({
   meta: { name: "diff", description: "Show the diff for a proposal (accepts full UUID, UUID prefix, or asset ref)" },
   args: {
@@ -557,7 +593,7 @@ const proposalDrainCommand = defineJsonCommand({
 export const proposalCommand = defineGroupCommand({
   meta: {
     name: "proposal",
-    description: "Manage the proposal queue: list, show, diff, accept, reject, revert, extract, new, drain",
+    description: "Manage the proposal queue: list, show, diff, accept, reject, reopen, revert, extract, new, drain",
   },
   // The group declared `--queue`/`--status`/`--ref`/`--type` only so the bare
   // form could act as `proposal list`. That form is gone (see below), and
@@ -570,6 +606,7 @@ export const proposalCommand = defineGroupCommand({
     diff: proposalDiffCommand,
     accept: proposalAcceptCommand,
     reject: proposalRejectCommand,
+    reopen: proposalReopenCommand,
     revert: proposalRevertCommand,
     drain: proposalDrainCommand,
     extract: extractCommand,

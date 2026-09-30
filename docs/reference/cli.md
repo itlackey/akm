@@ -2607,14 +2607,14 @@ support.
 ### proposal
 
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
-`extract`, `new`, `list`, `show`, `diff`, `accept`, `reject`, `revert`,
-`drain`. Bare `akm proposal` is a usage error (exit 2) as of 0.9.0 — it used
+`extract`, `new`, `list`, `show`, `diff`, `accept`, `reject`, `reopen`,
+`revert`, `drain`. Bare `akm proposal` is a usage error (exit 2) as of 0.9.0 — it used
 to behave as `akm proposal list`; name the verb. There are no flat-verb
 spellings (`akm proposals`, `akm extract`, `akm propose`, `akm accept`, `akm
 reject`, `akm diff`, `akm revert`) — use the `akm proposal <verb>` form.
 
-`list`, `show`, `diff`, `accept`, `reject`, and `revert` (and bulk accept/
-reject) support `--queue <source>`. It selects the proposal queue stored for
+`list`, `show`, `diff`, `accept`, `reject`, `reopen`, and `revert` (and bulk
+accept/reject) support `--queue <source>`. It selects the proposal queue stored for
 that configured writable source root; without it, commands use the primary
 queue. Queue selection is not a destination override. `drain` does **not**
 take `--queue` — it operates on the standing backlog via a policy, not a
@@ -2808,6 +2808,67 @@ akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
 and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
+
+#### proposal reopen
+
+Undo a rejection: move rejected proposals back to `pending` so they can be
+reviewed again. A rejection is otherwise final. `accept` refuses anything that
+is not pending, and a rejected consolidate pair-pass retire proposal also keeps
+the pair pass from proposing that retirement again while both documents are
+unchanged.
+
+```sh
+akm proposal reopen <id>
+akm proposal reopen <id> --reason "the diff was misrendered (#997)"
+akm proposal reopen <id> <id> <id>                 # several at once: all or none
+akm proposal reopen <id> --queue team-bundle
+akm proposal list --status rejected --generator consolidate-pair --format json \
+  | jq -r '.proposals[].id' | xargs akm proposal reopen --reason "diff was misrendered"
+```
+
+| Flag | Description |
+| --- | --- |
+| `--reason <text>` | Why the rejection is being undone. Kept in the proposal's review history, its ledger row and the `proposal_reopened` event |
+| `--queue <source>` | Select the proposal queue by configured writable source name |
+
+Takes full proposal ids: a UUID prefix only matches pending proposals, so it
+cannot name a rejected one (`akm proposal list --status rejected` prints the
+ids; add `--generator consolidate-pair` for the retire backlog). A retire
+proposal is never reached by asset ref, only by id.
+
+Reopening is refused, with the reason, when:
+
+- the proposal is not `rejected` (it is pending, accepted or reverted);
+- its target changed since it was created, by the same rule `accept` applies,
+  so a reopened proposal is never one `accept` would then refuse as stale: an
+  update needs its target unchanged, a create needs the target still absent,
+  and a retire proposal needs the successor to exist and both documents' body
+  hashes to match the ones recorded when the pair was judged;
+- it is a retire proposal and another pending retire proposal already involves
+  either of its two documents (the pair pass never has two at once, since
+  accepting one would strand the other): decide that one first;
+- it was recorded before proposals carried their change envelope (very old
+  archived rows).
+
+With several ids nothing is reopened unless every one can be: the error lists
+each refusal (exit 2).
+
+A reopened proposal is `pending` again with its `review` cleared. The rejection
+(its review, and any gate verdict that came with it) is appended to the
+proposal's `reviewHistory`, which `akm proposal show` prints as `reopened:
+<when> (<reason>), undoing rejected: <why>`, and the gate verdict is cleared so
+the drain and the quality gate treat it as undecided. It no longer counts as a
+settled pair for the pair pass, and while it is pending that pair is not
+proposed a second time. Its `improve_ledger` row goes back to what the mint
+wrote (a retire proposal's mint writes none, so the row its rejection created
+is dropped), its retention clock restarts (retire proposals never expire), and
+a `proposal_reopened` event is appended. Accepting it afterwards archives a
+retired file exactly as for any retire proposal, and `akm proposal revert`
+restores it byte-exactly.
+
+Output: for one id, the envelope `reject` returns (`ok`, `id`, `ref`, the
+proposal, and `reason`, here the reopen reason); for several ids,
+`{ reopened, results }` with one such envelope per proposal.
 
 #### proposal revert
 

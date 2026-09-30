@@ -348,6 +348,145 @@ describe("akm proposal diff — a retire proposal (#997)", () => {
   });
 });
 
+/** A second retire proposal over its own pair of memories (a batch needs more than one). */
+function seedSecondRetireProposal(stash: string) {
+  const write = (name: string, body: string): string => {
+    const filePath = path.join(stash, "memories", `${name}.md`);
+    fs.writeFileSync(filePath, `---\ndescription: ${name}\n---\n${body}`, "utf8");
+    return filePath;
+  };
+  const oldPath = write("older-note", "Older.\n");
+  const newPath = write("newer-note", "Newer.\n");
+  return createRetireProposal(stash, {
+    ref: "memories/older-note",
+    source: "consolidate-pair",
+    retirement: {
+      retiredRef: "memories/older-note",
+      successorRef: "memories/newer-note",
+      cosine: 0.97,
+      judgeLabel: "subsumed",
+      judgeReason: "Newer covers it.",
+      retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+      successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+      reason: "subsumed",
+    },
+  });
+}
+
+async function rejectViaCli(stash: string, id: string, reason = "would destroy content (generator bug)") {
+  const result = await runCli(["proposal", "reject", id, "--reason", reason, "--yes", "--format=json"], {
+    stashDir: stash,
+  });
+  expect(result.status).toBe(0);
+}
+
+describe("akm proposal reopen (CLI, #997)", () => {
+  test("one id: the same envelope reject returns, the proposal pending again with its rejection in the history", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    await rejectViaCli(stash, proposal.id);
+
+    const result = await runCli(
+      ["proposal", "reopen", proposal.id, "--reason", "diff rendering bug #997", "--format=json"],
+      { stashDir: stash },
+    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({
+      ok: true,
+      id: proposal.id,
+      ref: proposal.ref,
+      reason: "diff rendering bug #997",
+      proposal: { id: proposal.id, status: "pending", source: "consolidate-pair" },
+    });
+    expect(parsed.proposal.reviewHistory).toHaveLength(1);
+    expect(parsed.proposal.reviewHistory[0]).toMatchObject({
+      review: { outcome: "rejected", reason: "would destroy content (generator bug)" },
+      reopenReason: "diff rendering bug #997",
+    });
+    expect(getProposal(stash, proposal.id).status).toBe("pending");
+  });
+
+  test("one id, text: names the proposal and says it is pending; `show` remembers the rejection", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    await rejectViaCli(stash, proposal.id);
+
+    const reopened = await runCli(["proposal", "reopen", proposal.id, "--reason", "misrendered", "--format=text"], {
+      stashDir: stash,
+    });
+    expect(reopened.status).toBe(0);
+    expect(reopened.stdout.trim()).toBe(`Reopened proposal ${proposal.id} (${proposal.ref}) [pending] (misrendered)`);
+
+    const shown = await runCli(["proposal", "show", proposal.id, "--format=text"], { stashDir: stash });
+    expect(shown.stdout).toContain("status: pending");
+    expect(shown.stdout).toContain("reopened: ");
+    expect(shown.stdout).toContain("(misrendered), undoing rejected: would destroy content (generator bug)");
+    expect(shown.stdout).not.toContain("review.outcome:"); // the rejection is history, not the current review
+  });
+
+  test("several ids: one batch envelope, every proposal pending again", async () => {
+    const stash = makeStashDir();
+    const first = seedRetireProposal(stash);
+    const second = seedSecondRetireProposal(stash);
+    await rejectViaCli(stash, first.id);
+    await rejectViaCli(stash, second.id);
+
+    const result = await runCli(["proposal", "reopen", first.id, second.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({ ok: true, reopened: 2, shape: "proposal-reopen-batch" });
+    expect(parsed.results.map((r: { id: string }) => r.id)).toEqual([first.id, second.id]);
+    expect(getProposal(stash, first.id).status).toBe("pending");
+    expect(getProposal(stash, second.id).status).toBe("pending");
+  });
+
+  test("several ids, text: a count and one line per proposal", async () => {
+    const stash = makeStashDir();
+    const first = seedRetireProposal(stash);
+    const second = seedSecondRetireProposal(stash);
+    await rejectViaCli(stash, first.id);
+    await rejectViaCli(stash, second.id);
+
+    const result = await runCli(["proposal", "reopen", first.id, second.id, "--format=text"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    expect(result.stdout.split("\n")[0]).toBe("Reopened 2 proposal(s) [pending]");
+    expect(result.stdout).toContain(`  ${first.id}  ${first.ref}`);
+    expect(result.stdout).toContain(`  ${second.id}  ${second.ref}`);
+  });
+
+  test("one refusal reopens none of a batch (exit 2)", async () => {
+    const stash = makeStashDir();
+    const rejected = seedRetireProposal(stash);
+    const pending = seedSecondRetireProposal(stash);
+    await rejectViaCli(stash, rejected.id);
+
+    const result = await runCli(["proposal", "reopen", rejected.id, pending.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).error).toContain("Cannot reopen 1 of 2 proposals; none were reopened");
+    expect(getProposal(stash, rejected.id).status).toBe("rejected");
+  });
+
+  test("a proposal that is not rejected: exit 2 with the reason, and a hint", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "reopen", proposal.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
+    expect(envelope.error).toContain("is not rejected (current status: pending)");
+    expect(envelope.hint).toContain("akm proposal list --status rejected");
+    expect(getProposal(stash, proposal.id).status).toBe("pending");
+  });
+
+  test("an id is required", async () => {
+    const stash = makeStashDir();
+    const result = await runCli(["proposal", "reopen", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    expect(JSON.parse(result.stderr).code).toBe("MISSING_REQUIRED_ARGUMENT");
+  });
+});
+
 describe("akm proposal accept --generator bulk safety guard (WS0)", () => {
   test("bulk accept without --yes aborts in non-interactive mode (exit 2)", async () => {
     const stash = makeStashDir();
