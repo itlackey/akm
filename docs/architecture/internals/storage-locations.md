@@ -625,7 +625,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `proactive_selected` | the proactive-maintenance selector, once per run | `count`, `dueTotal`, `neverReflected` |
 | `reflect_invoked` | the reflect pass | `task`, `engine`, `eligibilitySource` |
 | `reflect_completed` | the reflect pass | `proposalId`, `source`, `engine` when a proposal was created; `ok: false`, `reason`, `subreason` when it failed |
-| `distill_invoked` | the distill pass | `outcome` (queued, skipped, config_disabled, llm_failed, validation_failed, quality_rejected, review_needed), `proposalRef`, `proposalKind`, `proposalId`, `skipReason`, `judgeConfidence`; `score`, `criteria`, `reason` from the quality gate |
+| `distill_invoked` | the distill pass | `outcome` (queued, skipped, llm_failed, validation_failed, quality_rejected, review_needed), `proposalRef`, `proposalKind`, `proposalId`, `skipReason`, `judgeConfidence`; `score`, `criteria`, `reason` from the quality gate |
 | `extract_invoked` | `akm proposal extract`, and improve's extract stage | `outcome` (no_candidates\|candidates_queued), `sessionId`, `harness`, `sourceRun`, `candidateCount`, `proposalCount` |
 | `extract_triaged` | the extract triage gate | `evaluated`, `passed`, `triagedOut`, `sourceRun` |
 | `schema_repair_invoked` | improve's schema-repair pass | `outcome` (queued\|error), `reason`, `proposalId`, `error` |

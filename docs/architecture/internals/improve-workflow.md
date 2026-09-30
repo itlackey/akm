@@ -40,15 +40,14 @@ flowchart TD
     D -- no --> CONSOLIDATE
     EXTRACT[Session extract\nwhen the strategy enables it: queues proposals\nfrom coding-agent session transcripts]
     EXTRACT --> J[applyMemoryCleanup\nautonomy-gated: persist belief-state transitions\narchive prune candidates to .akm/memory-cleanup/archive/]
-    J --> J2{anything archived or transitioned?}
+    J --> K[projectMemoryCleanup\ndrop archived refs from the planned set]
+    K --> J2{anything archived or transitioned?}
     J2 -- yes --> J3[push memory-prune actions\nreindexFn: rebuild SQLite index]
-    J2 -- no --> K
-    J3 --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
-
-    K --> O[Pre-run validation sweep\ncheck file exists + lesson description\nschema repair when enabled]
+    J2 -- no --> O[Pre-run validation sweep\ncheck file exists + lesson description\nschema repair when enabled]
+    J3 --> O
     O --> P{validationFailures?}
     P -- yes --> P1[Log failures; refs that still fail\nare excluded from selection]
-    P -- no --> L[Signal delta\nkeep refs with signal feedback newer than\nthe last ledger attempt and no ledger window]
+    P -- no --> L[Signal delta\nkeep refs with signal feedback newer than\nthe last ledger attempt and no hard ledger window]
     P1 --> L
     L --> L2[Fallback lanes\nproactive maintenance, high salience:\nonly retrieved or new material]
     L2 --> M[scoreSalience\nsalience vector per ref: encoding, outcome, retrieval\nutility scores from SQLite seed the outcome term]
@@ -575,7 +574,7 @@ Two proposals can share the same `ref`; their UUID primary keys prevent collisio
 
 ## Ledger pre-filter (signal delta)
 
-Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row per `(stash_dir, ref, source)`; `source` is `reflect`, `distill`, `consolidate`, `consolidate-pair`, `extract` or `schema-repair`) before it spends a model call, and writes it after. It replaced the per-stage cooldown constants and the event reads behind them (`reflect_invoked`, `distill_invoked`, `consolidate_completed`, rejected-proposal rows, `proposal_fingerprints`). When a ref may be tried again is decided in one place, `nextEligibleAt`, from the row's source and outcome: a rejected or quality-rejected attempt waits 14 days (reflect), 30 days (distill) or 7 days (any other source), an expired proposal 1 day, and an attempt that left a pending proposal, needed review, judged no action or changed nothing is revisited after 7 days; an accepted or failed attempt has no window. The consolidate pair pass and a decided consolidate promotion have no clock at all: their rows hold a body hash and the ref waits until its body differs (see **Re-eligibility** above). `rejected`, `quality_rejected` and `expired` are hard windows; every other window is a revisit cadence that a newer signal (new feedback, or for consolidation an edit) lifts (`isLedgerBlocked`).
+Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row per `(stash_dir, ref, source)`; `source` is `reflect`, `distill`, `consolidate`, `consolidate-pair`, `extract`, `schema-repair` or `propose`, the last written by `akm proposal new` through `createProposal`) before it spends a model call, and writes it after. It replaced the per-stage cooldown constants and the event reads behind them (`reflect_invoked`, `distill_invoked`, `consolidate_completed`, rejected-proposal rows, `proposal_fingerprints`). When a ref may be tried again is decided in one place, `nextEligibleAt`, from the row's source and outcome: a rejected or quality-rejected attempt waits 14 days (reflect), 30 days (distill) or 7 days (any other source), an expired proposal 1 day, and an attempt that left a pending proposal, needed review, judged no action or changed nothing is revisited after 7 days; an accepted or failed attempt has no window. The consolidate pair pass and a decided consolidate promotion have no clock at all: their rows hold a body hash and the ref waits until its body differs (see **Re-eligibility** above). `rejected`, `quality_rejected` and `expired` are hard windows; every other window is a revisit cadence that a newer signal (new feedback, or for consolidation an edit) lifts (`isLedgerBlocked`).
 
 **Selection.** Before the per-asset loop, `buildSnapshotManifest` reads the feedback events once and the ledger's `reflect` and `distill` rows once for every candidate, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. Reflect and distill each *pass* a ref when it has feedback carrying a signal or a note, dated within the last 30 days, newer than that stage's last ledger attempt for the ref, with no hard window blocking it. Then:
 
@@ -583,7 +582,7 @@ Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row pe
 - A ref that passes only distill, and is a distill candidate, is planned distill-only.
 - A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)).
 - Every ref left without a lane is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
-- The picked refs are ranked by salience (`scoreSalience`, `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
+- The picked refs are ranked by salience (`scoreSalience` in `preparation.ts`, which computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
 
 An explicit ref scope bypasses every gate. After the run lock is acquired, `refilterProactiveLoopRefs` (`improve.ts`) re-reads the ledger and drops proactive refs that another run attempted since this one planned (the "post-lock cooldown re-filter" log line). Consolidation, extract and schema repair read their own ledger sources in their own stages.
 
@@ -633,7 +632,7 @@ The promote pass records a structured skip for each memory the model proposed to
 | `dedup_existing_knowledge` | A `knowledge/` doc in the write target already has an identical body (frontmatter aside). |
 | `dedup_pending_proposal` | A pending consolidate proposal already carries an identical body. Clears as triage drains the queue. |
 | `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. |
-| `promote_invalid_frontmatter` | Neither the model's description nor the memory's own is usable: it is missing or truncated. |
+| `promote_invalid_frontmatter` | The description it would use (the model's, else the memory's own) is missing or truncated. |
 | `promote_dedup_window` | The target slug is a variant of a pending consolidate proposal's slug (dates, counters and word order folded), so it would queue a near-copy. |
 | `promote_create_failed` | `createProposal` threw. The memory gets no ledger row, is retried next run, and is counted in `failedPromotions`. |
 
@@ -663,6 +662,6 @@ Reviewed against `src/commands/improve/improve.ts`,
 
 2. **Per-asset loop (critical accuracy bug):** The loop no longer checks validation failures. A ref that fails the pre-run validation sweep (and is not repaired) is excluded before selection (`validationFailureRefs` in `runImprovePreparationStage`, `preparation.ts`), so the first check in `runImproveLoopStage` is the wall-clock budget. The diagram's `S{ref in validationFailures?}` branch, which had also reused the `SKIP` node id of the lock-held exit, is gone.
 
-3. **Preparation order (accuracy bug):** `runImprovePreparationStage` (`preparation.ts`) runs consolidation, session extract, memory cleanup (`applyMemoryCleanup`, the `memory-prune` actions and `reindexFn` when something was archived), the validation sweep and schema repair, and only then selection (signal delta, fallback lanes, salience ranking, disk check, `--limit`). The diagram follows that order.
+3. **Preparation order (accuracy bug):** `runImprovePreparationStage` (`preparation.ts`) runs consolidation, session extract, memory cleanup (`applyMemoryCleanup`, `projectMemoryCleanup`, then the `memory-prune` actions and `reindexFn` when something was archived), the validation sweep and schema repair, and only then selection (signal delta, fallback lanes, salience ranking, disk check, `--limit`). The diagram follows that order.
 
 4. **Post-loop maintenance placement (accuracy bug):** Improve now runs memory inference after consolidation, not before it (the same fix originally applied to graph extraction, retired in 0.9.17-alpha.9). The workflow now documents the maintenance stage and the reindex after inference writes.
