@@ -223,6 +223,16 @@ describe("akm proposal list (CLI)", () => {
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
   });
 
+  test("error path: an unknown --queue names --queue, not the retired --target", async () => {
+    const stash = makeStashDir();
+    const result = await runCli(["proposal", "list", "--queue", "ghost", "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(2);
+    const envelope = JSON.parse(result.stderr);
+    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
+    expect(envelope.error).toContain('--queue must reference a source name from your config. No source named "ghost"');
+    expect(envelope.error).not.toContain("--target");
+  });
+
   test("accepts --status=reverted (parser allows reverted status)", async () => {
     // Regression: parseProposalStatus must accept "reverted" so that
     // `akm proposal list --status reverted` works for archived/reverted proposals.

@@ -127,7 +127,11 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
         return { file: await resolveAssetPath(bundleDir, type, name), bundleRoot: bundleDir };
       }
       const resolutionConfig = requiresCommandConfig ? config : loadConfig();
-      const resolvedBundle = resolveWriteTarget(resolutionConfig, bundle, { requireWritable: false });
+      // `bundle` is the qualifier of an asset ref in the task, not a flag.
+      const resolvedBundle = resolveWriteTarget(resolutionConfig, bundle, {
+        requireWritable: false,
+        flag: "The asset ref's bundle",
+      });
       return {
         file: await resolveAssetPath(resolvedBundle.source.path, type, name),
         bundleRoot: resolvedBundle.source.path,

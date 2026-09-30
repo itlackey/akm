@@ -97,6 +97,8 @@ export interface WriteTargetOptions {
    * The flag that named the explicit target, spelled in the errors below
    * (default `--target`). A command whose destination flag is `--bundle`, like
    * `akm improve`, passes that instead of telling its user to use `--target`.
+   * A target that came from a ref's bundle qualifier rather than a flag passes
+   * how the user knows it, such as "The task ref's bundle".
    */
   flag?: string;
 }

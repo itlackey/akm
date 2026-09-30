@@ -5,14 +5,20 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmTasksAdd, akmTasksSync } from "../../src/commands/tasks/tasks";
+import { akmTasksAdd, akmTasksHistory, akmTasksRun, akmTasksSync } from "../../src/commands/tasks/tasks";
 import { loadConfig } from "../../src/core/config/config";
+import { ConfigError, UsageError } from "../../src/core/errors";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import { isSchedulerRefEnabled, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
 import type { ScheduleBackend } from "../../src/tasks/schedule";
 import { compileTaskSchedulerBindings, type SchedulerBinding } from "../../src/tasks/scheduler-binding";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  makeSandboxDir,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 let backendName: ScheduleBackend;
@@ -405,5 +411,70 @@ describe("task lifecycle failure handling", () => {
       uses: { kind: "builtin-command", ref: "akm/command" },
       command: { kind: "inline", content: "Review the latest changes carefully." },
     });
+  });
+});
+
+describe("task commands name the flag they take when a bundle does not resolve", () => {
+  const failure = (run: () => Promise<unknown>): Promise<unknown> =>
+    run().then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+
+  test("--bundle naming no configured bundle is reported as --bundle by add, history and run", async () => {
+    const errors = await Promise.all([
+      failure(() => akmTasksAdd({ id: "x", schedule: "0 3 * * *", command: "echo x", target: "ghost" }, { backend })),
+      failure(() => akmTasksHistory({ target: "ghost" })),
+      failure(() => akmTasksRun("x", { target: "ghost" })),
+    ]);
+    for (const error of errors) {
+      expect(error).toBeInstanceOf(UsageError);
+      expect((error as UsageError).message).toContain(
+        '--bundle must reference a source name from your config. No source named "ghost" is configured',
+      );
+      expect((error as UsageError).message).not.toContain("--target");
+    }
+  });
+
+  test("a read-only --bundle for add points at --bundle, not --target", async () => {
+    const readOnly = makeSandboxDir("akm-task-readonly-");
+    try {
+      writeSandboxConfig({
+        bundles: {
+          stash: { path: storage.stashDir, writable: true },
+          frozen: { path: readOnly.dir, writable: false },
+        },
+        defaultBundle: "stash",
+      });
+
+      const error = await failure(() =>
+        akmTasksAdd({ id: "x", schedule: "0 3 * * *", command: "echo x", target: "frozen" }, { backend }),
+      );
+      expect(error).toBeInstanceOf(ConfigError);
+      expect((error as ConfigError).hint()).toContain("or pass --bundle to a different source");
+      expect((error as ConfigError).hint()).not.toContain("--target");
+    } finally {
+      readOnly.cleanup();
+    }
+  });
+
+  test("a bundle taken from a task ref or a workflow ref is not blamed on any flag", async () => {
+    const run = await failure(() => akmTasksRun("ghost//tasks/x"));
+    expect(run).toBeInstanceOf(UsageError);
+    expect((run as UsageError).message).toContain(
+      `The task ref's bundle must reference a source name from your config. No source named "ghost" is configured`,
+    );
+
+    const add = await failure(() =>
+      akmTasksAdd({ id: "y", schedule: "0 3 * * *", workflow: "ghost//workflows/deploy" }, { backend }),
+    );
+    expect(add).toBeInstanceOf(UsageError);
+    expect((add as UsageError).message).toContain(
+      `The asset ref's bundle must reference a source name from your config. No source named "ghost" is configured`,
+    );
+    for (const error of [run, add]) {
+      expect((error as UsageError).message).not.toContain("--target");
+      expect((error as UsageError).message).not.toContain("--bundle");
+    }
   });
 });
