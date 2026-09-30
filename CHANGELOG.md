@@ -33,12 +33,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bundle's `consolidate-pair` proposals as "would destroy content". The diff
   now lists only the removed lines, under a `(retire: <retired> -> <successor>)`
   header and `+++ /dev/null (retired: archived; successor <ref>)`, and its JSON
-  result gains `op: "delete"`, a `retirement` block (retired and successor
-  refs, the judge's label and reason, cosine) and a `note` that accepting
-  archives the file under `.akm/memory-cleanup/archive/` and `akm proposal
-  revert` restores it byte-exactly. The new fields are additive and appear on
-  retire proposals only. `akm proposal show --detail full` also stops ending a
-  retire proposal with a bare `payload:` heading over nothing.
+  result gains `op: "delete"`, a `retirement` block under the keys `proposal
+  show` uses (`retiredRef`, `successorRef`, `judgeLabel`, `judgeReason`,
+  `cosine`, and `continuityRisk` when the pair was flagged, which the text
+  output prints as well) and a `note` that accepting archives the file under
+  `.akm/memory-cleanup/archive/` and `akm proposal revert` restores it
+  byte-exactly. The new fields are additive and appear on retire proposals
+  only. `akm proposal show --detail full` also stops ending a retire proposal
+  with a bare `payload:` heading over nothing.
 
 ## [0.9.18] - 2026-09-29
 

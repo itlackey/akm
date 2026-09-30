@@ -2940,12 +2940,16 @@ note: Accepting archives the retired file under .akm/memory-cleanup/archive/ (no
 ```
 
 The JSON result carries three more fields for a retire proposal, and none of
-them on any other proposal: `op` (`"delete"`), `retirement` (`retiredRef`,
-`successorRef`, the judge's `label` and `reason`, and the pair's `cosine`), and
-`note` (what accept and revert do to the file). `isNew` is always `false` for a
-retire proposal; when the retired file is already gone (retired, or removed by
-something else), the diff is only its two header lines, `--- <ref> (missing)`
-and the `+++` line.
+them on any other proposal: `op` (`"delete"`), `retirement`, and `note` (what
+accept and revert do to the file). `retirement` uses the keys `proposal show`
+reports the pair under: `retiredRef`, `successorRef`, `judgeLabel`,
+`judgeReason` (the judge's own text; the stored block's `reason` is the
+tombstone vocabulary and is not repeated), `cosine`, and `continuityRisk` when
+the retirement continuity check flagged the pair. The text output prints the
+same verdict lines `show` does, `continuityRisk` and its failing queries
+included, above the diff. `isNew` is always `false` for a retire proposal; when
+the retired file is already gone (retired, or removed by something else), the
+diff is only its two header lines, `--- <ref> (missing)` and the `+++` line.
 
 #### proposal drain
 

@@ -118,9 +118,52 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
   return lines.join("\n").trimEnd();
 }
 
-/** The pair judge's verdict as `proposal show` and `proposal diff` both print it for a retire proposal. */
-function retireVerdictLines(label: unknown, cosine: unknown, reason: unknown): string[] {
-  return [`retire.label: ${String(label)} (cosine=${String(cosine)})`, `retire.reason: ${String(reason)}`];
+/**
+ * A retire proposal's verdict lines — the pair judge's label and reason, and
+ * the continuity check's failing queries — as `proposal show` and `proposal
+ * diff` both print them. `retirement` is the stored block, which `proposal
+ * diff` reports under the same keys.
+ */
+function retireVerdictLines(retirement: Record<string, unknown>): string[] {
+  const lines = [
+    `retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`,
+    `retire.reason: ${String(retirement.judgeReason)}`,
+  ];
+  // Item 1 (continuity check): flagged, but still minted — never swept by a
+  // bulk accept, only acceptable by id, so a reviewer must see it.
+  const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
+  if (continuityRisk) {
+    const failingQueries = typeof continuityRisk.failingQueries === "number" ? continuityRisk.failingQueries : 0;
+    const unverifiedQueries =
+      typeof continuityRisk.unverifiedQueries === "number" ? continuityRisk.unverifiedQueries : 0;
+    const summary: string[] = [];
+    if (failingQueries > 0) {
+      summary.push(
+        `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
+      );
+    }
+    // S2: a query the search call never ran, or that fell back to
+    // keyword-only ranking, is never silently trusted OR silently
+    // dropped — it excludes the proposal from bulk accept on its own.
+    if (unverifiedQueries > 0) {
+      summary.push(
+        `${unverifiedQueries} quer${unverifiedQueries === 1 ? "y" : "ies"} unverified (search failed or used the keyword-only fallback)`,
+      );
+    }
+    lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
+    // N3 / S4: the actual failing query text, not just the count — a
+    // reviewer deciding whether to accept by id needs to see what would
+    // stop resolving, not just how many queries.
+    const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
+    for (const rank of ranks) {
+      const successorRank =
+        rank.successorRank === null || rank.successorRank === undefined
+          ? "absent from top 10"
+          : `#${String(rank.successorRank)}`;
+      lines.push(`  - "${String(rank.query)}": retired #${String(rank.retiredRank)}, successor ${successorRank}`);
+    }
+  }
+  return lines;
 }
 
 export function formatProposalShowPlain(r: Record<string, unknown>): string {
@@ -168,41 +211,7 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   const retirement = p.retirement as Record<string, unknown> | undefined;
   if (retirement) {
     lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
-    lines.push(...retireVerdictLines(retirement.judgeLabel, retirement.cosine, retirement.judgeReason));
-    // Item 1 (continuity check): flagged, but still minted — never swept by a
-    // bulk accept, only acceptable by id, so a reviewer must see it here.
-    const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
-    if (continuityRisk) {
-      const failingQueries = typeof continuityRisk.failingQueries === "number" ? continuityRisk.failingQueries : 0;
-      const unverifiedQueries =
-        typeof continuityRisk.unverifiedQueries === "number" ? continuityRisk.unverifiedQueries : 0;
-      const summary: string[] = [];
-      if (failingQueries > 0) {
-        summary.push(
-          `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
-        );
-      }
-      // S2: a query the search call never ran, or that fell back to
-      // keyword-only ranking, is never silently trusted OR silently
-      // dropped — it excludes the proposal from bulk accept on its own.
-      if (unverifiedQueries > 0) {
-        summary.push(
-          `${unverifiedQueries} quer${unverifiedQueries === 1 ? "y" : "ies"} unverified (search failed or used the keyword-only fallback)`,
-        );
-      }
-      lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
-      // N3 / S4: the actual failing query text, not just the count — a
-      // reviewer deciding whether to accept by id needs to see what would
-      // stop resolving, not just how many queries.
-      const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
-      for (const rank of ranks) {
-        const successorRank =
-          rank.successorRank === null || rank.successorRank === undefined
-            ? "absent from top 10"
-            : `#${String(rank.successorRank)}`;
-        lines.push(`  - "${String(rank.query)}": retired #${String(rank.retiredRank)}, successor ${successorRank}`);
-      }
-    }
+    lines.push(...retireVerdictLines(retirement));
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {
@@ -303,7 +312,7 @@ export function formatProposalDiffPlain(r: Record<string, unknown>): string {
       ? `${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`
       : String(r.ref);
     const lines = [`# proposal ${String(r.id)} (retire: ${subject})`];
-    if (retirement) lines.push(...retireVerdictLines(retirement.label, retirement.cosine, retirement.reason));
+    if (retirement) lines.push(...retireVerdictLines(retirement));
     if (typeof r.note === "string") lines.push(`note: ${r.note}`);
     if (unified) lines.push(unified);
     return lines.join("\n");

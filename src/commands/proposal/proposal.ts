@@ -317,17 +317,6 @@ export interface ProposalDiffOptions {
   config?: AkmConfig;
 }
 
-/** A retire proposal's pair verdict, as `proposal diff` reports it (the stored block's judge fields under review-facing names). */
-export interface ProposalDiffRetirement {
-  retiredRef: string;
-  successorRef: string;
-  /** The pair judge's label: `duplicate`, `subsumed` or `supersedes`. */
-  label: RetirementMetadata["judgeLabel"];
-  /** The judge's own explanation. */
-  reason: string;
-  cosine: number;
-}
-
 /** What a reviewer of a retire proposal needs to know that its diff (a file leaving) does not say. */
 const RETIRE_DIFF_NOTE =
   "Accepting archives the retired file under .akm/memory-cleanup/archive/ (nothing is deleted); " +
@@ -342,10 +331,41 @@ export interface ProposalDiffResult {
   targetPath?: string;
   /** `delete` on a retire proposal (accept archives its target); absent on a create or update. */
   op?: "delete";
-  /** The pair verdict behind a retire proposal; absent unless `op` is `delete`. */
-  retirement?: ProposalDiffRetirement;
+  /**
+   * The pair verdict behind a retire proposal, under the keys `proposal show`
+   * reports it (`judgeReason` is the judge's text; the stored block's `reason`
+   * is the tombstone vocabulary and is not repeated here). `continuityRisk`
+   * appears when the retirement continuity check flagged the pair. Absent
+   * unless `op` is `delete`.
+   */
+  retirement?: Pick<
+    RetirementMetadata,
+    "retiredRef" | "successorRef" | "judgeLabel" | "judgeReason" | "cosine" | "continuityRisk"
+  >;
   /** Present with `op: "delete"`: what accept and revert do to the retired file. */
   note?: string;
+}
+
+/** The fields a retire proposal's diff result adds to an ordinary one (#997). */
+function retireDiffFields(
+  retirement: RetirementMetadata | undefined,
+): Pick<ProposalDiffResult, "op" | "retirement" | "note"> {
+  return {
+    op: "delete",
+    ...(retirement
+      ? {
+          retirement: {
+            retiredRef: retirement.retiredRef,
+            successorRef: retirement.successorRef,
+            judgeLabel: retirement.judgeLabel,
+            judgeReason: retirement.judgeReason,
+            cosine: retirement.cosine,
+            ...(retirement.continuityRisk ? { continuityRisk: retirement.continuityRisk } : {}),
+          },
+        }
+      : {}),
+    note: RETIRE_DIFF_NOTE,
+  };
 }
 
 export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResult {
@@ -354,7 +374,6 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
   const stash = queue.stashDir;
   const proposal = resolveProposalId(stash, options.id);
   const diff = diffProposal(stash, config, proposal.id, { target: options.target, queueTarget: queue.target });
-  const retirement = proposal.retirement;
   return {
     schemaVersion: 1,
     id: proposal.id,
@@ -362,23 +381,7 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
     isNew: diff.isNew,
     unified: diff.unified,
     ...(diff.targetPath ? { targetPath: diff.targetPath } : {}),
-    ...(isRetireProposal(proposal)
-      ? {
-          op: "delete" as const,
-          ...(retirement
-            ? {
-                retirement: {
-                  retiredRef: retirement.retiredRef,
-                  successorRef: retirement.successorRef,
-                  label: retirement.judgeLabel,
-                  reason: retirement.judgeReason,
-                  cosine: retirement.cosine,
-                },
-              }
-            : {}),
-          note: RETIRE_DIFF_NOTE,
-        }
-      : {}),
+    ...(isRetireProposal(proposal) ? retireDiffFields(proposal.retirement) : {}),
   };
 }
 

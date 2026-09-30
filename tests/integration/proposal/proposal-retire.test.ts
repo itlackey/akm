@@ -992,18 +992,52 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(diff.isNew).toBe(false);
     expect(diff.targetPath).toBe(oldPath);
 
-    // The retirement travels with the diff, so a reviewer need not run `show` too.
+    // The retirement travels with the diff, so a reviewer need not run `show` too — under the very
+    // keys `show` uses (`reason` there is the tombstone vocabulary, so the judge's text is `judgeReason`).
     expect(diff.op).toBe("delete");
     expect(diff.retirement).toEqual({
       retiredRef: "memories/old-note",
       successorRef: "memories/new-note",
-      label: "subsumed",
-      reason: "B says everything A says, and more.",
+      judgeLabel: "subsumed",
+      judgeReason: "B says everything A says, and more.",
       cosine: 0.987,
     });
+    const shown = akmProposalShow({ stashDir: storage.stashDir, id: proposal.id }).proposal.retirement;
+    expect(diff.retirement).toMatchObject({
+      retiredRef: shown?.retiredRef,
+      successorRef: shown?.successorRef,
+      judgeLabel: shown?.judgeLabel,
+      judgeReason: shown?.judgeReason,
+      cosine: shown?.cosine,
+    });
+    expect(diff.retirement).not.toHaveProperty("reason");
+    expect(diff.retirement).not.toHaveProperty("continuityRisk"); // not flagged, so not present
     expect(diff.note).toContain(".akm/memory-cleanup/archive/");
     expect(diff.note).toContain("akm proposal revert");
     expect(diff.note).toContain("byte-exactly");
+  });
+
+  test("#997: a continuityRisk flag rides along with the diff — a reviewer reading only the diff must not miss it", () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const continuityRisk = {
+      failingQueries: 1,
+      unverifiedQueries: 2,
+      ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }],
+    };
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+        continuityRisk,
+      }),
+    });
+    const diff = akmProposalDiff({ stashDir: storage.stashDir, id: proposal.id });
+    expect(diff.retirement?.continuityRisk).toEqual(continuityRisk);
   });
 
   test("#997: an ordinary proposal's diff result gains none of the retirement fields", () => {

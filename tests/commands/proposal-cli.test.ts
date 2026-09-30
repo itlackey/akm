@@ -5,6 +5,7 @@ import path from "node:path";
 import { contentHash } from "../../src/commands/improve/content-hash";
 import { stageJudgedProposal } from "../../src/commands/improve/stage";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
+import type { RetirementMetadata } from "../../src/commands/proposal/proposal-types";
 import { createProposal, createRetireProposal, getProposal } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { slugForPath } from "../../src/indexer/installations";
@@ -258,7 +259,7 @@ describe("akm proposal accept/reject/diff (CLI)", () => {
 });
 
 /** A `consolidate-pair` retire proposal over two real memories in `stash` (real body hashes: accept refuses a stale pair). */
-function seedRetireProposal(stash: string) {
+function seedRetireProposal(stash: string, flags: Pick<RetirementMetadata, "continuityRisk"> = {}) {
   const write = (name: string, description: string, body: string): string => {
     const filePath = path.join(stash, "memories", `${name}.md`);
     fs.writeFileSync(filePath, `---\ndescription: ${description}\n---\n${body}`, "utf8");
@@ -278,6 +279,7 @@ function seedRetireProposal(stash: string) {
       retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
       successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
       reason: "duplicate",
+      ...flags,
     },
   });
 }
@@ -297,11 +299,12 @@ describe("akm proposal diff — a retire proposal (#997)", () => {
       retirement: {
         retiredRef: "memories/old-note",
         successorRef: "memories/new-note",
-        label: "duplicate",
-        reason: "Same durable facts, B adds nothing new.",
+        judgeLabel: "duplicate",
+        judgeReason: "Same durable facts, B adds nothing new.",
         cosine: 0.986,
       },
     });
+    expect(parsed.retirement).not.toHaveProperty("continuityRisk"); // unflagged: nothing to report
     expect(parsed.note).toContain(".akm/memory-cleanup/archive/");
     expect(parsed.note).toContain("akm proposal revert");
     expect(parsed.unified).toContain("-The durable fact.");
@@ -339,14 +342,44 @@ describe("akm proposal diff — a retire proposal (#997)", () => {
     expect(full.stdout).toContain("payload:");
   });
 
+  test("a continuityRisk flag shows in the diff — JSON block and text lines — the way `show` prints it", async () => {
+    const stash = makeStashDir();
+    const continuityRisk = {
+      failingQueries: 1,
+      unverifiedQueries: 2,
+      ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }],
+    };
+    const proposal = seedRetireProposal(stash, { continuityRisk });
+
+    const json = await runCli(["proposal", "diff", proposal.id, "--format=json"], { stashDir: stash });
+    expect(JSON.parse(json.stdout).retirement.continuityRisk).toEqual(continuityRisk);
+
+    const flaggedLines = [
+      "retire.continuityRisk: 1 of the retired asset's own query would not have found the successor top 10; " +
+        "2 queries unverified (search failed or used the keyword-only fallback) — excluded from bulk accept",
+      '  - "how do I do X": retired #1, successor absent from top 10',
+    ];
+    const diff = await runCli(["proposal", "diff", proposal.id, "--format=text"], { stashDir: stash });
+    const shown = await runCli(["proposal", "show", proposal.id, "--format=text"], { stashDir: stash });
+    for (const line of flaggedLines) {
+      expect(diff.stdout).toContain(line);
+      expect(shown.stdout).toContain(line);
+    }
+    // The flag belongs to the verdict lines, ahead of the diff proper.
+    const diffLines = diff.stdout.trimEnd().split("\n");
+    expect(diffLines.indexOf(flaggedLines[0] as string)).toBeLessThan(diffLines.findIndex((l) => l.startsWith("--- ")));
+  });
+
   test("md and html renderings carry the same retirement fields", async () => {
     const stash = makeStashDir();
     const proposal = seedRetireProposal(stash);
     for (const format of ["md", "html"]) {
       const result = await runCli(["proposal", "diff", proposal.id, `--format=${format}`], { stashDir: stash });
       expect({ format, status: result.status }).toEqual({ format, status: 0 });
-      expect(result.stdout).toContain("memories/new-note");
-      expect(result.stdout).toContain("archive");
+      // The judge's text and label live only in the `retirement` block, never in the unified diff.
+      expect(result.stdout).toContain("judgeReason");
+      expect(result.stdout).toContain("Same durable facts, B adds nothing new.");
+      expect(result.stdout).toContain("judgeLabel");
     }
   });
 

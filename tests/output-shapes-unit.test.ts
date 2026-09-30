@@ -849,9 +849,10 @@ describe("shapeProposal* — proposal commands", () => {
       retirement: {
         retiredRef: "memories/old",
         successorRef: "memories/new",
-        label: "duplicate",
-        reason: "same facts",
+        judgeLabel: "duplicate",
+        judgeReason: "same facts",
         cosine: 0.98,
+        continuityRisk: { failingQueries: 1, ranks: [{ query: "q", retiredRank: 1, successorRank: null }] },
       },
       note: "Accepting archives the retired file.",
     };
