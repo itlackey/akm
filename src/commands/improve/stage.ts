@@ -268,6 +268,7 @@ export function buildJudgePrompt(
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
     "1. NOVELTY: Does the lesson add information not already present in the source asset?",
     "2. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
+    "3. GROUNDING: Is the lesson about what the source asset is about? Score 1-2 if it is about a different subject than the source or contradicts it; 3 if it is on subject but goes beyond what the source says; 4-5 if the source supports it. A lesson may generalize the source's point.",
     "",
     "Source asset content:",
     "```",
@@ -289,7 +290,7 @@ export function buildJudgePrompt(
     lessonContent.slice(0, 1000),
     "```",
     "",
-    'Return ONLY valid JSON, no prose: {"scores": {"novelty": <1-5 integer>, "nonRedundancy": <1-5 integer>}, "reason": "<one sentence>"}',
+    'Return ONLY valid JSON, no prose: {"scores": {"novelty": <1-5 integer>, "nonRedundancy": <1-5 integer>, "grounding": <1-5 integer>}, "reason": "<one sentence>"}',
   );
   return lines.join("\n");
 }
@@ -354,13 +355,26 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
   ].join("\n");
 }
 
-const LESSON_JUDGE_CRITERIA = ["novelty", "nonRedundancy"] as const;
+/**
+ * `grounding` is scored with the other lesson criteria but left out of their
+ * mean: a lesson about a different subject than its source reads as novel and
+ * non-redundant, so the mean would pass it (or, in the review band, mint it as
+ * a pending proposal). A score of {@link UNGROUNDED_MAX_SCORE} or less is a
+ * rejection whatever the mean says (#999). The rubric scores a different
+ * subject or a contradiction that low, not a lesson that merely goes beyond the
+ * source: distill folds feedback into the lesson, and the judge never sees it.
+ */
+const GROUNDING_CRITERION = "grounding";
+const UNGROUNDED_MAX_SCORE = 2;
+
+const LESSON_JUDGE_CRITERIA = ["novelty", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["feedbackAlignment", "preservation", "quality"] as const;
 
 /**
- * Read a judge response: the per-criterion shape (averaged here) or the older
- * `{"score"}` shape. Only the expected criteria are read; any missing or
- * out-of-range (1..5) value is a parse failure, extra keys are ignored.
+ * Read a judge response: the per-criterion shape (averaged here, `grounding`
+ * aside) or the older `{"score"}` shape. Only the expected criteria are read;
+ * any missing or out-of-range (1..5) value is a parse failure, extra keys are
+ * ignored.
  */
 function parseJudgeResponse(
   raw: string,
@@ -380,7 +394,10 @@ function parseJudgeResponse(
       if (!inRange(value)) return undefined;
       criteria[key] = value;
     }
-    return { score: Object.values(criteria).reduce((a, b) => a + b, 0) / keys.length, reason, criteria };
+    const averaged = Object.entries(criteria)
+      .filter(([key]) => key !== GROUNDING_CRITERION)
+      .map(([, value]) => value);
+    return { score: averaged.reduce((a, b) => a + b, 0) / averaged.length, reason, criteria };
   }
   return inRange(parsed.score) ? { score: parsed.score, reason } : undefined;
 }
@@ -405,7 +422,8 @@ function judgeResponseSchema(keys: readonly string[]): Record<string, unknown> {
 /**
  * The quality judge. Fails closed: no runner, an unparseable verdict or a
  * provider failure never passes content. Bands: >= 3.5 pass, 2.5-3.5 review,
- * < 2.5 reject. Temperature is pinned to 0 so verdicts do not flip.
+ * < 2.5 reject; a `grounding` score of {@link UNGROUNDED_MAX_SCORE} or less
+ * rejects whatever the mean is. Temperature is pinned to 0 so verdicts do not flip.
  */
 async function runQualityJudge(
   feature: LlmFeatureKey,
@@ -443,6 +461,15 @@ async function runQualityJudge(
   const parsed = parseJudgeResponse(outcome.raw, keys);
   if (!parsed) return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
   const { score, reason, criteria } = parsed;
+  const grounding = criteria?.[GROUNDING_CRITERION];
+  if (criteria && grounding !== undefined && grounding <= UNGROUNDED_MAX_SCORE) {
+    return {
+      pass: false,
+      score,
+      reason: `Unrelated to or contradicting its source (grounding ${grounding}/5): ${reason}`,
+      criteria,
+    };
+  }
   const verdict = score >= 3.5 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
   return { ...verdict, score, reason, ...(criteria ? { criteria } : {}) };
 }

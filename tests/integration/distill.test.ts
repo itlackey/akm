@@ -2070,4 +2070,117 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     expect(proposals[0]!.status).toBe("pending");
     expect(proposals[0]!.source).toBe("distill");
   });
+
+  // #999: negative feedback recording that `akm show` failed on a memory
+  // ("two physical assets share the same logical ref") reached distill as
+  // evidence about the memory. The lessons it produced were about the tool
+  // error, not the memory's subject, and became proposals for a human.
+  describe("a lesson about a different subject than its source memory (#999)", () => {
+    const TOOL_FAILURE = "The curated ref could not be shown because two physical assets share the same logical ref.";
+    const MEMORY_REF = "memories/perf-runbook";
+
+    function setup() {
+      const stash = makeStashDir();
+      const sourcePath = path.join(stash, "memories", "perf-runbook.md");
+      fs.writeFileSync(
+        sourcePath,
+        "---\ndescription: Performance report runbook\n---\n\nRun the report against the nightly snapshot, then compare p95 latency with last week.\n",
+      );
+      const feedbackEvents = (() => ({
+        events: [
+          {
+            schemaVersion: 1 as const,
+            id: 1,
+            ts: "2026-09-17T08:23:43.906Z",
+            eventType: "feedback",
+            ref: MEMORY_REF,
+            metadata: { signal: "negative", reason: TOOL_FAILURE },
+          },
+        ],
+        nextOffset: 0,
+      })) as unknown as typeof readEvents;
+      return { stash, sourcePath, feedbackEvents };
+    }
+
+    function distillWithJudge(
+      fixture: ReturnType<typeof setup>,
+      scores: { novelty: number; nonRedundancy: number; grounding: number },
+      reason: string,
+    ) {
+      return akmDistill({
+        ref: MEMORY_REF,
+        config: configJudgeEnabled(fixture.stash),
+        stashDir: fixture.stash,
+        lookupFn: async () => fixture.sourcePath,
+        readEventsFn: fixture.feedbackEvents,
+        chat: async (_cfg, messages) => {
+          const joined = messages.map((m) => m.content).join("\n");
+          return joined.includes("Score this lesson") ? JSON.stringify({ scores, reason }) : VALID_LESSON;
+        },
+      });
+    }
+
+    function ledgerRow(stash: string) {
+      const db = openStateDatabase();
+      try {
+        return listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === MEMORY_REF);
+      } finally {
+        db.close();
+      }
+    }
+
+    test("is quality_rejected: a ledger row and an event with the reason, and no proposal", async () => {
+      const fixture = setup();
+      const reason = "The lesson is about duplicate refs; the source is a performance runbook.";
+      const result = await distillWithJudge(fixture, { novelty: 5, nonRedundancy: 5, grounding: 1 }, reason);
+
+      expect(result.outcome).toBe("quality_rejected");
+      expect(result.proposalId).toBeUndefined();
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+
+      const row = ledgerRow(fixture.stash);
+      expect(row).toMatchObject({ outcome: "quality_rejected" });
+      expect(row?.detail).toContain("Unrelated to or contradicting its source (grounding 1/5)");
+      expect(row?.detail).toContain(reason);
+      // The distill rejection window keeps selection from regenerating it.
+      expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
+
+      const { events } = readEvents({ type: "distill_invoked" });
+      expect(events.at(-1)?.metadata).toMatchObject({
+        outcome: "quality_rejected",
+        criteria: { novelty: 5, nonRedundancy: 5, grounding: 1 },
+      });
+      expect(String(events.at(-1)?.metadata?.reason)).toContain("(grounding 1/5)");
+    });
+
+    test("a grounded lesson in the same review band still mints a pending proposal for a human", async () => {
+      const fixture = setup();
+      // Mean 2.5 is the review band. Only the grounding score differs from the case below.
+      const result = await distillWithJudge(
+        fixture,
+        { novelty: 2, nonRedundancy: 3, grounding: 4 },
+        "Mostly restates the runbook.",
+      );
+
+      expect(result.outcome).toBe("review_needed");
+      const proposals = listProposals(fixture.stash);
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0]).toMatchObject({ status: "pending", source: "distill" });
+      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
+      expect(ledgerRow(fixture.stash)).toMatchObject({ outcome: "review_needed" });
+    });
+
+    test("the same review-band scores with grounding 2 mint nothing", async () => {
+      const fixture = setup();
+      const result = await distillWithJudge(
+        fixture,
+        { novelty: 2, nonRedundancy: 3, grounding: 2 },
+        "Mostly restates the runbook.",
+      );
+
+      expect(result.outcome).toBe("quality_rejected");
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+      expect(ledgerRow(fixture.stash)).toMatchObject({ outcome: "quality_rejected" });
+    });
+  });
 });
