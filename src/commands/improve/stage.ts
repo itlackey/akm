@@ -360,15 +360,20 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
  * `grounding` is scored with the other lesson criteria but left out of their
  * mean: a lesson about a different subject than its source reads as novel and
  * non-redundant, so the mean would pass it (or, in the review band, mint it as
- * a pending proposal). A score of {@link UNGROUNDED_MAX_SCORE} or less is a
- * rejection whatever the mean says (#999). Only a different subject scores that
- * low. A lesson that goes beyond or corrects its source is on its subject:
- * distill folds feedback into the lesson, and the judge is never shown it. A
- * contradiction of the source is the optional fidelity check's to send to a
- * human (`judgeAndQueue` in distill.ts), so the rubric must not pre-empt it.
+ * a pending proposal). The rubric reserves 1-2 for a different subject. A score
+ * of {@link UNGROUNDED_MAX_SCORE} or less is a rejection whatever the mean says
+ * (#999). A higher score up to {@link BORDERLINE_GROUNDING_MAX_SCORE} is only
+ * borderline: a lesson on its source's subject that advises beyond it has scored
+ * 2, and a score can move a point between runs (see `runQualityJudge`), so it
+ * goes to a person unless the mean alone already rejects it. A lesson that goes
+ * beyond or corrects its source is on its subject: distill folds feedback into
+ * the lesson, and the judge is never shown it. A contradiction of the source is
+ * the optional fidelity check's to send to a human (`judgeAndQueue` in
+ * distill.ts), so the rubric must not pre-empt it.
  */
 const GROUNDING_CRITERION = "grounding";
-const UNGROUNDED_MAX_SCORE = 2;
+const UNGROUNDED_MAX_SCORE = 1;
+const BORDERLINE_GROUNDING_MAX_SCORE = 2;
 
 const LESSON_JUDGE_CRITERIA = ["novelty", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["feedbackAlignment", "preservation", "quality"] as const;
@@ -426,7 +431,12 @@ function judgeResponseSchema(keys: readonly string[]): Record<string, unknown> {
  * The quality judge. Fails closed: no runner, an unparseable verdict or a
  * provider failure never passes content. Bands: >= 3.5 pass, 2.5-3.5 review,
  * < 2.5 reject; a `grounding` score of {@link UNGROUNDED_MAX_SCORE} or less
- * rejects whatever the mean is. Temperature is pinned to 0 so verdicts do not flip.
+ * rejects whatever the mean is, and one of {@link BORDERLINE_GROUNDING_MAX_SCORE}
+ * routes a lesson the mean would pass to review (a mean that rejects stays a
+ * rejection). Temperature is set to 0, which reduces run-to-run variation but
+ * does not remove it: on some servers (llama.cpp batching, for one) the same
+ * request can score a point apart, so the routing rules are chosen with that
+ * margin in mind.
  */
 async function runQualityJudge(
   feature: LlmFeatureKey,
@@ -474,6 +484,21 @@ async function runQualityJudge(
     };
   }
   const verdict = score >= 3.5 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
+  // Borderline grounding is a person's call even when the mean would pass; a mean that rejects stays rejected.
+  if (
+    criteria &&
+    grounding !== undefined &&
+    grounding <= BORDERLINE_GROUNDING_MAX_SCORE &&
+    (verdict.pass || verdict.reviewNeeded)
+  ) {
+    return {
+      pass: false,
+      reviewNeeded: true,
+      score,
+      reason: `Borderline on grounding (${grounding}/5), routed to review: ${reason}`,
+      criteria,
+    };
+  }
   return { ...verdict, score, reason, ...(criteria ? { criteria } : {}) };
 }
 

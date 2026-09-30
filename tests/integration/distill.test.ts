@@ -2237,7 +2237,31 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
     });
 
-    test("the same review-band scores with grounding 2 mint nothing", async () => {
+    // Grounding 2 is borderline, not off-subject: a person decides. Nothing is dropped
+    // unless the mean of novelty and non-redundancy already rejects it.
+    test("grounding 2 with a passing mean mints a pending proposal for a human and says it is borderline", async () => {
+      const fixture = setup();
+      const reason = "On the runbook's subject, but the advice goes beyond it.";
+      const { result } = await distillWithJudge(fixture, { novelty: 5, nonRedundancy: 5, grounding: 2 }, reason);
+
+      expect(result.outcome).toBe("review_needed");
+      expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
+      expect(result.reason).toContain(reason);
+      const proposals = listProposals(fixture.stash);
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0]).toMatchObject({ status: "pending", source: "distill" });
+      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
+      expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
+
+      const { events } = readEvents({ type: "distill_invoked" });
+      expect(events.at(-1)?.metadata).toMatchObject({
+        outcome: "review_needed",
+        criteria: { novelty: 5, nonRedundancy: 5, grounding: 2 },
+      });
+      expect(String(events.at(-1)?.metadata?.reason)).toContain("Borderline on grounding (2/5)");
+    });
+
+    test("the same review-band scores with grounding 2 also mint a pending proposal, with the borderline reason", async () => {
       const fixture = setup();
       const { result } = await distillWithJudge(
         fixture,
@@ -2245,9 +2269,24 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
         "Mostly restates the runbook.",
       );
 
+      expect(result.outcome).toBe("review_needed");
+      expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
+      expect(listProposals(fixture.stash)).toHaveLength(1);
+      expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
+    });
+
+    test("grounding 2 does not rescue a mean that rejects: quality_rejected, no proposal", async () => {
+      const fixture = setup();
+      const { result } = await distillWithJudge(
+        fixture,
+        { novelty: 2, nonRedundancy: 2, grounding: 2 },
+        "Restates the runbook.",
+      );
+
       expect(result.outcome).toBe("quality_rejected");
+      expect(result.proposalId).toBeUndefined();
       expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
-      expect(ledgerRow(fixture)).toMatchObject({ outcome: "quality_rejected" });
+      expect(ledgerRow(fixture)).toMatchObject({ outcome: "quality_rejected", detail: "Restates the runbook." });
     });
 
     // The judge is never shown the feedback a lesson is distilled from, so a
