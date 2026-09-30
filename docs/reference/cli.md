@@ -2508,7 +2508,7 @@ with no such feedback: high salience (content-scored refs at or above
 `improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
 capped at 10% of the limit, at least one ref) and, in a strategy that enables
 `proactiveMaintenance`, refs due for a revisit. Both pick only refs in the
-[retrieval scope](../architecture/improvement.md#retrieval-scope): returned by
+[retrieval scope](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retrieval-scope): returned by
 `search`, `curate` or `show`, or named by feedback, in the last 90 days, or new
 material no improve stage has processed. The picks are ranked by salience and
 cut to the limit; an explicit ref scope bypasses every gate. Use

@@ -545,7 +545,7 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 
 ### Proposal queue
 
-`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It writes the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record (`akm proposal reopen` moves a rejected row back to pending). The retired `<stash>/.akm/proposals/` tree is neither read nor written.
+`createProposal` is the write point used by reflect, distill, consolidate (promote), extract, schema repair and `akm proposal new`; the pair pass's retire proposals go through `createRetireProposal` instead. Both write the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record (`akm proposal reopen` moves a rejected row back to pending). The retired `<stash>/.akm/proposals/` tree is neither read nor written.
 
 **Logical proposal shape:**
 

@@ -46,8 +46,9 @@ everything else routes through `akm proposal accept`.
   whole memory corpus (consolidate). See
   [Improve Workflow](internals/improve-workflow.md) for the full per-step
   reference and flow diagram.
-- **Proposal queue** (`state.db`) — the single write point (`createProposal`)
-  used by reflect, distill, and consolidate's promote operations.
+- **Proposal queue** (`state.db`) — written by `createProposal` (reflect,
+  distill, consolidate's promote operations, and the other proposal producers)
+  and by `createRetireProposal` (the pair pass's retire proposals).
 - **Auto-sync** — the end-of-run commit/push step for git-backed bundles.
 - **Session extraction** (`akm proposal extract`) — a separate entry point
   that mines coding-agent session transcripts for durable insights and queues
@@ -80,7 +81,9 @@ everything else routes through `akm proposal accept`.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
-   drain policy (`akm proposal drain`) reviews and resolves each proposal.
+   drain policy (`akm proposal drain`) reviews and resolves each proposal. A
+   rejection is not final: `akm proposal reopen` puts a rejected proposal back
+   to `pending`.
 7. `akm proposal accept` promotes the proposal into the bundle; `akm proposal
    revert` restores the prior content from the backup captured at promotion
    time, if the proposal overwrote an existing asset.
