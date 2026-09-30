@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A command killed by SIGTERM or SIGINT no longer leaves the `opencode serve` it
+  started running (#1005).** The SDK runner closes the servers it caches when a
+  command finishes, with a `process.once("exit")` hook as the backstop. A command
+  with no signal handler of its own dies on the signal without running `exit` hooks,
+  so a plain `kill <pid>` (or a supervisor's or scheduler's timeout) left the server
+  running, reparented to init, until someone killed it; `akm agent --prompt`
+  reproduced it. The runner now closes its servers on SIGINT and SIGTERM when the
+  command has no listener of its own, then re-raises the signal, so the command
+  still ends by it with the same status. The handlers go up before the first server
+  is spawned, so one that is still starting is covered too. `workflow run`,
+  `improve`, `index` and shell/script tasks keep handling the signals themselves.
+
 ## [0.9.19] - 2026-09-30
 
 ### Added
