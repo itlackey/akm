@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.18] - 2026-09-29
+
 ### Fixed
 
 - **A running `akm improve` no longer loses its SQLite file locks, which let
