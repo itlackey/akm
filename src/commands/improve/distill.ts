@@ -22,7 +22,7 @@ import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/f
 import { stripMarkdownFences } from "../../core/asset/markdown";
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { authoringRulesForType } from "../../core/authoring-rules";
-import { resolveStashDir } from "../../core/common";
+import { isWithin, resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -807,7 +807,10 @@ async function planPromotion(
   const existingPath = await run.lookup(assessment.knowledgeRef);
   let existing: string | null = null;
   try {
-    if (existingPath && fs.existsSync(existingPath)) existing = fs.readFileSync(existingPath, "utf8");
+    // The promotion is filed in run.stash, so only that bundle's doc is its destination (#1000).
+    if (existingPath && fs.existsSync(existingPath) && isWithin(existingPath, run.stash)) {
+      existing = fs.readFileSync(existingPath, "utf8");
+    }
   } catch {
     existing = null;
   }

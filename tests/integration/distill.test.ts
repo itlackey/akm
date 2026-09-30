@@ -21,7 +21,7 @@ import {
   isValidWhenToUse,
 } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
-import type { AkmConfig } from "../../src/core/config/config";
+import { type AkmConfig, saveConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
@@ -1604,6 +1604,61 @@ describe("D-1: fast path calls LLM merge when destination knowledge exists (#369
     expect(proposals.length).toBeGreaterThan(0);
     const proposal = proposals[0];
     expect(proposal?.payload.content).toContain("Merged auth content");
+  });
+
+  test("a doc only another bundle owns is not the promotion's destination (#1000)", async () => {
+    const stash = makeStashDir();
+    const team = makeStashDir();
+    const config = {
+      ...distillConfig(stash, { qualityGate: { enabled: false } }),
+      bundles: { stash: { path: stash, writable: true }, team: { path: team, writable: true } },
+    } as AkmConfig;
+    // The default lookup walks every configured source, so both bundles must be configured.
+    saveConfig(config);
+    fs.mkdirSync(path.join(team, "knowledge"), { recursive: true });
+    fs.writeFileSync(
+      path.join(team, "knowledge", "auth-guide.md"),
+      "---\ndescription: Team auth guide\n---\nTEAM-KNOWLEDGE only the team bundle owns.\n",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(stash, "memories", "auth-guide.md"),
+      [
+        "---",
+        "description: VPN required",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "---",
+        "",
+        "Always connect the VPN.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const chatCalls: string[] = [];
+    const result = await akmDistill({
+      ref: "memories/auth-guide",
+      proposalKind: "auto",
+      stashDir: stash,
+      config,
+      readEventsFn: eventsFor("memories/auth-guide", ["positive", "positive"]),
+      chat: async (_cfg, msgs) => {
+        chatCalls.push(msgs.map((message) => message.content).join("\n"));
+        return JSON.stringify({ action: "NOOP", content: "" });
+      },
+    });
+
+    // The bundle the run writes to has no `knowledge/auth-guide`: nothing to merge, so no model call
+    // (and no NOOP that would suppress the promotion), and none of the team's text in the proposal.
+    expect(chatCalls).toEqual([]);
+    expect(result.outcome).toBe("queued");
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.changes[0]?.op).toBe("create");
+    expect(proposals[0]?.payload.content).toContain("Always connect the VPN");
+    expect(proposals[0]?.payload.content).not.toContain("TEAM-KNOWLEDGE");
   });
 });
 
