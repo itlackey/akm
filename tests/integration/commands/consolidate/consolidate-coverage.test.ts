@@ -130,7 +130,7 @@ describe("findCoveringKnowledge — neighbours from the index, decided by shared
     });
   });
 
-  test("a guide that sits far from the memory by vector but quotes it is still found: coverage has no cosine floor", () => {
+  test("a guide that sits far from the memory by vector but quotes it is still found: there is no cosine floor, only a rank", () => {
     const memoryFile = writeAsset("memory", "release-note", "release note", RELEASE_NOTE);
     const guideFile = writeAsset("knowledge", "handbook", "handbook", `${GUIDE_INTRO}\n\n${RELEASE_NOTE}`);
     withIndex((db) => {
@@ -157,17 +157,42 @@ describe("findCoveringKnowledge — neighbours from the index, decided by shared
     });
   });
 
-  test("only the nearest neighbours are read: a covering doc past the pair pass's fetch depth is not found", () => {
+  test("memories and other bundles' knowledge that sit nearer do not crowd the covering guide out: the scan is scoped, not filtered afterwards", () => {
     const memoryFile = writeAsset("memory", "release-note", "release note", RELEASE_NOTE);
     const guideFile = writeAsset("knowledge", "handbook", "handbook", `${GUIDE_INTRO}\n\n${RELEASE_NOTE}`);
     withIndex((db) => {
       indexAsset(db, "memory", "release-note", memoryFile, 0);
-      for (let i = 0; i < PAIR_NEIGHBOR_FETCH_K; i++) {
-        const filler = writeAsset("memory", `filler-${i}`, "filler", `Unrelated filler ${i}.`);
-        indexAsset(db, "memory", `filler-${i}`, filler, 1 + i * 0.1);
+      // More than the fetch depth of nearer entries that cannot be candidates.
+      for (let i = 0; i < PAIR_NEIGHBOR_FETCH_K + 5; i++) {
+        const nearMemory = writeAsset("memory", `near-memory-${i}`, "near", `Unrelated memory ${i}.`);
+        indexAsset(db, "memory", `near-memory-${i}`, nearMemory, 1 + i * 0.1);
+        const foreign = writeAsset("knowledge", `foreign-${i}`, "foreign", `Unrelated foreign doc ${i}.`);
+        indexAsset(db, "knowledge", `foreign-${i}`, foreign, 1.05 + i * 0.1, "other-bundle");
       }
       indexAsset(db, "knowledge", "handbook", guideFile, 30);
-      expect(findCoveringKnowledge(db, "stash", memoryFile, RELEASE_NOTE)).toBeUndefined();
+      expect(findCoveringKnowledge(db, "stash", memoryFile, RELEASE_NOTE)?.ref).toBe("knowledge/handbook");
+    });
+  });
+
+  test.each([
+    { nearer: PAIR_NEIGHBOR_FETCH_K - 1, found: true }, // the guide is the 20th nearest knowledge doc
+    { nearer: PAIR_NEIGHBOR_FETCH_K, found: false }, // the guide is the 21st: past the fetch depth, unseen
+  ])("reads only the nearest knowledge docs: with $nearer of them nearer than the guide, it is found: $found", ({
+    nearer,
+    found,
+  }) => {
+    const memoryFile = writeAsset("memory", "release-note", "release note", RELEASE_NOTE);
+    const guideFile = writeAsset("knowledge", "handbook", "handbook", `${GUIDE_INTRO}\n\n${RELEASE_NOTE}`);
+    withIndex((db) => {
+      indexAsset(db, "memory", "release-note", memoryFile, 0);
+      for (let i = 0; i < nearer; i++) {
+        const filler = writeAsset("knowledge", `filler-${i}`, "filler", `Unrelated filler ${i}.`);
+        indexAsset(db, "knowledge", `filler-${i}`, filler, 1 + i * 0.1);
+      }
+      indexAsset(db, "knowledge", "handbook", guideFile, 30);
+      expect(findCoveringKnowledge(db, "stash", memoryFile, RELEASE_NOTE)?.ref).toBe(
+        found ? "knowledge/handbook" : undefined,
+      );
     });
   });
 

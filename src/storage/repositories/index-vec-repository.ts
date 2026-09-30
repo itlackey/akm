@@ -104,14 +104,22 @@ export function upsertEmbedding(db: Database, entryId: number, embedding: Embedd
   return true;
 }
 
+/** Confines a vector scan to the entries of one type in one bundle. */
+export interface VecScope {
+  type: string;
+  bundleId: string;
+}
+
 /**
  * The `k` stored vectors nearest to `query` by cosine similarity, best first
  * (ties by id): an exact scan of the current model's rows. `distance` is
  * `sqrt(2 * (1 - cosine))`, the L2 distance between the unit-normalised
  * vectors. Rows of another width, left by a model that is no longer current,
- * never match.
+ * never match. With a `scope`, only that bundle's entries of that type are
+ * scanned: the `k` nearest of those, not the `k` nearest of everything filtered
+ * afterwards.
  */
-export function searchVec(db: Database, query: ArrayLike<number>, k: number): DbVecResult[] {
+export function searchVec(db: Database, query: ArrayLike<number>, k: number, scope?: VecScope): DbVecResult[] {
   const dim = query.length;
   const q = Float64Array.from(query);
   let queryNorm = 0;
@@ -120,11 +128,13 @@ export function searchVec(db: Database, query: ArrayLike<number>, k: number): Db
   queryNorm = Math.sqrt(queryNorm);
 
   const current = modelPredicate(db, currentEmbeddingModel(db));
+  const scoped = scope ? " AND embeddings.id IN (SELECT id FROM entries WHERE type = ? AND bundle_id = ?)" : "";
+  const params = scope ? [...current.params, scope.type, scope.bundleId] : current.params;
   const ids: number[] = [];
   const similarities: number[] = [];
   const rows = db
-    .prepare(`SELECT id, embedding FROM embeddings WHERE ${current.sql}`)
-    .iterate(...current.params) as IterableIterator<{ id: number; embedding: Uint8Array }>;
+    .prepare(`SELECT id, embedding FROM embeddings WHERE ${current.sql}${scoped}`)
+    .iterate(...params) as IterableIterator<{ id: number; embedding: Uint8Array }>;
   for (const { id, embedding } of rows) {
     if (embedding.byteLength !== dim * 4) continue;
     // A Float32Array view needs 4-byte alignment; copy the rare row that lacks it.
@@ -155,15 +165,16 @@ export function searchVec(db: Database, query: ArrayLike<number>, k: number): Db
 /**
  * The k nearest neighbours of an already-indexed entry, by its stored vector —
  * no re-embedding, no network. Returns [] when the entry has no stored
- * vector. The entry itself is typically returned with distance ~0; callers
- * filter it out by id.
+ * vector. Unscoped, the entry itself is typically returned with distance ~0;
+ * callers filter it out by id. A `scope` confines the neighbours to one
+ * bundle's entries of one type (see {@link searchVec}).
  */
-export function getNeighborsByEntryId(db: Database, id: number, k: number): DbVecResult[] {
+export function getNeighborsByEntryId(db: Database, id: number, k: number, scope?: VecScope): DbVecResult[] {
   const row = db.prepare("SELECT embedding FROM embeddings WHERE id = ?").get(id) as
     | { embedding: Uint8Array }
     | undefined;
   if (!row || row.embedding.byteLength % 4 !== 0) return [];
-  return searchVec(db, new Float32Array(row.embedding.slice().buffer), k);
+  return searchVec(db, new Float32Array(row.embedding.slice().buffer), k, scope);
 }
 
 /** One entry the embedding pass has to (re)embed, with the text its vector is embedded from. */

@@ -2461,12 +2461,13 @@ the memory's current body (frontmatter edits do not count), the same
 content-driven rule the consolidate pair pass uses. A promotion decided by an
 older release, which recorded no hash, keeps the old windows. Consolidation
 also does not promote a memory that `knowledge/` already covers: before it
-queues a promotion it looks at the memory's nearest `knowledge/` docs by stored
-vector, and skips the memory when one of them holds at least half of its
-distinct 5-word shingles (skip reason `dedup_covered_by_knowledge` in the
-result's `consolidation.skipReasons`). With no stored vector (semantic search
-off, or the memory not indexed yet) that check does nothing and the exact slug
-and whole-body checks still apply.
+queues a promotion it compares the memory with the 20 `knowledge/` docs in its
+bundle nearest to it by stored vector, and skips the memory when one of them
+holds at least half of its distinct 5-word shingles (skip reason
+`dedup_covered_by_knowledge` in the result's `consolidation.skipReasons`). A
+covering doc that ranks lower than the 20th nearest goes unseen. With no stored
+vector (semantic search off, or the memory not indexed yet) that check does
+nothing and the exact slug and whole-body checks still apply.
 
 Built-in `default` and `frequent` leave the improve-stage extract process off,
 and `default` plus `reflect-distill` leave proactive maintenance off. Use the

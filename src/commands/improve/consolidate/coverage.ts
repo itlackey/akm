@@ -20,21 +20,26 @@
  * overlaps" an existing knowledge doc): the share of a proposal's distinct
  * 5-word shingles found in the best OTHER knowledge doc was >= 0.5 for 122 of
  * the 224 rejected proposals and for none of the 103 accepted ones. 0.5 is the
- * cut that sample supports: no accepted promotion would have been skipped, and
- * about 54% of the rejections would never have reached review. The other 102
- * rejected proposals (paraphrases, partial overlaps) still do: the next cut
+ * cut that sample supports: no accepted promotion would have been skipped. That
+ * sample compared each proposal with EVERY other knowledge doc, so 122 of 224
+ * (up to about 54%) is what the rule can take out of review at most, not what
+ * this gate achieves: it reads only the {@link PAIR_NEIGHBOR_FETCH_K} nearest
+ * knowledge docs (below), and a covering doc that ranks lower goes unseen. The
+ * recall over that candidate set is unmeasured. The rest of the rejected
+ * proposals (paraphrases, partial overlaps) still reach review: the next cut
  * measured, 0.2 (169 of 224 rejected), would also have skipped 2 of the 103
  * accepted ones, and no cosine cut was measured at all. A wrong skip is a
  * promotion nobody gets to review.
  *
- * Candidates come from the memory's nearest neighbours by stored vector
- * (`getNeighborsByEntryId`, {@link PAIR_NEIGHBOR_FETCH_K} of them — the lookup
- * the pair pass runs), never from a scan of `knowledge/`; no cosine floor
- * applies, because a big guide holding the memory verbatim sits far from it by
- * vector yet covers it fully. With no stored vector (semantic search off, the
- * memory not indexed yet, no index at all) there are no candidates and the gate
- * does nothing: the exact-slug and whole-body checks still run, and nothing
- * throws.
+ * Candidates are the memory's {@link PAIR_NEIGHBOR_FETCH_K} nearest knowledge
+ * docs in its bundle by stored vector (`getNeighborsByEntryId`, the lookup the
+ * pair pass runs, scoped to the bundle's knowledge entries), never a scan of
+ * `knowledge/`. There is no similarity floor, only a rank: a guide that quotes
+ * the memory is found however far it sits from it by vector, as long as fewer
+ * than that many other knowledge docs in the bundle are nearer. With no stored
+ * vector (semantic search off, the memory not indexed yet, no index at all)
+ * there are no candidates and the gate does nothing: the exact-slug and
+ * whole-body checks still run, and nothing throws.
  */
 
 import fs from "node:fs";
@@ -83,9 +88,10 @@ export interface CoveringKnowledge {
 export type CoveringKnowledgeFinder = (filePath: string, body: string) => CoveringKnowledge | undefined;
 
 /**
- * The best-covering knowledge doc among the memory's nearest neighbours in
- * `bundleId`. `filePath` is the memory's indexed file; a memory the index does
- * not know has no stored vector and so no candidates.
+ * The best-covering knowledge doc among the {@link PAIR_NEIGHBOR_FETCH_K}
+ * knowledge docs in `bundleId` nearest to the memory. `filePath` is the
+ * memory's indexed file; a memory the index does not know has no stored vector
+ * and so no candidates.
  */
 export function findCoveringKnowledge(
   db: Database,
@@ -98,10 +104,9 @@ export function findCoveringKnowledge(
   const entryId = getEntryIdByFilePath(db, filePath);
   if (entryId === undefined) return undefined;
   let best: CoveringKnowledge | undefined;
-  for (const hit of getNeighborsByEntryId(db, entryId, PAIR_NEIGHBOR_FETCH_K)) {
-    if (hit.id === entryId) continue;
+  for (const hit of getNeighborsByEntryId(db, entryId, PAIR_NEIGHBOR_FETCH_K, { type: "knowledge", bundleId })) {
     const neighbour = getEntryById(db, hit.id);
-    if (!neighbour || neighbour.entry.type !== "knowledge" || neighbour.bundleId !== bundleId) continue;
+    if (!neighbour) continue;
     let raw: string;
     try {
       raw = fs.readFileSync(neighbour.filePath, "utf8");

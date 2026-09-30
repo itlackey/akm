@@ -251,12 +251,16 @@ per-asset loop.
    proposal with `source: "consolidate"`. The checks run cheapest first and
    each records a skip reason: the same knowledge slug or a pending proposal
    for it, an identical body already in `knowledge/` or already pending, and
-   then the coverage check (`consolidate/coverage.ts`, #998): the memory's
-   nearest neighbours by stored vector (`getNeighborsByEntryId`, the 20 the
-   pair pass fetches) are filtered to `knowledge/` docs in the same bundle,
-   and the memory is skipped as `dedup_covered_by_knowledge` when one of them
-   holds at least half of the memory's distinct 5-word shingles. The rule and
-   its evidence are in the module's header comment. With no stored vector
+   then the coverage check (`consolidate/coverage.ts`, #998): the 20
+   `knowledge/` docs in the same bundle nearest to the memory by stored vector
+   (`getNeighborsByEntryId` scoped to that bundle's knowledge entries, the
+   fetch depth the pair pass uses; no similarity floor, only that rank) are
+   compared with it, and the memory is skipped as `dedup_covered_by_knowledge`
+   when one of them holds at least half of its distinct 5-word shingles. A
+   covering doc that ranks lower goes unseen, so the gate removes fewer
+   proposals than the rule does against every knowledge doc (122 of 224
+   rejected in #998's sample); its recall over the 20 is unmeasured. The rule
+   and its evidence are in the module's header comment. With no stored vector
    (semantic search off, or the memory not yet indexed) the check does
    nothing and nothing throws.
 2. Advance the consolidation watermark only when every chunk completed and
@@ -597,7 +601,7 @@ and can report `ok: false` for terminated runs:
 | `promote_source_too_small` | Source body too short to warrant a promotion proposal. |
 | `merge_content_too_short` | Secondary body too short to be a meaningful merge candidate. |
 | `dedup_pending_proposal` | Ref already has a pending proposal. Clears as triage drains the queue. |
-| `dedup_covered_by_knowledge` | A `knowledge/` doc among the memory's nearest neighbours already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. The memory stays in the ledger as `judged_no_action` (7-day revisit, or at once on an edit). |
+| `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. The memory stays in the ledger as `judged_no_action` (7-day revisit, or at once on an edit). |
 
 ### Fixed bugs — should be 0 in steady state
 
