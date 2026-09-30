@@ -14,7 +14,7 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../../src/storage/sqlite-read-snapshot";
-import { makeSandboxDir, withEnv } from "../../_helpers/sandbox";
+import { makeSandboxDir } from "../../_helpers/sandbox";
 
 describe("SQLite read snapshot lifecycle", () => {
   test("normal close is idempotent and removes its process-exit cleanup listener", () => {
@@ -129,6 +129,42 @@ function exclusiveAccessFromAnotherProcess(dbPath: string): string {
   return result.stdout.trim() || `probe produced no output (status ${result.status}): ${result.stderr.trim()}`;
 }
 
+const SNAPSHOT_MODULE = path.resolve(import.meta.dir, "../../../src/storage/sqlite-read-snapshot");
+
+/**
+ * What `openSqliteReadSnapshot(dbPath)` does in a child process that STARTS
+ * with a `PATH` holding no `cp`: `"no-throw"`, or `"<error name>: <message>"`.
+ *
+ * The child is the point. On Bun 1.3.14 (the version CI pins) `spawnSync("cp")`
+ * finds `cp` through the PATH the process started with and ignores later edits
+ * to `process.env.PATH`; Bun 1.4 honors them. A test that changes PATH inside
+ * its own process therefore only simulates a missing `cp` on newer Bun.
+ */
+function snapshotOutcomeWithoutCp(dbPath: string, scratchDir: string): string {
+  const emptyBin = path.join(scratchDir, "empty-bin");
+  fs.mkdirSync(emptyBin, { recursive: true });
+  const script = `
+    import { openSqliteReadSnapshot } from ${JSON.stringify(SNAPSHOT_MODULE)};
+    try {
+      openSqliteReadSnapshot(process.env.PROBE_DB)?.close();
+      console.log("no-throw");
+    } catch (error) {
+      console.log(error.name + ": " + error.message);
+    }
+  `;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    encoding: "utf8",
+    env: {
+      PATH: emptyBin,
+      HOME: scratchDir,
+      TMPDIR: scratchDir,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+      PROBE_DB: dbPath,
+    },
+  });
+  return result.stdout.trim() || `probe produced no output (status ${result.status}): ${result.stderr.trim()}`;
+}
+
 // POSIX advisory locks belong to the process: closing ANY descriptor for a file
 // drops every lock the process holds on it. Windows locks belong to the handle,
 // so there is nothing to lose there.
@@ -190,16 +226,14 @@ describe("SQLite read snapshot keeps the process's own SQLite locks", () => {
     }
   });
 
-  posixLockTest("a missing cp fails closed rather than copying inside this process", async () => {
+  posixLockTest("a missing cp fails closed rather than copying inside this process", () => {
     const fixture = makeSandboxDir("akm-sqlite-read-no-cp");
     const dbPath = path.join(fixture.dir, "source.db");
     const source = new Database(dbPath);
     source.exec("CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('x')");
     source.close();
     try {
-      await withEnv({ PATH: path.join(fixture.dir, "no-such-bin") }, () => {
-        expect(() => openSqliteReadSnapshot(dbPath)).toThrow(SqliteReadSnapshotUnavailableError);
-      });
+      expect(snapshotOutcomeWithoutCp(dbPath, fixture.dir)).toStartWith("SqliteReadSnapshotUnavailableError:");
     } finally {
       fixture.cleanup();
     }
