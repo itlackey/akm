@@ -46,8 +46,9 @@ everything else routes through `akm proposal accept`.
   whole memory corpus (consolidate). See
   [Improve Workflow](internals/improve-workflow.md) for the full per-step
   reference and flow diagram.
-- **Proposal queue** (`state.db`) — the single write point (`createProposal`)
-  used by reflect, distill, and consolidate's promote operations.
+- **Proposal queue** (`state.db`) — written by `createProposal` (reflect,
+  distill, consolidate's promote operations, and the other proposal producers)
+  and by `createRetireProposal` (the pair pass's retire proposals).
 - **Auto-sync** — the end-of-run commit/push step for git-backed bundles.
 - **Session extraction** (`akm proposal extract`) — a separate entry point
   that mines coding-agent session transcripts for durable insights and queues
@@ -59,10 +60,14 @@ everything else routes through `akm proposal accept`.
 2. The feedback event is appended to `state.db`, and the asset's utility
    score is updated immediately via the bounded-step formula (below) — no
    reindex required.
-3. `akm improve` selects assets (recent feedback first, retrieval-count
-   fallback for high-traffic assets with no feedback yet) from the one bundle
-   it writes to, inside the retrieval scope below, then runs whichever
-   processes the selected strategy enables against each one.
+3. `akm improve` selects assets from the one bundle it writes to: those with
+   feedback (a signal or a note, in the last 30 days) newer than the stage's
+   last attempt, plus, unless `--require-feedback-signal` is set, the fallback
+   lanes (high salience, and proactive maintenance where the strategy enables
+   it), which pick only what the retrieval scope below admits. It ranks them by
+   salience, applies the limit, then runs whichever processes the selected
+   strategy enables against each one (see
+   [Improve Workflow](internals/improve-workflow.md#ledger-pre-filter-signal-delta)).
 4. Reflect and distill each emit at most one proposal per asset per run;
    consolidate runs two passes alongside each other — the promote pass emits
    a proposal turning a memory into knowledge (and, once accepted, retires
@@ -76,7 +81,9 @@ everything else routes through `akm proposal accept`.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
-   drain policy (`akm proposal drain`) reviews and resolves each proposal.
+   drain policy (`akm proposal drain`) reviews and resolves each proposal. A
+   rejection is not final: `akm proposal reopen` puts a rejected proposal back
+   to `pending`.
 7. `akm proposal accept` promotes the proposal into the bundle; `akm proposal
    revert` restores the prior content from the backup captured at promotion
    time, if the proposal overwrote an existing asset.
@@ -108,9 +115,9 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `memory-focus`,
-`frequent`, `consolidate`, `catchup`, `reflect-distill`, and
-`proactive-maintenance` (`src/assets/improve-strategies/*.json`). Selection
+set: `default`, `quick`, `thorough`, `consolidate`, `catchup`,
+`reflect-distill`, and `proactive-maintenance`
+(`src/assets/improve-strategies/*.json`). Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
@@ -125,10 +132,10 @@ that "off" rather than defaulting to on.
 
 ### Retrieval scope
 
-Improve reworks only what gets read (#986). Fresh feedback and an explicit
-`--scope <ref>` are usage evidence of their own. Every other pick — the
-proactive-maintenance and high-salience lanes, and the memories consolidation
-judges — must be in the retrieval scope
+Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
+scope (`akm improve skills/x`) are usage evidence of their own. Every other
+pick — the proactive-maintenance and high-salience lanes, and the memories
+consolidation judges — must be in the retrieval scope
 (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
@@ -189,7 +196,7 @@ real risk.
 
 A failing pair still mints — the check flags, it never blocks — but the
 proposal carries `continuityRisk` in its retirement metadata: the failing
-query count and the rank pairs, visible in `akm proposal show`/`list`. A
+query count and the rank pairs, visible in `akm proposal show`/`list`/`diff`. A
 flagged proposal is excluded from every bulk accept path (`accept
 --generator …`, with or without `--yes`); a person can still accept it by id.
 Bulk *reject* is unaffected, since declining a flagged proposal is always the
@@ -219,10 +226,13 @@ but nothing assigns or emits it any more.
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
-proactive maintenance, salience ranking, replay, disk presence, and the final
-cap. Each invocation reports a best-effort observation assembled while it
-runs; it is not an atomic cross-store snapshot, a reservation, or a durable
-frozen plan. A later live invocation re-inspects mutable index, state,
+the fallback lanes (proactive maintenance and high salience), the retrieval
+scope, salience ranking, disk presence, and the final cap, and resolve the
+bundle they plan the same way: `--bundle`, else
+`defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
+`defaultBundle`). Each invocation reports a best-effort observation assembled
+while it runs; it is not an atomic cross-store snapshot, a reservation, or a
+durable frozen plan. A later live invocation re-inspects mutable index, state,
 filesystem, and session-log inputs and can therefore differ from an earlier
 dry preview. Given equivalent observed inputs, both paths produce the same
 selection. The public schema-v2 result projects the observation as `plan`: raw
@@ -244,10 +254,11 @@ before dispatch. A missing index or one without the current `entries` table
 yields an explicit empty `plan.snapshot` (`missing` or `incompatible`) rather
 than creating or migrating the database.
 
-`plan.limits.effective` is the base cap for ordinary refs. Replay is explicitly
-additive: `additiveReplayAllowance` reports its separate budget, and a finite
-`totalCeiling` is `effective + additiveReplayAllowance`. When the base run is
-unbounded, `totalCeiling` is omitted.
+`plan.limits.effective` is the cap on the refs a run dispatches, resolved from
+`--limit`, then the reflect process's `limit`, then the strategy's `limit`. The
+replay lane is retired, so `additiveReplayAllowance` is always `0` (the field
+stays so the schema-v2 plan shape keeps validating) and a finite `totalCeiling`
+equals `effective`. When the run is unbounded, `totalCeiling` is omitted.
 
 ### The autonomy gate
 
@@ -331,10 +342,10 @@ size and file count instead (`memory-cleanup-archive` advisory,
 session transcripts (`--type claude`, `--type opencode`, or `--auto` to
 iterate every harness with a detectable session-log location) into proposals.
 It replaced the legacy session-checkpoint hook and runs independently of
-whether a strategy's own `processes.extract` stage is enabled — the shipped
-`default` and `frequent` strategies leave that improve-stage extraction off,
-but a direct `akm proposal extract --type <harness>` or `--auto` invocation is
-never gated by that toggle. Session indexing writes are additive
+whether a strategy's own `processes.extract` stage is enabled — no shipped
+strategy turns that improve-stage extraction on, and a direct
+`akm proposal extract --type <harness>` or `--auto` invocation is never gated
+by that toggle. Session indexing writes are additive
 (`sessions/**`), which is why they are one of the writes left deliberately
 ungated by the autonomy gate above.
 

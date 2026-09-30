@@ -2255,6 +2255,11 @@ function retireHeldRefs(proposal: Proposal): string[] {
   });
 }
 
+const REOPEN_REFUSED_HINT =
+  "Only a rejected proposal whose target is unchanged can be reopened; `akm proposal list --status rejected` lists the candidates.";
+const REOPEN_RETIRE_CONFLICT_HINT =
+  "Only one pending retire proposal can involve a document: accept or reject the pending one (or reopen just one of a clashing pair), then reopen the other.";
+
 /**
  * The pair pass never has two pending retire proposals speak for one asset
  * (`pendingRetireRefs`): accepting one would strand the other. Reopening must
@@ -2306,10 +2311,19 @@ export function reopenProposals(
         if (isRetireProposal(pending)) for (const ref of retireHeldRefs(pending)) held.set(ref, pending.id);
       }
       const refusals = proposals.flatMap((proposal) => {
-        const reason = reopenRefusal(config, proposal, options.queueTarget) ?? retireConflict(proposal, held);
-        return reason === undefined ? [] : [{ proposal: `${proposal.id} (${proposal.ref})`, reason }];
+        const refusal = reopenRefusal(config, proposal, options.queueTarget);
+        const conflict = refusal === undefined ? retireConflict(proposal, held) : undefined;
+        const reason = refusal ?? conflict;
+        return reason === undefined
+          ? []
+          : [{ proposal: `${proposal.id} (${proposal.ref})`, reason, isConflict: conflict !== undefined }];
       });
       if (refusals.length > 0) {
+        // A retire conflict is not about the target changing, so it gets its own hint.
+        const hints = [
+          ...(refusals.some((refusal) => !refusal.isConflict) ? [REOPEN_REFUSED_HINT] : []),
+          ...(refusals.some((refusal) => refusal.isConflict) ? [REOPEN_RETIRE_CONFLICT_HINT] : []),
+        ];
         throw new UsageError(
           proposals.length === 1
             ? `Proposal ${refusals[0]?.proposal} cannot be reopened: ${refusals[0]?.reason}`
@@ -2317,7 +2331,7 @@ export function reopenProposals(
                 .map((refusal) => `  - ${refusal.proposal}: ${refusal.reason}`)
                 .join("\n")}`,
           "INVALID_FLAG_VALUE",
-          "Only a rejected proposal whose target is unchanged can be reopened; `akm proposal list --status rejected` lists the candidates.",
+          hints.join(" "),
         );
       }
       const decidedAt = nowIso(ctx);

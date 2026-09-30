@@ -366,6 +366,8 @@ describe("akm proposal reopen — refusals", () => {
     expect(error.message).toContain(b.proposal.id);
     expect(error.message).toContain(c.proposal.id);
     expect(error.message).not.toContain(a.proposal.id);
+    expect(error.hint()).toContain("whose target is unchanged");
+    expect(error.hint()).not.toContain("pending retire proposal");
     for (const { proposal } of [a, b, c]) expect(getProposal(stash(), proposal.id).status).toBe("rejected");
     expect(readEvents({ type: "proposal_reopened" }).events).toHaveLength(0);
 
@@ -385,10 +387,13 @@ describe("akm proposal reopen — refusals", () => {
       retirement: retirement(first.retiredPath, otherPath, "memories/old-note", "memories/other-note"),
     });
 
-    await expectRefused(
+    const error = await expectRefused(
       [first.proposal.id],
       new RegExp(`memories/old-note is already part of retire proposal ${second.id}`),
     );
+    // The refusal is not about the target changing, so the hint must not say it is.
+    expect(error.hint()).toContain("Only one pending retire proposal can involve a document");
+    expect(error.hint()).not.toContain("whose target is unchanged");
     expect(getProposal(stash(), first.proposal.id).status).toBe("rejected");
 
     // Decide the newer one and the older can come back.
@@ -414,8 +419,32 @@ describe("akm proposal reopen — refusals", () => {
     );
     expect(error.message).toContain(second.id);
     expect(error.message).toContain(`retire proposal ${first.proposal.id}`);
+    expect(error.hint()).toContain("Only one pending retire proposal can involve a document");
+    expect(error.hint()).not.toContain("whose target is unchanged");
     expect(getProposal(stash(), first.proposal.id).status).toBe("rejected");
     expect(getProposal(stash(), second.id).status).toBe("rejected");
+  });
+
+  test("a batch with a stale proposal and a conflicting one gets both hints", async () => {
+    const stale = mintRetire("old-stale", "new-stale");
+    await rejectIt(stale.proposal);
+    fs.rmSync(stale.successorPath);
+    const first = mintRetire("old-note", "new-note");
+    await rejectIt(first.proposal);
+    const otherPath = writeAsset("memories/other-note.md", "description: other-note");
+    const second = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement(first.retiredPath, otherPath, "memories/old-note", "memories/other-note"),
+    });
+
+    const error = await expectRefused(
+      [stale.proposal.id, first.proposal.id],
+      /Cannot reopen 2 of 2 proposals; none were reopened/,
+    );
+    expect(error.hint()).toContain("whose target is unchanged");
+    expect(error.hint()).toContain("Only one pending retire proposal can involve a document");
+    expect(getProposal(stash(), second.id).status).toBe("pending");
   });
 
   test("a proposal recorded before the change envelope existed is refused, not half-restored", async () => {

@@ -11,12 +11,11 @@
  *   - errors on unknown target names (UsageError)
  *   - errors on non-writable targets (ConfigError)
  *
- * The underlying shared write-target resolver (`resolveWriteTarget`,
- * src/core/write-source.ts) is unchanged and still names its own parameter
- * `--target` in error text — its callers span several commands whose flag
- * names now diverge (`--bundle` here, `--target` on `import`/env/secret), so
- * the error assertions below intentionally still expect the literal
- * `--target` substring from that shared message.
+ * The shared write-target resolvers (`resolveWriteTarget` and
+ * `resolveMutationTarget`) spell whatever flag their caller names, and
+ * `--target` by default. `remember` takes `--bundle`, so its errors must say
+ * `--bundle`, never the retired `--target` (still what `import`, env and secret
+ * take).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -113,7 +112,46 @@ describe("remember --bundle", () => {
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain('No source named "nope" is configured');
-    expect(json.error).toContain("--target must reference a source name");
+    expect(json.error).toContain("--bundle must reference a source name");
+    expect(json.error).not.toContain("--target");
+  });
+
+  test("--bundle with an unknown source name still names --bundle when --xref needs the write target", async () => {
+    writeConfig({ semanticSearchMode: "off", bundles: { real: { path: makeTargetDir(), writable: true } } });
+
+    const { result } = await runCli(["remember", "won't be written", "--bundle", "nope", "--xref", "knowledge/guide"]);
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string };
+    expect(json.error).toContain("--bundle must reference a source name");
+    expect(json.error).not.toContain("--target");
+  });
+
+  test("a qualified --supersedes ref that names a different bundle conflicts with --bundle, not --target", async () => {
+    writeConfig({
+      semanticSearchMode: "off",
+      bundles: {
+        stash: { path: currentStashDir, writable: true },
+        team: { path: makeTargetDir(), writable: true },
+      },
+      defaultBundle: "stash",
+    });
+
+    const { result } = await runCli([
+      "remember",
+      "won't be written",
+      "--bundle",
+      "stash",
+      "--supersedes",
+      "team//memories/old-note",
+    ]);
+    expect(result.status).toBe(2);
+
+    const json = JSON.parse(result.stderr) as { error: string; hint?: string };
+    expect(json.error).toContain('conflicts with --bundle "stash"');
+    expect(json.hint).toContain("Drop --bundle");
+    expect(json.error).not.toContain("--target");
+    expect(json.hint).not.toContain("--target");
   });
 
   test("--bundle on a non-writable source throws a config error", async () => {
@@ -132,9 +170,11 @@ describe("remember --bundle", () => {
     // this test.
     expect(result.status).toBe(78);
 
-    const json = JSON.parse(result.stderr) as { error: string; code?: string };
+    const json = JSON.parse(result.stderr) as { error: string; code?: string; hint?: string };
     expect(json.code).toBe("INVALID_CONFIG_FILE");
     expect(json.error).toContain("source read-only is not writable");
+    expect(json.hint).toContain("or pass --bundle to a different source");
+    expect(json.hint).not.toContain("--target");
   });
 });
 

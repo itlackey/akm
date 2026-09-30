@@ -78,7 +78,7 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   // are not bundle slugs).
   const parsed = parseQualifiedRefInput(options.sourceRef);
   const config = hasUnmanagedDest ? undefined : loadConfig();
-  const resolvedWriteTarget = config ? resolveWriteTarget(config, options.target) : undefined;
+  const resolvedWriteTarget = config ? resolveWriteTarget(config, options.target, { flag: "--bundle" }) : undefined;
   const writeTarget = resolvedWriteTarget ? prepareWriteTargetForMutation(resolvedWriteTarget) : undefined;
 
   // An unmanaged --dest does not require any configured write target.

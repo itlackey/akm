@@ -6,14 +6,14 @@
 
 | Option | Type | Purpose |
 |---|---|---|
-| `--scope` | `string` | Restrict the run to a single ref (`[bundle//]conceptId`), an asset type (`lesson`), or omit for all assets. |
+| `[scope]` (positional) | `string` | Restrict the run to a single ref (`[bundle//]conceptId`), an asset type (`lesson`), or omit for all assets. |
 | `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
 | `--dry-run` | `boolean` | Compute the plan from the existing index and analyze memory cleanup; emit no events, acquire no lock, call no model, and write nothing. |
 | `--bundle` | `string` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. It is the only bundle whose assets the run plans. |
-| `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
+| `--limit` | `number` | Cap the number of assets processed, taken from the salience ranking, highest first (refs routed to distill only come last). |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
-| `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a config error. |
-| `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; disable retrieval fallback. |
+| `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a transient error (`IMPROVE_LOCK_HELD`, exit 75). |
+| `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; turn the fallback lanes (high salience, proactive maintenance) off. |
 
 Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`) replace production defaults in tests.
 
@@ -27,7 +27,7 @@ flowchart TD
     C -- yes --> COLLECT[collectEligibleRefs\nquery existing SQLite index, filter to stashDir]
     E --> E1{lock file held?}
     E1 -- yes, skip-if-locked --> SKIP[Return exit-0 no-op\nno triage, index, events, or sync]
-    E1 -- yes, no flag --> ERR([throw ConfigError: already running])
+    E1 -- yes, no flag --> ERR([throw TransientError: already running\nIMPROVE_LOCK_HELD, exit 75])
     E1 -- no / stale reclaimed --> PURGE[purgeGracedArchive\ngit-backed bundles only: delete archived\nretirement bytes past RETIRE_GRACE_DAYS]
     PURGE --> TRIAGE[Triage pending proposal backlog]
     TRIAGE --> ENSURE[ensureIndex primaryStashDir\nshared deadline signal]
@@ -38,29 +38,26 @@ flowchart TD
     ANALYZE --> D{dryRun?}
     D -- yes --> DRY[Return dry-run result\nno lock, no events, no writes, no model calls\nincludes memoryCleanupPlan analysis]
     D -- no --> CONSOLIDATE
-    J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/memory-cleanup/archive/]
-    J --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
-
-    K --> L[Signal filter\nkeep only refs with recent feedback events\nhaving metadata.signal or metadata.note]
-    L --> L2[Zero-feedback fallback\ninclude refs with retrievalCount >= threshold\ndefault threshold: 5]
-    L2 --> M[buildUtilityMap\nlook up utility scores from SQLite]
-    M --> N[Sort by utility score DESC\napply --limit if set]
-    N --> J2{anything archived or transitioned?}
+    EXTRACT[Session extract\nwhen the strategy enables it: queues proposals\nfrom coding-agent session transcripts]
+    EXTRACT --> J[applyMemoryCleanup\nautonomy-gated: persist belief-state transitions\narchive prune candidates to .akm/memory-cleanup/archive/]
+    J --> K[projectMemoryCleanup\ndrop archived refs from the planned set]
+    K --> J2{anything archived or transitioned?}
     J2 -- yes --> J3[push memory-prune actions\nreindexFn: rebuild SQLite index]
-    J2 -- no --> O
-    J3 --> O[Pre-run validation sweep\ncheck file exists + lesson description]
+    J2 -- no --> O[Pre-run validation sweep\ncheck file exists + lesson description\nschema repair when enabled]
+    J3 --> O
     O --> P{validationFailures?}
-    P -- yes --> P1[Log failures; add to validationFailures set\ncontinue with valid refs only]
-    P -- no --> Q
-
-    P1 --> Q
+    P -- yes --> P1[Log failures; refs that still fail\nare excluded from selection]
+    P -- no --> L[Signal delta\nkeep refs with signal feedback newer than\nthe last ledger attempt and no hard ledger window]
+    P1 --> L
+    L --> L2[Fallback lanes\nproactive maintenance, high salience:\nonly retrieved or new material]
+    L2 --> M[scoreSalience\nsalience vector per ref: encoding, outcome, retrieval\nutility scores from SQLite seed the outcome term]
+    M --> N[Sort by salience rank DESC, no-op dampened\ndrop refs missing on disk\napply --limit if set]
+    N --> Q
 
     subgraph ASSET_LOOP["Per-asset loop"]
-        Q --> S{ref in validationFailures?}
-        S -- yes --> SKIP([skip, next asset])
-        S -- no --> R{budget exhausted?}
-        R -- yes --> BUDGET([push error action\nbreak loop])
-        R -- no --> REFLECT
+        Q{budget exhausted?}
+        Q -- yes --> BUDGET([push error action\nbreak loop])
+        Q -- no --> REFLECT
 
         subgraph REFLECT["reflectFn subprocess"]
             REFLECT_A[appendEvent: reflect_invoked] --> REFLECT_B[lookup ref in FTS index\nread asset file content]
@@ -75,21 +72,19 @@ flowchart TD
             REFLECT_G --> REFLECT_H([return AkmReflectResult\nok or failure envelope])
         end
 
-        REFLECT_H --> T{lesson or distillable memory?}
+        REFLECT_H --> T{distillable memory?\nmemory ref, not derived or proposed,\nnot cooled by the signal delta}
         T -- no --> NEXT_ASSET
         T -- yes + memory without recent feedback
         --> SKIP_WEAK[push distill-skipped action\nappendEvent improve_skipped\nreason: memory_distill_requires_feedback]
-        T -- yes --> DEDUP{pending proposal\nalready exists for lessonRef?}
-        DEDUP -- yes --> SKIP_DISTILL[push distill-skipped action]
-        DEDUP -- no --> DISTILL
+        T -- yes --> DISTILL
 
         subgraph DISTILL["distillFn subprocess"]
             DISTILL_A[lookup ref file path] --> DISTILL_B[readEvents: feedback for ref\napply excludeFeedbackFromRefs filter]
             DISTILL_B --> DISTILL_C{proposalKind == auto\nAND promotion heuristic passes?}
             DISTILL_C -- yes --> DISTILL_PROMOTE[createProposal knowledge/ref\nsource: distill\nappendEvent: distill_invoked outcome=queued]
-            DISTILL_C -- no --> DISTILL_D[tryLlmFeature: feedback_distillation\n30 s hard timeout\nnull on gate-disabled or error]
-            DISTILL_D --> DISTILL_E{raw == null?}
-            DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=skipped\nreturn skipped result]
+            DISTILL_C -- no --> DISTILL_D[callStage distill\nplan-resolved runner\n600 s default timeout]
+            DISTILL_D --> DISTILL_E{call failed or empty output?}
+            DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=llm_failed\nreturn llm_failed result, no ledger row]
             DISTILL_E -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
             DISTILL_F --> DISTILL_G{findings?}
             DISTILL_G -- yes --> DISTILL_FAIL[appendEvent: outcome=validation_failed\nthrow UsageError]
@@ -104,15 +99,13 @@ flowchart TD
             DISTILL_REJECT --> DISTILL_RETURN
         end
 
-        SKIP_DISTILL --> NEXT_ASSET
         SKIP_WEAK --> NEXT_ASSET
         DISTILL_RETURN --> NEXT_ASSET([completedCount++\nlog progress])
     end
 
-    NEXT_ASSET --> S
+    NEXT_ASSET --> Q
 
     BUDGET --> MAINT
-    SKIP --> S
     NEXT_ASSET -->|all assets done| MAINT
 
     subgraph CONSOLIDATE_SUB["akmConsolidate subprocess"]
@@ -156,9 +149,9 @@ flowchart TD
     end
 
     CONSOLIDATE --> CON_A
-    CON_NOOP --> J
-    CON_DONE --> J
-    CON_DRYRESULT --> J
+    CON_NOOP --> EXTRACT
+    CON_DONE --> EXTRACT
+    CON_DRYRESULT --> EXTRACT
     CON_ABORT2 --> MAINT
 
     subgraph MAINTENANCE["Improve-owned maintenance"]
@@ -203,7 +196,7 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
 
 ### distill (akmDistill)
 
-`akmDistill` is the bounded in-tree LLM subprocess. It never calls `runAgent`; it issues a direct HTTP chat completion through the configured LLM endpoint. It always emits exactly one `distill_invoked` event.
+`akmDistill` is the bounded in-tree LLM subprocess. It never calls `runAgent`; it issues a direct HTTP chat completion through the configured LLM endpoint. Past the process gate it emits a `distill_invoked` event carrying the outcome.
 
 **Internal steps:**
 
@@ -215,12 +208,12 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
    back to `defaults.llmEngine`), then issue one bounded call.
    - Process gate: disabled if the selected strategy's `processes.distill.enabled` is `false`.
    - Hard timeout: 600 seconds by default, overridden by the resolved invocation timeout.
-   - Returns `null` on gate-disabled, timeout, or error — treated as a graceful skip (exit 0, no proposal).
+   - A timeout, an error or empty output returns an `llm_failed` result: a `distill_invoked` event with that outcome, no proposal and exit 0. It is not a ledger attempt, so the ref stays eligible. A disabled process returns `config_disabled` before any event.
 6. Strip markdown fences and `<think>` blocks from the raw LLM output.
 7. Validate: `lintLessonContent` for lesson proposals; `validateKnowledgeContent` for knowledge proposals. Failure emits `distill_invoked` with `outcome: "validation_failed"` and throws `UsageError`.
 8. Quality gate (`processes.distill.qualityGate`, on unless disabled): one judge call scores the lesson from 1 to 5 on **novelty**, **non-redundancy** and **grounding**, against the source body the lesson was generated from (frontmatter stripped, first 3000 characters). The mean of novelty and non-redundancy picks the outcome: 3.5 or more passes, 2.5 up to 3.5 is `review_needed`, below 2.5 is `quality_rejected`. Grounding asks whether the lesson is about what its source is about: 1–2 only for a different subject than the source, 3 for a lesson on the source's subject that goes beyond or corrects it (it may draw on feedback the judge is not shown), 4–5 when the source supports it. It is not part of the mean, and a grounding score of 2 or less is `quality_rejected` whatever the mean is. This keeps a lesson about a tool error recorded as feedback — `akm show` failing on the ref — from being minted for a memory on an unrelated subject, which the mean of the other two criteria would pass or send to review (#999). A distill with no source to read (an unindexed ref distilled "from feedback signal alone") gives the judge an empty source, so its lesson is expected to be rejected as off-subject.
    - `quality_rejected` writes an `improve_ledger` row for the input (30-day distill rejection window) and a `distill_invoked` event carrying `score`, the per-criterion `criteria` and the `reason`. It mints no proposal.
-   - `review_needed` mints a pending proposal stamped `deferred` / `quality-gate` for a human; the triage drain leaves it alone. It is the outcome for a mean in the review band (unless grounding is 2 or less), a judge that times out or returns something unparseable or incomplete, the optional fidelity check's contradiction (a lesson that contradicts its source reaches a human this way, not through grounding), and a heuristic lesson-quality finding (for example an invalid `description`), which is found before the judge is called.
+   - `review_needed` mints a pending proposal stamped `deferred` / `quality-gate` for a human; the triage drain leaves it alone. It is the outcome for a mean in the review band (unless grounding is 2 or less), a judge that times out or returns something unparseable or incomplete, the optional fidelity check's contradiction (`processes.distill.fidelityCheck.enabled`, off by default; a lesson that contradicts its source reaches a human this way, not through grounding), and a heuristic lesson-quality finding (for example an invalid `description`), which is found before the judge is called.
 9. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
 10. Emit `distill_invoked` event with `outcome: "queued"`.
 
@@ -271,12 +264,15 @@ per-asset loop.
    and its evidence are in the module's header comment. With no stored vector
    (semantic search off, or the memory not yet indexed) the check does
    nothing and nothing throws.
-2. Advance the consolidation watermark only when every chunk completed and
-   every promotion proposal was emitted or deterministically deduplicated.
+2. Record what happened in the improve ledger (see **Re-eligibility** below):
+   a memory the model judged and left alone, or that a skip reason turned
+   away, gets a `judged_no_action` row; a promotion that failed to persist
+   gets none, so the next run retries it.
 
 **What it writes:**
 - A durable row in the `proposals` table in `state.db` for each emitted
   `promote` op, partitioned by bundle path.
+- An `improve_ledger` row for each memory the pass judged, except a promotion that failed to persist.
 
 **Re-eligibility (#998):** the promote pass keys its ledger row by the source
 memory (`memories/<name>`). A memory the model saw and left alone
@@ -310,7 +306,7 @@ same enabled gate. It replaces nothing the promote pass does; it adds
 duplicate, subsumed and superseding retirement, review-gated.
 
 1. **Initiators:** memory (base or `.derived`), flat `knowledge/` or lesson
-   assets in the primary writable bundle, in the retrieval scope, and
+   assets in the bundle the run writes to, in the retrieval scope, and
    content-eligible: no prior pair-pass ledger row (source
    `consolidate-pair`, kept apart from the promote pass's `consolidate`
    rows), or a row whose recorded body hash differs from the asset's current
@@ -427,8 +423,8 @@ by a blank one, #997), and bulk
 `accept --generator consolidate-pair` / `reject --generator
 consolidate-pair`. A proposal carrying `continuityRisk` (below) is excluded
 from that bulk accept, whatever the generator or `--yes` — visible inline in
-`list`'s default output and in `show`'s text output (the specific
-failing/unverified queries, not just a count) — bulk reject is unaffected,
+`list`'s default output and in the text output of `show` and `diff` (the
+specific failing/unverified queries, not just a count) — bulk reject is unaffected,
 and a person can always accept one by id. A rejection is not final:
 `akm proposal reopen <id>` puts a rejected retire proposal back to `pending`
 (refused if the retired document, or the successor, changed since the pair was
@@ -548,7 +544,7 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 
 ### Proposal queue
 
-`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It writes the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record. The retired `<stash>/.akm/proposals/` tree is neither read nor written.
+`createProposal` is the write point used by reflect, distill, consolidate (promote), extract, schema repair and `akm proposal new`; the pair pass's retire proposals go through `createRetireProposal` instead. Both write the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record (`akm proposal reopen` moves a rejected row back to pending). The retired `<stash>/.akm/proposals/` tree is neither read nor written.
 
 **Logical proposal shape:**
 
@@ -568,17 +564,27 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 }
 ```
 
-Two proposals can share the same `ref`; their UUID primary keys prevent collisions. The dedup guard in `akmImprove` (checking `listProposals(stashDir, { ref: lessonRef })`) skips `akmDistill` when a pending proposal already exists for the derived lesson ref.
+Two proposals can share the same `ref`; their UUID primary keys prevent collisions. Nothing in the loop scans the queue before it runs reflect or distill. The improve ledger keeps a stage from proposing the same ref again: an attempt that left a pending proposal is revisited after 7 days, or sooner when feedback newer than the attempt arrives (see **Ledger pre-filter (signal delta)** below).
 
 ## Scope restrictions
 
-`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. The candidate set is that bundle's assets and nothing else, because every proposal is filed in the write target. An asset that another writable bundle owns is never planned: reflect would read it from its own bundle and the proposal would land in this one, either forking the asset as a `create` or overwriting this bundle's copy with content taken from the other's (#1000). A bare ref scope (`akm improve skills/x`) resolves inside the write target only, and distill's memory-to-knowledge promotion merges only with a doc that already exists there. To improve another writable bundle, select it with `--bundle team` or a bundle-qualified scope such as `team//skills/code-review`. As a second line of defence, `createProposal` refuses a proposal whose `itemRef` names an asset owned by a different configured bundle than the queue's.
+`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. The candidate set is that bundle's assets and nothing else, because every proposal is filed in the write target. An asset that another writable bundle owns is never planned: reflect would read it from its own bundle and the proposal would land in this one, either forking the asset as a `create` or overwriting this bundle's copy with content taken from the other's (#1000). A bare ref scope (`akm improve skills/x`) resolves inside the write target only, and distill's memory-to-knowledge promotion merges only with a doc that already exists there. To improve another writable bundle, select it with `--bundle team` or a bundle-qualified scope such as `team//skills/code-review`; a scheduled run therefore covers only its write target, and each other bundle needs its own scheduled `akm improve --bundle <name>` run. A dry run (`--dry-run`, `--plan`) resolves the bundle the way a live run does, with the working bundle starting from `AKM_BUNDLE_DIR` before `defaultBundle`, so it previews the bundle a live run improves. As a second line of defence, `createProposal` refuses a proposal whose `itemRef` names an asset owned by a different configured bundle than the queue's.
 
 `akm improve` and `akm lint` only operate on writable bundle sources (sources with `writable: true`). Read-only sources (git, npm, website) are excluded from the candidate set before any other filtering; a read-only write target plans nothing.
 
-## Cooldown pre-filter
+## Ledger pre-filter (signal delta)
 
-Before the per-asset loop, `akm improve` builds Sets of all refs that are currently under cooldown (reflect, distill, consolidation, schema-repair) in a single batch of event reads. This replaces the prior design that issued one `readEvents` query per ref inside the loop. The change eliminates the "reflect cooldown" console spam on large bundles and reduces database round-trips to O(1) reads per cooldown category. Reflect cooldown now bypasses refs with a newer `promoted` event than their last `reflect_invoked` event.
+Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row per `(stash_dir, ref, source)`; `source` is `reflect`, `distill`, `consolidate`, `consolidate-pair`, `extract`, `schema-repair` or `propose`, the last written by `akm proposal new` through `createProposal`) before it spends a model call, and writes it after. It replaced the per-stage cooldown constants and the event reads behind them (`reflect_invoked`, `distill_invoked`, `consolidate_completed`, rejected-proposal rows, `proposal_fingerprints`). When a ref may be tried again is decided in one place, `nextEligibleAt`, from the row's source and outcome: a rejected or quality-rejected attempt waits 14 days (reflect), 30 days (distill) or 7 days (any other source), an expired proposal 1 day, and an attempt that left a pending proposal, needed review, judged no action or changed nothing is revisited after 7 days; an accepted or failed attempt has no window. The consolidate pair pass and a decided consolidate promotion have no clock at all: their rows hold a body hash and the ref waits until its body differs (see **Re-eligibility** above). `rejected`, `quality_rejected` and `expired` are hard windows; every other window is a revisit cadence that a newer signal (new feedback, or for consolidation an edit) lifts (`isLedgerBlocked`).
+
+**Selection.** Before the per-asset loop, `buildSnapshotManifest` reads the feedback events once and the ledger's `reflect` and `distill` rows once for every candidate, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. Reflect and distill each *pass* a ref when it has feedback carrying a signal or a note, dated within the last 30 days, newer than that stage's last ledger attempt for the ref, with no hard window blocking it. Then:
+
+- A ref that passes reflect is planned for the loop. If it does not pass distill, distill is skipped for it (a `distill-skipped` action and an `improve_skipped` event with reason `distill_no_new_signal`).
+- A ref that passes only distill, and is a distill candidate, is planned distill-only.
+- A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)).
+- Every ref left without a lane is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
+- The picked refs are ranked by salience (`scoreSalience` in `preparation.ts`, which computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
+
+An explicit ref scope bypasses every gate. After the run lock is acquired, `refilterProactiveLoopRefs` (`improve.ts`) re-reads the ledger and drops proactive refs that another run attempted since this one planned (the "post-lock cooldown re-filter" log line). Consolidation, extract and schema repair read their own ledger sources in their own stages.
 
 ## Strategy process configuration
 
@@ -603,53 +609,34 @@ and can report `ok: false` for terminated runs:
 | `guidance` | `string?` | Human-readable note about memory cleanup when memories are in scope. |
 | `memorySummary` | `{ eligible, derived }` | Count of memory assets in scope and count of `.derived` ones. |
 | `memoryCleanup` | `ImproveMemoryCleanupResult?` | Analysis (always present when eligible > 0) merged with apply results on a live run. Includes `archived`, `transitionLogPath`, `transitionLogEntries`, and `warnings`. |
-| `plannedRefs` | `ImproveEligibleRef[]` | The post-filter, post-cleanup, utility-sorted refs that were (or would be) processed. |
-| `actions` | `ImproveActionResult[]?` | Per-asset action record: mode (`reflect`, `distill`, `distill-skipped`, `memory-prune`, `memory-inference`, `error`) and the subprocess result. Absent on dry-run. |
+| `plannedRefs` | `ImproveEligibleRef[]` | The post-filter, post-cleanup, salience-ranked refs that were (or would be) processed. |
+| `actions` | `ImproveActionResult[]?` | Per-asset action records `{ ref, mode, result }`, where `mode` is an `ImproveActionMode` (`src/core/improve-types.ts`). A run emits `reflect` (a reflect proposal was queued), `reflect-skipped` (the strategy filtered the ref, or reflect declined it as `unsupported_type` or `no_change`), `reflect-guard-rejected` (a content-policy guard rejected the rewrite), `reflect-failed` (any other reflect failure, a quality rejection included), `distill` (the distill result, a validation failure included), `memory-prune` (a memory archived by cleanup), `memory-inference` (one `memories/_inference` row for the inference pass) and `error` (a loop failure other than a distill validation failure, or the wall-clock budget running out). `distill-skipped` is also emitted per ref, but `foldDistillSkipped` moves those rows into `distillSkipped` before the result is built, so none appears here. `reflect-cooldown` stays in the union for older rows and counters; nothing emits it. Absent on dry-run. |
+| `distillSkipped` | `{ total, byReason, samples }?` | The folded `distill-skipped` actions: their total, a count per skip reason, and up to three sample refs per reason. Omitted when none were skipped. |
 | `validationFailures` | `Array<{ ref, reason }>?` | Refs skipped due to pre-run validation failures (missing file, missing description). |
 | `consolidation` | `ConsolidateResult?` | Result from `akmConsolidate`; omitted when `processed === 0` and no warnings. |
 | `memoryInference` | `MemoryInferenceResult?` | Improve-owned post-consolidation memory inference telemetry. |
 
 ## Consolidation Skip Reason Taxonomy
 
-`akmConsolidate` emits structured `skipReasons` entries in its result. Each entry is `{ op, ref, reason }`. The reasons fall into three categories:
-
-### Expected / healthy (not bugs)
+The promote pass records a structured skip for each memory the model proposed to promote and the pass then declined to queue. They appear in `consolidation.skipReasons` of the improve result as `{ ref, skips: [{ op: "promote", reason }] }`, one entry per memory (`ConsolidateResult`, `src/core/improve-types.ts`); `emitPromotionProposal` in `src/commands/improve/consolidate.ts` is the only producer. Each skip also adds a warning line and moves the memory from `judgedNoAction` into the skip count, which keeps the accounting invariant `processed == promoted + judgedNoAction + Σ(skipReasons) + failedChunkMemories`. A skipped memory is written to the ledger as `judged_no_action` (revisited after 7 days, or at once on an edit), except a memory already promoted this run, which keeps the `proposed` row its proposal wrote, and `promote_create_failed`, which leaves no row so the next run retries it. The checks run in this order and the first that applies wins:
 
 | Reason | Meaning |
 |--------|---------|
-| `merge_participant_blocked` | Hot or unparseable memory was a merge participant. Pre-flight guard fires before LLM call. High counts are normal on bundles with many `captureMode: hot` memories. |
-| `captureMode_hot_refused` | Delete refused on a hot memory. Correct behavior. |
-| `promote_already_exists` | Target knowledge ref already exists on disk. Normal steady-state noise. |
-| `promote_source_too_small` | Source body too short to warrant a promotion proposal. |
-| `merge_content_too_short` | Secondary body too short to be a meaningful merge candidate. |
-| `dedup_pending_proposal` | Ref already has a pending proposal. Clears as triage drains the queue. |
-| `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. The memory stays in the ledger as `judged_no_action` (7-day revisit, or at once on an edit). |
+| `promote_already_promoted_this_run` | Defensive guard: the memory was already promoted earlier in this run. `mergePlans` leaves one operation per memory, so it should not fire. |
+| `promote_pending_proposal_exists` | A pending proposal already exists for the target `knowledge/<slug>`. Clears as triage drains the queue. |
+| `promote_already_exists` | `knowledge/<slug>.md` already exists in the write target. Normal steady-state noise. |
+| `promote_read_failed` | The memory file could not be read. |
+| `promote_sanitization_failed` | The memory could not be re-serialized as an asset (an unbalanced code fence, missing or malformed frontmatter, frontmatter that is not valid YAML or not a mapping); the warning carries the reason code. |
+| `promote_superseded` | The memory has `status: superseded`, which is not promotable knowledge. |
+| `promote_source_too_small` | The memory's body is under 100 characters, too short to make useful knowledge. |
+| `dedup_existing_knowledge` | A `knowledge/` doc in the write target already has an identical body (frontmatter aside). |
+| `dedup_pending_proposal` | A pending consolidate proposal already carries an identical body. Clears as triage drains the queue. |
+| `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. |
+| `promote_invalid_frontmatter` | The description it would use (the model's, else the memory's own) is missing or truncated. |
+| `promote_dedup_window` | The target slug is a variant of a pending consolidate proposal's slug (dates, counters and word order folded), so it would queue a near-copy. |
+| `promote_create_failed` | `createProposal` threw. The memory gets no ledger row, is retried next run, and is counted in `failedPromotions`. |
 
-### Fixed bugs — should be 0 in steady state
-
-| Reason | Root cause | Fix | Regression signal |
-|--------|-----------|-----|-------------------|
-| `merge_missing_description` | Guard ordering bug: pre-flight hot guard was placed *after* `generateMergedContent()`, so hot memories wasted LLM calls and then failed the description check. | Commit `208fe06`: pre-flight guard before LLM call. | Any non-zero count. |
-| `merge_primary_missing` (stale-DB path) | Prior run deleted files but did not reindex; ghost DB entries reached chunk prompts. | Commit `d34bc1a`: pre-flight `fs.existsSync` filter before chunking. | Log line `Pre-flight: filtered N stale DB entries` + `merge_primary_missing` in same run. |
-| `merge_primary_missing` (hallucination path) | LLM invented a primary ref not in the loaded pool; `mergePlans()` had no ref-existence check; every real secondary charged with `merge_primary_missing`. | Commit `a853de4`: `mergePlans()` accepts `knownRefs` set; ops with hallucinated primaries dropped pre-execution. | Log line `mergePlans: primary <ref> not in loaded memory pool (LLM hallucination)`. |
-
-### Residual / low-frequency (not bugs at normal rates)
-
-| Reason | Meaning | Normal rate | Investigation threshold |
-|--------|---------|-------------|------------------------|
-| `merge_primary_missing` (intra-run race) | An earlier op consumed the ref as a secondary; Fix-A (`memoryByRef.delete`) pruned it; a later op's plan used that ref as its primary. Log: `Merge: primary <ref> not found in loaded memories (pruned by prior op this run)`. | 0–2/run | >2/run: investigate chunk plan ordering |
-| `merge_primary_file_gone` | Defense-in-depth: file existed at pre-flight but was deleted between pre-flight and Phase B execution. | 0–1/run | >1/run: investigate lock contention |
-
-### Distinguishing `merge_primary_missing` causes at a glance
-
-```
-merge_primary_missing spike → check log for:
-  "Pre-flight: filtered N stale DB entries"  → stale-DB regression (d34bc1a broken)
-  "pruned by prior op this run"              → intra-run race (normal if ≤2)
-  "LLM hallucination" (in mergePlans warn)   → hallucination caught, not charged (a853de4 working)
-  "merge_primary_file_gone" in skip reasons  → concurrent file deletion
-  none of the above + code change            → investigate pre-flight filter / memoryByRef init
-```
+The dedup and eligibility reasons are ordinary; `promote_read_failed`, `promote_sanitization_failed`, `promote_invalid_frontmatter` and `promote_create_failed` point at a broken memory or a failing write and are worth a look when they recur. The consolidate `merge`, `delete` and `contradict` operations, and the `merge_*` and `captureMode_hot_refused` skip reasons that went with them, were removed in 0.9.17-alpha.1 (see Phase A above); the promote pass emits none of them. The pair pass (`consolidate-pair`) reports through its own result, not through `skipReasons`.
 
 ## Reviewed
 
@@ -673,8 +660,8 @@ Reviewed against `src/commands/improve/improve.ts`,
 
 1. **`analyzeMemoryCleanup` placement (critical accuracy bug):** The original diagram showed `analyzeMemoryCleanup` happening after lock acquisition (`E3 → F → G → H{memoryCleanup eligible?} → I`). In the actual code (`improve.ts` lines 251–253), `memoryCleanupPlan` is computed unconditionally before the `dryRun` check (line 259) and before lock acquisition (line 272). Moved `analyzeMemoryCleanup` to before the `dryRun?` diamond, and updated the DRY node to note it includes the pre-computed analysis.
 
-2. **Per-asset loop branch order (critical accuracy bug):** The original diagram checked `R{budget exhausted?}` before `S{ref in validationFailures?}`. In the code (lines 394–407), the validation skip (`validationFailureRefs.has(planned.ref)`) is evaluated first (`continue` on line 395), and the budget check happens second (line 396). Swapped the order so `S{ref in validationFailures?}` is the first branch in the loop, followed by `R{budget exhausted?}`. Updated all loop-back edges accordingly.
+2. **Per-asset loop (critical accuracy bug):** The loop no longer checks validation failures. A ref that fails the pre-run validation sweep (and is not repaired) is excluded before selection (`validationFailureRefs` in `runImprovePreparationStage`, `preparation.ts`), so the first check in `runImproveLoopStage` is the wall-clock budget. The diagram's `S{ref in validationFailures?}` branch, which had also reused the `SKIP` node id of the lock-held exit, is gone.
 
-3. **`reindexFn` timing (accuracy bug):** The original diagram placed `J3[reindexFn]` before `K[filterRemovedPlannedRefs]`. In the code, `filterRemovedPlannedRefs` (line 336) and the signal filter/sort/limit steps (lines 338–349) all run before the reindex block (lines 351–368). Moved `reindexFn` and `push memory-prune actions` to after the sort/limit step and before the validation sweep, matching the actual code order.
+3. **Preparation order (accuracy bug):** `runImprovePreparationStage` (`preparation.ts`) runs consolidation, session extract, memory cleanup (`applyMemoryCleanup`, `projectMemoryCleanup`, then the `memory-prune` actions and `reindexFn` when something was archived), the validation sweep and schema repair, and only then selection (signal delta, fallback lanes, salience ranking, disk check, `--limit`). The diagram follows that order.
 
 4. **Post-loop maintenance placement (accuracy bug):** Improve now runs memory inference after consolidation, not before it (the same fix originally applied to graph extraction, retired in 0.9.17-alpha.9). The workflow now documents the maintenance stage and the reindex after inference writes.

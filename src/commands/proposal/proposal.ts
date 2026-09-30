@@ -56,7 +56,7 @@ function resolveProposalQueue(
 ): ResolvedProposalQueue {
   if (stashDir) return { stashDir };
   if (!queue) return { stashDir: resolveStash() };
-  const target = resolveWriteTarget(config ?? loadConfig(), queue);
+  const target = resolveWriteTarget(config ?? loadConfig(), queue, { flag: "--queue" });
   return { stashDir: target.source.path, target };
 }
 

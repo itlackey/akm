@@ -1017,7 +1017,7 @@ function fetchRetrievalSignals(
     withRunState(eventsCtx, persist, (stateDb) => {
       if (countUsageEventsByType(stateDb, "show") === 0) {
         warn(
-          "Warning: show events not yet in usage_events — zero-feedback fallback will match only search-retrieved assets.",
+          "Warning: show events not yet in usage_events — the retrieval scope will match only search-retrieved assets.",
         );
       }
       const refs = [...new Set([...signalFiltered, ...noFeedbackCandidates].map((r) => r.ref))];

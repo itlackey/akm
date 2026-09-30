@@ -273,7 +273,7 @@ const proposalRejectCommand = defineJsonCommand({
     if (generator && !args.id) {
       const { confirmDestructive } = await import("../../cli/confirm.js");
       const confirmed = await confirmDestructive(
-        `Bulk-reject all matching proposals from generator "${generator}"? This cannot be undone.`,
+        `Bulk-reject all matching proposals from generator "${generator}"? A rejection can be undone with akm proposal reopen.`,
         { yes: args.yes === true || args["dry-run"] === true },
       );
       if (!confirmed) {
@@ -300,9 +300,12 @@ const proposalRejectCommand = defineJsonCommand({
       );
     }
     const { confirmDestructive } = await import("../../cli/confirm.js");
-    const confirmed = await confirmDestructive(`Reject proposal "${args.id}"? This cannot be undone.`, {
-      yes: args.yes === true,
-    });
+    const confirmed = await confirmDestructive(
+      `Reject proposal "${args.id}"? A rejection can be undone with akm proposal reopen.`,
+      {
+        yes: args.yes === true,
+      },
+    );
     if (!confirmed) {
       process.stderr.write("Aborted.\n");
       return;

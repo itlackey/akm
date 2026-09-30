@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   age that retention expiry and `--older-than` (bulk accept/reject, `drain`)
   see restarts at the reopen, so a scheduled sweep does not take a proposal a
   person just put back, and a `proposal_reopened` event is appended.
+  `akm proposal reject`'s confirmation prompt no longer says a rejection
+  cannot be undone.
 
 ### Fixed
 
@@ -54,8 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same slice of the source the lesson was generated from (its body without
   frontmatter, first 3000 characters) instead of the raw file's first 2000. A
   lesson that contradicts its source still reaches a human through the
-  optional fidelity check, and every other `review_needed` reason is
-  unchanged. `TODO:` lines already in a memory are not removed.
+  optional fidelity check (`processes.distill.fidelityCheck.enabled`, off by
+  default), and every other `review_needed` reason is unchanged. `TODO:`
+  lines already in a memory are not removed.
 - **Consolidation stops re-proposing memories that `knowledge/` already
   covers (#998).** The promote pass copied a memory into a new `knowledge/`
   proposal with no notion of what `knowledge/` already held: the model never
@@ -95,7 +98,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm improve <ref>` for an asset that lives only in another bundle now fails
   with a not-found error whose hint names the remedy (`--bundle team`, or
   `akm improve team//skills/x`). Proposals the old behaviour already queued
-  stay in the queue; review them with `akm proposal list`.
+  stay in the queue; review them with `akm proposal list`. `--bundle`'s help
+  text now says it selects the bundle a run improves and writes to.
 - **`akm improve --dry-run`/`--plan` previews the bundle a live run improves.**
   With no `--bundle` and no `defaultWriteTarget`, a live run starts from
   `AKM_BUNDLE_DIR` before `defaultBundle`, but a dry run read `defaultBundle`
@@ -116,6 +120,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   byte-exactly. The new fields are additive and appear on retire proposals
   only. `akm proposal show --detail full` also stops ending a retire proposal
   with a bare `payload:` heading over nothing.
+- **Errors name the flag the command takes, not the retired `--target`
+  (`improve`, `remember`, `clone`, `task`, `proposal --queue`).** A `--bundle`
+  that names no configured bundle, names a read-only one, or differs from a
+  bundle-qualified ref (`akm improve team//skills/x --bundle stash`) failed with
+  "--target must reference a source name", "or pass --target to a different
+  source" or "conflicts with --target". `akm improve`, `remember`, `clone` and
+  every `task` verb reject `--target` (renamed `--bundle` in 0.9), and
+  `proposal --queue` takes `--queue`, so each message sent the user to a flag
+  that does not work. They now name the flag the command takes, and the
+  remedy in `akm remember --supersedes` says "re-run with --bundle" instead of
+  "--target". A bundle that came from a ref inside a task (`ghost//workflows/x`)
+  is described as such rather than blamed on a flag. The commands that really
+  take `--target` (`import`, `env`, `secret`, `proposal accept`) are unchanged.
+  Separately, the help for `akm improve --skip-if-locked` said a lock collision
+  without the flag exits 78. It exits 75 (`IMPROVE_LOCK_HELD`), as the CLI
+  reference says. The `--limit` help says "highest salience first" (it said
+  utility), and the `task add --command` help example uses
+  `--strategy reflect-distill` (the `frequent` strategy no longer exists).
 
 ## [0.9.18] - 2026-09-29
 

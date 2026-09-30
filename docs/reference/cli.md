@@ -2430,9 +2430,9 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
-| `--limit <n>` | Base cap for ordinary assets (highest utility first); configured replay slots are additive |
+| `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
-| `--require-feedback-signal` | Only process assets with recent feedback signals |
+| `--require-feedback-signal` | Only process assets with recent feedback signals: turns the fallback lanes (high salience, proactive maintenance) off for the run |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
@@ -2448,9 +2448,14 @@ a different explicit `--bundle` is a usage error.
 
 A run improves one bundle, the one it writes to, and plans only that bundle's
 assets: an asset that lives in another bundle is left alone even when that
-bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves inside the write target only.
-To improve another bundle, name it (`akm improve --bundle team`, or
-`akm improve team//skills/code-review`).
+bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves
+inside the write target only. To improve another bundle, name it
+(`akm improve --bundle team`, or `akm improve team//skills/code-review`). A
+scheduled `akm improve` therefore covers only its write target: schedule one
+`akm improve --bundle <name>` run per other bundle. `--dry-run` and `--plan`
+resolve the bundle the way a live run does (the working bundle starts from
+`AKM_BUNDLE_DIR`, then `defaultBundle`), so they preview the bundle a live run
+improves.
 
 Every stage records what it did with each asset in the improve ledger
 (`improve_ledger` in `state.db`) and reads it before any model call: an asset
@@ -2475,10 +2480,9 @@ covering doc that ranks lower than the 20th nearest goes unseen. With no stored
 vector (semantic search off, or the memory not indexed yet) that check does
 nothing and the exact slug and whole-body checks still apply.
 
-Built-in `default` and `frequent` leave the improve-stage extract process off,
-and `default` plus `reflect-distill` leave proactive maintenance off. Use the
-explicit `proactive-maintenance` strategy or set the selected strategy's
-process `enabled: true` to opt in. The stage toggle does not disable a direct
+No built-in strategy turns the improve-stage extract process on, and only
+`proactive-maintenance` turns proactive maintenance on. Use that strategy or
+set the selected strategy's process `enabled: true` to opt in. The stage toggle does not disable a direct
 `akm proposal extract --type <harness>` or `akm proposal extract --auto`
 invocation.
 
@@ -2498,9 +2502,17 @@ the drain engine. Reflect still emits a `confidence` score (0..1) in its JSON
 response schema; it is recorded on the proposal for triage and ranking, but no
 threshold auto-accepts anything.
 
-Selection behavior defaults to recent feedback signals first, with a
-zero-feedback retrieval fallback for high-traffic refs. Use
-`--require-feedback-signal` to disable retrieval fallback for the run.
+Selection picks the refs with feedback (a signal or a note, in the last 30
+days) newer than the stage's last ledger attempt. Two fallback lanes add refs
+with no such feedback: high salience (content-scored refs at or above
+`improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
+capped at 10% of the limit, at least one ref) and, in a strategy that enables
+`proactiveMaintenance`, refs due for a revisit. Both pick only refs in the
+[retrieval scope](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retrieval-scope): returned by
+`search`, `curate` or `show`, or named by feedback, in the last 90 days, or new
+material no improve stage has processed. The picks are ranked by salience and
+cut to the limit; an explicit ref scope bypasses every gate. Use
+`--require-feedback-signal` to turn the fallback lanes off for the run.
 
 When the active strategy enables a process (or the triage judgment engine)
 whose engine or credential cannot be resolved in this process's environment,
@@ -2537,9 +2549,9 @@ ref in the requested scope. The `plan` object preserves both views: raw scope
 size and per-gate removals, configured and effective caps, final ranked refs
 and their selection lanes, proactive and consolidation statistics, stage
 decisions, triage mode/caps, and `snapshot.status`/`snapshot.reason` for the
-read-side index boundary. `limits.effective` is the ordinary-ref base cap;
-`limits.additiveReplayAllowance` is the separate replay budget, and
-`limits.totalCeiling` is their finite sum (omitted when the base run is
+read-side index boundary. `limits.effective` is the cap on the refs the run
+dispatches; the replay lane is retired, so `limits.additiveReplayAllowance` is
+always `0` and `limits.totalCeiling` equals the cap (omitted when the run is
 unbounded). A missing or incompatible index is an explicit empty snapshot and
 is not created or migrated. `plan.mode` is `estimate` and `plan.dispatch` is
 `false`; live JSON results use the same projection with `mode: "execution"`.
@@ -2610,7 +2622,8 @@ which never make an attributable LLM call themselves) the active strategy
 enabled but that ended the run with zero calls, each with a `reason` drawn
 from the existing skip-reason vocabulary: `"engine_unavailable"` (also in
 `skippedProcesses`), `"autonomy_gated"`, `"strategy_filtered_all_passes"`, a
-reflect/distill dominant skip reason (e.g. `"no_new_signal"`, `"cooldown"`),
+reflect/distill dominant skip reason (e.g. `"no_change"` for reflect,
+`"no new signal since last proposal"` for distill),
 or `"no_signal"` as the fallback — never a fabricated category. The field is
 omitted entirely when both would be empty. The same table is printed to
 stderr (`[improve] usage report ...`) after every real run, independent of
@@ -2755,8 +2768,8 @@ akm proposal list --generator consolidate-pair
 | `--generator <name>` | Filter by generator/source (e.g. `reflect`, `distill`, `consolidate-pair`) — the same value `accept`/`reject --generator` take |
 
 Each retire proposal's `retirement.continuityRisk`, when present, also shows
-in the default listing (`⚠ continuity-risk` inline) and in `proposal show`'s
-text output (the specific failing/unverified queries) — see
+in the default listing (`⚠ continuity-risk` inline) and in the text output of
+`proposal show` and `proposal diff` (the specific failing/unverified queries) — see
 [Retirement continuity](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retirement-continuity).
 
 Each proposal record carries an optional `confidence` field (0..1) emitted by
@@ -2808,7 +2821,8 @@ Bulk-accept all pending proposals from one generator with `--generator <name>`
 #### proposal reject
 
 Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
-UUID prefix, or an asset ref.
+UUID prefix, or an asset ref. [`akm proposal reopen`](#proposal-reopen) undoes a
+rejection.
 
 ```sh
 akm proposal reject <id> --reason "duplicates existing workflow"
@@ -2835,9 +2849,10 @@ and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shell
 #### proposal reopen
 
 Undo a rejection: move rejected proposals back to `pending` so they can be
-reviewed again. A rejection is otherwise final. `accept` refuses anything that
-is not pending, and a rejected consolidate pair-pass retire proposal also keeps
-the pair pass from proposing that retirement again while both documents are
+reviewed again (a proposal that retention expiry archived is a rejected one
+too). A rejection is otherwise final. `accept` refuses anything that is not
+pending, and a rejected consolidate pair-pass retire proposal also keeps the
+pair pass from proposing that retirement again while both documents are
 unchanged.
 
 ```sh
@@ -2845,19 +2860,35 @@ akm proposal reopen <id>
 akm proposal reopen <id> --reason "the diff was misrendered (#997)"
 akm proposal reopen <id> <id> <id>                 # several at once: all or none
 akm proposal reopen <id> --queue team-bundle
-akm proposal list --status rejected --generator consolidate-pair --format json \
-  | jq -r '.proposals[].id' | xargs akm proposal reopen --reason "diff was misrendered"
+# One id per call, and only the rejections whose reason says the diff was misread:
+akm proposal list --status rejected --generator consolidate-pair \
+  --detail normal --format json \
+  | jq -r '.proposals[] | select(.review.reason // "" | test("blank line"))
+      | .id' \
+  | xargs -r -n 1 akm proposal reopen --reason "diff was misrendered"
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--reason <text>` | Why the rejection is being undone. Kept in the proposal's review history, its ledger row and the `proposal_reopened` event |
+| `--reason <text>` | Why the rejection is being undone. Kept in the proposal's review history and the `proposal_reopened` event, and in its ledger row's detail when it has a row |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
 
 Takes full proposal ids: a UUID prefix only matches pending proposals, so it
 cannot name a rejected one (`akm proposal list --status rejected` prints the
-ids; add `--generator consolidate-pair` for the retire backlog). A retire
-proposal is never reached by asset ref, only by id.
+ids; add `--generator consolidate-pair` for the retire backlog). An asset ref
+also resolves, to the newest proposal for that ref, but only while none is
+pending, and it never reaches a retire proposal, which is named by its id.
+
+Check a rejection's reason before reopening it. The default brief output of
+`akm proposal list` leaves it out; `--detail normal --format json` shows it as
+`review.reason`. Reopen only the rejections you want back, since a deliberate
+rejection would otherwise be undone with the rest. The pattern in the example,
+`test("blank line")`, matches the reason given in the 0.9.19 upgrade note (the
+diff read as a blank-line replacement); change it to yours. Pass one id per
+call (`xargs -n 1`) so a refusal skips only that proposal, and use `xargs -r`
+so GNU xargs does not run `reopen` with no id when nothing matches. A retire
+proposal refused because another pending retire proposal involves the same
+document can be reopened once that one is decided.
 
 Reopening is refused, with the reason, when:
 
@@ -2878,19 +2909,20 @@ each refusal (exit 2).
 
 A reopened proposal is `pending` again with its `review` cleared. The rejection
 (its review, and any gate verdict that came with it) is appended to the
-proposal's `reviewHistory`, which `akm proposal show` prints as `reopened:
-<when> (<reason>), undoing rejected: <why>`. The gate verdict is cleared so the
-drain treats the proposal as undecided, except a `deferred` one, the quality
-gate's hand-off to a person, which stays so the drain keeps leaving the
-proposal for that person. It no longer counts as a settled pair for the pair
-pass, and while it is pending that pair is not
-proposed a second time. Its `improve_ledger` row goes back to what the mint
-wrote (a retire proposal's mint writes none, so the row its rejection created
-is dropped), the age retention expiry and `--older-than` see restarts at the
-reopen (retire proposals never expire), and a `proposal_reopened` event is
-appended. Accepting it afterwards archives a
-retired file exactly as for any retire proposal, and `akm proposal revert`
-restores it byte-exactly.
+proposal's `reviewHistory`, which `akm proposal show` prints as one line per
+reopen: `reopened: <when> (<reopen reason>), undoing rejected: <why> (<when>)`.
+The gate verdict is cleared so the drain treats the proposal as undecided,
+except a `deferred` one, the quality gate's hand-off to a person, which stays
+so the drain keeps leaving the proposal for that person.
+
+A reopened retire proposal no longer counts as a settled pair for the pair
+pass, and while it is pending that pair is not proposed a second time. The
+proposal's `improve_ledger` row goes back to what the mint wrote (a retire
+proposal's mint writes none, so the row its rejection created is dropped).
+The age that retention expiry and `--older-than` see restarts at the reopen
+(retire proposals never expire), and a `proposal_reopened` event is appended.
+Accepting a reopened retire proposal archives the retired file exactly as for
+any retire proposal, and `akm proposal revert` restores it byte-exactly.
 
 Output: for one id, the envelope `reject` returns (`ok`, `id`, `ref`, the
 proposal, and `reason`, here the reopen reason); for several ids,

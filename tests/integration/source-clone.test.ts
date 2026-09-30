@@ -158,6 +158,30 @@ describe("akmClone", () => {
     expect(fs.existsSync(path.join(targetDir, "scripts", "deploy.sh"))).toBe(false);
   });
 
+  test("an unknown or read-only bundle is reported against --bundle, the flag clone takes, not --target", async () => {
+    const targetDir = createStashDir("akm-clone-flag-readonly-");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "echo deploy\n");
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: {
+        searchpath: { path: searchPathDir },
+        readonly: { path: targetDir, writable: false },
+      },
+    });
+
+    const unknown = await akmClone({ sourceRef: "scripts/deploy.sh", target: "ghost" }).catch((error) => error);
+    expect(unknown).toBeInstanceOf(UsageError);
+    expect((unknown as UsageError).message).toContain(
+      '--bundle must reference a source name from your config. No source named "ghost" is configured',
+    );
+    expect((unknown as UsageError).message).not.toContain("--target");
+
+    const readonly = await akmClone({ sourceRef: "scripts/deploy.sh", target: "readonly" }).catch((error) => error);
+    expect(readonly).toBeInstanceOf(ConfigError);
+    expect((readonly as ConfigError).hint()).toContain("or pass --bundle to a different source");
+    expect((readonly as ConfigError).hint()).not.toContain("--target");
+  });
+
   test("rejects a managed OKF target before replacing existing bytes", async () => {
     const targetDir = createStashDir("akm-clone-okf-target-");
     const destination = path.join(targetDir, "scripts", "deploy.sh");

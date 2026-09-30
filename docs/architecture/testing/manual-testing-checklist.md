@@ -2195,10 +2195,10 @@ akm improve skills/k8s-deploy \
 
 - [ ] **AI** Successful live run persists exactly one `improve_runs` row, emits expected process/proposal events, and queues reviewable changes with provenance.
 - [ ] **AI** Default live mode emits progress on stderr and no stdout; json-to-stdout returns the same persisted result.
-- [ ] **AI** Lock contention without skip is config exit `78`; `--skip-if-locked` exits `0`, reports `skipped.reason:"lock-held"`, and emits no `improve_invoked`.
+- [ ] **AI** Lock contention without skip is a transient error, exit `75` (`IMPROVE_LOCK_HELD`); `--skip-if-locked` exits `0`, reports `skipped.reason:"lock-held"`, and emits no `improve_invoked`.
 - [ ] **AI** Stale lock is reclaimed with an observable recovery event; active lock is never stolen.
 - [ ] **AI** Timeout/SIGINT/SIGTERM/SIGHUP persist one terminated run with redacted reason and release locks/children.
-- [ ] **AI** Default/frequent/reflect-distill/consolidate/memory/proactive strategies enable exactly documented processes. Autonomy-gated mutations remain off without explicit experimental opt-in.
+- [ ] **AI** Default/quick/thorough/reflect-distill/consolidate/catchup/proactive-maintenance strategies enable exactly documented processes. Autonomy-gated mutations remain off without explicit experimental opt-in.
 - [ ] **AI** No sync/push occurs under explicit flags; git publication is tested separately only against disposable remote.
 - [ ] **AI** Credential/prompt/session values are absent from improve result, state DB, proposal provenance, health report, event stream, and logs.
 

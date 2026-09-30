@@ -35,6 +35,12 @@ omitting it exits 2. `--failure-mode` adds a curated taxonomy label but does
 **not** substitute for `--reason`. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).
 
+Record feedback about the asset's content: that it helped, or that it turned
+out wrong, stale or unhelpful. A failed `akm` command, such as an `akm show`
+that errors on the ref, says nothing about the asset, so don't record it as
+feedback on it: reflect and distill read each reason as a report about the
+asset's content.
+
 **Example: flag a skill that gave bad advice**
 
 ```sh
@@ -73,16 +79,22 @@ akm improve memory                    # Scope to memory assets only
 akm improve skills/code-review         # One asset
 akm improve --task "reduce duplication"
 akm improve --dry-run                 # Show planned refs without generating proposals
-akm improve --limit 10                # Base cap; configured replay slots are additive
+akm improve --limit 10                # Cap the refs the run processes
 ```
 
 A run improves one bundle, the one it writes to (`--bundle`, else
 `defaultWriteTarget`, else your working bundle), and leaves assets in your other
 bundles alone even when they are writable. Run `akm improve --bundle team` to
-improve another one.
+improve another one. A scheduled run covers the same single bundle, so schedule
+one `akm improve --bundle <name>` run per other bundle you want improved.
+`--dry-run` previews the bundle a live run would improve.
 
-Selection defaults to assets with recent feedback signals first, with a
-retrieval-count fallback for high-traffic assets that have no feedback yet.
+Selection picks assets whose feedback (a signal or a note, in the last 30
+days) is newer than the last time improve tried them. Unless
+`--require-feedback-signal` is set, two fallback lanes add assets with no such
+feedback: high-salience assets that were never reflected, and, in a strategy
+that enables proactive maintenance, assets due for a revisit. The picks are
+ranked by salience and cut to `--limit`.
 Improve reworks only what gets read: without fresh feedback, an asset is
 picked (and a memory is judged for consolidation) only if `search`, `curate`
 or `show` returned it, or feedback named it, in the last 90 days — the usage
@@ -97,11 +109,11 @@ per-gate removal counts and reasons, configured versus effective limits, and
 the selection lane for each final ref. `plan.snapshot` explains whether the
 existing index was readable; a missing or incompatible index produces an
 explicit empty snapshot without creating or migrating it. The plan reports the
-ordinary base cap as `limits.effective`, the separate additive replay budget as
-`limits.additiveReplayAllowance`, and their finite sum as
-`limits.totalCeiling`. It also reports proactive-maintenance due statistics,
-consolidation pool gates and chunk estimate, extract/memory-inference
-stage decisions, and proposal-triage mode and caps. The plan has
+cap as `limits.effective` (`limits.additiveReplayAllowance` is always `0` and
+`limits.totalCeiling` equals the cap, because the replay lane is retired). It
+also reports proactive-maintenance due statistics, consolidation pool gates and
+chunk estimate, extract/memory-inference stage decisions, and proposal-triage
+mode and caps. The plan has
 `mode: "estimate"` and `dispatch: false`; producing it does not acquire the
 improve lock, invoke an LLM, create state, or write proposals, events, assets,
 cache files, or result records.
@@ -115,7 +127,7 @@ concurrent changes can legitimately produce a different plan.
 
 ```sh
 akm improve --dry-run        # preview what would be processed
-akm improve --limit 20       # base cap; configured replay slots may be appended
+akm improve --limit 20       # process at most 20 refs
 akm proposal list            # review what was generated
 ```
 
