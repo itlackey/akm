@@ -238,7 +238,8 @@ const tasksAddCommand = defineJsonCommand({
     },
     command: {
       type: "string",
-      description: 'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy frequent".',
+      description:
+        'Exact shell string to run on the schedule (no AI agent), e.g. "akm improve --strategy reflect-distill".',
     },
     engine: { type: "string", description: "Engine to use for prompt targets (default: defaults.engine)" },
     model: { type: "string", description: "Model override for prompt targets" },

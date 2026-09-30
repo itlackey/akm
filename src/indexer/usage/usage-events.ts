@@ -144,7 +144,8 @@ export function countFeedbackSignals(db: Database, entryId: number): { pos: numb
  * Count usage events of a given `event_type`.
  *
  * Lifted verbatim from `akm improve` (improve.ts) where the show-event count
- * was hand-rolled inline to drive the zero-feedback fallback warning.
+ * was hand-rolled inline to drive the warning that the retrieval scope matches
+ * only search-retrieved assets.
  */
 export function countUsageEventsByType(db: Database, eventType: string): number {
   return (db.prepare("SELECT COUNT(*) AS cnt FROM usage_events WHERE event_type = ?").get(eventType) as { cnt: number })
