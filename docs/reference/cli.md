@@ -2857,9 +2857,11 @@ each refusal (exit 2).
 A reopened proposal is `pending` again with its `review` cleared. The rejection
 (its review, and any gate verdict that came with it) is appended to the
 proposal's `reviewHistory`, which `akm proposal show` prints as `reopened:
-<when> (<reason>), undoing rejected: <why>`, and the gate verdict is cleared so
-the drain and the quality gate treat it as undecided. It no longer counts as a
-settled pair for the pair pass, and while it is pending that pair is not
+<when> (<reason>), undoing rejected: <why>`. The gate verdict is cleared so the
+drain treats the proposal as undecided, except a `deferred` one, the quality
+gate's hand-off to a person, which stays so the drain keeps leaving the
+proposal for that person. It no longer counts as a settled pair for the pair
+pass, and while it is pending that pair is not
 proposed a second time. Its `improve_ledger` row goes back to what the mint
 wrote (a retire proposal's mint writes none, so the row its rejection created
 is dropped), its retention clock restarts (retire proposals never expire), and

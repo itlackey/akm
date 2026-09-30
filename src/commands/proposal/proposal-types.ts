@@ -87,10 +87,12 @@ export interface ProposalReview {
 
 /**
  * A rejection `akm proposal reopen` undid, kept on the proposal so reopening
- * it never erases what happened. The rejection's `gateDecision` moves in here
- * too and is cleared from the proposal: a reopened proposal is adjudicated
- * afresh, whereas a stale `staged` verdict would let the drain accept it
- * unseen and another gate's `auto-rejected` would have the drain skip it.
+ * it never erases what happened. The rejection's `gateDecision` is recorded
+ * here too, and cleared from the proposal unless it is a `deferred` one: a
+ * reopened proposal is adjudicated afresh, whereas a stale `staged` verdict
+ * would let the drain accept it unseen and another gate's `auto-rejected`
+ * would have the drain skip it. A `deferred` verdict (the quality gate's
+ * hand-off to a person) stays, so the drain keeps leaving it alone.
  */
 export interface ProposalReviewHistoryEntry {
   /** The rejection that was undone, as recorded when it was made. */

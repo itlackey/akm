@@ -2220,9 +2220,10 @@ function retireConflict(proposal: Proposal, held: Map<string, string>): string |
  * rejection is otherwise final, and it also suppresses the pair pass from ever
  * re-proposing a retirement (its record keys the pair), so a mistaken one
  * could not be undone. Each proposal returns to `pending` with the rejection —
- * and the gate verdict that came with it — kept in `reviewHistory`, its ledger
- * row reset (the pair pass keys off proposal status, so the pair is no longer
- * suppressed and, while pending, cannot be minted twice), and a
+ * and the gate verdict that came with it — kept in `reviewHistory` (the verdict
+ * itself is cleared, unless it is a `deferred` hand-off to a person), its
+ * ledger row reset (the pair pass keys off proposal status, so the pair is no
+ * longer suppressed and, while pending, cannot be minted twice), and a
  * `proposal_reopened` event recorded, all in one transaction.
  *
  * All-or-nothing: every id is checked (see {@link reopenRefusal} and
@@ -2265,7 +2266,12 @@ export function reopenProposals(
           status: "pending",
           updatedAt: decidedAt,
           review: undefined,
-          gateDecision: undefined,
+          // A reopened proposal is adjudicated afresh: a `staged` verdict would
+          // let the drain accept it unseen, and another gate's `auto-rejected`
+          // would have the drain skip it. A `deferred` one is the quality
+          // gate's hand-off to a person, which the drain must keep honouring
+          // (drainProposals leaves it alone), so it stays.
+          gateDecision: existing.gateDecision?.outcome === "deferred" ? existing.gateDecision : undefined,
           reviewHistory: [
             ...(existing.reviewHistory ?? []),
             {

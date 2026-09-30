@@ -19,6 +19,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadRejectedPairKeys } from "../../../src/commands/improve/consolidate/pair-pass";
 import { contentHash } from "../../../src/commands/improve/content-hash";
+import { stageJudgedProposal } from "../../../src/commands/improve/stage";
+import { drainProposals } from "../../../src/commands/proposal/drain";
 import {
   akmProposalAccept,
   akmProposalReject,
@@ -33,12 +35,12 @@ import {
   expireStaleProposals,
   getProposal,
   listProposals,
+  recordGateDecision,
 } from "../../../src/commands/proposal/repository";
 import { NotFoundError, UsageError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
-import { upsertProposal } from "../../../src/storage/repositories/proposals-repository";
 import { makeConfig } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
@@ -459,30 +461,45 @@ describe("akm proposal reopen — any rejected proposal, not just a retirement",
 
   test("a `staged` verdict does not survive a rejection that is then reopened: the drain must not accept it unseen", async () => {
     const proposal = mintLesson();
-    const db = openStateDatabase();
-    try {
-      // A judge passed it (staged); a human then rejected it by hand, which keeps the verdict on the row.
-      upsertProposal(
-        db,
-        {
-          ...proposal,
-          gateDecision: {
-            outcome: "staged",
-            reason: "judge-passed",
-            gate: "quality-gate",
-            decidedAt: "2026-01-01T00:00:00.000Z",
-          },
-        },
-        stash(),
-      );
-    } finally {
-      db.close();
-    }
-    await akmProposalReject({ stashDir: stash(), id: proposal.id, reason: "no", config: config() });
+    stageJudgedProposal(stash(), proposal); // a quality judge passed it
+    const drain = () => drainProposals({ stashDir: stash(), applyMode: "promote", maxAccepts: 25, dryRun: true });
+    expect((await drain()).promoted).toEqual([proposal.id]); // control: staged and pending, the drain would accept it
+
+    // A human then rejects it by hand, which leaves the verdict on the row.
+    await rejectIt(proposal, "no");
     expect(getProposal(stash(), proposal.id).gateDecision?.outcome).toBe("staged");
 
     await akmProposalReopen({ stashDir: stash(), ids: [proposal.id], config: config() });
     expect(getProposal(stash(), proposal.id).gateDecision).toBeUndefined();
+    const drained = await drain();
+    expect(drained.promoted).toEqual([]);
+    expect(drained.deferred).toEqual([{ id: proposal.id, reason: "needs-judgment" }]); // undecided, as any new proposal is
+  });
+
+  test("a `deferred` quality-gate verdict is kept: the drain still leaves a reopened proposal for the person it was handed to", async () => {
+    const proposal = mintLesson();
+    recordGateDecision(stash(), proposal.id, { outcome: "deferred", reason: "quality-review", gate: "quality-gate" });
+    await rejectIt(proposal, "not now"); // by hand: the deferral stays on the row
+    await akmProposalReopen({ stashDir: stash(), ids: [proposal.id], reason: "second look", config: config() });
+
+    const reopened = getProposal(stash(), proposal.id);
+    expect(reopened.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "quality-review",
+      gate: "quality-gate",
+    });
+    expect(reopened.reviewHistory?.[0]?.gateDecision).toMatchObject({ outcome: "deferred" }); // the history records it regardless
+
+    // Cleared, the drain would judge it (and, in promote mode, could accept it); kept, it never touches it.
+    const drained = await drainProposals({ stashDir: stash(), applyMode: "promote", maxAccepts: 25, dryRun: true });
+    expect(drained).toMatchObject({
+      promoted: [],
+      rejected: [],
+      deferred: [],
+      skippedByCap: [],
+      staged: [],
+      failed: [],
+    });
   });
 
   test("an update proposal whose target changed since it was minted is refused", async () => {

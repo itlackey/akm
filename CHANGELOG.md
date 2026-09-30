@@ -13,12 +13,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   also kept the pair pass from ever proposing that retirement again while both
   documents were unchanged. Reopen moves rejected proposals back to `pending`,
   keeping the rejection (and the gate verdict that came with it) in the
-  proposal's new `reviewHistory`, which `proposal show` prints. It is refused
-  unless the proposal is `rejected` and `accept` would not refuse it as stale
-  (an update's target unchanged; a create's target still absent; a retire
-  proposal's successor present and both documents' body hashes as recorded), and
-  a retire proposal is refused while another pending retire proposal involves
-  either of its documents. Several ids are all-or-nothing. The pair pass
+  proposal's new `reviewHistory`, which `proposal show` prints; the verdict
+  itself is cleared so the drain sees the proposal as undecided, except a
+  `deferred` one (the quality gate's hand-off to a person), which stays. It is
+  refused unless the proposal is `rejected` and `accept` would not refuse it as
+  stale (an update's target unchanged; a create's target still absent; a retire
+  proposal's successor present and both documents' body hashes as recorded),
+  and a retire proposal is refused while another pending retire proposal
+  involves either of its documents. Several ids are all-or-nothing. The pair pass
   follows the status: a reopened proposal is no longer a settled pair and,
   pending, is not minted twice. Its `improve_ledger` row is reset (a retire
   proposal's rejection row is dropped, any other goes back to `proposed`), its
