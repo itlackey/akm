@@ -40,7 +40,7 @@
  * mutate inside the per-test window and restore before the tripwire fires.
  */
 
-import { afterEach, beforeEach, mock } from "bun:test";
+import { afterAll, afterEach, beforeEach, mock } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -48,6 +48,7 @@ import path from "node:path";
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
+import { closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
 
@@ -390,3 +391,10 @@ afterEach(() => {
     throw new Error(`[sandbox tripwire] ${leakReasons.join("; ")}`);
   }
 });
+
+// `bun test` does not emit `process.on("exit")` when a run ends normally (bun
+// 1.4.1), so the SDK runner's own exit backstop never closes the `opencode
+// serve` children it caches: a test that dispatched through the real runner
+// leaves its server running, reparented to init, long after the run. Close them
+// once the whole run is done.
+afterAll(() => closeServer());
