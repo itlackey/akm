@@ -268,7 +268,7 @@ export function buildJudgePrompt(
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
     "1. NOVELTY: Does the lesson add information not already present in the source asset?",
     "2. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
-    "3. GROUNDING: Is the lesson about what the source asset is about? Score 1-2 if it is about a different subject than the source or contradicts it; 3 if it is on subject but goes beyond what the source says; 4-5 if the source supports it. A lesson may generalize the source's point.",
+    "3. GROUNDING: Is the lesson about what the source asset is about? Score 1-2 only if it is about a different subject than the source; 3 if it is on the source's subject but goes beyond or corrects what the source says (it may draw on feedback you are not shown); 4-5 if the source supports it. A lesson may generalize the source's point.",
     "",
     "Source asset content:",
     "```",
@@ -278,7 +278,7 @@ export function buildJudgePrompt(
   if (similarLessons && similarLessons.length > 0) {
     lines.push(
       "",
-      "Existing similar lessons (top-3 by similarity). Rate lower if the proposed lesson is substantially similar to any of these:",
+      "Existing similar lessons (top-3 by similarity). Rate NOVELTY and NON-REDUNDANCY lower if the proposed lesson is substantially similar to any of these:",
     );
     for (const sl of similarLessons)
       lines.push(`\nExisting lesson ref: ${sl.ref}`, "```", sl.content.slice(0, 500), "```");
@@ -360,9 +360,11 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
  * mean: a lesson about a different subject than its source reads as novel and
  * non-redundant, so the mean would pass it (or, in the review band, mint it as
  * a pending proposal). A score of {@link UNGROUNDED_MAX_SCORE} or less is a
- * rejection whatever the mean says (#999). The rubric scores a different
- * subject or a contradiction that low, not a lesson that merely goes beyond the
- * source: distill folds feedback into the lesson, and the judge never sees it.
+ * rejection whatever the mean says (#999). Only a different subject scores that
+ * low. A lesson that goes beyond or corrects its source is on its subject:
+ * distill folds feedback into the lesson, and the judge is never shown it. A
+ * contradiction of the source is the optional fidelity check's to send to a
+ * human (`judgeAndQueue` in distill.ts), so the rubric must not pre-empt it.
  */
 const GROUNDING_CRITERION = "grounding";
 const UNGROUNDED_MAX_SCORE = 2;
@@ -466,7 +468,7 @@ async function runQualityJudge(
     return {
       pass: false,
       score,
-      reason: `Unrelated to or contradicting its source (grounding ${grounding}/5): ${reason}`,
+      reason: `Off-subject for its source (grounding ${grounding}/5): ${reason}`,
       criteria,
     };
   }

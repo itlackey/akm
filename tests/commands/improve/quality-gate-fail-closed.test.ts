@@ -331,7 +331,7 @@ describe("runLessonQualityJudge — grounding rejects outright and is not averag
     expect(result.reviewNeeded).toBeUndefined();
     expect(result.score).toBeCloseTo(5, 9);
     expect(result.criteria).toEqual({ novelty: 5, nonRedundancy: 5, grounding: 1 });
-    expect(result.reason).toContain("Unrelated to or contradicting its source (grounding 1/5)");
+    expect(result.reason).toContain("Off-subject for its source (grounding 1/5)");
     expect(result.reason).toContain("The lesson is about duplicate refs; the source is a performance runbook.");
   });
 
@@ -381,6 +381,26 @@ describe("runLessonQualityJudge — grounding rejects outright and is not averag
     expect(prompt).toContain("Score this lesson");
     expect(prompt).toContain("3. GROUNDING:");
     expect(prompt).toContain('"grounding": <1-5 integer>');
+  });
+
+  // The judge never sees the feedback a lesson is distilled from, and a lesson
+  // that corrects its source (the source says port 8080, feedback says it
+  // clashes, the lesson says use 8081) is on the source's subject. A
+  // contradiction is not this criterion's to reject: the optional fidelity
+  // check routes it to a human.
+  test("the rubric reserves 1-2 for a different subject, so a lesson that corrects its source scores 3", () => {
+    const prompt = buildJudgePrompt("lesson body", "source body");
+
+    expect(prompt).toContain(
+      "Score 1-2 only if it is about a different subject than the source; 3 if it is on the source's subject but goes beyond or corrects what the source says (it may draw on feedback you are not shown); 4-5 if the source supports it.",
+    );
+    expect(prompt).not.toMatch(/contradict/i);
+  });
+
+  test("the instruction to rate similar existing lessons lower names the criteria it applies to", () => {
+    const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "lessons/other", content: "Other lesson." }]);
+
+    expect(prompt).toContain("Rate NOVELTY and NON-REDUNDANCY lower if the proposed lesson is substantially similar");
   });
 
   test("grounding belongs to the lesson judge: a reflect verdict neither reads nor is vetoed by it", async () => {
