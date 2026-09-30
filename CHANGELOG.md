@@ -37,7 +37,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refs, the judge's label and reason, cosine) and a `note` that accepting
   archives the file under `.akm/memory-cleanup/archive/` and `akm proposal
   revert` restores it byte-exactly. The new fields are additive and appear on
-  retire proposals only.
+  retire proposals only. `akm proposal show --detail full` also stops ending a
+  retire proposal with a bare `payload:` heading over nothing.
 
 ## [0.9.18] - 2026-09-29
 

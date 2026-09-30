@@ -324,6 +324,21 @@ describe("akm proposal diff — a retire proposal (#997)", () => {
     expect(lines).not.toContain("+"); // the synthetic blank line the old rendering padded in
   });
 
+  test("`proposal show --detail full` does not print the retire proposal's empty payload as a bare heading", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const shown = await runCli(["proposal", "show", proposal.id, "--detail=full", "--format=text"], {
+      stashDir: stash,
+    });
+    expect(shown.status).toBe(0);
+    expect(shown.stdout).toContain("retire: memories/old-note -> memories/new-note");
+    expect(shown.stdout).not.toContain("payload:");
+    // An ordinary proposal still shows its payload at full detail.
+    const ordinary = seedProposal(stash);
+    const full = await runCli(["proposal", "show", ordinary.id, "--detail=full", "--format=text"], { stashDir: stash });
+    expect(full.stdout).toContain("payload:");
+  });
+
   test("md and html renderings carry the same retirement fields", async () => {
     const stash = makeStashDir();
     const proposal = seedRetireProposal(stash);

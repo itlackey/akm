@@ -230,7 +230,10 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     }
   }
   const payload = p.payload as Record<string, unknown> | undefined;
-  if (payload && typeof payload.content === "string") {
+  // A retire proposal's payload is empty by design (it archives a file, it
+  // writes none): a bare `payload:` heading reads as "replaced by nothing" —
+  // the misreading #997 is about — so the retirement lines above stand alone.
+  if (!retirement && payload && typeof payload.content === "string") {
     lines.push("");
     lines.push("payload:");
     lines.push(payload.content);
