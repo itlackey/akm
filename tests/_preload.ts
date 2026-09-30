@@ -83,12 +83,23 @@ const HARNESSED: readonly string[] = [
 ];
 
 /**
- * Suite-wide sandbox root. Created once at preload time and torn down on
- * process exit. Any test that doesn't explicitly override `HOME` /
- * `XDG_*_HOME` will fall back to subdirectories of this root — keeping
- * production code's filesystem reads off the developer's real $HOME.
+ * Suite-wide sandbox root. Created once at preload time and removed when the
+ * run ends (the final `afterAll` at the bottom of this file), or on an
+ * explicit `process.exit()` or a signal. Any test that doesn't explicitly
+ * override `HOME` / `XDG_*_HOME` will fall back to subdirectories of this
+ * root — keeping production code's filesystem reads off the developer's real
+ * $HOME.
  */
 let suiteSandboxRoot: string | undefined;
+
+function removeSuiteRoot(): void {
+  if (!suiteSandboxRoot) return;
+  try {
+    fs.rmSync(suiteSandboxRoot, { recursive: true, force: true });
+  } catch {
+    // Best-effort cleanup; ignore.
+  }
+}
 
 function installSuiteWideSandbox(): void {
   suiteSandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), "akm-test-suite-"));
@@ -124,14 +135,9 @@ function installSuiteWideSandbox(): void {
   // accumulation that filled tmpfs with tens of thousands of husks. SIGKILL is
   // uncatchable, so the stale-husk sweep in scripts/sweep-test-tmp.ts is the
   // backstop for that case.
-  const removeSuiteRoot = (): void => {
-    if (!suiteSandboxRoot) return;
-    try {
-      fs.rmSync(suiteSandboxRoot, { recursive: true, force: true });
-    } catch {
-      // Best-effort cleanup; ignore.
-    }
-  };
+  //
+  // Under `bun test` `exit` fires only on an explicit `process.exit()` (which
+  // also skips the `afterAll` below); a normal end of run is the `afterAll`'s job.
   process.on("exit", removeSuiteRoot);
   for (const sig of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(sig, () => {
@@ -396,5 +402,10 @@ afterEach(() => {
 // 1.4.1), so the SDK runner's own exit backstop never closes the `opencode
 // serve` children it caches: a test that dispatched through the real runner
 // leaves its server running, reparented to init, long after the run. Close them
-// once the whole run is done.
-afterAll(() => closeServer());
+// once the whole run is done, then remove the suite sandbox they use as HOME —
+// for the same reason the `exit` listener above never removes it at the end of a
+// normal run, so every run left its `akm-test-suite-*` root behind.
+afterAll(async () => {
+  await closeServer();
+  removeSuiteRoot();
+});

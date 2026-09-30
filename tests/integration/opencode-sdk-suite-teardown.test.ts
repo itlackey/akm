@@ -10,16 +10,19 @@
  * dispatched through the real runner therefore orphaned its server (argv
  * `opencode serve --hostname=127.0.0.1 --port=N`, HOME inside
  * `/tmp/akm-test-suite-*`, reparented to init) on every machine that has the
- * `opencode` binary; CI has none, so it never showed there.
+ * `opencode` binary; CI has none, so it never showed there. The same missing
+ * `exit` left `/tmp/akm-test-suite-*` behind: the preload removed it only from
+ * `process.on("exit")`, so every run left one.
  *
- * `tests/_preload.ts` closes the runner's servers in a global `afterAll`. This
- * runs a real `bun test` of a fixture that completes a dispatch against a fake
- * managed server and never closes it, then proves the server was told to stop.
+ * `tests/_preload.ts` closes the runner's servers, then removes the suite
+ * sandbox, in a global `afterAll`. This runs a real `bun test` of a fixture that
+ * completes a dispatch against a fake managed server and never closes it, then
+ * proves the server was told to stop and the run's suite sandbox is gone.
  *
  * Integration-scoped (ORG-03/06): spawns a real `bun test` and its child.
  */
 
-import { test } from "bun:test";
+import { expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { makeSandboxDir } from "../_helpers/sandbox";
@@ -35,10 +38,11 @@ async function waitForFile(filePath: string): Promise<void> {
   }
 }
 
-test("a bun test run closes the opencode servers its tests started", async () => {
+test("a bun test run closes the opencode servers its tests started and removes its suite sandbox", async () => {
   const sandbox = makeSandboxDir("akm-sdk-teardown");
   const pidFile = path.join(sandbox.dir, "serve.pid");
   const termFile = path.join(sandbox.dir, "serve.sigterm");
+  const homeFile = path.join(sandbox.dir, "suite.home");
   const serve = path.join(sandbox.dir, "serve.js");
   const fixture = path.join(sandbox.dir, "start-server.test.ts");
   // A minimal `opencode serve`: registers its SIGTERM handler, answers the
@@ -62,13 +66,16 @@ test("a bun test run closes the opencode servers its tests started", async () =>
       `console.log("opencode server listening on http://127.0.0.1:" + server.port);`,
     ].join("\n"),
   );
-  // Completes a dispatch through the real spawn path and never closes the server.
+  // Completes a dispatch through the real spawn path and never closes the server,
+  // and records its HOME (`<suite sandbox>/home`) for the assertion below.
   fs.writeFileSync(
     fixture,
     [
       `import { expect, test } from "bun:test";`,
+      `import { writeFileSync } from "node:fs";`,
       `import { __setServeCommand, runOpencodeSdk } from ${JSON.stringify(SDK_RUNNER)};`,
       `test("completes a dispatch and leaves the server cached", async () => {`,
+      `  writeFileSync(${JSON.stringify(homeFile)}, process.env.HOME as string);`,
       `  __setServeCommand([process.execPath, ${JSON.stringify(serve)}]);`,
       `  const profile = { name: "sdk-teardown", bin: "unused", args: [], platform: "opencode-sdk" };`,
       `  const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 10_000 });`,
@@ -84,6 +91,10 @@ test("a bun test run closes the opencode servers its tests started", async () =>
       throw new Error(`fixture run exited ${run.exitCode}\n${run.stdout.toString()}\n${run.stderr.toString()}`);
     }
     await waitForFile(termFile);
+    // The run is over, so the suite sandbox its preload created (HOME's parent) must be gone.
+    const suiteRoot = path.dirname(fs.readFileSync(homeFile, "utf8"));
+    expect(path.basename(suiteRoot)).toStartWith("akm-test-suite-");
+    expect(fs.existsSync(suiteRoot)).toBe(false);
   } finally {
     // A server that never saw SIGTERM is still running (only SIGTERM or SIGKILL ends it), so its pid is safe to
     // kill; one that did has exited or is exiting.
