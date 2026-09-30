@@ -397,6 +397,17 @@ describe("runLessonQualityJudge — grounding rejects outright and is not averag
     expect(prompt).not.toMatch(/contradict/i);
   });
 
+  // Distill generates from the first 3000 characters of the source body
+  // (buildDistillPrompt). A judge that reads fewer would call a lesson drawn
+  // from later in the source off-subject, and grounding can now reject.
+  test("the judge reads the same 3000 characters of source the generator did", () => {
+    const source = `${"a".repeat(2500)}INSIDE_WINDOW${"b".repeat(600)}BEYOND_WINDOW`;
+    const prompt = buildJudgePrompt("lesson body", source);
+
+    expect(prompt).toContain("INSIDE_WINDOW");
+    expect(prompt).not.toContain("BEYOND_WINDOW");
+  });
+
   test("the instruction to rate similar existing lessons lower names the criteria it applies to", () => {
     const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "lessons/other", content: "Other lesson." }]);
 

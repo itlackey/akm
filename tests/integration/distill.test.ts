@@ -2087,11 +2087,11 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       feedbackEvents: typeof readEvents;
     }
 
-    function setup(name = "perf-runbook", body = RUNBOOK, feedbackReason = TOOL_FAILURE): Fixture {
+    function setup(name = "perf-runbook", body = RUNBOOK, feedbackReason = TOOL_FAILURE, frontmatter = ""): Fixture {
       const stash = makeStashDir();
       const ref = `memories/${name}`;
       const sourcePath = path.join(stash, "memories", `${name}.md`);
-      fs.writeFileSync(sourcePath, `---\ndescription: ${name}\n---\n\n${body}\n`);
+      fs.writeFileSync(sourcePath, `---\ndescription: ${name}\n${frontmatter}---\n\n${body}\n`);
       const feedbackEvents = (() => ({
         events: [
           {
@@ -2226,6 +2226,27 @@ Bind the gateway to port 8081. Port 8080 is taken on hosts that also run the met
       expect(judgePrompt).not.toMatch(/contradict/i);
       // ... and it was not shown the feedback that motivated the correction.
       expect(judgePrompt).not.toContain(fixture.feedbackReason);
+    });
+
+    // The generator is given the source body, frontmatter stripped, first 3000
+    // characters. The judge can now reject on grounding, so it reads that same
+    // slice rather than the raw file's first 2000 characters, which for a
+    // memory with a long frontmatter block are all frontmatter.
+    test("the judge is given the source body the lesson was generated from, not the raw file", async () => {
+      const fixture = setup(
+        "long-frontmatter",
+        `${"Runbook line. ".repeat(180)}LATE_BODY_MARKER`,
+        TOOL_FAILURE,
+        `notes: ${"F".repeat(2500)}\n`,
+      );
+      const { judgePrompt } = await distillWithJudge(
+        fixture,
+        { novelty: 4, nonRedundancy: 4, grounding: 4 },
+        "Draws on the runbook.",
+      );
+
+      expect(judgePrompt).toContain("LATE_BODY_MARKER");
+      expect(judgePrompt).not.toContain("FFFFFFFFFF");
     });
 
     test("a lesson that contradicts its source is left to the fidelity check, which sends it to a human", async () => {

@@ -272,7 +272,8 @@ export function buildJudgePrompt(
     "",
     "Source asset content:",
     "```",
-    sourceContent.slice(0, 2000),
+    // The window distill generates from (buildDistillPrompt): grounding can reject, so the judge reads all of it.
+    sourceContent.slice(0, 3000),
     "```",
   ];
   if (similarLessons && similarLessons.length > 0) {
