@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { formatRetireDiff, formatUnifiedDiff } from "../src/commands/proposal/diff-format";
+import { proposalWaitingSince } from "../src/commands/proposal/proposal-types";
 // Import directly from the relocated module (the proposals repository split
 // out of `validators/proposals.ts`).
 import {
@@ -124,6 +125,21 @@ describe("proposal repository — pure helpers (post-split)", () => {
       /reviewHistory/,
     );
     expect(proposalRowToProposal(withHistory([])).reviewHistory).toEqual([]);
+  });
+
+  test("proposalWaitingSince counts from the last reopen, else from creation (#997)", () => {
+    const created = "2026-01-01T00:00:00.000Z";
+    expect(proposalWaitingSince({ createdAt: created })).toBe(created);
+    expect(proposalWaitingSince({ createdAt: created, reviewHistory: [] })).toBe(created);
+    expect(
+      proposalWaitingSince({
+        createdAt: created,
+        reviewHistory: [
+          { reopenedAt: "2026-02-01T00:00:00.000Z" },
+          { reopenedAt: "2026-03-01T00:00:00.000Z", reopenReason: "again" },
+        ],
+      }),
+    ).toBe("2026-03-01T00:00:00.000Z");
   });
 
   test("tolerates a row without the current proposal envelope (#859)", () => {

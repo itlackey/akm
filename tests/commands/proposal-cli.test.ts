@@ -515,6 +515,37 @@ describe("akm proposal reopen (CLI, #997)", () => {
     expect(getProposal(stash, rejected.id).status).toBe("rejected");
   });
 
+  test("`drain --older-than` counts a reopened proposal from its reopen, not from its creation", async () => {
+    const stash = makeStashDir();
+    const longAgo = { now: () => Date.now() - 30 * 86_400_000 };
+    const seed = (ref: string) =>
+      createProposal(
+        stash,
+        { ref, source: "reflect", sourceRun: "run-1", payload: { content: VALID_LESSON } },
+        longAgo,
+      );
+    const reopened = seed("lessons/reopened");
+    const untouched = seed("lessons/untouched");
+    await rejectViaCli(stash, reopened.id);
+    const reopen = await runCli(["proposal", "reopen", reopened.id, "--format=json"], { stashDir: stash });
+    expect(reopen.status).toBe(0);
+
+    // Old by creation, but just put back in the queue: too fresh to consider. The untouched one is considered.
+    const older = await runCli(["proposal", "drain", "--older-than", "7", "--dry-run", "--format=json"], {
+      stashDir: stash,
+    });
+    expect(older.status).toBe(0);
+    expect(JSON.parse(older.stdout).deferred.map((d: { id: string }) => d.id)).toEqual([untouched.id]);
+
+    // Without the age filter the drain considers both, so it is the reopen that keeps the first one out.
+    const all = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir: stash });
+    expect(
+      JSON.parse(all.stdout)
+        .deferred.map((d: { id: string }) => d.id)
+        .sort(),
+    ).toEqual([reopened.id, untouched.id].sort());
+  });
+
   test("a proposal that is not rejected: exit 2 with the reason, and a hint", async () => {
     const stash = makeStashDir();
     const proposal = seedRetireProposal(stash);

@@ -20,7 +20,7 @@ import { NotFoundError } from "../../core/errors";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { isRetireProposal, type RetirementMetadata } from "./proposal-types";
+import { isRetireProposal, proposalWaitingSince, type RetirementMetadata } from "./proposal-types";
 import {
   diffProposal,
   listProposals,
@@ -528,7 +528,7 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
       if (lines > options.maxDiffLines) return false;
     }
     if (options.olderThanMs !== undefined) {
-      const age = Date.now() - new Date(p.createdAt).getTime();
+      const age = Date.now() - new Date(proposalWaitingSince(p)).getTime();
       if (age < options.olderThanMs) return false;
     }
     return true;

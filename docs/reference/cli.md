@@ -2775,7 +2775,7 @@ akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bu
 | `--target <name>` | Write destination; must match the proposal's recorded target |
 | `--generator <name>` | Bulk-accept all pending proposals from this generator (e.g. `reflect`, `distill`). Requires no positional id. |
 | `--max-diff-lines` | When bulk-accepting, only accept proposals whose content is `<=` this many lines. Larger proposals are skipped. |
-| `--older-than` | When bulk-accepting, only accept proposals created more than this many days ago |
+| `--older-than` | When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-accepted without accepting them |
 | `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk accept) |
 
@@ -2803,7 +2803,7 @@ akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
 | `--queue <source>` | Select the proposal queue by configured writable source name |
 | `--generator <name>` | Bulk-reject all pending proposals from this generator (e.g. `reflect`, `distill`). Requires no positional id. |
 | `--max-diff-lines` | When bulk-rejecting, only reject proposals whose content is `<=` this many lines. Larger proposals are skipped. |
-| `--older-than` | When bulk-rejecting, only reject proposals created more than this many days ago |
+| `--older-than` | When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-rejected without rejecting them |
 | `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk reject) |
 
@@ -2864,8 +2864,9 @@ proposal for that person. It no longer counts as a settled pair for the pair
 pass, and while it is pending that pair is not
 proposed a second time. Its `improve_ledger` row goes back to what the mint
 wrote (a retire proposal's mint writes none, so the row its rejection created
-is dropped), its retention clock restarts (retire proposals never expire), and
-a `proposal_reopened` event is appended. Accepting it afterwards archives a
+is dropped), the age retention expiry and `--older-than` see restarts at the
+reopen (retire proposals never expire), and a `proposal_reopened` event is
+appended. Accepting it afterwards archives a
 retired file exactly as for any retire proposal, and `akm proposal revert`
 restores it byte-exactly.
 
@@ -2976,7 +2977,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--promote` | Promote (accept) judge-passed proposals. Default is queue mode — stage only, no writes to assets. |
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
-| `--older-than` | Only consider proposals created more than this many days ago |
+| `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
 | `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
 

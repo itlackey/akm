@@ -285,6 +285,18 @@ export interface Proposal {
   retireAcceptIntent?: RetireAcceptIntent;
 }
 
+/**
+ * When a pending proposal's wait for review began: its last reopen (#997), else
+ * its creation. Every age-based sweep — retention expiry, and `--older-than` on
+ * bulk accept/reject and on `drain` — counts from here, so a proposal just put
+ * back in the queue is not swept as if it had been waiting since it was first
+ * created (a scheduled `drain --older-than 7 --promote` would otherwise take
+ * it at once).
+ */
+export function proposalWaitingSince(proposal: Pick<Proposal, "createdAt" | "reviewHistory">): string {
+  return proposal.reviewHistory?.at(-1)?.reopenedAt ?? proposal.createdAt;
+}
+
 /** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */
 export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
   return proposal.changes[0]?.op === "delete";

@@ -26,6 +26,7 @@ import {
   akmProposalReject,
   akmProposalReopen,
   akmProposalRevert,
+  bulkAdjudicateProposals,
 } from "../../../src/commands/proposal/proposal";
 import type { Proposal, RetirementMetadata } from "../../../src/commands/proposal/proposal-types";
 import {
@@ -238,6 +239,58 @@ describe("akm proposal reopen — a rejected retire proposal", () => {
     const results = await akmProposalReopen({ stashDir: stash(), ids: [proposal.id, proposal.id], config: config() });
     expect(results).toHaveLength(1);
     expect(getProposal(stash(), proposal.id).reviewHistory).toHaveLength(1);
+  });
+});
+
+describe("akm proposal reopen — the age a sweep sees", () => {
+  const DAY = 86_400_000;
+  const longAgo = { now: () => Date.now() - 30 * DAY };
+
+  /** A retire proposal minted 30 days ago. */
+  function mintOldRetire(name: string) {
+    const retiredPath = writeAsset(`memories/${name}-old.md`, `description: ${name}-old`, "The durable fact.\n");
+    const successorPath = writeAsset(`memories/${name}-new.md`, `description: ${name}-new`);
+    return createRetireProposal(
+      storage.stashDir,
+      {
+        ref: `memories/${name}-old`,
+        source: "consolidate-pair",
+        retirement: retirement(retiredPath, successorPath, `memories/${name}-old`, `memories/${name}-new`),
+      },
+      longAgo,
+    );
+  }
+
+  test("`--older-than` counts a reopened proposal from its reopen: a bulk accept or reject leaves it alone", async () => {
+    const reopened = mintOldRetire("reopened");
+    const untouched = mintOldRetire("untouched");
+    await rejectIt(reopened);
+    await akmProposalReopen({ stashDir: stash(), ids: [reopened.id], config: config() });
+    expect(Date.now() - Date.parse(getProposal(stash(), reopened.id).createdAt)).toBeGreaterThan(29 * DAY); // old by creation
+
+    for (const action of ["accept", "reject"] as const) {
+      const sweep = await bulkAdjudicateProposals({
+        stashDir: stash(),
+        config: config(),
+        action,
+        generator: "consolidate-pair",
+        olderThanMs: 7 * DAY,
+        dryRun: true,
+      });
+      expect({ action, ids: sweep.results.map((result) => (result as { id: string }).id) }).toEqual({
+        action,
+        ids: [untouched.id],
+      });
+    }
+    // Without the age filter both are in the sweep, so it is the reopen that keeps the first one out.
+    const everything = await bulkAdjudicateProposals({
+      stashDir: stash(),
+      config: config(),
+      action: "reject",
+      generator: "consolidate-pair",
+      dryRun: true,
+    });
+    expect(everything.count).toBe(2);
   });
 });
 

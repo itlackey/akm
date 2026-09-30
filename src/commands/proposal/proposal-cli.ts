@@ -38,6 +38,7 @@ import {
   akmProposalShow,
   bulkAdjudicateProposals,
 } from "./proposal";
+import { proposalWaitingSince } from "./proposal-types";
 import { proposeCommand } from "./propose-cli";
 
 export function mergeProposalDrainNotices(
@@ -155,7 +156,7 @@ const proposalAcceptCommand = defineJsonCommand({
     "older-than": {
       type: "string",
       description:
-        "When bulk-accepting, only accept proposals created more than this many days ago (e.g. '7' for 7 days).",
+        "When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago (e.g. '7' for 7 days).",
     },
     "dry-run": {
       type: "boolean",
@@ -245,7 +246,7 @@ const proposalRejectCommand = defineJsonCommand({
     "older-than": {
       type: "string",
       description:
-        "When bulk-rejecting, only reject proposals created more than this many days ago (e.g. '7' for 7 days).",
+        "When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago (e.g. '7' for 7 days).",
     },
     "dry-run": {
       type: "boolean",
@@ -445,7 +446,7 @@ const proposalDrainCommand = defineJsonCommand({
     },
     "older-than": {
       type: "string",
-      description: "Only consider proposals created more than this many days ago.",
+      description: "Only consider proposals created (or last reopened) more than this many days ago.",
     },
     promote: {
       type: "boolean",
@@ -511,10 +512,11 @@ const proposalDrainCommand = defineJsonCommand({
       excludeIds = new Set(
         listProposals(stashDir, { status: "pending" })
           // Fail SAFE: exclude a proposal when its age cannot be computed
-          // (NaN createdAt) OR it is too fresh. An unparseable createdAt must
-          // never be treated as old enough to drain/promote.
+          // (NaN date) OR it is too fresh. An unparseable date must never be
+          // treated as old enough to drain/promote. Age counts from creation,
+          // or from the last reopen (#997) — a proposal just reopened is fresh.
           .filter((proposal) => {
-            const age = now - new Date(proposal.createdAt).getTime();
+            const age = now - new Date(proposalWaitingSince(proposal)).getTime();
             return Number.isNaN(age) || age < olderThanMs;
           })
           .map((proposal) => proposal.id),

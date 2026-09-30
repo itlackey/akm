@@ -23,8 +23,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   involves either of its documents. Several ids are all-or-nothing. The pair pass
   follows the status: a reopened proposal is no longer a settled pair and,
   pending, is not minted twice. Its `improve_ledger` row is reset (a retire
-  proposal's rejection row is dropped, any other goes back to `proposed`), its
-  retention clock restarts, and a `proposal_reopened` event is appended.
+  proposal's rejection row is dropped, any other goes back to `proposed`), the
+  age that retention expiry and `--older-than` (bulk accept/reject, `drain`)
+  see restarts at the reopen, so a scheduled sweep does not take a proposal a
+  person just put back, and a `proposal_reopened` event is appended.
 
 ### Fixed
 

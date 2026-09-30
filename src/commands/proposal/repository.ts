@@ -79,6 +79,7 @@ import {
   type ProposalPayload,
   type ProposalSource,
   type ProposalStatus,
+  proposalWaitingSince,
   type RetireAcceptIntent,
   type RetirementMetadata,
   STALE_TARGET_GATE_REASON,
@@ -822,7 +823,7 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
     if (isRetireProposal(p)) continue;
     // A reopened proposal's wait starts over at the reopen (#997): expiring it
     // on its original age would undo the reopen at the next sweep.
-    const createdMs = new Date(p.reviewHistory?.at(-1)?.reopenedAt ?? p.createdAt).getTime();
+    const createdMs = new Date(proposalWaitingSince(p)).getTime();
     if (!Number.isFinite(createdMs) || nowMs - createdMs < retentionDays * MS_PER_DAY) continue;
     try {
       archiveProposal(stashDir, p.id, "rejected", "expired: no action within retention window", ctx, {
