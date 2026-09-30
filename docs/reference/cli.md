@@ -2448,7 +2448,7 @@ a different explicit `--bundle` is a usage error.
 
 A run improves one bundle, the one it writes to, and plans only that bundle's
 assets: an asset that lives in another bundle is left alone even when that
-bundle is writable, and a bare scope ref resolves inside the write target only.
+bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves inside the write target only.
 To improve another bundle, name it (`akm improve --bundle team`, or
 `akm improve team//skills/code-review`).
 

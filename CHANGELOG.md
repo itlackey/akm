@@ -15,16 +15,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   came back as a `create` fork in the write target, or as an `update` of the
   write target's own copy built from the other bundle's copy. A run now plans
   only the bundle it writes to (`--bundle`, else `defaultWriteTarget`, else
-  the working bundle), and a bare `--scope` ref resolves inside that bundle.
-  As a second line of defence, `createProposal` refuses a rewrite whose
-  `itemRef` names an asset owned by a different configured bundle than the
-  queue's. **Narrowed behaviour:** a run no longer picks up assets from your
-  other writable bundles (it used to read them and queue the result in its own
-  write target). `akm improve <ref>` for an asset that lives only in another
-  bundle now fails with a not-found error whose hint names the remedy. To
-  improve another bundle, select it: `akm improve --bundle team`, or
-  `akm improve team//skills/x`. Proposals the old behaviour already queued
+  the working bundle), and a bare ref scope (`akm improve skills/x`) resolves
+  inside that bundle. Distill's memory-to-knowledge promotion likewise merges
+  only with a doc that already exists in the write target. As a second line of
+  defence, `createProposal` refuses a rewrite whose `itemRef` names an asset
+  owned by a different configured bundle than the queue's. **Narrowed
+  behaviour:** a run no longer picks up assets from your other writable
+  bundles (it used to read them and queue the result in its own write target),
+  so a scheduled `akm improve` now covers only its write target: add one
+  `akm improve --bundle <name>` run per other bundle you want improved.
+  `akm improve <ref>` for an asset that lives only in another bundle now fails
+  with a not-found error whose hint names the remedy (`--bundle team`, or
+  `akm improve team//skills/x`). Proposals the old behaviour already queued
   stay in the queue; review them with `akm proposal list`.
+- **`akm improve --dry-run`/`--plan` previews the bundle a live run improves.**
+  With no `--bundle` and no `defaultWriteTarget`, a live run starts from
+  `AKM_BUNDLE_DIR` before `defaultBundle`, but a dry run read `defaultBundle`
+  only, so the two could plan different bundles. The preview now resolves the
+  working bundle the same way.
 
 ## [0.9.18] - 2026-09-29
 
