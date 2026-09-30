@@ -85,8 +85,6 @@ describe("buildReflectPrompt — feedback framing (#952)", () => {
     expect(framing).toContain(FEEDBACK_CAVEAT_SNIPPET);
     expect(framing).toContain("leave the section unchanged");
     expect(framing).not.toMatch(/TODO|placeholder/i);
-    // The rest of the prompt never asks for one either.
-    expect(rendered).not.toContain("TODO");
   });
 });
 

@@ -13,20 +13,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   recorded `akm show` failing on a memory with a `.derived.md` child (fixed in
   0.9.17) as negative feedback, and distill and reflect read it as evidence
   about the memory's content. On one bundle, 9 such events on 8 memories
-  produced 5 distill lessons about "duplicate physical owners" for memories on
+  produced 4 distill lessons about "duplicate physical owners" for memories on
   unrelated subjects (one auto-accepted and live), and a reflect proposal,
   also auto-accepted, that added a `TODO: verify physical owner` section to a
-  memory, which a later distill pass built a lesson on. Reflect's feedback
-  caveat no longer offers a `TODO: verify …` placeholder: when feedback asks
-  for information the asset lacks, it says only to leave the section
-  unchanged. The distill quality judge now also scores **grounding**, whether
-  the lesson is about what its source is about, and a grounding score of 2 or
-  less is `quality_rejected` (an `improve_ledger` row and a `distill_invoked`
-  event, no proposal) whatever the mean of novelty and non-redundancy is.
-  Such a lesson reads as novel and non-redundant, so it used to pass or, in
-  the review band, be minted as a pending `review_needed` proposal. Every
-  other `review_needed` reason is unchanged. `TODO:` lines already in a
-  memory are not removed.
+  memory, on which a fifth lesson was then built. The shipped hints had told
+  agents to record `--negative` "when it fails"; they, and the help for
+  `akm feedback --reason`, now say a failed akm command is not feedback on the
+  asset. Reflect's feedback caveat no longer offers a `TODO: verify …`
+  placeholder: when feedback asks for information the asset lacks, it says
+  only to leave the section unchanged. The distill quality judge now also
+  scores **grounding**, whether the lesson is about what its source is about
+  (1–2 only for a different subject; a lesson that corrects its source from
+  feedback is not off-subject), and a grounding score of 2 or less is
+  `quality_rejected` (an `improve_ledger` row and a `distill_invoked` event, no
+  proposal) whatever the mean of novelty and non-redundancy is. Such a lesson
+  reads as novel and non-redundant, so it used to pass or, in the review band,
+  be minted as a pending `review_needed` proposal. The judge also reads the
+  same slice of the source the lesson was generated from (its body without
+  frontmatter, first 3000 characters) instead of the raw file's first 2000. A
+  lesson that contradicts its source still reaches a human through the
+  optional fidelity check, and every other `review_needed` reason is
+  unchanged. `TODO:` lines already in a memory are not removed.
 
 ## [0.9.18] - 2026-09-29
 
