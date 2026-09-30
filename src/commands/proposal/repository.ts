@@ -23,7 +23,7 @@ import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-seri
 import { carryForwardBookkeepingFrontmatter, parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
-import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { type FileChange, proposalContent } from "../../core/file-change";
 import type { MemoryPruneCandidate } from "../../core/improve-types";
@@ -114,7 +114,8 @@ type ProposalRejectionReason =
   | "unknown_type"
   | "empty_content"
   | "missing_description"
-  | "invalid_canonical_structure";
+  | "invalid_canonical_structure"
+  | "cross_bundle";
 
 export interface OrphanPurgeResult {
   checked: number;
@@ -163,6 +164,13 @@ export interface CreateProposalInput {
   ref: string;
   /** The queue's bundle name and materialized root; derived from the stash when omitted. */
   target?: { source: string; root: string };
+  /**
+   * The durable `bundle//conceptId` of the existing asset this proposal rewrites,
+   * when the caller read it from a specific bundle. The proposal must be filed in
+   * that bundle: another queue would fork the asset (a `create`) or overwrite its
+   * own copy with content derived from the other bundle's (#1000).
+   */
+  itemRef?: string;
   /** One of {@link PROPOSAL_SOURCES}; an unknown value warns. */
   source: ProposalSource | string;
   /** The automated run that made it (PROV-DM); an automated source without one warns. */
@@ -300,6 +308,27 @@ export function resolveProposalQueueTarget(
 }
 
 /**
+ * The configured bundle that owns the asset `itemRef` names when it is not the
+ * bundle rooted at `target`; otherwise `undefined`. A differing name is
+ * confirmed by the owner's root, so one bundle known by two spellings is never
+ * taken for two, and an owner that cannot be resolved is never refused on.
+ */
+function otherOwningBundle(itemRef: string, target: { source: string; root: string }): string | undefined {
+  try {
+    const owner = parseBundleRef(itemRef).bundle;
+    if (owner === undefined || owner === target.source) return undefined;
+    const sources = resolveSourceEntries(target.root, loadConfig());
+    const ownerSource = sources[deriveInstallations(sources).findIndex((installation) => installation.id === owner)];
+    return ownerSource !== undefined && path.resolve(ownerSource.path) !== path.resolve(target.root)
+      ? owner
+      : undefined;
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return undefined;
+  }
+}
+
+/**
  * Create a pending proposal (a random UUID id). Obviously invalid input is
  * refused with a typed `proposal_creation_rejected` event. The mint and its
  * `proposed` ledger rows commit in one transaction; whether a ref may be
@@ -364,9 +393,17 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
     }
   }
 
+  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
+  const owner = input.itemRef ? otherOwningBundle(input.itemRef, proposalTarget) : undefined;
+  if (owner) {
+    return rejectProposal(
+      "cross_bundle",
+      `Proposal for "${input.ref}" rewrites ${input.itemRef}, which bundle "${owner}" owns, but its queue target is bundle "${proposalTarget.source}". Filing it there would fork the asset out of "${owner}" or overwrite this bundle's copy with content taken from the other. Improve it in its own bundle instead (\`akm improve --bundle ${owner}\`).`,
+    );
+  }
+
   // The FileChange envelope, and the target's before-hashes as of mint (the
   // freshness check at accept compares against them).
-  const proposalTarget = resolveCreateProposalTarget(stashDir, input.target, parsedRef.origin);
   const normalizedRef = proposalDurableRef(parsedRef, proposalTarget);
   const targetRoot = path.resolve(proposalTarget.root);
   let targetRelPath: string;

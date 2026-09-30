@@ -264,3 +264,30 @@ describe("an improve run never files another bundle's asset into its write targe
     expect(listProposals(primary)).toEqual([]);
   });
 });
+
+describe("reflect refuses an asset the write target does not own", () => {
+  test("a candidate from another bundle mints no proposal in the queue it writes to", async () => {
+    const config = twoBundleConfig();
+    await seedAndIndex(config);
+
+    await expect(
+      akmReflect({
+        ref: "skills/team-skill",
+        itemRef: "team//skills/team-skill",
+        stashDir: primary,
+        target: { source: "primary", root: primary },
+        config,
+        improveProfile: config.improve?.strategies?.default,
+        chat: async () =>
+          JSON.stringify({
+            content: "---\nname: team-skill\ndescription: team skill\n---\n\nRewritten by the model.\n",
+            confidence: 0.9,
+            frontmatterPatch: { description: null, when_to_use: null },
+          }),
+      }),
+    ).rejects.toMatchObject({ code: "INVALID_PROPOSAL", message: expect.stringContaining('bundle "team" owns') });
+
+    expect(listProposals(primary)).toEqual([]);
+    expect(listProposals(team)).toEqual([]);
+  });
+});
