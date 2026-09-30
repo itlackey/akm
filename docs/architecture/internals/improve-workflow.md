@@ -6,7 +6,7 @@
 
 | Option | Type | Purpose |
 |---|---|---|
-| `--scope` | `string` | Restrict the run to a single ref (`[bundle//]conceptId`), an asset type (`lesson`), or omit for all assets. |
+| `[scope]` (positional) | `string` | Restrict the run to a single ref (`[bundle//]conceptId`), an asset type (`lesson`), or omit for all assets. |
 | `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
 | `--dry-run` | `boolean` | Compute the plan from the existing index and analyze memory cleanup; emit no events, acquire no lock, call no model, and write nothing. |
 | `--bundle` | `string` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. It is the only bundle whose assets the run plans. |
@@ -310,7 +310,7 @@ same enabled gate. It replaces nothing the promote pass does; it adds
 duplicate, subsumed and superseding retirement, review-gated.
 
 1. **Initiators:** memory (base or `.derived`), flat `knowledge/` or lesson
-   assets in the primary writable bundle, in the retrieval scope, and
+   assets in the bundle the run writes to, in the retrieval scope, and
    content-eligible: no prior pair-pass ledger row (source
    `consolidate-pair`, kept apart from the promote pass's `consolidate`
    rows), or a row whose recorded body hash differs from the asset's current
@@ -427,8 +427,8 @@ by a blank one, #997), and bulk
 `accept --generator consolidate-pair` / `reject --generator
 consolidate-pair`. A proposal carrying `continuityRisk` (below) is excluded
 from that bulk accept, whatever the generator or `--yes` — visible inline in
-`list`'s default output and in `show`'s text output (the specific
-failing/unverified queries, not just a count) — bulk reject is unaffected,
+`list`'s default output and in the text output of `show` and `diff` (the
+specific failing/unverified queries, not just a count) — bulk reject is unaffected,
 and a person can always accept one by id. A rejection is not final:
 `akm proposal reopen <id>` puts a rejected retire proposal back to `pending`
 (refused if the retired document, or the successor, changed since the pair was
@@ -548,7 +548,7 @@ remaining live-write memory/index artifacts previously coupled to indexing.
 
 ### Proposal queue
 
-`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It writes the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record. The retired `<stash>/.akm/proposals/` tree is neither read nor written.
+`createProposal` is the single write point used by reflect, distill, and consolidate (promote). It writes the canonical `proposals` table in `state.db`; rows are partitioned by `stash_dir`, and pending/accepted/rejected/reverted are statuses on the same durable record (`akm proposal reopen` moves a rejected row back to pending). The retired `<stash>/.akm/proposals/` tree is neither read nor written.
 
 **Logical proposal shape:**
 
@@ -572,7 +572,7 @@ Two proposals can share the same `ref`; their UUID primary keys prevent collisio
 
 ## Scope restrictions
 
-`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. The candidate set is that bundle's assets and nothing else, because every proposal is filed in the write target. An asset that another writable bundle owns is never planned: reflect would read it from its own bundle and the proposal would land in this one, either forking the asset as a `create` or overwriting this bundle's copy with content taken from the other's (#1000). A bare ref scope (`akm improve skills/x`) resolves inside the write target only, and distill's memory-to-knowledge promotion merges only with a doc that already exists there. To improve another writable bundle, select it with `--bundle team` or a bundle-qualified scope such as `team//skills/code-review`. As a second line of defence, `createProposal` refuses a proposal whose `itemRef` names an asset owned by a different configured bundle than the queue's.
+`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. The candidate set is that bundle's assets and nothing else, because every proposal is filed in the write target. An asset that another writable bundle owns is never planned: reflect would read it from its own bundle and the proposal would land in this one, either forking the asset as a `create` or overwriting this bundle's copy with content taken from the other's (#1000). A bare ref scope (`akm improve skills/x`) resolves inside the write target only, and distill's memory-to-knowledge promotion merges only with a doc that already exists there. To improve another writable bundle, select it with `--bundle team` or a bundle-qualified scope such as `team//skills/code-review`; a scheduled run therefore covers only its write target, and each other bundle needs its own scheduled `akm improve --bundle <name>` run. A dry run (`--dry-run`, `--plan`) resolves the bundle the way a live run does, with the working bundle starting from `AKM_BUNDLE_DIR` before `defaultBundle`, so it previews the bundle a live run improves. As a second line of defence, `createProposal` refuses a proposal whose `itemRef` names an asset owned by a different configured bundle than the queue's.
 
 `akm improve` and `akm lint` only operate on writable bundle sources (sources with `writable: true`). Read-only sources (git, npm, website) are excluded from the candidate set before any other filtering; a read-only write target plans nothing.
 

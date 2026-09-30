@@ -610,8 +610,8 @@ independent of scope. `--scope` was removed in 0.9.0 with no alias; use
 proposal is kept before `akm improve`'s maintenance pass archives it (status
 `rejected`, reason `"expired: no action within retention window"`; counted
 from the last `akm proposal reopen`, if there was one) — `akm proposal` itself
-has no archive/expire verb. Setting it to `0` or less disables expiry
-entirely.
+has no archive/expire verb, though `akm proposal reopen` puts an expired
+proposal back. Setting it to `0` or less disables expiry entirely.
 
 ## Registries
 

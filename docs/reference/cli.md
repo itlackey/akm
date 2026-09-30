@@ -2448,9 +2448,14 @@ a different explicit `--bundle` is a usage error.
 
 A run improves one bundle, the one it writes to, and plans only that bundle's
 assets: an asset that lives in another bundle is left alone even when that
-bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves inside the write target only.
-To improve another bundle, name it (`akm improve --bundle team`, or
-`akm improve team//skills/code-review`).
+bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves
+inside the write target only. To improve another bundle, name it
+(`akm improve --bundle team`, or `akm improve team//skills/code-review`). A
+scheduled `akm improve` therefore covers only its write target: schedule one
+`akm improve --bundle <name>` run per other bundle. `--dry-run` and `--plan`
+resolve the bundle the way a live run does (the working bundle starts from
+`AKM_BUNDLE_DIR`, then `defaultBundle`), so they preview the bundle a live run
+improves.
 
 Every stage records what it did with each asset in the improve ledger
 (`improve_ledger` in `state.db`) and reads it before any model call: an asset
@@ -2755,8 +2760,8 @@ akm proposal list --generator consolidate-pair
 | `--generator <name>` | Filter by generator/source (e.g. `reflect`, `distill`, `consolidate-pair`) — the same value `accept`/`reject --generator` take |
 
 Each retire proposal's `retirement.continuityRisk`, when present, also shows
-in the default listing (`⚠ continuity-risk` inline) and in `proposal show`'s
-text output (the specific failing/unverified queries) — see
+in the default listing (`⚠ continuity-risk` inline) and in the text output of
+`proposal show` and `proposal diff` (the specific failing/unverified queries) — see
 [Retirement continuity](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retirement-continuity).
 
 Each proposal record carries an optional `confidence` field (0..1) emitted by
@@ -2808,7 +2813,8 @@ Bulk-accept all pending proposals from one generator with `--generator <name>`
 #### proposal reject
 
 Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
-UUID prefix, or an asset ref.
+UUID prefix, or an asset ref. [`akm proposal reopen`](#proposal-reopen) undoes a
+rejection.
 
 ```sh
 akm proposal reject <id> --reason "duplicates existing workflow"
@@ -2835,9 +2841,10 @@ and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shell
 #### proposal reopen
 
 Undo a rejection: move rejected proposals back to `pending` so they can be
-reviewed again. A rejection is otherwise final. `accept` refuses anything that
-is not pending, and a rejected consolidate pair-pass retire proposal also keeps
-the pair pass from proposing that retirement again while both documents are
+reviewed again (a proposal that retention expiry archived is a rejected one
+too). A rejection is otherwise final. `accept` refuses anything that is not
+pending, and a rejected consolidate pair-pass retire proposal also keeps the
+pair pass from proposing that retirement again while both documents are
 unchanged.
 
 ```sh
@@ -2851,13 +2858,14 @@ akm proposal list --status rejected --generator consolidate-pair --format json \
 
 | Flag | Description |
 | --- | --- |
-| `--reason <text>` | Why the rejection is being undone. Kept in the proposal's review history, its ledger row and the `proposal_reopened` event |
+| `--reason <text>` | Why the rejection is being undone. Kept in the proposal's review history and the `proposal_reopened` event, and in its ledger row's detail when it has a row |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
 
 Takes full proposal ids: a UUID prefix only matches pending proposals, so it
 cannot name a rejected one (`akm proposal list --status rejected` prints the
-ids; add `--generator consolidate-pair` for the retire backlog). A retire
-proposal is never reached by asset ref, only by id.
+ids; add `--generator consolidate-pair` for the retire backlog). An asset ref
+also resolves, to the newest proposal for that ref, but only while none is
+pending, and it never reaches a retire proposal, which is named by its id.
 
 Reopening is refused, with the reason, when:
 
@@ -2878,19 +2886,20 @@ each refusal (exit 2).
 
 A reopened proposal is `pending` again with its `review` cleared. The rejection
 (its review, and any gate verdict that came with it) is appended to the
-proposal's `reviewHistory`, which `akm proposal show` prints as `reopened:
-<when> (<reason>), undoing rejected: <why>`. The gate verdict is cleared so the
-drain treats the proposal as undecided, except a `deferred` one, the quality
-gate's hand-off to a person, which stays so the drain keeps leaving the
-proposal for that person. It no longer counts as a settled pair for the pair
-pass, and while it is pending that pair is not
-proposed a second time. Its `improve_ledger` row goes back to what the mint
-wrote (a retire proposal's mint writes none, so the row its rejection created
-is dropped), the age retention expiry and `--older-than` see restarts at the
-reopen (retire proposals never expire), and a `proposal_reopened` event is
-appended. Accepting it afterwards archives a
-retired file exactly as for any retire proposal, and `akm proposal revert`
-restores it byte-exactly.
+proposal's `reviewHistory`, which `akm proposal show` prints as one line per
+reopen: `reopened: <when> (<reopen reason>), undoing rejected: <why> (<when>)`.
+The gate verdict is cleared so the drain treats the proposal as undecided,
+except a `deferred` one, the quality gate's hand-off to a person, which stays
+so the drain keeps leaving the proposal for that person.
+
+A reopened retire proposal no longer counts as a settled pair for the pair
+pass, and while it is pending that pair is not proposed a second time. The
+proposal's `improve_ledger` row goes back to what the mint wrote (a retire
+proposal's mint writes none, so the row its rejection created is dropped).
+The age that retention expiry and `--older-than` see restarts at the reopen
+(retire proposals never expire), and a `proposal_reopened` event is appended.
+Accepting a reopened retire proposal archives the retired file exactly as for
+any retire proposal, and `akm proposal revert` restores it byte-exactly.
 
 Output: for one id, the envelope `reject` returns (`ok`, `id`, `ref`, the
 proposal, and `reason`, here the reopen reason); for several ids,

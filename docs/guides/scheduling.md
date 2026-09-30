@@ -64,6 +64,21 @@ A scheduled fire re-reads the guarded current source and creates a fresh
 durable-v4-family freeze at executable `irVersion: 5`.
 Scheduler sync/validation evidence is not an executable snapshot and is never reused as the later run plan.
 
+## A scheduled `akm improve` covers one bundle
+
+An `akm improve` run improves one bundle, the one it writes to: `--bundle`,
+else `defaultWriteTarget`, else the working bundle. A scheduled row sets
+`AKM_BUNDLE_DIR` to the working bundle of the shell that synced it, so a
+scheduled `akm improve` covers that bundle (or `defaultWriteTarget`, when set)
+and leaves your other bundles alone, even the writable ones. To improve
+another bundle on a schedule, give it a task of its own; the `--bundle` inside
+the command is `akm improve`'s own:
+
+```sh
+akm task add improve-team --schedule "15 3 * * *" \
+  --command "akm improve --bundle team --skip-if-locked --require-engines"
+```
+
 ## Rerunning setup preserves scheduler bindings
 
 Rerunning `akm setup` preserves existing scheduler bindings by design — it

@@ -125,10 +125,10 @@ that "off" rather than defaulting to on.
 
 ### Retrieval scope
 
-Improve reworks only what gets read (#986). Fresh feedback and an explicit
-`--scope <ref>` are usage evidence of their own. Every other pick — the
-proactive-maintenance and high-salience lanes, and the memories consolidation
-judges — must be in the retrieval scope
+Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
+scope (`akm improve skills/x`) are usage evidence of their own. Every other
+pick — the proactive-maintenance and high-salience lanes, and the memories
+consolidation judges — must be in the retrieval scope
 (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
@@ -189,7 +189,7 @@ real risk.
 
 A failing pair still mints — the check flags, it never blocks — but the
 proposal carries `continuityRisk` in its retirement metadata: the failing
-query count and the rank pairs, visible in `akm proposal show`/`list`. A
+query count and the rank pairs, visible in `akm proposal show`/`list`/`diff`. A
 flagged proposal is excluded from every bulk accept path (`accept
 --generator …`, with or without `--yes`); a person can still accept it by id.
 Bulk *reject* is unaffected, since declining a flagged proposal is always the
@@ -220,9 +220,11 @@ but nothing assigns or emits it any more.
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
 proactive maintenance, salience ranking, replay, disk presence, and the final
-cap. Each invocation reports a best-effort observation assembled while it
-runs; it is not an atomic cross-store snapshot, a reservation, or a durable
-frozen plan. A later live invocation re-inspects mutable index, state,
+cap, and resolve the bundle they plan the same way: `--bundle`, else
+`defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
+`defaultBundle`). Each invocation reports a best-effort observation assembled
+while it runs; it is not an atomic cross-store snapshot, a reservation, or a
+durable frozen plan. A later live invocation re-inspects mutable index, state,
 filesystem, and session-log inputs and can therefore differ from an earlier
 dry preview. Given equivalent observed inputs, both paths produce the same
 selection. The public schema-v2 result projects the observation as `plan`: raw

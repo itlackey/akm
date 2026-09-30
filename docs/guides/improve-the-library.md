@@ -35,6 +35,12 @@ omitting it exits 2. `--failure-mode` adds a curated taxonomy label but does
 **not** substitute for `--reason`. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).
 
+Record feedback about the asset's content: that it helped, or that it turned
+out wrong, stale or unhelpful. A failed `akm` command, such as an `akm show`
+that errors on the ref, says nothing about the asset, so don't record it as
+feedback on it: reflect and distill read each reason as a report about the
+asset's content.
+
 **Example: flag a skill that gave bad advice**
 
 ```sh
@@ -79,7 +85,9 @@ akm improve --limit 10                # Base cap; configured replay slots are ad
 A run improves one bundle, the one it writes to (`--bundle`, else
 `defaultWriteTarget`, else your working bundle), and leaves assets in your other
 bundles alone even when they are writable. Run `akm improve --bundle team` to
-improve another one.
+improve another one. A scheduled run covers the same single bundle, so schedule
+one `akm improve --bundle <name>` run per other bundle you want improved.
+`--dry-run` previews the bundle a live run would improve.
 
 Selection defaults to assets with recent feedback signals first, with a
 retrieval-count fallback for high-traffic assets that have no feedback yet.
