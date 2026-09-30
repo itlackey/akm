@@ -285,7 +285,7 @@ export const improveCommand = defineCommand({
       description:
         "Bundle to improve and write proposals to (default: defaultWriteTarget, else the working bundle); only its assets are planned",
     },
-    limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
+    limit: { type: "string", description: "Maximum number of assets to process (highest salience first)" },
     "timeout-ms": {
       type: "string",
       description: "Wall-clock budget for the entire run in milliseconds (default: 7200000 = 2 hours)",

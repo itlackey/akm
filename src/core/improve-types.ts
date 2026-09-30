@@ -188,11 +188,11 @@ export interface ImproveExecutionPlan {
   limits: {
     /** Authored values, kept separate so precedence is visible. */
     configured: { cli?: number; profile?: number; reflect?: number };
-    /** Base cap for ordinary (non-replay) refs, resolved from CLI -> reflect process -> profile. */
+    /** Cap on the refs the run dispatches, resolved from CLI -> reflect process -> profile. */
     effective?: number;
-    /** Separately configured replay refs that may be appended beyond the base cap. */
+    /** Always 0: the replay lane is retired. Kept so the plan shape, and plans stored with it, still validate. */
     additiveReplayAllowance: number;
-    /** Finite maximum dispatch count when a base cap exists; base cap + replay allowance. */
+    /** Finite maximum dispatch count when a cap exists; `effective` while the replay allowance is 0. */
     totalCeiling?: number;
   };
   gates: ImprovePlanGate[];
