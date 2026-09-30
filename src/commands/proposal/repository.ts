@@ -149,6 +149,12 @@ export interface ProposalsContext {
   randomUUID?: () => string;
   /** Test seam — the state.db path. */
   dbPath?: string;
+  /**
+   * A live state.db connection the caller already holds (the improve run's).
+   * {@link listProposalsReadOnly} reads through it instead of copying the
+   * database; every other operation still opens its own.
+   */
+  db?: Database;
   /** The `<id>` of a `human:<id>` provenance actor; defaults to the OS username, else `local`. */
   actorId?: () => string;
 }
@@ -582,13 +588,16 @@ export function listProposals(
 /**
  * {@link listProposals} on a read snapshot that never creates or migrates
  * state.db: prompt building runs before the first dispatch has validated its
- * credentials, and a missing store is simply empty.
+ * credentials, and a missing store is simply empty. A caller that already
+ * holds a live connection (`ctx.db`) reads through it: a snapshot would copy
+ * the whole database for nothing.
  */
 export function listProposalsReadOnly(
   stashDir: string,
   options: ListProposalsOptions = {},
   ctx?: ProposalsContext,
 ): Proposal[] {
+  if (ctx?.db) return queryProposals(ctx.db, stashDir, options);
   const dbPath = ctx?.dbPath ?? getStateDbPath();
   if (!fs.existsSync(dbPath)) return [];
   const db = openSqliteReadSnapshot(dbPath);

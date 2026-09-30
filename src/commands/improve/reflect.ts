@@ -976,7 +976,7 @@ async function gatherReflectPromptSources(
       options.ref && parsedRef
         ? await readRelatedLessons(stash, options.ref, parsedRef, options.itemRef, options.eventsCtx)
         : [],
-    rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx),
+    rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx, options.eventsCtx),
     standardsContext: resolveStandardsContext(options.ref, stash),
   };
 }

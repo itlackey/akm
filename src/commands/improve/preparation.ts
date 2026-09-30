@@ -305,6 +305,8 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
         maxChunkSize: processConfig?.maxChunkSize,
         signal: args.budgetSignal,
         p90ChunkSecondsDefault: processConfig?.p90ChunkSecondsDefault,
+        // Its read-only proposal lookups go through the run's own state.db handle.
+        ...(eventsCtx?.db ? { proposalsCtx: { db: eventsCtx.db } } : {}),
       }),
     );
   }
