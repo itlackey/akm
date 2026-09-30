@@ -586,7 +586,9 @@ async function judgeAndQueue(
   let confidence: number | undefined;
   if (qualityGateEnabled(run)) {
     const similarLessons = await run.similar(content.slice(0, 500), 3);
-    const verdict = await runLessonQualityJudge(run.config, content, out.source ?? "", run.options.chat, {
+    // The judge reads what the generator read: the source body, without its frontmatter (buildDistillPrompt).
+    const source = out.source ? parseFrontmatter(out.source).content.trim() : "";
+    const verdict = await runLessonQualityJudge(run.config, content, source, run.options.chat, {
       ...(similarLessons.length > 0 ? { similarLessons } : {}),
       ...(run.runner ? { llmRunner: run.runner } : {}),
       ...(run.options.signal ? { signal: run.options.signal } : {}),

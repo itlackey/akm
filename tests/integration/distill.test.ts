@@ -2070,4 +2070,218 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     expect(proposals[0]!.status).toBe("pending");
     expect(proposals[0]!.source).toBe("distill");
   });
+
+  // #999: negative feedback recording that `akm show` failed on a memory
+  // ("two physical assets share the same logical ref") reached distill as
+  // evidence about the memory. The lessons it produced were about the tool
+  // error, not the memory's subject, and became proposals for a human.
+  describe("a lesson about a different subject than its source memory (#999)", () => {
+    const TOOL_FAILURE = "The curated ref could not be shown because two physical assets share the same logical ref.";
+    const RUNBOOK = "Run the report against the nightly snapshot, then compare p95 latency with last week.";
+
+    interface Fixture {
+      stash: string;
+      ref: string;
+      sourcePath: string;
+      feedbackReason: string;
+      feedbackEvents: typeof readEvents;
+    }
+
+    function setup(name = "perf-runbook", body = RUNBOOK, feedbackReason = TOOL_FAILURE, frontmatter = ""): Fixture {
+      const stash = makeStashDir();
+      const ref = `memories/${name}`;
+      const sourcePath = path.join(stash, "memories", `${name}.md`);
+      fs.writeFileSync(sourcePath, `---\ndescription: ${name}\n${frontmatter}---\n\n${body}\n`);
+      const feedbackEvents = (() => ({
+        events: [
+          {
+            schemaVersion: 1 as const,
+            id: 1,
+            ts: "2026-09-17T08:23:43.906Z",
+            eventType: "feedback",
+            ref,
+            metadata: { signal: "negative", reason: feedbackReason },
+          },
+        ],
+        nextOffset: 0,
+      })) as unknown as typeof readEvents;
+      return { stash, ref, sourcePath, feedbackReason, feedbackEvents };
+    }
+
+    /** Distill `fixture` with a judge that answers `scores`; returns the result and the prompt the judge was given. */
+    async function distillWithJudge(
+      fixture: Fixture,
+      scores: { novelty: number; nonRedundancy: number; grounding: number },
+      reason: string,
+      options: { lesson?: string; config?: AkmConfig } = {},
+    ) {
+      let judgePrompt = "";
+      const result = await akmDistill({
+        ref: fixture.ref,
+        config: options.config ?? configJudgeEnabled(fixture.stash),
+        stashDir: fixture.stash,
+        lookupFn: async () => fixture.sourcePath,
+        readEventsFn: fixture.feedbackEvents,
+        chat: async (_cfg, messages) => {
+          const joined = messages.map((m) => m.content).join("\n");
+          if (!joined.includes("Score this lesson")) return options.lesson ?? VALID_LESSON;
+          judgePrompt = joined;
+          return JSON.stringify({ scores, reason });
+        },
+      });
+      return { result, judgePrompt };
+    }
+
+    function ledgerRow(fixture: Fixture) {
+      const db = openStateDatabase();
+      try {
+        return listImproveLedgerRows(db, fixture.stash, ["distill"]).find((entry) => entry.ref === fixture.ref);
+      } finally {
+        db.close();
+      }
+    }
+
+    test("is quality_rejected: a ledger row and an event with the reason, and no proposal", async () => {
+      const fixture = setup();
+      const reason = "The lesson is about duplicate refs; the source is a performance runbook.";
+      const { result } = await distillWithJudge(fixture, { novelty: 5, nonRedundancy: 5, grounding: 1 }, reason);
+
+      expect(result.outcome).toBe("quality_rejected");
+      expect(result.proposalId).toBeUndefined();
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+
+      const row = ledgerRow(fixture);
+      expect(row).toMatchObject({ outcome: "quality_rejected" });
+      expect(row?.detail).toContain("Off-subject for its source (grounding 1/5)");
+      expect(row?.detail).toContain(reason);
+      // The distill rejection window keeps selection from regenerating it.
+      expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
+
+      const { events } = readEvents({ type: "distill_invoked" });
+      expect(events.at(-1)?.metadata).toMatchObject({
+        outcome: "quality_rejected",
+        criteria: { novelty: 5, nonRedundancy: 5, grounding: 1 },
+      });
+      expect(String(events.at(-1)?.metadata?.reason)).toContain("(grounding 1/5)");
+    });
+
+    test("a grounded lesson in the same review band still mints a pending proposal for a human", async () => {
+      const fixture = setup();
+      // Mean 2.5 is the review band. Only the grounding score differs from the case below.
+      const { result } = await distillWithJudge(
+        fixture,
+        { novelty: 2, nonRedundancy: 3, grounding: 4 },
+        "Mostly restates the runbook.",
+      );
+
+      expect(result.outcome).toBe("review_needed");
+      const proposals = listProposals(fixture.stash);
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0]).toMatchObject({ status: "pending", source: "distill" });
+      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
+      expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
+    });
+
+    test("the same review-band scores with grounding 2 mint nothing", async () => {
+      const fixture = setup();
+      const { result } = await distillWithJudge(
+        fixture,
+        { novelty: 2, nonRedundancy: 3, grounding: 2 },
+        "Mostly restates the runbook.",
+      );
+
+      expect(result.outcome).toBe("quality_rejected");
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+      expect(ledgerRow(fixture)).toMatchObject({ outcome: "quality_rejected" });
+    });
+
+    // The judge is never shown the feedback a lesson is distilled from, so a
+    // lesson that corrects its source is not evidence of a different subject.
+    test("a lesson that corrects its source on the same subject is not vetoed", async () => {
+      const fixture = setup(
+        "gateway-port",
+        "The gateway listens on port 8080.",
+        "Port 8080 conflicts with another service on this host.",
+      );
+      const lesson = `---
+description: Bind the gateway to port 8081 on hosts that already run another service on 8080.
+when_to_use: When configuring the gateway listener on a host where port 8080 is already in use.
+---
+
+Bind the gateway to port 8081. Port 8080 is taken on hosts that also run the metrics exporter.
+`;
+      const { result, judgePrompt } = await distillWithJudge(
+        fixture,
+        { novelty: 4, nonRedundancy: 4, grounding: 3 },
+        "It corrects the source's port on the same subject.",
+        { lesson },
+      );
+
+      expect(result.outcome).toBe("queued");
+      expect(listProposals(fixture.stash)).toHaveLength(1);
+      expect(ledgerRow(fixture)).not.toMatchObject({ outcome: "quality_rejected" });
+      // What the judge was told: 1-2 only for a different subject, never for a correction or a contradiction.
+      expect(judgePrompt).toContain("Score 1-2 only if it is about a different subject than the source");
+      expect(judgePrompt).toContain("goes beyond or corrects what the source says");
+      expect(judgePrompt).not.toMatch(/contradict/i);
+      // ... and it was not shown the feedback that motivated the correction.
+      expect(judgePrompt).not.toContain(fixture.feedbackReason);
+    });
+
+    // The generator is given the source body, frontmatter stripped, first 3000
+    // characters. The judge can now reject on grounding, so it reads that same
+    // slice rather than the raw file's first 2000 characters, which for a
+    // memory with a long frontmatter block are all frontmatter.
+    test("the judge is given the source body the lesson was generated from, not the raw file", async () => {
+      const fixture = setup(
+        "long-frontmatter",
+        `${"Runbook line. ".repeat(180)}LATE_BODY_MARKER`,
+        TOOL_FAILURE,
+        `notes: ${"F".repeat(2500)}\n`,
+      );
+      const { judgePrompt } = await distillWithJudge(
+        fixture,
+        { novelty: 4, nonRedundancy: 4, grounding: 4 },
+        "Draws on the runbook.",
+      );
+
+      expect(judgePrompt).toContain("LATE_BODY_MARKER");
+      expect(judgePrompt).not.toContain("FFFFFFFFFF");
+    });
+
+    test("a lesson that contradicts its source is left to the fidelity check, which sends it to a human", async () => {
+      const fixture = setup(
+        "gateway-restart",
+        "Never restart the gateway while a deploy is running.",
+        "The gateway kept serving stale routes after the last deploy.",
+      );
+      const lesson = `---
+description: Restart the gateway once a deploy has finished so it serves the new routes.
+when_to_use: When a deploy has finished and the gateway still serves routes from before it.
+---
+
+Always restart the gateway once the deploy finishes. A running gateway keeps serving the old routes.
+`;
+      const { result } = await distillWithJudge(
+        fixture,
+        { novelty: 4, nonRedundancy: 4, grounding: 3 },
+        "Same subject, and it goes beyond the source.",
+        {
+          lesson,
+          config: distillConfig(fixture.stash, {
+            enabled: true,
+            qualityGate: { enabled: true },
+            fidelityCheck: { enabled: true },
+          }),
+        },
+      );
+
+      expect(result.outcome).toBe("review_needed");
+      const proposals = listProposals(fixture.stash);
+      expect(proposals).toHaveLength(1);
+      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
+      const { events } = readEvents({ type: "distill_invoked" });
+      expect(events.at(-1)?.metadata).toMatchObject({ outcome: "review_needed", fidelityContradiction: true });
+    });
+  });
 });
