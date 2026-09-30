@@ -27,6 +27,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   age that retention expiry and `--older-than` (bulk accept/reject, `drain`)
   see restarts at the reopen, so a scheduled sweep does not take a proposal a
   person just put back, and a `proposal_reopened` event is appended.
+  `akm proposal reject`'s confirmation prompt no longer says a rejection
+  cannot be undone.
 
 ### Fixed
 
@@ -95,7 +97,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm improve <ref>` for an asset that lives only in another bundle now fails
   with a not-found error whose hint names the remedy (`--bundle team`, or
   `akm improve team//skills/x`). Proposals the old behaviour already queued
-  stay in the queue; review them with `akm proposal list`.
+  stay in the queue; review them with `akm proposal list`. `--bundle`'s help
+  text now says it selects the bundle a run improves and writes to.
 - **`akm improve --dry-run`/`--plan` previews the bundle a live run improves.**
   With no `--bundle` and no `defaultWriteTarget`, a live run starts from
   `AKM_BUNDLE_DIR` before `defaultBundle`, but a dry run read `defaultBundle`

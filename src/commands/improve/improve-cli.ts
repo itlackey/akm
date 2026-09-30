@@ -280,7 +280,11 @@ export const improveCommand = defineCommand({
         "Alias for --dry-run (#947). Sets the exact same internal flag; use it when previewing resolved process -> engine -> model routing (plan.processes) rather than checking what would write.",
       default: false,
     },
-    bundle: { type: "string", description: "Override the write target for accepted proposals" },
+    bundle: {
+      type: "string",
+      description:
+        "Bundle to improve and write proposals to (default: defaultWriteTarget, else the working bundle); only its assets are planned",
+    },
     limit: { type: "string", description: "Maximum number of assets to process (highest utility first)" },
     "timeout-ms": {
       type: "string",
