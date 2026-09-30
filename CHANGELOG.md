@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Distill's grounding check vetoes only a score of 1; a 2 goes to a person.**
+  0.9.19-alpha.1 made a grounding score of 2 or less `quality_rejected`. A
+  calibration of the lesson judge on a local llama.cpp model (34 cases, 5
+  passes, 199 calls) scored all 4 off-subject lessons grounding 1 in nearly
+  every pass (one scored 2 in 4 of 5 full passes and 1 otherwise), and its only
+  false vetoes, 2 of 120 legitimate judgments, were one on-subject lesson that
+  adds advice beyond its source and scored 2. Temperature 0 did not make the
+  judge repeatable on that server either: scores moved by up to a point between
+  passes. A grounding score of 1 is therefore still `quality_rejected` (an
+  `improve_ledger` row and a `distill_invoked` event, no proposal, reason
+  `Off-subject for its source (grounding 1/5): …`), and a 2 is now
+  `review_needed`, a pending proposal for a person with the reason
+  `Borderline on grounding (2/5), routed to review: …`, even when the mean of
+  novelty and non-redundancy alone would pass it. A mean that alone rejects the
+  lesson stays `quality_rejected`, and a grounding score of 3 to 5 is
+  unchanged.
+
 ## [0.9.19-alpha.1] - 2026-09-30
 
 ### Added

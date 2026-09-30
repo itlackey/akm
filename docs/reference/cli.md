@@ -3045,8 +3045,9 @@ Write the reason about the asset's content. Reflect treats it as an unverified
 report to investigate, not a fact to insert, and is told to leave the section
 unchanged when the reason asks for information the asset lacks. Distill's
 quality gate rejects a lesson that is off-subject for the asset it was
-distilled from. A command that failed (`akm show` erroring on the ref, say)
-says nothing about the asset, so it is not a reason to record against it.
+distilled from and sends a borderline one to review. A command that failed
+(`akm show` erroring on the ref, say) says nothing about the asset, so it is
+not a reason to record against it.
 
 ### task
 
