@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { formatUnifiedDiff } from "../src/commands/proposal/diff-format";
+import { formatRetireDiff, formatUnifiedDiff } from "../src/commands/proposal/diff-format";
 // Import directly from the relocated module (the proposals repository split
 // out of `validators/proposals.ts`).
 import {
@@ -58,6 +58,35 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(out).toContain(" one");
     expect(out).toContain("-two");
     expect(out).toContain("+TWO");
+  });
+
+  test("formatRetireDiff renders only removals, under a header that says the file is archived (#997)", () => {
+    const out = formatRetireDiff("stash//memories/old", "line one\nline two\n", "memories/new");
+    expect(out.split("\n")).toEqual([
+      "--- stash//memories/old (existing)",
+      "+++ /dev/null (retired: archived; successor memories/new)",
+      "@@ 1,2 0,0 @@",
+      "-line one",
+      "-line two",
+    ]);
+    // Nothing is added: the padding blank `+` line formatUnifiedDiff would render is exactly the bug.
+    expect(out.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"))).toEqual([]);
+    expect(formatUnifiedDiff("line one\nline two\n", "", "x")).toContain("\n+\n");
+  });
+
+  test("formatRetireDiff: no trailing newline, an empty file, no known successor, and a file already gone", () => {
+    expect(formatRetireDiff("r", "only line", undefined).split("\n")).toEqual([
+      "--- r (existing)",
+      "+++ /dev/null (retired: archived)",
+      "@@ 1,1 0,0 @@",
+      "-only line",
+    ]);
+    expect(formatRetireDiff("r", "", "s").split("\n")).toEqual([
+      "--- r (existing)",
+      "+++ /dev/null (retired: archived; successor s)",
+      "@@ 1,0 0,0 @@",
+    ]);
+    expect(formatRetireDiff("r", null, "s")).toBe("--- r (missing)\n+++ /dev/null (retired: archived; successor s)");
   });
 
   test("tolerates a row without the current proposal envelope (#859)", () => {

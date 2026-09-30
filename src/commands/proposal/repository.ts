@@ -63,7 +63,7 @@ import { writeSupersededEdge } from "../improve/memory/memory-belief";
 import { archiveCleanupCandidate, derivedTwinPath } from "../improve/memory/memory-improve";
 import { runBaseChecks } from "../lint/base-linter";
 import type { LintIssue, LintIssueType } from "../lint/types";
-import { formatNewAssetDiff, formatUnifiedDiff } from "./diff-format";
+import { formatNewAssetDiff, formatRetireDiff, formatUnifiedDiff } from "./diff-format";
 import {
   ASSET_MISSING_GATE_REASON,
   type EligibilitySource,
@@ -2154,11 +2154,20 @@ export function diffProposal(
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   const targetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
   const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;
-  // A retire proposal's primary change deletes its target rather than
-  // writing content: "proposed" is empty and the diff shows the whole body
-  // being removed, reusing the ordinary unified-diff formatter instead of
-  // proposalContent() (which has nothing to read for a delete).
-  const proposed = isRetireProposal(proposal) ? "" : proposalContent(proposal);
+  if (isRetireProposal(proposal)) {
+    // A retire proposal's primary change deletes its target rather than
+    // writing content (proposalContent() has nothing to read for a delete):
+    // accept archives the file, it never replaces it with a blank one, so the
+    // diff shows the file leaving — not a "proposed" side (#997).
+    return {
+      existing,
+      proposed: "",
+      unified: formatRetireDiff(proposal.ref, existing, proposal.retirement?.successorRef),
+      isNew: false,
+      ...(targetPath ? { targetPath } : {}),
+    };
+  }
+  const proposed = proposalContent(proposal);
   return {
     existing,
     proposed,

@@ -2854,6 +2854,37 @@ akm proposal diff <id> --target team-bundle    # Must match a recorded target
 `proposal accept` runs full validation before promoting. `proposal reject`
 requires `--reason`.
 
+**A retire proposal** (the consolidate pair pass's `consolidate-pair`
+retirements) writes no content: accepting it archives the retired file under
+`.akm/memory-cleanup/archive/` (nothing is deleted), and `akm proposal revert`
+restores it byte-for-byte. Its diff shows just that, the retired file's lines as
+removals and nothing added, under a `retire` header. It does not present the
+file as replaced by a blank one, which is how earlier releases rendered it:
+
+```
+$ akm proposal diff <id>
+# proposal <id> (retire: memories/old-note -> memories/new-note)
+retire.label: duplicate (cosine=0.986)
+retire.reason: Same durable facts, B adds nothing new.
+note: Accepting archives the retired file under .akm/memory-cleanup/archive/ (nothing is deleted); `akm proposal revert` restores it byte-exactly.
+--- stash//memories/old-note (existing)
++++ /dev/null (retired: archived; successor memories/new-note)
+@@ 1,5 0,0 @@
+----
+-description: an old note
+----
+-The durable fact.
+-A second line.
+```
+
+The JSON result carries three more fields for a retire proposal, and none of
+them on any other proposal: `op` (`"delete"`), `retirement` (`retiredRef`,
+`successorRef`, the judge's `label` and `reason`, and the pair's `cosine`), and
+`note` (what accept and revert do to the file). `isNew` is always `false` for a
+retire proposal; when the retired file is already gone (retired, or removed by
+something else), the diff is only its two header lines, `--- <ref> (missing)`
+and the `+++` line.
+
 #### proposal drain
 
 Drain the standing pending-proposal backlog instead of adjudicating proposals

@@ -19,7 +19,7 @@ import { loadConfig } from "../../core/config/config";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { isRetireProposal } from "./proposal-types";
+import { isRetireProposal, type RetirementMetadata } from "./proposal-types";
 import {
   diffProposal,
   listProposals,
@@ -252,6 +252,22 @@ export interface ProposalDiffOptions {
   config?: AkmConfig;
 }
 
+/** A retire proposal's pair verdict, as `proposal diff` reports it (the stored block's judge fields under review-facing names). */
+export interface ProposalDiffRetirement {
+  retiredRef: string;
+  successorRef: string;
+  /** The pair judge's label: `duplicate`, `subsumed` or `supersedes`. */
+  label: RetirementMetadata["judgeLabel"];
+  /** The judge's own explanation. */
+  reason: string;
+  cosine: number;
+}
+
+/** What a reviewer of a retire proposal needs to know that its diff (a file leaving) does not say. */
+const RETIRE_DIFF_NOTE =
+  "Accepting archives the retired file under .akm/memory-cleanup/archive/ (nothing is deleted); " +
+  "`akm proposal revert` restores it byte-exactly.";
+
 export interface ProposalDiffResult {
   schemaVersion: 1;
   id: string;
@@ -259,6 +275,12 @@ export interface ProposalDiffResult {
   isNew: boolean;
   unified: string;
   targetPath?: string;
+  /** `delete` on a retire proposal (accept archives its target); absent on a create or update. */
+  op?: "delete";
+  /** The pair verdict behind a retire proposal; absent unless `op` is `delete`. */
+  retirement?: ProposalDiffRetirement;
+  /** Present with `op: "delete"`: what accept and revert do to the retired file. */
+  note?: string;
 }
 
 export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResult {
@@ -267,6 +289,7 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
   const stash = queue.stashDir;
   const proposal = resolveProposalId(stash, options.id);
   const diff = diffProposal(stash, config, proposal.id, { target: options.target, queueTarget: queue.target });
+  const retirement = proposal.retirement;
   return {
     schemaVersion: 1,
     id: proposal.id,
@@ -274,6 +297,23 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
     isNew: diff.isNew,
     unified: diff.unified,
     ...(diff.targetPath ? { targetPath: diff.targetPath } : {}),
+    ...(isRetireProposal(proposal)
+      ? {
+          op: "delete" as const,
+          ...(retirement
+            ? {
+                retirement: {
+                  retiredRef: retirement.retiredRef,
+                  successorRef: retirement.successorRef,
+                  label: retirement.judgeLabel,
+                  reason: retirement.judgeReason,
+                  cosine: retirement.cosine,
+                },
+              }
+            : {}),
+          note: RETIRE_DIFF_NOTE,
+        }
+      : {}),
   };
 }
 

@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm proposal diff` shows a retire proposal as a retirement (#997).** It
+  rendered the retired file as replaced by one blank line (`----`, a lone `+`,
+  then every other line as a removal, under an `(update: <ref>)` header) and
+  said nothing about the retirement, so one reviewer rejected all 65 of a
+  bundle's `consolidate-pair` proposals as "would destroy content". The diff
+  now lists only the removed lines, under a `(retire: <retired> -> <successor>)`
+  header and `+++ /dev/null (retired: archived; successor <ref>)`, and its JSON
+  result gains `op: "delete"`, a `retirement` block (retired and successor
+  refs, the judge's label and reason, cosine) and a `note` that accepting
+  archives the file under `.akm/memory-cleanup/archive/` and `akm proposal
+  revert` restores it byte-exactly. The new fields are additive and appear on
+  retire proposals only.
+
 ## [0.9.18] - 2026-09-29
 
 ### Fixed

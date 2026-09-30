@@ -2,9 +2,10 @@ import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
+import { contentHash } from "../../src/commands/improve/content-hash";
 import { stageJudgedProposal } from "../../src/commands/improve/stage";
 import { akmProposalAccept } from "../../src/commands/proposal/proposal";
-import { createProposal, getProposal } from "../../src/commands/proposal/repository";
+import { createProposal, createRetireProposal, getProposal } from "../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../src/core/config/config";
 import { slugForPath } from "../../src/indexer/installations";
 import { runCliCapture } from "../_helpers/cli";
@@ -253,6 +254,97 @@ describe("akm proposal accept/reject/diff (CLI)", () => {
     expect(result.status).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(parsed.ok).toBe(true);
+  });
+});
+
+/** A `consolidate-pair` retire proposal over two real memories in `stash` (real body hashes: accept refuses a stale pair). */
+function seedRetireProposal(stash: string) {
+  const write = (name: string, description: string, body: string): string => {
+    const filePath = path.join(stash, "memories", `${name}.md`);
+    fs.writeFileSync(filePath, `---\ndescription: ${description}\n---\n${body}`, "utf8");
+    return filePath;
+  };
+  const oldPath = write("old-note", "an old note", "The durable fact.\n");
+  const newPath = write("new-note", "a new note", "The durable fact, restated.\n");
+  return createRetireProposal(stash, {
+    ref: "memories/old-note",
+    source: "consolidate-pair",
+    retirement: {
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      cosine: 0.986,
+      judgeLabel: "duplicate",
+      judgeReason: "Same durable facts, B adds nothing new.",
+      retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+      successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+      reason: "duplicate",
+    },
+  });
+}
+
+describe("akm proposal diff — a retire proposal (#997)", () => {
+  test("--format=json: op, the retirement block and the archive/revert note ride along; no blank `+` line", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "diff", proposal.id, "--format=json"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({
+      id: proposal.id,
+      ref: proposal.ref,
+      isNew: false,
+      op: "delete",
+      retirement: {
+        retiredRef: "memories/old-note",
+        successorRef: "memories/new-note",
+        label: "duplicate",
+        reason: "Same durable facts, B adds nothing new.",
+        cosine: 0.986,
+      },
+    });
+    expect(parsed.note).toContain(".akm/memory-cleanup/archive/");
+    expect(parsed.note).toContain("akm proposal revert");
+    expect(parsed.unified).toContain("-The durable fact.");
+    expect(parsed.unified).toContain("+++ /dev/null (retired: archived; successor memories/new-note)");
+    expect(parsed.unified.split("\n").filter((l: string) => l.startsWith("+") && !l.startsWith("+++"))).toEqual([]);
+  });
+
+  test("--format=text: the header says `retire`, not `update`, and carries the verdict and the note", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    const result = await runCli(["proposal", "diff", proposal.id, "--format=text"], { stashDir: stash });
+    expect(result.status).toBe(0);
+    const lines = result.stdout.trimEnd().split("\n");
+    expect(lines[0]).toBe(`# proposal ${proposal.id} (retire: memories/old-note -> memories/new-note)`);
+    expect(result.stdout).not.toContain("(update:");
+    expect(result.stdout).toContain("retire.label: duplicate (cosine=0.986)");
+    expect(result.stdout).toContain("retire.reason: Same durable facts, B adds nothing new.");
+    expect(result.stdout).toContain("note: Accepting archives the retired file under .akm/memory-cleanup/archive/");
+    expect(result.stdout).toContain("-The durable fact.");
+    expect(lines).not.toContain("+"); // the synthetic blank line the old rendering padded in
+  });
+
+  test("md and html renderings carry the same retirement fields", async () => {
+    const stash = makeStashDir();
+    const proposal = seedRetireProposal(stash);
+    for (const format of ["md", "html"]) {
+      const result = await runCli(["proposal", "diff", proposal.id, `--format=${format}`], { stashDir: stash });
+      expect({ format, status: result.status }).toEqual({ format, status: 0 });
+      expect(result.stdout).toContain("memories/new-note");
+      expect(result.stdout).toContain("archive");
+    }
+  });
+
+  test("an ordinary proposal still renders `update` / `new asset`", async () => {
+    const stash = makeStashDir();
+    const created = seedProposal(stash);
+    const text = await runCli(["proposal", "diff", created.id, "--format=text"], { stashDir: stash });
+    expect(text.status).toBe(0);
+    expect(text.stdout.split("\n")[0]).toContain("(new asset:");
+    const json = JSON.parse(
+      (await runCli(["proposal", "diff", created.id, "--format=json"], { stashDir: stash })).stdout,
+    );
+    expect(json).not.toHaveProperty("op");
   });
 });
 

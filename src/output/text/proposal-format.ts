@@ -118,6 +118,11 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
   return lines.join("\n").trimEnd();
 }
 
+/** The pair judge's verdict as `proposal show` and `proposal diff` both print it for a retire proposal. */
+function retireVerdictLines(label: unknown, cosine: unknown, reason: unknown): string[] {
+  return [`retire.label: ${String(label)} (cosine=${String(cosine)})`, `retire.reason: ${String(reason)}`];
+}
+
 export function formatProposalShowPlain(r: Record<string, unknown>): string {
   const p = r.proposal as Record<string, unknown>;
   const lines: string[] = [];
@@ -152,8 +157,7 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
   const retirement = p.retirement as Record<string, unknown> | undefined;
   if (retirement) {
     lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
-    lines.push(`retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`);
-    lines.push(`retire.reason: ${String(retirement.judgeReason)}`);
+    lines.push(...retireVerdictLines(retirement.judgeLabel, retirement.cosine, retirement.judgeReason));
     // Item 1 (continuity check): flagged, but still minted — never swept by a
     // bulk accept, only acceptable by id, so a reviewer must see it here.
     const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
@@ -261,10 +265,24 @@ export function formatProposalDrainPlain(r: Record<string, unknown>): string {
 }
 
 export function formatProposalDiffPlain(r: Record<string, unknown>): string {
+  const unified = typeof r.unified === "string" ? r.unified : "";
+  if (r.op === "delete") {
+    // #997: a retire proposal archives its target — it does not "update" it —
+    // so the header says so, and the pair verdict and the accept/revert note
+    // sit above the file that is leaving.
+    const retirement = r.retirement as Record<string, unknown> | undefined;
+    const subject = retirement
+      ? `${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`
+      : String(r.ref);
+    const lines = [`# proposal ${String(r.id)} (retire: ${subject})`];
+    if (retirement) lines.push(...retireVerdictLines(retirement.label, retirement.cosine, retirement.reason));
+    if (typeof r.note === "string") lines.push(`note: ${r.note}`);
+    if (unified) lines.push(unified);
+    return lines.join("\n");
+  }
   const header = r.isNew
     ? `# proposal ${String(r.id)} (new asset: ${String(r.ref)})`
     : `# proposal ${String(r.id)} (update: ${String(r.ref)})`;
-  const unified = typeof r.unified === "string" ? r.unified : "";
   if (!unified) return `${header}\n(no changes)`;
   return `${header}\n${unified}`;
 }

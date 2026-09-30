@@ -838,6 +838,40 @@ describe("shapeProposal* — proposal commands", () => {
     expect(full.schemaVersion).toBe(1);
   });
 
+  test("shapeProposalDiffOutput carries a retirement's op, verdict and note at every detail level (#997)", () => {
+    const result = {
+      schemaVersion: 1,
+      id: "uuid-1",
+      ref: "stash//memories/old",
+      isNew: false,
+      unified: "--- x (existing)\n+++ /dev/null (retired: archived; successor memories/new)\n@@ 1,1 0,0 @@\n-body",
+      op: "delete",
+      retirement: {
+        retiredRef: "memories/old",
+        successorRef: "memories/new",
+        label: "duplicate",
+        reason: "same facts",
+        cosine: 0.98,
+      },
+      note: "Accepting archives the retired file.",
+    };
+    for (const detail of ["brief", "normal", "full"] as const) {
+      expect(shapeProposalDiffOutput(result, detail)).toMatchObject({
+        op: "delete",
+        retirement: result.retirement,
+        note: result.note,
+      });
+    }
+    // An ordinary diff result stays exactly as it was: no retirement keys appear.
+    const ordinary = shapeProposalDiffOutput(
+      { schemaVersion: 1, id: "uuid-1", ref: "r", isNew: true, unified: "+" },
+      "full",
+    );
+    expect(ordinary).not.toHaveProperty("op");
+    expect(ordinary).not.toHaveProperty("retirement");
+    expect(ordinary).not.toHaveProperty("note");
+  });
+
   test("shapeForCommand routes proposal-* arms through their dedicated shapers", () => {
     const list = shapeForCommand(
       "proposal-list",

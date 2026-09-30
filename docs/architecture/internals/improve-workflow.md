@@ -375,7 +375,10 @@ reused by an unrelated file since, which refuses instead of overwriting it.
 Triage never auto-accepts a `retire` proposal, whatever `applyMode` says —
 review reuses `akm proposal list --generator consolidate-pair` (S4: the
 backlog is reviewed as its own list, not mixed in with every other
-generator's proposals), `show`, `diff`, and bulk
+generator's proposals), `show`, `diff` (which renders a retirement as the
+retired file's lines leaving under a `retire` header, with the pair's verdict
+and a note that accept archives and revert restores — not as the file replaced
+by a blank one, #997), and bulk
 `accept --generator consolidate-pair` / `reject --generator
 consolidate-pair`. A proposal carrying `continuityRisk` (below) is excluded
 from that bulk accept, whatever the generator or `--yes` — visible inline in

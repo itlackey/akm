@@ -49,3 +49,23 @@ export function formatNewAssetDiff(ref: string, content: string): string {
   }
   return lines.join("\n");
 }
+
+/**
+ * Render the all-removals diff for a retire proposal (#997): the file its
+ * accept archives, line by line, and nothing added. Padding the proposed side
+ * with an empty string, as {@link formatUnifiedDiff} does, reads as "the whole
+ * file replaced by one blank line" — a retirement reviewed as data loss.
+ * `existing` is `null` when the retired file is already gone.
+ */
+export function formatRetireDiff(ref: string, existing: string | null, successorRef?: string): string {
+  const destination = `+++ /dev/null (retired: archived${successorRef ? `; successor ${successorRef}` : ""})`;
+  if (existing === null) return [`--- ${ref} (missing)`, destination].join("\n");
+  const removed = existing.split("\n");
+  if (removed[removed.length - 1] === "") removed.pop(); // the newline ending the file is not a line of its own
+  return [
+    `--- ${ref} (existing)`,
+    destination,
+    `@@ 1,${removed.length} 0,0 @@`,
+    ...removed.map((line) => `-${line}`),
+  ].join("\n");
+}
