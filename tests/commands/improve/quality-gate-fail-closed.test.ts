@@ -315,7 +315,9 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
 // for memories on unrelated subjects. A lesson about a different subject than
 // its source reads as novel and non-redundant, so the mean of those two alone
 // passes it or lands it in the review band, where it became a pending proposal.
-describe("runLessonQualityJudge — grounding rejects outright and is not averaged (#999)", () => {
+// Only grounding 1 is a veto: a 2 is borderline and goes to a person, unless the
+// mean alone already rejects the lesson.
+describe("runLessonQualityJudge — grounding 1 rejects, grounding 2 goes to review, neither is averaged (#999)", () => {
   const judge = (scores: Record<string, number>, reason = "one sentence from the judge") =>
     runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
       JSON.stringify({ scores, reason }),
@@ -335,12 +337,55 @@ describe("runLessonQualityJudge — grounding rejects outright and is not averag
     expect(result.reason).toContain("The lesson is about duplicate refs; the source is a performance runbook.");
   });
 
-  test("grounding 2 rejects outright instead of routing the review band to review", async () => {
+  test("grounding 1 rejects in every band of the mean and never routes to review", async () => {
+    for (const mean of [5, 3, 2]) {
+      const result = await judge({ novelty: mean, nonRedundancy: mean, grounding: 1 });
+
+      expect(result.pass).toBe(false);
+      expect(result.reviewNeeded).toBeUndefined();
+      expect(result.reason).toContain("Off-subject for its source (grounding 1/5)");
+    }
+  });
+
+  test("grounding 2 goes to review although novelty and non-redundancy alone would pass", async () => {
+    const result = await judge(
+      { novelty: 5, nonRedundancy: 5, grounding: 2 },
+      "On the source's subject, but the advice goes beyond it.",
+    );
+
+    expect(result.pass).toBe(false);
+    expect(result.reviewNeeded).toBe(true);
+    expect(result.score).toBeCloseTo(5, 9);
+    expect(result.criteria).toEqual({ novelty: 5, nonRedundancy: 5, grounding: 2 });
+    expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
+    expect(result.reason).toContain("On the source's subject, but the advice goes beyond it.");
+    expect(result.reason).not.toContain("Off-subject");
+  });
+
+  test("grounding 2 in the review band stays in review and says why it is borderline", async () => {
     const result = await judge({ novelty: 3, nonRedundancy: 3, grounding: 2 });
 
     expect(result.pass).toBe(false);
+    expect(result.reviewNeeded).toBe(true);
+    expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
+  });
+
+  test("grounding 2 does not lift a mean that rejects into review", async () => {
+    const result = await judge({ novelty: 2, nonRedundancy: 2, grounding: 2 });
+
+    expect(result.pass).toBe(false);
     expect(result.reviewNeeded).toBeUndefined();
-    expect(result.reason).toContain("(grounding 2/5)");
+    expect(result.score).toBeCloseTo(2, 9);
+    expect(result.reason).toBe("one sentence from the judge");
+  });
+
+  // Without schema enforcement a reply may not be an integer; a lower score is never treated more leniently.
+  test("a grounding between 1 and 2 is borderline too, never a pass", async () => {
+    const result = await judge({ novelty: 5, nonRedundancy: 5, grounding: 1.5 });
+
+    expect(result.pass).toBe(false);
+    expect(result.reviewNeeded).toBe(true);
+    expect(result.reason).toContain("Borderline on grounding (1.5/5), routed to review");
   });
 
   test("grounding 3 is not a veto: the mean of novelty and non-redundancy decides", async () => {
