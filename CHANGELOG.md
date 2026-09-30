@@ -18,9 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the rejection, and the gate verdict that came with it, in the proposal's new
   `reviewHistory`, which `proposal show` prints. The verdict itself is cleared
   so the drain sees the proposal as undecided, except a `deferred` one (the
-  quality gate's hand-off to a person), which stays. It takes full ids (an id
-  prefix only matches pending proposals) and is refused unless the proposal is
-  `rejected` and `accept` would not refuse it as stale: an update's target
+  quality gate's hand-off to a person), which stays. It takes a full id or an
+  asset ref (an id prefix only matches pending proposals) and is refused
+  unless the proposal is `rejected` and `accept` would not refuse it as stale: an update's target
   unchanged, a create's target still absent, a retire proposal's successor
   present and both documents' body hashes as recorded. A retire proposal is
   also refused while another pending retire proposal involves either of its
