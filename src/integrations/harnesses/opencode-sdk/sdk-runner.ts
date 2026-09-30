@@ -611,16 +611,29 @@ async function startServer(
   options.port = await allocateFreePort(registryKey);
   if (startupSignal.aborted) throw new Error("OpenCode server startup cancelled because no callers are waiting");
 
-  const server = await factory(options);
-  if (!server) throw new Error("Failed to initialise OpenCode SDK server.");
-
+  // Installed before the spawn, so a child that is still starting up is covered too.
   if (!_exitHookInstalled) {
     _exitHookInstalled = true;
     process.once("exit", () => {
       _processExiting = true;
       void closeServer();
     });
+    // A command with no SIGINT/SIGTERM handler of its own dies on the signal without running `exit` hooks, which
+    // orphaned every cached server. Close them and re-raise, so the default termination still happens. A command that
+    // handles the signal itself (`workflow run`, `improve`, `index`, task runs) unwinds through its own cleanup and is
+    // left alone.
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      if (process.listenerCount(signal) > 0) continue;
+      process.once(signal, () => {
+        _processExiting = true;
+        void closeServer();
+        process.kill(process.pid, signal);
+      });
+    }
   }
+
+  const server = await factory(options);
+  if (!server) throw new Error("Failed to initialise OpenCode SDK server.");
   return server;
 }
 

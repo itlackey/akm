@@ -16,7 +16,8 @@ import { initOutputMode, resetOutputMode } from "../../src/output/context";
 
 const priorExitCode = process.exitCode;
 afterEach(() => {
-  process.exitCode = priorExitCode;
+  // Bun ignores `undefined` once a non-zero exit code is set, so restore `0` instead.
+  process.exitCode = priorExitCode ?? 0;
   resetOutputMode();
 });
 

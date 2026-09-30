@@ -31,6 +31,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
+import { __setTestServer } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { runCliCapture } from "../_helpers/cli";
 import { WORKFLOW_TEST_CONFIG } from "../_helpers/workflow";
@@ -98,6 +99,7 @@ async function runCli(
 }
 
 afterEach(() => {
+  __setTestServer(null);
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -217,7 +219,13 @@ describe("issue #194 — workflow create --from then start has non-null workflow
 
     // No explicit `akm index` — `workflow create --from` should leave the
     // FTS index in a state that lets canonical `workflow run` resolve a
-    // workflowEntryId. A 1ms cooperative timeout stops before external work.
+    // workflowEntryId. A 1ms cooperative timeout stops before external work;
+    // the fake server keeps the dispatch it races from spawning a real
+    // `opencode serve` on machines that have the binary.
+    __setTestServer({
+      client: { session: { create: () => new Promise(() => {}) } },
+      server: { close() {} },
+    } as never);
     const started = await runCli(
       ["workflow", "run", "workflows/imported", "--app_name=sandbox-app", "--timeout=1ms"],
       env,

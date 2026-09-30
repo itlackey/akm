@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmIndex } from "../src/indexer/indexer";
 import { runCliCapture } from "./_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
+import { snapshotTree } from "./_helpers/snapshot-tree";
 
 let storage: IsolatedAkmStorage;
 
@@ -58,25 +58,6 @@ function stableResult(stdout: string): Record<string, unknown> {
   return parsed;
 }
 
-function treeSnapshot(root: string): string[] {
-  const out: string[] = [];
-  const visit = (dir: string): void => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-      const absolute = path.join(dir, entry.name);
-      const relative = path.relative(root, absolute).replaceAll(path.sep, "/");
-      if (entry.isDirectory()) visit(absolute);
-      else if (entry.isFile()) {
-        const stat = fs.statSync(absolute);
-        out.push(
-          `${relative}:${stat.size}:${stat.mtimeMs}:${createHash("sha256").update(fs.readFileSync(absolute)).digest("hex")}`,
-        );
-      }
-    }
-  };
-  visit(root);
-  return out;
-}
-
 async function installHostileInferenceKey(): Promise<void> {
   fs.writeFileSync(
     path.join(storage.stashDir, "commands", "review.md"),
@@ -112,7 +93,7 @@ describe("command CLI execution convergence", () => {
       defaults: { engine: "direct" },
     });
     delete process.env.AKM_REQUIRED_DRY_RUN_SECRET;
-    const before = treeSnapshot(storage.root);
+    const before = snapshotTree(storage.root);
 
     const result = await runCliCapture([
       "command",
@@ -139,7 +120,7 @@ describe("command CLI execution convergence", () => {
     expect(envelope).not.toHaveProperty("stderr");
     expect(envelope).not.toHaveProperty("durationMs");
     expect(JSON.stringify(envelope)).not.toContain("DO-NOT-LEAK");
-    expect(treeSnapshot(storage.root)).toEqual(before);
+    expect(snapshotTree(storage.root)).toEqual(before);
   });
 
   test("live --verbose reports only safe dry-run diagnostics before preserving the dispatch envelope", async () => {
