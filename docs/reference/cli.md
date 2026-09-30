@@ -2430,9 +2430,9 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
-| `--limit <n>` | Base cap for ordinary assets (highest utility first); configured replay slots are additive |
+| `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
-| `--require-feedback-signal` | Only process assets with recent feedback signals |
+| `--require-feedback-signal` | Only process assets with recent feedback signals: turns the fallback lanes (high salience, proactive maintenance) off for the run |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
@@ -2480,10 +2480,9 @@ covering doc that ranks lower than the 20th nearest goes unseen. With no stored
 vector (semantic search off, or the memory not indexed yet) that check does
 nothing and the exact slug and whole-body checks still apply.
 
-Built-in `default` and `frequent` leave the improve-stage extract process off,
-and `default` plus `reflect-distill` leave proactive maintenance off. Use the
-explicit `proactive-maintenance` strategy or set the selected strategy's
-process `enabled: true` to opt in. The stage toggle does not disable a direct
+No built-in strategy turns the improve-stage extract process on, and only
+`proactive-maintenance` turns proactive maintenance on. Use that strategy or
+set the selected strategy's process `enabled: true` to opt in. The stage toggle does not disable a direct
 `akm proposal extract --type <harness>` or `akm proposal extract --auto`
 invocation.
 
@@ -2503,9 +2502,17 @@ the drain engine. Reflect still emits a `confidence` score (0..1) in its JSON
 response schema; it is recorded on the proposal for triage and ranking, but no
 threshold auto-accepts anything.
 
-Selection behavior defaults to recent feedback signals first, with a
-zero-feedback retrieval fallback for high-traffic refs. Use
-`--require-feedback-signal` to disable retrieval fallback for the run.
+Selection picks the refs with feedback (a signal or a note, in the last 30
+days) newer than the stage's last ledger attempt. Two fallback lanes add refs
+with no such feedback: high salience (content-scored refs at or above
+`improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
+capped at 10% of the limit, at least one ref) and, in a strategy that enables
+`proactiveMaintenance`, refs due for a revisit. Both pick only refs in the
+[retrieval scope](../architecture/improvement.md#retrieval-scope): returned by
+`search`, `curate` or `show`, or named by feedback, in the last 90 days, or new
+material no improve stage has processed. The picks are ranked by salience and
+cut to the limit; an explicit ref scope bypasses every gate. Use
+`--require-feedback-signal` to turn the fallback lanes off for the run.
 
 When the active strategy enables a process (or the triage judgment engine)
 whose engine or credential cannot be resolved in this process's environment,
@@ -2542,9 +2549,9 @@ ref in the requested scope. The `plan` object preserves both views: raw scope
 size and per-gate removals, configured and effective caps, final ranked refs
 and their selection lanes, proactive and consolidation statistics, stage
 decisions, triage mode/caps, and `snapshot.status`/`snapshot.reason` for the
-read-side index boundary. `limits.effective` is the ordinary-ref base cap;
-`limits.additiveReplayAllowance` is the separate replay budget, and
-`limits.totalCeiling` is their finite sum (omitted when the base run is
+read-side index boundary. `limits.effective` is the cap on the refs the run
+dispatches; the replay lane is retired, so `limits.additiveReplayAllowance` is
+always `0` and `limits.totalCeiling` equals the cap (omitted when the run is
 unbounded). A missing or incompatible index is an explicit empty snapshot and
 is not created or migrated. `plan.mode` is `estimate` and `plan.dispatch` is
 `false`; live JSON results use the same projection with `mode: "execution"`.
@@ -2615,7 +2622,8 @@ which never make an attributable LLM call themselves) the active strategy
 enabled but that ended the run with zero calls, each with a `reason` drawn
 from the existing skip-reason vocabulary: `"engine_unavailable"` (also in
 `skippedProcesses`), `"autonomy_gated"`, `"strategy_filtered_all_passes"`, a
-reflect/distill dominant skip reason (e.g. `"no_new_signal"`, `"cooldown"`),
+reflect/distill dominant skip reason (e.g. `"no_change"` for reflect,
+`"no new signal since last proposal"` for distill),
 or `"no_signal"` as the fallback — never a fabricated category. The field is
 omitted entirely when both would be empty. The same table is printed to
 stderr (`[improve] usage report ...`) after every real run, independent of

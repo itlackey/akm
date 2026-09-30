@@ -353,11 +353,11 @@ guidance. When enabled, engine selection is judgment → triage → strategy →
 }
 ```
 
-The shipped `default` and `frequent` strategies keep improve-stage session
-extraction off. `proactiveMaintenance` is off in `default` and
-`reflect-distill`; run `akm improve --strategy proactive-maintenance` to use the
-dedicated opt-in preset. Because strategies inherit from `default`, a preset
-that omits either process also inherits the off value. User strategy overrides
+No shipped strategy turns improve-stage session extraction on.
+`proactiveMaintenance` is on only in the `proactive-maintenance` preset; run
+`akm improve --strategy proactive-maintenance` to use that opt-in preset.
+Because strategies inherit from `default`, a preset that omits either process
+also inherits the off value. User strategy overrides
 are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 

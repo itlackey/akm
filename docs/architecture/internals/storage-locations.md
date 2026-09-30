@@ -70,28 +70,24 @@ on request. Nothing deletes this user data without that explicit opt-in.
 `unresolved-sources/`, and the improve-pipeline `.lock` files used to be
 written under `$STASH/.akm` but never met the "must travel with the content"
 rule above — none of them are read to resolve anything about the bundle
-content itself. They now live under `$STATE`/`$CACHE`, namespaced per stash
-by `getStashStateKey()` (`src/core/paths.ts`) so two stashes on one machine
-never collide:
+content itself. Three of them now live under `$STATE`/`$CACHE`, namespaced per
+stash by `getStashStateKey()` (`src/core/paths.ts`) so two stashes on one
+machine never collide; the other two no longer exist:
 
 | Old path | New path |
 |---|---|
-| `$STASH/.akm/distill-rejected/` | `$STATE/improve/distill-rejected/<stash>/` |
-| `$STASH/.akm/eval-cases/` | `$STATE/improve/eval-cases/<stash>/` |
+| `$STASH/.akm/distill-rejected/` | none: the improve ledger replaced it (`improve_ledger`, below) |
+| `$STASH/.akm/eval-cases/` | none: the write-only eval-cases path was removed |
 | `$STASH/.akm/measurement/verdicts/` | `$STATE/improve/measurement/verdicts/<stash>/` |
 | `$STASH/.akm/unresolved-sources/` | `$CACHE/index/unresolved-sources/<stash>/` |
 | `$STASH/.akm/improve.lock` | `$STATE/locks/<stash>/improve.lock` |
 
-`akm migrate status`/`apply` covers every configured LOCAL bundle (the
-default stash first, then every other filesystem-backed bundle — a
-`git`/`website`/`npm` bundle is cache-backed, never touched) and reports and
-relocates any pre-0.9.11 files still sitting at the old paths (see
-`docs/migration/`); a lock file only moves out of the way (is deleted) once
-`probeLock` — the same staleness check `akm improve` itself uses — says its
-holder is dead, so a lock a live run holds is left alone and reported
-instead. The pilot treatment file at `$STASH/.akm/measurement/` (sibling to
-`verdicts/`) is manually-authored measurement input, not a writer output,
-and did not move.
+`akm migrate` relocated pre-0.9.11 files still sitting at the old paths until
+0.9.17-alpha.4 removed that step (`scripts/akm-migrate/migrate/writer-relocation.ts`).
+A file left at an old path is now inert: nothing reads it and nothing moves or
+deletes it, so remove it by hand if you want it gone. The pilot treatment file
+at `$STASH/.akm/measurement/` (sibling to `verdicts/`) is manually-authored
+measurement input, not a writer output, and did not move.
 
 ---
 
