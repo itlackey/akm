@@ -35,7 +35,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { openStateDatabase } from "../../core/state-db";
 import { info, warn, warnVerbose } from "../../core/warn";
 import { beginWriteProvenance, relativeWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
-import { resolveWritable, resolveWriteTarget } from "../../core/write-source";
+import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "../../core/write-source";
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
@@ -385,6 +385,11 @@ export function resolveImproveReadSource(
   }
   const selector = scopedRef?.origin ?? explicitTarget ?? config.defaultWriteTarget;
   if (!selector && fallbackStashDir) return { source: { name: "stash", path: fallbackStashDir } };
+  if (!selector && process.env.AKM_BUNDLE_DIR?.trim()) {
+    // A live run's working bundle starts from AKM_BUNDLE_DIR (`resolveWorkingStashTarget`), so its preview does too.
+    const { source } = resolveWorkingStashTarget(config, { requireWritable: false });
+    return { source: { name: source.name, path: source.path } };
+  }
   const configuredSelector = selector ?? config.defaultBundle;
   if (configuredSelector) {
     const entry = bundlesToSourceEntries(config)?.find((source) => source.name === configuredSelector);

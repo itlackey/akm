@@ -208,6 +208,8 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
   const reflectErrors = env.recentErrors.reflect ?? [];
   if (reflectErrors.length > 0) tally.reflectsWithErrorContext++;
   const budgetMs = env.remainingBudgetMs();
+  // `planned` was selected from the run's write target alone (eligibility.ts), so the
+  // `target` below is the bundle `planned.itemRef` is read from and the proposal is filed in.
   const reflectArgs = {
     ref: planned.ref,
     ...(planned.itemRef ? { itemRef: planned.itemRef } : {}),

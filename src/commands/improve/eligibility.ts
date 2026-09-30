@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput, resolveRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -15,7 +16,7 @@ import type { ImproveEligibleRef, ImproveIndexSnapshot } from "../../core/improv
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
 import { deriveInstallations, deriveWritableBundleIds } from "../../indexer/installations";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
 import type { Database } from "../../storage/database";
 import {
@@ -135,6 +136,25 @@ type EligibleRefs = {
   indexSnapshot?: ImproveIndexSnapshot;
 };
 
+/**
+ * The bundle an improve run reads candidates from and files proposals into: its
+ * write target, the source rooted at `stashDir` (else the working bundle).
+ * Reflect reads a candidate from its owning bundle but the proposal lands in
+ * the write target, so a candidate owned by any other bundle would be read from
+ * one bundle and filed in another (#1000).
+ */
+function runBundleIdOf(
+  sources: readonly SearchSource[],
+  installations: readonly { id: string }[],
+  stashDir: string | undefined,
+): string | undefined {
+  const root = stashDir === undefined ? undefined : path.resolve(stashDir);
+  const index = sources.findIndex((source) =>
+    root === undefined ? source.isDefault === true : path.resolve(source.path) === root,
+  );
+  return installations[index]?.id;
+}
+
 export async function collectEligibleRefs(
   scope: Scope,
   stashDir?: string,
@@ -177,6 +197,10 @@ async function collectEligibleRefsFromIndex(
   if (sources.length === 0) return empty();
   const installations = deriveInstallations(sources);
   const writableBundleIds = deriveWritableBundleIds(sources);
+  const runBundleId = runBundleIdOf(sources, installations, stashDir);
+  // Candidates come from the write target alone, and only while it is writable.
+  const isCandidateBundle = (bundleId: string | undefined): boolean =>
+    bundleId !== undefined && bundleId === runBundleId && writableBundleIds.has(bundleId);
   const ready: ImproveIndexSnapshot = {
     status: "ready",
     reason: readOnly ? "loaded a non-mutating point-in-time copy of the existing index" : "loaded the prepared index",
@@ -193,19 +217,36 @@ async function collectEligibleRefsFromIndex(
     if (!db) return empty(missing);
     if (scope.mode === "ref" && scope.value) {
       const entriesByItemRef = new Map(getAllEntries(db).map((entry) => [entry.itemRef, entry] as const));
-      const resolved = resolveRef(scope.value, {
-        defaultBundle: config.defaultBundle,
-        bundles: installations.map((installation) => ({
-          id: installation.id,
-          hasConcept: (conceptId) => entriesByItemRef.has(`${installation.id}//${conceptId}`),
-        })),
-      });
+      let resolved: ReturnType<typeof resolveRef>;
+      try {
+        resolved = resolveRef(scope.value, {
+          defaultBundle: config.defaultBundle,
+          bundles: installations.map((installation) => ({
+            id: installation.id,
+            hasConcept: (conceptId) => entriesByItemRef.has(`${installation.id}//${conceptId}`),
+          })),
+          ...(runBundleId ? { only: runBundleId } : {}),
+        });
+      } catch (error) {
+        if (!(error instanceof NotFoundError) || !runBundleId) throw error;
+        // Name the bundle that owns the ref; a typo or an unindexed ref keeps the default advice.
+        const { conceptId } = parseBundleRef(scope.value);
+        const owner = installations.find(
+          (installation) => installation.id !== runBundleId && entriesByItemRef.has(`${installation.id}//${conceptId}`),
+        )?.id;
+        if (!owner) throw error;
+        throw new NotFoundError(
+          error.message,
+          error.code,
+          `"${conceptId}" is in bundle "${owner}"; this run improves bundle "${runBundleId}" only. Run \`akm improve ${owner}//${conceptId}\` (or pass \`--bundle ${owner}\`).`,
+        );
+      }
       const indexed = entriesByItemRef.get(`${resolved.bundle}//${resolved.conceptId}`);
       if (!indexed?.bundleId || !indexed.conceptId || !fs.existsSync(indexed.filePath)) {
         if (await findAssetFilePath(scope.value, stashDir)) return empty(ready);
         throw new NotFoundError(`Asset not found in the selected writable source: ${scope.value}`, "ASSET_NOT_FOUND");
       }
-      if (!writableBundleIds.has(indexed.bundleId)) return empty(ready);
+      if (!isCandidateBundle(indexed.bundleId)) return empty(ready);
       const isMemory = indexed.entry.type === "memory";
       return {
         plannedRefs: [
@@ -220,7 +261,7 @@ async function collectEligibleRefsFromIndex(
       };
     }
     const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) =>
-      writableBundleIds.has(indexed.bundleId),
+      isCandidateBundle(indexed.bundleId),
     );
     const planned = new Map<string, ImproveEligibleRef>();
     const strategyFiltered = new Map<string, ImproveEligibleRef>();

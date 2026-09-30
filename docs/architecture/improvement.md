@@ -60,9 +60,9 @@ everything else routes through `akm proposal accept`.
    score is updated immediately via the bounded-step formula (below) — no
    reindex required.
 3. `akm improve` selects assets (recent feedback first, retrieval-count
-   fallback for high-traffic assets with no feedback yet) inside the
-   retrieval scope below, then runs whichever processes the selected strategy
-   enables against each one.
+   fallback for high-traffic assets with no feedback yet) from the one bundle
+   it writes to, inside the retrieval scope below, then runs whichever
+   processes the selected strategy enables against each one.
 4. Reflect and distill each emit at most one proposal per asset per run;
    consolidate runs two passes alongside each other — the promote pass emits
    a proposal turning a memory into knowledge (and, once accepted, retires

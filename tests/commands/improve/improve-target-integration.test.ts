@@ -5,11 +5,18 @@ import { akmConsolidate } from "../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { ConfigError, UsageError } from "../../../src/core/errors";
+import { resolveWriteTarget } from "../../../src/core/write-source";
 import { getCachePaths, parseGitRepoUrl } from "../../../src/sources/providers/git";
 import { getWebsiteCachePaths } from "../../../src/sources/snapshot-fetchers/website-ingest";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
 import { seedLockEntries } from "../../_helpers/lockfile";
-import { type Cleanup, makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
+import {
+  type Cleanup,
+  makeStashDir,
+  mutateScopedEnv,
+  type SandboxedDir,
+  sandboxXdgDataHome,
+} from "../../_helpers/sandbox";
 
 const sandboxes: SandboxedDir[] = [];
 let envCleanup: Cleanup = () => {};
@@ -66,6 +73,32 @@ describe("improve named target integration", () => {
       },
     });
 
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
+  });
+
+  test("a dry run without a selector previews the working bundle the live run writes to (AKM_BUNDLE_DIR first)", async () => {
+    const primary = stash();
+    const team = stash();
+    // No `defaultWriteTarget`, so both runs start from the working bundle, which AKM_BUNDLE_DIR overrides.
+    const config = withTestImproveLlm({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      bundles: { primary: { path: primary, writable: true }, team: { path: team, writable: true } },
+      defaultBundle: "primary",
+    } as AkmConfig);
+    mutateScopedEnv("AKM_BUNDLE_DIR", team);
+    let selectedRoot: string | undefined;
+
+    await akmImprove({
+      dryRun: true,
+      config,
+      collectEligibleRefsFn: async (_scope, stashDir) => {
+        selectedRoot = stashDir;
+        return { plannedRefs: [], memorySummary: { eligible: 0, derived: 0 }, strategyFilteredRefs: [] };
+      },
+    });
+
+    expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(resolveWriteTarget(config).source.path));
     expect(path.resolve(selectedRoot ?? "")).toBe(path.resolve(team));
   });
 
