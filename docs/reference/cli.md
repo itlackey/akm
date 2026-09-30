@@ -1610,7 +1610,7 @@ akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --
 | --- | --- |
 | `--positive` | Record positive feedback (use when an asset was helpful) |
 | `--negative` | Record negative feedback (use when an asset was not useful) |
-| `--reason` | Optional text reason to attach to the feedback event (required for negative feedback by default) |
+| `--reason` | What was wrong with (or right about) the asset's content; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default) |
 | `--failure-mode` | Structured failure-mode taxonomy for negative feedback: `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant`. Stored alongside `--reason` in event metadata for the distill pipeline. |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |

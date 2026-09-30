@@ -254,7 +254,8 @@ export const feedbackCommand = defineJsonCommand({
     },
     reason: {
       type: "string",
-      description: "Reason for the feedback (required for negative feedback by default; used by distillation)",
+      description:
+        "What was wrong with (or right about) the asset's content (required for negative feedback by default; used by distillation). Not for akm command errors.",
     },
     "failure-mode": {
       type: "string",

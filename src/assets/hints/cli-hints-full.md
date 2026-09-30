@@ -100,8 +100,9 @@ akm feedback memories/deployment-notes --positive # Works for memories too
 akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
 
-Use `akm feedback` whenever an asset materially helps or fails so future search
-ranking can learn from actual usage.
+Use `akm feedback` whenever an asset's content materially helps, or proves wrong,
+stale or unhelpful, so future search ranking can learn from actual usage. An akm
+command that fails says nothing about the asset; don't record it as feedback.
 
 ## LLM Wiki bundles
 
