@@ -10,8 +10,13 @@
  * must not do that. This helper copies a stable main/WAL pair and opens that
  * private copy, so SQLite never attaches to the operator's original
  * main/WAL/SHM files.
+ *
+ * The copy itself is made by a child process, never by this one: see
+ * {@link copyFileOutsideThisProcess} for why an in-process read of a live
+ * database is unsafe.
  */
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -76,6 +81,46 @@ function fingerprintsEqual(left: DatabaseFingerprint, right: DatabaseFingerprint
 }
 
 /**
+ * Copy `source` to `destination` without opening `source` in THIS process.
+ *
+ * POSIX advisory locks belong to the process, not to the descriptor: when a
+ * process closes ANY descriptor for a file, the kernel drops every lock that
+ * process holds on it, including the SHARED lock a live SQLite connection in
+ * this same process (`akm improve` keeps one on state.db for the whole run)
+ * holds. A peer using an older SQLite (< 3.51) read-write would then see no
+ * reader, take EXCLUSIVE when it closes, and delete the `-wal`/`-shm` this
+ * process is still using. The read therefore happens in a child `cp`, whose
+ * descriptors and locks are its own. Windows locks belong to the handle, so
+ * an in-process copy cannot release another handle's lock there (and there is
+ * no `cp`).
+ *
+ * A source that vanished (a WAL checkpointed away mid-copy) throws an
+ * `ENOENT` error, which {@link openSqliteReadSnapshot} retries.
+ */
+function copyFileOutsideThisProcess(source: string, destination: string): void {
+  if (process.platform === "win32") {
+    fs.copyFileSync(source, destination);
+    return;
+  }
+  const result = spawnSync("cp", ["--", source, destination], {
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  if (result.error) {
+    throw new SqliteReadSnapshotUnavailableError(`cannot run cp to copy ${source}: ${result.error.message}`);
+  }
+  if (result.status === 0) return;
+  // `cp` reports its errors as text, so the vanished-source case is recognised
+  // by looking at the source itself.
+  if (fileFingerprint(source) === undefined) {
+    throw Object.assign(new Error(`${source} disappeared while it was being copied`), { code: "ENOENT" });
+  }
+  const reason =
+    result.stderr.trim() || (result.signal ? `killed by ${result.signal}` : `exit status ${result.status}`);
+  throw new Error(`cp could not copy ${source}: ${reason}`);
+}
+
+/**
  * Open an isolated copy of an existing SQLite database.
  *
  * Returns `undefined` only when the source is absent. Committed WAL frames are
@@ -98,8 +143,8 @@ export function openSqliteReadSnapshot(dbPath: string): Database | undefined {
       try {
         if (pathExists(`${dbPath}-journal`)) continue;
         const before = databaseFingerprint(dbPath);
-        fs.copyFileSync(dbPath, snapshotPath);
-        if (before.wal) fs.copyFileSync(`${dbPath}-wal`, `${snapshotPath}-wal`);
+        copyFileOutsideThisProcess(dbPath, snapshotPath);
+        if (before.wal) copyFileOutsideThisProcess(`${dbPath}-wal`, `${snapshotPath}-wal`);
         else fs.rmSync(`${snapshotPath}-wal`, { force: true });
         const after = databaseFingerprint(dbPath);
         if (fingerprintsEqual(before, after) && !pathExists(`${dbPath}-journal`)) {
