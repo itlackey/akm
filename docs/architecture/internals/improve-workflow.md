@@ -9,7 +9,7 @@
 | `--scope` | `string` | Restrict the run to a single ref (`[bundle//]conceptId`), an asset type (`lesson`), or omit for all assets. |
 | `--task` | `string` | Hint forwarded verbatim to the reflection prompt and agent. |
 | `--dry-run` | `boolean` | Compute the plan from the existing index and analyze memory cleanup; emit no events, acquire no lock, call no model, and write nothing. |
-| `--target` | `string` | Passed through to `akmConsolidate` as the write-target source override. |
+| `--bundle` | `string` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. It is the only bundle whose assets the run plans. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a config error. |
@@ -519,7 +519,9 @@ Two proposals can share the same `ref`; their UUID primary keys prevent collisio
 
 ## Scope restrictions
 
-`akm improve` and `akm lint` only operate on writable bundle sources (sources with `writable: true`). Read-only sources (git, npm, website) are excluded from the candidate set before any other filtering.
+`akm improve` reads and writes one bundle, its write target: `--bundle`, else `defaultWriteTarget`, else the working bundle. The candidate set is that bundle's assets and nothing else, because every proposal is filed in the write target. An asset that another writable bundle owns is never planned: reflect would read it from its own bundle and the proposal would land in this one, either forking the asset as a `create` or overwriting this bundle's copy with content taken from the other's (#1000). A bare `--scope` ref resolves inside the write target only. To improve another writable bundle, select it with `--bundle team` or a bundle-qualified scope such as `team//skills/code-review`.
+
+`akm improve` and `akm lint` only operate on writable bundle sources (sources with `writable: true`). Read-only sources (git, npm, website) are excluded from the candidate set before any other filtering; a read-only write target plans nothing.
 
 ## Cooldown pre-filter
 

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm improve` no longer files one bundle's assets into another (#1000).**
+  Candidate selection admitted assets from every writable bundle, but every
+  proposal is filed in the run's write target and reflect reads each asset
+  from the bundle that owns it. An asset owned by another bundle therefore
+  came back as a `create` fork in the write target, or as an `update` of the
+  write target's own copy built from the other bundle's copy. A run now plans
+  only the bundle it writes to (`--bundle`, else `defaultWriteTarget`, else
+  the working bundle), and a bare `--scope` ref resolves inside that bundle.
+  **Narrowed behaviour:** a run no longer picks up assets from your other
+  writable bundles (it used to read them and queue the result in its own write
+  target). `akm improve <ref>` for an asset that lives only in another bundle
+  now fails with a not-found error whose hint names the remedy. To improve
+  another bundle, select it: `akm improve --bundle team`, or
+  `akm improve team//skills/x`. Proposals the old behaviour already queued
+  stay in the queue; review them with `akm proposal list`.
+
 ## [0.9.18] - 2026-09-29
 
 ### Fixed

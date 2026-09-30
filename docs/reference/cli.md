@@ -2429,7 +2429,7 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
-| `--bundle` | Select the proposal/write target; when the ref scope is bundle-qualified, it must name the same bundle |
+| `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Base cap for ordinary assets (highest utility first); configured replay slots are additive |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Only process assets with recent feedback signals |
@@ -2445,6 +2445,12 @@ akm improve report --since 7d          # ...aggregated over every real run start
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow. A qualified scope such as `team//skills/code-review` selects that bundle;
 a different explicit `--bundle` is a usage error.
+
+A run improves one bundle, the one it writes to, and plans only that bundle's
+assets: an asset that lives in another bundle is left alone even when that
+bundle is writable, and a bare scope ref resolves inside the write target only.
+To improve another bundle, name it (`akm improve --bundle team`, or
+`akm improve team//skills/code-review`).
 
 Every stage records what it did with each asset in the improve ledger
 (`improve_ledger` in `state.db`) and reads it before any model call: an asset

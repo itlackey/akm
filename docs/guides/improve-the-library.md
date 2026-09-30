@@ -76,6 +76,11 @@ akm improve --dry-run                 # Show planned refs without generating pro
 akm improve --limit 10                # Base cap; configured replay slots are additive
 ```
 
+A run improves one bundle, the one it writes to (`--bundle`, else
+`defaultWriteTarget`, else your working bundle), and leaves assets in your other
+bundles alone even when they are writable. Run `akm improve --bundle team` to
+improve another one.
+
 Selection defaults to assets with recent feedback signals first, with a
 retrieval-count fallback for high-traffic assets that have no feedback yet.
 Improve reworks only what gets read: without fresh feedback, an asset is
