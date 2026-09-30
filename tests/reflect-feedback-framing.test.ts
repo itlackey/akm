@@ -63,6 +63,31 @@ describe("buildReflectPrompt — feedback framing (#952)", () => {
     }).prompt;
     expect(rendered).not.toContain(FEEDBACK_CAVEAT_SNIPPET);
   });
+
+  // #999: the framing used to offer "add a clearly marked `TODO: verify …`
+  // placeholder or leave the section unchanged". A model took the first option
+  // for a feedback line reporting that `akm show` had failed, and the TODO it
+  // wrote became permanent memory content that a later distill pass built a
+  // lesson on. Leaving the section unchanged is the only instruction now.
+  test("feedback that asks for information the asset lacks is answered with 'leave the section unchanged', never a TODO placeholder (#999)", () => {
+    const rendered = buildReflectPrompt({
+      ref: "memories/foo",
+      type: "memory",
+      name: "foo",
+      assetContent: "Existing body.",
+      feedback: ["Ambiguous ref has multiple physical owners and cannot be shown reliably"],
+    }).prompt;
+    // The framing paragraph: from its first sentence up to the feedback list.
+    const framing = rendered.slice(
+      rendered.indexOf("Feedback describes"),
+      rendered.indexOf("Recent feedback / signals:"),
+    );
+    expect(framing).toContain(FEEDBACK_CAVEAT_SNIPPET);
+    expect(framing).toContain("leave the section unchanged");
+    expect(framing).not.toMatch(/TODO|placeholder/i);
+    // The rest of the prompt never asks for one either.
+    expect(rendered).not.toContain("TODO");
+  });
 });
 
 describe("buildReflectPrompt — content budget / truncation marker (#952)", () => {
