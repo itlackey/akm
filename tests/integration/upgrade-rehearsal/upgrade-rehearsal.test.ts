@@ -25,9 +25,16 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { gte as semverGte } from "semver";
 import { resolveCandidateTarball } from "./candidate";
 import { requireUpgradeRehearsalCapabilities } from "./gate";
-import { buildHome, buildLegacyGrantHome, type LegacyGrantHome, type UpgradeHome } from "./home";
+import {
+  buildHome,
+  buildLegacyGrantHome,
+  INLINE_SCHEDULER_ROWS_SINCE,
+  type LegacyGrantHome,
+  type UpgradeHome,
+} from "./home";
 import { installAkmTarball, runLauncher } from "./install";
 import { fetchPreviousReleaseTarball, resolveUpgradeOriginVersion, type UpgradeOrigin } from "./previous-release";
 
@@ -112,6 +119,8 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
   let candidateMigrateLauncher: string;
   let livePrefix: string;
   let candidateVersion: string;
+  /** Whether the previous release already writes the inline scheduler row the candidate writes. */
+  let originWritesInlineRows: boolean;
   let home: UpgradeHome;
 
   beforeAll(async () => {
@@ -121,6 +130,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
 
     candidateVersion = candidatePackageVersion();
     previousVersion = await resolveUpgradeOriginVersion("previous", candidateVersion);
+    originWritesInlineRows = semverGte(previousVersion, INLINE_SCHEDULER_ROWS_SINCE);
 
     const [previousTarball, candidateTarball] = await Promise.all([
       fetchPreviousReleaseTarball(previousVersion, cacheRoot),
@@ -248,22 +258,36 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(taskList.status, taskList.stderr).toBe(0);
   });
 
-  test("5. task sync --dry-run shows each previous-release row as an update: no adds, no removals, no failures", async () => {
-    // The previous release's rows name a `--scheduler-context` descriptor; the
-    // candidate rewrites each one in place, never adding or removing a row.
-    expect(fs.readFileSync(home.fakeCrontab, "utf8")).toContain("--scheduler-context");
+  test("5. task sync --dry-run reconciles each previous-release row in place: an update for a descriptor row, unchanged for an inline row; no adds, no removals, no failures", async () => {
+    // A release before INLINE_SCHEDULER_ROWS_SINCE wrote rows that name a
+    // `--scheduler-context` descriptor; the candidate rewrites each one in
+    // place, never adding or removing a row. A release since then already
+    // writes the inline row the candidate writes, so every row is current.
+    const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
+    if (originWritesInlineRows) {
+      expect(crontab).not.toContain("--scheduler-context");
+      for (const id of [home.taskIds.a, home.taskIds.b]) {
+        const command = extractCronCommandContaining(crontab, id);
+        expect(command.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `), command).toBe(true);
+      }
+    } else {
+      expect(crontab).toContain("--scheduler-context");
+    }
     const result = await runLauncher(candidateLauncher, ["task", "sync", "--dry-run"], home.env);
     expect(result.status, result.stderr).toBe(0);
     const preview = JSON.parse(result.stdout) as {
       adds?: { id: string }[];
       updates?: { id: string }[];
       removes?: { id: string }[];
+      unchanged?: string[];
       failures?: unknown[];
     };
     expect(preview.failures ?? []).toEqual([]);
     expect(preview.adds ?? []).toEqual([]);
     expect(preview.removes ?? []).toEqual([]);
-    expect((preview.updates ?? []).map((update) => update.id).sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
+    const bothRows = [home.taskIds.a, home.taskIds.b].sort();
+    expect((preview.updates ?? []).map((update) => update.id).sort()).toEqual(originWritesInlineRows ? [] : bothRows);
+    if (originWritesInlineRows) expect([...(preview.unchanged ?? [])].sort()).toEqual(bothRows);
   });
 
   test("6. task sync (plain, no --rebind) keeps a/b scheduled inside `live`; c stays absent", async () => {
@@ -282,7 +306,11 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     const synced = JSON.parse(result.stdout) as { installed?: string[]; updated?: string[]; removed?: string[] };
     expect(synced.installed ?? []).toEqual([]);
     expect(synced.removed ?? []).toEqual([]);
-    expect([...(synced.updated ?? [])].sort()).toEqual([home.taskIds.a, home.taskIds.b].sort());
+    // A descriptor row is rewritten in place; a row the origin already wrote
+    // inline is current, so sync leaves it alone.
+    expect([...(synced.updated ?? [])].sort()).toEqual(
+      originWritesInlineRows ? [] : [home.taskIds.a, home.taskIds.b].sort(),
+    );
 
     const crontab = fs.readFileSync(home.fakeCrontab, "utf8");
     const commandA = extractCronCommandContaining(crontab, home.taskIds.a);
@@ -291,8 +319,9 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(commandB).toContain(livePrefix);
     expect(crontab.includes(home.taskIds.c)).toBe(false);
     // Each row is its command plus its schedule: the descriptor argument is
-    // gone, its one value (the working stash) is set inline, and every row
-    // keeps its launcher and its time.
+    // gone (rewritten away, or never written by an inline origin), its one
+    // value (the working stash) is set inline, and every row keeps its
+    // launcher and its time.
     expect(crontab).not.toContain("--scheduler-context");
     expect(commandA.startsWith(`AKM_BUNDLE_DIR=${home.stashDir} `)).toBe(true);
     expect(cronSchedules(crontab)).toEqual(cronSchedules(before));

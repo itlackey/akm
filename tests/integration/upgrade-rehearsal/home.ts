@@ -29,6 +29,11 @@ export const HOME_DEVIATIONS: readonly string[] = [
     "every 0.9.17 candidate), ignore `--name` on a registry add (npm, `github:`, git) and key the bundle " +
     "`extracted`, a slug of its extracted cache directory's basename. For those origins the key is read back " +
     "from `bundle list`: an upgraded home really carries it, and the candidate keeps an installed bundle's key.",
+  "Steps 5 and 6 expect the candidate to rewrite the previous release's scheduler rows only when the origin " +
+    "predates 0.9.17-alpha.7: until then a row named a `--scheduler-context` descriptor, so the first " +
+    "`task sync` shows each row as an update. From 0.9.17-alpha.7 on (0.9.17 is the `previous` origin of every " +
+    "0.9.18 candidate) the origin already writes the inline `AKM_BUNDLE_DIR=… task run …` row the candidate " +
+    "writes, so a dry run lists each row as unchanged and a plain sync updates nothing.",
 ];
 
 /**
@@ -40,6 +45,9 @@ export const HOME_DEVIATIONS: readonly string[] = [
  * `git:…`) is never a legal bundle slug.
  */
 const REGISTRY_ADD_HONORS_NAME_SINCE = "0.9.17-alpha.4";
+
+/** The first release whose scheduler rows set their environment inline (#987); 0.9.0 – 0.9.17-alpha.6 name a `--scheduler-context` file. */
+export const INLINE_SCHEDULER_ROWS_SINCE = "0.9.17-alpha.7";
 
 export interface UpgradeHomeTaskIds {
   readonly a: string;
