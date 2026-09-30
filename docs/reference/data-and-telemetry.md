@@ -344,10 +344,13 @@ rm -rf ~/.cache/akm/config-backups/
 
 # Delete the events log from state.db (non-reversible)
 # There is no akm CLI command to do this directly (`akm log` only exposes
-# `list`/`tail`, no delete/purge verb). Use SQLite directly:
+# `list`/`tail`, no delete/purge verb). Use SQLite directly.
+# Stop akm first (no `akm` process or scheduled task running): an older
+# `sqlite3` (< 3.51) opened read-write alongside a running akm can corrupt
+# the database.
 sqlite3 ~/.local/share/akm/state.db "DELETE FROM events;"
 
-# Delete all proposals
+# Delete all proposals (same precondition: stop akm first)
 sqlite3 ~/.local/share/akm/state.db "DELETE FROM proposals;"
 ```
 
