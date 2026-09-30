@@ -7,6 +7,11 @@ live one level up in `docs/migration/`.
 
 ## Available notes
 
+- [0.9.19](0.9.19.md) — `akm improve` planning only the bundle it writes to
+  (a scheduled run needs one `--bundle` run per other bundle),
+  `akm proposal reopen` and the retire-proposal diff, consolidate's coverage
+  check and content-driven hold on decided promotions, distill's grounding
+  check, and what a downgrade to 0.9.18 undoes
 - [0.9.17](0.9.17.md) — consolidate's retire proposals and continuity check,
   promotions archiving their source memory, declared links replacing the LLM
   entity graph, index layout 26, scheduler rows carrying their own context,
