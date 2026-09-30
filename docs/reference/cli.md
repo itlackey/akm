@@ -2453,6 +2453,21 @@ days (other stages) before it is tried again; an expired proposal waits one
 day; an asset a stage looked at and left unchanged is revisited after 7 days,
 or as soon as new feedback (or, for consolidation, an edit) arrives.
 
+Consolidation's promotion of a memory into `knowledge/` is the exception to the
+7-day rule: once a promotion is accepted or rejected, its memory is not offered
+to the model again until its body changes, however long that takes. The ledger
+records the body hash the promotion was decided against and compares it with
+the memory's current body (frontmatter edits do not count), the same
+content-driven rule the consolidate pair pass uses. A promotion decided by an
+older release, which recorded no hash, keeps the old windows. Consolidation
+also does not promote a memory that `knowledge/` already covers: before it
+queues a promotion it looks at the memory's nearest `knowledge/` docs by stored
+vector, and skips the memory when one of them holds at least half of its
+distinct 5-word shingles (skip reason `dedup_covered_by_knowledge` in the
+result's `consolidation.skipReasons`). With no stored vector (semantic search
+off, or the memory not indexed yet) that check does nothing and the exact slug
+and whole-body checks still apply.
+
 Built-in `default` and `frequent` leave the improve-stage extract process off,
 and `default` plus `reflect-distill` leave proactive maintenance off. Use the
 explicit `proactive-maintenance` strategy or set the selected strategy's
