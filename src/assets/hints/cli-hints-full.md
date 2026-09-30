@@ -341,6 +341,7 @@ akm proposal accept 7c115132                            # Accept by UUID prefix
 akm proposal accept <id> --target team-bundle            # Accept to a named writable bundle source
 akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."                 # Archive with a reason
+akm proposal reopen <id> --reason "..."                 # Undo a rejection: back to pending (refused if the target changed)
 akm proposal revert <id>                                # Restore the pre-promotion content
 akm proposal new <type> <name> --task "..."             # Agent-author a NEW asset as a proposal
 akm proposal extract --auto                             # Mine native session files into proposals

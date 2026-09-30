@@ -957,6 +957,127 @@ describe("review surface (show / diff / bulk accept) works for retire proposals"
     expect(diff.unified).toContain("-The durable fact.");
   });
 
+  test("#997: diff renders a retirement as a retirement, not as the file replaced by one blank line", () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note", "The durable fact.\n");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+        judgeLabel: "subsumed",
+        judgeReason: "B says everything A says, and more.",
+        reason: "subsumed",
+        cosine: 0.987,
+      }),
+    });
+    const diff = akmProposalDiff({ stashDir: storage.stashDir, id: proposal.id });
+
+    // Only removals: the file leaves, nothing takes its place.
+    expect(diff.unified).toBe(
+      [
+        `--- ${proposal.ref} (existing)`,
+        "+++ /dev/null (retired: archived; successor memories/new-note)",
+        "@@ 1,4 0,0 @@",
+        "----",
+        "-description: an old note",
+        "----",
+        "-The durable fact.",
+      ].join("\n"),
+    );
+    expect(diff.unified.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"))).toEqual([]);
+    expect(diff.isNew).toBe(false);
+    expect(diff.targetPath).toBe(oldPath);
+
+    // The retirement travels with the diff, so a reviewer need not run `show` too — under the very
+    // keys `show` uses (`reason` there is the tombstone vocabulary, so the judge's text is `judgeReason`).
+    expect(diff.op).toBe("delete");
+    expect(diff.retirement).toEqual({
+      retiredRef: "memories/old-note",
+      successorRef: "memories/new-note",
+      judgeLabel: "subsumed",
+      judgeReason: "B says everything A says, and more.",
+      cosine: 0.987,
+    });
+    const shown = akmProposalShow({ stashDir: storage.stashDir, id: proposal.id }).proposal.retirement;
+    expect(diff.retirement).toMatchObject({
+      retiredRef: shown?.retiredRef,
+      successorRef: shown?.successorRef,
+      judgeLabel: shown?.judgeLabel,
+      judgeReason: shown?.judgeReason,
+      cosine: shown?.cosine,
+    });
+    expect(diff.retirement).not.toHaveProperty("reason");
+    expect(diff.retirement).not.toHaveProperty("continuityRisk"); // not flagged, so not present
+    expect(diff.note).toContain(".akm/memory-cleanup/archive/");
+    expect(diff.note).toContain("akm proposal revert");
+    expect(diff.note).toContain("byte-exactly");
+  });
+
+  test("#997: a continuityRisk flag rides along with the diff — a reviewer reading only the diff must not miss it", () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const continuityRisk = {
+      failingQueries: 1,
+      unverifiedQueries: 2,
+      ranks: [{ query: "how do I do X", retiredRank: 1, successorRank: null }],
+    };
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+        continuityRisk,
+      }),
+    });
+    const diff = akmProposalDiff({ stashDir: storage.stashDir, id: proposal.id });
+    expect(diff.retirement?.continuityRisk).toEqual(continuityRisk);
+  });
+
+  test("#997: an ordinary proposal's diff result gains none of the retirement fields", () => {
+    const proposal = createProposal(storage.stashDir, {
+      ref: "knowledge/fresh-doc",
+      source: "reflect",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: "---\ndescription: fresh\n---\n\nBody.\n", frontmatter: { description: "fresh" } },
+    });
+    const diff = akmProposalDiff({ stashDir: storage.stashDir, id: proposal.id });
+    expect(diff.isNew).toBe(true);
+    expect(diff).not.toHaveProperty("op");
+    expect(diff).not.toHaveProperty("retirement");
+    expect(diff).not.toHaveProperty("note");
+  });
+
+  test('#997: a retire proposal whose target is already gone is not a "new asset"', async () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const config = makeConfig(storage.stashDir);
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+      }),
+    });
+    await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config }); // archives the file
+
+    const diff = akmProposalDiff({ stashDir: storage.stashDir, id: proposal.id, config });
+    expect(diff.isNew).toBe(false);
+    expect(diff.op).toBe("delete");
+    expect(diff.unified).toBe(
+      [`--- ${proposal.ref} (missing)`, "+++ /dev/null (retired: archived; successor memories/new-note)"].join("\n"),
+    );
+  });
+
   test("S6: bulk accept --generator consolidate-pair sweeps only retire proposals; --generator consolidate sweeps only promotions", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm proposal reopen <id...> [--reason <text>]` (#997).** A rejection was
+  final: nothing undid it, and a rejected `consolidate-pair` retire proposal
+  also kept the pair pass from ever proposing that retirement again while both
+  documents were unchanged. Reopen moves rejected proposals back to `pending`,
+  keeping the rejection (and the gate verdict that came with it) in the
+  proposal's new `reviewHistory`, which `proposal show` prints; the verdict
+  itself is cleared so the drain sees the proposal as undecided, except a
+  `deferred` one (the quality gate's hand-off to a person), which stays. It is
+  refused unless the proposal is `rejected` and `accept` would not refuse it as
+  stale (an update's target unchanged; a create's target still absent; a retire
+  proposal's successor present and both documents' body hashes as recorded),
+  and a retire proposal is refused while another pending retire proposal
+  involves either of its documents. Several ids are all-or-nothing. The pair pass
+  follows the status: a reopened proposal is no longer a settled pair and,
+  pending, is not minted twice. Its `improve_ledger` row is reset (a retire
+  proposal's rejection row is dropped, any other goes back to `proposed`), the
+  age that retention expiry and `--older-than` (bulk accept/reject, `drain`)
+  see restarts at the reopen, so a scheduled sweep does not take a proposal a
+  person just put back, and a `proposal_reopened` event is appended.
+
 ### Fixed
 
 - **A tool failure recorded with `akm feedback` no longer becomes a lesson
@@ -79,6 +101,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `AKM_BUNDLE_DIR` before `defaultBundle`, but a dry run read `defaultBundle`
   only, so the two could plan different bundles. The preview now resolves the
   working bundle the same way.
+- **`akm proposal diff` shows a retire proposal as a retirement (#997).** It
+  rendered the retired file as replaced by one blank line (`----`, a lone `+`,
+  then every other line as a removal, under an `(update: <ref>)` header) and
+  said nothing about the retirement, so one reviewer rejected all 65 of a
+  bundle's `consolidate-pair` proposals as "would destroy content". The diff
+  now lists only the removed lines, under a `(retire: <retired> -> <successor>)`
+  header and `+++ /dev/null (retired: archived; successor <ref>)`, and its JSON
+  result gains `op: "delete"`, a `retirement` block under the keys `proposal
+  show` uses (`retiredRef`, `successorRef`, `judgeLabel`, `judgeReason`,
+  `cosine`, and `continuityRisk` when the pair was flagged, which the text
+  output prints as well) and a `note` that accepting archives the file under
+  `.akm/memory-cleanup/archive/` and `akm proposal revert` restores it
+  byte-exactly. The new fields are additive and appear on retire proposals
+  only. `akm proposal show --detail full` also stops ending a retire proposal
+  with a bare `payload:` heading over nothing.
 
 ## [0.9.18] - 2026-09-29
 

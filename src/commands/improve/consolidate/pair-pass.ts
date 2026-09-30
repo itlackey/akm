@@ -52,7 +52,7 @@ import {
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
 import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
 import { isRetireProposal, type RetirementMetadata, type RetireReason } from "../../proposal/proposal-types";
-import { createRetireProposal, listProposalsReadOnly } from "../../proposal/repository";
+import { createRetireProposal, listProposalsReadOnly, type ProposalsContext } from "../../proposal/repository";
 import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
@@ -331,6 +331,41 @@ function pairKey(a: string, b: string): string {
  */
 function rejectedPairKey(retiredRef: string, successorRef: string, retiredHash: string, successorHash: string): string {
   return [retiredRef, successorRef, retiredHash, successorHash].join("\u0000");
+}
+
+/**
+ * Item 0 / S1: every rejected OR reverted consolidate-pair retirement on
+ * record, as {@link rejectedPairKey}s — read once per run, the same shape as
+ * `pendingRetireRefs` in {@link runConsolidatePairPass}. `reverted` is
+ * included alongside `rejected`: a person undoing an accept via `akm proposal
+ * revert` is the same "no, not this" signal as a reject — without it, the next
+ * run would re-mint the identical retirement, and a bulk accept could
+ * re-apply a decision the person just undid. The keys follow each proposal's
+ * CURRENT status, so one `akm proposal reopen` put back to `pending` (#997) is
+ * no longer among them — and, pending, blocks its pair from a second mint.
+ *
+ * @internal exported for unit tests.
+ */
+export function loadRejectedPairKeys(stashDir: string, proposalsCtx: ProposalsContext | undefined): Set<string> {
+  const keys = new Set<string>();
+  try {
+    for (const status of ["rejected", "reverted"] as const) {
+      for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true }, proposalsCtx)) {
+        if (!isRetireProposal(p) || !p.retirement) continue;
+        keys.add(
+          rejectedPairKey(
+            p.retirement.retiredRef,
+            p.retirement.successorRef,
+            p.retirement.retiredContentHash,
+            p.retirement.successorContentHash,
+          ),
+        );
+      }
+    }
+  } catch {
+    // Best-effort de-dup only; a failed read never blocks judging.
+  }
+  return keys;
 }
 
 /**
@@ -784,31 +819,7 @@ export async function runConsolidatePairPass(
   const isPendingBlocked = (c: PairCandidate): boolean =>
     pendingRetireRefs.has(stripBundle(c.initiator.ref)) || pendingRetireRefs.has(stripBundle(c.other.ref));
 
-  // Item 0 / S1: every rejected OR reverted consolidate-pair retirement on
-  // record, keyed by its exact ref pair and both content hashes — read once
-  // per run, the same shape as pendingRetireRefs above. `reverted` is
-  // included alongside `rejected`: a person undoing an accept via `akm
-  // proposal revert` is the same "no, not this" signal as a reject — without
-  // it, the next run would re-mint the identical retirement, and a bulk
-  // accept could re-apply a decision the person just undid.
-  const rejectedPairKeys = new Set<string>();
-  try {
-    for (const status of ["rejected", "reverted"] as const) {
-      for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true }, opts.proposalsCtx)) {
-        if (!isRetireProposal(p) || !p.retirement) continue;
-        rejectedPairKeys.add(
-          rejectedPairKey(
-            p.retirement.retiredRef,
-            p.retirement.successorRef,
-            p.retirement.retiredContentHash,
-            p.retirement.successorContentHash,
-          ),
-        );
-      }
-    }
-  } catch {
-    // Best-effort de-dup only; a failed read never blocks judging.
-  }
+  const rejectedPairKeys = loadRejectedPairKeys(stashDir, opts.proposalsCtx);
 
   // Blocker 2: admit WHOLE initiators under MAX_PAIRS_PER_RUN, never
   // individual pairs — the old flat "top 300 candidates by cosine" cap let a

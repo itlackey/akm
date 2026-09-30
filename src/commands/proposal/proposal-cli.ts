@@ -33,10 +33,12 @@ import {
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
+  akmProposalReopen,
   akmProposalRevert,
   akmProposalShow,
   bulkAdjudicateProposals,
 } from "./proposal";
+import { proposalWaitingSince } from "./proposal-types";
 import { proposeCommand } from "./propose-cli";
 
 export function mergeProposalDrainNotices(
@@ -154,7 +156,7 @@ const proposalAcceptCommand = defineJsonCommand({
     "older-than": {
       type: "string",
       description:
-        "When bulk-accepting, only accept proposals created more than this many days ago (e.g. '7' for 7 days).",
+        "When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago (e.g. '7' for 7 days).",
     },
     "dry-run": {
       type: "boolean",
@@ -244,7 +246,7 @@ const proposalRejectCommand = defineJsonCommand({
     "older-than": {
       type: "string",
       description:
-        "When bulk-rejecting, only reject proposals created more than this many days ago (e.g. '7' for 7 days).",
+        "When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago (e.g. '7' for 7 days).",
     },
     "dry-run": {
       type: "boolean",
@@ -311,6 +313,41 @@ const proposalRejectCommand = defineJsonCommand({
       reason: String(args.reason),
     });
     output("proposal-reject", result);
+  },
+});
+
+// `proposal reopen` (#997): the undo a rejection lacked. Unlike `reject` it is
+// reversible (reject again), so it asks no confirmation.
+const proposalReopenCommand = defineJsonCommand({
+  meta: {
+    name: "reopen",
+    description:
+      "Reopen rejected proposals: move them back to pending, keeping the rejection in their history. " +
+      "Takes full proposal ids; refused (and none reopened) if any is not rejected or its target changed since it was created.",
+  },
+  args: {
+    id: {
+      type: "positional",
+      description: "Rejected proposal id (full uuid); repeat it to reopen several at once",
+      required: true,
+    },
+    reason: {
+      type: "string",
+      description: "Why the rejection is being undone (kept in the proposal's review history)",
+    },
+    queue: { type: "string", description: "Select the proposal queue by source name" },
+  },
+  async run({ args }) {
+    // citty keeps every positional token in `_`, though it declares only `id`.
+    const ids = (Array.isArray(args._) && args._.length > 0 ? args._ : [args.id]).map(String);
+    const reason = typeof args.reason === "string" && args.reason.trim() ? args.reason.trim() : undefined;
+    const results = await akmProposalReopen({
+      ids,
+      queue: args.queue as string | undefined,
+      ...(reason !== undefined ? { reason } : {}),
+    });
+    if (results.length === 1) output("proposal-reopen", results[0]);
+    else output("proposal-reopen-batch", { reopened: results.length, results });
   },
 });
 
@@ -409,7 +446,7 @@ const proposalDrainCommand = defineJsonCommand({
     },
     "older-than": {
       type: "string",
-      description: "Only consider proposals created more than this many days ago.",
+      description: "Only consider proposals created (or last reopened) more than this many days ago.",
     },
     promote: {
       type: "boolean",
@@ -475,10 +512,11 @@ const proposalDrainCommand = defineJsonCommand({
       excludeIds = new Set(
         listProposals(stashDir, { status: "pending" })
           // Fail SAFE: exclude a proposal when its age cannot be computed
-          // (NaN createdAt) OR it is too fresh. An unparseable createdAt must
-          // never be treated as old enough to drain/promote.
+          // (NaN date) OR it is too fresh. An unparseable date must never be
+          // treated as old enough to drain/promote. Age counts from creation,
+          // or from the last reopen (#997) — a proposal just reopened is fresh.
           .filter((proposal) => {
-            const age = now - new Date(proposal.createdAt).getTime();
+            const age = now - new Date(proposalWaitingSince(proposal)).getTime();
             return Number.isNaN(age) || age < olderThanMs;
           })
           .map((proposal) => proposal.id),
@@ -557,7 +595,7 @@ const proposalDrainCommand = defineJsonCommand({
 export const proposalCommand = defineGroupCommand({
   meta: {
     name: "proposal",
-    description: "Manage the proposal queue: list, show, diff, accept, reject, revert, extract, new, drain",
+    description: "Manage the proposal queue: list, show, diff, accept, reject, reopen, revert, extract, new, drain",
   },
   // The group declared `--queue`/`--status`/`--ref`/`--type` only so the bare
   // form could act as `proposal list`. That form is gone (see below), and
@@ -570,6 +608,7 @@ export const proposalCommand = defineGroupCommand({
     diff: proposalDiffCommand,
     accept: proposalAcceptCommand,
     reject: proposalRejectCommand,
+    reopen: proposalReopenCommand,
     revert: proposalRevertCommand,
     drain: proposalDrainCommand,
     extract: extractCommand,

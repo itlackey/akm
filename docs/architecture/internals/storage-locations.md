@@ -683,7 +683,7 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 
 | Path | Contents | Retention |
 |---|---|---|
-| `$DATA/state.db` (`proposals` table) | Proposal queue: `id`, `stash_dir`, `ref`, `status` (`pending`\|`accepted`\|`rejected`\|`reverted`), `source`, `created_at`, `updated_at`, `content`, `frontmatter_json`, `metadata_json`. Replaces the pre-0.9.0 per-uuid `$STASH/.akm/proposals/<uuid>/proposal.json` filesystem layout — archival is a status flip, not a directory move (`src/commands/proposal/repository.ts`). | Durable; `archiveRetentionDays` (default 90d) governs when pending proposals age out |
+| `$DATA/state.db` (`proposals` table) | Proposal queue: `id`, `stash_dir`, `ref`, `status` (`pending`\|`accepted`\|`rejected`\|`reverted`), `source`, `created_at`, `updated_at`, `content`, `frontmatter_json`, `metadata_json`. Replaces the pre-0.9.0 per-uuid `$STASH/.akm/proposals/<uuid>/proposal.json` filesystem layout — archival is a status flip, not a directory move (`src/commands/proposal/repository.ts`). | Durable; `archiveRetentionDays` (default 90d) governs when pending proposals age out (counted from the last `akm proposal reopen`, if any) |
 | `$STASH/.akm/archive/<ts>-<i>-<name>.md` | Legacy consolidation archive. Current advisory consolidation does not create or manage these files. | Dead residue (itlackey/akm#889); reported by `akm migrate status`, removed by `akm migrate apply` |
 | `$STASH/.akm/consolidate-backup/<ts>/<name>.md` | Legacy pre-0.9 consolidation backups; current advisory consolidation does not create them. | Safe to remove after review |
 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Belief-state archived memory files + `cleanup.md` audit record | No cleanup |

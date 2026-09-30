@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm proposal {list,show,accept,reject,diff}` — review surface for the
+ * `akm proposal {list,show,accept,reject,reopen,diff}` — review surface for the
  * proposal substrate (#225).
  *
  * Each function returns a plain JSON envelope; the CLI dispatcher in
@@ -16,10 +16,11 @@
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
+import { NotFoundError } from "../../core/errors";
 import type { ResolvedWriteTarget } from "../../core/write-source";
 import { resolveWriteTarget } from "../../core/write-source";
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
-import { isRetireProposal } from "./proposal-types";
+import { isRetireProposal, proposalWaitingSince, type RetirementMetadata } from "./proposal-types";
 import {
   diffProposal,
   listProposals,
@@ -30,6 +31,7 @@ import {
   promoteProposal,
   proposalContent,
   rejectProposalDurably,
+  reopenProposals,
   resolveProposalId,
   revertProposal,
 } from "./repository";
@@ -242,6 +244,69 @@ export async function akmProposalReject(options: ProposalRejectOptions): Promise
   });
 }
 
+// ── reopen ──────────────────────────────────────────────────────────────────
+
+export interface ProposalReopenOptions {
+  stashDir?: string;
+  /** Proposal ids (full uuid) or asset refs; every one must be a rejected proposal. */
+  ids: readonly string[];
+  queue?: string;
+  /** Why the rejection is being undone; kept in the proposal's review history. */
+  reason?: string;
+  ctx?: ProposalsContext;
+  config?: AkmConfig;
+}
+
+/** One reopened proposal, in the envelope shape `reject` uses (`reason` here is the reopen reason). */
+export interface ProposalReopenResult {
+  schemaVersion: 1;
+  ok: true;
+  id: string;
+  ref: string;
+  reason?: string;
+  proposal: Proposal;
+}
+
+/**
+ * Put rejected proposals back in the queue as `pending` (#997) — the undo the
+ * proposal queue lacked. All-or-nothing: see {@link reopenProposals}. An
+ * archived proposal is found by its full id (a prefix only matches the pending
+ * queue), the same as `revert`.
+ */
+export async function akmProposalReopen(options: ProposalReopenOptions): Promise<ProposalReopenResult[]> {
+  return withAssetMutationLease("proposal-reopen", async () => {
+    const config = options.config ?? loadConfig();
+    const queue = resolveProposalQueue(options.stashDir, options.queue, config);
+    const ids = options.ids.map((id) => {
+      try {
+        return resolveProposalId(queue.stashDir, id, options.ctx).id;
+      } catch (error) {
+        if (!(error instanceof NotFoundError)) throw error;
+        throw new NotFoundError(
+          error.message,
+          error.code,
+          "A rejected proposal is addressed by its full id (a prefix only matches pending proposals): `akm proposal list --status rejected` lists them.",
+        );
+      }
+    });
+    const reopened = reopenProposals(
+      queue.stashDir,
+      config,
+      ids,
+      { queueTarget: queue.target, ...(options.reason !== undefined ? { reason: options.reason } : {}) },
+      options.ctx,
+    );
+    return reopened.map((proposal) => ({
+      schemaVersion: 1 as const,
+      ok: true as const,
+      id: proposal.id,
+      ref: proposal.ref,
+      ...(options.reason !== undefined ? { reason: options.reason } : {}),
+      proposal,
+    }));
+  });
+}
+
 // ── diff ────────────────────────────────────────────────────────────────────
 
 export interface ProposalDiffOptions {
@@ -252,6 +317,11 @@ export interface ProposalDiffOptions {
   config?: AkmConfig;
 }
 
+/** What a reviewer of a retire proposal needs to know that its diff (a file leaving) does not say. */
+const RETIRE_DIFF_NOTE =
+  "Accepting archives the retired file under .akm/memory-cleanup/archive/ (nothing is deleted); " +
+  "`akm proposal revert` restores it byte-exactly.";
+
 export interface ProposalDiffResult {
   schemaVersion: 1;
   id: string;
@@ -259,6 +329,43 @@ export interface ProposalDiffResult {
   isNew: boolean;
   unified: string;
   targetPath?: string;
+  /** `delete` on a retire proposal (accept archives its target); absent on a create or update. */
+  op?: "delete";
+  /**
+   * The pair verdict behind a retire proposal, under the keys `proposal show`
+   * reports it (`judgeReason` is the judge's text; the stored block's `reason`
+   * is the tombstone vocabulary and is not repeated here). `continuityRisk`
+   * appears when the retirement continuity check flagged the pair. Absent
+   * unless `op` is `delete`.
+   */
+  retirement?: Pick<
+    RetirementMetadata,
+    "retiredRef" | "successorRef" | "judgeLabel" | "judgeReason" | "cosine" | "continuityRisk"
+  >;
+  /** Present with `op: "delete"`: what accept and revert do to the retired file. */
+  note?: string;
+}
+
+/** The fields a retire proposal's diff result adds to an ordinary one (#997). */
+function retireDiffFields(
+  retirement: RetirementMetadata | undefined,
+): Pick<ProposalDiffResult, "op" | "retirement" | "note"> {
+  return {
+    op: "delete",
+    ...(retirement
+      ? {
+          retirement: {
+            retiredRef: retirement.retiredRef,
+            successorRef: retirement.successorRef,
+            judgeLabel: retirement.judgeLabel,
+            judgeReason: retirement.judgeReason,
+            cosine: retirement.cosine,
+            ...(retirement.continuityRisk ? { continuityRisk: retirement.continuityRisk } : {}),
+          },
+        }
+      : {}),
+    note: RETIRE_DIFF_NOTE,
+  };
 }
 
 export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResult {
@@ -274,6 +381,7 @@ export function akmProposalDiff(options: ProposalDiffOptions): ProposalDiffResul
     isNew: diff.isNew,
     unified: diff.unified,
     ...(diff.targetPath ? { targetPath: diff.targetPath } : {}),
+    ...(isRetireProposal(proposal) ? retireDiffFields(proposal.retirement) : {}),
   };
 }
 
@@ -420,7 +528,7 @@ export async function bulkAdjudicateProposals(options: BulkAdjudicateOptions): P
       if (lines > options.maxDiffLines) return false;
     }
     if (options.olderThanMs !== undefined) {
-      const age = Date.now() - new Date(p.createdAt).getTime();
+      const age = Date.now() - new Date(proposalWaitingSince(p)).getTime();
       if (age < options.olderThanMs) return false;
     }
     return true;

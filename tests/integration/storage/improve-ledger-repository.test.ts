@@ -13,6 +13,7 @@ import { STATE_MIGRATIONS } from "../../../src/core/state/migrations";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
 import {
+  forgetImproveLedgerDecision,
   getImproveLedgerRow,
   isContentDrivenRow,
   isLedgerBlocked,
@@ -20,6 +21,7 @@ import {
   nextEligibleAt,
   recordImproveLedger,
   recordImproveLedgerDecision,
+  reopenImproveLedgerDecision,
 } from "../../../src/storage/repositories/improve-ledger-repository";
 import { runMigrations } from "../../../src/storage/sqlite-migrations";
 
@@ -410,6 +412,153 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
         proposalId: "legacy",
       });
       expect(listImproveLedgerRows(db, "/s", ["distill"])).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
+  test("reopenImproveLedgerDecision puts the rows a rejection hardened back to `proposed` on the revisit cadence", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "personal//memories/foo",
+        source: "distill",
+        outcome: "proposed",
+        at: T0,
+        proposalId: "p1",
+      });
+      recordImproveLedgerDecision(db, {
+        proposalId: "p1",
+        stashDir: "/s",
+        ref: "personal//lessons/foo",
+        source: "distill",
+        outcome: "rejected",
+        at: plusDays(T0, 2),
+        detail: "not novel",
+      });
+      const rejected = getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill");
+      expect(rejected).toMatchObject({ outcome: "rejected", nextEligibleAt: plusDays(T0, 32) });
+      expect(isLedgerBlocked(rejected, plusDays(T0, 3))).toBe(true);
+
+      reopenImproveLedgerDecision(db, {
+        proposalId: "p1",
+        stashDir: "/s",
+        source: "distill",
+        at: plusDays(T0, 3),
+        detail: "reopened: second look",
+      });
+      const reopened = getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill");
+      expect(reopened).toMatchObject({
+        outcome: "proposed",
+        lastAttemptAt: T0, // a decision — and its undoing — never moves the attempt time
+        nextEligibleAt: plusDays(T0, 10), // the 7-day revisit cadence from the reopen, not the 30-day rejection window
+        proposalId: "p1",
+        detail: "reopened: second look",
+      });
+      expect(isLedgerBlocked(reopened, plusDays(T0, 3))).toBe(true); // still revisit-windowed while pending...
+      expect(isLedgerBlocked(reopened, plusDays(T0, 3), plusDays(T0, 2))).toBe(false); // ...which fresh feedback lifts, unlike a rejection's
+    } finally {
+      db.close();
+    }
+  });
+
+  test("reopenImproveLedgerDecision also drops a content_hash, so the row is exactly what a mint writes", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "personal//memories/foo",
+        source: "distill",
+        outcome: "rejected",
+        at: T0,
+        proposalId: "p1",
+        contentHash: "hash-v1",
+      });
+      expect(getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill")?.contentHash).toBe("hash-v1");
+      reopenImproveLedgerDecision(db, { proposalId: "p1", stashDir: "/s", source: "distill", at: T0 });
+      expect(getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill")).toMatchObject({
+        outcome: "proposed",
+        contentHash: null,
+        detail: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("reopenImproveLedgerDecision touches only the reopened proposal's rows, and creates none", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "a",
+        source: "reflect",
+        outcome: "rejected",
+        at: T0,
+        proposalId: "p1",
+      });
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "b",
+        source: "reflect",
+        outcome: "rejected",
+        at: T0,
+        proposalId: "p2",
+      });
+      recordImproveLedger(db, {
+        stashDir: "/other",
+        ref: "a",
+        source: "reflect",
+        outcome: "rejected",
+        at: T0,
+        proposalId: "p1",
+      });
+
+      reopenImproveLedgerDecision(db, { proposalId: "p1", stashDir: "/s", source: "reflect", at: T0 });
+      reopenImproveLedgerDecision(db, { proposalId: "unknown", stashDir: "/s", source: "reflect", at: T0 });
+
+      expect(getImproveLedgerRow(db, "/s", "a", "reflect")?.outcome).toBe("proposed");
+      expect(getImproveLedgerRow(db, "/s", "b", "reflect")?.outcome).toBe("rejected");
+      expect(getImproveLedgerRow(db, "/other", "a", "reflect")?.outcome).toBe("rejected");
+      expect(listImproveLedgerRows(db, "/s")).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("forgetImproveLedgerDecision drops the row a retire proposal's rejection created, and nothing else", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      // A retire mint writes no row; its rejection creates one keyed by the proposal's own ref.
+      recordImproveLedgerDecision(db, {
+        proposalId: "retire-1",
+        stashDir: "/s",
+        ref: "stash//memories/old-note",
+        source: "consolidate-pair",
+        outcome: "rejected",
+        at: T0,
+        detail: "would destroy content",
+      });
+      // The pair pass's own initiator row for the same asset lives under the bare ref and no proposal id.
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/old-note",
+        source: "consolidate-pair",
+        outcome: "proposed",
+        at: T0,
+        contentHash: "h1",
+      });
+
+      forgetImproveLedgerDecision(db, "/s", "retire-1");
+
+      expect(getImproveLedgerRow(db, "/s", "stash//memories/old-note", "consolidate-pair")).toBeUndefined();
+      expect(getImproveLedgerRow(db, "/s", "memories/old-note", "consolidate-pair")).toMatchObject({
+        outcome: "proposed",
+        contentHash: "h1",
+      });
     } finally {
       db.close();
     }

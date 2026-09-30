@@ -118,6 +118,54 @@ export function formatProposalListPlain(r: Record<string, unknown>): string {
   return lines.join("\n").trimEnd();
 }
 
+/**
+ * A retire proposal's verdict lines — the pair judge's label and reason, and
+ * the continuity check's failing queries — as `proposal show` and `proposal
+ * diff` both print them. `retirement` is the stored block, which `proposal
+ * diff` reports under the same keys.
+ */
+function retireVerdictLines(retirement: Record<string, unknown>): string[] {
+  const lines = [
+    `retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`,
+    `retire.reason: ${String(retirement.judgeReason)}`,
+  ];
+  // Item 1 (continuity check): flagged, but still minted — never swept by a
+  // bulk accept, only acceptable by id, so a reviewer must see it.
+  const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
+  if (continuityRisk) {
+    const failingQueries = typeof continuityRisk.failingQueries === "number" ? continuityRisk.failingQueries : 0;
+    const unverifiedQueries =
+      typeof continuityRisk.unverifiedQueries === "number" ? continuityRisk.unverifiedQueries : 0;
+    const summary: string[] = [];
+    if (failingQueries > 0) {
+      summary.push(
+        `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
+      );
+    }
+    // S2: a query the search call never ran, or that fell back to
+    // keyword-only ranking, is never silently trusted OR silently
+    // dropped — it excludes the proposal from bulk accept on its own.
+    if (unverifiedQueries > 0) {
+      summary.push(
+        `${unverifiedQueries} quer${unverifiedQueries === 1 ? "y" : "ies"} unverified (search failed or used the keyword-only fallback)`,
+      );
+    }
+    lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
+    // N3 / S4: the actual failing query text, not just the count — a
+    // reviewer deciding whether to accept by id needs to see what would
+    // stop resolving, not just how many queries.
+    const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
+    for (const rank of ranks) {
+      const successorRank =
+        rank.successorRank === null || rank.successorRank === undefined
+          ? "absent from top 10"
+          : `#${String(rank.successorRank)}`;
+      lines.push(`  - "${String(rank.query)}": retired #${String(rank.retiredRank)}, successor ${successorRank}`);
+    }
+  }
+  return lines;
+}
+
 export function formatProposalShowPlain(r: Record<string, unknown>): string {
   const p = r.proposal as Record<string, unknown>;
   const lines: string[] = [];
@@ -146,48 +194,24 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     if (review.reason) lines.push(`review.reason: ${String(review.reason)}`);
     if (review.decidedAt) lines.push(`review.decidedAt: ${String(review.decidedAt)}`);
   }
+  // `akm proposal reopen` (#997): the rejection each reopen undid, so a
+  // pending proposal that was once rejected says so.
+  const history = Array.isArray(p.reviewHistory) ? (p.reviewHistory as Array<Record<string, unknown>>) : [];
+  for (const entry of history) {
+    const undone = entry.review as Record<string, unknown> | undefined;
+    const was = undone
+      ? `${String(undone.outcome ?? "?")}${undone.reason ? `: ${String(undone.reason)}` : ""} (${String(undone.decidedAt ?? "?")})`
+      : "an unrecorded review";
+    const why = entry.reopenReason ? ` (${String(entry.reopenReason)})` : "";
+    lines.push(`reopened: ${String(entry.reopenedAt)}${why}, undoing ${was}`);
+  }
   // alpha.9: a consolidate retire proposal writes no content (`payload.content`
   // is empty by design) — this is the reason a reviewer needs instead. `diff`
   // shows the body being retired.
   const retirement = p.retirement as Record<string, unknown> | undefined;
   if (retirement) {
     lines.push(`retire: ${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`);
-    lines.push(`retire.label: ${String(retirement.judgeLabel)} (cosine=${String(retirement.cosine)})`);
-    lines.push(`retire.reason: ${String(retirement.judgeReason)}`);
-    // Item 1 (continuity check): flagged, but still minted — never swept by a
-    // bulk accept, only acceptable by id, so a reviewer must see it here.
-    const continuityRisk = retirement.continuityRisk as Record<string, unknown> | undefined;
-    if (continuityRisk) {
-      const failingQueries = typeof continuityRisk.failingQueries === "number" ? continuityRisk.failingQueries : 0;
-      const unverifiedQueries =
-        typeof continuityRisk.unverifiedQueries === "number" ? continuityRisk.unverifiedQueries : 0;
-      const summary: string[] = [];
-      if (failingQueries > 0) {
-        summary.push(
-          `${failingQueries} of the retired asset's own quer${failingQueries === 1 ? "y" : "ies"} would not have found the successor top 10`,
-        );
-      }
-      // S2: a query the search call never ran, or that fell back to
-      // keyword-only ranking, is never silently trusted OR silently
-      // dropped — it excludes the proposal from bulk accept on its own.
-      if (unverifiedQueries > 0) {
-        summary.push(
-          `${unverifiedQueries} quer${unverifiedQueries === 1 ? "y" : "ies"} unverified (search failed or used the keyword-only fallback)`,
-        );
-      }
-      lines.push(`retire.continuityRisk: ${summary.join("; ")} — excluded from bulk accept`);
-      // N3 / S4: the actual failing query text, not just the count — a
-      // reviewer deciding whether to accept by id needs to see what would
-      // stop resolving, not just how many queries.
-      const ranks = Array.isArray(continuityRisk.ranks) ? (continuityRisk.ranks as Array<Record<string, unknown>>) : [];
-      for (const rank of ranks) {
-        const successorRank =
-          rank.successorRank === null || rank.successorRank === undefined
-            ? "absent from top 10"
-            : `#${String(rank.successorRank)}`;
-        lines.push(`  - "${String(rank.query)}": retired #${String(rank.retiredRank)}, successor ${successorRank}`);
-      }
-    }
+    lines.push(...retireVerdictLines(retirement));
   }
   const validation = r.validation as Record<string, unknown> | undefined;
   if (validation) {
@@ -215,7 +239,10 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     }
   }
   const payload = p.payload as Record<string, unknown> | undefined;
-  if (payload && typeof payload.content === "string") {
+  // A retire proposal's payload is empty by design (it archives a file, it
+  // writes none): a bare `payload:` heading reads as "replaced by nothing" —
+  // the misreading #997 is about — so the retirement lines above stand alone.
+  if (!retirement && payload && typeof payload.content === "string") {
     lines.push("");
     lines.push("payload:");
     lines.push(payload.content);
@@ -230,6 +257,20 @@ export function formatProposalAcceptPlain(r: Record<string, unknown>): string {
 export function formatProposalRejectPlain(r: Record<string, unknown>): string {
   const reason = r.reason ? ` (${String(r.reason)})` : "";
   return `Rejected proposal ${String(r.id)} (${String(r.ref)})${reason}`;
+}
+
+export function formatProposalReopenPlain(r: Record<string, unknown>): string {
+  const reason = r.reason ? ` (${String(r.reason)})` : "";
+  return `Reopened proposal ${String(r.id)} (${String(r.ref)}) [pending]${reason}`;
+}
+
+export function formatProposalReopenBatchPlain(r: Record<string, unknown>): string {
+  const results = Array.isArray(r.results) ? (r.results as Array<Record<string, unknown>>) : [];
+  const reason = results[0]?.reason ? ` (${String(results[0].reason)})` : "";
+  return [
+    `Reopened ${results.length} proposal(s) [pending]${reason}`,
+    ...results.map((result) => `  ${String(result.id)}  ${String(result.ref)}`),
+  ].join("\n");
 }
 
 export function formatProposalDrainPlain(r: Record<string, unknown>): string {
@@ -261,10 +302,24 @@ export function formatProposalDrainPlain(r: Record<string, unknown>): string {
 }
 
 export function formatProposalDiffPlain(r: Record<string, unknown>): string {
+  const unified = typeof r.unified === "string" ? r.unified : "";
+  if (r.op === "delete") {
+    // #997: a retire proposal archives its target — it does not "update" it —
+    // so the header says so, and the pair verdict and the accept/revert note
+    // sit above the file that is leaving.
+    const retirement = r.retirement as Record<string, unknown> | undefined;
+    const subject = retirement
+      ? `${String(retirement.retiredRef)} -> ${String(retirement.successorRef)}`
+      : String(r.ref);
+    const lines = [`# proposal ${String(r.id)} (retire: ${subject})`];
+    if (retirement) lines.push(...retireVerdictLines(retirement));
+    if (typeof r.note === "string") lines.push(`note: ${r.note}`);
+    if (unified) lines.push(unified);
+    return lines.join("\n");
+  }
   const header = r.isNew
     ? `# proposal ${String(r.id)} (new asset: ${String(r.ref)})`
     : `# proposal ${String(r.id)} (update: ${String(r.ref)})`;
-  const unified = typeof r.unified === "string" ? r.unified : "";
   if (!unified) return `${header}\n(no changes)`;
   return `${header}\n${unified}`;
 }

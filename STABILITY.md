@@ -89,6 +89,7 @@ enumeration of the whole `proposal` noun group.
 | `akm proposal diff` | Evolving | |
 | `akm proposal accept` | Evolving | |
 | `akm proposal reject` | Evolving | |
+| `akm proposal reopen` | Evolving | New in 0.9.19; undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. |
@@ -247,7 +248,7 @@ proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
 - **Improvement loop** — `akm improve` and the proposal noun group
-  `akm proposal {extract,new,list,show,diff,accept,reject,revert,drain}`
+  `akm proposal {extract,new,list,show,diff,accept,reject,reopen,revert,drain}`
   (`extract` and `new` are the former top-level `akm extract`/`akm propose`,
   moved under `proposal` in 0.9.0). Output JSON keys
   are stable; CLI flags (`--strategy`, `--task`, `--generator`) may add

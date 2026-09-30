@@ -2486,9 +2486,10 @@ The maintenance pass run by `improve` also expires stale proposals: any pending
 proposal older than the top-level `archiveRetentionDays` config key (default
 **90**, not `improve.archiveRetentionDays`) is moved to the archive with the
 reason `expired: no action within retention window` and a `proposal_expired`
-event is emitted. Set `archiveRetentionDays` to `0` to disable expiration
-entirely. The total expired count surfaces in the improve result as
-`proposalsExpired`.
+event is emitted (a proposal put back by `akm proposal reopen` is counted
+from the reopen, not its original creation). Set `archiveRetentionDays` to `0`
+to disable expiration entirely. The total expired count surfaces in the improve
+result as `proposalsExpired`.
 
 `improve` never promotes proposals on its own — there is no confidence gate.
 Every generated proposal lands in the queue with a `pending` status
@@ -2629,14 +2630,14 @@ support.
 ### proposal
 
 Manage the proposal queue. The canonical grammar is `akm proposal <verb>`:
-`extract`, `new`, `list`, `show`, `diff`, `accept`, `reject`, `revert`,
-`drain`. Bare `akm proposal` is a usage error (exit 2) as of 0.9.0 — it used
+`extract`, `new`, `list`, `show`, `diff`, `accept`, `reject`, `reopen`,
+`revert`, `drain`. Bare `akm proposal` is a usage error (exit 2) as of 0.9.0 — it used
 to behave as `akm proposal list`; name the verb. There are no flat-verb
 spellings (`akm proposals`, `akm extract`, `akm propose`, `akm accept`, `akm
 reject`, `akm diff`, `akm revert`) — use the `akm proposal <verb>` form.
 
-`list`, `show`, `diff`, `accept`, `reject`, and `revert` (and bulk accept/
-reject) support `--queue <source>`. It selects the proposal queue stored for
+`list`, `show`, `diff`, `accept`, `reject`, `reopen`, and `revert` (and bulk
+accept/reject) support `--queue <source>`. It selects the proposal queue stored for
 that configured writable source root; without it, commands use the primary
 queue. Queue selection is not a destination override. `drain` does **not**
 take `--queue` — it operates on the standing backlog via a policy, not a
@@ -2796,7 +2797,7 @@ akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bu
 | `--target <name>` | Write destination; must match the proposal's recorded target |
 | `--generator <name>` | Bulk-accept all pending proposals from this generator (e.g. `reflect`, `distill`). Requires no positional id. |
 | `--max-diff-lines` | When bulk-accepting, only accept proposals whose content is `<=` this many lines. Larger proposals are skipped. |
-| `--older-than` | When bulk-accepting, only accept proposals created more than this many days ago |
+| `--older-than` | When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-accepted without accepting them |
 | `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk accept) |
 
@@ -2824,12 +2825,76 @@ akm proposal reject --generator reflect --reason "noisy" --max-diff-lines 50 -y
 | `--queue <source>` | Select the proposal queue by configured writable source name |
 | `--generator <name>` | Bulk-reject all pending proposals from this generator (e.g. `reflect`, `distill`). Requires no positional id. |
 | `--max-diff-lines` | When bulk-rejecting, only reject proposals whose content is `<=` this many lines. Larger proposals are skipped. |
-| `--older-than` | When bulk-rejecting, only reject proposals created more than this many days ago |
+| `--older-than` | When bulk-rejecting, only reject proposals created (or last reopened) more than this many days ago |
 | `--dry-run` | List proposals that would be bulk-rejected without rejecting them |
 | `-y`, `--yes` | Skip confirmation (required in non-interactive mode for bulk reject) |
 
 Bulk-reject all pending proposals from one generator with `--generator <name>`
 and no positional id. Bulk reject requires `-y`/`--yes` in non-interactive shells.
+
+#### proposal reopen
+
+Undo a rejection: move rejected proposals back to `pending` so they can be
+reviewed again. A rejection is otherwise final. `accept` refuses anything that
+is not pending, and a rejected consolidate pair-pass retire proposal also keeps
+the pair pass from proposing that retirement again while both documents are
+unchanged.
+
+```sh
+akm proposal reopen <id>
+akm proposal reopen <id> --reason "the diff was misrendered (#997)"
+akm proposal reopen <id> <id> <id>                 # several at once: all or none
+akm proposal reopen <id> --queue team-bundle
+akm proposal list --status rejected --generator consolidate-pair --format json \
+  | jq -r '.proposals[].id' | xargs akm proposal reopen --reason "diff was misrendered"
+```
+
+| Flag | Description |
+| --- | --- |
+| `--reason <text>` | Why the rejection is being undone. Kept in the proposal's review history, its ledger row and the `proposal_reopened` event |
+| `--queue <source>` | Select the proposal queue by configured writable source name |
+
+Takes full proposal ids: a UUID prefix only matches pending proposals, so it
+cannot name a rejected one (`akm proposal list --status rejected` prints the
+ids; add `--generator consolidate-pair` for the retire backlog). A retire
+proposal is never reached by asset ref, only by id.
+
+Reopening is refused, with the reason, when:
+
+- the proposal is not `rejected` (it is pending, accepted or reverted);
+- its target changed since it was created, by the same rule `accept` applies,
+  so a reopened proposal is never one `accept` would then refuse as stale: an
+  update needs its target unchanged, a create needs the target still absent,
+  and a retire proposal needs the successor to exist and both documents' body
+  hashes to match the ones recorded when the pair was judged;
+- it is a retire proposal and another pending retire proposal already involves
+  either of its two documents (the pair pass never has two at once, since
+  accepting one would strand the other): decide that one first;
+- it was recorded before proposals carried their change envelope (very old
+  archived rows).
+
+With several ids nothing is reopened unless every one can be: the error lists
+each refusal (exit 2).
+
+A reopened proposal is `pending` again with its `review` cleared. The rejection
+(its review, and any gate verdict that came with it) is appended to the
+proposal's `reviewHistory`, which `akm proposal show` prints as `reopened:
+<when> (<reason>), undoing rejected: <why>`. The gate verdict is cleared so the
+drain treats the proposal as undecided, except a `deferred` one, the quality
+gate's hand-off to a person, which stays so the drain keeps leaving the
+proposal for that person. It no longer counts as a settled pair for the pair
+pass, and while it is pending that pair is not
+proposed a second time. Its `improve_ledger` row goes back to what the mint
+wrote (a retire proposal's mint writes none, so the row its rejection created
+is dropped), the age retention expiry and `--older-than` see restarts at the
+reopen (retire proposals never expire), and a `proposal_reopened` event is
+appended. Accepting it afterwards archives a
+retired file exactly as for any retire proposal, and `akm proposal revert`
+restores it byte-exactly.
+
+Output: for one id, the envelope `reject` returns (`ok`, `id`, `ref`, the
+proposal, and `reason`, here the reopen reason); for several ids,
+`{ reopened, results }` with one such envelope per proposal.
 
 #### proposal revert
 
@@ -2876,6 +2941,41 @@ akm proposal diff <id> --target team-bundle    # Must match a recorded target
 `proposal accept` runs full validation before promoting. `proposal reject`
 requires `--reason`.
 
+**A retire proposal** (the consolidate pair pass's `consolidate-pair`
+retirements) writes no content: accepting it archives the retired file under
+`.akm/memory-cleanup/archive/` (nothing is deleted), and `akm proposal revert`
+restores it byte-for-byte. Its diff shows just that, the retired file's lines as
+removals and nothing added, under a `retire` header. It does not present the
+file as replaced by a blank one, which is how earlier releases rendered it:
+
+```
+$ akm proposal diff <id>
+# proposal <id> (retire: memories/old-note -> memories/new-note)
+retire.label: duplicate (cosine=0.986)
+retire.reason: Same durable facts, B adds nothing new.
+note: Accepting archives the retired file under .akm/memory-cleanup/archive/ (nothing is deleted); `akm proposal revert` restores it byte-exactly.
+--- stash//memories/old-note (existing)
++++ /dev/null (retired: archived; successor memories/new-note)
+@@ 1,5 0,0 @@
+----
+-description: an old note
+----
+-The durable fact.
+-A second line.
+```
+
+The JSON result carries three more fields for a retire proposal, and none of
+them on any other proposal: `op` (`"delete"`), `retirement`, and `note` (what
+accept and revert do to the file). `retirement` uses the keys `proposal show`
+reports the pair under: `retiredRef`, `successorRef`, `judgeLabel`,
+`judgeReason` (the judge's own text; the stored block's `reason` is the
+tombstone vocabulary and is not repeated), `cosine`, and `continuityRisk` when
+the retirement continuity check flagged the pair. The text output prints the
+same verdict lines `show` does, `continuityRisk` and its failing queries
+included, above the diff. `isNew` is always `false` for a retire proposal; when
+the retired file is already gone (retired, or removed by something else), the
+diff is only its two header lines, `--- <ref> (missing)` and the `+++` line.
+
 #### proposal drain
 
 Drain the standing pending-proposal backlog instead of adjudicating proposals
@@ -2899,7 +2999,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--promote` | Promote (accept) judge-passed proposals. Default is queue mode — stage only, no writes to assets. |
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
-| `--older-than` | Only consider proposals created more than this many days ago |
+| `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
 | `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
 

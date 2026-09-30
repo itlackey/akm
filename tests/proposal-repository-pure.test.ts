@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { describe, expect, test } from "bun:test";
-import { formatUnifiedDiff } from "../src/commands/proposal/diff-format";
+import { formatRetireDiff, formatUnifiedDiff } from "../src/commands/proposal/diff-format";
+import { proposalWaitingSince } from "../src/commands/proposal/proposal-types";
 // Import directly from the relocated module (the proposals repository split
 // out of `validators/proposals.ts`).
 import {
@@ -58,6 +59,87 @@ describe("proposal repository — pure helpers (post-split)", () => {
     expect(out).toContain(" one");
     expect(out).toContain("-two");
     expect(out).toContain("+TWO");
+  });
+
+  test("formatRetireDiff renders only removals, under a header that says the file is archived (#997)", () => {
+    const out = formatRetireDiff("stash//memories/old", "line one\nline two\n", "memories/new");
+    expect(out.split("\n")).toEqual([
+      "--- stash//memories/old (existing)",
+      "+++ /dev/null (retired: archived; successor memories/new)",
+      "@@ 1,2 0,0 @@",
+      "-line one",
+      "-line two",
+    ]);
+    // Nothing is added: the padding blank `+` line formatUnifiedDiff would render is exactly the bug.
+    expect(out.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"))).toEqual([]);
+    expect(formatUnifiedDiff("line one\nline two\n", "", "x")).toContain("\n+\n");
+  });
+
+  test("formatRetireDiff: no trailing newline, an empty file, no known successor, and a file already gone", () => {
+    expect(formatRetireDiff("r", "only line", undefined).split("\n")).toEqual([
+      "--- r (existing)",
+      "+++ /dev/null (retired: archived)",
+      "@@ 1,1 0,0 @@",
+      "-only line",
+    ]);
+    expect(formatRetireDiff("r", "", "s").split("\n")).toEqual([
+      "--- r (existing)",
+      "+++ /dev/null (retired: archived; successor s)",
+      "@@ 1,0 0,0 @@",
+    ]);
+    expect(formatRetireDiff("r", null, "s")).toBe("--- r (missing)\n+++ /dev/null (retired: archived; successor s)");
+  });
+
+  test("reviewHistory round-trips through the row; a malformed one is refused (#997)", () => {
+    const base = proposalRowToProposal({
+      ...historicalRow,
+      metadata_json: JSON.stringify({
+        changes: [{ path: "lessons/history.md", op: "update" }],
+        proposedTarget: { source: "team", root: "/tmp/stash" },
+      }),
+    });
+    const reviewHistory = [
+      {
+        review: { outcome: "rejected" as const, reason: "no", decidedAt: "2026-01-02T00:00:00.000Z" },
+        gateDecision: { outcome: "auto-rejected" as const, reason: "expired", decidedAt: "2026-01-02T00:00:00.000Z" },
+        reopenedAt: "2026-01-03T00:00:00.000Z",
+        reopenReason: "second look",
+      },
+    ];
+    const values = proposalToRowValues({ ...base, reviewHistory }, historicalRow.stash_dir);
+    expect(proposalRowToProposal({ ...historicalRow, ...values }).reviewHistory).toEqual(reviewHistory);
+    // Never written when absent, so a row that was never reopened is byte-identical to before.
+    expect(proposalToRowValues(base, historicalRow.stash_dir).metadata_json).not.toContain("reviewHistory");
+
+    const withHistory = (history: unknown) => ({
+      ...historicalRow,
+      metadata_json: JSON.stringify({
+        changes: [{ path: "lessons/history.md", op: "update" }],
+        proposedTarget: { source: "team", root: "/tmp/stash" },
+        reviewHistory: history,
+      }),
+    });
+    expect(() => proposalRowToProposal(withHistory("nope"))).toThrow(/reviewHistory/);
+    expect(() => proposalRowToProposal(withHistory([{ reopenedAt: 5 }]))).toThrow(/reviewHistory/);
+    expect(() => proposalRowToProposal(withHistory([{ reopenedAt: "t", review: { outcome: "rejected" } }]))).toThrow(
+      /reviewHistory/,
+    );
+    expect(proposalRowToProposal(withHistory([])).reviewHistory).toEqual([]);
+  });
+
+  test("proposalWaitingSince counts from the last reopen, else from creation (#997)", () => {
+    const created = "2026-01-01T00:00:00.000Z";
+    expect(proposalWaitingSince({ createdAt: created })).toBe(created);
+    expect(proposalWaitingSince({ createdAt: created, reviewHistory: [] })).toBe(created);
+    expect(
+      proposalWaitingSince({
+        createdAt: created,
+        reviewHistory: [
+          { reopenedAt: "2026-02-01T00:00:00.000Z" },
+          { reopenedAt: "2026-03-01T00:00:00.000Z", reopenReason: "again" },
+        ],
+      }),
+    ).toBe("2026-03-01T00:00:00.000Z");
   });
 
   test("tolerates a row without the current proposal envelope (#859)", () => {

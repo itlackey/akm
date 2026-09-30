@@ -86,6 +86,24 @@ export interface ProposalReview {
 }
 
 /**
+ * A rejection `akm proposal reopen` undid, kept on the proposal so reopening
+ * it never erases what happened. The rejection's `gateDecision` is recorded
+ * here too, and cleared from the proposal unless it is a `deferred` one: a
+ * reopened proposal is adjudicated afresh, whereas a stale `staged` verdict
+ * would let the drain accept it unseen and another gate's `auto-rejected`
+ * would have the drain skip it. A `deferred` verdict (the quality gate's
+ * hand-off to a person) stays, so the drain keeps leaving it alone.
+ */
+export interface ProposalReviewHistoryEntry {
+  /** The rejection that was undone, as recorded when it was made. */
+  review?: ProposalReview;
+  gateDecision?: ProposalGateDecision;
+  reopenedAt: string;
+  /** The `--reason` given to `akm proposal reopen`. */
+  reopenReason?: string;
+}
+
+/**
  * A gate's verdict (#577): `staged` means a judge passed this exact content
  * (a promote run may accept it without judging again); `deferred` leaves it
  * for review.
@@ -226,6 +244,8 @@ export interface Proposal {
    */
   beforeHashNormalized?: string;
   review?: ProposalReview;
+  /** Rejections undone by `akm proposal reopen`, oldest first; absent on a proposal never reopened. */
+  reviewHistory?: ProposalReviewHistoryEntry[];
   /** Self-estimated confidence in [0, 1], for reviewers. */
   confidence?: number;
   gateDecision?: ProposalGateDecision;
@@ -263,6 +283,18 @@ export interface Proposal {
    * rather than re-deriving `backupContent` from whatever is on disk now.
    */
   retireAcceptIntent?: RetireAcceptIntent;
+}
+
+/**
+ * When a pending proposal's wait for review began: its last reopen (#997), else
+ * its creation. Every age-based sweep — retention expiry, and `--older-than` on
+ * bulk accept/reject and on `drain` — counts from here, so a proposal just put
+ * back in the queue is not swept as if it had been waiting since it was first
+ * created (a scheduled `drain --older-than 7 --promote` would otherwise take
+ * it at once).
+ */
+export function proposalWaitingSince(proposal: Pick<Proposal, "createdAt" | "reviewHistory">): string {
+  return proposal.reviewHistory?.at(-1)?.reopenedAt ?? proposal.createdAt;
 }
 
 /** A pending or accepted proposal whose primary change deletes its target (a consolidate retire proposal, alpha.9). */

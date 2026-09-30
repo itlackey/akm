@@ -102,6 +102,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
       "confidence",
       "gateDecision",
       "review",
+      "reviewHistory",
       "retirement",
     ]);
   }
@@ -118,6 +119,7 @@ export function shapeProposalEntry(entry: Record<string, unknown>, detail: Detai
     "gateDecision",
     "payload",
     "review",
+    "reviewHistory",
     "retirement",
     "retiredArchive",
     "promotionSource",
@@ -194,6 +196,11 @@ export function shapeProposalDiffOutput(result: Record<string, unknown>, detail:
     isNew: result.isNew,
     unified: result.unified,
     ...(result.targetPath !== undefined ? { targetPath: result.targetPath } : {}),
+    // A retire proposal (#997): the diff alone is a file leaving, so the pair
+    // verdict and the accept/revert note travel with it at every detail level.
+    ...(result.op !== undefined ? { op: result.op } : {}),
+    ...(result.retirement !== undefined ? { retirement: result.retirement } : {}),
+    ...(result.note !== undefined ? { note: result.note } : {}),
   };
   if (detail === "full") {
     return { schemaVersion: result.schemaVersion, ...base };
