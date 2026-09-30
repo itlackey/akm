@@ -12,7 +12,7 @@
 | `--bundle` | `string` | The bundle the run improves and writes to, overriding `defaultWriteTarget` and the working bundle. It is the only bundle whose assets the run plans. |
 | `--limit` | `number` | Cap the number of assets processed after utility-score sorting. |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
-| `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a config error. |
+| `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a transient error (`IMPROVE_LOCK_HELD`, exit 75). |
 | `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; disable retrieval fallback. |
 
 Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`) replace production defaults in tests.
@@ -27,7 +27,7 @@ flowchart TD
     C -- yes --> COLLECT[collectEligibleRefs\nquery existing SQLite index, filter to stashDir]
     E --> E1{lock file held?}
     E1 -- yes, skip-if-locked --> SKIP[Return exit-0 no-op\nno triage, index, events, or sync]
-    E1 -- yes, no flag --> ERR([throw ConfigError: already running])
+    E1 -- yes, no flag --> ERR([throw TransientError: already running\nIMPROVE_LOCK_HELD, exit 75])
     E1 -- no / stale reclaimed --> PURGE[purgeGracedArchive\ngit-backed bundles only: delete archived\nretirement bytes past RETIRE_GRACE_DAYS]
     PURGE --> TRIAGE[Triage pending proposal backlog]
     TRIAGE --> ENSURE[ensureIndex primaryStashDir\nshared deadline signal]
@@ -41,8 +41,8 @@ flowchart TD
     J[applyMemoryCleanup\npersist belief-state transitions\narchive prune candidates to .akm/memory-cleanup/archive/]
     J --> K[filterRemovedPlannedRefs\ndrop archived refs from queue]
 
-    K --> L[Signal filter\nkeep only refs with recent feedback events\nhaving metadata.signal or metadata.note]
-    L --> L2[Zero-feedback fallback\ninclude refs with retrievalCount >= threshold\ndefault threshold: 5]
+    K --> L[Signal delta\nkeep refs with signal feedback newer than\nthe last ledger attempt and no ledger window]
+    L --> L2[Fallback lanes\nproactive maintenance, high salience:\nonly retrieved or new material]
     L2 --> M[buildUtilityMap\nlook up utility scores from SQLite]
     M --> N[Sort by utility score DESC\napply --limit if set]
     N --> J2{anything archived or transitioned?}
@@ -579,9 +579,18 @@ Two proposals can share the same `ref`; their UUID primary keys prevent collisio
 
 `akm improve` and `akm lint` only operate on writable bundle sources (sources with `writable: true`). Read-only sources (git, npm, website) are excluded from the candidate set before any other filtering; a read-only write target plans nothing.
 
-## Cooldown pre-filter
+## Ledger pre-filter (signal delta)
 
-Before the per-asset loop, `akm improve` builds Sets of all refs that are currently under cooldown (reflect, distill, consolidation, schema-repair) in a single batch of event reads. This replaces the prior design that issued one `readEvents` query per ref inside the loop. The change eliminates the "reflect cooldown" console spam on large bundles and reduces database round-trips to O(1) reads per cooldown category. Reflect cooldown now bypasses refs with a newer `promoted` event than their last `reflect_invoked` event.
+Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row per `(stash_dir, ref, source)`; `source` is `reflect`, `distill`, `consolidate`, `consolidate-pair`, `extract` or `schema-repair`) before it spends a model call, and writes it after. It replaced the per-stage cooldown constants and the event reads behind them (`reflect_invoked`, `distill_invoked`, `consolidate_completed`, rejected-proposal rows, `proposal_fingerprints`). When a ref may be tried again is decided in one place, `nextEligibleAt`, from the row's source and outcome: a rejected or quality-rejected attempt waits 14 days (reflect), 30 days (distill) or 7 days (any other source), an expired proposal 1 day, and an attempt that left a pending proposal, needed review, judged no action or changed nothing is revisited after 7 days; an accepted or failed attempt has no window. The consolidate pair pass and a decided consolidate promotion have no clock at all: their rows hold a body hash and the ref waits until its body differs (see **Re-eligibility** above). `rejected`, `quality_rejected` and `expired` are hard windows; every other window is a revisit cadence that a newer signal (new feedback, or for consolidation an edit) lifts (`isLedgerBlocked`).
+
+**Selection.** Before the per-asset loop, `buildSnapshotManifest` reads the feedback events once and the ledger's `reflect` and `distill` rows once for every candidate, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. Reflect and distill each *pass* a ref when it has feedback carrying a signal or a note, dated within the last 30 days, newer than that stage's last ledger attempt for the ref, with no hard window blocking it. Then:
+
+- A ref that passes reflect is planned for the loop. If it does not pass distill, distill is skipped for it (a `distill-skipped` action and an `improve_skipped` event with reason `distill_no_new_signal`).
+- A ref that passes only distill, and is a distill candidate, is planned distill-only.
+- A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)).
+- Every ref left without a lane is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
+
+An explicit ref scope bypasses every gate. After the run lock is acquired, `refilterProactiveLoopRefs` (`improve.ts`) re-reads the ledger and drops proactive refs that another run attempted since this one planned (the "post-lock cooldown re-filter" log line). Consolidation, extract and schema repair read their own ledger sources in their own stages.
 
 ## Strategy process configuration
 
@@ -614,45 +623,25 @@ and can report `ok: false` for terminated runs:
 
 ## Consolidation Skip Reason Taxonomy
 
-`akmConsolidate` emits structured `skipReasons` entries in its result. Each entry is `{ op, ref, reason }`. The reasons fall into three categories:
-
-### Expected / healthy (not bugs)
+The promote pass records a structured skip for each memory the model proposed to promote and the pass then declined to queue. They appear in `consolidation.skipReasons` of the improve result as `{ ref, skips: [{ op: "promote", reason }] }`, one entry per memory (`ConsolidateResult`, `src/core/improve-types.ts`); `emitPromotionProposal` in `src/commands/improve/consolidate.ts` is the only producer. Each skip also adds a warning line and moves the memory from `judgedNoAction` into the skip count, which keeps the accounting invariant `processed == promoted + judgedNoAction + Σ(skipReasons) + failedChunkMemories`. A skipped memory is written to the ledger as `judged_no_action` (revisited after 7 days, or at once on an edit), except a memory already promoted this run, which keeps the `proposed` row its proposal wrote, and `promote_create_failed`, which leaves no row so the next run retries it. The checks run in this order and the first that applies wins:
 
 | Reason | Meaning |
 |--------|---------|
-| `merge_participant_blocked` | Hot or unparseable memory was a merge participant. Pre-flight guard fires before LLM call. High counts are normal on bundles with many `captureMode: hot` memories. |
-| `captureMode_hot_refused` | Delete refused on a hot memory. Correct behavior. |
-| `promote_already_exists` | Target knowledge ref already exists on disk. Normal steady-state noise. |
-| `promote_source_too_small` | Source body too short to warrant a promotion proposal. |
-| `merge_content_too_short` | Secondary body too short to be a meaningful merge candidate. |
-| `dedup_pending_proposal` | Ref already has a pending proposal. Clears as triage drains the queue. |
-| `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. The memory stays in the ledger as `judged_no_action` (7-day revisit, or at once on an edit). |
+| `promote_already_promoted_this_run` | Defensive guard: the memory was already promoted earlier in this run. `mergePlans` leaves one operation per memory, so it should not fire. |
+| `promote_pending_proposal_exists` | A pending proposal already exists for the target `knowledge/<slug>`. Clears as triage drains the queue. |
+| `promote_already_exists` | `knowledge/<slug>.md` already exists in the write target. Normal steady-state noise. |
+| `promote_read_failed` | The memory file could not be read. |
+| `promote_sanitization_failed` | The memory could not be re-serialized as an asset (an unbalanced code fence, missing or malformed frontmatter, frontmatter that is not valid YAML or not a mapping); the warning carries the reason code. |
+| `promote_superseded` | The memory has `status: superseded`, which is not promotable knowledge. |
+| `promote_source_too_small` | The memory's body is under 100 characters, too short to make useful knowledge. |
+| `dedup_existing_knowledge` | A `knowledge/` doc in the write target already has an identical body (frontmatter aside). |
+| `dedup_pending_proposal` | A pending consolidate proposal already carries an identical body. Clears as triage drains the queue. |
+| `dedup_covered_by_knowledge` | A `knowledge/` doc among the 20 nearest to the memory in its bundle already holds at least half of its 5-word shingles (#998), so promoting it would queue a near-copy. |
+| `promote_invalid_frontmatter` | Neither the model's description nor the memory's own is usable: it is missing or truncated. |
+| `promote_dedup_window` | The target slug is a variant of a pending consolidate proposal's slug (dates, counters and word order folded), so it would queue a near-copy. |
+| `promote_create_failed` | `createProposal` threw. The memory gets no ledger row, is retried next run, and is counted in `failedPromotions`. |
 
-### Fixed bugs — should be 0 in steady state
-
-| Reason | Root cause | Fix | Regression signal |
-|--------|-----------|-----|-------------------|
-| `merge_missing_description` | Guard ordering bug: pre-flight hot guard was placed *after* `generateMergedContent()`, so hot memories wasted LLM calls and then failed the description check. | Commit `208fe06`: pre-flight guard before LLM call. | Any non-zero count. |
-| `merge_primary_missing` (stale-DB path) | Prior run deleted files but did not reindex; ghost DB entries reached chunk prompts. | Commit `d34bc1a`: pre-flight `fs.existsSync` filter before chunking. | Log line `Pre-flight: filtered N stale DB entries` + `merge_primary_missing` in same run. |
-| `merge_primary_missing` (hallucination path) | LLM invented a primary ref not in the loaded pool; `mergePlans()` had no ref-existence check; every real secondary charged with `merge_primary_missing`. | Commit `a853de4`: `mergePlans()` accepts `knownRefs` set; ops with hallucinated primaries dropped pre-execution. | Log line `mergePlans: primary <ref> not in loaded memory pool (LLM hallucination)`. |
-
-### Residual / low-frequency (not bugs at normal rates)
-
-| Reason | Meaning | Normal rate | Investigation threshold |
-|--------|---------|-------------|------------------------|
-| `merge_primary_missing` (intra-run race) | An earlier op consumed the ref as a secondary; Fix-A (`memoryByRef.delete`) pruned it; a later op's plan used that ref as its primary. Log: `Merge: primary <ref> not found in loaded memories (pruned by prior op this run)`. | 0–2/run | >2/run: investigate chunk plan ordering |
-| `merge_primary_file_gone` | Defense-in-depth: file existed at pre-flight but was deleted between pre-flight and Phase B execution. | 0–1/run | >1/run: investigate lock contention |
-
-### Distinguishing `merge_primary_missing` causes at a glance
-
-```
-merge_primary_missing spike → check log for:
-  "Pre-flight: filtered N stale DB entries"  → stale-DB regression (d34bc1a broken)
-  "pruned by prior op this run"              → intra-run race (normal if ≤2)
-  "LLM hallucination" (in mergePlans warn)   → hallucination caught, not charged (a853de4 working)
-  "merge_primary_file_gone" in skip reasons  → concurrent file deletion
-  none of the above + code change            → investigate pre-flight filter / memoryByRef init
-```
+The dedup and eligibility reasons are ordinary; `promote_read_failed`, `promote_sanitization_failed`, `promote_invalid_frontmatter` and `promote_create_failed` point at a broken memory or a failing write and are worth a look when they recur. The consolidate `merge`, `delete` and `contradict` operations, and the `merge_*` and `captureMode_hot_refused` skip reasons that went with them, were removed in 0.9.17-alpha.1 (see Phase A above); the promote pass emits none of them. The pair pass (`consolidate-pair`) reports through its own result, not through `skipReasons`.
 
 ## Reviewed
 
