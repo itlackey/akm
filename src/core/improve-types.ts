@@ -1024,7 +1024,7 @@ export interface AkmImproveResult {
    * auto-sync scopes its commit to, minus paths whose final bytes match HEAD.
    *
    * Deduped and sorted. Entries are POSIX paths relative to the run's primary
-   * stash dir; a write that landed outside it (e.g. a `--target` bundle) is
+   * stash dir; a write that landed outside it (e.g. in another bundle) is
    * reported as an absolute path. Omitted entirely when the run wrote nothing —
    * and always absent on a dry run, which writes nothing by construction.
    */

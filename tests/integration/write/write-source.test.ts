@@ -533,6 +533,33 @@ describe("resolveWriteTarget", () => {
       ),
     ).toThrow(UsageError);
   });
+
+  test("names --target in its errors by default, and the caller's flag when it passes one", () => {
+    const config = {
+      semanticSearchMode: "off",
+      bundles: {
+        other: { path: "/tmp/akm-other", writable: true },
+        frozen: { path: "/tmp/akm-frozen", writable: false },
+      },
+    } as const;
+    const failure = (target: string, flag?: string): { message: string; hint?: string } => {
+      try {
+        resolveWriteTarget(config, target, flag ? { flag } : {});
+      } catch (error) {
+        const { message } = error as Error;
+        return { message, hint: (error as { hint?: () => string | undefined }).hint?.() };
+      }
+      throw new Error("expected resolveWriteTarget to throw");
+    };
+
+    expect(failure("nope").message).toContain("--target must reference a source name");
+    expect(failure("nope", "--bundle").message).toContain("--bundle must reference a source name");
+    expect(failure("nope", "--bundle").message).not.toContain("--target");
+
+    expect(failure("frozen").hint).toContain("or pass --target to a different source");
+    expect(failure("frozen", "--bundle").hint).toContain("or pass --bundle to a different source");
+    expect(failure("frozen", "--bundle").hint).not.toContain("--target");
+  });
 });
 
 // ── sanitizeCommitMessage (issue #270) ──────────────────────────────────────

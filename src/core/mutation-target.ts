@@ -13,6 +13,7 @@ import {
   type ResolvedWriteTarget,
   resolveWorkingStashTarget,
   resolveWriteTarget,
+  type WriteTargetOptions,
 } from "./write-source";
 
 export interface ResolvedMutationTarget {
@@ -40,7 +41,7 @@ function canonicalSources(config: AkmConfig): CanonicalSource[] {
 function targetForCanonicalSource(
   config: AkmConfig,
   canonical: CanonicalSource,
-  options: { requireWritable?: boolean },
+  options: WriteTargetOptions,
 ): ResolvedWriteTarget {
   const target = canonical.source.registryId
     ? resolveWriteTarget(config, canonical.source.registryId, options)
@@ -64,7 +65,7 @@ export function canonicalBundleIdForTarget(config: AkmConfig, target: ResolvedWr
 export function resolveBundleWriteTarget(
   config: AkmConfig,
   bundleId: string,
-  options: { requireWritable?: boolean } = {},
+  options: WriteTargetOptions = {},
 ): ResolvedWriteTarget {
   const canonical = canonicalSources(config).find((candidate) => candidate.bundleId === bundleId);
   if (!canonical) {
@@ -77,7 +78,7 @@ export function resolveBundleWriteTarget(
 function resolveExplicitMutationTarget(
   config: AkmConfig,
   explicitTarget: string,
-  options: { requireWritable?: boolean },
+  options: WriteTargetOptions,
 ): ResolvedWriteTarget {
   try {
     return resolveWriteTarget(config, explicitTarget, options);
@@ -90,14 +91,19 @@ function resolveExplicitMutationTarget(
   }
 }
 
-/** Reconcile a qualified mutation ref with `--target`, then resolve the write destination. */
+/**
+ * Reconcile a qualified mutation ref with the explicit target (`--target`, or
+ * the `options.flag` the caller's command spells), then resolve the write
+ * destination.
+ */
 export function resolveMutationTarget(
   config: AkmConfig,
   ref: AssetRef,
   explicitTarget?: string,
-  options: { requireWritable?: boolean; allowedAdapters?: readonly string[] } = {},
+  options: WriteTargetOptions & { allowedAdapters?: readonly string[] } = {},
 ): ResolvedMutationTarget {
-  const writeOptions = { requireWritable: options.requireWritable };
+  const flag = options.flag ?? "--target";
+  const writeOptions: WriteTargetOptions = { requireWritable: options.requireWritable, flag };
   const qualifiedTarget = ref.origin ? resolveBundleWriteTarget(config, ref.origin, writeOptions) : undefined;
   const explicitResolved = explicitTarget
     ? resolveExplicitMutationTarget(config, explicitTarget, writeOptions)
@@ -108,9 +114,9 @@ export function resolveMutationTarget(
     path.resolve(qualifiedTarget.source.path) !== path.resolve(explicitResolved.source.path)
   ) {
     throw new UsageError(
-      `Qualified ref bundle "${ref.origin}" conflicts with --target "${explicitTarget}".`,
+      `Qualified ref bundle "${ref.origin}" conflicts with ${flag} "${explicitTarget}".`,
       "INVALID_FLAG_VALUE",
-      `Drop --target or select the same bundle.`,
+      `Drop ${flag} or select the same bundle.`,
     );
   }
 

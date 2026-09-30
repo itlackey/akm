@@ -119,6 +119,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   byte-exactly. The new fields are additive and appear on retire proposals
   only. `akm proposal show --detail full` also stops ending a retire proposal
   with a bare `payload:` heading over nothing.
+- **`akm improve`'s errors name `--bundle`, not the retired `--target`.** A
+  `--bundle` that names no configured bundle, names a read-only one, or differs
+  from a bundle-qualified scope (`akm improve team//skills/x --bundle stash`)
+  failed with "--target must reference a source name", "or pass --target to a
+  different source" or "conflicts with --target". `akm improve` rejects
+  `--target` (renamed `--bundle` in 0.9), so each message sent the user to a flag
+  that does not work. They now name `--bundle`; the commands that really take
+  `--target` (`import`, `env`, `secret`) are unchanged. Separately, the help for
+  `akm improve --skip-if-locked` said a lock collision without the flag exits
+  78. It exits 75 (`IMPROVE_LOCK_HELD`), as the CLI reference says.
 
 ## [0.9.18] - 2026-09-29
 

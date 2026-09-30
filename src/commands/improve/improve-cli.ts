@@ -21,7 +21,7 @@ import { collectEngineCredentialValues } from "../../integrations/agent/engine-r
 import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
-import { akmImprove, resolveImproveReadSource } from "./improve";
+import { akmImprove, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
   buildImproveRunId,
@@ -304,7 +304,7 @@ export const improveCommand = defineCommand({
     "skip-if-locked": {
       type: "boolean",
       description:
-        "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 78). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
+        "If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with 'already running' (exit 75). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress.",
       default: false,
     },
     "require-engines": {
@@ -370,8 +370,8 @@ export const improveCommand = defineCommand({
       const writeTarget = dryRun
         ? undefined
         : scopeRef
-          ? resolveMutationTarget(effectiveConfig, scopeRef, targetArg).target
-          : resolveWriteTarget(effectiveConfig, targetArg);
+          ? resolveMutationTarget(effectiveConfig, scopeRef, targetArg, { flag: IMPROVE_TARGET_FLAG }).target
+          : resolveWriteTarget(effectiveConfig, targetArg, { flag: IMPROVE_TARGET_FLAG });
       // Every model-backed process resolves before any side effect; a dry run
       // never dispatches, so it tolerates every process being disabled.
       const resolvedPlan = resolveImprovePlan(strategyArg, effectiveConfig, { allowAllDisabled: Boolean(dryRun) });

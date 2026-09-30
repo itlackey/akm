@@ -90,6 +90,17 @@ export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "
   return kind === "filesystem" || kind === "git";
 }
 
+/** How a caller wants a write target resolved. */
+export interface WriteTargetOptions {
+  requireWritable?: boolean;
+  /**
+   * The flag that named the explicit target, spelled in the errors below
+   * (default `--target`). A command whose destination flag is `--bundle`, like
+   * `akm improve`, passes that instead of telling its user to use `--target`.
+   */
+  flag?: string;
+}
+
 /**
  * Resolve the destination for a write: explicit `--target`, then
  * `defaultWriteTarget`, then the working stash (`defaultBundle`). There is no
@@ -98,11 +109,12 @@ export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "
 export function resolveWriteTarget(
   akmConfig: AkmConfig,
   explicitTarget?: string,
-  options: { requireWritable?: boolean } = {},
+  options: WriteTargetOptions = {},
 ): ResolvedWriteTarget {
   const allConfiguredSources = resolveConfiguredSources(akmConfig);
   const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
+  const flag = options.flag ?? "--target";
 
   if (explicitTarget) {
     const match = configuredSources.find((s) => s.name === explicitTarget);
@@ -111,7 +123,7 @@ export function resolveWriteTarget(
         throw new UsageError(`Bundle "${explicitTarget}" is disabled.`, "INVALID_FLAG_VALUE");
       }
       throw new UsageError(
-        `--target must reference a source name from your config. No source named "${explicitTarget}" is configured. Run \`akm bundle list\` to see available sources.`,
+        `${flag} must reference a source name from your config. No source named "${explicitTarget}" is configured. Run \`akm bundle list\` to see available sources.`,
         "INVALID_FLAG_VALUE",
       );
     }
@@ -119,7 +131,7 @@ export function resolveWriteTarget(
       throw new ConfigError(
         `source ${explicitTarget} is not writable`,
         "INVALID_CONFIG_FILE",
-        `Set \`writable: true\` on the "${explicitTarget}" source in your config, or pass --target to a different source.`,
+        `Set \`writable: true\` on the "${explicitTarget}" source in your config, or pass ${flag} to a different source.`,
       );
     }
     return adaptConfiguredSource(match);
