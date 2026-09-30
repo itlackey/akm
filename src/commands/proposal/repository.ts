@@ -682,6 +682,10 @@ function ledgerOutcomeForDecision(
  * hash the promotion was queued against — this is what holds the memory back
  * until it changes (`isContentDrivenDecision`). Any other proposal, and a
  * promotion minted before the hash was recorded, is keyed by its own ref.
+ * Every decision that can create a row when none carries the proposal id — a
+ * reject, an accept and a drain deferral alike — must key it this way: a stray
+ * row under the knowledge ref carries the proposal id, so a later verdict
+ * updates that one and never reaches the memory's own row.
  */
 function decisionLedgerSubject(proposal: Proposal): { ref: string; contentHash?: string } {
   if (
@@ -758,7 +762,7 @@ export function recordGateDecision(
         recordImproveLedgerDecision(db, {
           proposalId: updated.id,
           stashDir,
-          ref: updated.ref,
+          ...decisionLedgerSubject(updated),
           source: updated.source,
           outcome: "review_needed",
           at: decidedAt,

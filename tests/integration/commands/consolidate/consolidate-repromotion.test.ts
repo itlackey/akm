@@ -29,11 +29,14 @@ import {
 import { contentHash } from "../../../../src/commands/improve/content-hash";
 import { recordLedgerAttempt } from "../../../../src/commands/improve/ledger";
 import { akmProposalAccept, akmProposalReject } from "../../../../src/commands/proposal/proposal";
-import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import { createProposal, listProposals, recordGateDecision } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { resolveWriteTarget } from "../../../../src/core/write-source";
-import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
+import {
+  getImproveLedgerRow,
+  listImproveLedgerRows,
+} from "../../../../src/storage/repositories/improve-ledger-repository";
 import { makeConfig } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
@@ -124,6 +127,16 @@ function ledgerRow(name: string) {
   }
 }
 
+/** The ref of every `consolidate` ledger row: promotions are keyed by their source memory, never by the knowledge ref. */
+function ledgerRefs(): string[] {
+  const db = openStateDatabase();
+  try {
+    return listImproveLedgerRows(db, stash, ["consolidate"]).map((row) => row.ref);
+  } finally {
+    db.close();
+  }
+}
+
 function pool() {
   return inspectConsolidationPool({ config }, stash, []);
 }
@@ -196,6 +209,44 @@ describe("a promotion whose ledger row a later attempt overwrote (#998)", () => 
       contentHash: contentHash(raw, "body"),
       proposalId: proposal.id,
     });
+  });
+});
+
+describe("a promotion the drain deferred after its ledger row was overwritten (#998)", () => {
+  it("keeps the deferral on the memory's row, so the later verdict still holds the memory", async () => {
+    const raw = writeMemory("deferred", BODY);
+    markRetrieved("deferred");
+    const proposal = await promote("deferred");
+
+    // As above, a later attempt took over the memory's row; then the drain's
+    // judge deferred the proposal for a person to review.
+    recordLedgerAttempt({ proposalsCtx: { now: () => Date.now() - 9 * DAY_MS } }, [
+      { stashDir: stash, ref: "memories/deferred", source: "consolidate", outcome: "judged_no_action" },
+    ]);
+    recordGateDecision(stash, proposal.id, { outcome: "deferred", reason: "judgment-deferred", gate: "triage" });
+
+    // The deferral restores the link on the memory's row. It used to write a
+    // row under the knowledge ref, which the verdict below then updated
+    // instead, leaving the memory's own row `judged_no_action`.
+    expect(ledgerRow("deferred")).toMatchObject({ outcome: "review_needed", proposalId: proposal.id });
+    expect(ledgerRefs()).toEqual(["memories/deferred"]);
+
+    await akmProposalReject({
+      stashDir: stash,
+      id: proposal.id,
+      config,
+      reason: "duplicate of knowledge/release-check",
+      ctx: { now: () => Date.now() - 8 * DAY_MS },
+    });
+
+    expect(namesIn(pool())).not.toContain("deferred");
+    expect(ledgerRow("deferred")).toMatchObject({
+      outcome: "rejected",
+      nextEligibleAt: null,
+      contentHash: contentHash(raw, "body"),
+      proposalId: proposal.id,
+    });
+    expect(ledgerRefs()).toEqual(["memories/deferred"]);
   });
 });
 
