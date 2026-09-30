@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * R0: real on-disk `PRAGMA quick_check` / freelist / VACUUM
+ * R0: real on-disk `PRAGMA integrity_check` / freelist / VACUUM
  * coverage for src/storage/state-db-integrity.ts. The pure check-registry
  * projection is covered by tests/health-state-db-integrity-check.test.ts;
  * this file proves the probes themselves — which open a real state.db —
@@ -12,12 +12,13 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
+import path from "node:path";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
 import { insertEventStrict } from "../../../src/storage/repositories/events-repository";
 import {
   getStateDbFreelistInfo,
-  runStateDbQuickCheck,
+  runStateDbIntegrityCheck,
   STATE_DB_FREELIST_WARN_RATIO,
   STATE_DB_VACUUMED_EVENT,
   vacuumIfReclaimable,
@@ -40,7 +41,7 @@ afterEach(() => {
  * Garbles page bytes past the SQLite header (first 100 bytes), same recipe
  * as tests/index-corruption-recovery.test.ts: `openDatabase()` still succeeds
  * (the header is intact), but any real page read trips SQLITE_CORRUPT —
- * matching what quick_check is meant to catch.
+ * matching what integrity_check is meant to catch.
  */
 function corruptDatabaseFile(dbPath: string): void {
   const buf = fs.readFileSync(dbPath);
@@ -48,12 +49,12 @@ function corruptDatabaseFile(dbPath: string): void {
   fs.writeFileSync(dbPath, buf);
 }
 
-describe("runStateDbQuickCheck (R0)", () => {
+describe("runStateDbIntegrityCheck (R0)", () => {
   test("reports ok on a freshly created, healthy state.db", () => {
     const dbPath = getStateDbPath();
     openStateDatabase(dbPath).close();
 
-    const result = runStateDbQuickCheck(dbPath);
+    const result = runStateDbIntegrityCheck(dbPath);
     expect(result.ok).toBe(true);
     expect(result.lines).toEqual(["ok"]);
     expect(result.error).toBeUndefined();
@@ -72,19 +73,49 @@ describe("runStateDbQuickCheck (R0)", () => {
 
     corruptDatabaseFile(dbPath);
 
-    const result = runStateDbQuickCheck(dbPath);
+    const result = runStateDbIntegrityCheck(dbPath);
     expect(result.ok).toBe(false);
-    // Real corruption surfaces either as quick_check's own diagnostic lines
+    // Real corruption surfaces either as integrity_check's own diagnostic lines
     // or as a thrown SQLITE_CORRUPT the probe converts to `error` — both are
     // "not ok", which is what the check registry keys off of.
     expect(result.lines.length > 0 || Boolean(result.error)).toBe(true);
     expect(result.lines).not.toEqual(["ok"]);
   });
 
+  test("detects an index that no longer matches its table, which quick_check calls ok", () => {
+    // What a WAL deleted under a live connection leaves behind: the table's
+    // page holds one value and the index entry another. quick_check never
+    // compares the two; integrity_check does.
+    const dbPath = path.join(storage.root, "index-mismatch.db");
+    const seed = openDatabase(dbPath);
+    seed.exec("CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT); CREATE INDEX t_v ON t(v)");
+    seed.exec("INSERT INTO t(v) VALUES ('needle-aaaaaaaa'), ('hay-1'), ('hay-2')");
+    seed.close();
+    // The table's leaf page precedes the index's, so the first copy of the
+    // value is the table row's: change only that one.
+    const bytes = fs.readFileSync(dbPath);
+    const needle = Buffer.from("needle-aaaaaaaa");
+    const at = bytes.indexOf(needle);
+    expect(at).toBeGreaterThan(0);
+    bytes[at + needle.length - 1] = "b".charCodeAt(0);
+    fs.writeFileSync(dbPath, bytes);
+
+    const raw = openDatabase(dbPath, { readonly: true, create: false });
+    try {
+      expect(raw.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
+    } finally {
+      raw.close();
+    }
+
+    const result = runStateDbIntegrityCheck(dbPath);
+    expect(result.ok).toBe(false);
+    expect(result.lines.join("\n")).toContain("row 1 missing from index t_v");
+  });
+
   test("reports an error (not a throw) when the file cannot be opened at all", () => {
     const dbPath = getStateDbPath();
     // No file at this path — never created.
-    const result = runStateDbQuickCheck(dbPath);
+    const result = runStateDbIntegrityCheck(dbPath);
     expect(result.ok).toBe(false);
     expect(result.error).toBeDefined();
   });

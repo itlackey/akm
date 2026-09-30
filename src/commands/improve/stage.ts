@@ -12,6 +12,7 @@
 import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../../core/config/config";
 import { getImproveProcessConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
+import type { EventsContext } from "../../core/events";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
@@ -158,15 +159,18 @@ export const MAX_REJECTED_PROPOSALS = 3;
 /**
  * Reflexion context: the newest reviewer rejections for `ref`. Procedural
  * refusals (expiry, stale target, missing asset) are not judgements on the
- * content and are left out. Reads never create state.db.
+ * content and are left out. Reads never create state.db, and an improve run's
+ * live connection (`eventsCtx.db`) is read through, not copied.
  */
 export function rejectedProposalContext(
   stash: string,
   ref: string | undefined,
   ctx?: ProposalsContext,
+  eventsCtx?: EventsContext,
 ): RejectedProposalContext[] {
   if (!ref) return [];
-  return listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, ctx)
+  const proposalsCtx = eventsCtx?.db ? { ...ctx, db: eventsCtx.db } : ctx;
+  return listProposalsReadOnly(stash, { ref, status: "rejected", includeArchive: true }, proposalsCtx)
     .filter((p) => !isProceduralRejection(p))
     .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime())
     .slice(0, MAX_REJECTED_PROPOSALS)

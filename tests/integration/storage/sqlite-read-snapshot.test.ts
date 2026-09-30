@@ -4,8 +4,10 @@
 
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { openStateDatabase } from "../../../src/core/state-db";
 import {
   closeDatabase,
   openIndexDatabase,
@@ -93,6 +95,166 @@ describe("SQLite read snapshot lifecycle", () => {
       // the writer still owns the transaction.
       if (holder.inTransaction) holder.exec("ROLLBACK");
       holder.close();
+      fixture.cleanup();
+    }
+  });
+});
+
+/**
+ * What another process sees when it asks for exclusive access to `dbPath`
+ * right now: `"acquired"`, or `"blocked: <SQLite error>"`.
+ *
+ * `PRAGMA locking_mode=EXCLUSIVE` makes a WAL-mode connection take the
+ * database file's EXCLUSIVE lock on its first read, which fails with
+ * SQLITE_BUSY for as long as any other process holds that file's SHARED lock.
+ * Deliberately not `PRAGMA journal_mode=DELETE`: SQLite 3.51+ also consults the
+ * `-shm` dead-man-switch lock there, which hides a lost SHARED lock.
+ */
+function exclusiveAccessFromAnotherProcess(dbPath: string): string {
+  const script = `
+    import { Database } from "bun:sqlite";
+    const db = new Database(process.env.PROBE_DB);
+    db.exec("PRAGMA busy_timeout=0; PRAGMA locking_mode=EXCLUSIVE");
+    try {
+      db.prepare("SELECT count(*) FROM sqlite_master").get();
+      console.log("acquired");
+    } catch (error) {
+      console.log("blocked: " + error.message);
+    }
+  `;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    encoding: "utf8",
+    env: { ...process.env, PROBE_DB: dbPath },
+  });
+  return result.stdout.trim() || `probe produced no output (status ${result.status}): ${result.stderr.trim()}`;
+}
+
+const SNAPSHOT_MODULE = path.resolve(import.meta.dir, "../../../src/storage/sqlite-read-snapshot");
+
+/**
+ * What `openSqliteReadSnapshot(dbPath)` does in a child process that STARTS
+ * with a `PATH` holding no `cp`: `"no-throw"`, or `"<error name>: <message>"`.
+ *
+ * The child is the point. On Bun 1.3.14 (the version CI pins) `spawnSync("cp")`
+ * finds `cp` through the PATH the process started with and ignores later edits
+ * to `process.env.PATH`; Bun 1.4 honors them. A test that changes PATH inside
+ * its own process therefore only simulates a missing `cp` on newer Bun.
+ */
+function snapshotOutcomeWithoutCp(dbPath: string, scratchDir: string): string {
+  const emptyBin = path.join(scratchDir, "empty-bin");
+  fs.mkdirSync(emptyBin, { recursive: true });
+  const script = `
+    import { openSqliteReadSnapshot } from ${JSON.stringify(SNAPSHOT_MODULE)};
+    try {
+      openSqliteReadSnapshot(process.env.PROBE_DB)?.close();
+      console.log("no-throw");
+    } catch (error) {
+      console.log(error.name + ": " + error.message);
+    }
+  `;
+  const result = spawnSync(process.execPath, ["-e", script], {
+    encoding: "utf8",
+    env: {
+      PATH: emptyBin,
+      HOME: scratchDir,
+      TMPDIR: scratchDir,
+      BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+      PROBE_DB: dbPath,
+    },
+  });
+  return result.stdout.trim() || `probe produced no output (status ${result.status}): ${result.stderr.trim()}`;
+}
+
+// POSIX advisory locks belong to the process: closing ANY descriptor for a file
+// drops every lock the process holds on it. Windows locks belong to the handle,
+// so there is nothing to lose there.
+const posixLockTest = process.platform === "win32" ? test.skip : test;
+
+describe("SQLite read snapshot keeps the process's own SQLite locks", () => {
+  posixLockTest("control: a raw open/close of a live database in this process drops its SQLite lock", () => {
+    const fixture = makeSandboxDir("akm-sqlite-read-lock-control");
+    const dbPath = path.join(fixture.dir, "state.db");
+    const live = openStateDatabase(dbPath);
+    try {
+      expect(exclusiveAccessFromAnotherProcess(dbPath)).toStartWith("blocked:");
+      fs.closeSync(fs.openSync(dbPath, "r"));
+      expect(exclusiveAccessFromAnotherProcess(dbPath)).toBe("acquired");
+    } finally {
+      try {
+        live.close();
+      } catch {
+        // The lock this test deliberately dropped can make the close complain.
+      }
+      fixture.cleanup();
+    }
+  });
+
+  posixLockTest("openSqliteReadSnapshot does not drop the lock of a connection in the same process", () => {
+    const fixture = makeSandboxDir("akm-sqlite-read-lock-snapshot");
+    const dbPath = path.join(fixture.dir, "state.db");
+    // Stands in for `akm improve`'s long-lived `eventsDb`.
+    const live = openStateDatabase(dbPath);
+    try {
+      live.exec("CREATE TABLE lock_probe(v TEXT); INSERT INTO lock_probe VALUES ('x')");
+      expect(exclusiveAccessFromAnotherProcess(dbPath)).toStartWith("blocked:");
+      for (let i = 0; i < 3; i++) openSqliteReadSnapshot(dbPath)?.close();
+      expect(exclusiveAccessFromAnotherProcess(dbPath)).toStartWith("blocked:");
+    } finally {
+      try {
+        live.close();
+      } catch {
+        // Diagnostics for a lost lock are the assertion above; do not mask it.
+      }
+      fixture.cleanup();
+    }
+  });
+
+  posixLockTest("a second openStateDatabase in the same process does not drop the first one's lock", () => {
+    const fixture = makeSandboxDir("akm-sqlite-read-lock-open");
+    const dbPath = path.join(fixture.dir, "state.db");
+    const live = openStateDatabase(dbPath);
+    try {
+      openStateDatabase(dbPath).close();
+      expect(exclusiveAccessFromAnotherProcess(dbPath)).toStartWith("blocked:");
+    } finally {
+      try {
+        live.close();
+      } catch {
+        // Diagnostics for a lost lock are the assertion above; do not mask it.
+      }
+      fixture.cleanup();
+    }
+  });
+
+  posixLockTest("a missing cp fails closed rather than copying inside this process", () => {
+    const fixture = makeSandboxDir("akm-sqlite-read-no-cp");
+    const dbPath = path.join(fixture.dir, "source.db");
+    const source = new Database(dbPath);
+    source.exec("CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('x')");
+    source.close();
+    try {
+      expect(snapshotOutcomeWithoutCp(dbPath, fixture.dir)).toStartWith("SqliteReadSnapshotUnavailableError:");
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  test("a snapshot carries committed WAL frames, not just the main file", () => {
+    const fixture = makeSandboxDir("akm-sqlite-read-wal-frames");
+    const dbPath = path.join(fixture.dir, "wal.db");
+    const live = new Database(dbPath);
+    try {
+      live.exec("PRAGMA journal_mode=WAL; CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('committed-in-wal')");
+      // Not yet checkpointed: the row exists only in the WAL.
+      expect(fs.statSync(`${dbPath}-wal`).size).toBeGreaterThan(0);
+      const snapshot = openSqliteReadSnapshot(dbPath);
+      try {
+        expect(snapshot?.prepare("SELECT v FROM t").all()).toEqual([{ v: "committed-in-wal" }]);
+      } finally {
+        snapshot?.close();
+      }
+    } finally {
+      live.close();
       fixture.cleanup();
     }
   });

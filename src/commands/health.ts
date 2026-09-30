@@ -24,7 +24,7 @@ import { countImproveRunsSince } from "../storage/repositories/improve-runs-repo
 import { closeDatabase, openReadonlyExistingDatabase } from "../storage/repositories/index-connection";
 import { getAllEntries } from "../storage/repositories/index-entries-repository";
 import { queryTaskHistory } from "../storage/repositories/task-history-repository";
-import { getStateDbFreelistInfo, runStateDbQuickCheck } from "../storage/state-db-integrity";
+import { getStateDbFreelistInfo, runStateDbIntegrityCheck } from "../storage/state-db-integrity";
 import { pkgVersion } from "../version";
 import { collectArchiveUsageAdvisory } from "./health/archive-usage";
 import {
@@ -209,7 +209,7 @@ interface TaskHistoryPhase {
   tableNames: string[];
   missingTables: string[];
   probe: ReturnType<typeof probeStateDbRoundTrip>;
-  stateDbIntegrity: ReturnType<typeof runStateDbQuickCheck>;
+  stateDbIntegrity: ReturnType<typeof runStateDbIntegrityCheck>;
   stateDbFreelist: ReturnType<typeof getStateDbFreelistInfo>;
   taskRowCount: number;
   stuckActiveRuns: number;
@@ -280,10 +280,10 @@ function gatherTaskHistoryPhase(db: Database, since: string, stateDbPath: string
   const missingTables = requiredTables.filter((name) => !tableNames.includes(name));
 
   const probe = probeStateDbRoundTrip(stateDbPath);
-  // R0: read-only, independent of the round-trip probe above — quick_check
+  // R0: read-only, independent of the round-trip probe above — integrity_check
   // catches corruption a successful append/read cannot (out-of-order rowids,
   // bad index entry counts), and the freelist reading is purely informational.
-  const stateDbIntegrity = runStateDbQuickCheck(stateDbPath);
+  const stateDbIntegrity = runStateDbIntegrityCheck(stateDbPath);
   const stateDbFreelist = getStateDbFreelistInfo(stateDbPath);
 
   // D8 (spec §5.3): a marked "command" row or a legacy (unmarked) "prompt"

@@ -773,7 +773,7 @@ export async function runConsolidatePairPass(
   // also be judged as part of another until that decision resolves.
   const pendingRetireRefs = new Set<string>();
   try {
-    for (const p of listProposalsReadOnly(stashDir, { status: "pending" })) {
+    for (const p of listProposalsReadOnly(stashDir, { status: "pending" }, opts.proposalsCtx)) {
       if (!isRetireProposal(p)) continue;
       pendingRetireRefs.add(stripBundle(p.ref));
       if (p.retirement?.successorRef) pendingRetireRefs.add(stripBundle(p.retirement.successorRef));
@@ -794,7 +794,7 @@ export async function runConsolidatePairPass(
   const rejectedPairKeys = new Set<string>();
   try {
     for (const status of ["rejected", "reverted"] as const) {
-      for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true })) {
+      for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true }, opts.proposalsCtx)) {
         if (!isRetireProposal(p) || !p.retirement) continue;
         rejectedPairKeys.add(
           rejectedPairKey(

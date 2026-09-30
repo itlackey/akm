@@ -80,19 +80,19 @@ explicitly instead.
 `sqlite3 -readonly`:
 
 ```bash
-sqlite3 -readonly ~/.local/share/akm/state.db "PRAGMA quick_check;"
+sqlite3 -readonly ~/.local/share/akm/state.db "PRAGMA integrity_check;"
 sqlite3 -readonly ~/.local/share/akm/state.db ".backup /tmp/state-snapshot.db"
 ```
 
 Do not open a live akm database with a plain (read-write) `sqlite3`
-connection, even just to run `.backup`. A read-write connection can trigger a
-WAL checkpoint when it closes, and doing that concurrently with an akm writer
-was the one non-standard element present in a `state.db` index-corruption
-incident (duplicate `events` index entries, repaired with `REINDEX`);
-deliberate concurrency stress-testing did not reproduce it, so treat this as
-a precaution against a suspected but unconfirmed hazard, not a proven one.
-`-readonly` avoids the whole class of risk by never taking a write
-connection.
+connection, even just to run `.backup`. Through 0.9.17 an akm process could
+silently lose its SQLite file locks (copying the database file inside a
+process that holds it open drops them). An older `sqlite3` (< 3.51, and
+Python's `sqlite3` module on many hosts) opened read-write at that moment
+sees no other reader, takes an exclusive lock when it closes, and deletes the
+`-wal`/`-shm` files akm is still using: that produced a `state.db` with
+colliding rowids and stale index entries. `-readonly` avoids the whole class
+of risk by never taking a write connection.
 
 ## Verification
 

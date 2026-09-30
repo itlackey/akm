@@ -17,6 +17,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { Worker } from "node:worker_threads";
 import { computeAcceptRateBySource } from "../../../src/commands/health/accept-rate";
+import { rejectedProposalContext } from "../../../src/commands/improve/stage";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -28,6 +29,7 @@ import {
   createProposal as createProposalImpl,
   getProposal,
   listProposals,
+  listProposalsReadOnly,
   type Proposal,
   resolveProposalId,
 } from "../../../src/commands/proposal/repository";
@@ -282,6 +284,48 @@ describe("state.db is the canonical proposal store", () => {
     const common = commonPrefix(a.id, b.id);
     if (common.length > 0) {
       expect(() => resolveProposalId(stash, common)).toThrow(/Ambiguous prefix/);
+    }
+  });
+});
+
+// ── read-only listing through a borrowed connection ─────────────────────────
+
+describe("read-only proposal listing borrows a live connection", () => {
+  // A snapshot copies the whole database and, in a process that also holds a
+  // SQLite connection to it, is exactly what an improve run must not do. Both
+  // tests point `dbPath` at a file that does not exist: the snapshot path reads
+  // that as an empty store, so only a read through the borrowed connection can
+  // find the proposal.
+  function absentDbPath(): string {
+    return path.join(makeTempDir("akm-prop-sql-borrow-"), "absent-state.db");
+  }
+
+  test("listProposalsReadOnly reads through ctx.db instead of snapshotting", () => {
+    const stash = makeStashDir();
+    const created = mustCreate(stash, "lessons/borrowed-listing");
+    const dbPath = absentDbPath();
+    const live = openStateDatabase(getStateDbPath());
+    try {
+      expect(listProposalsReadOnly(stash, { status: "pending" }, { dbPath })).toEqual([]);
+      const listed = listProposalsReadOnly(stash, { status: "pending" }, { dbPath, db: live });
+      expect(listed.map((p) => p.id)).toEqual([created.id]);
+    } finally {
+      live.close();
+    }
+  });
+
+  test("rejectedProposalContext reads through the events context's live connection", () => {
+    const stash = makeStashDir();
+    const created = mustCreate(stash, "lessons/borrowed-rejected");
+    archiveProposal(stash, created.id, "rejected", "too vague");
+    const dbPath = absentDbPath();
+    const live = openStateDatabase(getStateDbPath());
+    try {
+      expect(rejectedProposalContext(stash, "lessons/borrowed-rejected", { dbPath })).toEqual([]);
+      const context = rejectedProposalContext(stash, "lessons/borrowed-rejected", { dbPath }, { db: live });
+      expect(context.map((entry) => entry.reason)).toEqual(["too vague"]);
+    } finally {
+      live.close();
     }
   });
 });

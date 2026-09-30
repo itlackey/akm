@@ -8,7 +8,7 @@
  *
  * `akm health`'s `state-db-integrity` check (src/commands/health/checks.ts)
  * is a pure projection like every other check, so the actual IO lives here:
- * a read-only `PRAGMA quick_check` and a read-only freelist/page-count read.
+ * a read-only `PRAGMA integrity_check` and a read-only freelist/page-count read.
  * Both open their own short-lived read-only connection via the plain
  * {@link openDatabase} opener rather than `openStateDatabase`
  * (src/core/state-db.ts), since a corrupt database must not need a clean
@@ -30,8 +30,8 @@ import { appendEvent, type EventsContext } from "../core/events";
 import { type Database, openDatabase } from "./database";
 import { applyReadonlyPragmas } from "./sqlite-pragmas";
 
-/** How many corruption errors `PRAGMA quick_check` collects before it stops scanning and returns. */
-const QUICK_CHECK_ERROR_LIMIT = 10;
+/** How many corruption errors `PRAGMA integrity_check` collects before it stops scanning and returns. */
+const INTEGRITY_CHECK_ERROR_LIMIT = 10;
 
 /**
  * Above this fraction of free pages, `state-db-integrity` warns, and
@@ -46,7 +46,7 @@ export const STATE_DB_VACUUMED_EVENT = "state_db_vacuumed";
 /** Event appended by {@link vacuumIfReclaimable} after a successful VACUUM of index.db. */
 export const INDEX_DB_VACUUMED_EVENT = "index_db_vacuumed";
 
-export interface StateDbQuickCheckResult {
+export interface StateDbIntegrityResult {
   ok: boolean;
   /** Raw pragma result rows: `["ok"]` when clean, its diagnostic lines otherwise. */
   lines: string[];
@@ -85,16 +85,21 @@ function openReadonlyStateDb(dbPath: string): Database {
 }
 
 /**
- * Run `PRAGMA quick_check(N)` against `dbPath` read-only. Sub-second on a
- * healthy multi-hundred-MB file; on a corrupt one, `N` bounds how many errors
- * SQLite collects before it stops scanning, which keeps the check's runtime
- * bounded even against a badly corrupt file.
+ * Run `PRAGMA integrity_check(N)` against `dbPath` read-only. Unlike
+ * `quick_check`, it also verifies every index against its table ("row N
+ * missing from index", "wrong # of entries in index"): the damage a WAL
+ * deleted under a live connection leaves behind, which `quick_check` reports
+ * as `ok`. Sub-second on a healthy state.db of a few hundred MB; on a corrupt
+ * one, `N` bounds how many errors SQLite collects before it stops scanning,
+ * which keeps the check's runtime bounded even against a badly corrupt file.
  */
-export function runStateDbQuickCheck(dbPath: string): StateDbQuickCheckResult {
+export function runStateDbIntegrityCheck(dbPath: string): StateDbIntegrityResult {
   let db: Database | undefined;
   try {
     db = openReadonlyStateDb(dbPath);
-    const rows = db.prepare(`PRAGMA quick_check(${QUICK_CHECK_ERROR_LIMIT})`).all() as Array<Record<string, unknown>>;
+    const rows = db.prepare(`PRAGMA integrity_check(${INTEGRITY_CHECK_ERROR_LIMIT})`).all() as Array<
+      Record<string, unknown>
+    >;
     const lines = rows.map((row) => String(firstColumn(row)));
     const ok = lines.length === 1 && lines[0] === "ok";
     return { ok, lines };

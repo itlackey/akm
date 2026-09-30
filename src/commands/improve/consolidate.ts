@@ -304,10 +304,10 @@ function injectRandomClusterMembers(
 }
 
 /** Body hashes of pending consolidate proposals, so the prompt can mark memories already queued. */
-function loadPendingConsolidateProposalHashes(stashDir: string): Set<string> {
+function loadPendingConsolidateProposalHashes(stashDir: string, proposalsCtx?: ProposalsContext): Set<string> {
   const hashes = new Set<string>();
   try {
-    for (const p of listProposalsReadOnly(stashDir, { status: "pending" })) {
+    for (const p of listProposalsReadOnly(stashDir, { status: "pending" }, proposalsCtx)) {
       if (p.source !== "consolidate") continue;
       try {
         hashes.add(contentHash(proposalContent(p), "body"));
@@ -790,7 +790,7 @@ async function planConsolidation(
   if (llmRunner && willDispatch) assertRunnerCredentials(llmRunner);
   const { ordered, embedTelemetry } = await clusterMemoriesBySimilarity(budgeted, config, stateDb, opts.signal);
   const chunks = slice(injectRandomClusterMembers(ordered, opts.improveProfile, warnings));
-  const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir);
+  const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir, opts.proposalsCtx);
   warn(
     `[consolidate] ${budgeted.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +
       ` / pending-proposal hashes: ${pendingProposalBodyHashes.size}`,

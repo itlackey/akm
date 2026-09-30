@@ -1024,7 +1024,7 @@ async function buildDistillMessages(
   kind: DistillKind,
   outputRef: string,
 ): Promise<{ system: string; prompt: string }> {
-  const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx);
+  const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx);
   // CLS interleaving (default off): show related lessons so the model does not overwrite them.
   const cls =
     (getImproveProcessConfig("distill", run.profile)?.cls as { enabled?: boolean; adjacentCount?: number }) ?? {};

@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A running `akm improve` no longer loses its SQLite file locks, which let
+  an older `sqlite3` delete `state.db`'s WAL.** Copying a database file
+  inside a process that also holds it open drops every POSIX lock the process
+  holds on it, and `akm improve` did exactly that (its read snapshots copy
+  `state.db`, hundreds of times a run). A peer on SQLite older than 3.51 (the
+  system `sqlite3` command, Python's `sqlite3` module) that then opened
+  `state.db` read-write, even just for `.backup`, saw no reader and deleted
+  `state.db-wal`/`-shm` at close, leaving colliding rowids, stale index
+  entries and lost rows. Affected: every release since 0.9.2 through the
+  snapshot, and 0.9.2 through 0.9.16 also on every `openStateDatabase` (fixed
+  in 0.9.17-alpha.4). The snapshot now copies in a child `cp` (Windows keeps
+  the in-process copy; its locks belong to the handle), and `improve` reads
+  proposals through its own connection instead of snapshotting per asset.
+  `akm health`'s `state-db-integrity` check now runs `PRAGMA integrity_check`,
+  since `quick_check` does not compare indexes with their tables and reported
+  this damage as `ok`. On earlier releases, open a live database only with
+  `sqlite3 -readonly`.
+
 ## [0.9.17] - 2026-09-29
 
 ### Added
