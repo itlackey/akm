@@ -13,6 +13,10 @@
  * person accepts or rejects through the proposal API, and
  * `inspectConsolidationPool` selects. Every memory is marked as retrieved so
  * that the retrieval scope (#986) never masks what the ledger decides.
+ *
+ * Integration (ORG-03): opens a real state.db (`openStateDatabase`, the
+ * proposal and ledger repositories) and `inspectConsolidationPool` opens
+ * index.db with `openExistingDatabase`.
  */
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
@@ -21,17 +25,17 @@ import {
   type ConsolidatePromoteOp,
   emitPromotionProposal,
   inspectConsolidationPool,
-} from "../../../src/commands/improve/consolidate";
-import { contentHash } from "../../../src/commands/improve/content-hash";
-import { recordLedgerAttempt } from "../../../src/commands/improve/ledger";
-import { akmProposalAccept, akmProposalReject } from "../../../src/commands/proposal/proposal";
-import { createProposal, listProposals } from "../../../src/commands/proposal/repository";
-import type { AkmConfig } from "../../../src/core/config/config";
-import { openStateDatabase } from "../../../src/core/state-db";
-import { resolveWriteTarget } from "../../../src/core/write-source";
-import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
-import { makeConfig } from "../../_helpers/factories";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+} from "../../../../src/commands/improve/consolidate";
+import { contentHash } from "../../../../src/commands/improve/content-hash";
+import { recordLedgerAttempt } from "../../../../src/commands/improve/ledger";
+import { akmProposalAccept, akmProposalReject } from "../../../../src/commands/proposal/proposal";
+import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
+import type { AkmConfig } from "../../../../src/core/config/config";
+import { openStateDatabase } from "../../../../src/core/state-db";
+import { resolveWriteTarget } from "../../../../src/core/write-source";
+import { getImproveLedgerRow } from "../../../../src/storage/repositories/improve-ledger-repository";
+import { makeConfig } from "../../../_helpers/factories";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 const DAY_MS = 86_400_000;
 
