@@ -8,7 +8,8 @@
  * promoted. Promotion emits a reviewable proposal and never touches the
  * memory directly; accepting it later retires the source memory (O1, in
  * `proposal/repository.ts`). Memories the improve ledger judged recently and
- * that have not changed since are not judged again.
+ * that have not changed since are not judged again, and a memory whose
+ * promotion was accepted or rejected waits until its body changes.
  *
  * Accounting invariant (the promote pass only): `processed == promoted +
  * judgedNoAction + Σ(skipReasons) + failedChunkMemories`.
@@ -58,7 +59,7 @@ import { runConsolidatePairPass } from "./consolidate/pair-pass";
 import { sanitizeMergedContent } from "./consolidate/sanitize";
 import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
+import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
 import { callStage, type LlmRunner, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
 
@@ -482,7 +483,10 @@ export interface ConsolidationPoolSnapshot {
   memories: MemoryEntry[];
   /** Memories whose body already exists verbatim in `knowledge/`. */
   prefilteredAlreadyPromoted: number;
-  /** Memories the ledger skipped: judged within their revisit window and unchanged since. */
+  /**
+   * Memories the ledger skipped: judged within their revisit window, or
+   * decided as a promotion (accepted or rejected), and unchanged since.
+   */
   judgedUnchanged: number;
   /** Memories left out because retrieval did not return them and they are not new (#986). */
   outsideRetrievalScope: number;
@@ -550,19 +554,31 @@ export function inspectConsolidationPool(
   }
   memories = memories.filter((memory) => fs.existsSync(memory.filePath));
   const poolSize = memories.length;
-  // A memory judged within its revisit window comes back once it is edited.
+  // A memory judged within its revisit window comes back once it is edited. A
+  // promotion that was accepted or rejected holds its memory until the body
+  // changes, however long that takes (#998).
   const ledger = loadLedgerSnapshot({ proposalsCtx: opts.proposalsCtx, readOnly }, stashDir, ["consolidate"]);
   if (ledger.size > 0) {
     const nowIso = new Date().toISOString();
     memories = memories.filter((memory) => {
       const row = ledger.get(ledgerKey("consolidate", conceptIdFromTypeName("memory", memory.name)));
+      if (!row) return true;
+      if (isContentDrivenRow(row)) {
+        let bodyHash: string | undefined;
+        try {
+          bodyHash = contentHash(fs.readFileSync(memory.filePath, "utf8"), "body");
+        } catch {
+          bodyHash = undefined;
+        }
+        return row.contentHash !== bodyHash;
+      }
       let changedAt: string | undefined;
       try {
         changedAt = fs.statSync(memory.filePath).mtime.toISOString();
       } catch {
         changedAt = undefined;
       }
-      return !row || !isLedgerBlocked(row, nowIso, changedAt);
+      return !isLedgerBlocked(row, nowIso, changedAt);
     });
   }
   const judgedUnchanged = poolSize - memories.length;
@@ -829,7 +845,7 @@ async function consolidate(
   const plural = (n: number) => `memor${n === 1 ? "y" : "ies"}`;
   if (pool.judgedUnchanged > 0) {
     warnings.push(
-      `Consolidation: skipped ${pool.judgedUnchanged} ${plural(pool.judgedUnchanged)} judged within the revisit window and unchanged since.`,
+      `Consolidation: skipped ${pool.judgedUnchanged} ${plural(pool.judgedUnchanged)} judged within the revisit window, or already promoted or rejected, and unchanged since.`,
     );
   }
   if (pool.outsideRetrievalScope > 0) {

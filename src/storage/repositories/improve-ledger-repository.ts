@@ -17,7 +17,10 @@
  * constants — none of which agreed with each other.
  *
  * `next_eligible_at` is computed in exactly one place, {@link nextEligibleAt},
- * from `(source, outcome)`.
+ * from `(source, outcome)` — and, for the two content-driven cases (the
+ * consolidate pair pass and a decided consolidate promotion), from whether a
+ * body hash was recorded: those rows carry no clock, their `content_hash` is
+ * the eligibility test.
  *
  * @module improve-ledger-repository
  */
@@ -54,8 +57,9 @@ export interface ImproveLedgerRow {
   /**
    * Body content hash (`contentHash(_, "body")`) of the attempted ref at
    * `lastAttemptAt`, when the source's eligibility is content-driven rather
-   * than time-driven (alpha.9: the consolidate pair pass — see
-   * {@link PAIR_PASS_LEDGER_SOURCE}). `null` for every other source.
+   * than time-driven: the consolidate pair pass (alpha.9 — see
+   * {@link PAIR_PASS_LEDGER_SOURCE}) and a decided consolidate promotion (see
+   * {@link isContentDrivenDecision}). `null` for every other row.
    */
   contentHash: string | null;
 }
@@ -88,6 +92,36 @@ export const LEDGER_REVISIT_CADENCE_DAYS = 7;
  * eligible again.
  */
 export const PAIR_PASS_LEDGER_SOURCE = "consolidate-pair";
+
+/**
+ * The consolidate promote pass's ledger source: one row per source memory,
+ * keyed by the memory (`memories/<name>`), not by the knowledge ref the
+ * promotion would create.
+ */
+export const CONSOLIDATE_LEDGER_SOURCE = "consolidate";
+
+/**
+ * Whether a decision on `(source, outcome)` leaves the ref's next attempt to
+ * its content instead of a clock (#998). An accepted or rejected consolidate
+ * promotion is a verdict on that memory's text; asking the model about the
+ * same text again can only reproduce the proposal (accepted used to be
+ * eligible at once, rejected after 7 days), so the memory waits for an edit.
+ * The clock stays for a row with no recorded hash — one decided before the
+ * hash was recorded — see {@link nextEligibleAt} and {@link isContentDrivenRow}.
+ */
+export function isContentDrivenDecision(source: string, outcome: ImproveLedgerOutcome): boolean {
+  return source === CONSOLIDATE_LEDGER_SOURCE && (outcome === "accepted" || outcome === "rejected");
+}
+
+/**
+ * Whether this row is held by its content hash: a decided consolidate
+ * promotion that recorded the body it was decided against. Such a row has no
+ * `next_eligible_at`; the caller compares `contentHash` with the asset's
+ * current body hash (the pair pass does the same in `selectInitiators`).
+ */
+export function isContentDrivenRow(row: Pick<ImproveLedgerRow, "source" | "outcome" | "contentHash">): boolean {
+  return row.contentHash !== null && isContentDrivenDecision(row.source, row.outcome);
+}
 
 /**
  * Outcomes whose window a fresh signal on the asset (new feedback, a content
@@ -125,11 +159,20 @@ function windowDays(source: string, outcome: ImproveLedgerOutcome): number | nul
 
 /**
  * The single cadence function: when a `(source, outcome)` recorded at
- * `fromIso` becomes eligible again, or `null` for "immediately".
+ * `fromIso` becomes eligible again, or `null` for "immediately". A decision
+ * that {@link isContentDrivenDecision} holds by content, recorded together
+ * with the body hash it was decided against, starts no clock at all: `null`
+ * here means the hash is the whole test, not that the ref is free to retry.
  */
-export function nextEligibleAt(source: string, outcome: ImproveLedgerOutcome, fromIso: string): string | null {
+export function nextEligibleAt(
+  source: string,
+  outcome: ImproveLedgerOutcome,
+  fromIso: string,
+  contentHash?: string | null,
+): string | null {
   const from = Date.parse(fromIso);
   if (!Number.isFinite(from)) return null;
+  if (contentHash && isContentDrivenDecision(source, outcome)) return null;
   const days = windowDays(source, outcome);
   return days === null ? null : new Date(from + days * MS_PER_DAY).toISOString();
 }
@@ -202,7 +245,7 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
     source: input.source,
     lastAttemptAt: input.at,
     outcome: input.outcome,
-    nextEligibleAt: nextEligibleAt(input.source, input.outcome, input.at),
+    nextEligibleAt: nextEligibleAt(input.source, input.outcome, input.at, input.contentHash),
     proposalId: input.proposalId ?? null,
     detail: trimDetail(input.detail),
     contentHash: input.contentHash ?? null,
@@ -235,13 +278,24 @@ export function recordImproveLedger(db: Database, input: RecordImproveLedgerInpu
 export interface RecordImproveLedgerDecisionInput {
   proposalId: string;
   stashDir: string;
-  /** The proposal's own ref: the fallback key when no row carries `proposalId`. */
+  /**
+   * The fallback key when no row carries `proposalId`: the proposal's own ref,
+   * or — for a promotion, whose ledger row is keyed by its source memory — that
+   * memory's ref.
+   */
   ref: string;
   source: string;
   outcome: ImproveLedgerOutcome;
   /** ISO instant of the decision; the cadence is computed from it. */
   at: string;
   detail?: string;
+  /**
+   * Body hash (`contentHash(_, "body")`) of the asset the decision was made
+   * about — a promotion's source memory at the time it was queued. Recorded
+   * on the row when {@link isContentDrivenDecision} holds it by content, and
+   * ignored otherwise.
+   */
+  contentHash?: string;
 }
 
 /**
@@ -250,19 +304,22 @@ export interface RecordImproveLedgerDecisionInput {
  * differ from the ledger key (a distill proposal for `lessons/x` is keyed by
  * its input `memories/x`) — and `last_attempt_at` is kept: the window starts
  * at the decision, the attempt happened when it happened. A proposal no row
- * knows (minted before the ledger existed) gets a row keyed by its own ref.
+ * knows (minted before the ledger existed, or whose row a later `judged_no_action`
+ * overwrote) gets a row keyed by `input.ref`.
  */
 export function recordImproveLedgerDecision(db: Database, input: RecordImproveLedgerDecisionInput): void {
+  const hash = isContentDrivenDecision(input.source, input.outcome) ? input.contentHash : undefined;
   const changes = db
     .prepare(
       `UPDATE improve_ledger
-       SET outcome = ?, next_eligible_at = ?, detail = ?
+       SET outcome = ?, next_eligible_at = ?, detail = ?, content_hash = COALESCE(?, content_hash)
        WHERE stash_dir = ? AND proposal_id = ?`,
     )
     .run(
       input.outcome,
-      nextEligibleAt(input.source, input.outcome, input.at),
+      nextEligibleAt(input.source, input.outcome, input.at, hash),
       trimDetail(input.detail),
+      hash ?? null,
       input.stashDir,
       input.proposalId,
     ).changes;
@@ -275,6 +332,7 @@ export function recordImproveLedgerDecision(db: Database, input: RecordImproveLe
     at: input.at,
     proposalId: input.proposalId,
     ...(input.detail !== undefined ? { detail: input.detail } : {}),
+    ...(hash !== undefined ? { contentHash: hash } : {}),
   });
 }
 

@@ -14,6 +14,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { openDatabase } from "../../../src/storage/database";
 import {
   getImproveLedgerRow,
+  isContentDrivenRow,
   isLedgerBlocked,
   listImproveLedgerRows,
   nextEligibleAt,
@@ -68,6 +69,50 @@ describe("nextEligibleAt — the one cadence function", () => {
     // revisit cadence for judged_no_action — only the pair pass's distinct
     // "consolidate-pair" source is exempted.
     expect(nextEligibleAt("consolidate", "judged_no_action", T0)).toBe(plusDays(T0, 7));
+  });
+
+  test("a decided consolidate promotion recorded with its body hash starts no clock (#998); without one it keeps the old window", () => {
+    // The hash is the whole eligibility test for such a row (the pool compares
+    // it with the memory's current body), so accepted and rejected are the
+    // same: eligible again when the text changes, never because time passed.
+    expect(nextEligibleAt("consolidate", "rejected", T0, "body-hash")).toBeNull();
+    expect(nextEligibleAt("consolidate", "accepted", T0, "body-hash")).toBeNull();
+    // Nothing to compare against (a decision recorded before the hash existed): the clock stays.
+    expect(nextEligibleAt("consolidate", "rejected", T0)).toBe(plusDays(T0, 7));
+    expect(nextEligibleAt("consolidate", "rejected", T0, null)).toBe(plusDays(T0, 7));
+    expect(nextEligibleAt("consolidate", "accepted", T0)).toBeNull();
+  });
+
+  test("a hash changes nothing for the outcomes and sources that are not content-driven", () => {
+    expect(nextEligibleAt("consolidate", "expired", T0, "h")).toBe(plusDays(T0, 1));
+    expect(nextEligibleAt("consolidate", "judged_no_action", T0, "h")).toBe(plusDays(T0, 7));
+    expect(nextEligibleAt("consolidate", "proposed", T0, "h")).toBe(plusDays(T0, 7));
+    expect(nextEligibleAt("reflect", "rejected", T0, "h")).toBe(plusDays(T0, 14));
+    expect(nextEligibleAt("distill", "rejected", T0, "h")).toBe(plusDays(T0, 30));
+    expect(nextEligibleAt("distill", "expired", T0, "h")).toBe(plusDays(T0, 1));
+  });
+});
+
+describe("isContentDrivenRow", () => {
+  const row = (
+    source: string,
+    outcome: "accepted" | "rejected" | "judged_no_action" | "expired",
+    hash: string | null,
+  ) => ({
+    source,
+    outcome,
+    contentHash: hash,
+  });
+
+  test("only a decided consolidate promotion that recorded a hash is held by content", () => {
+    expect(isContentDrivenRow(row("consolidate", "rejected", "h"))).toBe(true);
+    expect(isContentDrivenRow(row("consolidate", "accepted", "h"))).toBe(true);
+    expect(isContentDrivenRow(row("consolidate", "rejected", null))).toBe(false);
+    expect(isContentDrivenRow(row("consolidate", "judged_no_action", "h"))).toBe(false);
+    expect(isContentDrivenRow(row("consolidate", "expired", "h"))).toBe(false);
+    // The pair pass has its own content test (selectInitiators) and never a decided outcome.
+    expect(isContentDrivenRow(row("consolidate-pair", "judged_no_action", "h"))).toBe(false);
+    expect(isContentDrivenRow(row("reflect", "rejected", "h"))).toBe(false);
   });
 });
 
@@ -200,6 +245,149 @@ describe("recordImproveLedger / recordImproveLedgerDecision", () => {
       // A row for a source that never sets contentHash decodes it as null, not undefined/missing.
       recordImproveLedger(db, { stashDir: "/s", ref: "skills/x", source: "reflect", outcome: "proposed", at: T0 });
       expect(getImproveLedgerRow(db, "/s", "skills/x", "reflect")?.contentHash).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a consolidate promotion decided with its source hash holds the source memory by content: no clock, hash recorded (#998)", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      for (const [proposalId, memory, outcome] of [
+        ["p-rejected", "memories/rejected", "rejected"],
+        ["p-accepted", "memories/accepted", "accepted"],
+      ] as const) {
+        recordImproveLedger(db, {
+          stashDir: "/s",
+          ref: memory,
+          source: "consolidate",
+          outcome: "proposed",
+          at: T0,
+          proposalId,
+        });
+        // The proposal itself is keyed by the knowledge ref; the decision names the memory.
+        recordImproveLedgerDecision(db, {
+          proposalId,
+          stashDir: "/s",
+          ref: memory,
+          source: "consolidate",
+          outcome,
+          at: plusDays(T0, 1),
+          contentHash: `hash-of-${outcome}`,
+        });
+        expect(getImproveLedgerRow(db, "/s", memory, "consolidate")).toMatchObject({
+          outcome,
+          lastAttemptAt: T0,
+          nextEligibleAt: null,
+          contentHash: `hash-of-${outcome}`,
+        });
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a promotion decided without a hash keeps the old windows, and a hash never lands on an outcome that is not content-driven", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/legacy",
+        source: "consolidate",
+        outcome: "proposed",
+        at: T0,
+        proposalId: "p-legacy",
+      });
+      recordImproveLedgerDecision(db, {
+        proposalId: "p-legacy",
+        stashDir: "/s",
+        ref: "memories/legacy",
+        source: "consolidate",
+        outcome: "rejected",
+        at: T0,
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/legacy", "consolidate")).toMatchObject({
+        nextEligibleAt: plusDays(T0, 7),
+        contentHash: null,
+      });
+
+      // An expiry is a procedural refusal that judged nothing: the one-day grace stays and the hash is dropped.
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/expired",
+        source: "consolidate",
+        outcome: "proposed",
+        at: T0,
+        proposalId: "p-expired",
+      });
+      recordImproveLedgerDecision(db, {
+        proposalId: "p-expired",
+        stashDir: "/s",
+        ref: "memories/expired",
+        source: "consolidate",
+        outcome: "expired",
+        at: T0,
+        contentHash: "ignored",
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/expired", "consolidate")).toMatchObject({
+        nextEligibleAt: plusDays(T0, 1),
+        contentHash: null,
+      });
+
+      // Another source is untouched even when a caller passes a hash.
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "skills/x",
+        source: "reflect",
+        outcome: "proposed",
+        at: T0,
+        proposalId: "p-reflect",
+      });
+      recordImproveLedgerDecision(db, {
+        proposalId: "p-reflect",
+        stashDir: "/s",
+        ref: "skills/x",
+        source: "reflect",
+        outcome: "rejected",
+        at: T0,
+        contentHash: "ignored",
+      });
+      expect(getImproveLedgerRow(db, "/s", "skills/x", "reflect")).toMatchObject({
+        nextEligibleAt: plusDays(T0, 14),
+        contentHash: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a promotion whose memory row a later attempt overwrote still lands its decision on the memory, keyed by the hash it names (#998)", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      // The row `proposed` left was replaced by a later judged_no_action, which
+      // carries no proposal id, so the decision finds no row to update.
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "memories/overwritten",
+        source: "consolidate",
+        outcome: "judged_no_action",
+        at: T0,
+      });
+      recordImproveLedgerDecision(db, {
+        proposalId: "p-late",
+        stashDir: "/s",
+        ref: "memories/overwritten",
+        source: "consolidate",
+        outcome: "rejected",
+        at: plusDays(T0, 9),
+        contentHash: "hash-at-mint",
+      });
+      expect(getImproveLedgerRow(db, "/s", "memories/overwritten", "consolidate")).toMatchObject({
+        outcome: "rejected",
+        nextEligibleAt: null,
+        contentHash: "hash-at-mint",
+        proposalId: "p-late",
+      });
     } finally {
       db.close();
     }
