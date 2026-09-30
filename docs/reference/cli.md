@@ -2860,8 +2860,12 @@ akm proposal reopen <id>
 akm proposal reopen <id> --reason "the diff was misrendered (#997)"
 akm proposal reopen <id> <id> <id>                 # several at once: all or none
 akm proposal reopen <id> --queue team-bundle
-akm proposal list --status rejected --generator consolidate-pair --format json \
-  | jq -r '.proposals[].id' | xargs akm proposal reopen --reason "diff was misrendered"
+# One id per call, and only the rejections whose reason says the diff was misread:
+akm proposal list --status rejected --generator consolidate-pair \
+  --detail normal --format json \
+  | jq -r '.proposals[] | select(.review.reason // "" | test("blank line"))
+      | .id' \
+  | xargs -r -n 1 akm proposal reopen --reason "diff was misrendered"
 ```
 
 | Flag | Description |
@@ -2874,6 +2878,17 @@ cannot name a rejected one (`akm proposal list --status rejected` prints the
 ids; add `--generator consolidate-pair` for the retire backlog). An asset ref
 also resolves, to the newest proposal for that ref, but only while none is
 pending, and it never reaches a retire proposal, which is named by its id.
+
+Check a rejection's reason before reopening it. The default brief output of
+`akm proposal list` leaves it out; `--detail normal --format json` shows it as
+`review.reason`. Reopen only the rejections you want back, since a deliberate
+rejection would otherwise be undone with the rest. The pattern in the example,
+`test("blank line")`, matches the reason given in the 0.9.19 upgrade note (the
+diff read as a blank-line replacement); change it to yours. Pass one id per
+call (`xargs -n 1`) so a refusal skips only that proposal, and use `xargs -r`
+so GNU xargs does not run `reopen` with no id when nothing matches. A retire
+proposal refused because another pending retire proposal involves the same
+document can be reopened once that one is decided.
 
 Reopening is refused, with the reason, when:
 

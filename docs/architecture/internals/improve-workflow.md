@@ -214,7 +214,7 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
 7. Validate: `lintLessonContent` for lesson proposals; `validateKnowledgeContent` for knowledge proposals. Failure emits `distill_invoked` with `outcome: "validation_failed"` and throws `UsageError`.
 8. Quality gate (`processes.distill.qualityGate`, on unless disabled): one judge call scores the lesson from 1 to 5 on **novelty**, **non-redundancy** and **grounding**, against the source body the lesson was generated from (frontmatter stripped, first 3000 characters). The mean of novelty and non-redundancy picks the outcome: 3.5 or more passes, 2.5 up to 3.5 is `review_needed`, below 2.5 is `quality_rejected`. Grounding asks whether the lesson is about what its source is about: 1–2 only for a different subject than the source, 3 for a lesson on the source's subject that goes beyond or corrects it (it may draw on feedback the judge is not shown), 4–5 when the source supports it. It is not part of the mean, and a grounding score of 2 or less is `quality_rejected` whatever the mean is. This keeps a lesson about a tool error recorded as feedback — `akm show` failing on the ref — from being minted for a memory on an unrelated subject, which the mean of the other two criteria would pass or send to review (#999). A distill with no source to read (an unindexed ref distilled "from feedback signal alone") gives the judge an empty source, so its lesson is expected to be rejected as off-subject.
    - `quality_rejected` writes an `improve_ledger` row for the input (30-day distill rejection window) and a `distill_invoked` event carrying `score`, the per-criterion `criteria` and the `reason`. It mints no proposal.
-   - `review_needed` mints a pending proposal stamped `deferred` / `quality-gate` for a human; the triage drain leaves it alone. It is the outcome for a mean in the review band (unless grounding is 2 or less), a judge that times out or returns something unparseable or incomplete, the optional fidelity check's contradiction (a lesson that contradicts its source reaches a human this way, not through grounding), and a heuristic lesson-quality finding (for example an invalid `description`), which is found before the judge is called.
+   - `review_needed` mints a pending proposal stamped `deferred` / `quality-gate` for a human; the triage drain leaves it alone. It is the outcome for a mean in the review band (unless grounding is 2 or less), a judge that times out or returns something unparseable or incomplete, the optional fidelity check's contradiction (`processes.distill.fidelityCheck.enabled`, off by default; a lesson that contradicts its source reaches a human this way, not through grounding), and a heuristic lesson-quality finding (for example an invalid `description`), which is found before the judge is called.
 9. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
 10. Emit `distill_invoked` event with `outcome: "queued"`.
 
@@ -273,7 +273,7 @@ per-asset loop.
 **What it writes:**
 - A durable row in the `proposals` table in `state.db` for each emitted
   `promote` op, partitioned by bundle path.
-- An `improve_ledger` row for each memory the pass judged.
+- An `improve_ledger` row for each memory the pass judged, except a promotion that failed to persist.
 
 **Re-eligibility (#998):** the promote pass keys its ledger row by the source
 memory (`memories/<name>`). A memory the model saw and left alone

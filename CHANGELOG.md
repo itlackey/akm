@@ -56,8 +56,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same slice of the source the lesson was generated from (its body without
   frontmatter, first 3000 characters) instead of the raw file's first 2000. A
   lesson that contradicts its source still reaches a human through the
-  optional fidelity check, and every other `review_needed` reason is
-  unchanged. `TODO:` lines already in a memory are not removed.
+  optional fidelity check (`processes.distill.fidelityCheck.enabled`, off by
+  default), and every other `review_needed` reason is unchanged. `TODO:`
+  lines already in a memory are not removed.
 - **Consolidation stops re-proposing memories that `knowledge/` already
   covers (#998).** The promote pass copied a memory into a new `knowledge/`
   proposal with no notion of what `knowledge/` already held: the model never
