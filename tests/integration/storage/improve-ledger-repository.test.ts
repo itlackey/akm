@@ -277,6 +277,30 @@ describe("reopening a rejected proposal resets its ledger rows (#997)", () => {
     }
   });
 
+  test("reopenImproveLedgerDecision also drops a content_hash, so the row is exactly what a mint writes", () => {
+    const db = openStateDatabase(statePath());
+    try {
+      recordImproveLedger(db, {
+        stashDir: "/s",
+        ref: "personal//memories/foo",
+        source: "distill",
+        outcome: "rejected",
+        at: T0,
+        proposalId: "p1",
+        contentHash: "hash-v1",
+      });
+      expect(getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill")?.contentHash).toBe("hash-v1");
+      reopenImproveLedgerDecision(db, { proposalId: "p1", stashDir: "/s", source: "distill", at: T0 });
+      expect(getImproveLedgerRow(db, "/s", "personal//memories/foo", "distill")).toMatchObject({
+        outcome: "proposed",
+        contentHash: null,
+        detail: null,
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   test("reopenImproveLedgerDecision touches only the reopened proposal's rows, and creates none", () => {
     const db = openStateDatabase(statePath());
     try {

@@ -281,11 +281,12 @@ export function recordImproveLedgerDecision(db: Database, input: RecordImproveLe
 /**
  * A rejected proposal was reopened (`akm proposal reopen`): put the rows
  * {@link recordImproveLedgerDecision} found by `proposal_id` back to what the
- * mint wrote — `proposed`, on the revisit cadence from the reopen — so the
- * rejection's hard window stops reporting (and blocking) a proposal that is
- * pending again. `last_attempt_at` is kept, as a decision keeps it. A proposal
- * with no such row (its mint wrote none, or a later attempt took the key over)
- * changes nothing.
+ * mint wrote — `proposed`, on the revisit cadence from the reopen, and no
+ * `content_hash` (a mint records none) — so the rejection's hard window stops
+ * reporting (and blocking) a proposal that is pending again.
+ * `last_attempt_at` is kept, as a decision keeps it. A proposal with no such
+ * row (its mint wrote none, or a later attempt took the key over) changes
+ * nothing.
  */
 export function reopenImproveLedgerDecision(
   db: Database,
@@ -293,7 +294,7 @@ export function reopenImproveLedgerDecision(
 ): void {
   db.prepare(
     `UPDATE improve_ledger
-     SET outcome = 'proposed', next_eligible_at = ?, detail = ?
+     SET outcome = 'proposed', next_eligible_at = ?, detail = ?, content_hash = NULL
      WHERE stash_dir = ? AND proposal_id = ?`,
   ).run(nextEligibleAt(input.source, "proposed", input.at), trimDetail(input.detail), input.stashDir, input.proposalId);
 }
