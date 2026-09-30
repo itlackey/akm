@@ -14,7 +14,7 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../src/storage/repositories/index-connection";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../../src/storage/sqlite-read-snapshot";
-import { makeSandboxDir } from "../../_helpers/sandbox";
+import { makeSandboxDir, withEnv } from "../../_helpers/sandbox";
 
 describe("SQLite read snapshot lifecycle", () => {
   test("normal close is idempotent and removes its process-exit cleanup listener", () => {
@@ -186,6 +186,21 @@ describe("SQLite read snapshot keeps the process's own SQLite locks", () => {
       } catch {
         // Diagnostics for a lost lock are the assertion above; do not mask it.
       }
+      fixture.cleanup();
+    }
+  });
+
+  posixLockTest("a missing cp fails closed rather than copying inside this process", async () => {
+    const fixture = makeSandboxDir("akm-sqlite-read-no-cp");
+    const dbPath = path.join(fixture.dir, "source.db");
+    const source = new Database(dbPath);
+    source.exec("CREATE TABLE t(v TEXT); INSERT INTO t VALUES ('x')");
+    source.close();
+    try {
+      await withEnv({ PATH: path.join(fixture.dir, "no-such-bin") }, () => {
+        expect(() => openSqliteReadSnapshot(dbPath)).toThrow(SqliteReadSnapshotUnavailableError);
+      });
+    } finally {
       fixture.cleanup();
     }
   });
