@@ -464,20 +464,42 @@ Indexes: `idx_events_type` on `event_type`, `idx_events_ref` on `ref`, `idx_even
 
 #### Table: `proposals`
 
-Replaces per-uuid JSON directories under `$STASH/.akm/proposals/`. Indexed on `stash_dir+status`, `ref+status`.
+The proposal queue: pending proposals and the decided rows kept for the audit trail (archival is a `status` change, not a move). Replaces per-uuid JSON directories under `$STASH/.akm/proposals/`. Defined by migration `001-initial-schema`; migration `006-proposals-pending-ref-source` added the third index and `026-proposals-strip-legacy-fragment-refs` stripped `#fragment` from stored refs. Row mapping and validation: `src/storage/repositories/proposals-repository.ts` (`ProposalRow`, `proposalToRowValues`, `proposalRowToProposal`).
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID v4 |
-| `ref` | TEXT NOT NULL | Asset ref |
-| `stash_dir` | TEXT NOT NULL | Bundle root directory |
-| `status` | TEXT NOT NULL | `pending`, `accepted`, `rejected` |
-| `source` | TEXT | Origin (e.g. `reflect`) |
-| `payload_json` | TEXT NOT NULL | Full proposal payload JSON |
+| `stash_dir` | TEXT NOT NULL | Absolute bundle root; partitions the queue per bundle |
+| `ref` | TEXT NOT NULL | Canonical bundle-qualified ref (`bundle//conceptId`, no fragment) |
+| `status` | TEXT NOT NULL DEFAULT 'pending' | `pending`, `accepted`, `rejected`, `reverted` (`akm proposal reopen` moves `rejected` back to `pending`) |
+| `source` | TEXT NOT NULL | The generator: `reflect`, `distill`, `consolidate`, `consolidate-pair`, `extract`, `improve`, `feedback`, `propose`, `remember`, `import`, `distill_quality_rejected` or `schema-repair` (`PROPOSAL_SOURCES`); an unknown value is kept and warned about |
 | `created_at` | TEXT NOT NULL | ISO-8601 |
-| `updated_at` | TEXT NOT NULL | ISO-8601 |
+| `updated_at` | TEXT NOT NULL | ISO-8601; set on every decision |
+| `content` | TEXT NOT NULL DEFAULT '' | The content accept writes (equal to `changes[0].after`); empty for a retire proposal |
+| `frontmatter_json` | TEXT | JSON of the payload's frontmatter, NULL when it has none |
+| `metadata_json` | TEXT NOT NULL DEFAULT '{}' | JSON object holding every field without a column (keys below) |
 
-Indexes: `idx_proposals_stash_status` on `(stash_dir, status)`, `idx_proposals_ref_status` on `(ref, status)`.
+Keys of `metadata_json`, each written only when the proposal has it:
+
+| Key | Holds |
+|---|---|
+| `changes` | The file-change envelope, `[{ path, op: create\|update\|delete, after? }]`; only entries after the first carry `after`. Required on a pending row, absent on rows from before it existed |
+| `proposedTarget` | `{ source, root }`, the bundle bound at mint so a later accept cannot follow a changed default write target |
+| `beforeHash`, `beforeHashNormalized` | Target hashes at mint, for the accept-time freshness check (the second ignores bookkeeping frontmatter) |
+| `sourceRun` | The automated run that made the proposal |
+| `review` | `{ outcome: accepted\|rejected, reason?, decidedAt }` |
+| `reviewHistory` | Since 0.9.19: the rejections `akm proposal reopen` undid, oldest first, each `{ review?, gateDecision?, reopenedAt, reopenReason? }`; the newest `reopenedAt` is where retention expiry and `--older-than` start counting |
+| `confidence` | Self-estimated confidence in [0, 1] |
+| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, decidedAt }` |
+| `backupContent` | The target's content before promotion, for `revert` |
+| `acceptedTarget` | `{ source, root, path, contentHash }`, where accepted content went |
+| `eligibilitySource` | The improve lane that selected the asset (`signal-delta`, `proactive`, `high-salience`, `scope`, ...) |
+| `promotionSource`, `promotionSourceHash` | A consolidate promotion's source memory and its raw body hash at mint: accept archives the memory only if the hash still matches, and once the promotion is decided the ledger holds the memory until its body changes |
+| `retirement` | A `consolidate-pair` retire proposal's verdict: `retiredRef`, `successorRef`, `cosine`, `judgeLabel`, `judgeReason`, `retiredContentHash`, `successorContentHash`, `reason`, and `continuityRisk` when the retirement continuity check flagged it |
+| `retiredArchive` | `{ dirs }`, the archive directories of an accepted retirement, for `revert` |
+| `retireAcceptIntent` | `{ assetPath, backupContent }`, a retire accept's recorded intent, kept until the accept finishes so a crashed one resumes |
+
+Indexes: `idx_proposals_stash_status` on `(stash_dir, status)`, `idx_proposals_ref_status` on `(ref, status)`, `idx_proposals_stash_status_ref_source` on `(stash_dir, status, ref, source)`.
 
 #### Table: `task_history`
 
@@ -569,35 +591,65 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 
 > `id` was the byte offset of the line — assigned at read time via `readEvents()`, not stored on disk. In the new `events` table, the monotonic `INTEGER PRIMARY KEY` replaces the byte-offset cursor.
 
-**Full event type catalog:**
+**Event type catalog.** `EventType` (`src/core/events.ts`) is an open string union, so this is the set of types the code writes at HEAD (every `appendEvent`/`insertEventOnce` call site, plus the retention pass's `report(...)` helper and the vacuum helper), not a closed list. [Data & Telemetry](../../reference/data-and-telemetry.md#1-events-table) groups the same set by area. A synthetic `ref` (for example `proposals/_expiration`) stands in for a stash-wide event.
 
 | `eventType` | Emitted by | Key `metadata` fields |
 |---|---|---|
-| `add` | `akm bundle add` | `target`, `provider`, `name`, `writable` |
-| `remove` | `akm bundle remove` | `target`, `ref` |
-| `update` | `akm bundle update` | `target`, `all`, `processed` |
-| `remember` | `akm remember` | `path`, `force`, `tagCount`, `enriched`, `auto`, `scope` |
+| `add` | `akm bundle add` | `target`, `name`, `writable`; `provider` when one was given |
+| `remove` | `akm bundle remove` | `target`, `ref`, `id` |
+| `update` | `akm bundle update` | `target`, `all`, `force`, `allowDangerousEnvKeys`, `processed` |
+| `remember` | `akm remember` | `path`, `force`; `tagCount`, `enriched`, `auto`, `scope`, `notices` on the full path |
 | `import` | `akm import` | `source`, `path`, `force` |
-| `save` | `akm sync` | `name`, `message`, `ok` |
-| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
-| `promoted` | `akm proposal accept` | `proposalId`, `source`, `assetPath` |
-| `rejected` | `akm proposal reject` | `proposalId`, `source`, `reason` |
-| `reflect_invoked` | reflect pass inside `akm improve` | `task`, `engine`, `eligibilitySource` |
-| `propose_invoked` | `akm proposal new` | `type`, `name`, `task`, `engine` |
-| `distill_invoked` | distill pass inside `akm improve` | `outcome` (queued\|skipped\|validation_failed\|quality_rejected), `lessonRef`, `score`, `reason` |
+| `sync` | `akm sync` | `name`, `message`, `ok` |
+| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `failureMode`, `tags` |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
+| `curate` | `akm curate` | `query`, `itemCount`, `itemRefs[]` |
 | `show` | `akm show` | `type`, `name` |
-| `select` | `akm show` (when preceded by search within 60s) | `query`, `searchTs`, `rankPosition` |
-| `improve_invoked` | `akm improve` | `strategy`, `scope`, `dryRun`, `eligibleCount` |
-| `improve_skipped` | `akm improve` (cooldown guards) | `reason` (reflect_cooldown\|distill_cooldown\|consolidation_cooldown\|budget_exhausted), `cooldownDays`, `lastEventTs` |
-| `schema_repair_invoked` | `akm improve` (repair pass) | `outcome` (queued\|error), `reason`, `proposalId?`, `error?` |
-| `reflect_completed` | reflect pass inside `akm improve` (after proposal created) | `proposalId`, `source` |
-| `workflow_started` | workflow engine | `runId` |
-| `workflow_step_completed` | workflow engine (genuine `completed` transition only) | `runId`, `stepId`, `status` |
-| `workflow_step_updated` | workflow engine (every non-`completed` transition: `failed`/`skipped`/`blocked`) | `runId`, `stepId`, `status` |
-| `workflow_finished` | workflow engine | `runId` |
+| `select` | `akm show`, when a search within the last 60s returned the ref | `query`, `searchTs`, `rankPosition` |
+| `env_access` | `akm env run`, and a workflow step's frozen environment | `keys`; `secretNames` from a workflow step (names only, never values) |
+| `secret_access` | `akm secret run` | `var` (the variable name, never the value) |
+| `promoted` | `akm proposal accept`, and drain/triage promotion | `proposalId`, `source`, `sourceRun`, `assetPath`, `eligibilitySource`; `retired: true` for a retire proposal |
+| `rejected` | `akm proposal reject` | `proposalId`, `source`, `sourceRun`, `reason` |
+| `proposal_reopened` | `akm proposal reopen` | `proposalId`, `source`, `sourceRun`, `reason` |
+| `proposal_reverted` | `akm proposal revert` | `proposalId`, `source`, `sourceRun`, `assetPath` |
+| `proposal_expired` | improve maintenance: a pending proposal older than `archiveRetentionDays` | `proposalId`, `source`, `sourceRun`, `ageDays`, `retentionDays` |
+| `proposal_expiration_pass` | improve maintenance (ref `proposals/_expiration`) | `checked`, `expired`, `durationMs`, `retentionDays`, `expiredProposals` |
+| `proposal_orphan_purge` | improve maintenance (ref `proposals/_orphan-purge`) | `checked`, `rejected`, `durationMs`, `byType`, `orphans` |
+| `proposal_creation_rejected` | `createProposal` refusing its input | `source`, `reason` |
+| `propose_invoked` | `akm proposal new` | `type`, `name`, `task`, `engine` |
+| `triage_drained` | `akm proposal drain`, and improve's triage pre-pass | `promoted`, `rejected`, `deferredByReason`, `skippedByCap`, `staged`, `applyMode`, `dryRun` |
+| `triage_deferred` | the same, when items stay undecided | `deferred`, `deferredByReason`, `reason` |
+| `improve_invoked` | `akm improve`, live runs | `strategy`, `scope`, `dryRun`, `eligibleCount` |
+| `improve_completed` | `akm improve`, end of a run | `strategy`, `plannedRefs`, per-mode and per-class action counts, memory-cleanup counts |
+| `improve_failed` | `akm improve`, a run that crashed | `strategy`, `error` (redacted), `durationMs` |
+| `improve_skipped` | `akm improve`: a ref, a lane, or a group of refs left out | `reason`: `no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`; with `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
+| `improve_lock_recovered` | `akm improve` reclaiming a stale run lock | `lockName`, `stalePid`, `lockedAt`, `recoveredAt`, `lockAgeMs`, `reason` |
+| `improve_review_needed` | `akm feedback`, when a high-utility asset's utility drops below the review threshold | `previousUtility`, `nextUtility`, `reason`, `failureMode` |
+| `improve_reflect_outcome` | the improve loop, after each reflect call | `ok`, `durationMs`, `engine`, `reason` |
+| `proactive_selected` | the proactive-maintenance selector, once per run | `count`, `dueTotal`, `neverReflected` |
+| `reflect_invoked` | the reflect pass | `task`, `engine`, `eligibilitySource` |
+| `reflect_completed` | the reflect pass | `proposalId`, `source`, `engine` when a proposal was created; `ok: false`, `reason`, `subreason` when it failed |
+| `distill_invoked` | the distill pass | `outcome` (queued, skipped, config_disabled, llm_failed, validation_failed, quality_rejected, review_needed), `proposalRef`, `proposalKind`, `proposalId`, `skipReason`, `judgeConfidence`; `score`, `criteria`, `reason` from the quality gate |
+| `extract_invoked` | `akm proposal extract`, and improve's extract stage | `outcome` (no_candidates\|candidates_queued), `sessionId`, `harness`, `sourceRun`, `candidateCount`, `proposalCount` |
+| `extract_triaged` | the extract triage gate | `evaluated`, `passed`, `triagedOut`, `sourceRun` |
+| `schema_repair_invoked` | improve's schema-repair pass | `outcome` (queued\|error), `reason`, `proposalId`, `error` |
+| `stash_synced` | improve's end-of-run auto-sync | `committed`, `pushed`, `skipped`, `reason`, `attributed`, `unattributed` |
+| `asset_state_gc` | improve maintenance: orphaned `asset_salience`/`asset_outcome` rows (ref `asset_state/_gc`) | `pending`, `collected`, `byTable` |
+| `events_purged`, `improve_runs_purged`, `task_logs_purged` | improve's retention pass (refs `events/_purge`, `improve_runs/_purge`, `task_logs/_purge`) | `purgedCount`, `retentionDays` |
+| `state_db_vacuumed`, `index_db_vacuumed` | the retention pass's VACUUM of `state.db`; `akm index` compacting `index.db` | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
+| `workflow_started` | a workflow run is created | `runId`, `status` |
+| `workflow_step_completed` | a step's genuine `completed` transition | `runId`, `stepId`, `status` |
+| `workflow_step_updated` | every non-`completed` step transition (`failed`, `skipped`, `blocked`) | `runId`, `stepId`, `status` |
+| `workflow_finished` | the run turns terminal | `runId` |
+| `workflow_abandoned` | `akm workflow abandon` | `runId` |
+| `workflow_unit_started` | a workflow unit attempt begins | `runId`, `stepId`, `unitId`, `attempt`, `dispatchId`, `phase`, `status` |
+| `workflow_unit_finished` | a unit attempt ends | the same, plus `failureReason` and `tokens` when present |
+| `llm_usage` | every LLM call | `durationMs`, `outcome`, `modelSource`, `stage`, `engine`, `process`, `model`, `finishReason`, token counts, `errorCode` |
+| `llm_usage_summary` | the usage sink's teardown | `expectedTerminalRecords` |
+| `health_probe` | `akm health`'s state.db write/read probe | none kept: the row is deleted in the same connection |
+| `rekey` | `scripts/rekey-asset-ref.ts`, when it moved rows | `from`, `to`, `changed` |
 
-**Read API:** `readEvents(options)` — filter by `since`, `sinceOffset` (row id cursor), `type`, `ref`, `includeTags`, `excludeTags`. Returns `{ events, nextOffset }`. `tailEvents()` provides a polling loop.
+**Read API:** `readEvents(options)` — filter by `since`, `sinceOffset` (row id cursor), `type`, `ref`, `includeTags`, `excludeTags`, `runId` (`metadata.runId`), and `limit` (the most recent N). Returns `{ events, nextOffset }`. There is no polling loop (`tailEvents` was removed with `akm log tail` in 0.9.0); a consumer polls with `sinceOffset`.
 
 **Consumers and purpose:**
 

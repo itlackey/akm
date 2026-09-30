@@ -138,29 +138,29 @@ An append-only log of every mutating action you perform with AKM. Events are sto
 **Full event type list.** `EventType` (`src/core/events.ts`) is an open
 string union — new types can be added without a schema bump — so this is
 the set of types the code actually emits at HEAD (verified against every
-`appendEvent(...)` call site, 2026-07-27), grouped by area:
+`appendEvent(...)` and `insertEventOnce(...)` call site, 2026-09-30), grouped by area:
 
 *Asset lifecycle*
 
 | Event type | When emitted | Key metadata fields |
 |---|---|---|
-| `add` | `akm bundle add <source>` | `ref`, `provider` |
+| `add` | `akm bundle add <source>` | `target`, `name`, `writable`; `provider` when given |
 | `remove` | `akm bundle remove <source>` | `ref` |
-| `update` | `akm bundle update [source]` | `ref` |
-| `remember` | `akm remember <text>` | `ref` |
-| `import` | `akm import <file>` | `ref` |
+| `update` | `akm bundle update [source]` | `target`, `all`, `processed` |
+| `remember` | `akm remember <text>` | `ref`, `path`, `force` |
+| `import` | `akm import <file>` | `ref`, `source`, `path`, `force` |
 | `rekey` | `scripts/rekey-asset-ref.ts` moved at least one row onto a renamed asset's new ref — nothing is emitted on a no-op re-run | `ref` (the new ref); metadata `{from, to, changed}` (row counts only) |
 
 *Search, retrieval, sync*
 
 | Event type | When emitted | Key metadata fields |
 |---|---|---|
-| `search` | `akm search <query>` | `query`, `source`, `signal` |
-| `curate` | `akm curate <prompt>` | `query`, `source` |
+| `search` | `akm search <query>` | `query`, `hitCount`, `resultRefs`, `mode` |
+| `curate` | `akm curate <prompt>` | `query`, `itemCount`, `itemRefs` |
 | `show` | `akm show <ref>` | `ref`, `type`, `name` |
-| `select` | `akm show` after a search returning the same ref | `ref`, `entryId` |
-| `feedback` | `akm feedback <ref>` | `signal` (positive/negative) |
-| `sync` | `akm sync` | `ref` |
+| `select` | `akm show` after a search returning the same ref | `ref`, `query`, `searchTs`, `rankPosition` |
+| `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `failureMode`, `tags` |
+| `sync` | `akm sync` | `name`, `message`, `ok` |
 | `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `stash_synced` | `akm improve`'s internal auto-sync pass (the `sync.push` feature), **distinct from** the `akm sync` command above | `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
 | `env_access` | `akm env run <name> -- <command>` (audit trail: key **names** only, values never recorded) | `ref`, `keys` |
@@ -202,6 +202,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `proactive_selected` | The proactive-maintenance selector runs (once per `akm improve` run) | `count`, `dueTotal`, `neverReflected` (aggregated) |
 | `events_purged` | Old events deleted by improve maintenance (90-day default retention) | `purgedCount`, `retentionDays` |
 | `improve_runs_purged` | Old `improve_runs` rows deleted by improve maintenance (same retention window as events) | `purgedCount`, `retentionDays` |
+| `asset_state_gc` | Improve maintenance found `asset_salience`/`asset_outcome` rows that no longer resolve against the index (`pending`) or deleted them (`improve.stateGc.collect`); a run with neither emits nothing | `pending`, `collected`, `byTable` |
 | `state_db_vacuumed` | state.db was VACUUMed after the retention purge because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `task_logs_purged` | Old scheduled-task log files purged by improve maintenance | |
 
