@@ -2464,9 +2464,10 @@ The maintenance pass run by `improve` also expires stale proposals: any pending
 proposal older than the top-level `archiveRetentionDays` config key (default
 **90**, not `improve.archiveRetentionDays`) is moved to the archive with the
 reason `expired: no action within retention window` and a `proposal_expired`
-event is emitted. Set `archiveRetentionDays` to `0` to disable expiration
-entirely. The total expired count surfaces in the improve result as
-`proposalsExpired`.
+event is emitted (a proposal put back by `akm proposal reopen` is counted
+from the reopen, not its original creation). Set `archiveRetentionDays` to `0`
+to disable expiration entirely. The total expired count surfaces in the improve
+result as `proposalsExpired`.
 
 `improve` never promotes proposals on its own — there is no confidence gate.
 Every generated proposal lands in the queue with a `pending` status
