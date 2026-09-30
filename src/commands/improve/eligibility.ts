@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput, resolveRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
@@ -228,10 +229,16 @@ async function collectEligibleRefsFromIndex(
         });
       } catch (error) {
         if (!(error instanceof NotFoundError) || !runBundleId) throw error;
+        // Name the bundle that owns the ref; a typo or an unindexed ref keeps the default advice.
+        const { conceptId } = parseBundleRef(scope.value);
+        const owner = installations.find(
+          (installation) => installation.id !== runBundleId && entriesByItemRef.has(`${installation.id}//${conceptId}`),
+        )?.id;
+        if (!owner) throw error;
         throw new NotFoundError(
           error.message,
           error.code,
-          `This run improves bundle "${runBundleId}" only. To improve an asset that lives in another bundle, run \`akm improve <bundle>//<ref>\` (or pass \`--bundle <bundle>\`).`,
+          `"${conceptId}" is in bundle "${owner}"; this run improves bundle "${runBundleId}" only. Run \`akm improve ${owner}//${conceptId}\` (or pass \`--bundle ${owner}\`).`,
         );
       }
       const indexed = entriesByItemRef.get(`${resolved.bundle}//${resolved.conceptId}`);

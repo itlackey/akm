@@ -169,10 +169,28 @@ describe("candidate selection is bound to the run's write target", () => {
     ).catch((error: unknown) => error);
     expect(unqualified).toBeInstanceOf(NotFoundError);
     // The default "refresh the index" advice would be wrong here: the asset is indexed, in another bundle.
-    expect((unqualified as NotFoundError).hint()).toContain("--bundle <bundle>");
+    const hint = (unqualified as NotFoundError).hint();
+    expect(hint).toContain('"skills/team-skill" is in bundle "team"');
+    expect(hint).toContain("akm improve team//skills/team-skill");
+    expect(hint).toContain("--bundle team");
     await expect(
       collectEligibleRefs({ mode: "ref", value: "team//skills/team-skill" }, primary, {}, config),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe("a scope ref no bundle owns", () => {
+  test("keeps the default not-found advice instead of blaming another bundle", async () => {
+    const config = twoBundleConfig();
+    await seedAndIndex(config);
+
+    const error = await collectEligibleRefs({ mode: "ref", value: "skills/no-such-skill" }, primary, {}, config).catch(
+      (thrown: unknown) => thrown,
+    );
+
+    expect(error).toBeInstanceOf(NotFoundError);
+    expect((error as NotFoundError).hint()).toContain("akm index");
+    expect((error as NotFoundError).hint()).not.toContain("--bundle");
   });
 });
 
