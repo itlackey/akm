@@ -786,6 +786,30 @@ describe("akm proposal multi-bundle queues", () => {
     expect(JSON.parse(rejected.stdout).proposal.status).toBe("rejected");
   });
 
+  test("reopens a rejected proposal of a secondary queue through --queue; the primary queue cannot", async () => {
+    const primary = makeStashDir();
+    const secondary = makeStashDir();
+    writeSandboxConfig(multiBundleConfig(primary, secondary));
+    const proposal = seedProposal(secondary, "secondary//lessons/reopen-me");
+    const rejected = await runCli(
+      ["proposal", "reject", proposal.id, "--queue", "secondary", "--reason", "no", "--yes", "--format=json"],
+      { stashDir: primary },
+    );
+    expect(rejected.status).toBe(0);
+
+    // The id belongs to the secondary queue: the primary one does not know it.
+    const wrongQueue = await runCli(["proposal", "reopen", proposal.id, "--format=json"], { stashDir: primary });
+    expect(wrongQueue.status).not.toBe(0);
+    expect(getProposal(secondary, proposal.id).status).toBe("rejected");
+
+    const reopened = await runCli(["proposal", "reopen", proposal.id, "--queue", "secondary", "--format=json"], {
+      stashDir: primary,
+    });
+    expect(reopened.status).toBe(0);
+    expect(JSON.parse(reopened.stdout).proposal).toMatchObject({ id: proposal.id, status: "pending" });
+    expect(getProposal(secondary, proposal.id).status).toBe("pending");
+  });
+
   test("qualified proposal refs preserve bundle identity", async () => {
     const primary = makeStashDir();
     const secondary = makeStashDir();

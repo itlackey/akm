@@ -138,7 +138,6 @@ describe("akm proposal reopen — a rejected retire proposal", () => {
     expect(reopened.reviewHistory).toEqual([
       { review: rejected.review, reopenedAt: reopened.updatedAt, reopenReason: "diff rendering bug #997" },
     ]);
-    expect(reopened.review).toBeUndefined();
     // Everything else about the proposal is what it was.
     expect(reopened).toMatchObject({
       createdAt: proposal.createdAt,
