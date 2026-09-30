@@ -271,12 +271,15 @@ per-asset loop.
    and its evidence are in the module's header comment. With no stored vector
    (semantic search off, or the memory not yet indexed) the check does
    nothing and nothing throws.
-2. Advance the consolidation watermark only when every chunk completed and
-   every promotion proposal was emitted or deterministically deduplicated.
+2. Record what happened in the improve ledger (see **Re-eligibility** below):
+   a memory the model judged and left alone, or that a skip reason turned
+   away, gets a `judged_no_action` row; a promotion that failed to persist
+   gets none, so the next run retries it.
 
 **What it writes:**
 - A durable row in the `proposals` table in `state.db` for each emitted
   `promote` op, partitioned by bundle path.
+- An `improve_ledger` row for each memory the pass judged.
 
 **Re-eligibility (#998):** the promote pass keys its ledger row by the source
 memory (`memories/<name>`). A memory the model saw and left alone
