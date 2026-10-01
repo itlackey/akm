@@ -6,6 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The reflect judge asks whether a rewrite is needed, and both judges pass
+  only when every criterion scores 4 or more.** Judging on the mean (3.5 or
+  more) let rewrites that only reworded a correct asset through. The reflect
+  judge's criteria are now **need** (does the revision fix a concrete problem
+  in the source: something the feedback reports, a factual error, or broken,
+  garbled, truncated or missing text, frontmatter fields included; rewording,
+  restating, reformatting or adding headings scores 1 or 2), **preservation**
+  and **quality**, replacing feedback alignment, preservation and quality, and
+  the "overlap with the source is expected" line is gone. Its JSON keys are
+  `need`, `preservation` and `quality`. The lesson judge passes only when
+  novelty and non-redundancy both score 4 or more. A verdict that does not
+  pass keeps its routing (a mean of 2.5 or more is a review, below that a
+  rejection) and the grounding rules are unchanged, grounding staying outside
+  the mean and the pass rule.
+- **A quality-judge pass keeps its evidence.** The `staged` decision the
+  quality gate stamps on a proposal now carries the per-criterion `scores` and
+  the judge's `judgeReason` (`gateDecision.scores`, `gateDecision.judgeReason`
+  in `akm proposal show --format json`), and they stay on the proposal when the
+  drain accepts it, so a later audit can read why a rewrite passed.
+- **Each accepted proposal is committed as it happens when its bundle is a git
+  repository.** Manual `akm proposal accept`, `akm proposal drain`, the improve
+  triage pre-pass and judgment accepts all commit exactly the paths the accept
+  wrote or removed, a retirement's archived copy and tombstone and the source
+  memory a consolidate promotion retires included, as one local commit
+  `akm accept: <generator> <proposal-id-8> <ref>`. Before, only a `kind: "git"`
+  bundle committed at accept; an accept into a filesystem bundle with a `.git`
+  directory (the working bundle `akm init` creates is one) stayed uncommitted
+  until a sync, and a standalone `akm proposal accept` never committed it. A
+  commit that fails warns and the accept stands. A non-git bundle is
+  unchanged.
+- **The end-of-run sync and `akm sync` commit even when they cannot push.** A
+  branch with no upstream, or behind or diverged from it, used to fail before
+  committing, leaving the run's changes in the working tree. They are now
+  committed and only the push is skipped, with `not pushed: ...` as the result's
+  `reason`. A branch ahead of its upstream (an accept commits locally) is pushed
+  along with the sync commit, where it used to be refused.
+
+### Fixed
+
+- **A dotted token no longer splits a synthesized description.** `akm
+  remember` ended a sentence at every `.`, so `192.168.0.203` became `192. 168.
+  0. 203` and `0.9.12` became `0. 9. 12`. A `.`, `!` or `?` now ends a sentence
+  only when whitespace or the end of the text follows it.
+- **The nightly commit message's `{accepted}` and the run metrics count the
+  proposals triage promoted.** `{accepted}`, `autoAcceptedCount` in
+  `improve_runs.metrics_json` and `improve.autoAccept.promoted` in `akm health`
+  read `gateAutoAcceptedCount`, which nothing has set since the confidence gate
+  was deleted, so they were always 0. They read the triage pre-pass's promoted
+  count, and the dead field is gone from the result type. A result row an older
+  akm wrote with the field no longer decodes in `akm health`, which counts it
+  under `resultRows.skipped.invalid`.
+
 ## [0.9.20] - 2026-09-30
 
 ### Fixed
