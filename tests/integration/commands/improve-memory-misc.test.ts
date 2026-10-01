@@ -817,7 +817,6 @@ describe("new 0.8.0 improve metrics", () => {
     );
     expect(auto).toBeUndefined();
     // The result envelope no longer reports gate counts (0 is omitted).
-    expect(result.gateAutoAcceptedCount ?? 0).toBe(0);
     expect(result.gateAutoAcceptFailedCount ?? 0).toBe(0);
   });
 

@@ -59,6 +59,10 @@ const COMMON_FIELDS = [
   "reflectCooldownActions",
   "reflectSkippedActions",
   "reflectGuardRejectedActions",
+  // No longer written (nothing has set it since the confidence gate was
+  // deleted), but kept in the allow-list so `decodeImproveResult` still reads
+  // the improve_runs rows an older release wrote with it, its value ignored —
+  // AGENTS.md "Reading persisted data".
   "gateAutoAcceptedCount",
   "gateAutoAcceptFailedCount",
   "triage",
@@ -483,7 +487,6 @@ function validateCommon(value: Record<string, unknown>): void {
     "reflectCooldownActions",
     "reflectSkippedActions",
     "reflectGuardRejectedActions",
-    "gateAutoAcceptedCount",
     "gateAutoAcceptFailedCount",
   ] as const) {
     if (value[field] !== undefined && typeof value[field] !== "number") fail(`${field} must be a number`);

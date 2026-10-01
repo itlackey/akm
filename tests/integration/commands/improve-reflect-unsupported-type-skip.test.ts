@@ -153,16 +153,16 @@ describe("improve loop: unsupported-type reflect pre-check", () => {
 
     await indexStash(stash);
 
-    // Inject positive feedback so both refs pass the signal filter inside improve.
+    // Inject negative feedback (the signal that plans a reflect) so both refs pass the signal filter inside improve.
     appendEvent({
       eventType: "feedback",
       ref: durableRef("scripts/deploy.sh"),
-      metadata: { signal: "positive", note: "fixture" },
+      metadata: { signal: "negative", reason: "fixture" },
     });
     appendEvent({
       eventType: "feedback",
       ref: durableRef("skills/deploy-guide"),
-      metadata: { signal: "positive", note: "fixture" },
+      metadata: { signal: "negative", reason: "fixture" },
     });
 
     const reflectCalls: AkmReflectOptions[] = [];
@@ -235,7 +235,7 @@ describe("improve loop: inner reflect type-guard fallback maps to reflect-skippe
     appendEvent({
       eventType: "feedback",
       ref: durableRef("skills/deploy-guide"),
-      metadata: { signal: "positive", note: "fixture" },
+      metadata: { signal: "negative", reason: "fixture" },
     });
 
     const result = await akmImprove({
@@ -292,7 +292,7 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
     appendEvent({
       eventType: "feedback",
       ref: durableRef("skills/byphase-fixture"),
-      metadata: { signal: "positive", note: "fixture" },
+      metadata: { signal: "negative", reason: "fixture" },
     });
 
     const result = await akmImprove({

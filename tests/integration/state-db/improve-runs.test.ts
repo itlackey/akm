@@ -245,7 +245,7 @@ describe("recordImproveRun", () => {
     const db = openStateDatabase();
     try {
       const result = buildMinimalResult({
-        gateAutoAcceptedCount: 1,
+        triage: { promoted: 1, rejected: 0, deferred: 0, failed: 0, skippedByCap: 0 },
         plannedRefs: [
           { ref: "lessons/a", reason: "scope-type" },
           { ref: "lessons/b", reason: "scope-type" },

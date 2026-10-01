@@ -77,8 +77,12 @@ akm search "<query>" --type skill
 ### Recording feedback and new knowledge
 
 ```sh
-# Mark an asset as helpful (improves future rankings)
+# Mark an asset as helpful (raises its ranking; does not trigger a rewrite)
 akm feedback <ref> --positive
+
+# Flag an asset for review: the next improve run proposes a fix based on your
+# reason, so be specific about what is wrong and what should change
+akm feedback <ref> --negative --reason "<what is wrong and what should change>"
 
 # Capture a durable lesson or memory from the current session
 akm remember "<fact or lesson>"

@@ -197,7 +197,7 @@ describe("a scope ref no bundle owns", () => {
 describe("an improve run never files another bundle's asset into its write target", () => {
   const LLM_BODY = "Rewritten by the model.";
 
-  /** Signals for every skill in both bundles, so the loop would pick all of them. */
+  /** Negative feedback on every skill in both bundles, so the loop would pick all of them. */
   function signalEverySkill(): void {
     for (const itemRef of [
       "primary//skills/local-skill",
@@ -205,7 +205,7 @@ describe("an improve run never files another bundle's asset into its write targe
       "team//skills/team-skill",
       "team//skills/shared-skill",
     ]) {
-      appendEvent({ eventType: "feedback", ref: itemRef, metadata: { signal: "positive", note: "fixture" } });
+      appendEvent({ eventType: "feedback", ref: itemRef, metadata: { signal: "negative", reason: "fixture" } });
     }
   }
 

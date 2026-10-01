@@ -185,29 +185,37 @@ export function rejectedProposalContext(
 // ── Mint ─────────────────────────────────────────────────────────────────────
 
 /**
- * Create a stage's proposal. `judged` stamps a `staged` gate decision with the
- * judged content's hash (the triage drain accepts it while the content still
- * matches); `review` leaves it `deferred` for a human (`review_needed` in the
- * improve ledger).
+ * Create a stage's proposal. `judged` (the passing verdict) stamps a `staged`
+ * gate decision with the judged content's hash and the judge's scores and reason
+ * (the triage drain accepts it while the content still matches); `review`
+ * leaves it `deferred` for a human (`review_needed` in the improve ledger).
  */
 export function mintProposal(
   stash: string,
   proposalsCtx: ProposalsContext | undefined,
   input: CreateProposalInput,
-  verdict: { judged?: boolean; review?: Omit<ProposalGateDecision, "outcome" | "decidedAt"> } = {},
+  verdict: {
+    judged?: Pick<QualityJudgeResult, "criteria" | "reason">;
+    review?: Omit<ProposalGateDecision, "outcome" | "decidedAt">;
+  } = {},
 ): Proposal {
   const proposal = createProposal(stash, input, proposalsCtx);
   if (verdict.review) {
     return recordGateDecision(stash, proposal.id, { outcome: "deferred", ...verdict.review }, proposalsCtx) ?? proposal;
   }
-  return verdict.judged ? stageJudgedProposal(stash, proposal, proposalsCtx) : proposal;
+  return verdict.judged ? stageJudgedProposal(stash, proposal, verdict.judged, proposalsCtx) : proposal;
 }
 
 /**
  * Stamp a proposal the quality judge passed. Best-effort: a failed stamp only
  * means the triage drain judges it again.
  */
-export function stageJudgedProposal(stash: string, proposal: Proposal, proposalsCtx?: ProposalsContext): Proposal {
+export function stageJudgedProposal(
+  stash: string,
+  proposal: Proposal,
+  judged?: Pick<QualityJudgeResult, "criteria" | "reason">,
+  proposalsCtx?: ProposalsContext,
+): Proposal {
   try {
     return (
       recordGateDecision(
@@ -218,6 +226,8 @@ export function stageJudgedProposal(stash: string, proposal: Proposal, proposals
           reason: "quality-judge",
           gate: "quality-gate",
           contentHash: proposalContentHash(proposal),
+          ...(judged?.criteria ? { scores: judged.criteria } : {}),
+          ...(judged ? { judgeReason: judged.reason } : {}),
         },
         proposalsCtx,
       ) ?? proposal
@@ -320,17 +330,15 @@ function buildChangedRegion(sourceContent: string, candidateContent: string): st
   return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
 }
 
-/** Judge prompt for an in-place revision (overlap with the source is expected). */
+/** Judge prompt for an in-place revision. */
 export function buildReflectJudgePrompt(candidateContent: string, sourceContent: string, feedback: string[]): string {
   return [
     "You are evaluating a proposed revision to an existing akm asset.",
     "",
     "Score this revision on each criterion from 1 (poor) to 5 (excellent):",
-    "1. FEEDBACK ALIGNMENT: Does the revision address the supplied feedback or improve retrieval and clarity?",
-    "2. PRESERVATION: Does it retain the source's concrete facts, code, commands, examples, and structure without truncation?",
-    "3. QUALITY: Is the revision coherent, actionable, complete, and free of unsupported claims?",
-    "",
-    "Overlap with the source is expected and must not lower the score by itself; this is an in-place revision, not a new lesson.",
+    "1. NEED: Does the revision fix a concrete problem in the source? Concrete problems are: something the feedback reports as wrong or missing; a factual error; or broken, garbled, truncated or missing text, including frontmatter fields such as description or when_to_use. Score 4-5 when it fixes one, even a small one. Score 1-2 when the source was already correct and the revision only rewords, restates, reformats, or adds headings, an introduction or a table of contents.",
+    "2. PRESERVATION: Does it keep every concrete fact, identifier, command, path, number and example from the source, without truncation?",
+    "3. QUALITY: Is it coherent and accurate, with no claims, steps or details that the source or the feedback does not support?",
     "",
     "Feedback:",
     "```",
@@ -352,14 +360,14 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
     buildChangedRegion(sourceContent, candidateContent),
     "```",
     "",
-    'Return ONLY valid JSON, no prose: {"scores": {"feedbackAlignment": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
+    'Return ONLY valid JSON, no prose: {"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
   ].join("\n");
 }
 
 /**
  * `grounding` is scored with the other lesson criteria but left out of their
  * mean: a lesson about a different subject than its source reads as novel and
- * non-redundant, so the mean would pass it (or, in the review band, mint it as
+ * non-redundant, so they would pass it (or, in the review band, mint it as
  * a pending proposal). The rubric reserves 1-2 for a different subject. A score
  * of {@link UNGROUNDED_MAX_SCORE} or less is a rejection whatever the mean says
  * (#999). A higher score up to {@link BORDERLINE_GROUNDING_MAX_SCORE} is only
@@ -376,18 +384,18 @@ const UNGROUNDED_MAX_SCORE = 1;
 const BORDERLINE_GROUNDING_MAX_SCORE = 2;
 
 const LESSON_JUDGE_CRITERIA = ["novelty", "nonRedundancy", GROUNDING_CRITERION] as const;
-const REFLECT_JUDGE_CRITERIA = ["feedbackAlignment", "preservation", "quality"] as const;
+const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
 
 /**
  * Read a judge response: the per-criterion shape (averaged here, `grounding`
- * aside) or the older `{"score"}` shape. Only the expected criteria are read;
- * any missing or out-of-range (1..5) value is a parse failure, extra keys are
- * ignored.
+ * aside; `lowest` is the lowest score in that mean) or the older `{"score"}`
+ * shape. Only the expected criteria are read; any missing or out-of-range
+ * (1..5) value is a parse failure, extra keys are ignored.
  */
 function parseJudgeResponse(
   raw: string,
   keys: readonly string[],
-): { score: number; reason: string; criteria?: Record<string, number> } | undefined {
+): { score: number; lowest: number; reason: string; criteria?: Record<string, number> } | undefined {
   const parsed = parseEmbeddedJsonResponse<{ score?: unknown; scores?: unknown; reason?: unknown }>(raw);
   if (!parsed || typeof parsed.reason !== "string") return undefined;
   const reason = parsed.reason;
@@ -405,9 +413,14 @@ function parseJudgeResponse(
     const averaged = Object.entries(criteria)
       .filter(([key]) => key !== GROUNDING_CRITERION)
       .map(([, value]) => value);
-    return { score: averaged.reduce((a, b) => a + b, 0) / averaged.length, reason, criteria };
+    return {
+      score: averaged.reduce((a, b) => a + b, 0) / averaged.length,
+      lowest: Math.min(...averaged),
+      reason,
+      criteria,
+    };
   }
-  return inRange(parsed.score) ? { score: parsed.score, reason } : undefined;
+  return inRange(parsed.score) ? { score: parsed.score, lowest: parsed.score, reason } : undefined;
 }
 
 function judgeResponseSchema(keys: readonly string[]): Record<string, unknown> {
@@ -429,14 +442,14 @@ function judgeResponseSchema(keys: readonly string[]): Record<string, unknown> {
 
 /**
  * The quality judge. Fails closed: no runner, an unparseable verdict or a
- * provider failure never passes content. Bands: >= 3.5 pass, 2.5-3.5 review,
- * < 2.5 reject; a `grounding` score of {@link UNGROUNDED_MAX_SCORE} or less
- * rejects whatever the mean is, and one of {@link BORDERLINE_GROUNDING_MAX_SCORE}
- * routes a lesson the mean would pass to review (a mean that rejects stays a
- * rejection). Temperature is set to 0, which reduces run-to-run variation but
- * does not remove it: on some servers (llama.cpp batching, for one) the same
- * request can score a point apart, so the routing rules are chosen with that
- * margin in mind.
+ * provider failure never passes content. Bands: every criterion in the mean
+ * >= 4 passes, otherwise a mean >= 2.5 is review and a lower one reject; a
+ * `grounding` score of {@link UNGROUNDED_MAX_SCORE} or less rejects whatever
+ * the mean is, and one of {@link BORDERLINE_GROUNDING_MAX_SCORE} routes a lesson
+ * that would pass to review (a mean that rejects stays a rejection).
+ * Temperature is set to 0, which reduces run-to-run variation but does not
+ * remove it: on some servers (llama.cpp batching, for one) the same request can
+ * score a point apart, so the routing rules are chosen with that margin in mind.
  */
 async function runQualityJudge(
   feature: LlmFeatureKey,
@@ -473,7 +486,7 @@ async function runQualityJudge(
   }
   const parsed = parseJudgeResponse(outcome.raw, keys);
   if (!parsed) return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
-  const { score, reason, criteria } = parsed;
+  const { score, lowest, reason, criteria } = parsed;
   const grounding = criteria?.[GROUNDING_CRITERION];
   if (criteria && grounding !== undefined && grounding <= UNGROUNDED_MAX_SCORE) {
     return {
@@ -483,8 +496,8 @@ async function runQualityJudge(
       criteria,
     };
   }
-  const verdict = score >= 3.5 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
-  // Borderline grounding is a person's call even when the mean would pass; a mean that rejects stays rejected.
+  const verdict = lowest >= 4 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
+  // Borderline grounding is a person's call even when the lesson would pass; a mean that rejects stays rejected.
   if (
     criteria &&
     grounding !== undefined &&

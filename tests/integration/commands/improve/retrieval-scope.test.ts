@@ -223,7 +223,9 @@ describe("fallback lanes pick only from the retrieval scope", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected.sort()).toEqual(["skills/fresh", "skills/read"]);
+    // The lane selects (and scores) only what retrieval returned or is new; it never plans a reflect.
+    expect(result.proactiveMaintenance?.selectedRefs.sort()).toEqual(["skills/fresh", "skills/read"]);
+    expect(reflected).toEqual([]);
     expect(result.plan?.gates.find((gate) => gate.name === "retrieval")?.removed).toBe(1);
     expect(result.proactiveMaintenance?.dueTotal).toBe(2);
   });

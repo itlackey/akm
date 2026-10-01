@@ -18,7 +18,6 @@ function fakeResult(
   overrides: Partial<{
     scope: { mode: string; value?: string };
     plannedRefs: unknown[];
-    gateAutoAcceptedCount?: number;
     triage?: { promoted: number; rejected: number; deferred: number; failed: number; skippedByCap: number };
     runId?: string;
   }> = {},
@@ -39,7 +38,11 @@ describe("renderSyncCommitMessage", () => {
   test("expands scope/refs/accepted from the result", () => {
     const out = renderSyncCommitMessage(
       "akm improve: {accepted} accepted, {refs} refs [{scope}]",
-      fakeResult({ scope: { mode: "type", value: "memory" }, plannedRefs: [1, 2, 3], gateAutoAcceptedCount: 7 }),
+      fakeResult({
+        scope: { mode: "type", value: "memory" },
+        plannedRefs: [1, 2, 3],
+        triage: { promoted: 7, rejected: 0, deferred: 0, failed: 0, skippedByCap: 0 },
+      }),
       NOW,
     );
     expect(out).toBe("akm improve: 7 accepted, 3 refs [memory]");
@@ -49,7 +52,7 @@ describe("renderSyncCommitMessage", () => {
     expect(renderSyncCommitMessage("{scope}", fakeResult({ scope: { mode: "all" } }), NOW)).toBe("all");
   });
 
-  test("accepted defaults to 0 when gateAutoAcceptedCount is absent", () => {
+  test("accepted defaults to 0 when triage did not run", () => {
     expect(renderSyncCommitMessage("{accepted}", fakeResult(), NOW)).toBe("0");
   });
 
@@ -61,13 +64,12 @@ describe("renderSyncCommitMessage", () => {
     const out = renderSyncCommitMessage(
       "akm improve {runId}: +{triage_promoted} triaged, -{triage_rejected}, {accepted} accepted @ {timestamp}",
       fakeResult({
-        gateAutoAcceptedCount: 4,
         triage: { promoted: 5, rejected: 2, deferred: 1, failed: 0, skippedByCap: 0 },
         runId: "run-abc123",
       }),
       NOW,
     );
-    expect(out).toBe("akm improve run-abc123: +5 triaged, -2, 4 accepted @ 2026-06-02 21:30:45");
+    expect(out).toBe("akm improve run-abc123: +5 triaged, -2, 5 accepted @ 2026-06-02 21:30:45");
   });
 
   test("triage tokens default to 0 when the result has no triage field (triage did not run)", () => {

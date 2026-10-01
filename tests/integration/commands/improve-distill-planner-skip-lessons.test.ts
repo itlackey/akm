@@ -144,11 +144,11 @@ describe("improve planner: skip distill-refused input types", () => {
     const stash = makeFixtureStash();
     await indexStash(stash);
 
-    // Give every ref a positive feedback signal so the all-scope improve run
-    // considers them eligible (otherwise the signal/retrieval gate at
-    // improve.ts:1553 drops zero-signal refs and the test plan is empty).
+    // Give every ref a negative feedback signal (the one that plans a reflect)
+    // so the all-scope improve run considers them eligible (otherwise the
+    // signal gate drops the refs and the test plan is empty).
     for (const ref of ["lessons/alpha-lesson", "lessons/beta-lesson", "lessons/gamma-lesson", "memories/deploy-fact"]) {
-      appendEvent({ eventType: "feedback", ref: durableRef(ref), metadata: { signal: "positive", note: "fixture" } });
+      appendEvent({ eventType: "feedback", ref: durableRef(ref), metadata: { signal: "negative", reason: "fixture" } });
     }
 
     const distillCalls: AkmDistillOptions[] = [];

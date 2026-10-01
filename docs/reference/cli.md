@@ -1395,6 +1395,8 @@ value also looks like a format token.
 | Git repo, no remote | Stage and commit only |
 | Git repo, has remote, not writable | Stage and commit only |
 | Git repo, has remote, `writable: true` | Stage, commit, and push |
+| Writable with a remote, but no upstream branch, or behind or diverged from it | Stage and commit; the push is skipped and `reason` says `not pushed: ...` |
+| Writable with a remote and ahead of its upstream | Stage, commit, and push, unpushed commits included |
 | Any writable repo with `--no-push` | Stage and commit only (push suppressed) |
 
 **Primary bundle writable config:**
@@ -1592,9 +1594,12 @@ preserves it byte-for-byte.
 
 ### feedback
 
-Record positive or negative feedback for any indexed bundle asset. Feedback
-influences utility scores during the next index run, causing highly-rated
-assets to rank higher in search results over time.
+Record positive or negative feedback for any indexed bundle asset.
+`akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
+flags the asset for review: the next improve run proposes a fix based on your
+reason, so be specific. `--positive` records that an asset helped (it raises
+its ranking) and does not trigger a rewrite. Both signals update the asset's
+utility score right away, so highly-rated assets rank higher in search results.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
@@ -1608,15 +1613,20 @@ akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --
 
 | Flag | Description |
 | --- | --- |
-| `--positive` | Record positive feedback (use when an asset was helpful) |
-| `--negative` | Record negative feedback (use when an asset was not useful) |
-| `--reason` | What was wrong with (or right about) the asset's content; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default) |
+| `--positive` | Record that an asset helped: it raises its ranking and does not trigger a rewrite |
+| `--negative` | Flag the asset for review: the next improve run proposes a fix based on `--reason`, so be specific |
+| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event and read by the next improve run's fix proposal (required for negative feedback by default) |
 | `--failure-mode` | Structured failure-mode taxonomy for negative feedback: `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant`. Stored alongside `--reason` in event metadata for the distill pipeline. |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |
 
 Specify exactly one of `--positive` or `--negative`. The ref must already be
 present in the current local index.
+
+Only negative feedback with a specific reason gets an asset reviewed and fixed:
+`akm improve` plans a rewrite (reflect) only for an asset with fresh negative
+feedback, or for an explicit ref. A positive or note-only signal never plans
+one, and improve no longer rewrites assets on a proactive cadence.
 
 The `--applied-to` flag records the lesson-strength signal: each credit is
 kept in the lesson's `lessonStrength[]` frontmatter. Search ranking does not
@@ -2432,7 +2442,7 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
-| `--require-feedback-signal` | Only process assets with recent feedback signals: turns the fallback lanes (high salience, proactive maintenance) off for the run |
+| `--require-feedback-signal` | Turn the fallback lanes (high salience, proactive maintenance) off for the run: they only select and score assets, and a rewrite needs negative feedback |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
@@ -2481,7 +2491,8 @@ vector (semantic search off, or the memory not indexed yet) that check does
 nothing and the exact slug and whole-body checks still apply.
 
 No built-in strategy turns the improve-stage extract process on, and only
-`proactive-maintenance` turns proactive maintenance on. Use that strategy or
+`proactive-maintenance` turns proactive maintenance on, which selects and
+scores due assets but plans no rewrite. Use that strategy or
 set the selected strategy's process `enabled: true` to opt in. The stage toggle does not disable a direct
 `akm proposal extract --type <harness>` or `akm proposal extract --auto`
 invocation.
@@ -2502,16 +2513,22 @@ the drain engine. Reflect still emits a `confidence` score (0..1) in its JSON
 response schema; it is recorded on the proposal for triage and ranking, but no
 threshold auto-accepts anything.
 
-Selection picks the refs with feedback (a signal or a note, in the last 30
-days) newer than the stage's last ledger attempt. Two fallback lanes add refs
-with no such feedback: high salience (content-scored refs at or above
+Selection plans a reflect (a proposed rewrite) only for refs with negative
+feedback in the last 30 days newer than the stage's last ledger attempt, or for
+an explicit ref scope. A positive or note-only signal never plans one, so
+improve does not rewrite an asset from a positive signal. Distill keeps its own
+trigger: a memory with feedback of any kind (a signal or a note) in that window,
+newer than distill's last attempt. Two fallback lanes pick refs with no such
+feedback: high salience (content-scored refs at or above
 `improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
 capped at 10% of the limit, at least one ref) and, in a strategy that enables
-`proactiveMaintenance`, refs due for a revisit. Both pick only refs in the
+`proactiveMaintenance`, refs due for a revisit. They only select and score refs
+(salience and outcome) and plan nothing, so improve does not rewrite on a
+proactive cadence; they pick only refs in the
 [retrieval scope](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retrieval-scope): returned by
 `search`, `curate` or `show`, or named by feedback, in the last 90 days, or new
-material no improve stage has processed. The picks are ranked by salience and
-cut to the limit; an explicit ref scope bypasses every gate. Use
+material no improve stage has processed. The planned refs are ranked by salience
+and cut to the limit; an explicit ref scope bypasses every gate. Use
 `--require-feedback-signal` to turn the fallback lanes off for the run.
 
 When the active strategy enables a process (or the triage judgment engine)
@@ -2818,6 +2835,14 @@ Bulk-accept all pending proposals from one generator with `--generator <name>`
 (e.g. `reflect`, `distill`) and no positional id. Bulk accept requires
 `-y`/`--yes` in non-interactive shells.
 
+When the destination bundle is a git repository (a `.git` directory, whatever
+its source kind), each accept is committed as it happens, with exactly the paths
+it wrote or removed and the subject `akm accept: <generator> <proposal-id-8>
+<ref>`. A retirement's archived copy and tombstone, and the source memory a
+consolidate promotion retires, are part of the same commit. The commit is local:
+`akm sync`, or the end-of-run sync of `akm improve`, pushes it. A commit that
+fails warns and the accept stands.
+
 #### proposal reject
 
 Reject a proposal and archive the reason. Accepts a full UUID, an 8-character
@@ -3039,7 +3064,8 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 
 `akm feedback` accepts an optional `--reason <text>` flag whose value is
 forwarded into feedback metadata and consumed by improve/distill proposal
-prompts. Negative feedback requires a reason by default.
+prompts. Negative feedback requires a reason by default: the next improve run
+proposes a fix from it, so say what is wrong and what should change.
 
 Write the reason about the asset's content. Reflect treats it as an unverified
 report to investigate, not a fact to insert, and is told to leave the section

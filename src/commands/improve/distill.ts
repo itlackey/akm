@@ -64,6 +64,7 @@ import {
   mintProposal,
   type NoticeSet,
   noticeSet,
+  type QualityJudgeResult,
   rejectedProposalContext,
   runLessonQualityJudge,
   stageRunner,
@@ -584,6 +585,7 @@ async function judgeAndQueue(
 ): Promise<AkmDistillResult> {
   let content = out.content;
   let confidence: number | undefined;
+  let judged: QualityJudgeResult | undefined;
   if (qualityGateEnabled(run)) {
     const similarLessons = await run.similar(content.slice(0, 500), 3);
     // The judge reads what the generator read: the source body, without its frontmatter (buildDistillPrompt).
@@ -601,6 +603,7 @@ async function judgeAndQueue(
       });
     }
     if (verdict.score > 0) confidence = verdict.score / 5;
+    judged = verdict;
   }
 
   let frontmatter: Record<string, unknown> | undefined;
@@ -652,7 +655,7 @@ async function judgeAndQueue(
       // The ledger keys the attempt by the input, not the output.
       attemptedRefs: [run.ledgerRef],
     },
-    { judged: confidence !== undefined },
+    { judged },
   );
   persistOutputEncodingSalience(run, out.ref, content);
   const swapped = out.descriptionSwapped ? { descriptionSwapped: out.descriptionSwapped } : {};

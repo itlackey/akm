@@ -57,16 +57,23 @@ everything else routes through `akm proposal accept`.
 ## Data flow
 
 1. An agent uses a capability and calls `akm feedback <ref> --positive|--negative`.
+   `--negative --reason "<what is wrong and what should change>"` flags the
+   asset for review: the next improve run proposes a fix based on the reason.
+   `--positive` records that the asset helped (it raises its ranking) and does
+   not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility
    score is updated immediately via the bounded-step formula (below) — no
    reindex required.
-3. `akm improve` selects assets from the one bundle it writes to: those with
-   feedback (a signal or a note, in the last 30 days) newer than the stage's
-   last attempt, plus, unless `--require-feedback-signal` is set, the fallback
-   lanes (high salience, and proactive maintenance where the strategy enables
-   it), which pick only what the retrieval scope below admits. It ranks them by
-   salience, applies the limit, then runs whichever processes the selected
-   strategy enables against each one (see
+3. `akm improve` selects assets from the one bundle it writes to. A rewrite
+   (reflect) is planned only for an asset with negative feedback in the last
+   30 days that is newer than the stage's last attempt, or for an explicit ref;
+   a positive or note-only signal never plans one. Distill reads any feedback
+   on a memory in that window. Unless `--require-feedback-signal` is set, the
+   fallback lanes (high salience, and proactive maintenance where the strategy
+   enables it) pick what the retrieval scope below admits, for scoring only:
+   they plan nothing, so improve does not rewrite assets on a proactive
+   cadence. It ranks the selected assets by salience, applies the limit, then
+   runs whichever processes the selected strategy enables against each one (see
    [Improve Workflow](internals/improve-workflow.md#ledger-pre-filter-signal-delta)).
 4. Reflect and distill each emit at most one proposal per asset per run;
    consolidate runs two passes alongside each other — the promote pass emits
@@ -86,9 +93,15 @@ everything else routes through `akm proposal accept`.
    to `pending`.
 7. `akm proposal accept` promotes the proposal into the bundle; `akm proposal
    revert` restores the prior content from the backup captured at promotion
-   time, if the proposal overwrote an existing asset.
+   time, if the proposal overwrote an existing asset. When the bundle is a git
+   repository (a `.git` directory, whatever its source kind), each accept is
+   committed as it happens, locally and with exactly the paths it wrote or
+   removed: `akm accept: <generator> <proposal-id-8> <ref>`. A retirement's
+   archived copy and tombstone, and the source memory a consolidate promotion
+   retires, go in the same commit. A commit that fails warns and the accept
+   stands.
 8. For a git-backed bundle, `akm improve`'s end-of-run auto-sync commits the
-   run's changes as a single batch (see below).
+   rest of the run's changes as a single batch and pushes (see below).
 
 ## Current decisions
 
@@ -134,9 +147,9 @@ that "off" rather than defaulting to on.
 
 Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
 scope (`akm improve skills/x`) are usage evidence of their own. Every other
-pick — the proactive-maintenance and high-salience lanes, and the memories
-consolidation judges — must be in the retrieval scope
-(`src/commands/improve/retrieval-scope.ts`):
+pick — the proactive-maintenance and high-salience lanes (which only score what
+they pick), and the memories consolidation judges — must be in the retrieval
+scope (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
   asset, or user `feedback` named it, inside the window. A hit on a
@@ -153,6 +166,37 @@ the plan's `retrieval` gate and reported as the `not_retrieved` skip reason;
 consolidation reports them in its warnings. A bulk rewrite of old files
 (a rename, a lint fix, a fresh clone) makes them look new until improve has
 processed each once.
+
+### Quality judge
+
+Every reflect rewrite and every distilled lesson is scored by a judge before it
+is queued (`runQualityJudge`, `src/commands/improve/stage.ts`): one call at
+temperature 0, each criterion scored 1 to 5, failing closed (no runner, a
+timeout, or an unparseable or incomplete reply never passes content and goes to
+review). A reflect rewrite is scored on three criteria:
+
+- **need**: does it fix a concrete problem in the source: something the
+  feedback reports as wrong or missing, a factual error, or broken, garbled,
+  truncated or missing text (frontmatter fields included)? A rewrite that only
+  rewords, restates or reformats a correct source, or adds headings, an
+  introduction or a table of contents, scores 1 or 2.
+- **preservation**: does it keep every concrete fact, identifier, command, path,
+  number and example, without truncation?
+- **quality**: is it coherent and accurate, with nothing the source or the
+  feedback does not support?
+
+Content passes only when **every** criterion scores 4 or more (a lesson's
+grounding is judged apart, see
+[distill](internals/improve-workflow.md#distill-akmdistill)); a mean of 3.5
+passed it before. A verdict that does not pass is a review when its mean is 2.5
+or more and a rejection below that. The rubric and the rule were chosen on 90
+labelled real rewrites, where judging on the mean let rewrites that only
+reworded a correct asset through.
+
+A pass is stamped on the proposal as a `staged` decision from the `quality-gate`
+with the per-criterion `scores` and the judge's `judgeReason`; both stay on the
+proposal when the drain accepts it, so a later audit can read why it passed
+(`akm proposal show --format json`).
 
 ### Retrieval regression gate
 
@@ -226,9 +270,9 @@ but nothing assigns or emits it any more.
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
-the fallback lanes (proactive maintenance and high salience), the retrieval
-scope, salience ranking, disk presence, and the final cap, and resolve the
-bundle they plan the same way: `--bundle`, else
+the fallback lanes (proactive maintenance and high salience, which score and
+plan nothing), the retrieval scope, salience ranking, disk presence, and the
+final cap, and resolve the bundle they plan the same way: `--bundle`, else
 `defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
 `defaultBundle`). Each invocation reports a best-effort observation assembled
 while it runs; it is not an atomic cross-store snapshot, a reservation, or a
@@ -296,6 +340,13 @@ does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.
 
+The sync always commits the paths it is given. A branch it cannot push (no
+upstream branch, or behind or diverged from its upstream) only skips the push,
+and the result says why: `sync.reason` reads `not pushed: ...`. A branch that is
+ahead of its upstream, as it is after the accept commits above, is pushed with
+the sync commit. A clean tree that is ahead is not pushed: the sync pushes what
+it commits.
+
 The commit is scoped by **write provenance**, not by directory: every akm write
 path records the file it mutated into a run-scoped journal
 (`src/core/write-provenance.ts`), and the end-of-run sync stages exactly the
@@ -321,13 +372,11 @@ tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`) AND
 whose archive directory is entirely git-tracked and clean (`git ls-files`
 plus `git status --porcelain -uall`, both checked once per sweep, not once
 per directory). `.git` presence alone does not guarantee a retirement was
-ever committed: `akm proposal accept` only commits for a `kind: "git"` write
-target (`commitWriteTargetBoundary` in `src/core/write-source.ts`), and `akm
-improve`'s own auto-sync only stages the paths that same run wrote — a
-standalone `akm proposal accept` call, or any accept on a `kind:
-"filesystem"` source that merely happens to have a `.git` directory on disk,
-can leave archived bytes sitting on disk with no commit behind them at all.
-A directory with even one untracked or modified file (the tombstone
+ever committed: an accept commits its own paths (`commitAcceptedPaths` in
+`src/core/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
+directory too, but a commit that failed only warned, and a retirement accepted
+by an older akm left archived bytes sitting on disk with no commit behind them
+at all. A directory with even one untracked or modified file (the tombstone
 included) is left whole for a later sweep, so the purge only ever removes
 bytes git can already recover. Every deleted path is journaled individually,
 so the end-of-run auto-sync commits the removal the same way it commits the

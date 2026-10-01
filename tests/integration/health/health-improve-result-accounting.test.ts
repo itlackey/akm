@@ -151,4 +151,81 @@ describe("summarizeImproveRuns result-row accounting", () => {
       db.close();
     }
   });
+
+  test("an improve_runs row an older release wrote with gateAutoAcceptedCount still decodes", () => {
+    const now = Date.now();
+    const startedAt = new Date(now - 60_000).toISOString();
+    const db = openStateDatabase();
+
+    try {
+      recordImproveRun(db, {
+        id: "older-release",
+        startedAt,
+        completedAt: startedAt,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: {
+          schemaVersion: 2,
+          ok: true,
+          strategy: "default",
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [],
+          actions: [],
+          gateAutoAcceptedCount: 4,
+          gateAutoAcceptFailedCount: 0,
+        } as unknown as ImproveResultEnvelope,
+      });
+
+      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      expect(summary.metrics.resultRows).toEqual({ total: 1, included: 1, skipped: { invalid: 0 } });
+      // The retired count is ignored: only the triage pre-pass's promoted count is auto-accepted now.
+      expect(summary.metrics.autoAccept.promoted).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("counts the proposals the triage pre-pass promoted as auto-accepted", () => {
+    const now = Date.now();
+    const startedAt = new Date(now - 60_000).toISOString();
+    const db = openStateDatabase();
+
+    try {
+      recordImproveRun(db, {
+        id: "triaged",
+        startedAt,
+        completedAt: startedAt,
+        stashDir: "/tmp/stash",
+        dryRun: false,
+        strategy: "default",
+        scopeMode: "all",
+        scopeValue: null,
+        guidance: null,
+        ok: true,
+        result: {
+          schemaVersion: 2,
+          ok: true,
+          strategy: "default",
+          scope: { mode: "all" },
+          dryRun: false,
+          memorySummary: { eligible: 1, derived: 0 },
+          plannedRefs: [],
+          actions: [],
+          triage: { promoted: 3, rejected: 1, deferred: 0, failed: 0, skippedByCap: 0 },
+        } as ImproveResultEnvelope,
+      });
+
+      const summary = summarizeImproveRuns(db, new Date(now - 300_000).toISOString());
+      expect(summary.metrics.autoAccept.promoted).toBe(3);
+    } finally {
+      db.close();
+    }
+  });
 });

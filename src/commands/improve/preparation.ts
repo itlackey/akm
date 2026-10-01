@@ -9,10 +9,11 @@
  *
  * Candidate selection reads the improve ledger plus one set of signals: a ref
  * is eligible for a source when feedback newer than its last attempt landed and
- * no ledger window holds it. Refs without recent feedback can still be picked
- * by the fallback lanes (proactive maintenance, high salience); the survivors
- * are ranked by salience, checked on disk and capped. A plan-only run
- * evaluates the same selectors against read snapshots and writes nothing.
+ * no ledger window holds it, and reflect reads only negative feedback. Refs
+ * without recent feedback can still be picked by the fallback lanes (proactive
+ * maintenance, high salience), which only score them; the survivors are ranked
+ * by salience, checked on disk and capped. A plan-only run evaluates the same
+ * selectors against read snapshots and writes nothing.
  */
 
 import fs from "node:fs";
@@ -714,6 +715,8 @@ interface SignalDeltaSnapshot {
   nowIso: string;
   /** Newest in-window signal per ref. */
   latestFeedbackTs: Map<string, string>;
+  /** Newest in-window negative signal per ref: the only feedback that plans a reflect. */
+  latestNegativeTs: Map<string, string>;
   ledger: LedgerSnapshot;
   /** `ref → last_attempt_at` from the ledger. */
   lastReflectAttemptAt: Map<string, string>;
@@ -735,6 +738,7 @@ export function buildSnapshotManifest(args: {
   const candidates = args.postCleanupRefs.filter((r) => !args.validationFailureRefs.has(r.ref));
   const refByKey = new Map(candidates.map((r) => [keyOf(r), r.ref]));
   const latestFeedbackTs = new Map<string, string>();
+  const latestNegativeTs = new Map<string, string>();
   const feedback = new Map<string, FeedbackSignal>(
     candidates.map((r) => [r.ref, { hasSignal: false, positive: 0, negative: 0 }]),
   );
@@ -744,11 +748,12 @@ export function buildSnapshotManifest(args: {
       const entry = ref ? feedback.get(ref) : undefined;
       if (!ref || !entry) continue;
       const ts = e.ts ?? "";
+      const signal = (e.metadata as { signal?: unknown } | undefined)?.signal;
       if (ts >= feedbackSinceCutoff && isSignalEvent(e.metadata)) {
         entry.hasSignal = true;
         if (ts > (latestFeedbackTs.get(ref) ?? "")) latestFeedbackTs.set(ref, ts);
+        if (signal === "negative" && ts > (latestNegativeTs.get(ref) ?? "")) latestNegativeTs.set(ref, ts);
       }
-      const signal = (e.metadata as { signal?: unknown } | undefined)?.signal;
       if (signal === "positive") entry.positive++;
       else if (signal === "negative") entry.negative++;
     }
@@ -760,6 +765,7 @@ export function buildSnapshotManifest(args: {
     feedbackSinceCutoff,
     nowIso: new Date().toISOString(),
     latestFeedbackTs,
+    latestNegativeTs,
     ledger,
     lastReflectAttemptAt: lastAttemptByRef(ledger, "reflect", candidates),
     lastDistillAttemptAt: lastAttemptByRef(ledger, "distill", candidates),
@@ -769,10 +775,12 @@ export function buildSnapshotManifest(args: {
 
 /**
  * Partition the post-cleanup refs against the ledger:
- *  - eligibleRefs: reflect's signal delta passes (distill may still be cooled);
- *  - distillOnlyRefs: only distill's passes, on a distill candidate;
+ *  - eligibleRefs: reflect's signal delta passes, which only fresh negative
+ *    feedback can do (distill may still be cooled);
+ *  - distillOnlyRefs: only distill's passes (any signal, a positive or a note
+ *    included), on a distill candidate;
  *  - noFeedbackPool: no recent feedback and no reflect window, left to the
- *    fallback lanes;
+ *    fallback lanes, which only score them;
  *  - fullySkippedCount: feedback on record but nothing new, or a live window.
  * An explicit `--scope <ref>` bypasses every gate.
  */
@@ -781,7 +789,7 @@ export function partitionBySignalDelta(args: {
   options: AkmImproveOptions;
   postCleanupRefs: ImproveEligibleRef[];
   validationFailureRefs: Set<string>;
-  snapshot: Pick<SignalDeltaSnapshot, "latestFeedbackTs" | "ledger" | "nowIso">;
+  snapshot: Pick<SignalDeltaSnapshot, "latestFeedbackTs" | "latestNegativeTs" | "ledger" | "nowIso">;
 }): {
   distillCooledRefs: Set<string>;
   preCooldownCount: number;
@@ -791,10 +799,10 @@ export function partitionBySignalDelta(args: {
   fullySkippedCount: number;
 } {
   const { postCleanupRefs, validationFailureRefs } = args;
-  const { latestFeedbackTs, ledger, nowIso } = args.snapshot;
-  // Newer feedback lifts a revisit window, never a rejection.
+  const { latestFeedbackTs, latestNegativeTs, ledger, nowIso } = args.snapshot;
+  // Newer feedback lifts a revisit window, never a rejection. Reflect reads negative feedback only.
   const deltaPasses = (candidate: ImproveEligibleRef, source: "reflect" | "distill"): boolean => {
-    const feedbackAt = latestFeedbackTs.get(candidate.ref);
+    const feedbackAt = (source === "reflect" ? latestNegativeTs : latestFeedbackTs).get(candidate.ref);
     if (!feedbackAt) return false;
     const row = ledgerRowFor(ledger, source, candidate.ref, candidate.itemRef);
     return feedbackAt > (row?.lastAttemptAt ?? "") && !isLedgerBlocked(row, nowIso, feedbackAt);
@@ -834,8 +842,8 @@ export function partitionBySignalDelta(args: {
 
 /**
  * Pick the loop's refs: signal delta, the fallback lanes (unless
- * `--require-feedback-signal`), lane attribution, salience, the
- * no-op-dampened ranking, the disk check and the limit.
+ * `--require-feedback-signal`; they score, never plan), lane attribution,
+ * salience, the no-op-dampened ranking, the disk check and the limit.
  */
 async function selectLoopCandidates(
   args: ImprovePreparationStageArgs,
@@ -889,21 +897,19 @@ async function selectLoopCandidates(
         persist,
       )
     : [];
-  // An explicit ref scope always acts on its ref; otherwise usage signals gate the pool.
+  // An explicit ref scope always acts on its ref; otherwise only feedback plans the loop. The fallback lanes'
+  // picks are scored with it, never planned: a rewrite needs negative feedback.
   const signalAndRetrievalRefs = dedupeRefs([...signalFiltered, ...proactive.proactiveRefs, ...highSalienceRefs]);
-  const mergedRefs =
-    scope.mode === "ref" ? processableRefs : options.requireFeedbackSignal ? signalFiltered : signalAndRetrievalRefs;
+  const mergedRefs = scope.mode === "ref" ? processableRefs : signalFiltered;
+  const scoredRefs = scope.mode === "ref" ? processableRefs : signalAndRetrievalRefs;
 
-  // Lane attribution, weakest first so the strongest wins: high-salience <
-  // proactive < signal-delta, and an explicit ref scope over everything.
+  // Lane attribution: signal-delta, and an explicit ref scope over it.
   const sourceByRef = new Map<string, EligibilitySource>();
-  for (const r of highSalienceRefs) sourceByRef.set(r.ref, "high-salience");
-  for (const r of proactive.proactiveRefs) sourceByRef.set(r.ref, "proactive");
   for (const r of signalFiltered) sourceByRef.set(r.ref, "signal-delta");
   if (scope.mode === "ref") for (const r of processableRefs) sourceByRef.set(r.ref, "scope");
   for (const r of mergedRefs) r.eligibilitySource = sourceByRef.get(r.ref) ?? "unknown";
 
-  const salienceMap = scoreSalience(args, mergedRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
+  const salienceMap = scoreSalience(args, scoredRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
 
   // Rank by salience; a ref skipped as a no-op repeatedly sorts lower (its stored rank is untouched).
   const noOps = new Map<string, number>();
@@ -936,8 +942,7 @@ async function selectLoopCandidates(
       (options.limit && deferred > 0 ? ` (--limit ${options.limit} applied; ${deferred} deferred)` : ""),
   );
 
-  // Skip observability waits until every fallback lane has finalized the
-  // survivors, so a rescued ref is never also reported skipped.
+  // Skip observability: every candidate that did not survive into the loop pool is reported skipped.
   const survivors = new Set(sorted.map((c) => c.ref));
   const skipped = fallbackEligible.filter((c) => !survivors.has(c.ref));
   const retrievalSkipped = skipped.filter((c) => outOfScope.has(c.ref));
@@ -986,7 +991,7 @@ async function selectLoopCandidates(
       name: "signal",
       removed: signalSkipped.length,
       reason:
-        "no fresh signal since the last attempt (or an improve-ledger window) and no fallback lane selected the ref",
+        "no fresh negative feedback (or, for distill, any signal) since the last attempt, or a ledger window holds it",
     },
     { name: "disk", removed: missing.length, reason: "backing asset is absent on disk" },
     { name: "limit", removed: selection.limitRemoved, reason: "deferred by the effective run limit" },
@@ -1029,9 +1034,11 @@ function fetchRetrievalSignals(
 }
 
 /**
- * Proactive maintenance (default off, whole-stash/type runs): revisit stable
- * assets on a schedule. The due gate doubles as the rotation cooldown: a
- * freshly reflected asset waits `dueDays` before it is picked again.
+ * Proactive maintenance (default off, whole-stash/type runs): pick stable
+ * assets due for a revisit. The picks are scored and never planned: improve
+ * does not rewrite on a proactive cadence. The due gate doubles as the
+ * rotation cooldown: a freshly reflected asset waits `dueDays` before it is
+ * picked again.
  */
 function selectProactiveMaintenanceLane(
   args: ImprovePreparationStageArgs,
@@ -1098,7 +1105,8 @@ function selectProactiveMaintenanceLane(
 /**
  * High salience: zero-feedback refs whose content-derived encoding score (not
  * a per-type stub) reaches `salienceThreshold` and that were never reflected,
- * top-N by score, capped at 10% of the effective limit.
+ * top-N by score, capped at 10% of the effective limit. The picks are scored,
+ * never planned.
  */
 function selectHighSalienceLane(
   options: AkmImproveOptions,

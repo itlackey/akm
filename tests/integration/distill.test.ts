@@ -2042,6 +2042,35 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     }
   });
 
+  test("a queued lesson's staged stamp keeps the judge's scores and reason", async () => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({
+            scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+            reason: "adds the rollback step",
+          });
+        }
+        return VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(listProposals(stash)[0]?.gateDecision).toMatchObject({
+      outcome: "staged",
+      gate: "quality-gate",
+      scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+      judgeReason: "adds the rollback step",
+    });
+  });
+
   test("07 P0-2 end-to-end: gate ON + unjudgeable verdict → routed to review, never auto-queued", async () => {
     const stash = makeStashDir();
     // Distill returns a valid lesson, but the judge's second call receives the

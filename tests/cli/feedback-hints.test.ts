@@ -39,6 +39,34 @@ describe("shipped hints on recording feedback (#999)", () => {
     expect(EMBEDDED_HINTS).toContain("A failed akm command (e.g. `akm show` erroring) is not feedback on the asset");
   });
 
+  for (const [name, hints] of [
+    ["brief", EMBEDDED_HINTS],
+    ["full", EMBEDDED_HINTS_FULL],
+  ] as const) {
+    test(`${name} hints say negative feedback with a specific reason gets the asset fixed, and positive triggers no rewrite`, () => {
+      const prose = hints.replace(/\s+/g, " ");
+      expect(prose).toContain('--negative --reason "<what is wrong and what should change>"');
+      expect(prose).toMatch(/flags (it|the asset) for review/);
+      expect(prose).toContain("the next improve run proposes a fix based on your reason, so be specific");
+      expect(prose).toContain("does not trigger a rewrite");
+    });
+  }
+
+  test("`akm feedback` help says the same: negative flags the asset for review, positive triggers no rewrite", () => {
+    const meta = feedbackCommand.meta as { description?: string };
+    const args = feedbackCommand.args as Record<string, { description?: string }>;
+    const prose = (meta.description ?? "").replace(/\s+/g, " ");
+
+    expect(prose).toContain(
+      '`akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags the asset for review: ' +
+        "the next improve run proposes a fix based on your reason, so be specific. " +
+        "`--positive` records that an asset helped (it raises its ranking) and does not trigger a rewrite.",
+    );
+    expect(args.negative?.description).toContain("proposes a fix from --reason");
+    expect(args.positive?.description).toContain("does not trigger a rewrite");
+    expect(args.reason?.description).toContain("what should change");
+  });
+
   test("`akm feedback --reason` help asks for the asset's content and rules out command errors", () => {
     const args = feedbackCommand.args as Record<string, { description?: string }>;
 

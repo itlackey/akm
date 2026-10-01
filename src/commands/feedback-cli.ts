@@ -236,6 +236,10 @@ export const feedbackCommand = defineJsonCommand({
     name: "feedback",
     description:
       "Record positive or negative feedback for any indexed bundle asset.\n\n" +
+      '`akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags\n' +
+      "the asset for review: the next improve run proposes a fix based on your reason, so be\n" +
+      "specific. `--positive` records that an asset helped (it raises its ranking) and does not\n" +
+      "trigger a rewrite.\n\n" +
       "Both signals adjust the asset's usefulness score right away, in the same\n" +
       "process: positive feedback raises it, negative lowers it, and recent\n" +
       "feedback counts for more than old feedback. No reindex is needed — the new\n" +
@@ -246,16 +250,21 @@ export const feedbackCommand = defineJsonCommand({
     // and throw a structured UsageError below so exit code is 2 (USAGE) rather
     // than citty's default 0 (help banner).
     ref: { type: "positional", description: "Asset ref ([bundle//]conceptId, e.g. lessons/deploy)", required: false },
-    positive: { type: "boolean", description: "Record positive feedback (boosts ranking immediately)", default: false },
+    positive: {
+      type: "boolean",
+      description: "Record that the asset helped (raises its ranking immediately; does not trigger a rewrite)",
+      default: false,
+    },
     negative: {
       type: "boolean",
-      description: "Record negative feedback (lowers ranking immediately, no reindex needed).",
+      description:
+        "Flag the asset for review: the next improve run proposes a fix from --reason (also lowers its ranking immediately, no reindex needed).",
       default: false,
     },
     reason: {
       type: "string",
       description:
-        "What was wrong with (or right about) the asset's content (required for negative feedback by default; used by distillation). Not for akm command errors.",
+        "What is wrong with the asset's content and what should change; the next improve run proposes a fix from it, so be specific (required for negative feedback by default). Not for akm command errors.",
     },
     "failure-mode": {
       type: "string",
@@ -324,14 +333,14 @@ export const feedbackCommand = defineJsonCommand({
       const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
       if (requireReason) {
         throw new UsageError(
-          "Negative feedback requires --reason (structured failure signals are needed for distillation). " +
+          "Negative feedback requires --reason: the next improve run proposes a fix from it, so say what is wrong and what should change. " +
             "Use --failure-mode for a curated taxonomy or --reason for free text. " +
             "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
           "MISSING_REQUIRED_ARGUMENT",
-          `Hint: akm feedback ${ref} --negative --reason "..." [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
+          `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>" [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
         );
       } else {
-        warn("Warning: negative feedback without --reason provides less distillation signal.");
+        warn("Warning: negative feedback without --reason gives the next improve run nothing to base a fix on.");
       }
     }
     const rawTags = parseAllFlagValues("--tag");

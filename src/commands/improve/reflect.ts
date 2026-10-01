@@ -76,6 +76,7 @@ import {
   mintProposal,
   type Notice,
   noticeSet,
+  type QualityJudgeResult,
   rejectedProposalContext,
   runReflectQualityJudge,
 } from "./stage";
@@ -1250,21 +1251,15 @@ async function finalizeReflectProposal(args: {
     );
     return reflectFailure(run, result, "quality_rejected", message, false);
   };
+  let verdict: QualityJudgeResult | undefined;
   if (judged) {
-    const verdict = await runReflectQualityJudge(
-      run.config,
-      payload.content,
-      assetContent ?? "",
-      feedback,
-      options.chat,
-      {
-        runnerSelectionFrozen: true,
-        ...(judge.runner ? { llmRunner: judge.runner } : {}),
-        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
-        ...(options.signal ? { signal: options.signal } : {}),
-        onNotices: run.notices.add,
-      },
-    );
+    verdict = await runReflectQualityJudge(run.config, payload.content, assetContent ?? "", feedback, options.chat, {
+      runnerSelectionFrozen: true,
+      ...(judge.runner ? { llmRunner: judge.runner } : {}),
+      ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+      ...(options.signal ? { signal: options.signal } : {}),
+      onNotices: run.notices.add,
+    });
     if (!verdict.pass) {
       return refuse(
         verdict.reason,
@@ -1336,7 +1331,7 @@ async function finalizeReflectProposal(args: {
             ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
           },
         }
-      : { judged },
+      : { judged: verdict },
   );
   appendEvent(
     {

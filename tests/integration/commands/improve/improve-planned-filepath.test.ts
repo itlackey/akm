@@ -99,9 +99,10 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
     const betaPath = writeLesson(stash, "beta");
     await indexStash(stash);
     // `plannedRefs` is the effective post-selector work set. Give both assets
-    // fresh signal so this test reaches the filePath fast path it owns.
+    // fresh negative feedback (the signal that plans a reflect) so this test
+    // reaches the filePath fast path it owns.
     for (const ref of ["lessons/alpha", "lessons/beta"]) {
-      appendEvent({ eventType: "feedback", ref: durableRef(ref), metadata: { signal: "positive" } });
+      appendEvent({ eventType: "feedback", ref: durableRef(ref), metadata: { signal: "negative", reason: "fixture" } });
     }
 
     const result = await akmImprove({ stashDir: stash, dryRun: true });
@@ -192,17 +193,17 @@ describe("#591: planned refs carry a pre-resolved filePath", () => {
     writeLesson(stash, "kept");
     const goneFile = writeLesson(stash, "gone");
     await indexStash(stash);
-    // Fresh feedback keeps both refs past the signal-delta gate so they reach
-    // the validation pass and the final disk-existence guard.
+    // Fresh negative feedback keeps both refs past the signal-delta gate so
+    // they reach the validation pass and the final disk-existence guard.
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/kept"),
-      metadata: { signal: "positive", note: "fixture" },
+      metadata: { signal: "negative", reason: "fixture" },
     });
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/gone"),
-      metadata: { signal: "positive", note: "fixture" },
+      metadata: { signal: "negative", reason: "fixture" },
     });
     // Delete one asset AFTER indexing: its pre-resolved filePath is now stale,
     // so the disk-existence guard must drop it via the fallback lookup while

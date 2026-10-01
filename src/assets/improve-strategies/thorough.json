@@ -9,7 +9,7 @@
     "distill": {
       "enabled": true,
       "allowedTypes": ["memory"],
-      "requirePlannedRefs": true
+      "requirePlannedRefs": false
     },
     "consolidate": {
       "enabled": true,

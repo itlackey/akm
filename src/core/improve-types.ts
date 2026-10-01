@@ -524,7 +524,8 @@ export interface ConsolidatePerfTelemetry {
  */
 /**
  * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
- * for the uncertainty band (score 2.5–3.5). MT-Bench arXiv:2306.05685 reports
+ * for the uncertainty band (a mean of 2.5 or more with a criterion below 4).
+ * MT-Bench arXiv:2306.05685 reports
  * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
  * The review-needed band converts uncertain cases into explicit human review
  * requests rather than opaque auto-decisions.
@@ -977,12 +978,6 @@ export interface AkmImproveResult {
    */
   reflectGuardRejectedActions?: number;
   /**
-   * Total proposals auto-promoted by the (deleted, 0.9.0) improve confidence
-   * gate across all phases. Always 0/omitted for new runs; kept on the
-   * envelope allow-list because historical improve_runs rows carry counts.
-   */
-  gateAutoAcceptedCount?: number;
-  /**
    * Total proposals that hit the (deleted, 0.9.0) confidence gate but failed
    * validation. Always 0/omitted for new runs; kept for historical rows.
    */
@@ -998,8 +993,8 @@ export interface AkmImproveResult {
    * Layer 2 proactive-maintenance selector outcome. Present only when the
    * `proactiveMaintenance` process is enabled and the run was whole-stash / type
    * scope; omitted entirely otherwise. `selected` is the count of due assets
-   * folded into the reflect/distill candidate set this run (bounded by
-   * `maxPerRun`); `dueTotal` is the full due pool before the bound;
+   * picked for scoring this run (bounded by `maxPerRun`); they are never
+   * planned for reflect or distill. `dueTotal` is the full due pool before the bound;
    * `neverReflected` is the subset of the due pool never previously reflected.
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number; selectedRefs: string[] };

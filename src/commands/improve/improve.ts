@@ -11,12 +11,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
-import {
-  type AkmConfig,
-  bundlesToSourceEntries,
-  type ImproveProfileConfig,
-  loadConfig,
-} from "../../core/config/config";
+import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
@@ -79,7 +74,6 @@ import {
   resolveImproveStrategy,
 } from "./improve-strategies";
 import { buildImproveUsageReport } from "./improve-usage-report";
-import { lastAttemptByRef, loadLedgerSnapshot } from "./ledger";
 import { improveLockPath, releaseImproveLock, tryAcquireImproveLock } from "./locks";
 import { runImproveLoopStage, runImprovePostLoopStage } from "./loop-stages";
 import {
@@ -90,7 +84,6 @@ import {
 } from "./memory/memory-improve";
 import { buildImproveExecutionPlan } from "./planner";
 import { CONSOLIDATION_CONFIG_KEYS, pickDefined, recordImproveSkip, runImprovePreparationStage } from "./preparation";
-import { DEFAULT_DUE_DAYS, filterProactiveDue } from "./proactive-maintenance";
 import { akmReflect } from "./reflect";
 import { errMessage, type Notice, noticeSet } from "./stage";
 
@@ -119,7 +112,6 @@ export function renderSyncCommitMessage(
   result: {
     scope: { mode: string; value?: string };
     plannedRefs: unknown[];
-    gateAutoAcceptedCount?: number;
     triage?: { promoted: number; rejected: number; deferred: number; failed: number; skippedByCap: number };
     runId?: string;
   },
@@ -132,7 +124,7 @@ export function renderSyncCommitMessage(
     time: iso.slice(11, 19),
     scope: result.scope.value ?? result.scope.mode,
     refs: String(result.plannedRefs.length),
-    accepted: String(result.gateAutoAcceptedCount ?? 0),
+    accepted: String(result.triage?.promoted ?? 0),
     triage_promoted: String(result.triage?.promoted ?? 0),
     triage_rejected: String(result.triage?.rejected ?? 0),
     runId: result.runId ?? "",
@@ -949,38 +941,6 @@ function makeCommitStashBatch(deps: {
 }
 
 /**
- * Re-read the improve ledger under the lock and drop proactive refs another run
- * attempted after this one planned.
- */
-export function refilterProactiveLoopRefs(
-  loopRefs: ImprovePreparationResult["loopRefs"],
-  improveProfile: ImproveProfileConfig,
-  ledgerAccess: { stashDir?: string; eventsCtx?: EventsContext },
-): ImprovePreparationResult["loopRefs"] {
-  const proactiveLoopRefs = loopRefs.filter((r) => r.eligibilitySource === "proactive");
-  if (proactiveLoopRefs.length === 0 || !ledgerAccess.stashDir) return loopRefs;
-  const ledger = loadLedgerSnapshot({ eventsCtx: ledgerAccess.eventsCtx }, ledgerAccess.stashDir, [
-    "reflect",
-    "distill",
-  ]);
-  const stillDue = new Set(
-    filterProactiveDue(
-      proactiveLoopRefs,
-      lastAttemptByRef(ledger, "reflect", proactiveLoopRefs),
-      lastAttemptByRef(ledger, "distill", proactiveLoopRefs),
-      improveProfile.processes?.proactiveMaintenance?.dueDays ?? DEFAULT_DUE_DAYS,
-      Date.now(),
-    ).map((r) => r.ref),
-  );
-  const dropped = proactiveLoopRefs.filter((r) => !stillDue.has(r.ref));
-  if (dropped.length === 0) return loopRefs;
-  info(
-    `[improve] post-lock cooldown re-filter: dropped ${dropped.length} proactive ref(s) claimed by concurrent run (${dropped.map((r) => r.ref).join(", ")})`,
-  );
-  return loopRefs.filter((r) => r.eligibilitySource !== "proactive" || stillDue.has(r.ref));
-}
-
-/**
  * The audit events for refs and lanes this run will not touch, then
  * preparation → loop → post-loop. No post-loop work starts past the budget; the
  * result still finalizes, so budget exhaustion exits 0.
@@ -1033,10 +993,7 @@ async function runImproveStageSequence(
     options,
     reflectFn: run.reflectFn,
     distillFn: run.distillFn,
-    loopRefs: refilterProactiveLoopRefs(preparation.loopRefs, improveProfile, {
-      stashDir: primaryStashDir ?? options.stashDir,
-      eventsCtx,
-    }),
+    loopRefs: preparation.loopRefs,
     actions: preparation.actions,
     signalBearingSet: preparation.signalBearingSet,
     distillCooledRefs: preparation.distillCooledRefs,

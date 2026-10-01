@@ -21,6 +21,7 @@ import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmReflectOptions } from "../../../../src/commands/improve/reflect";
 import { getAssetSalience, getConsecutiveNoOps, upsertAssetSalience } from "../../../../src/commands/improve/salience";
 import { saveConfig } from "../../../../src/core/config/config";
+import { appendEvent } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
@@ -57,6 +58,29 @@ async function buildIndex(stashDir: string, bundle = "stash"): Promise<void> {
 
 function durableRef(ref: string, bundle = "stash"): string {
   return `${bundle}//${ref}`;
+}
+
+/** Negative feedback on skills: the only signal that plans a reflect (and with it the plasticity counters). */
+function complain(bundle: string, ...names: string[]): void {
+  for (const name of names) {
+    appendEvent({
+      eventType: "feedback",
+      ref: durableRef(`skills/${name}`, bundle),
+      metadata: { signal: "negative", reason: "names a removed flag" },
+    });
+  }
+}
+
+/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
+function scoredRefs(): string[] {
+  const db = openStateDatabase();
+  try {
+    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
+      (row) => row.asset_ref,
+    );
+  } finally {
+    db.close();
+  }
 }
 
 const noopIndexFns = {
@@ -115,8 +139,9 @@ const qualityRejectedDistill = (ref: string): AkmDistillResult => ({
 
 /**
  * Minimal config: disable noisy passes, but keep proactiveMaintenance enabled
- * so never-reflected, zero-feedback assets flow through the candidate selection
- * and into the salience map / plasticity wiring.
+ * so never-reflected, zero-feedback assets are selected into the salience map.
+ * The lane only scores them: a test that needs a reflect or a distill plans the
+ * ref with `complain`.
  */
 const minimalConfig = () =>
   withTestImproveLlm({
@@ -185,6 +210,7 @@ describe("WS-1 wiring — first run (empty table)", () => {
     const stash = isolatedStash();
     writeSkill(stash, "shared", "Shared source-local content.");
     await buildIndex(stash, "team");
+    complain("team", "shared");
     const config = {
       ...minimalConfig(),
       bundles: { team: { path: stash, writable: true } },
@@ -219,6 +245,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     const stash = isolatedStash();
     writeSkill(stash, "delta", "Delta content.");
     await buildIndex(stash);
+    complain("stash", "delta");
 
     // Pre-seed the salience row so consecutive_no_ops starts at 0.
     const dbSetup = openStateDatabase();
@@ -257,6 +284,7 @@ describe("WS-1 wiring — no-op tracking via consecutive_no_ops", () => {
     const stash = isolatedStash();
     writeSkill(stash, "epsilon", "Epsilon content.");
     await buildIndex(stash);
+    complain("stash", "epsilon");
 
     // Pre-seed with a high no-op count.
     const dbSetup = openStateDatabase();
@@ -317,7 +345,7 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
    *   - `alpha-stable` is given consecutive_no_ops = SALIENCE_NO_OP_DAMPEN_THRESHOLD
    *     (via direct SQL UPDATE) — it is dampened.
    *   - `beta-fresh` keeps consecutive_no_ops = 0 — it is not dampened.
-   *   - Improve runs with proactive maintenance enabled so both refs reach mergedRefs.
+   *   - Both refs carry negative feedback, so both are planned and ranked.
    *   - Assertions:
    *     (a) beta-fresh is reflect'd BEFORE alpha-stable (non-dampened first).
    *     (b) alpha-stable's persisted rank_score is UNCHANGED after the run
@@ -336,6 +364,7 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     writeSkill(stash, "alpha-stable", "Stable asset body.");
     writeSkill(stash, "beta-fresh", "Stable asset body.");
     await buildIndex(stash);
+    complain("stash", "alpha-stable", "beta-fresh");
 
     // Pre-seed asset_salience rows: equal rank_score, but alpha-stable is dampened.
     const dbSetup = openStateDatabase();
@@ -489,9 +518,9 @@ async function runAndCaptureLanes(opts: {
 //   1. Write a zero-feedback skill and build the index.
 //   2. Pre-seed asset_salience with encoding_salience >= salienceThreshold.
 //   3. Run akmImprove with salienceThreshold set explicitly.
-//   4. Assert the ref is reflected with eligibilitySource='high-salience'.
-//   5. Repeat with salienceThreshold=1.0 — the same ref must NOT be selected
-//      via 'high-salience' (score < 1.0).
+//   4. Assert the ref is scored (the lane admitted it) and never reflected.
+//   5. Repeat with salienceThreshold=1.0 — the same ref must NOT be admitted
+//      (score < 1.0), so it is not scored either.
 
 describe("#608 high-salience admission gate", () => {
   // Durable improve state is keyed by item_ref, so sources do not share state
@@ -522,7 +551,9 @@ describe("#608 high-salience admission gate", () => {
     localConfig.defaultBundle = "local";
     localConfig.defaultWriteTarget = "local";
     const localLanes = await runAndCaptureLanes({ stash: localStash, config: localConfig, target: "local" });
-    expect(localLanes.get("skills/legacy-local")).toBe("high-salience");
+    // The lane admits the local concept into scoring; it plans nothing.
+    expect(scoredRefs()).toContain(durableRef("skills/legacy-local", "local"));
+    expect(localLanes.size).toBe(0);
 
     await buildIndex(teamStash, "team");
     const teamConfig = configWithSalience({ salienceThreshold: 0.75 });
@@ -535,10 +566,11 @@ describe("#608 high-salience admission gate", () => {
     teamConfig.defaultBundle = "local";
     teamConfig.defaultWriteTarget = "team";
     const teamLanes = await runAndCaptureLanes({ stash: teamStash, config: teamConfig, target: "team" });
-    expect(teamLanes.has("skills/legacy-team")).toBe(false);
+    expect(scoredRefs()).not.toContain(durableRef("skills/legacy-team", "team"));
+    expect(teamLanes.size).toBe(0);
   });
 
-  test("zero-feedback ref with encoding_salience >= threshold is reflected with eligibilitySource='high-salience'", async () => {
+  test("zero-feedback ref with encoding_salience >= threshold is scored and never reflected", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "novel-skill", "A genuinely novel skill with critical error handling.");
     await buildIndex(stash);
@@ -592,8 +624,9 @@ describe("#608 high-salience admission gate", () => {
       distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
     });
 
-    expect(capturedEligibility.has("skills/novel-skill")).toBe(true);
-    expect(capturedEligibility.get("skills/novel-skill")).toBe("high-salience");
+    // The lane admits it into scoring; only negative feedback (or an explicit scope) plans a reflect.
+    expect(scoredRefs()).toContain(durableRef("skills/novel-skill"));
+    expect(capturedEligibility.size).toBe(0);
   });
 
   test("salienceThreshold=1.0 disables the gate — ref with score=0.82 is NOT selected via high-salience", async () => {
@@ -648,12 +681,8 @@ describe("#608 high-salience admission gate", () => {
       distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
     });
 
-    // With threshold=1.0, the ref must not be selected via high-salience.
-    if (capturedEligibility.has("skills/gated-skill")) {
-      expect(capturedEligibility.get("skills/gated-skill")).not.toBe("high-salience");
-    } else {
-      // Not selected at all — expected when both high-salience and proactive are gated out.
-      expect(capturedEligibility.has("skills/gated-skill")).toBe(false);
-    }
+    // With threshold=1.0, the lane does not admit the ref: it is not even scored.
+    expect(scoredRefs()).not.toContain(durableRef("skills/gated-skill"));
+    expect(capturedEligibility.size).toBe(0);
   });
 });
