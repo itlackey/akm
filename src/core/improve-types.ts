@@ -978,12 +978,6 @@ export interface AkmImproveResult {
    */
   reflectGuardRejectedActions?: number;
   /**
-   * Total proposals auto-promoted by the (deleted, 0.9.0) improve confidence
-   * gate across all phases. Always 0/omitted for new runs; kept on the
-   * envelope allow-list because historical improve_runs rows carry counts.
-   */
-  gateAutoAcceptedCount?: number;
-  /**
    * Total proposals that hit the (deleted, 0.9.0) confidence gate but failed
    * validation. Always 0/omitted for new runs; kept for historical rows.
    */

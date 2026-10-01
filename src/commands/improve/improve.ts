@@ -119,7 +119,6 @@ export function renderSyncCommitMessage(
   result: {
     scope: { mode: string; value?: string };
     plannedRefs: unknown[];
-    gateAutoAcceptedCount?: number;
     triage?: { promoted: number; rejected: number; deferred: number; failed: number; skippedByCap: number };
     runId?: string;
   },
@@ -132,7 +131,7 @@ export function renderSyncCommitMessage(
     time: iso.slice(11, 19),
     scope: result.scope.value ?? result.scope.mode,
     refs: String(result.plannedRefs.length),
-    accepted: String(result.gateAutoAcceptedCount ?? 0),
+    accepted: String(result.triage?.promoted ?? 0),
     triage_promoted: String(result.triage?.promoted ?? 0),
     triage_rejected: String(result.triage?.rejected ?? 0),
     runId: result.runId ?? "",

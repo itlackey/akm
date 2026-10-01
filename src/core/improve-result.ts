@@ -59,7 +59,6 @@ const COMMON_FIELDS = [
   "reflectCooldownActions",
   "reflectSkippedActions",
   "reflectGuardRejectedActions",
-  "gateAutoAcceptedCount",
   "gateAutoAcceptFailedCount",
   "triage",
   "proactiveMaintenance",
@@ -483,7 +482,6 @@ function validateCommon(value: Record<string, unknown>): void {
     "reflectCooldownActions",
     "reflectSkippedActions",
     "reflectGuardRejectedActions",
-    "gateAutoAcceptedCount",
     "gateAutoAcceptFailedCount",
   ] as const) {
     if (value[field] !== undefined && typeof value[field] !== "number") fail(`${field} must be a number`);

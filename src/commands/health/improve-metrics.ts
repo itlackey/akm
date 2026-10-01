@@ -214,7 +214,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
     }
   }
 
-  metrics.autoAccept.promoted += toFiniteNumber(result.gateAutoAcceptedCount);
+  metrics.autoAccept.promoted += toFiniteNumber((result.triage as { promoted?: unknown } | undefined)?.promoted);
   metrics.autoAccept.validationFailed += toFiniteNumber(result.gateAutoAcceptFailedCount);
 
   const memorySummary = result.memorySummary as Record<string, unknown> | undefined;

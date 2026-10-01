@@ -60,7 +60,7 @@ export interface ImproveRunMetrics {
   rejectedCount: number;
   /** Gated skips (cooldown / signal-delta skip / distill pool-delta skip) — NOT rejections. */
   skippedCount: number;
-  /** Subset of actions whose underlying result claimed `autoAccepted: true`. */
+  /** Proposals the triage pre-pass promoted (auto-accepted) this run. */
   autoAcceptedCount: number;
   /** Action modes that ended in `error`. */
   errorCount: number;
@@ -81,7 +81,6 @@ export function computeImproveRunMetrics(result: ImproveResultEnvelope): Improve
   let acceptedCount = 0;
   let rejectedCount = 0;
   let skippedCount = 0;
-  let autoAcceptedCount = 0;
   let errorCount = 0;
 
   for (const action of actions) {
@@ -109,8 +108,7 @@ export function computeImproveRunMetrics(result: ImproveResultEnvelope): Improve
     }
   }
 
-  // Add gate-promoted count from the unified PostPhaseAutoAcceptGate (all phases).
-  autoAcceptedCount += result.gateAutoAcceptedCount ?? 0;
+  const autoAcceptedCount = result.triage?.promoted ?? 0;
 
   // C1 (13-bus-factor): distill-skipped rows are folded into the bounded
   // `distillSkipped` aggregate and no longer live in `actions`. Add the
