@@ -146,7 +146,9 @@ export function readMemoryContent(contentArg: string | undefined): string {
  * Split `text` into sentence-shaped chunks on `.`/`!`/`?`, swallowing any
  * immediately-trailing closing quotes/brackets/repeated terminators into the
  * same sentence (so `Alice said, "hi there."` ends the sentence at the
- * closing quote, not the period).
+ * closing quote, not the period). A terminator ends a sentence only when
+ * whitespace or the end of the text follows, so `192.168.0.203`, `0.9.12`,
+ * `example.com` and `notes.md` stay whole.
  *
  * Ported from akm-eval's memory backend (`splitIntoSentences` /
  * `firstSentencesCapped` in akm-eval/src/memory/backends/akm.ts), which
@@ -163,6 +165,10 @@ function splitIntoSentences(text: string): string[] {
     if (ch === "." || ch === "!" || ch === "?") {
       let end = i + 1;
       while (end < text.length && /["'”’)\]!?.]/.test(text.charAt(end))) end += 1;
+      if (end < text.length && !/\s/.test(text.charAt(end))) {
+        i = end;
+        continue;
+      }
       sentences.push(text.slice(start, end));
       while (end < text.length && /\s/.test(text.charAt(end))) end += 1;
       start = end;

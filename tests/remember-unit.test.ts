@@ -261,4 +261,16 @@ describe("synthesizeMemoryDescription", () => {
     expect(synthesizeMemoryDescription("")).toBe("");
     expect(synthesizeMemoryDescription("   \n  ")).toBe("");
   });
+
+  test("keeps IPs, versions, domains, file names and URLs whole", () => {
+    const body =
+      "Host 192.168.0.203 runs akm 0.9.12 behind example.com, config in notes.md, docs at https://example.com/a.b?x=1.";
+    expect(synthesizeMemoryDescription(body)).toBe(body);
+  });
+
+  test("still splits sentences when the first one holds a dotted token", () => {
+    const out = synthesizeMemoryDescription("Upgraded to 0.9.12 on 192.168.0.203. Then rebooted the box.", 40);
+    expect(out).toBe("Upgraded to 0.9.12 on 192.168.0.203.");
+    expect(synthesizeMemoryDescription("Is it 0.9.12? Yes! Done.", 14)).toBe("Is it 0.9.12?");
+  });
 });
