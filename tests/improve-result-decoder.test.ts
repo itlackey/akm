@@ -114,6 +114,20 @@ describe("decodeImproveResult", () => {
     ).toThrow(/unknown field/);
   });
 
+  test("still decodes a row an older release wrote with the retired gateAutoAcceptedCount", () => {
+    const decoded = decodeImproveResult({
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      gateAutoAcceptedCount: 3,
+      gateAutoAcceptFailedCount: 1,
+    });
+    expect(decoded.strategy).toBe("default");
+    expect(() =>
+      decodeImproveResult({ schemaVersion: 2, strategy: "default", ...common, gateAutoAcceptedCountTypo: 3 }),
+    ).toThrow(/unknown field/);
+  });
+
   test("strictly decodes the additive improve plan", () => {
     const envelope = {
       schemaVersion: 2,

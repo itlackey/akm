@@ -59,6 +59,11 @@ const COMMON_FIELDS = [
   "reflectCooldownActions",
   "reflectSkippedActions",
   "reflectGuardRejectedActions",
+  // No longer written (nothing has set it since the confidence gate was
+  // deleted), but kept in the allow-list so `decodeImproveResult` still reads
+  // the improve_runs rows an older release wrote with it, its value ignored —
+  // AGENTS.md "Reading persisted data".
+  "gateAutoAcceptedCount",
   "gateAutoAcceptFailedCount",
   "triage",
   "proactiveMaintenance",
