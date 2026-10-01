@@ -584,7 +584,7 @@ Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row pe
 - Every ref the loop does not take is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
 - The loop's refs are ranked by salience (`scoreSalience` in `preparation.ts`, which also scores the fallback lanes' picks and computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
 
-An explicit ref scope bypasses every gate. After the run lock is acquired, `refilterProactiveLoopRefs` (`improve.ts`) re-reads the ledger and drops proactive refs that another run attempted since this one planned (the "post-lock cooldown re-filter" log line). Consolidation, extract and schema repair read their own ledger sources in their own stages.
+An explicit ref scope bypasses every gate. Consolidation, extract and schema repair read their own ledger sources in their own stages.
 
 ## Strategy process configuration
 

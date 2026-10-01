@@ -62,8 +62,8 @@ export interface ProactiveSelectionResult {
 }
 
 /**
- * The due gate, shared by selection and the post-lock re-filter: never touched,
- * or last touched more than `dueDays` ago. It doubles as the rotation cooldown.
+ * The due gate: never touched, or last touched more than `dueDays` ago. It
+ * doubles as the rotation cooldown.
  */
 function staleness(
   ref: string,
@@ -125,18 +125,4 @@ export function selectProactiveMaintenanceRefs(params: ProactiveSelectorParams):
     neverReflected: dueScored.filter((s) => s.neverReflected).length,
     scored,
   };
-}
-
-/**
- * Re-apply the due gate under the run lock with fresh timestamps, dropping refs
- * another run attempted after this one planned.
- */
-export function filterProactiveDue(
-  selected: ImproveEligibleRef[],
-  lastReflectTs: Map<string, string>,
-  lastDistillTs: Map<string, string>,
-  dueDays: number,
-  now: number,
-): ImproveEligibleRef[] {
-  return selected.filter((c) => staleness(c.ref, lastReflectTs, lastDistillTs, dueDays, now).due);
 }
