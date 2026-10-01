@@ -2,9 +2,10 @@
 
 AKM learns from outcomes, but changes remain reviewable. Every time an agent
 uses a capability and reports back whether it helped, AKM folds that signal
-into the asset's utility score and — over time — proposes concrete edits. Nothing
-lands in your bundle automatically: every generated change queues as a
-proposal you (or an explicit policy) accept, reject, or revert.
+into the asset's utility score; when the report says the content was wrong, it
+proposes a concrete edit. Nothing lands in your bundle automatically: every
+generated change queues as a proposal you (or an explicit policy) accept,
+reject, or revert.
 
 ```text
 agent selects capability -> agent records outcome -> AKM updates utility and analyzes evidence ->
@@ -19,6 +20,13 @@ assets rank higher and underperformers surface less often right away. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
 for how that score is computed.
 
+`akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
+flags the asset for review: the next improve run proposes a fix based on your
+reason, so be specific. `--positive` records that an asset helped (it raises
+its ranking) and does not trigger a rewrite. Only negative feedback plans a
+rewrite: improve no longer rewrites assets from positive signals or on a
+proactive cadence.
+
 ```sh
 akm feedback skills/code-review --positive
 akm feedback agents/reviewer --negative --reason "Gave outdated migration steps"
@@ -29,10 +37,10 @@ akm feedback skills/planner --negative --reason "incomplete-edge-cases"
 ```
 
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
-the current local index. `--negative` additionally requires `--reason` —
-negative signals need a written reason for the distillation pipeline to use, and
-omitting it exits 2. `--failure-mode` adds a curated taxonomy label but does
-**not** substitute for `--reason`. Full flag reference:
+the current local index. `--negative` additionally requires `--reason` — the
+next improve run proposes its fix from that reason, and omitting it exits 2.
+`--failure-mode` adds a curated taxonomy label but does **not** substitute for
+`--reason`. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).
 
 Record feedback about the asset's content: that it helped, or that it turned
@@ -89,16 +97,19 @@ improve another one. A scheduled run covers the same single bundle, so schedule
 one `akm improve --bundle <name>` run per other bundle you want improved.
 `--dry-run` previews the bundle a live run would improve.
 
-Selection picks assets whose feedback (a signal or a note, in the last 30
-days) is newer than the last time improve tried them. Unless
-`--require-feedback-signal` is set, two fallback lanes add assets with no such
-feedback: high-salience assets that were never reflected, and, in a strategy
-that enables proactive maintenance, assets due for a revisit. The picks are
+A rewrite (reflect) is planned only for assets with negative feedback in the
+last 30 days that is newer than the last time improve tried them, or for an
+explicit ref; a positive or note-only signal never plans one. Distill reads any
+feedback on a memory in that window. Unless `--require-feedback-signal` is set,
+two fallback lanes pick assets with no such feedback: high-salience assets that
+were never reflected, and, in a strategy that enables proactive maintenance,
+assets due for a revisit. They only select and score assets and plan nothing,
+so improve does not rewrite on a proactive cadence. The planned assets are
 ranked by salience and cut to `--limit`.
-Improve reworks only what gets read: without fresh feedback, an asset is
-picked (and a memory is judged for consolidation) only if `search`, `curate`
-or `show` returned it, or feedback named it, in the last 90 days — the usage
-log's retention — or if it is new material no improve stage has processed
+Improve reworks only what gets read: without fresh feedback, a fallback lane
+picks an asset (and a memory is judged for consolidation) only if `search`,
+`curate` or `show` returned it, or feedback named it, in the last 90 days — the
+usage log's retention — or if it is new material no improve stage has processed
 yet. An explicit ref (`akm improve skills/code-review`) is always reworked.
 Full flag reference: [CLI Reference — improve](../reference/cli.md#improve).
 

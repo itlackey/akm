@@ -109,9 +109,12 @@ akm feedback scripts/deploy.sh --positive
 akm feedback skills/code-review --negative --failure-mode outdated --reason "references a removed flag"
 ```
 
-Positive and negative feedback both feed `akm improve`'s proposal generation
-— this is how a one-off task turns into a durable improvement to the shared
-library rather than a result nobody else benefits from.
+`akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
+flags the asset for review: the next `akm improve` run proposes a fix based on
+your reason, so be specific. That is how a one-off task turns into a durable
+improvement to the shared library rather than a result nobody else benefits
+from. `--positive` records that an asset helped (it raises its ranking) and does
+not trigger a rewrite.
 
 ## 6. Troubleshoot an empty or poor result
 

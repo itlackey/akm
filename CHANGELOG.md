@@ -8,6 +8,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`akm improve` rewrites an asset only from negative feedback.** Reflect's
+  signal delta reads negative feedback only, so an asset whose recent feedback
+  is positive or a note is no longer planned for a rewrite; any signal planned
+  one before. `akm feedback <ref> --negative --reason "<what is wrong and what
+  should change>"` flags the asset for review, and the next improve run
+  proposes a fix based on the reason. `--positive` records that the asset
+  helped (it raises its ranking) and never triggers a rewrite. An explicit ref
+  (`akm improve skills/x`) still plans one, and distill still reads any recent
+  signal on a memory.
+- **The fallback lanes score assets and no longer plan them.** High salience,
+  and proactive maintenance in a strategy that enables it (the shipped
+  `proactive-maintenance` strategy), still pick assets and score them
+  (salience and outcome), but a pick no longer enters the loop, so nothing is
+  reflected or distilled for it and improve no longer rewrites assets on a
+  proactive cadence. `eligibilitySource` is now `signal-delta` or `scope`;
+  `proactive` and `high-salience` stay valid on the rows an older release wrote.
+  `--require-feedback-signal` still turns the lanes off.
+- **`distill.requirePlannedRefs` is `false` in the `default` and `thorough`
+  strategies** (the other presets inherit it from `default`). With reflect
+  planned only from negative feedback, `true` would have skipped distill on
+  every run where no ref has negative feedback; distill now keeps working
+  through memories with fresh feedback on each run. A strategy that sets it
+  `true` still skips distill when no ref is planned for reflect.
+- **`akm feedback`'s help and errors, both CLI hints, the stash README and the
+  docs say what each signal does:** `--negative --reason` flags the asset for
+  review and improve proposes a fix from the reason, so the reason should say
+  what is wrong and what should change; `--positive` raises the ranking and
+  does not trigger a rewrite. They also say that improve no longer rewrites on
+  a proactive cadence or from positive signals. The `default` and
+  `proactive-maintenance` strategy descriptions match.
 - **The reflect judge asks whether a rewrite is needed, and both judges pass
   only when every criterion scores 4 or more.** Judging on the mean (3.5 or
   more) let rewrites that only reworded a correct asset through. The reflect
@@ -57,8 +87,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   read `gateAutoAcceptedCount`, which nothing has set since the confidence gate
   was deleted, so they were always 0. They read the triage pre-pass's promoted
   count, and the dead field is gone from the result type. A result row an older
-  akm wrote with the field no longer decodes in `akm health`, which counts it
-  under `resultRows.skipped.invalid`.
+  akm wrote with the field still decodes in `akm health`: the decoder accepts
+  the key and ignores its value.
 
 ## [0.9.20] - 2026-09-30
 

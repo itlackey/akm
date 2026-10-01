@@ -57,16 +57,23 @@ everything else routes through `akm proposal accept`.
 ## Data flow
 
 1. An agent uses a capability and calls `akm feedback <ref> --positive|--negative`.
+   `--negative --reason "<what is wrong and what should change>"` flags the
+   asset for review: the next improve run proposes a fix based on the reason.
+   `--positive` records that the asset helped (it raises its ranking) and does
+   not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility
    score is updated immediately via the bounded-step formula (below) — no
    reindex required.
-3. `akm improve` selects assets from the one bundle it writes to: those with
-   feedback (a signal or a note, in the last 30 days) newer than the stage's
-   last attempt, plus, unless `--require-feedback-signal` is set, the fallback
-   lanes (high salience, and proactive maintenance where the strategy enables
-   it), which pick only what the retrieval scope below admits. It ranks them by
-   salience, applies the limit, then runs whichever processes the selected
-   strategy enables against each one (see
+3. `akm improve` selects assets from the one bundle it writes to. A rewrite
+   (reflect) is planned only for an asset with negative feedback in the last
+   30 days that is newer than the stage's last attempt, or for an explicit ref;
+   a positive or note-only signal never plans one. Distill reads any feedback
+   on a memory in that window. Unless `--require-feedback-signal` is set, the
+   fallback lanes (high salience, and proactive maintenance where the strategy
+   enables it) pick what the retrieval scope below admits, for scoring only:
+   they plan nothing, so improve does not rewrite assets on a proactive
+   cadence. It ranks the selected assets by salience, applies the limit, then
+   runs whichever processes the selected strategy enables against each one (see
    [Improve Workflow](internals/improve-workflow.md#ledger-pre-filter-signal-delta)).
 4. Reflect and distill each emit at most one proposal per asset per run;
    consolidate runs two passes alongside each other — the promote pass emits
@@ -140,9 +147,9 @@ that "off" rather than defaulting to on.
 
 Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
 scope (`akm improve skills/x`) are usage evidence of their own. Every other
-pick — the proactive-maintenance and high-salience lanes, and the memories
-consolidation judges — must be in the retrieval scope
-(`src/commands/improve/retrieval-scope.ts`):
+pick — the proactive-maintenance and high-salience lanes (which only score what
+they pick), and the memories consolidation judges — must be in the retrieval
+scope (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
   asset, or user `feedback` named it, inside the window. A hit on a
@@ -263,9 +270,9 @@ but nothing assigns or emits it any more.
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
-the fallback lanes (proactive maintenance and high salience), the retrieval
-scope, salience ranking, disk presence, and the final cap, and resolve the
-bundle they plan the same way: `--bundle`, else
+the fallback lanes (proactive maintenance and high salience, which score and
+plan nothing), the retrieval scope, salience ranking, disk presence, and the
+final cap, and resolve the bundle they plan the same way: `--bundle`, else
 `defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
 `defaultBundle`). Each invocation reports a best-effort observation assembled
 while it runs; it is not an atomic cross-store snapshot, a reservation, or a

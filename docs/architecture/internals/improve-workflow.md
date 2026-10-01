@@ -1,6 +1,6 @@
 # akm improve — Workflow Reference
 
-`akm improve` is the scheduled self-improvement loop that walks every asset in the bundle (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, runs memory consolidation across the corpus, and then performs improve-owned maintenance passes such as memory inference. It is the primary mechanism for turning accumulated feedback signals into queued proposals. Proposals remain queued until explicit proposal review or the configured drain policy resolves them; events and resolved proposal rows provide the audit trail.
+`akm improve` is the scheduled self-improvement loop that works through the assets with fresh feedback (or a scoped subset), invokes the reflection agent and the LLM distiller on each one, runs memory consolidation across the corpus, and then performs improve-owned maintenance passes such as memory inference. It is the primary mechanism for turning accumulated feedback into queued proposals: a rewrite (reflect) is planned only from negative feedback on an asset, or for an explicit ref, never from a positive signal and never on a proactive cadence. Proposals remain queued until explicit proposal review or the configured drain policy resolves them; events and resolved proposal rows provide the audit trail.
 
 ## Command surface
 
@@ -13,7 +13,7 @@
 | `--limit` | `number` | Cap the number of assets processed, taken from the salience ranking, highest first (refs routed to distill only come last). |
 | `--timeout-ms` | `number` | Wall-clock budget for the entire run. Default: 7 200 000 ms (2 hours). |
 | `--skip-if-locked` | `boolean` | If another improve owns the whole-run lock, return an exit-0 no-op result before triage, indexing, events, or sync. Without the flag, contention is a transient error (`IMPROVE_LOCK_HELD`, exit 75). |
-| `--require-feedback-signal` | `boolean` | Restrict all/type runs to refs with recent feedback signals; turn the fallback lanes (high salience, proactive maintenance) off. |
+| `--require-feedback-signal` | `boolean` | Turn the fallback lanes (high salience, proactive maintenance) off for the run: they only select and score assets, and a rewrite needs negative feedback. |
 
 Injected function seams (`reflectFn`, `distillFn`, `ensureIndexFn`, `reindexFn`) replace production defaults in tests.
 
@@ -47,9 +47,9 @@ flowchart TD
     J3 --> O
     O --> P{validationFailures?}
     P -- yes --> P1[Log failures; refs that still fail\nare excluded from selection]
-    P -- no --> L[Signal delta\nkeep refs with signal feedback newer than\nthe last ledger attempt and no hard ledger window]
+    P -- no --> L[Signal delta\nreflect: negative feedback, distill: any signal,\nnewer than the last ledger attempt\nand no hard ledger window]
     P1 --> L
-    L --> L2[Fallback lanes\nproactive maintenance, high salience:\nonly retrieved or new material]
+    L --> L2[Fallback lanes\nproactive maintenance, high salience:\nonly retrieved or new material,\nscored and never planned]
     L2 --> M[scoreSalience\nsalience vector per ref: encoding, outcome, retrieval\nutility scores from SQLite seed the outcome term]
     M --> N[Sort by salience rank DESC, no-op dampened\ndrop refs missing on disk\napply --limit if set]
     N --> Q
@@ -576,13 +576,13 @@ Two proposals can share the same `ref`; their UUID primary keys prevent collisio
 
 Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row per `(stash_dir, ref, source)`; `source` is `reflect`, `distill`, `consolidate`, `consolidate-pair`, `extract`, `schema-repair` or `propose`, the last written by `akm proposal new` through `createProposal`) before it spends a model call, and writes it after. It replaced the per-stage cooldown constants and the event reads behind them (`reflect_invoked`, `distill_invoked`, `consolidate_completed`, rejected-proposal rows, `proposal_fingerprints`). When a ref may be tried again is decided in one place, `nextEligibleAt`, from the row's source and outcome: a rejected or quality-rejected attempt waits 14 days (reflect), 30 days (distill) or 7 days (any other source), an expired proposal 1 day, and an attempt that left a pending proposal, needed review, judged no action or changed nothing is revisited after 7 days; an accepted or failed attempt has no window. The consolidate pair pass and a decided consolidate promotion have no clock at all: their rows hold a body hash and the ref waits until its body differs (see **Re-eligibility** above). `rejected`, `quality_rejected` and `expired` are hard windows; every other window is a revisit cadence that a newer signal (new feedback, or for consolidation an edit) lifts (`isLedgerBlocked`).
 
-**Selection.** Before the per-asset loop, `buildSnapshotManifest` reads the feedback events once and the ledger's `reflect` and `distill` rows once for every candidate, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. Reflect and distill each *pass* a ref when it has feedback carrying a signal or a note, dated within the last 30 days, newer than that stage's last ledger attempt for the ref, with no hard window blocking it. Then:
+**Selection.** Before the per-asset loop, `buildSnapshotManifest` reads the feedback events once and the ledger's `reflect` and `distill` rows once for every candidate, and `partitionBySignalDelta` (both in `preparation.ts`) sorts the refs. Reflect *passes* a ref when it has negative feedback, and distill when it has feedback carrying a signal or a note (a positive one included): dated within the last 30 days, newer than that stage's last ledger attempt for the ref, with no hard window blocking it. A positive or note-only signal never plans a reflect. Then:
 
 - A ref that passes reflect is planned for the loop. If it does not pass distill, distill is skipped for it (a `distill-skipped` action and an `improve_skipped` event with reason `distill_no_new_signal`).
 - A ref that passes only distill, and is a distill candidate, is planned distill-only.
-- A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)).
-- Every ref left without a lane is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
-- The picked refs are ranked by salience (`scoreSalience` in `preparation.ts`, which computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
+- A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)). The lanes only select and score: a ref they pick is not planned for reflect or distill, so improve does not rewrite assets on a proactive cadence.
+- Every ref the loop does not take is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
+- The loop's refs are ranked by salience (`scoreSalience` in `preparation.ts`, which also scores the fallback lanes' picks and computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
 
 An explicit ref scope bypasses every gate. After the run lock is acquired, `refilterProactiveLoopRefs` (`improve.ts`) re-reads the ledger and drops proactive refs that another run attempted since this one planned (the "post-lock cooldown re-filter" log line). Consolidation, extract and schema repair read their own ledger sources in their own stages.
 

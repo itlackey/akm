@@ -8,7 +8,7 @@ For any task, follow this loop:
 1. `akm curate "<task>"` — find the best matching asset
 2. `akm show <ref>` — read the schema (field names and structure)
 3. Edit the workspace file using schema field names + task-specific values from your README
-4. `akm feedback <ref> --positive` — record that the asset helped; use `--negative --reason "..."` when its content was wrong, stale or unhelpful. A failed akm command (e.g. `akm show` erroring) is not feedback on the asset — don't record it.
+4. `akm feedback <ref> --positive` — record that the asset helped (it raises its ranking and does not trigger a rewrite); when its content was wrong, stale or unhelpful, `akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags it for review: the next improve run proposes a fix based on your reason, so be specific. A failed akm command (e.g. `akm show` erroring) is not feedback on the asset — don't record it.
 
 For workflow tasks:
 1. `akm show workflows/<name>` — inspect the procedure before executing it
@@ -39,7 +39,8 @@ akm import ./doc.md --target my-bundle         # Route import to a named writabl
 akm proposal diff skills/akm-dream            # Diff proposal by ref, UUID, or 8-char prefix
 akm proposal accept 7c115132                  # Accept by UUID prefix
 akm proposal reject skills/my-skill --reason "..."  # Reject by ref
-akm feedback <ref> --positive|--negative      # Record whether an asset helped
+akm feedback <ref> --positive                 # Record that an asset helped (ranks it higher; no rewrite)
+akm feedback <ref> --negative --reason "..."  # Flag it for review: the next improve run proposes a fix from your reason
 akm bundle add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working bundle (optional --dest arg to clone to specific location)
 akm sync                                      # Commit (and push if writable remote) changes in the primary bundle (--no-push to commit only)
@@ -65,8 +66,10 @@ akm search "<query>" --from registry          # Search all registries (registry 
 
 When an asset's content meaningfully helps, or proves wrong, stale or unhelpful,
 record that with `akm feedback` so future search ranking can learn from real
-usage. An akm command that fails says nothing about the asset; don't record it
-as feedback.
+usage. Only negative feedback with a specific reason gets the asset reviewed and
+fixed: improve no longer rewrites assets from positive signals or on a
+proactive cadence. An akm command that fails says nothing about the asset;
+don't record it as feedback.
 
 ## Error Shapes and Exit Codes
 
