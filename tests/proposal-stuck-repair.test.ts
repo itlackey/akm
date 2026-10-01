@@ -376,6 +376,42 @@ describe("Bug 2 — repairProposalContent", () => {
     expect(repairProposalContent(content)).toBe(content);
   });
 
+  // ── Lines that are not the frontmatter description ────────────────────────
+  //
+  // The repair reads the frontmatter's own `description:` line and nothing
+  // else: not a body line that happens to start with `description:`, and not
+  // the line after an empty `description:`.
+
+  test("leaves a body line starting with description: untouched when the frontmatter has none", () => {
+    const content = [
+      "---",
+      "when_to_use: When authoring a new asset",
+      "---",
+      "",
+      "A frontmatter block can open with a summary line:",
+      "",
+      "```yaml",
+      "description: What the asset covers and when to reach for the",
+      "```",
+    ].join("\n");
+
+    expect(repairProposalContent(content)).toBe(content);
+  });
+
+  test("leaves the next key untouched when description is empty", () => {
+    const content = [
+      "---",
+      "description:",
+      "title: Notes about how we configure the",
+      "when_to_use: When tuning improve cooldowns",
+      "---",
+      "",
+      "Body text for the lesson.",
+    ].join("\n");
+
+    expect(repairProposalContent(content)).toBe(content);
+  });
+
   // ── Unrepairable: description too short ───────────────────────────────────
 
   test("does NOT fabricate or alter content when description is too short to repair", () => {

@@ -40,9 +40,13 @@ export function repairProposalContent(content: string): string {
   const { fmText, body } = splitFrontmatter(repaired);
   if (fmText === null) return repaired;
   if (/^description:.*\n[ \t]/m.test(fmText)) return repaired;
-  return repaired.replace(
-    /^(description:\s*)(.*?)(\r?\n)/m,
-    (_match, prefix: string, rawDesc: string, nl: string) =>
-      `${prefix}${repairTruncatedDescription(rawDesc.trim(), body)}${nl}`,
+  // The frontmatter block only: a body line starting with `description:` is not the description.
+  const frontmatter = repaired.slice(0, repaired.length - body.length);
+  return (
+    frontmatter.replace(
+      /^(description:[ \t]*)(.*?)(\r?\n)/m,
+      (_match, prefix: string, rawDesc: string, nl: string) =>
+        `${prefix}${repairTruncatedDescription(rawDesc.trim(), body)}${nl}`,
+    ) + body
   );
 }

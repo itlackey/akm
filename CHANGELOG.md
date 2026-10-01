@@ -23,6 +23,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   leaves a wrapped one exactly as proposed. Assets already promoted with a
   damaged description are not repaired by this change (the dropped words and the
   stray period stay in them), so they need a separate repair.
+- **The same repair no longer rewrites a body line or another key.** It looked
+  for `description:` in the whole file, and its `\s*` ran past the end of the
+  line. A file whose frontmatter had no description had a body line starting
+  with `description:` completed instead, and an empty `description:` had the
+  next key's line rewritten (`title: Notes about how we configure the` became
+  `title: Notes about how we configure.`). It now reads only the `description:`
+  line of the frontmatter block. Content already promoted that way is not
+  repaired by this change.
 
 ## [0.9.21] - 2026-10-01
 
