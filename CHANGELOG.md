@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.22] - 2026-10-01
+
+### Fixed
+
+- **Accepting a proposal no longer rewrites a long description at its first line
+  break.** `yaml.stringify`, which reflect and the other writers serialize
+  frontmatter with, wraps a description past about 80 columns over indented
+  lines. The truncation repair that `akm proposal accept` runs before it
+  promotes read only the first of those lines. When that line ended in a
+  connector word (`the`, `and`) or a comma it took the wrap for a truncation,
+  dropped the tail words, added a period and left the continuation lines
+  behind: `...the cooldowns that drive the` followed by `rest of the pipeline`
+  was written as `...the cooldowns that drive.` followed by `rest of the
+  pipeline`. Plain, single-quoted and double-quoted descriptions were all
+  damaged this way, and the repair has behaved so since it shipped in
+  0.9.0-beta.36 (#645). It now runs only on a single-line description and
+  leaves a wrapped one exactly as proposed. Assets already promoted with a
+  damaged description are not repaired by this change (the dropped words and the
+  stray period stay in them), so they need a separate repair.
+- **The same repair no longer rewrites a body line or another key.** It looked
+  for `description:` in the whole file, and its `\s*` ran past the end of the
+  line. A file whose frontmatter had no description had a body line starting
+  with `description:` completed instead, and an empty `description:` had the
+  next key's line rewritten (`title: Notes about how we configure the` became
+  `title: Notes about how we configure.`). It now reads only the `description:`
+  line of the frontmatter block. Content already promoted that way is not
+  repaired by this change.
+
 ## [0.9.21] - 2026-10-01
 
 ### Changed

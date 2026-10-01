@@ -30,16 +30,23 @@ export function validateProposal(proposal: Proposal): ProposalValidationReport {
  * Normalize line endings and complete a truncated frontmatter `description`
  * (`repairTruncatedDescription`, with the body as context). Nothing else: an
  * earlier repair that deleted body lines gutted any asset documenting
- * frontmatter. Callers re-validate the result.
+ * frontmatter. Only a single-line description is repaired: one YAML wrapped
+ * over indented lines (`yaml.stringify` does that past ~80 columns) has a
+ * first line that merely looks truncated. Callers re-validate the result.
  */
 export function repairProposalContent(content: string): string {
   if (typeof content !== "string" || content.trim() === "") return content;
   const repaired = content.replace(/\r\n/g, "\n");
   const { fmText, body } = splitFrontmatter(repaired);
   if (fmText === null) return repaired;
-  return repaired.replace(
-    /^(description:\s*)(.*?)(\r?\n)/m,
-    (_match, prefix: string, rawDesc: string, nl: string) =>
-      `${prefix}${repairTruncatedDescription(rawDesc.trim(), body)}${nl}`,
+  if (/^description:.*\n[ \t]/m.test(fmText)) return repaired;
+  // The frontmatter block only: a body line starting with `description:` is not the description.
+  const frontmatter = repaired.slice(0, repaired.length - body.length);
+  return (
+    frontmatter.replace(
+      /^(description:[ \t]*)(.*?)(\r?\n)/m,
+      (_match, prefix: string, rawDesc: string, nl: string) =>
+        `${prefix}${repairTruncatedDescription(rawDesc.trim(), body)}${nl}`,
+    ) + body
   );
 }
