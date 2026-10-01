@@ -89,7 +89,7 @@ function judge(grades: { old: number; new: number }, relevancePrompts: string[])
   return async (_connection: unknown, messages: ChatMessage[]) => {
     const user = messages.at(-1)?.content ?? "";
     if (!user.startsWith("Query:")) {
-      return JSON.stringify({ scores: { feedbackAlignment: 5, preservation: 5, quality: 5 }, reason: "fine" });
+      return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "fine" });
     }
     relevancePrompts.push(user);
     return JSON.stringify({ grade: user.includes("OLD_MARKER") ? grades.old : grades.new, reason: "graded" });

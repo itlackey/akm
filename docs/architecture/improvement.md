@@ -154,6 +154,32 @@ consolidation reports them in its warnings. A bulk rewrite of old files
 (a rename, a lint fix, a fresh clone) makes them look new until improve has
 processed each once.
 
+### Quality judge
+
+Every reflect rewrite and every distilled lesson is scored by a judge before it
+is queued (`runQualityJudge`, `src/commands/improve/stage.ts`): one call at
+temperature 0, each criterion scored 1 to 5, failing closed (no runner, a
+timeout, or an unparseable or incomplete reply never passes content and goes to
+review). A reflect rewrite is scored on three criteria:
+
+- **need**: does it fix a concrete problem in the source: something the
+  feedback reports as wrong or missing, a factual error, or broken, garbled,
+  truncated or missing text (frontmatter fields included)? A rewrite that only
+  rewords, restates or reformats a correct source, or adds headings, an
+  introduction or a table of contents, scores 1 or 2.
+- **preservation**: does it keep every concrete fact, identifier, command, path,
+  number and example, without truncation?
+- **quality**: is it coherent and accurate, with nothing the source or the
+  feedback does not support?
+
+Content passes only when **every** criterion scores 4 or more (a lesson's
+grounding is judged apart, see
+[distill](internals/improve-workflow.md#distill-akmdistill)); a mean of 3.5
+passed it before. A verdict that does not pass is a review when its mean is 2.5
+or more and a rejection below that. The rubric and the rule were chosen on 90
+labelled real rewrites, where judging on the mean let rewrites that only
+reworded a correct asset through.
+
 ### Retrieval regression gate
 
 Reflect refuses a rewrite of an existing asset that grades lower on the

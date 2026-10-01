@@ -524,7 +524,8 @@ export interface ConsolidatePerfTelemetry {
  */
 /**
  * D-5 / #388: "review_needed" outcome replaces the binary quality-gate cutoff
- * for the uncertainty band (score 2.5–3.5). MT-Bench arXiv:2306.05685 reports
+ * for the uncertainty band (a mean of 2.5 or more with a criterion below 4).
+ * MT-Bench arXiv:2306.05685 reports
  * ~±0.5 judge variance — 15-25% of borderline proposals flip between runs.
  * The review-needed band converts uncertain cases into explicit human review
  * requests rather than opaque auto-decisions.

@@ -554,7 +554,7 @@ describe("Reflect quality gate — source context", () => {
 
     expect(result.ok).toBe(true);
     expect(judgePrompt).toContain("SOURCE_ONLY_MARKER");
-    expect(judgePrompt).toContain("FEEDBACK ALIGNMENT");
+    expect(judgePrompt).toContain("NEED");
     expect(judgePrompt).toContain("PRESERVATION");
     expect(judgePrompt).not.toContain("Does the lesson add information not already present");
     const proposedRevision = judgePrompt.split("Proposed revision:")[1] ?? "";
