@@ -309,6 +309,73 @@ describe("Bug 2 — repairProposalContent", () => {
     expect(desc.trim().toLowerCase().endsWith(" the")).toBe(false);
   });
 
+  test("completes a genuinely truncated single-line description", () => {
+    const content = [
+      "---",
+      "description: Explains how improve schedules reflect and distill runs and the cooldowns that drive the",
+      "when_to_use: When tuning improve cooldowns",
+      "---",
+      "",
+      "Body text for the lesson.",
+    ].join("\n");
+
+    expect(repairProposalContent(content)).toBe(content.replace("that drive the", "that drive."));
+  });
+
+  // ── Folded descriptions ───────────────────────────────────────────────────
+  //
+  // yaml.stringify (every reflect/extract/consolidate writer) wraps a long
+  // description over indented lines. The first line then ends wherever the
+  // column limit fell, often on "the" or a comma, and used to be mistaken for a
+  // truncated description: the repair dropped its tail words and added a period
+  // while the continuation lines stayed behind. The fixtures below are the exact
+  // bytes yaml.stringify writes for each scalar style.
+
+  test("leaves a folded plain description untouched when its first line ends in a connector", () => {
+    const content = [
+      "---",
+      "description: Explains how the improve loop schedules reflect runs and the",
+      "  cooldowns between them that drive the rest of the pipeline between two",
+      "  scheduler ticks.",
+      "when_to_use: When tuning improve cooldowns",
+      "---",
+      "",
+      "Body text for the lesson.",
+    ].join("\n");
+
+    expect(repairProposalContent(content)).toBe(content);
+  });
+
+  test("leaves a folded single-quoted description untouched when a line ends in a comma", () => {
+    const content = [
+      "---",
+      `description: 'Proposal states in the "queue": pending, accepted, rejected,`,
+      "  reverted and expired, with the archive keeping every row that left the pending",
+      "  state.'",
+      "when_to_use: When tuning improve cooldowns",
+      "---",
+      "",
+      "Body text for the lesson.",
+    ].join("\n");
+
+    expect(repairProposalContent(content)).toBe(content);
+  });
+
+  test("leaves a folded double-quoted description untouched when its first line ends in a connector", () => {
+    const content = [
+      "---",
+      'description: "Reflect output contract: the model returns content, confidence and',
+      "  a frontmatter patch, never a ref the caller already knows, or the proposal is",
+      '  dropped from the queue."',
+      "when_to_use: When tuning improve cooldowns",
+      "---",
+      "",
+      "Body text for the lesson.",
+    ].join("\n");
+
+    expect(repairProposalContent(content)).toBe(content);
+  });
+
   // ── Unrepairable: description too short ───────────────────────────────────
 
   test("does NOT fabricate or alter content when description is too short to repair", () => {

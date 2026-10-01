@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { sanitizeReflectPayload } from "../../../src/commands/improve/reflect";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -240,6 +241,35 @@ describe("createProposal / listProposals / getProposal", () => {
 
     expect(parsed.data.description).toBe(description);
     expect(checkUnquotedDescriptionColon(parsed.frontmatter)).toBeNull();
+  });
+
+  // reflect writes a proposal's frontmatter through yaml.stringify, which wraps a
+  // description past ~80 columns over indented lines. The first line here ends in
+  // "the", so on its own it looks like a truncated description. Accept used to
+  // "repair" that line (drop the "the", add a period) and leave the rest behind.
+  test("accepts a reflect proposal with a long folded description exactly as proposed", async () => {
+    const stash = makeStashDir();
+    const config = makeConfig(stash);
+    const description =
+      "Explains how the improve loop schedules reflect runs and the cooldowns between them that drive the rest of the pipeline between two scheduler ticks.";
+    const { content } = sanitizeReflectPayload(
+      { content: "Useful body.\n", frontmatter: { description, when_to_use: "When tuning improve cooldowns" } },
+      undefined,
+      "lessons/folded-description",
+    );
+    // The fixture must be the shape that triggers the bug: a wrapped description
+    // whose first physical line ends in a connector word.
+    expect(content.split("\n")[1]).toMatch(/^description: .+ the$/);
+    expect(content.split("\n")[2]).toMatch(/^ {2}\S/);
+    const createdResult = createProposal(stash, {
+      ref: "lessons/folded-description",
+      source: "reflect",
+      payload: { content },
+    });
+
+    const accepted = await akmProposalAccept({ stashDir: stash, id: createdResult.id, config });
+
+    expect(parseFrontmatter(fs.readFileSync(accepted.assetPath, "utf8")).data.description).toBe(description);
   });
 
   test("reject path: archive contains entry, status rejected, rejected event emitted", async () => {
