@@ -486,7 +486,7 @@ Keys of `metadata_json`, each written only when the proposal has it:
 | `review` | `{ outcome: accepted\|rejected, reason?, decidedAt }` |
 | `reviewHistory` | Since 0.9.19: the rejections `akm proposal reopen` undid, oldest first, each `{ review?, gateDecision?, reopenedAt, reopenReason? }`; the newest `reopenedAt` is where retention expiry and `--older-than` start counting |
 | `confidence` | Self-estimated confidence in [0, 1] |
-| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, decidedAt }` |
+| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, scores?, judgeReason?, decidedAt }`; `scores` (per criterion) and `judgeReason` are the quality judge's evidence on its `staged` pass, and stay on the row when the drain accepts it |
 | `backupContent` | The target's content before promotion, for `revert` |
 | `acceptedTarget` | `{ source, root, path, contentHash }`, where accepted content went |
 | `eligibilitySource` | The improve lane that selected the asset (`signal-delta`, `proactive`, `high-salience`, `scope`, ...) |

@@ -548,11 +548,19 @@ describe("Reflect quality gate — source context", () => {
       },
       chat: async (_connection, messages) => {
         judgePrompt = messages[1]?.content ?? "";
-        return JSON.stringify({ score: 4.5, reason: "adds useful detail" });
+        return JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "adds useful detail" });
       },
     });
 
     expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected a proposal");
+    // The pass is stamped with the judge's evidence, so a later audit can read why it passed.
+    expect(result.proposal.gateDecision).toMatchObject({
+      outcome: "staged",
+      gate: "quality-gate",
+      scores: { need: 5, preservation: 4, quality: 4 },
+      judgeReason: "adds useful detail",
+    });
     expect(judgePrompt).toContain("SOURCE_ONLY_MARKER");
     expect(judgePrompt).toContain("NEED");
     expect(judgePrompt).toContain("PRESERVATION");

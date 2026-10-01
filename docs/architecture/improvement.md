@@ -180,6 +180,11 @@ or more and a rejection below that. The rubric and the rule were chosen on 90
 labelled real rewrites, where judging on the mean let rewrites that only
 reworded a correct asset through.
 
+A pass is stamped on the proposal as a `staged` decision from the `quality-gate`
+with the per-criterion `scores` and the judge's `judgeReason`; both stay on the
+proposal when the drain accepts it, so a later audit can read why it passed
+(`akm proposal show --format json`).
+
 ### Retrieval regression gate
 
 Reflect refuses a rewrite of an existing asset that grades lower on the

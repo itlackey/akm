@@ -128,6 +128,10 @@ export interface ProposalGateDecision {
   thresholds?: { maxDiffLines?: number; minContentLines?: number };
   /** SHA-256 of the content the gate evaluated, to tell an unchanged retry from an edit. */
   contentHash?: string;
+  /** The quality judge's per-criterion scores, on a `quality-gate` pass. */
+  scores?: Record<string, number>;
+  /** The quality judge's one-sentence reason, on a `quality-gate` pass. */
+  judgeReason?: string;
   gate?: string;
   decidedAt: string;
 }

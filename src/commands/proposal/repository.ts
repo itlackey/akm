@@ -992,6 +992,9 @@ function persistProposalDecision(
           ...(decision.gateDecision
             ? {
                 gateDecision: {
+                  // The drain's verdict replaces the quality judge's stamp; the judge's evidence stays on the row.
+                  ...(current.gateDecision?.scores ? { scores: current.gateDecision.scores } : {}),
+                  ...(current.gateDecision?.judgeReason ? { judgeReason: current.gateDecision.judgeReason } : {}),
                   ...decision.gateDecision,
                   decidedAt: decision.gateDecision.decidedAt ?? decision.decidedAt,
                 },

@@ -28,6 +28,7 @@ import {
 import { createProposal, getProposal, type Proposal, recordGateDecision } from "../src/commands/proposal/repository";
 import { shapeProposalEntry, shapeProposalListOutput } from "../src/output/shapes/helpers";
 import { formatProposalListPlain, formatProposalShowPlain } from "../src/output/text/helpers";
+import { makeConfig } from "./_helpers/factories";
 
 // ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -150,6 +151,49 @@ describe("drainProposals records a gate decision per path (#577)", () => {
 
     const decision = getProposal(stash, p.id).gateDecision;
     expect(decision).toMatchObject({ outcome: "staged", reason: "quality-judge", gate: "quality-gate" });
+  });
+
+  test("a staged stamp keeps the judge's per-criterion scores and reason, on the row as stored", () => {
+    const stash = makeStashDir();
+    const created = seed(stash, "lessons/evidence", "reflect", VALID_LESSON);
+    const stamped = stageJudgedProposal(stash, created, {
+      criteria: { need: 5, preservation: 4, quality: 4 },
+      reason: "fixes the stale port",
+    });
+
+    const expected = {
+      outcome: "staged",
+      scores: { need: 5, preservation: 4, quality: 4 },
+      judgeReason: "fixes the stale port",
+    };
+    expect(stamped.gateDecision).toMatchObject(expected);
+    expect(getProposal(stash, created.id).gateDecision).toMatchObject(expected);
+  });
+
+  test("a drain accept keeps the judge's evidence beside its own verdict", async () => {
+    const stash = makeStashDir();
+    const created = stageJudgedProposal(stash, seed(stash, "lessons/rg", "distill", VALID_LESSON), {
+      criteria: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+      reason: "adds the rollback step",
+    });
+
+    const result = await drainProposals({
+      stashDir: stash,
+      applyMode: "promote",
+      maxAccepts: 5,
+      dryRun: false,
+      config: makeConfig(stash),
+    });
+
+    expect(result.promoted).toEqual([created.id]);
+    const accepted = getProposal(stash, created.id);
+    expect(accepted.status).toBe("accepted");
+    expect(accepted.gateDecision).toMatchObject({
+      outcome: "auto-accepted",
+      reason: "judge-passed",
+      scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+      judgeReason: "adds the rollback step",
+    });
   });
 
   test("a mocked empty-diff rejection does not pre-stamp a terminal outcome", async () => {

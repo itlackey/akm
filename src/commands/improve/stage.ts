@@ -185,29 +185,37 @@ export function rejectedProposalContext(
 // ── Mint ─────────────────────────────────────────────────────────────────────
 
 /**
- * Create a stage's proposal. `judged` stamps a `staged` gate decision with the
- * judged content's hash (the triage drain accepts it while the content still
- * matches); `review` leaves it `deferred` for a human (`review_needed` in the
- * improve ledger).
+ * Create a stage's proposal. `judged` (the passing verdict) stamps a `staged`
+ * gate decision with the judged content's hash and the judge's scores and reason
+ * (the triage drain accepts it while the content still matches); `review`
+ * leaves it `deferred` for a human (`review_needed` in the improve ledger).
  */
 export function mintProposal(
   stash: string,
   proposalsCtx: ProposalsContext | undefined,
   input: CreateProposalInput,
-  verdict: { judged?: boolean; review?: Omit<ProposalGateDecision, "outcome" | "decidedAt"> } = {},
+  verdict: {
+    judged?: Pick<QualityJudgeResult, "criteria" | "reason">;
+    review?: Omit<ProposalGateDecision, "outcome" | "decidedAt">;
+  } = {},
 ): Proposal {
   const proposal = createProposal(stash, input, proposalsCtx);
   if (verdict.review) {
     return recordGateDecision(stash, proposal.id, { outcome: "deferred", ...verdict.review }, proposalsCtx) ?? proposal;
   }
-  return verdict.judged ? stageJudgedProposal(stash, proposal, proposalsCtx) : proposal;
+  return verdict.judged ? stageJudgedProposal(stash, proposal, verdict.judged, proposalsCtx) : proposal;
 }
 
 /**
  * Stamp a proposal the quality judge passed. Best-effort: a failed stamp only
  * means the triage drain judges it again.
  */
-export function stageJudgedProposal(stash: string, proposal: Proposal, proposalsCtx?: ProposalsContext): Proposal {
+export function stageJudgedProposal(
+  stash: string,
+  proposal: Proposal,
+  judged?: Pick<QualityJudgeResult, "criteria" | "reason">,
+  proposalsCtx?: ProposalsContext,
+): Proposal {
   try {
     return (
       recordGateDecision(
@@ -218,6 +226,8 @@ export function stageJudgedProposal(stash: string, proposal: Proposal, proposals
           reason: "quality-judge",
           gate: "quality-gate",
           contentHash: proposalContentHash(proposal),
+          ...(judged?.criteria ? { scores: judged.criteria } : {}),
+          ...(judged ? { judgeReason: judged.reason } : {}),
         },
         proposalsCtx,
       ) ?? proposal
