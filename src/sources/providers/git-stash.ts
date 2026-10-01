@@ -363,7 +363,9 @@ export function saveGitStash(
     throw new Error(`git remote failed: ${remoteResult.stderr?.trim() || "unknown error"}`);
   }
   const hasRemote = remoteResult.stdout.trim().length > 0;
-  const pushTarget = hasRemote && writable && allowPush ? readActualUpstream(repoDir, baseHead) : undefined;
+  // A branch that cannot be pushed still gets its commit: only the push is skipped, and the result says why.
+  const upstream = hasRemote && writable && allowPush ? readActualUpstream(repoDir, baseHead) : undefined;
+  const pushTarget = typeof upstream === "object" ? upstream : undefined;
   const exactCommit = createExactPathCommit(repoDir, {
     baseHead,
     commitMessage,
@@ -380,6 +382,7 @@ export function saveGitStash(
       committed: true,
       pushed: false,
       skipped: false,
+      ...(typeof upstream === "string" ? { reason: `not pushed: ${upstream}` } : {}),
       output: `commit ${exactCommit}`,
       commit: exactCommit,
     };
@@ -488,22 +491,24 @@ function readBranchRef(repoDir: string): string {
   return result.stdout.trim();
 }
 
+/**
+ * Where a commit on top of `baseHead` can be pushed: the branch's upstream, as
+ * long as it is an ancestor of `baseHead` (ahead is fine, the push fast-forwards
+ * it). Otherwise why not: no upstream, or behind or diverged from it.
+ */
 function readActualUpstream(
   repoDir: string,
   baseHead: string | undefined,
-): { remote: string; mergeRef: string; upstreamHead: string } {
-  if (!baseHead) throw new UsageError(`Writable Git target at ${repoDir} has no commit to publish.`);
+): { remote: string; mergeRef: string; upstreamHead: string } | string {
   const branchRef = readBranchRef(repoDir);
   const branch = branchRef.replace(/^refs\/heads\//, "");
   const remote = runGit(["-C", repoDir, "config", "--get", `branch.${branch}.remote`]);
   const merge = runGit(["-C", repoDir, "config", "--get", `branch.${branch}.merge`]);
   const upstream = runGit(["-C", repoDir, "rev-parse", "--verify", "@{u}"]);
-  if (remote.status !== 0 || merge.status !== 0 || upstream.status !== 0) {
-    throw new UsageError(`Writable Git target at ${repoDir} has no configured upstream branch.`);
-  }
+  if (remote.status !== 0 || merge.status !== 0 || upstream.status !== 0) return "no upstream branch is configured";
   const upstreamHead = upstream.stdout.trim();
-  if (!upstreamHead || upstreamHead !== baseHead) {
-    throw new UsageError(`Writable Git target at ${repoDir} is not synchronized with its actual upstream.`);
+  if (!baseHead || runGit(["-C", repoDir, "merge-base", "--is-ancestor", upstreamHead, baseHead]).status !== 0) {
+    return "the branch is behind its upstream or has diverged from it";
   }
   return { remote: remote.stdout.trim(), mergeRef: merge.stdout.trim(), upstreamHead };
 }

@@ -86,9 +86,15 @@ everything else routes through `akm proposal accept`.
    to `pending`.
 7. `akm proposal accept` promotes the proposal into the bundle; `akm proposal
    revert` restores the prior content from the backup captured at promotion
-   time, if the proposal overwrote an existing asset.
+   time, if the proposal overwrote an existing asset. When the bundle is a git
+   repository (a `.git` directory, whatever its source kind), each accept is
+   committed as it happens, locally and with exactly the paths it wrote or
+   removed: `akm accept: <generator> <proposal-id-8> <ref>`. A retirement's
+   archived copy and tombstone, and the source memory a consolidate promotion
+   retires, go in the same commit. A commit that fails warns and the accept
+   stands.
 8. For a git-backed bundle, `akm improve`'s end-of-run auto-sync commits the
-   run's changes as a single batch (see below).
+   rest of the run's changes as a single batch and pushes (see below).
 
 ## Current decisions
 
@@ -327,6 +333,13 @@ does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.
 
+The sync always commits the paths it is given. A branch it cannot push (no
+upstream branch, or behind or diverged from its upstream) only skips the push,
+and the result says why: `sync.reason` reads `not pushed: ...`. A branch that is
+ahead of its upstream, as it is after the accept commits above, is pushed with
+the sync commit. A clean tree that is ahead is not pushed: the sync pushes what
+it commits.
+
 The commit is scoped by **write provenance**, not by directory: every akm write
 path records the file it mutated into a run-scoped journal
 (`src/core/write-provenance.ts`), and the end-of-run sync stages exactly the
@@ -352,13 +365,11 @@ tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`) AND
 whose archive directory is entirely git-tracked and clean (`git ls-files`
 plus `git status --porcelain -uall`, both checked once per sweep, not once
 per directory). `.git` presence alone does not guarantee a retirement was
-ever committed: `akm proposal accept` only commits for a `kind: "git"` write
-target (`commitWriteTargetBoundary` in `src/core/write-source.ts`), and `akm
-improve`'s own auto-sync only stages the paths that same run wrote — a
-standalone `akm proposal accept` call, or any accept on a `kind:
-"filesystem"` source that merely happens to have a `.git` directory on disk,
-can leave archived bytes sitting on disk with no commit behind them at all.
-A directory with even one untracked or modified file (the tombstone
+ever committed: an accept commits its own paths (`commitAcceptedPaths` in
+`src/core/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
+directory too, but a commit that failed only warned, and a retirement accepted
+by an older akm left archived bytes sitting on disk with no commit behind them
+at all. A directory with even one untracked or modified file (the tombstone
 included) is left whole for a later sweep, so the purge only ever removes
 bytes git can already recover. Every deleted path is journaled individually,
 so the end-of-run auto-sync commits the removal the same way it commits the

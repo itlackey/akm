@@ -1430,3 +1430,76 @@ describe("revert by ref names a sibling retire proposal when refusing (nit, thir
     );
   });
 });
+
+// A stash that is a git repository (`.git` on disk, whatever its source kind) gets
+// one commit per accept: exactly the paths the accept wrote or removed, the
+// archived copies and tombstones of a retirement included.
+describe("an accept into a git repository commits what it removed and archived", () => {
+  const status = () => git("status", "--porcelain").trim();
+  const commitCount = () => Number(git("rev-list", "--count", "HEAD").trim());
+  const committedFiles = () =>
+    git("show", "--name-only", "--no-renames", "--format=", "HEAD").split("\n").filter(Boolean).sort();
+
+  test("a retire accept commits the removal, the archived copy and the tombstone as one commit", async () => {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    initGitRepo();
+    commitAll("seed");
+    const before = commitCount();
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+      }),
+    });
+
+    await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config: makeConfig(storage.stashDir) });
+
+    const entry = findArchiveEntry("memories/old-note.md");
+    const relative = (absolute: string) => path.relative(storage.stashDir, absolute).replaceAll(path.sep, "/");
+    expect(commitCount()).toBe(before + 1);
+    expect(git("log", "-1", "--format=%s").trim()).toBe(
+      `akm accept: consolidate-pair ${proposal.id.slice(0, 8)} ${proposal.ref}`,
+    );
+    expect(committedFiles()).toEqual(
+      ["memories/old-note.md", relative(entry.archivedAbs), relative(path.join(entry.dirAbs, "cleanup.md"))].sort(),
+    );
+    expect(status()).toBe("");
+  });
+
+  test("a promotion that retires its source memory commits the knowledge, the removal and the archive once", async () => {
+    const sourceContent = "---\ndescription: source memory\n---\n\nSource body.\n";
+    writeAsset("memories/source-note.md", "placeholder");
+    fs.writeFileSync(path.join(storage.stashDir, "memories", "source-note.md"), sourceContent, "utf8");
+    writeAsset("memories/source-note.derived.md", "inferred: true\nsource: memories/source-note\ndescription: child");
+    initGitRepo();
+    commitAll("seed");
+    const before = commitCount();
+    const proposal = createProposal(storage.stashDir, {
+      ref: "knowledge/promoted-note",
+      source: "consolidate",
+      target: { source: "stash", root: storage.stashDir },
+      payload: {
+        content: "---\ndescription: promoted knowledge\nxrefs:\n  - memories/source-note\n---\n\nPromoted body.\n",
+        frontmatter: { description: "promoted knowledge" },
+      },
+      promotionSource: "memories/source-note",
+      promotionSourceHash: contentHash(sourceContent, "body"),
+    });
+
+    await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config: makeConfig(storage.stashDir) });
+
+    expect(commitCount()).toBe(before + 1);
+    expect(git("log", "-1", "--format=%s").trim()).toMatch(/^akm accept: consolidate [0-9a-f]{8} /);
+    const files = committedFiles();
+    expect(files).toContain("knowledge/promoted-note.md");
+    expect(files).toContain("memories/source-note.md");
+    expect(files).toContain("memories/source-note.derived.md");
+    expect(files.filter((file) => file.startsWith(".akm/memory-cleanup/archive/"))).toHaveLength(4);
+    expect(status()).toBe("");
+  });
+});

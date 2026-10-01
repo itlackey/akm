@@ -21,7 +21,9 @@
  * Nothing commits per asset (issue #507). Callers write and delete through
  * {@link writeAssetToSource} / {@link deleteAssetFromSource}, then fire
  * {@link commitWriteTargetBoundary} once — or wrap a custom mutation in
- * {@link withWriteTargetMutation}, which does both under the asset lease.
+ * {@link withWriteTargetMutation}, which does both under the asset lease. An
+ * accepted proposal commits its own paths ({@link commitAcceptedPaths}), on a
+ * filesystem stash that is a git repository too.
  */
 
 import fs from "node:fs";
@@ -560,15 +562,16 @@ export function withWriteTargetMutation<T>(
  * Commit a git target's recorded paths plus `options.paths` (absolute or
  * repository-relative) as one commit, and push it with `--force-with-lease`
  * when the target is writable, has an upstream, and `push !== false`. A no-op
- * for filesystem targets. Ignored paths stay local: they are dropped from the
- * commit with a warning rather than failing a write that already landed.
+ * for filesystem targets unless `filesystem` is set. Ignored paths stay local:
+ * they are dropped from the commit with a warning rather than failing a write
+ * that already landed.
  */
 export function commitWriteTargetBoundary(
   target: ResolvedWriteTarget,
   message: string,
-  options?: { push?: boolean; paths?: string[] },
+  options?: { push?: boolean; paths?: string[]; filesystem?: boolean },
 ): void {
-  if (target.source.kind !== "git") return;
+  if (target.source.kind !== "git" && !options?.filesystem) return;
   const repoDir = repoDirFor(target.source);
   const recorded = pendingGitPaths.get(repoDir) ?? new Set<string>();
   pendingGitPaths.delete(repoDir);
@@ -589,11 +592,12 @@ export function commitWriteTargetBoundary(
   if (committable.length === 0) return;
 
   try {
-    saveGitStash(undefined, message, resolveWritable(target.config), {
+    const saved = saveGitStash(undefined, message, resolveWritable(target.config), {
       repoDir,
       paths: committable,
       ...(options?.push === undefined ? {} : { push: options.push }),
     });
+    if (saved.reason) warn(`warning: "${target.source.name}" ${saved.reason}`);
   } catch (error) {
     if (error instanceof GitStashPushError) {
       throw new Error(`Changes were committed as ${error.commit}, but publication failed: ${error.message}`, {
@@ -601,5 +605,25 @@ export function commitWriteTargetBoundary(
       });
     }
     throw error;
+  }
+}
+
+/**
+ * Commit exactly the paths an accepted proposal wrote or removed, when the
+ * target is a git repository: a filesystem stash with a `.git` too, which the
+ * boundary commit skips, locally (the end-of-run sync pushes). A failed commit
+ * only warns, since the accept already landed.
+ */
+export function commitAcceptedPaths(target: ResolvedWriteTarget, message: string, paths: string[]): void {
+  try {
+    commitWriteTargetBoundary(target, message, {
+      paths,
+      filesystem: true,
+      ...(target.source.kind === "git" ? {} : { push: false }),
+    });
+  } catch (error) {
+    warn(
+      `warning: could not commit the accept (${message}): ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

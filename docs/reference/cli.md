@@ -1395,6 +1395,8 @@ value also looks like a format token.
 | Git repo, no remote | Stage and commit only |
 | Git repo, has remote, not writable | Stage and commit only |
 | Git repo, has remote, `writable: true` | Stage, commit, and push |
+| Writable with a remote, but no upstream branch, or behind or diverged from it | Stage and commit; the push is skipped and `reason` says `not pushed: ...` |
+| Writable with a remote and ahead of its upstream | Stage, commit, and push, unpushed commits included |
 | Any writable repo with `--no-push` | Stage and commit only (push suppressed) |
 
 **Primary bundle writable config:**
@@ -2817,6 +2819,14 @@ akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bu
 Bulk-accept all pending proposals from one generator with `--generator <name>`
 (e.g. `reflect`, `distill`) and no positional id. Bulk accept requires
 `-y`/`--yes` in non-interactive shells.
+
+When the destination bundle is a git repository (a `.git` directory, whatever
+its source kind), each accept is committed as it happens, with exactly the paths
+it wrote or removed and the subject `akm accept: <generator> <proposal-id-8>
+<ref>`. A retirement's archived copy and tombstone, and the source memory a
+consolidate promotion retires, are part of the same commit. The commit is local:
+`akm sync`, or the end-of-run sync of `akm improve`, pushes it. A commit that
+fails warns and the accept stands.
 
 #### proposal reject
 

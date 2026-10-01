@@ -33,6 +33,7 @@ import { warn } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import {
   assertAkmAssetWrite,
+  commitAcceptedPaths,
   commitWriteTargetBoundary,
   prepareWriteTargetForMutation,
   type ResolvedWriteTarget,
@@ -1433,6 +1434,11 @@ function requireAcceptedTarget(proposal: Proposal): NonNullable<Proposal["accept
   return proposal.acceptedTarget;
 }
 
+/** An accept's commit subject: the generator, the proposal id's first 8 characters and the asset ref. */
+function acceptCommitMessage(proposal: Proposal): string {
+  return `akm accept: ${proposal.source} ${proposal.id.slice(0, 8)} ${proposal.ref}`;
+}
+
 /**
  * O1 (alpha.9): an accepted consolidate PROMOTION retires its source memory
  * (and its `.derived` twin), so promotion no longer leaves a memory/
@@ -1452,7 +1458,7 @@ function requireAcceptedTarget(proposal: Proposal): NonNullable<Proposal["accept
  * existed carries no hash at all, so it is treated the same way: never
  * archived, not verified against a hash that was never recorded.
  */
-function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Proposal): void {
+function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Proposal, paths: string[]): void {
   if (!accepted.promotionSource) return;
   try {
     const sourceRef = parseRefInput(accepted.promotionSource);
@@ -1480,11 +1486,11 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       successorRefs: [accepted.ref],
     };
     const record = archiveCleanupCandidate(mutationTarget.source.path, candidate, sourcePath);
-    const paths = [
+    paths.push(
       sourcePath,
       path.join(mutationTarget.source.path, record.archivedPath),
       path.join(mutationTarget.source.path, record.auditPath),
-    ];
+    );
     const twin = derivedTwinPath(sourcePath, sourceRef.type);
     if (twin) {
       const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
@@ -1494,7 +1500,6 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
         path.join(mutationTarget.source.path, twinRecord.auditPath),
       );
     }
-    commitWriteTargetBoundary(mutationTarget, `Retire promoted source ${accepted.promotionSource}`, { paths });
   } catch (error) {
     warn(
       `[proposal] O1: failed to retire promotion source ${accepted.promotionSource} for ${accepted.id}: ${error instanceof Error ? error.message : String(error)}`,
@@ -1546,7 +1551,6 @@ async function promoteProposalWithLease(
   const decidedAt = nowIso(ctx);
   const content = preflight.stampedContent.endsWith("\n") ? preflight.stampedContent : `${preflight.stampedContent}\n`;
   writeProposalAssetFile(assetPath, content);
-  commitWriteTargetBoundary(mutationTarget, `Update ${proposalForMutation.ref}`, { paths: [assetPath] });
   const accepted = persistProposalDecision(
     stashDir,
     proposalForMutation,
@@ -1564,8 +1568,10 @@ async function promoteProposalWithLease(
     ctx,
   );
   await indexWrittenProposalAsset(mutationTarget, assetPath);
+  const paths = [assetPath];
   if (accepted.status === "accepted" && accepted.source === "consolidate")
-    retirePromotionSource(mutationTarget, accepted);
+    retirePromotionSource(mutationTarget, accepted, paths);
+  commitAcceptedPaths(mutationTarget, acceptCommitMessage(accepted), paths);
   return { proposal: accepted, assetPath, ref: accepted.ref };
 }
 
@@ -1890,7 +1896,7 @@ async function retireProposalWithLease(
       path.join(mutationTarget.source.path, twinRecord.auditPath),
     );
   }
-  if (paths.length > 0) commitWriteTargetBoundary(mutationTarget, `Retire ${proposal.ref}`, { paths });
+  if (paths.length > 0) commitAcceptedPaths(mutationTarget, acceptCommitMessage(proposal), paths);
 
   if (archiveDirs.length === 0) {
     // Recorded intent, but neither file is at its original location NOR
