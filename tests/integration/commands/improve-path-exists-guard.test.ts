@@ -151,18 +151,18 @@ describe("akmImprove final pathExists guard", () => {
     writeLesson(stashDir, "beta", "beta lesson", "trigger");
     await buildIndex(stashDir);
 
-    // Inject a positive feedback signal so both lessons pass the signal filter
-    // and arrive at the final guard.
+    // Inject a negative feedback signal (the one that plans a reflect) so both
+    // lessons pass the signal filter and arrive at the final guard.
     const { appendEvent } = await import("../../../src/core/events");
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/alpha"),
-      metadata: { signal: "positive", note: "ok" },
+      metadata: { signal: "negative", reason: "ok" },
     });
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/beta"),
-      metadata: { signal: "positive", note: "ok" },
+      metadata: { signal: "negative", reason: "ok" },
     });
 
     const warnSpy = spyOn(console, "warn").mockImplementation(() => {});
@@ -200,22 +200,22 @@ describe("akmImprove final pathExists guard", () => {
     writeLesson(stashDir, "alive", "alive lesson", "trigger");
     await buildIndex(stashDir);
 
-    // Positive feedback so all three pass the signal filter and reach the guard.
+    // Negative feedback so all three pass the signal filter and reach the guard.
     const { appendEvent } = await import("../../../src/core/events");
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/kept"),
-      metadata: { signal: "positive", note: "ok" },
+      metadata: { signal: "negative", reason: "ok" },
     });
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/gone"),
-      metadata: { signal: "positive", note: "ok" },
+      metadata: { signal: "negative", reason: "ok" },
     });
     appendEvent({
       eventType: "feedback",
       ref: durableRef("lessons/alive"),
-      metadata: { signal: "positive", note: "ok" },
+      metadata: { signal: "negative", reason: "ok" },
     });
 
     // Delete one file post-index to simulate the deletion race.

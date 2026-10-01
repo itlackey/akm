@@ -3,7 +3,7 @@
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: default 1`] = `
 {
   "config": {
-    "description": "Standard improve pass — reflect, distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
+    "description": "Standard improve pass — reflect (rewrites only from negative feedback), distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -16,7 +16,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": true,
-        "requirePlannedRefs": true,
+        "requirePlannedRefs": false,
       },
       "extract": {
         "enabled": false,
@@ -80,7 +80,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": false,
-        "requirePlannedRefs": true,
+        "requirePlannedRefs": false,
       },
       "extract": {
         "enabled": false,
@@ -144,7 +144,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": true,
-        "requirePlannedRefs": true,
+        "requirePlannedRefs": false,
       },
       "extract": {
         "enabled": false,
@@ -214,7 +214,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": false,
-        "requirePlannedRefs": true,
+        "requirePlannedRefs": false,
       },
       "extract": {
         "enabled": false,
@@ -280,7 +280,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": false,
-        "requirePlannedRefs": true,
+        "requirePlannedRefs": false,
       },
       "extract": {
         "enabled": false,
@@ -407,7 +407,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: proactive-maintenance 1`] = `
 {
   "config": {
-    "description": "Opt-in proactive-maintenance pass — reflect, distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100); consolidate/memoryInference/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
+    "description": "Opt-in proactive-maintenance pass — reflect (on negative feedback), distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100), which picks due assets for scoring but plans no rewrite; consolidate/memoryInference/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -420,7 +420,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
           "memory",
         ],
         "enabled": true,
-        "requirePlannedRefs": true,
+        "requirePlannedRefs": false,
       },
       "extract": {
         "enabled": false,

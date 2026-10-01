@@ -183,12 +183,12 @@ describe("akm improve memory cleanup", () => {
     await buildIndex(stashDir);
 
     // 0.8.0: signal-delta gate requires recent feedback to make the parent
-    // memory eligible for reflect/distill. Without this the test's
-    // reflectFn / distillFn assertions don't fire.
+    // memory eligible for reflect/distill, and only negative feedback plans a
+    // reflect. Without this the test's reflectFn / distillFn assertions don't fire.
     appendEvent({
       eventType: "feedback",
       ref: durableRef("memories/deploy"),
-      metadata: { signal: "positive" },
+      metadata: { signal: "negative", reason: "stale port" },
     });
 
     const reflectedRefs: string[] = [];
@@ -855,7 +855,7 @@ describe("akm improve memory cleanup", () => {
     appendEvent({
       eventType: "feedback",
       ref: durableRef("memories/alpha"),
-      metadata: { signal: "positive", note: "helpful" },
+      metadata: { signal: "negative", reason: "outdated" },
     });
 
     const reflectedWithSignal: string[] = [];
@@ -971,21 +971,25 @@ describe("akm improve memory cleanup", () => {
     expect(result.memorySummary).toEqual({ eligible: 2, derived: 1 });
   });
 
-  test("ref with new feedback signal after the last reflect proposal is reflect-eligible (0.8.0 signal-delta)", async () => {
+  test("ref with new negative feedback after the last reflect proposal is reflect-eligible (0.8.0 signal-delta)", async () => {
     const stashDir = makeTempDir("akm-improve-memory-accepted-bypass-");
     writeMemory(stashDir, "deploy", { description: "deploy memory" }, "Remember deploy details.");
     await buildIndex(stashDir);
 
     const reflectedRefs: string[] = [];
     const now = Date.now();
-    // Old reflect_invoked event, then a NEWER feedback event → signal-delta
-    // gate passes (new signal arrived since the last proposal).
+    // Old reflect_invoked event, then a NEWER negative feedback event →
+    // signal-delta gate passes (new negative signal arrived since the last proposal).
     appendEvent(
       { eventType: "reflect_invoked", ref: durableRef("memories/deploy") },
       { now: () => now - 24 * 60 * 60 * 1000 },
     );
     appendEvent(
-      { eventType: "feedback", ref: durableRef("memories/deploy"), metadata: { signal: "positive" } },
+      {
+        eventType: "feedback",
+        ref: durableRef("memories/deploy"),
+        metadata: { signal: "negative", reason: "stale port" },
+      },
       { now: () => now },
     );
 
@@ -1277,7 +1281,7 @@ describe("akm improve memory cleanup", () => {
     appendEvent({
       eventType: "feedback",
       ref: durableRef("memories/vpn"),
-      metadata: { signal: "positive", note: "good" },
+      metadata: { signal: "negative", reason: "stale endpoint" },
     });
 
     const result = await akmImprove({

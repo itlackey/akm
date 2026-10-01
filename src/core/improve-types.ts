@@ -993,8 +993,8 @@ export interface AkmImproveResult {
    * Layer 2 proactive-maintenance selector outcome. Present only when the
    * `proactiveMaintenance` process is enabled and the run was whole-stash / type
    * scope; omitted entirely otherwise. `selected` is the count of due assets
-   * folded into the reflect/distill candidate set this run (bounded by
-   * `maxPerRun`); `dueTotal` is the full due pool before the bound;
+   * picked for scoring this run (bounded by `maxPerRun`); they are never
+   * planned for reflect or distill. `dueTotal` is the full due pool before the bound;
    * `neverReflected` is the subset of the due pool never previously reflected.
    */
   proactiveMaintenance?: { selected: number; dueTotal: number; neverReflected: number; selectedRefs: string[] };

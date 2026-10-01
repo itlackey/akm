@@ -89,6 +89,29 @@ function writeMemory(stashDir: string, name: string): void {
   fs.writeFileSync(filePath, `---\ndescription: ${name}\n---\n\nMemory ${name}.\n`, "utf8");
 }
 
+/** Negative feedback on skills: the only signal that plans a reflect. */
+function complain(...names: string[]): void {
+  for (const name of names) {
+    appendEvent({
+      eventType: "feedback",
+      ref: `stash//skills/${name}`,
+      metadata: { signal: "negative", reason: "names a removed flag" },
+    });
+  }
+}
+
+/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
+function scoredRefs(): string[] {
+  const db = openStateDatabase();
+  try {
+    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
+      (row) => row.asset_ref,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 function seedReplayRank(ref: string, rankScore: number, encodingSource?: "content" | "type-stub"): void {
   const db = openStateDatabase();
   try {
@@ -261,7 +284,9 @@ describe("#800 effective dry-run planner", () => {
 
       expect(result.plan?.snapshot.status).toBe("ready");
       expect(result.plan?.candidates.rawInScope).toBe(2);
-      expect(result.plannedRefs).toHaveLength(1);
+      // The lane selects one ref from the held index; it plans nothing: only negative feedback plans a reflect.
+      expect(result.proactiveMaintenance?.selected).toBe(1);
+      expect(result.plannedRefs).toEqual([]);
       expect(snapshotTree(storage.root)).toEqual(before);
     } finally {
       writer.close();
@@ -316,8 +341,9 @@ describe("#800 effective dry-run planner", () => {
 
   test("reports raw candidates separately from the post-selector, post-limit refs", async () => {
     const { stashDir } = isolatedStorage();
-    const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 3 } });
+    const config = plannerConfig();
     await indexSkills(stashDir, 5, config);
+    complain("skill-0", "skill-1", "skill-2");
 
     const result = await akmImprove({ scope: "skill", stashDir, config, dryRun: true, limit: 2 });
 
@@ -337,7 +363,7 @@ describe("#800 effective dry-run planner", () => {
       },
     });
     expect(result.plan?.effectiveRefs).toHaveLength(2);
-    expect(result.plan?.effectiveRefs.every((entry) => entry.lane === "proactive")).toBe(true);
+    expect(result.plan?.effectiveRefs.every((entry) => entry.lane === "signal-delta")).toBe(true);
     expect(result.plan?.gates.some((gate) => gate.name === "limit" && gate.removed === 1)).toBe(true);
     expect(decodeImproveResult(JSON.stringify(result)).envelope.plannedRefs).toEqual(result.plannedRefs);
   });
@@ -416,7 +442,7 @@ describe("#800 effective dry-run planner", () => {
     expect(defaultRun.plan?.processes.map((row) => row.process).sort()).toEqual(expectedProcesses.sort());
   });
 
-  test("proactive dry-run reports due population, selected refs, and differs from default", async () => {
+  test("proactive dry-run reports due population and selected refs, and plans nothing", async () => {
     const { stashDir } = isolatedStorage();
     const proactiveConfig = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 2 } });
     await indexSkills(stashDir, 4, proactiveConfig);
@@ -431,14 +457,13 @@ describe("#800 effective dry-run planner", () => {
 
     expect(baseline.plan?.candidates.rawInScope).toBe(4);
     expect(baseline.plannedRefs).toEqual([]);
+    expect(baseline.proactiveMaintenance).toBeUndefined();
     expect(proactive.plan?.candidates.rawInScope).toBe(4);
-    expect(proactive.plannedRefs).toHaveLength(2);
-    expect(proactive.proactiveMaintenance).toEqual({
-      dueTotal: 4,
-      neverReflected: 4,
-      selected: 2,
-      selectedRefs: proactive.plannedRefs.map((entry) => entry.ref),
-    });
+    // The lane selects two due refs for scoring; with no negative feedback nothing is planned for reflect.
+    expect(proactive.plannedRefs).toEqual([]);
+    expect(proactive.plan?.effectiveRefs).toEqual([]);
+    expect(proactive.proactiveMaintenance).toMatchObject({ dueTotal: 4, neverReflected: 4, selected: 2 });
+    expect(proactive.proactiveMaintenance?.selectedRefs).toHaveLength(2);
     expect(proactive.plan?.proactive).toMatchObject({
       configured: { dueDays: 0, maxPerRun: 2 },
       effective: { dueDays: 0, maxPerRun: 2 },
@@ -451,8 +476,9 @@ describe("#800 effective dry-run planner", () => {
 
   test("dry and live execution expose identical effective refs when observed inputs are unchanged", async () => {
     const { stashDir } = isolatedStorage();
-    const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 4 } });
+    const config = plannerConfig();
     await indexSkills(stashDir, 6, config);
+    complain("skill-0", "skill-1", "skill-2", "skill-3");
 
     const dry = await akmImprove({ scope: "skill", stashDir, config, dryRun: true, limit: 3 });
     const live = await akmImprove({
@@ -466,6 +492,7 @@ describe("#800 effective dry-run planner", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
+    expect(live.plannedRefs).toHaveLength(3);
     expect(dry.plannedRefs).toEqual(live.plannedRefs);
     expect(dry.plan?.effectiveRefs).toEqual(live.plan?.effectiveRefs);
     const terminalSignalSkips = live.distillSkipped?.byReason["no new signal since last proposal"] ?? 0;
@@ -483,7 +510,7 @@ describe("#800 effective dry-run planner", () => {
     expect(noSignalEvents[0]?.metadata?.count).toBe(terminalSignalSkips);
   });
 
-  test("live high-salience fallback is not double-reported as a terminal no-signal skip", async () => {
+  test("a live high-salience pick is scored, planned nowhere, and reported once as an ordinary no-signal skip", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig();
     config.improve = {
@@ -501,14 +528,15 @@ describe("#800 effective dry-run planner", () => {
       reflectFn: async ({ ref }) => okReflect(ref ?? ""),
     });
 
-    expect(result.plannedRefs.map((entry) => [entry.ref, entry.eligibilitySource])).toEqual([
-      ["skills/skill-0", "high-salience"],
-    ]);
-    expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(0);
-    expect(result.distillSkipped?.byReason["no new signal since last proposal"] ?? 0).toBe(0);
-    expect(
-      readEvents({ type: "improve_skipped" }).events.filter((event) => event.metadata?.reason === "no_new_signal"),
-    ).toEqual([]);
+    expect(scoredRefs()).toContain("stash//skills/skill-0");
+    expect(result.plannedRefs).toEqual([]);
+    expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(1);
+    expect(result.distillSkipped?.byReason["no new signal since last proposal"]).toBe(1);
+    const noSignalEvents = readEvents({ type: "improve_skipped" }).events.filter(
+      (event) => event.metadata?.reason === "no_new_signal",
+    );
+    expect(noSignalEvents).toHaveLength(1);
+    expect(noSignalEvents[0]?.metadata?.count).toBe(1);
   });
 
   test("feedback-only mode suppresses the proactive and high-salience selectors in dry and live plans", async () => {

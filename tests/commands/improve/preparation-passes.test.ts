@@ -18,6 +18,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { type ImproveLedgerOutcome, type ImproveLedgerRow, ledgerKey } from "../../../src/commands/improve/ledger";
 import { buildSnapshotManifest, partitionBySignalDelta } from "../../../src/commands/improve/preparation";
 import type { AkmConfig } from "../../../src/core/config/config";
+import { appendEvent } from "../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { nextEligibleAt, recordImproveLedger } from "../../../src/storage/repositories/improve-ledger-repository";
@@ -44,10 +45,13 @@ function ref(r: string, extra: Partial<ImproveEligibleRef> = {}): ImproveEligibl
 /**
  * A snapshot whose ledger holds one row per recorded attempt, all with
  * `outcome` (default `unchanged`: a revisit window a newer signal lifts), and
- * whose clock sits inside every window the fixtures open.
+ * whose clock sits inside every window the fixtures open. A fixture's feedback
+ * is negative unless it passes `latestNegativeTs`: only negative feedback plans
+ * a reflect.
  */
 function snapshot(overrides: {
   latestFeedbackTs?: Map<string, string>;
+  latestNegativeTs?: Map<string, string>;
   lastReflectAttemptAt?: Map<string, string>;
   lastDistillAttemptAt?: Map<string, string>;
   outcome?: ImproveLedgerOutcome;
@@ -76,6 +80,7 @@ function snapshot(overrides: {
     feedbackSinceCutoff: new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString(),
     nowIso: "2026-07-03T00:00:00.000Z",
     latestFeedbackTs: overrides.latestFeedbackTs ?? new Map(),
+    latestNegativeTs: overrides.latestNegativeTs ?? overrides.latestFeedbackTs ?? new Map(),
     ledger,
     lastReflectAttemptAt: overrides.lastReflectAttemptAt ?? new Map(),
     lastDistillAttemptAt: overrides.lastDistillAttemptAt ?? new Map(),
@@ -225,6 +230,53 @@ describe("partitionBySignalDelta — the four buckets", () => {
     expect(out.noFeedbackPool).toEqual([]);
   });
 
+  test("positive-only feedback never plans reflect: a memory goes to distillOnlyRefs, a skill is skipped", () => {
+    const stash = freshStash();
+    const out = partitionBySignalDelta({
+      scope: { mode: "all" },
+      options: { stashDir: stash, config: {} as AkmConfig },
+      postCleanupRefs: [ref("memories/helped"), ref("skills/helped")],
+      validationFailureRefs: new Set(),
+      snapshot: snapshot({
+        latestFeedbackTs: new Map([
+          ["memories/helped", T2],
+          ["skills/helped", T2],
+        ]),
+        latestNegativeTs: new Map(),
+      }),
+    });
+
+    expect(out.eligibleRefs).toEqual([]);
+    expect(out.distillOnlyRefs.map((r) => r.ref)).toEqual(["memories/helped"]);
+    expect(out.noFeedbackPool).toEqual([]);
+    expect(out.fullySkippedCount).toBe(1);
+  });
+
+  test("negative feedback plans reflect, and a newer positive does not reopen a window the negative closed", () => {
+    const stash = freshStash();
+    const out = partitionBySignalDelta({
+      scope: { mode: "all" },
+      options: { stashDir: stash, config: {} as AkmConfig },
+      postCleanupRefs: [ref("memories/complained"), ref("memories/praised-after")],
+      validationFailureRefs: new Set(),
+      snapshot: snapshot({
+        latestFeedbackTs: new Map([
+          ["memories/complained", T2],
+          ["memories/praised-after", T2],
+        ]),
+        // The second ref's only negative came before the reflect attempt that answered it.
+        latestNegativeTs: new Map([
+          ["memories/complained", T2],
+          ["memories/praised-after", T1],
+        ]),
+        lastReflectAttemptAt: new Map([["memories/praised-after", "2026-07-01T12:00:00.000Z"]]),
+      }),
+    });
+
+    expect(out.eligibleRefs.map((r) => r.ref)).toEqual(["memories/complained"]);
+    expect(out.distillOnlyRefs.map((r) => r.ref)).toEqual(["memories/praised-after"]);
+  });
+
   test("validation failures are excluded from every bucket", () => {
     const stash = freshStash();
     const out = partitionBySignalDelta({
@@ -284,6 +336,31 @@ describe("buildSnapshotManifest", () => {
     expect(snap.lastDistillAttemptAt.size).toBe(0);
   });
 
+  test("only a negative signal in the window is the reflect cursor; a positive or a note is not", () => {
+    const stash = freshStash();
+    const at = (offsetMs: number) => ({ now: () => Date.now() - offsetMs });
+    appendEvent({ eventType: "feedback", ref: "memories/positive", metadata: { signal: "positive" } }, at(3000));
+    appendEvent({ eventType: "feedback", ref: "memories/note", metadata: { note: "worked" } }, at(2000));
+    appendEvent({ eventType: "feedback", ref: "memories/negative", metadata: { signal: "negative" } }, at(1000));
+    appendEvent(
+      { eventType: "feedback", ref: "memories/old-negative", metadata: { signal: "negative" } },
+      { now: () => Date.now() - 31 * 24 * 3600 * 1000 },
+    );
+
+    const snap = buildSnapshotManifest({
+      postCleanupRefs: ["positive", "note", "negative", "old-negative"].map((name) => ref(`memories/${name}`)),
+      validationFailureRefs: new Set(),
+      stashDir: stash,
+    });
+
+    expect([...snap.latestFeedbackTs.keys()].sort()).toEqual([
+      "memories/negative",
+      "memories/note",
+      "memories/positive",
+    ]);
+    expect([...snap.latestNegativeTs.keys()]).toEqual(["memories/negative"]);
+  });
+
   test("validation-failure refs are excluded from the timestamp-map candidate set", () => {
     freshStash();
     // With every ref excluded, the maps are built over an empty candidate list.
@@ -292,5 +369,6 @@ describe("buildSnapshotManifest", () => {
       validationFailureRefs: new Set(["memories/broken"]),
     });
     expect(snap.latestFeedbackTs.size).toBe(0);
+    expect(snap.latestNegativeTs.size).toBe(0);
   });
 });

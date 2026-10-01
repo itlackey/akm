@@ -107,6 +107,18 @@ function durableRef(ref: string): string {
   return `stash//${ref}`;
 }
 
+/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
+function scoredRefs(): string[] {
+  const db = openStateDatabase();
+  try {
+    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
+      (row) => row.asset_ref,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 /** Seed an improve-ledger attempt on `ref` (keyed by its item_ref) at `atMs`. */
 function recordAttempt(
   stashDir: string,
@@ -390,14 +402,14 @@ describe("reflect signal-delta eligibility", () => {
     expect(reflected).not.toContain("memories/refused");
   });
 
-  test("never-reflected ref with feedback signal → eligible", async () => {
+  test("never-reflected ref with negative feedback → eligible", async () => {
     const stash = makeTempDir("akm-elig-reflect-first-time-");
     writeMemory(stash, "fresh", "Fresh content.");
     await buildIndex(stash);
     appendEvent({
       eventType: "feedback",
       ref: durableRef("memories/fresh"),
-      metadata: { signal: "positive" },
+      metadata: { signal: "negative", reason: "stale port" },
     });
 
     const reflected: string[] = [];
@@ -414,6 +426,30 @@ describe("reflect signal-delta eligibility", () => {
     });
 
     expect(reflected).toContain("memories/fresh");
+  });
+
+  test("a positive-only or note-only ref is not planned for reflect", async () => {
+    const stash = makeTempDir("akm-elig-reflect-positive-only-");
+    writeMemory(stash, "helped", "Helped an agent.");
+    writeMemory(stash, "noted", "Carries a note, no signal.");
+    await buildIndex(stash);
+    appendEvent({ eventType: "feedback", ref: durableRef("memories/helped"), metadata: { signal: "positive" } });
+    appendEvent({ eventType: "feedback", ref: durableRef("memories/noted"), metadata: { note: "worked well" } });
+
+    const reflected: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(reflected).toEqual([]);
   });
 
   test("never-reflected ref without any signal → ineligible", async () => {
@@ -528,6 +564,67 @@ describe("distill signal-delta eligibility", () => {
     });
 
     expect(distilled).toContain("memories/new-tip");
+  });
+
+  test("a positive-signal memory is still distilled under the default strategy when no ref has negative feedback", async () => {
+    const stash = makeTempDir("akm-elig-distill-positive-only-");
+    writeMemory(stash, "reinforced", "Helped an agent twice.");
+    await buildIndex(stash);
+    appendEvent({ eventType: "feedback", ref: durableRef("memories/reinforced"), metadata: { signal: "positive" } });
+
+    const reflected: string[] = [];
+    const distilled: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => {
+        if (ref) distilled.push(ref);
+        return okDistill(ref ?? "");
+      },
+    });
+
+    // Nothing planned reflect, and the default strategy does not hold distill back for want of a reflect.
+    expect(reflected).toEqual([]);
+    expect(distilled).toEqual(["memories/reinforced"]);
+  });
+
+  test("distill needs no reflect: with a negative ref in the run, only that one is reflected and both are distilled", async () => {
+    const stash = makeTempDir("akm-elig-distill-beside-negative-");
+    writeMemory(stash, "reinforced", "Helped an agent twice.");
+    writeMemory(stash, "complained", "Carries a stale port.");
+    await buildIndex(stash);
+    appendEvent({ eventType: "feedback", ref: durableRef("memories/reinforced"), metadata: { signal: "positive" } });
+    appendEvent({
+      eventType: "feedback",
+      ref: durableRef("memories/complained"),
+      metadata: { signal: "negative", reason: "stale port" },
+    });
+
+    const reflected: string[] = [];
+    const distilled: string[] = [];
+    await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => {
+        if (ref) distilled.push(ref);
+        return okDistill(ref ?? "");
+      },
+    });
+
+    expect(reflected).toEqual(["memories/complained"]);
+    expect(distilled.sort()).toEqual(["memories/complained", "memories/reinforced"]);
   });
 
   test("never-distilled memory without signal → ineligible", async () => {
@@ -688,7 +785,7 @@ describe("high-salience admission gate (#608)", () => {
     }
   }
 
-  test("zero-feedback ref with content encoding_salience ≥ threshold and no prior reflect → reflected", async () => {
+  test("zero-feedback ref with content encoding_salience ≥ threshold and no prior reflect → scored, never reflected", async () => {
     const stash = makeTempDir("akm-hs-rescue-");
     writeMemory(stash, "salient", "Newly distilled, never surfaced to a user.");
     await buildIndex(stash);
@@ -710,7 +807,9 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memories/salient");
+    // The lane admits it into scoring; only negative feedback (or an explicit scope) plans a reflect.
+    expect(scoredRefs()).toContain(durableRef("memories/salient"));
+    expect(reflected).toEqual([]);
   });
 
   test("high-salience fires at most once per asset (a prior reflect attempt blocks re-rescue)", async () => {
@@ -738,7 +837,8 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memories/salient");
+    expect(scoredRefs()).not.toContain(durableRef("memories/salient"));
+    expect(reflected).toEqual([]);
   });
 
   // The lane cap must take the TOP-N candidates BY SCORE, not the first N found
@@ -768,8 +868,9 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).toContain("memories/zzz");
-    expect(reflected).not.toContain("memories/aaa");
+    expect(scoredRefs()).toContain(durableRef("memories/zzz"));
+    expect(scoredRefs()).not.toContain(durableRef("memories/aaa"));
+    expect(reflected).toEqual([]);
   });
 
   // #644 follow-up — the lore-writer case. A type-stub row (encoding_salience set
@@ -800,7 +901,8 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memories/stub");
+    expect(scoredRefs()).not.toContain(durableRef("memories/stub"));
+    expect(reflected).toEqual([]);
   });
 
   test("NULL-provenance rows are not admitted", async () => {
@@ -822,7 +924,8 @@ describe("high-salience admission gate (#608)", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    expect(reflected).not.toContain("memories/legacy");
+    expect(scoredRefs()).not.toContain(durableRef("memories/legacy"));
+    expect(reflected).toEqual([]);
   });
 
   test("NULL provenance is never content regardless of score", () => {

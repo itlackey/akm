@@ -3,10 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Proactive maintenance: a second eligibility source that revisits stale,
- * useful assets with no fresh feedback. Whole-stash/type scope only; the
- * winners join the same reflect/distill candidate set as the signal-delta gate.
- * Pure: the caller supplies the ledger timestamps, retrieval counts and clock.
+ * Proactive maintenance: a fallback lane that picks stale, useful assets with
+ * no fresh feedback. Whole-stash/type scope only; the winners are scored with
+ * the signal-delta set and never planned: only negative feedback plans a
+ * reflect. Pure: the caller supplies the ledger timestamps, retrieval counts
+ * and clock.
  */
 
 import type { ImproveEligibleRef } from "../../core/improve-types";

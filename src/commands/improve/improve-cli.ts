@@ -293,7 +293,7 @@ export const improveCommand = defineCommand({
     "require-feedback-signal": {
       type: "boolean",
       description:
-        "Only process assets with recent feedback signals (disables the proactive/high-salience fallback lanes)",
+        "Turn the proactive/high-salience fallback lanes off (they only select and score assets; a rewrite needs negative feedback)",
       default: false,
     },
     "json-to-stdout": {

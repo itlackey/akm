@@ -7,16 +7,18 @@
  * `akm improve` eligibility flow:
  *  - DISABLED by default (no selection when the process flag is off).
  *  - When enabled, a never-reflected asset with NO feedback and NO retrieval
- *    signal (so the signal-delta gate would not pick it) is folded into the
- *    reflect candidate set and the proactive_selected event + result summary
- *    are emitted.
+ *    signal (so the signal-delta gate would not pick it) is selected and
+ *    scored, and the proactive_selected event + result summary are emitted. It
+ *    is never planned for reflect: only negative feedback (or an explicit ref
+ *    scope) plans a rewrite, so improve does not rewrite on a proactive cadence.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import { saveConfig } from "../../../../src/core/config/config";
-import { readEvents } from "../../../../src/core/events";
+import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import { writeSkill } from "../../../_helpers/assets";
 import { withTestImproveLlm } from "../../../_helpers/improve-config";
@@ -93,6 +95,18 @@ afterEach(() => {
   for (const cleanup of cleanups.splice(0)) cleanup();
 });
 
+/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
+function scoredRefs(): string[] {
+  const db = openStateDatabase();
+  try {
+    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
+      (row) => row.asset_ref,
+    );
+  } finally {
+    db.close();
+  }
+}
+
 describe("proactive maintenance — explicitly disabled", () => {
   test("a never-reflected, no-signal asset is NOT selected when the process is off", async () => {
     const stash = isolatedStash();
@@ -120,8 +134,8 @@ describe("proactive maintenance — explicitly disabled", () => {
   });
 });
 
-describe("proactive maintenance — enabled selects due assets into the reflect set", () => {
-  test("never-reflected, no-feedback, no-retrieval asset flows into reflect via the selector", async () => {
+describe("proactive maintenance — enabled selects and scores due assets, and never plans a reflect", () => {
+  test("never-reflected, no-feedback, no-retrieval asset is selected and scored, not reflected", async () => {
     const stash = isolatedStash();
     writeSkill(stash, "deploy", "Deploy steps.");
     await buildIndex(stash);
@@ -139,8 +153,10 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    // The ONLY eligibility path that can surface this ref is proactive maintenance.
-    expect(reflected).toContain("skills/deploy");
+    // The ONLY path that can surface this ref is proactive maintenance, and it scores the ref: it plans nothing.
+    expect(scoredRefs().some((ref) => ref.endsWith("skills/deploy"))).toBe(true);
+    expect(reflected).toEqual([]);
+    expect(res.plannedRefs).toEqual([]);
 
     expect(res.proactiveMaintenance).toBeDefined();
     expect(res.proactiveMaintenance?.selected).toBeGreaterThanOrEqual(1);
@@ -152,7 +168,7 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
     expect((events[0]!.metadata as { count?: number }).count).toBeGreaterThanOrEqual(1);
   });
 
-  test("maxPerRun bounds how many due assets are folded in", async () => {
+  test("maxPerRun bounds how many due assets are selected", async () => {
     const stash = isolatedStash();
     for (let i = 0; i < 5; i++) writeSkill(stash, `s${i}`, `Body ${i}.`);
     await buildIndex(stash);
@@ -172,6 +188,37 @@ describe("proactive maintenance — enabled selects due assets into the reflect 
 
     expect(res.proactiveMaintenance?.dueTotal).toBe(5);
     expect(res.proactiveMaintenance?.selected).toBe(2);
-    expect(reflected.length).toBe(2);
+    expect(scoredRefs()).toHaveLength(2);
+    expect(reflected).toEqual([]);
+  });
+
+  test("the shipped proactive-maintenance strategy still runs: negative feedback is reflected, the lane's pick is only selected", async () => {
+    const stash = isolatedStash();
+    writeSkill(stash, "complained", "Names a removed flag.");
+    writeSkill(stash, "quiet", "Never reflected, no feedback.");
+    await buildIndex(stash);
+    appendEvent({
+      eventType: "feedback",
+      ref: "stash//skills/complained",
+      metadata: { signal: "negative", reason: "names a removed flag" },
+    });
+
+    const reflected: string[] = [];
+    const res = await akmImprove({
+      scope: "skill",
+      stashDir: stash,
+      config: withTestImproveLlm({ semanticSearchMode: "off" }),
+      strategy: "proactive-maintenance",
+      ...noopIndexFns,
+      reflectFn: async ({ ref }) => {
+        if (ref) reflected.push(ref);
+        return okReflect(ref ?? "");
+      },
+      distillFn: async ({ ref }) => okDistill(ref ?? ""),
+    });
+
+    expect(res.ok).toBe(true);
+    expect(reflected).toEqual(["skills/complained"]);
+    expect(res.proactiveMaintenance?.selectedRefs).toEqual(["skills/quiet"]);
   });
 });
