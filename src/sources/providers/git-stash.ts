@@ -229,7 +229,9 @@ export function resolveWritableOverride(config: AkmConfig): true | undefined {
  *   - Not a git repo → skipped (no-op)
  *   - Git repo, no remote → commit only
  *   - Git repo, has remote, but stash is not writable → commit only
- *   - Git repo, has remote, stash is writable → commit + push
+ *   - Git repo, has remote, stash is writable → commit + push, unless the
+ *     branch has no upstream or is behind or diverged from it: then commit
+ *     only, and `reason` says why
  *
  * When `name` is omitted the primary stash directory is used.
  * When `message` is omitted a timestamp is used.
