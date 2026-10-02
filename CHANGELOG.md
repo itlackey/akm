@@ -93,6 +93,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   inside a feature gate, came back as `error`. They now come back as `timeout`
   or `aborted`.
 
+- **`akm proposal new` keeps the reply's confidence.** The engine's
+  self-rated `confidence` was parsed and then dropped, so a proposal from
+  `proposal new` never carried the field the reference says it has.
+
 ## [0.9.24] - 2026-10-02
 
 ### Changed

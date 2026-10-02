@@ -372,6 +372,7 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
       content: payload.content,
       ...(payload.frontmatter ? { frontmatter: payload.frontmatter } : {}),
     },
+    ...(payload.confidence !== undefined ? { confidence: payload.confidence } : {}),
   };
   const proposal: Proposal = createProposal(stash, createInput, options.ctx);
   return {

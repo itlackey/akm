@@ -214,6 +214,7 @@ function expectProposalCreated(result: CliResult, engine: string): void {
   const proposals = listProposals(storage.stashDir);
   expect(proposals).toHaveLength(1);
   expect(proposals[0]).toMatchObject({ source: "propose", ref: `work//skills/${NAME}`, status: "pending" });
+  expect(proposals[0]?.confidence).toBe(0.8);
   // The queue stamps `type` and `updated` into the reply's frontmatter.
   expect(proposals[0]?.payload.content).toContain("description: Proves proposal new on every engine kind");
   expect(proposals[0]?.payload.content).toContain("Return the proposal as JSON.");
