@@ -7,7 +7,7 @@ import type { LlmConnectionConfig } from "../../src/core/config/config";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import type { AgentRunResult } from "../../src/integrations/agent";
 import { type BuiltExecution, buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
-import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import { type AgentProfile, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { type RunExecutionOptions, runExecution } from "../../src/integrations/agent/runner-dispatch";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../src/llm/usage-telemetry";
@@ -204,6 +204,31 @@ describe("runExecution redacts what the child could have seen", () => {
       expect(JSON.stringify(result)).toContain(nonsecret);
     }
     expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(4);
+  });
+
+  // The XDG directories are paths, like HOME and TMPDIR: an opencode child that echoes the config
+  // directory it read (in an error, say) must not have it scrubbed to [REDACTED].
+  test("not the XDG base directories an opencode child was given", async () => {
+    const opencode = getBuiltinAgentProfile("opencode") as AgentProfile;
+    const directories = {
+      XDG_CONFIG_HOME: "/sandbox/xdg-config",
+      XDG_DATA_HOME: "/sandbox/xdg-data",
+      XDG_CACHE_HOME: "/sandbox/xdg-cache",
+      XDG_STATE_HOME: "/sandbox/xdg-state",
+    };
+    const echoed = Object.values(directories).join(" | ");
+    const result = await runExecution(
+      built({ kind: "agent", engine: "oc", profile: { ...opencode, platform: "opencode" } }),
+      {
+        runOptions: { envSource: { PATH: "/safe/bin", ...directories } },
+        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
+      },
+    );
+
+    expect(result.stdout).toBe(echoed);
+    expect(result.stderr).toBe(echoed);
+    expect(result.error).toBe(echoed);
+    expect(result.stdout).not.toContain("[REDACTED]");
   });
 
   test("credential-bearing values even when their passthrough names are allowlisted", async () => {

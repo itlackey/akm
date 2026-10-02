@@ -11,6 +11,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import type { AkmConfig } from "../../src/core/config/config";
 import { canonicalPlanJson } from "../../src/workflows/ir/plan-hash";
 import { readRunPlan } from "../../src/workflows/runtime/run-plan";
 import { freezeWorkflow } from "../_helpers/workflow";
@@ -83,6 +84,43 @@ describe("readRunPlan — an older plan runs", () => {
     const reordered = Object.fromEntries(Object.entries(JSON.parse(canonicalPlanJson(plan))).reverse());
     const read = readRunPlan({ id: "pretty", plan_json: JSON.stringify(reordered, null, 2), plan_ir_version: 5 });
     expect(read.ok).toBe(true);
+  });
+});
+
+// A unit's runner, profile and its `envPassthrough` included, is frozen into the plan. opencode's
+// profile gained the XDG base-directory names after plans were frozen without them.
+describe("readRunPlan — a plan frozen before opencode's profile named the XDG variables", () => {
+  const OPENCODE_CONFIG = {
+    configVersion: "0.9.0",
+    semanticSearchMode: "off",
+    engines: { oc: { kind: "agent", platform: "opencode" } },
+    defaults: { engine: "oc" },
+    workflow: { judgeEngine: "oc" },
+  } as const satisfies AkmConfig;
+  const opencodeProfile = (stored: unknown) =>
+    (stored as { steps: Array<{ root: { frozenTarget: { runner: { profile: { envPassthrough: string[] } } } } }> })
+      .steps[0]?.root.frozenTarget.runner.profile as { envPassthrough: string[] };
+
+  test("a plan frozen now names them, and one stored without them is read as it was frozen", () => {
+    const frozen = freezeWorkflow(
+      "---\ntype: workflow\ndefaults:\n  engine: oc\nsteps:\n  - id: only-step\n---\n\n## only-step\n\nDo the work.\n",
+      "workflows/demo.md",
+      OPENCODE_CONFIG,
+    );
+    const stored = JSON.parse(canonicalPlanJson(frozen));
+    expect(opencodeProfile(stored).envPassthrough).toContain("XDG_CONFIG_HOME");
+
+    // What a release before the names stored.
+    const profile = opencodeProfile(stored);
+    profile.envPassthrough = profile.envPassthrough.filter((name) => !name.startsWith("XDG_"));
+    const read = readRunPlan({ id: "pre-xdg", plan_json: JSON.stringify(stored), plan_ir_version: 6 });
+    if (!read.ok) throw new Error(read.problem);
+
+    const unit = read.plan.steps[0]?.root;
+    const target = unit?.kind === "unit" && unit.frozenTarget.kind === "command" ? unit.frozenTarget : undefined;
+    const names = target?.runner.kind === "agent" ? target.runner.profile.envPassthrough : [];
+    expect(names).toContain("OPENCODE_CONFIG");
+    expect(names.filter((name) => name.startsWith("XDG_"))).toEqual([]);
   });
 });
 

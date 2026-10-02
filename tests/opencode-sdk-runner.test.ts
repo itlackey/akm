@@ -1179,6 +1179,43 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     });
   });
 
+  // opencode serve resolves its provider config, auth, package cache and state through the XDG
+  // base-directory variables; without them it reads $HOME's defaults and misses the config akm's
+  // own environment points at (the 2026-10-02 "Unexpected server error"). The names belong to the
+  // runner's allowlist, not to the profile's list, which workflow plans freeze.
+  test("the XDG base-directory variables reach the server, and a different location starts another one", async () => {
+    const environments: Record<string, string>[] = [];
+    __setServerFactory(((options: { env: Record<string, string> }) => {
+      environments.push(options.env);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+    const source = (configHome: string) => ({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      XDG_CONFIG_HOME: configHome,
+      XDG_DATA_HOME: "/sandbox/data",
+      XDG_CACHE_HOME: "/sandbox/cache",
+      XDG_STATE_HOME: "/sandbox/state",
+      AMBIENT_CLOUD_TOKEN: "must-not-leak",
+    });
+
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("/sandbox/config-a"), timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("/sandbox/config-a"), timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("/sandbox/config-b"), timeoutMs: null });
+
+    expect(environments).toHaveLength(2);
+    expect(environments[0]).toEqual({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      XDG_CONFIG_HOME: "/sandbox/config-a",
+      XDG_DATA_HOME: "/sandbox/data",
+      XDG_CACHE_HOME: "/sandbox/cache",
+      XDG_STATE_HOME: "/sandbox/state",
+      OPENCODE_CONFIG_CONTENT: "{}",
+    });
+    expect(environments[1]?.XDG_CONFIG_HOME).toBe("/sandbox/config-b");
+  });
+
   test("only explicit passthrough values participate in child materialization and registry identity", async () => {
     const values: Array<string | undefined> = [];
     __setServerFactory(((options: { env: Record<string, string> }) => {

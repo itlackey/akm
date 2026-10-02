@@ -28,6 +28,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `Engine "<name>" reply was not a valid reflect proposal after 2 attempts: …`.
   The `reflect-quality` classifier knew only the older messages, so it counted
   these under `other` and the schema-shape rate left them out.
+- **`opencode` and `opencode-sdk` engines receive the XDG base-directory
+  variables.** akm starts an agent CLI, and the `opencode serve` server for
+  `opencode-sdk`, with an allowlisted environment, and `XDG_CONFIG_HOME`,
+  `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` were not on it. In a
+  sandbox that sets `XDG_CONFIG_HOME` to its own directory, the opencode that akm
+  started read `$HOME/.config/opencode` instead, missed the provider config
+  under `XDG_CONFIG_HOME`, and failed every dispatch with `Unexpected server
+  error`. Both engines now get the four variables that akm's own environment
+  has. Every other harness and every workflow `exec` unit gets the same
+  environment as before.
+  - **Model work stays confined.** The variables only move where opencode reads
+    its own config from. With a permissive user config under `XDG_CONFIG_HOME`
+    (opencode 1.18.25), the confined `akm-model-work` agent still advertises
+    only `read`, `edit` and `write`, and the model's `bash` and outside-the-
+    directory `write` do not run, on the CLI and on the SDK.
+  - **Workflow plans.** A unit's runner profile, with its `envPassthrough`, is
+    frozen into the plan, so a plan frozen from now on lists the four names on an
+    `opencode` unit, and its `plan_hash` differs from the one the same workflow
+    froze to before. Nothing treats that hash as a gate. A plan frozen earlier
+    decodes and resumes as before, with the list it was frozen with: an
+    `opencode` unit of a run frozen before this release still gets none of the
+    four until the workflow is started again. An `opencode-sdk` unit gets them
+    either way, because the server's allowlist is not part of the plan.
 
 ## [0.9.25-alpha.1] - 2026-10-02
 
