@@ -24,6 +24,7 @@ import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
+import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { assertRunnerCredentials } from "../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig, ChatMessage } from "../../src/llm/client";
@@ -387,6 +388,21 @@ describe("callStructured contract", () => {
     expect(resolveStructuredCurrent({ timeout: 9 }, undefined, agent)).toEqual({ timeout: 9 });
   });
 
+  test("(11b') a configured agent or SDK engine that sets no timeoutMs gets the 600 s bound too", () => {
+    const config = {
+      configVersion: "0.9.0",
+      engines: {
+        cc: { kind: "agent", platform: "claude" },
+        sdk: { kind: "agent", platform: "opencode-sdk" },
+        unbounded: { kind: "agent", platform: "claude", timeoutMs: null },
+      },
+    } as unknown as AkmConfig;
+    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("cc", config))).toEqual({ timeout: 600_000 });
+    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("sdk", config))).toEqual({ timeout: 600_000 });
+    // An engine's own timeoutMs, null included, still applies.
+    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("unbounded", config))).toBeUndefined();
+  });
+
   test("(11c) the feature gate's timeout aborts the dispatch it bounds", async () => {
     let seen: AbortSignal | undefined;
     const result = await callStructured<string>({
@@ -453,30 +469,52 @@ describe("callStructured contract", () => {
     ]);
   });
 
-  test("(13) tool denial stops before credential materialization and provider dispatch", async () => {
+  test("(13) a structured call runs under the model-work tool policy, whatever tools the caller selects", async () => {
+    // The caller's own selection would be denied (no execution.allowedTools on a
+    // runner-only resolution); it is replaced, so the LLM call goes ahead.
     let chatRan = false;
-    await withEnv({ AKM_STRUCTURED_DENIED_SECRET: undefined }, async () => {
-      const attempt = callStructured<string>({
-        feature: "memory_inference",
-        akmConfig: GATED,
-        runner: runner(PROFILE, {
-          credential: { names: ["AKM_STRUCTURED_DENIED_SECRET"], required: true },
-        }),
-        current: { tools: ["shell"] },
-        messages: [{ role: "user", content: "must not dispatch" }],
-        request: {
-          chat: async () => {
-            chatRan = true;
-            return "wrong";
-          },
+    const value = await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      runner: runner(),
+      current: { tools: ["shell"] },
+      messages: [{ role: "user", content: "judge this" }],
+      request: {
+        chat: async () => {
+          chatRan = true;
+          return "answer";
         },
-        parse: (raw) => raw ?? "",
-        onError: () => "ERR",
-        fallback: "FB",
-      });
-      await expect(attempt).rejects.toThrow(/authorization policy/i);
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
     });
-    expect(chatRan).toBe(false);
+    expect({ value, chatRan }).toEqual({ value: "answer", chatRan: true });
+
+    // An agent engine that cannot confine the policy is refused before anything runs.
+    const codex: RunnerSpec = {
+      kind: "agent",
+      engine: "structured-codex",
+      profile: {
+        name: "structured-codex",
+        platform: "codex",
+        bin: "codex-must-not-run",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    const refused = callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      runner: codex,
+      messages: [{ role: "user", content: "judge this" }],
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+    await expect(refused).rejects.toThrow(/cannot enforce the model-work tool policy/);
   });
 
   test("(14) a provider failure is credential-redacted before ungated propagation", async () => {

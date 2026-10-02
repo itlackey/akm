@@ -65,3 +65,8 @@ export const VALID_HARNESS_IDS = Object.freeze(HARNESS_ID_TABLE.map((h) => h.id)
 export const HARNESS_AGENT_DISPATCH_IDS: ReadonlySet<string> = new Set(
   HARNESS_ID_TABLE.filter((h) => h.agentDispatch).map((h) => h.id),
 );
+
+/** Harness ids that confine the model-work tool policy, so unattended model work may run on them. */
+export const HARNESS_MODEL_WORK_IDS: ReadonlySet<string> = new Set(
+  HARNESS_ID_TABLE.filter((h) => h.enforcesModelWorkTools).map((h) => h.id),
+);

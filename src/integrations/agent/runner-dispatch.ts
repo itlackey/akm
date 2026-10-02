@@ -25,6 +25,7 @@ import {
 import { isModelWorkTools } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
+import { getHarness } from "../harnesses";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import {
   lookupApiKeyFileValue,
@@ -246,6 +247,24 @@ export async function runExecution(
   }
 }
 
+/**
+ * A model-work reply's answer: the harness's result extractor strips its
+ * framing (claude's `--output-format json` result envelope, for one), as a
+ * workflow unit's does, and no answer is a `parse_error`.
+ */
+function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
+  const extractor =
+    runner.kind === "agent" ? getHarness(runner.profile.platform ?? runner.profile.name)?.resultExtractor : undefined;
+  const extracted = extractor ? extractor(result) : { text: result.stdout };
+  const answer = {
+    ...result,
+    stdout: extracted.text,
+    ...(extracted.sessionId ? { sessionId: extracted.sessionId } : {}),
+  };
+  if (extracted.text.trim() !== "") return answer;
+  return { ...answer, ok: false, reason: "parse_error", error: `Engine "${runner.engine}" returned no answer.` };
+}
+
 /** `scratch` is the model-work working directory, set only for model work on an agent or SDK engine. */
 async function runBuiltExecution(
   execution: BuiltExecution,
@@ -286,10 +305,7 @@ async function runBuiltExecution(
     }
   };
   let result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
-  if (scratch !== undefined && result.ok && result.stdout.trim() === "") {
-    const error = `Engine "${execution.runner.engine}" returned no answer.`;
-    result = { ...result, ok: false, reason: "parse_error", error };
-  }
+  if (scratch !== undefined && result.ok) result = modelWorkAnswer(execution.runner, result);
   // The LLM transport records each HTTP attempt itself.
   if (execution.runner.kind !== "llm") recordDispatchUsage(execution, result);
   return result;

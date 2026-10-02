@@ -183,8 +183,12 @@ For `skills/*` refs, reflect also reviews related distilled lessons as consolida
 3. Resolve the selected strategy's `reflect.engine`, falling back to `defaults.llmEngine`.
 4. For skill refs, load the canonical derived lesson (`lessons/<type>-<name>-lesson`) plus any lesson files whose frontmatter `sources` cite the skill ref.
 5. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
-6. Dispatch the frozen `RunnerSpec` through `runExecution`. Unattended improve
-   requires an LLM engine; explicit interactive uses may select an agent engine.
+6. Dispatch the frozen `RunnerSpec` through `runExecution` under the
+   model-work tool policy
+   ([Engines for unattended model work](../../reference/configuration.md#engines-for-unattended-model-work)).
+   The engine may be an LLM or an agent that confines the policy. An agent
+   edits only its own scratch directory, so it returns the proposal as JSON on
+   stdout too.
 7. Parse stdout: `parseAgentProposalPayload` strips `<think>` blocks and code fences, then JSON-parses the output. Falls back to raw markdown detection if JSON parse fails.
 8. Quality gate (`processes.reflect.qualityGate`, on unless disabled): one judge call scores the revision against the source on **need**, **preservation** and **quality** ([Quality judge](../improvement.md#quality-judge)), and passes it only when every criterion scores 4 or more. A score that does not pass is refused (`quality_rejected`, no proposal). A judge that times out, errors or replies unparseably gives no verdict, and the proposal is deferred for review (`judge-error`, gate `quality-gate`). A revision the size guard or the truncation-marker check flagged skips the judge.
 9. Retrieval regression gate, after a pass on an existing asset: a revision that grades lower on the asset's own retrieval queries is refused ([Retrieval regression gate](../improvement.md#retrieval-regression-gate)).
@@ -592,12 +596,13 @@ An explicit ref scope bypasses every gate. Consolidation, extract and schema rep
 
 | Process | Config path | Controls |
 |---|---|---|
-| `distill` | `improve.strategies.<name>.processes.distill` | Enables distillation and selects its LLM engine/model/request overrides. |
-| `consolidate` | `improve.strategies.<name>.processes.consolidate` | Enables consolidation and selects its LLM engine/model/request overrides. |
+| `distill` | `improve.strategies.<name>.processes.distill` | Enables distillation and selects its engine/model/request overrides. |
+| `consolidate` | `improve.strategies.<name>.processes.consolidate` | Enables consolidation and selects its engine/model/request overrides. |
 
 Improve process selection is resolved once by `resolveImprovePlan`; the plan
 contains every process's frozen enablement, process config, and resolved runner.
-LLM-only processes reject an explicit agent engine rather than falling through.
+A process runs on any engine that confines the model-work tool policy; one that
+cannot is refused when the plan is built, never replaced by another engine.
 
 ## Output shape
 

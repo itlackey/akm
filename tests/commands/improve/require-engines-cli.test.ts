@@ -180,6 +180,59 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     expect(outcomes[0]?.latencyMs).toBe(outcomes[1]?.latencyMs);
   });
 
+  test("an agent engine is checked by its binary, an SDK engine by its binary and its LLM fallback", async () => {
+    const profile = (name: string, bin: string) => ({
+      name,
+      bin,
+      args: [],
+      stdio: "captured",
+      envPassthrough: [],
+      parseOutput: "text",
+    });
+    const plan = {
+      processes: {
+        reflect: {
+          enabled: true,
+          config: {},
+          runner: { kind: "agent", engine: "cc", profile: profile("cc", "claude") },
+        },
+        distill: {
+          enabled: true,
+          config: {},
+          runner: {
+            kind: "sdk",
+            engine: "sdk",
+            profile: profile("sdk", "opencode"),
+            fallbackConnection: { endpoint: "https://fallback.example.test/v1", model: "fallback-model" },
+          },
+        },
+      },
+      triageJudgment: null,
+    } as unknown as ResolvedImprovePlan;
+    const probeReachable = mock(async () => ({ reachable: true }));
+    const onPath = new Set(["claude", "opencode"]);
+    const which = (bin: string) => (onPath.has(bin) ? `/usr/bin/${bin}` : undefined);
+
+    const outcomes = await assertRequiredEnginesReachable(plan, probeReachable, which);
+
+    // Only the SDK's LLM fallback is probed over the network.
+    expect(probeReachable).toHaveBeenCalledTimes(1);
+    expect(outcomes).toEqual([
+      expect.objectContaining({ process: "reflect", engine: "cc", endpoint: "claude", reachable: true }),
+      expect.objectContaining({
+        process: "distill",
+        engine: "sdk",
+        endpoint: "https://fallback.example.test/v1",
+        reachable: true,
+      }),
+    ]);
+
+    onPath.delete("claude");
+    await expect(assertRequiredEnginesReachable(plan, probeReachable, which)).rejects.toThrow(
+      /reflect \(engine "cc", claude\): claude is not on PATH/,
+    );
+  });
+
   test("still throws ConfigError when a target is unreachable (unchanged abort behavior)", async () => {
     const plan = planWithTargets({
       reflect: { endpoint: "https://dead.example.test/v1", model: "model-a", engine: "engineA" },

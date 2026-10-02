@@ -148,6 +148,54 @@ client with no dependencies — it spawns `opencode serve` and talks to it — s
 the npm dependency alone does not make the platform usable. Install the binary
 with `npm i -g opencode-ai` or opencode's own installer.
 
+### Engines for unattended model work
+
+Unattended model work is the work akm hands a model with no one watching:
+- the improve processes (reflect, distill, consolidate, memory inference,
+  extract, and validation's repair);
+- the quality, triage and retrieval-gate judges;
+- index passes;
+- `akm remember --enrich`.
+
+It runs on any engine kind under one tool policy. The model may read, edit
+files only inside a scratch working directory that akm creates for the
+dispatch and removes after it, and run `akm search` and `akm show`. The
+stash stays read-only to it: what model work changes reaches the stash only
+as a proposal, through the review queue.
+
+Each engine enforces as much of the policy as it can, and grants nothing it
+cannot enforce:
+
+| Engine | What the model gets |
+|---|---|
+| LLM | No tools. |
+| `claude` | Read and Edit inside the working directory, and Bash for `akm search` and `akm show` only. akm runs it with `--restricted`, so your user, project and local settings cannot widen that. |
+| `opencode`, `opencode-sdk` | Read and edit inside the working directory, through an injected `akm-model-work` agent. No bash, so no `akm search` or `akm show`, because opencode cannot stop a redirect such as `akm show x > file` from writing elsewhere. |
+| `codex`, `copilot`, `pi`, `gemini`, `aider`, `amazonq`, `openhands` | Cannot run model work: akm refuses the request before it starts. |
+
+**The one rule.** Every key model work reads its engine from must name an
+LLM engine or a `claude`, `opencode` or `opencode-sdk` agent engine. Those
+keys are:
+- `defaults.llmEngine`;
+- `index.defaults.engine` and `index.<pass>.engine`;
+- `improve.strategies.<name>.engine`;
+- `improve.strategies.<name>.processes.<process>.engine`;
+- an enabled `processes.triage.judgment.engine`;
+- `processes.<process>.qualityGate.engine`.
+
+A config that breaks the rule fails to load, with an error that names the
+key, the engine and its platform. Other engine keys, `defaults.engine` and
+`workflow.judgeEngine`, may name any configured engine.
+
+**Further details:**
+- A model-work dispatch builds its own command, so the engine's `args` do not
+  apply to it, except a `--model` they name, and neither does its `workspace`.
+- The temporary directory must not be inside a git repository, because
+  opencode would treat the whole repository as its working directory. Point
+  `TMPDIR` elsewhere if it is.
+- `llm` overrides that reach an agent engine (`temperature`, for one) are
+  reported as `untranslated-field` notices, not errors.
+
 ### Model-map files
 
 AKM ships an immutable `models.json` package asset with three intent aliases:
@@ -281,8 +329,10 @@ the embedded copy, and release tests pin copied bytes to `src/assets/models.json
 The health check passes when the optional user file is absent and warns with
 its path and JSON location when the user file is unreadable or invalid.
 
-`defaults.engine` names an LLM or agent engine. `defaults.llmEngine` must name
-an LLM engine. There is no first-engine fallback: an unset `defaults.engine`
+`defaults.engine` names an LLM or agent engine. `defaults.llmEngine` names the
+default engine for unattended model work, so it follows
+[the one rule](#engines-for-unattended-model-work). There is no first-engine
+fallback: an unset `defaults.engine`
 never resolves to some arbitrary entry in `engines`. It resolves instead to a
 synthesized, config-free `opencode-sdk` engine when the `opencode` binary is on
 PATH — announced once per run, and preempted by any `opencode-sdk` engine you
@@ -290,7 +340,8 @@ configure yourself. Naming an engine that is not configured is always an error
 and is never rescued by that fallback.
 
 Index passes select engines through `index.defaults.engine` or
-`index.<pass>.engine`. Per-pass `model`, `timeoutMs`, and `llm` fields are
+`index.<pass>.engine`, which follow
+[the one rule](#engines-for-unattended-model-work). Per-pass `model`, `timeoutMs`, and `llm` fields are
 invocation overrides; `enabled: false` disables that pass. Connection fields
 such as `endpoint`, `provider`, `apiKey`, and `apiKeyFile` belong only on
 named engines.
@@ -339,7 +390,8 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
 }
 ```
 
-LLM-only improve processes require an LLM engine; an explicit invalid or
+An improve process's engine follows
+[the one rule](#engines-for-unattended-model-work); an explicit invalid or
 incompatible engine never falls back to another engine. Built-in strategies
 are complete presets. User-defined strategies inherit omitted fields from the
 built-in `default` strategy before applying their own overrides.
@@ -375,11 +427,13 @@ each process's LLM-as-judge quality gate. Each is on unless it sets
 `enabled: false`, and each follows only its own switch. A reflect revision
 that changes the body is never auto-accepted; when the judge passes it, it
 waits for review. With the gate off, it waits for review too. The judge is the
-process's own LLM engine, or `defaults.llmEngine` when an agent generates.
-`engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
+process's own engine when that is an LLM engine, or the `defaults.llmEngine`
+engine when an agent generates. `engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
 resolved over the process's settings the way `triage.judgment` resolves over
-triage's. A gate whose settings resolve to no LLM engine fails before anything
-is generated; it never falls back to another engine. The judge runs at
+triage's. The judge may be any engine that follows
+[the one rule](#engines-for-unattended-model-work). A gate whose settings
+resolve to no engine fails before anything is generated; it never falls back
+to another engine. The judge runs at
 temperature 0 with thinking off unless its engine sets `enableThinking: true`.
 Thinking is slow: on a 27B llama.cpp server, a thinking judgment took a median
 of 30–67 s and up to about 3 minutes, against about 5 s without.

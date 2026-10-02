@@ -144,16 +144,13 @@ interface SdkClient {
       };
     }>;
     delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
-    // Optional so a fake that omits it cannot crash a dispatch; the real client has it.
+    // Optional so a fake that omits them cannot crash a dispatch; the real client has both.
     abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
-  };
-  // The server's event stream (SSE), used to count a model-work session's steps.
-  event?: {
-    subscribe(args: {
+    // A session's messages, polled to count a model-work session's steps.
+    messages?(args: {
+      path: { id: string };
       query?: SdkDirectoryQuery;
-      signal?: AbortSignal;
-      sseMaxRetryAttempts?: number;
-    }): Promise<{ stream: AsyncIterable<unknown> }>;
+    }): Promise<{ data?: { parts?: { type: string }[] }[] }>;
   };
 }
 
@@ -861,47 +858,50 @@ function abortSessionBestEffort(client: SdkClient, sessionId: string, query: Sdk
   void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
 }
 
-/** The id of a step-start part of `sessionId`, when `event` reports one. */
-function stepStartPartId(event: unknown, sessionId: string): string | undefined {
-  if (!isRecord(event) || event.type !== "message.part.updated" || !isRecord(event.properties)) return undefined;
-  const part = event.properties.part;
-  if (!isRecord(part) || part.type !== "step-start" || part.sessionID !== sessionId) return undefined;
-  return typeof part.id === "string" ? part.id : undefined;
-}
+/** How often a model-work session's messages are polled for its step count. */
+const MODEL_WORK_STEP_POLL_MS = 1_000;
 
 /**
- * Count a model-work session's steps on the server's event stream and abort
- * the session once they pass `MODEL_WORK_STEPS` + `MODEL_WORK_STEP_GRACE`:
- * opencode 1.18.25 only asks the model to stop at the agent's `steps`. Best
- * effort: without the stream, the dispatch timeout still bounds the session.
+ * Count a model-work session's steps, its `step-start` parts, once a second
+ * and abort the session once they pass `MODEL_WORK_STEPS` +
+ * `MODEL_WORK_STEP_GRACE`: opencode 1.18.25 only asks the model to stop at the
+ * agent's `steps`. Polled rather than read from the server's event stream,
+ * because the SDK's stream cannot be closed mid-read without an unhandled
+ * AbortError (its abort handler drops the promise `reader.cancel()` returns),
+ * which the CLI turns into a crash. Best effort: the dispatch timeout still
+ * bounds the session.
  */
 function watchModelWorkSteps(
   client: SdkClient,
   sessionId: string,
   query: SdkDirectoryQuery | undefined,
+  timers: { setTimeoutFn: typeof setTimeout; clearTimeoutFn: typeof clearTimeout },
 ): { steps(): number; stop(): void } {
-  const steps = new Set<string>();
-  const controller = new AbortController();
-  const subscribe = client.event?.subscribe;
-  if (subscribe) {
-    void (async () => {
-      const { stream } = await subscribe.call(client.event, {
-        ...(query ? { query } : {}),
-        signal: controller.signal,
-        sseMaxRetryAttempts: 1,
-      });
-      for await (const event of stream) {
-        const id = stepStartPartId(event, sessionId);
-        if (id === undefined) continue;
-        steps.add(id);
-        if (steps.size > MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE) {
-          abortSessionBestEffort(client, sessionId, query);
-          break;
-        }
-      }
-    })().catch(() => {});
-  }
-  return { steps: () => steps.size, stop: () => controller.abort() };
+  let steps = 0;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let stopped = false;
+  const poll = async (): Promise<void> => {
+    const listed = await client.session.messages?.({ path: { id: sessionId }, ...(query ? { query } : {}) });
+    if (stopped) return;
+    steps = (listed?.data ?? [])
+      .flatMap((message) => message.parts ?? [])
+      .filter((p) => p.type === "step-start").length;
+    if (steps > MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE) abortSessionBestEffort(client, sessionId, query);
+    else schedule();
+  };
+  const schedule = (): void => {
+    if (stopped || !client.session.messages) return;
+    timer = timers.setTimeoutFn(() => void poll().catch(() => schedule()), MODEL_WORK_STEP_POLL_MS);
+    if (typeof timer !== "number") timer.unref?.();
+  };
+  schedule();
+  return {
+    steps: () => steps,
+    stop: () => {
+      stopped = true;
+      if (timer !== undefined) timers.clearTimeoutFn(timer);
+    },
+  };
 }
 
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
@@ -1081,7 +1081,9 @@ export async function runOpencodeSdk(
   if (tools) body.tools = tools;
 
   let result: AgentRunResult;
-  const steps = modelWork ? watchModelWorkSteps(client, sessionId, query) : undefined;
+  const steps = modelWork
+    ? watchModelWorkSteps(client, sessionId, query, { setTimeoutFn: setTimeoutImpl, clearTimeoutFn: clearTimeoutImpl })
+    : undefined;
 
   try {
     const prompted = await raceSdkOperation(

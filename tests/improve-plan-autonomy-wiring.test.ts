@@ -46,13 +46,13 @@ describe("resolveImprovePlan applies the autonomy gate", () => {
     expect(plan.autonomyGated).toEqual([]);
   });
 
-  test("autonomy OFF still requires the planner's LLM engine", () => {
-    expect(() => resolveImprovePlan("consolidate", configWith())).toThrow(/requires an LLM engine/);
+  test("autonomy OFF still requires the planner's engine", () => {
+    expect(() => resolveImprovePlan("consolidate", configWith())).toThrow(/requires an engine/);
   });
 
   test("autonomy ON does not change the review-only planner's engine requirement", () => {
     expect(() => resolveImprovePlan("consolidate", configWith({ improveAutonomy: true }))).toThrow(
-      /requires an LLM engine/,
+      /requires an engine/,
     );
   });
 

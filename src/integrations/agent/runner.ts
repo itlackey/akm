@@ -125,7 +125,3 @@ export function runnerLlmConnection(runner: RunnerSpec): LlmConnectionConfig | u
   if (runner.kind === "llm") return runner.connection;
   return runner.kind === "sdk" ? runner.fallbackConnection : undefined;
 }
-
-export function runnerSupportsFileWrite(runner: RunnerSpec): runner is Extract<RunnerSpec, { kind: "agent" | "sdk" }> {
-  return runner.kind !== "llm";
-}

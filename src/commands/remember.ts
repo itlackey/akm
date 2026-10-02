@@ -23,7 +23,7 @@ import type { StashEntryScope } from "../indexer/passes/metadata";
 import { SCOPE_KEYS } from "../indexer/passes/metadata";
 import { callStructured } from "../llm/structured-call";
 import { withLlmStage } from "../llm/usage-telemetry";
-import { resolveImproveLlmExecution } from "./improve/execution";
+import { resolveImproveExecution } from "./improve/execution";
 
 /**
  * Fields the CLI collects via `--tag`, `--expires`, `--source`, `--auto`,
@@ -305,9 +305,9 @@ const LLM_ENRICH_TIMEOUT_MS = 10_000;
  */
 export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
   const config = loadConfig();
-  const resolved = resolveImproveLlmExecution({ config, processName: "remember-enrich" });
+  const resolved = resolveImproveExecution({ config, processName: "remember-enrich" });
   if (!resolved) {
-    warn("Warning: --enrich requires an LLM to be configured. Run `akm setup` to configure one.");
+    warn("Warning: --enrich requires an engine to be configured. Run `akm setup` to configure one.");
     return { tags: [] };
   }
   const runner = resolved.runner;

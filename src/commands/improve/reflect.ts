@@ -13,7 +13,6 @@
  */
 
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
@@ -31,9 +30,10 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warn, warnOnce } from "../../core/warn";
+import { MODEL_WORK_TOOLS } from "../../execution/source";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
+import { DEFAULT_LLM_TIMEOUT_MS, DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../../integrations/agent/config";
 import {
   fallbackAnnouncement,
   NO_ENGINE_MESSAGE_SUFFIX,
@@ -44,14 +44,13 @@ import { buildExecution, resolveExecution } from "../../integrations/agent/execu
 import {
   buildReflectOutputRepairPrompt,
   buildReflectPrompt,
-  extractDraftConfidence,
   parseAgentProposalPayload,
   REFLECT_CONTENT_CAP,
   REFLECT_TRUNCATION_MARKER,
   type ReflectLlmOutputMode,
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
-import { type RunnerSpec, runnerIsLlm, runnerSupportsFileWrite } from "../../integrations/agent/runner";
+import { type RunnerSpec, runnerIsLlm } from "../../integrations/agent/runner";
 import {
   assertRunnerCredentials,
   collectDispatchSensitiveValues,
@@ -66,7 +65,7 @@ import { checkReflectSize, isValidDescription } from "../proposal/validators/pro
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { deriveLessonRef } from "./distill";
 import { findAssetFilePath } from "./eligibility";
-import { resolveImproveLlmExecution } from "./execution";
+import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
 import { classifyReflectChange, splitFrontmatter } from "./reflect-noise";
 import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
@@ -165,17 +164,6 @@ const REFLECT_REFUSED_TYPES: ReadonlySet<string> = new Set(["secret"]);
 
 /** Identity fields the model may never change (a renamed `name` breaks ref resolution). */
 const PROTECTED_FRONTMATTER_FIELDS: ReadonlySet<string> = new Set(["name", "ref", "id", "slug", "type"]);
-
-/**
- * A fresh tmp path per iteration for the agent/SDK file-write contract (long
- * bodies are written to a file instead of fenced JSON on stdout). The direct
- * LLM runner has no filesystem and never gets one.
- */
-function synthesizeReflectDraftPath(ref: string | undefined): string {
-  const safeRef = (ref ?? "no-ref").replace(/[^a-z0-9_-]/gi, "_");
-  const rand = Math.random().toString(36).slice(2, 8);
-  return path.join(os.tmpdir(), `akm-reflect-${safeRef}-${Date.now()}-${rand}.md`);
-}
 
 /** Lesson lint findings for the prompt: a concrete starting point for the revision. */
 function buildSchemaHints(type: string, content: string | undefined): string[] {
@@ -875,8 +863,9 @@ async function resolveReflectSource(
 
 /**
  * The single engine for this invocation: `--engine`, the improve strategy's
- * LLM-only reflect process, or `defaults.engine` (announced when it falls back
- * to the SDK binary). Unattended improve refuses a tool-capable engine.
+ * reflect process, or `defaults.engine` (announced when it falls back to the
+ * SDK binary). Whatever its kind, reflect runs it under the model-work tool
+ * policy.
  */
 function resolveReflectRunner(options: AkmReflectOptions): {
   config: AkmConfig;
@@ -896,7 +885,7 @@ function resolveReflectRunner(options: AkmReflectOptions): {
   if (options.engine) {
     lowered = lower({ content: "reflect engine selection", config, current: { engine: options.engine } });
   } else if (options.improveProfile) {
-    const resolved = resolveImproveLlmExecution({
+    const resolved = resolveImproveExecution({
       config,
       profile: activeStrategy,
       process: activeStrategy?.processes?.reflect,
@@ -904,7 +893,7 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     });
     if (!resolved) {
       throw new ConfigError(
-        "Reflect requires an LLM engine for the active improve strategy.",
+        "Reflect requires an engine for the active improve strategy.",
         "LLM_NOT_CONFIGURED",
         "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine.",
       );
@@ -921,23 +910,20 @@ function resolveReflectRunner(options: AkmReflectOptions): {
     lowered = lower({ content: "reflect engine selection", config });
   }
   const runnerSpec = lowered.runner;
-  if (options.eventSource === "improve" && !runnerIsLlm(runnerSpec)) {
-    throw new ConfigError(
-      `Unattended improve requires an LLM engine for reflect; engine "${runnerSpec.engine ?? options.engine ?? "unknown"}" is tool-capable.`,
-      "INVALID_CONFIG_FILE",
-      "Set defaults.llmEngine or improve.strategies.<name>.processes.reflect.engine to an LLM engine.",
-    );
-  }
   const engineName = runnerSpec.engine ?? options.engine;
   if (!engineName) throw new ConfigError("Reflect requires a named engine.", "INVALID_CONFIG_FILE");
   return { config, activeStrategy, runnerSpec, engineName, notices: lowered.notices };
 }
 
-/** Lower a runner and check its credentials, so a bad transport fails before any work. */
+/**
+ * Lower a runner under the model-work tool policy and check its credentials,
+ * so a bad transport, or one that cannot confine the policy, fails before any work.
+ */
 function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: readonly Notice[]) => void): void {
   const prepared = resolveExecution({
     content: "Validate reflect operation transport before dispatch.",
     runner: runnerSpec,
+    current: { tools: MODEL_WORK_TOOLS },
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
   onNotices(lowered.notices);
@@ -990,10 +976,9 @@ function buildReflectPromptText(args: {
   assetContent: string | undefined;
   sources: ReflectPromptSources;
   runnerSpec: RunnerSpec;
-  draftFilePath: string | undefined;
   priorDraft: string | undefined;
 }): { prompt: string; outputMode?: ReflectLlmOutputMode } {
-  const { options, parsedRef, assetContent, sources, runnerSpec, draftFilePath, priorDraft } = args;
+  const { options, parsedRef, assetContent, sources, runnerSpec, priorDraft } = args;
   const { feedback, schemaHints, relatedLessons, rejectedProposals, standardsContext } = sources;
   const outputMode: ReflectLlmOutputMode | undefined = runnerIsLlm(runnerSpec)
     ? wantsJsonSchemaOutput(runnerSpec.connection)
@@ -1013,7 +998,6 @@ function buildReflectPromptText(args: {
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
     ...(rejectedProposals.length > 0 ? { rejectedProposals } : {}),
     ...(priorDraft !== undefined ? { priorDraft } : {}),
-    ...(draftFilePath ? { draftFilePath } : {}),
     ...(outputMode ? { outputMode } : {}),
   };
   const contentBudgetChars = computeReflectContentBudgetChars(input, runnerSpec);
@@ -1027,7 +1011,9 @@ function buildReflectPromptText(args: {
 /**
  * Dispatch with the optional self-refine loop: up to `maxRefineIters` passes,
  * each critiquing the prior draft, stopping early on an unchanged draft. The
- * direct-LLM repair budget is shared across passes.
+ * direct-LLM repair budget is shared across passes. An agent engine returns
+ * the proposal as JSON on stdout: under the model-work tool policy it can
+ * edit only its own scratch directory, which is gone once it returns.
  */
 async function runReflectRefineIterations(args: {
   run: ReflectRun;
@@ -1035,29 +1021,20 @@ async function runReflectRefineIterations(args: {
   assetContent: string | undefined;
   sources: ReflectPromptSources;
   agentEnv: Record<string, string>;
-  draftPaths: string[];
-}): Promise<{ result: AgentRunResult; lastDraftPath: string | undefined }> {
-  const { run, parsedRef, assetContent, sources, agentEnv, draftPaths } = args;
+}): Promise<AgentRunResult> {
+  const { run, parsedRef, assetContent, sources, agentEnv } = args;
   const { options, runnerSpec } = run;
   const maxRefineIters = Math.max(1, options.maxRefineIters ?? 1);
-  const canWriteFile = runnerSupportsFileWrite(runnerSpec);
   let result = {} as AgentRunResult;
   let priorDraft: string | undefined;
-  let lastDraftPath: string | undefined;
   let repairAttempts = 0;
   for (let iter = 0; iter < maxRefineIters; iter++) {
-    const draftFilePath = canWriteFile ? synthesizeReflectDraftPath(options.ref) : undefined;
-    if (draftFilePath) {
-      draftPaths.push(draftFilePath);
-      lastDraftPath = draftFilePath;
-    }
     const { prompt, outputMode } = buildReflectPromptText({
       options,
       parsedRef,
       assetContent,
       sources,
       runnerSpec,
-      draftFilePath,
       priorDraft,
     });
     let iterResult: AgentRunResult;
@@ -1086,15 +1063,21 @@ async function runReflectRefineIterations(args: {
               { role: "assistant" as const, content: priorDraft },
             ]
           : undefined;
-      const current = {
-        ...(Object.hasOwn(options, "timeoutMs") ? { timeout: options.timeoutMs } : {}),
-        ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
-      };
+      // Model work is bounded: a runner with no timeout of its own gets the default.
+      const timeout = Object.hasOwn(options, "timeoutMs")
+        ? { timeout: options.timeoutMs }
+        : Object.hasOwn(runnerSpec, "timeoutMs")
+          ? {}
+          : { timeout: DEFAULT_MODEL_WORK_TIMEOUT_MS };
       const prepared = resolveExecution({
         content: conversation ? REFLECT_CRITIQUE_PROMPT : prompt,
         ...(conversation ? { conversation } : {}),
         runner: runnerSpec,
-        ...(Object.keys(current).length > 0 ? { current } : {}),
+        current: {
+          ...timeout,
+          ...(Object.keys(agentEnv).length > 0 ? { environment: agentEnv } : {}),
+          tools: MODEL_WORK_TOOLS,
+        },
       });
       const lowered = buildExecution(prepared.request, prepared.runner);
       run.notices.add(lowered.notices);
@@ -1116,46 +1099,15 @@ async function runReflectRefineIterations(args: {
       priorDraft = nextDraft;
     }
   }
-  return { result, lastDraftPath };
+  return result;
 }
 
-/**
- * The proposal payload from a successful run: the agent's draft file
- * (file-write contract, `DRAFT_WRITTEN confidence=<n>` on stdout) or the JSON
- * payload on stdout.
- */
+/** The proposal payload from a successful run: the JSON payload on stdout. */
 function resolveReflectPayload(
   run: ReflectRun,
   result: AgentRunResult,
-  lastDraftPath: string | undefined,
-  sensitiveValues: readonly string[],
 ): { payload: ReflectPayload } | { failure: AkmReflectResult } {
   const { options } = run;
-  const draftFileExists =
-    lastDraftPath !== undefined && fs.existsSync(lastDraftPath) && fs.statSync(lastDraftPath).size > 0;
-  const draftSignaled = /\bDRAFT_WRITTEN\b/.test(result.stdout ?? "");
-  if (draftSignaled && lastDraftPath && !draftFileExists) {
-    run.emitFailed("parse_error", "draft_missing", options.ref, exitCodeMeta(result));
-    return {
-      failure: reflectFailure(
-        run,
-        result,
-        "parse_error",
-        `Agent emitted DRAFT_WRITTEN but draft file is missing or empty (${lastDraftPath}). The file-write contract failed; either the agent's file tools are broken or the path was unwritable.`,
-        true,
-      ),
-    };
-  }
-  if (draftFileExists && lastDraftPath) {
-    const draftConfidence = extractDraftConfidence(result.stdout);
-    return {
-      payload: {
-        ref: options.ref ?? "",
-        content: redactSensitiveText(fs.readFileSync(lastDraftPath, "utf8"), sensitiveValues),
-        ...(draftConfidence !== undefined ? { confidence: draftConfidence } : {}),
-      },
-    };
-  }
   try {
     return { payload: parseAgentProposalPayload(result.stdout ?? "") };
   } catch (err) {
@@ -1410,8 +1362,6 @@ export async function renderReflectPromptPreview(
     assetContent: source.assetContent,
     sources,
     runnerSpec,
-    // The same tmp-path shape a dispatch would use; never written.
-    draftFilePath: runnerSupportsFileWrite(runnerSpec) ? synthesizeReflectDraftPath(ref) : undefined,
     priorDraft: undefined,
   });
   return { ref, prompt, engine: engineName, engineKind: runnerSpec.kind };
@@ -1439,7 +1389,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     } else if (runnerIsLlm(runnerSpec)) {
       judgeRunner = runnerSpec;
     } else {
-      const resolved = resolveImproveLlmExecution({ config, processName: "reflect_proposal_quality-judge" });
+      const resolved = resolveImproveExecution({ config, processName: "reflect_proposal_quality-judge" });
       if (resolved) notices.add(resolved.notices);
       judgeRunner = resolved?.runner;
     }
@@ -1448,7 +1398,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   if (skippedNoJudge) {
     warnOnce(
       "reflect-quality-gate-no-judge",
-      "Reflect proposal quality gate has no LLM configured to judge proposals (set defaults.llmEngine). Skipping the gate for this run; the proposal is queued for human review instead.",
+      "Reflect proposal quality gate has no engine configured to judge proposals (set defaults.llmEngine). Skipping the gate for this run; the proposal is queued for human review instead.",
     );
   }
   preflightReflectDispatch(runnerSpec, notices.add);
@@ -1460,13 +1410,11 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
     ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
     ...(options.runAgentOptions ?? {}),
   });
-  const draftPaths: string[] = [];
   let result: AgentRunResult;
   let payload: ReflectPayload;
   try {
-    const iterated = await runReflectRefineIterations({ run, parsedRef, assetContent, sources, agentEnv, draftPaths });
+    result = await runReflectRefineIterations({ run, parsedRef, assetContent, sources, agentEnv });
     emitInvoked();
-    result = iterated.result;
     if (!result.ok) {
       if (isEnoentFailure(result)) {
         emitFailed("spawn_failed", "enoent", options.ref, {
@@ -1493,20 +1441,12 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       });
       return { ...envelope, ...notices.fields() };
     }
-    const resolved = resolveReflectPayload(run, result, iterated.lastDraftPath, sensitiveValues);
+    const resolved = resolveReflectPayload(run, result);
     if ("failure" in resolved) return resolved.failure;
     payload = resolved.payload;
   } catch (error) {
     if (!(error instanceof ConfigError)) emitInvoked();
     throw error;
-  } finally {
-    for (const draftPath of draftPaths) {
-      try {
-        if (fs.existsSync(draftPath)) fs.unlinkSync(draftPath);
-      } catch {
-        // best-effort
-      }
-    }
   }
 
   const unsafeContent = generatedContentRejection(

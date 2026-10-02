@@ -7,7 +7,7 @@
  * verbatim from the former `config-schema.ts` monolith — no behavior change.
  */
 import { z } from "zod";
-import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "../engine-semantics";
+import { IMPROVE_PROCESS_NAMES } from "../engine-semantics";
 import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
 
 // ── Improve profile / process ──────────────────────────────────────────────
@@ -358,7 +358,7 @@ const ImproveProfileProcessesSchema = z
     }
     for (const [name, process] of Object.entries(val as Record<string, unknown>)) {
       if (
-        !(name in IMPROVE_PROCESS_ENGINE_CAPABILITIES) &&
+        !(IMPROVE_PROCESS_NAMES as readonly string[]).includes(name) &&
         !RETIRED_PROCESS_NAMES.has(name) &&
         process !== null &&
         typeof process === "object" &&

@@ -199,9 +199,10 @@ describe("engine resolution", () => {
     }
   });
 
-  test("uses no timeout for CLI agents and inherits the fallback LLM timeout for SDK agents", () => {
+  test("leaves a CLI agent's unset timeout unset and inherits the fallback LLM timeout for SDK agents", () => {
+    // Unset, not null, so a caller's own default (model work's 600 s) can apply.
     const direct = resolveEngine("reviewer", config);
-    expect(direct.timeoutMs).toBeNull();
+    expect(Object.hasOwn(direct, "timeoutMs")).toBe(false);
 
     const inherited = resolveEngine("sdk", {
       ...config,

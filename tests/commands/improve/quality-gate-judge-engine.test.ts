@@ -94,9 +94,19 @@ describe("resolveQualityGateJudge (#1011)", () => {
     ).toBeUndefined();
   });
 
-  test("a gate that resolves to no LLM engine fails instead of falling back", () => {
+  test("the judge may be an agent engine that confines the model-work tool policy", () => {
+    const runner = resolveQualityGateJudge(
+      config(),
+      strategy({ reflect: { qualityGate: { engine: "agent" } } }),
+      "reflect",
+    );
+    expect(runner).toMatchObject({ kind: "agent", engine: "agent" });
+  });
+
+  test("a gate that resolves to no engine at all fails instead of falling back", () => {
+    const noDefault = { ...config(), defaults: {} } as AkmConfig;
     expect(() =>
-      resolveQualityGateJudge(config(), strategy({ reflect: { qualityGate: { engine: "agent" } } }), "reflect"),
+      resolveQualityGateJudge(noDefault, strategy({ reflect: { qualityGate: { model: "judge-model" } } }), "reflect"),
     ).toThrow(ConfigError);
   });
 });
@@ -108,19 +118,23 @@ describe("qualityGate.engine is checked when the config loads", () => {
       engines: {
         judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
         reviewer: { kind: "agent", platform: "pi" },
+        confined: { kind: "agent", platform: "claude" },
       },
       improve: { strategies: { custom: { processes: { reflect: { qualityGate: { engine } } } } } },
     });
     return result.ok ? [] : result.errors.map((issue) => `${issue.path}: ${issue.message}`);
   }
 
-  test("an LLM engine is accepted", () => {
+  test("an LLM engine, or an agent that confines the model-work tool policy, is accepted", () => {
     expect(gateEngineErrors("judge")).toEqual([]);
+    expect(gateEngineErrors("confined")).toEqual([]);
   });
 
-  test("an agent engine or a missing engine is rejected", () => {
+  test("an agent that cannot confine the policy, or a missing engine, is rejected", () => {
     const path = "improve.strategies.custom.processes.reflect.qualityGate.engine";
-    expect(gateEngineErrors("reviewer")).toEqual([`${path}: a quality-gate judge must be an LLM engine`]);
+    expect(gateEngineErrors("reviewer")).toEqual([
+      `${path}: engine "reviewer" (platform pi) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on opencode, claude or opencode-sdk.`,
+    ]);
     expect(gateEngineErrors("missing")).toEqual([`${path}: engine does not name a configured engine`]);
   });
 });

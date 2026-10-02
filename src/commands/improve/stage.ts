@@ -35,7 +35,7 @@ import {
   proposalContentHash,
   recordGateDecision,
 } from "../proposal/repository";
-import { resolveImproveLlmExecution } from "./execution";
+import { resolveImproveExecution } from "./execution";
 import type { ImproveProcessName, ResolvedImprovePlan } from "./improve-strategies";
 
 export type Notice = Readonly<LoweringNotice>;
@@ -70,7 +70,7 @@ export function stageRunner(
   onNotices?: NoticeSink,
 ): RunnerSpec | undefined {
   if (Object.hasOwn(frozen, "llmRunner")) return frozen.llmRunner ?? undefined;
-  const resolved = resolveImproveLlmExecution({
+  const resolved = resolveImproveExecution({
     config,
     profile,
     process: getImproveProcessConfig(processName, profile),
@@ -309,9 +309,10 @@ type QualityJudgeChat = (
  * The judge a quality gate names for itself (#1011): the gate's `engine`,
  * `model`, `timeoutMs` and `llm` over the process's own settings, as
  * `processes.triage.judgment` resolves over triage. `undefined` when the gate
- * is off or sets none of them, so the caller keeps its own judge. Throws when
- * they resolve to no LLM engine, before anything is generated: a judge must be
- * one, and the gate never falls back to another.
+ * is off or sets none of them, so the caller keeps its own judge. The engine
+ * may be of any kind; config validation has required one that confines the
+ * model-work tool policy. Throws when they resolve to no engine at all,
+ * before anything is generated: the gate never falls back to another judge.
  */
 export function resolveQualityGateJudge(
   config: AkmConfig,
@@ -323,7 +324,7 @@ export function resolveQualityGateJudge(
   const gate = process?.qualityGate;
   if (!gate || gate.enabled === false) return undefined;
   if (!["engine", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) return undefined;
-  const resolved = resolveImproveLlmExecution({
+  const resolved = resolveImproveExecution({
     config,
     processName: `${processName}-quality-judge`,
     ...(profile ? { profile } : {}),
@@ -332,7 +333,7 @@ export function resolveQualityGateJudge(
   });
   if (!resolved) {
     throw new ConfigError(
-      `The ${processName} quality gate's judge must be an LLM engine. Set processes.${processName}.qualityGate.engine to one.`,
+      `The ${processName} quality gate's judge has no engine. Set processes.${processName}.qualityGate.engine.`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -546,11 +547,11 @@ async function runQualityJudge(
 ): Promise<QualityJudgeResult> {
   const resolved =
     !options.runnerSelectionFrozen && !options.llmRunner
-      ? resolveImproveLlmExecution({ config, processName: `${feature}-judge` })
+      ? resolveImproveExecution({ config, processName: `${feature}-judge` })
       : null;
   if (resolved) options.onNotices?.(resolved.notices);
   const runner = options.llmRunner ?? resolved?.runner;
-  if (!runner) return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
+  if (!runner) return { pass: false, score: -1, reason: "no engine configured — cannot judge, failing closed" };
   const outcome = await callStage({
     feature,
     runner,

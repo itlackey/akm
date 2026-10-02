@@ -15,14 +15,18 @@ import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
   BUILTIN_IMPROVE_STRATEGY_NAMES,
-  IMPROVE_PROCESS_ENGINE_CAPABILITIES,
+  IMPROVE_ENGINE_PROCESSES,
+  IMPROVE_PROCESS_NAMES,
 } from "../../core/config/engine-semantics";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { describeLlmCredentialAvailability } from "../../integrations/agent/engine-resolution";
-import { type LlmRunner, type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
+import {
+  describeLlmCredentialAvailability,
+  type LlmCredentialAvailability,
+} from "../../integrations/agent/engine-resolution";
+import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
-import { resolveImproveExecution, resolveImproveLlmExecution } from "./execution";
+import { resolveImproveExecution } from "./execution";
 import { stripBundle } from "./ledger";
 
 /** 0.9 public name for the improve preset configuration. */
@@ -158,7 +162,15 @@ export function resolveImproveStrategy(name: string | undefined, config: AkmConf
   return { name: selectedName, config: ImproveProfileConfigSchema.parse(resolved) };
 }
 
-export type ImproveProcessName = keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES;
+export type ImproveProcessName = (typeof IMPROVE_PROCESS_NAMES)[number];
+
+/**
+ * The processes that make their own model calls, so the plan resolves a runner
+ * for each: every engine process but triage, whose engine is its judgment's.
+ */
+export const MODEL_CALLING_PROCESSES: ReadonlySet<ImproveProcessName> = new Set(
+  IMPROVE_ENGINE_PROCESSES.filter((name) => name !== "triage"),
+);
 
 export interface ResolvedImproveProcess {
   enabled: boolean;
@@ -168,10 +180,9 @@ export interface ResolvedImproveProcess {
 }
 
 /**
- * `"triage.judgment"` names the triage sub-process's own LLM/SDK-fallback
- * judgment engine, which is resolved separately from the main
- * {@link IMPROVE_PROCESS_ENGINE_CAPABILITIES} loop and has no entry of its own
- * in that table (#957).
+ * `"triage.judgment"` names the triage sub-process's own judgment engine, which
+ * is resolved separately from the main {@link MODEL_CALLING_PROCESSES} loop and
+ * is not a process of its own (#957).
  */
 export type EngineUnavailableProcessName = ImproveProcessName | "triage.judgment";
 
@@ -202,6 +213,7 @@ export interface EngineUnavailableProcess {
 export interface EngineProbeOutcome {
   process: EngineUnavailableProcessName;
   engine: string;
+  /** The LLM endpoint probed, or an agent engine's binary. */
   endpoint: string;
   reachable: boolean;
   latencyMs: number;
@@ -239,7 +251,7 @@ export interface ProcessRoutingRow {
   engine?: string;
   /** Resolved model, for an llm-kind runner only. */
   model?: string;
-  /** Kind of the resolved runner. Always "llm" for the main process table; the triage.judgment row can be "llm" | "agent" | "sdk". */
+  /** Kind of the resolved runner: "llm", "agent" or "sdk". */
   engineKind?: RunnerSpec["kind"];
   /** This process's own lowering notices (not the run's deduped flat pool). */
   notices: readonly Readonly<LoweringNotice>[];
@@ -251,7 +263,7 @@ export interface ProcessRoutingRow {
 
 /**
  * Project a resolved improve plan into one routing row per
- * {@link IMPROVE_PROCESS_ENGINE_CAPABILITIES} name, plus a `"triage.judgment"`
+ * {@link IMPROVE_PROCESS_NAMES} name, plus a `"triage.judgment"`
  * pseudo-row when the strategy configures a judgment engine. Pure — no I/O,
  * no re-resolution. Shared by `improve --dry-run`'s `plan.processes` (#947)
  * and `akm health`'s post-run reporting (#944); health's own
@@ -260,7 +272,7 @@ export interface ProcessRoutingRow {
 export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): ProcessRoutingRow[] {
   const unavailableByProcess = new Map(plan.engineUnavailable.map((item) => [item.process, item]));
   const rows: ProcessRoutingRow[] = [];
-  for (const processName of Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]) {
+  for (const processName of IMPROVE_PROCESS_NAMES) {
     const process = plan.processes[processName];
     const unavailable = unavailableByProcess.get(processName);
     rows.push({
@@ -359,6 +371,25 @@ function credentialUnavailableReason(engineName: string, status: { reason: strin
   return `requires a credential that is not available in this process's environment (engine "${engineName}": ${status.reason})`;
 }
 
+/**
+ * Whether the credential akm reads for `runner` is reachable in `env`: an LLM
+ * engine's own, or an SDK engine's LLM fallback. An agent CLI reads its own.
+ */
+function runnerCredentialStatus(runner: RunnerSpec, env: NodeJS.ProcessEnv): LlmCredentialAvailability {
+  if (runner.kind === "llm") return describeLlmCredentialAvailability(runner, env);
+  if (runner.kind === "sdk") {
+    return describeLlmCredentialAvailability(
+      {
+        credential: runner.fallbackCredential,
+        apiKeyFile: runner.fallbackApiKeyFile,
+        apiKeySecretRef: runner.fallbackApiKeySecretRef,
+      },
+      env,
+    );
+  }
+  return { available: true };
+}
+
 function buildImprovePlan(
   strategy: SelectedStrategy,
   config: AkmConfig,
@@ -376,12 +407,12 @@ function buildImprovePlan(
   // install is not the credential-in-the-wrong-environment case this option
   // exists for.
   let anyEngineNotConfigured = false;
-  for (const processName of Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]) {
+  for (const processName of IMPROVE_PROCESS_NAMES) {
     const sourceProcessConfig = strategy.config.processes?.[processName] ?? {};
     const enabled = sourceProcessConfig.enabled === true;
-    let runner: LlmRunner | null = null;
+    let runner: RunnerSpec | null = null;
     let notices: readonly Readonly<LoweringNotice>[] = [];
-    if (IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName] !== "llm" || !enabled) {
+    if (!MODEL_CALLING_PROCESSES.has(processName) || !enabled) {
       processes[processName] = Object.freeze({ enabled, config: cloneAndFreeze(sourceProcessConfig), runner });
       continue;
     }
@@ -398,7 +429,7 @@ function buildImprovePlan(
     // without the runner ever carrying a credential-less connection forward.
     let credentialUnavailableRouting: { engine: string; model?: string; contextLength?: number } | undefined;
     if (!skipsRepairEngine) {
-      const resolved = resolveImproveLlmExecution({
+      const resolved = resolveImproveExecution({
         config,
         profile: strategy.config,
         process: sourceProcessConfig,
@@ -407,15 +438,14 @@ function buildImprovePlan(
       runner = resolved?.runner ?? null;
       notices = resolved?.notices ?? [];
       if (runner) {
-        const credentialStatus = describeLlmCredentialAvailability(runner, env);
+        const credentialStatus = runnerCredentialStatus(runner, env);
         if (!credentialStatus.available) {
+          const connection = runnerLlmConnection(runner);
           credentialUnavailableMessage = credentialUnavailableReason(runner.engine, credentialStatus);
           credentialUnavailableRouting = {
             engine: runner.engine,
-            ...(runner.connection.model !== undefined ? { model: runner.connection.model } : {}),
-            ...(runner.connection.contextLength !== undefined
-              ? { contextLength: runner.connection.contextLength }
-              : {}),
+            ...(connection?.model !== undefined ? { model: connection.model } : {}),
+            ...(connection?.contextLength !== undefined ? { contextLength: connection.contextLength } : {}),
           };
           runner = null;
           notices = [];
@@ -430,7 +460,7 @@ function buildImprovePlan(
         configKey,
         reason:
           credentialUnavailableMessage ??
-          `requires an LLM engine that is not configured. Set defaults.llmEngine or ${configKey}`,
+          `requires an engine that is not configured. Set defaults.llmEngine or ${configKey}`,
         ...credentialUnavailableRouting,
       });
       processes[processName] = Object.freeze({
@@ -440,7 +470,7 @@ function buildImprovePlan(
       });
       continue;
     }
-    if (runner) runner = cloneAndFreeze(runner) as LlmRunner;
+    if (runner) runner = cloneAndFreeze(runner) as RunnerSpec;
     processes[processName] = Object.freeze({
       enabled,
       config: cloneAndFreeze(sourceProcessConfig),
@@ -456,7 +486,7 @@ function buildImprovePlan(
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");
     throw new ConfigError(
-      `No improve process can run: ${names} ${engineUnavailable.length === 1 ? "requires" : "require"} an LLM engine that is not configured. Set defaults.llmEngine, or the per-process engine key named for each.`,
+      `No improve process can run: ${names} ${engineUnavailable.length === 1 ? "requires" : "require"} an engine that is not configured. Set defaults.llmEngine, or the per-process engine key named for each.`,
       "LLM_NOT_CONFIGURED",
     );
   }
@@ -474,13 +504,6 @@ function buildImprovePlan(
         })
       : null;
   let triageJudgment = triageJudgmentResolution?.runner ?? null;
-  const effectiveJudgmentLlm = triage?.judgment?.llm ?? triage?.llm ?? strategy.config.llm;
-  if (triageJudgment && triageJudgment.kind !== "llm" && effectiveJudgmentLlm) {
-    throw new ConfigError(
-      `Triage judgment engine "${triageJudgment.engine ?? "unknown"}" is an agent engine and cannot receive llm overrides.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
   if (processes.triage.enabled && judgmentEnabled && !triageJudgment) {
     throw new ConfigError(
       `Enabled improve triage judgment requires an engine. Set defaults.llmEngine or improve.strategies.${strategy.name}.processes.triage.judgment.engine.`,
@@ -494,30 +517,14 @@ function buildImprovePlan(
   // `engineUnavailable` under the reserved `"triage.judgment"` process name
   // instead of silently reaching dispatch with a doomed credential.
   if (triageJudgment) {
-    const judgmentCredentialFields =
-      triageJudgment.kind === "llm"
-        ? {
-            credential: triageJudgment.credential,
-            apiKeyFile: triageJudgment.apiKeyFile,
-            apiKeySecretRef: triageJudgment.apiKeySecretRef,
-          }
-        : triageJudgment.kind === "sdk"
-          ? {
-              credential: triageJudgment.fallbackCredential,
-              apiKeyFile: triageJudgment.fallbackApiKeyFile,
-              apiKeySecretRef: triageJudgment.fallbackApiKeySecretRef,
-            }
-          : undefined;
-    if (judgmentCredentialFields) {
-      const credentialStatus = describeLlmCredentialAvailability(judgmentCredentialFields, env);
-      if (!credentialStatus.available) {
-        engineUnavailable.push({
-          process: "triage.judgment",
-          configKey: `improve.strategies.${strategy.name}.processes.triage.judgment.engine`,
-          reason: credentialUnavailableReason(triageJudgment.engine, credentialStatus),
-        });
-        triageJudgment = null;
-      }
+    const credentialStatus = runnerCredentialStatus(triageJudgment, env);
+    if (!credentialStatus.available) {
+      engineUnavailable.push({
+        process: "triage.judgment",
+        configKey: `improve.strategies.${strategy.name}.processes.triage.judgment.engine`,
+        reason: credentialUnavailableReason(triageJudgment.engine, credentialStatus),
+      });
+      triageJudgment = null;
     }
   }
   const frozenProcesses = Object.freeze(processes);

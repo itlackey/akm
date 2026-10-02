@@ -15,7 +15,7 @@ import { collectSensitiveValues } from "../../core/redaction";
 import { warn } from "../../core/warn";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
-import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { type AgentProfile, getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "./profiles";
 
 // `./runner.ts` imports values from this module, so RunnerSpec is referenced
@@ -454,14 +454,11 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model ? { model: engine.model } : {}),
   };
+  // An engine that sets no timeoutMs leaves it unset, so a caller's own default
+  // (model work's 600 s) can apply; a dispatch with none runs unbounded.
   const ownTimeout = Object.hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : undefined;
   if (!sdk) {
-    return {
-      kind: "agent",
-      engine: name,
-      profile,
-      timeoutMs: ownTimeout !== undefined ? ownTimeout : DEFAULT_AGENT_TIMEOUT_MS,
-    };
+    return { kind: "agent", engine: name, profile, ...(ownTimeout !== undefined ? { timeoutMs: ownTimeout } : {}) };
   }
   const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
   const fallback = fallbackName
@@ -480,7 +477,7 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
           fallbackTimeoutMs: fallback.timeoutMs,
         }
       : {}),
-    timeoutMs: ownTimeout !== undefined ? ownTimeout : (fallback?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),
+    ...(ownTimeout !== undefined ? { timeoutMs: ownTimeout } : fallback ? { timeoutMs: fallback.timeoutMs } : {}),
   };
 }
 

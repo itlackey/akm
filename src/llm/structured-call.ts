@@ -39,7 +39,7 @@
 import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
-import type { UnresolvedExecutionDefaults } from "../execution/source";
+import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../execution/source";
 import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
@@ -244,13 +244,13 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
   const terminal = requireTerminalUserMessage(messages);
 
   // `gateSignal` aborts when the feature gate's timeout fires, so the dispatch stops with it.
+  // Every structured call is unattended model work, so it runs under the model-work tool policy.
   const prepareInvocation = (): ((gateSignal?: AbortSignal) => Promise<T>) => {
-    const current = resolveStructuredCurrent(opts.current, request, runner);
     const prepared = resolveExecution({
       content: terminal.content,
       conversation: terminal.conversation,
       runner,
-      ...(current ? { current } : {}),
+      current: { ...resolveStructuredCurrent(opts.current, request, runner), tools: MODEL_WORK_TOOLS },
     });
     const lowered = buildExecution(prepared.request, prepared.runner);
     opts.onNotices?.(lowered.notices);

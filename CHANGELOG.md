@@ -66,6 +66,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the temporary directory is inside a git repository, which opencode would
   treat as its working directory, and fails with `parse_error` when the agent
   ends with no answer, as opencode can at its step limit.
+- **Unattended model work runs on any engine that confines the model-work
+  tool policy, and config checks that with one rule.**
+  - **Who sends the policy.** The improve processes, the quality, triage and
+    retrieval-gate judges, index passes and `akm remember --enrich` now send
+    it, so they may run on an LLM engine or on a `claude`, `opencode` or
+    `opencode-sdk` agent engine, where they could only use an LLM engine
+    before.
+  - **The one rule.** Every key model work reads its engine from must name
+    such an engine. The keys are `defaults.llmEngine`, `index.defaults.engine`,
+    `index.<pass>.engine`, a strategy's `engine`, a process's `engine`, an
+    enabled triage `judgment.engine`, and a `qualityGate.engine`. A config
+    that breaks the rule fails to load, naming the key, the engine and its
+    platform. The rule replaces six checks that each required an LLM engine
+    for some of those keys, or let the triage judgment use any agent.
+  - **What else is gone.** The plan, reflect, the quality gate and index
+    passes no longer turn an agent engine away. A triage judgment on an agent
+    engine takes a strategy's `llm` overrides as `untranslated-field`
+    notices, where it was refused before.
+  - **Reflect on an agent engine.** The agent returns its proposal as JSON on
+    stdout instead of writing a draft file, which the policy's scratch working
+    directory would not keep.
+  - **The answer is unwrapped.** A model-work reply from an agent engine goes
+    through its harness's result extractor, so a stage call on `claude` gets
+    the answer, not the `--output-format json` envelope around it.
+  - **`--require-engines` checks agent engines too.** It checks an agent
+    engine by its binary on PATH, and an `opencode-sdk` engine by its binary
+    and its LLM fallback's endpoint. It probed only LLM connections before.
+    The usage report and `akm health` count a process's calls whatever its
+    engine's kind.
 
 ### Removed
 
@@ -128,6 +157,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`akm proposal new` keeps the reply's confidence.** The engine's
   self-rated `confidence` was parsed and then dropped, so a proposal from
   `proposal new` never carried the field the reference says it has.
+- **Model work on an agent or `opencode-sdk` engine that sets no `timeoutMs` now
+  stops after 600 seconds, as documented.** Such an engine resolved to an
+  explicit "no timeout", so the 600-second bound for model work never applied
+  to it. An engine's own `timeoutMs`, `null` included, still applies, and
+  other work on an agent engine still runs until it finishes.
 
 ## [0.9.24] - 2026-10-02
 
