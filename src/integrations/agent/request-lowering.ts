@@ -5,7 +5,7 @@
 import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import type { ToolSelection } from "../../execution/source";
+import { isModelWorkTools, type ToolSelection } from "../../execution/source";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
 import { composePersonaFallbackPrompt } from "./persona-fallback";
@@ -20,6 +20,12 @@ export interface AgentLowererOptions {
   readonly tools: ToolTranslation;
   /** The harness has an exact native-agent selector flag. */
   readonly nativeAgentSelector?: boolean;
+  /**
+   * The harness builder confines the model-work tool policy (see
+   * `MODEL_WORK_TOOLS`). Mirrored by `enforcesModelWorkTools` in
+   * `harnesses/ids.ts`, which config validation reads.
+   */
+  readonly modelWorkTools?: boolean;
   /** Inference keys this harness translates. */
   readonly inference?: readonly string[];
 }
@@ -117,7 +123,22 @@ export function createAgentRequestLowerer(
       }
       if (typeof request.inference?.effort === "string") dispatch.effort = request.inference.effort;
     }
-    if (request.tools !== undefined) {
+    if (isModelWorkTools(request.tools)) {
+      if (!options.modelWorkTools) {
+        throw new ConfigError(
+          `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      // The builder selects its own confined agent or flags; another agent would replace them.
+      if (dispatch.agent) {
+        throw new ConfigError(
+          `The ${options.adapter} transport cannot run native agent ${JSON.stringify(dispatch.agent)} under the model-work tool policy.`,
+          "INVALID_CONFIG_FILE",
+        );
+      }
+      dispatch.tools = request.tools as AgentDispatchRequest["tools"];
+    } else if (request.tools !== undefined) {
       // An explicit empty selection still reaches the builder (e.g. an empty allowlist).
       if (hasToolSelection(request.tools) && !translatesTools(options.tools, request.tools)) {
         throw new ConfigError(

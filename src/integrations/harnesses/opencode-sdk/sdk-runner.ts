@@ -97,10 +97,17 @@ import { createHash } from "node:crypto";
 import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
+import { isModelWorkTools } from "../../../execution/source";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
+import {
+  MODEL_WORK_OPENCODE_AGENT,
+  MODEL_WORK_STEP_GRACE,
+  MODEL_WORK_STEPS,
+  modelWorkOpencodeConfig,
+} from "../opencode/model-work-agent";
 
 /** Per-call working-directory scope (see module doc — SDK `query.directory`). */
 interface SdkDirectoryQuery {
@@ -137,6 +144,16 @@ interface SdkClient {
       };
     }>;
     delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
+    // Optional so a fake that omits it cannot crash a dispatch; the real client has it.
+    abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
+  };
+  // The server's event stream (SSE), used to count a model-work session's steps.
+  event?: {
+    subscribe(args: {
+      query?: SdkDirectoryQuery;
+      signal?: AbortSignal;
+      sseMaxRetryAttempts?: number;
+    }): Promise<{ stream: AsyncIterable<unknown> }>;
   };
 }
 
@@ -307,9 +324,14 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
 /**
  * Assemble the OpenCode SDK server config from the profile + LLM fallback.
  * Pure and exported for tests. `profile.model` is already exact because model
- * aliases resolve once before harness lowering.
+ * aliases resolve once before harness lowering. A server for model work also
+ * defines the confined model-work agent (`../opencode/model-work-agent`).
  */
-export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
+export function buildSdkConfig(
+  profile: AgentProfile,
+  llmConfig?: LlmConnectionConfig,
+  modelWork = false,
+): Record<string, unknown> {
   const endpoint = llmConfig?.endpoint;
   const apiKey = llmConfig?.apiKey;
   const profileModel = profile.model;
@@ -336,7 +358,7 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
     };
     if (modelId) sdkConfig.model = `akm-custom/${modelId}`;
   }
-  return sdkConfig;
+  return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig() } : sdkConfig;
 }
 
 /** Digest the executable and exact environment received by the child. */
@@ -657,9 +679,10 @@ function getOrStartServer(
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
   envSource: NodeJS.ProcessEnv = process.env,
+  modelWork = false,
 ): { promise: Promise<SdkServer>; release(): void } {
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
-  const sdkConfig = buildSdkConfig(profile, llmConfig);
+  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork);
   const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
   const key = serverRegistryKey(profile, serverEnv);
   let entry = _servers.get(key);
@@ -833,6 +856,54 @@ async function deleteSessionBestEffort(
   }
 }
 
+/** Stop a server-side session that the dispatch has given up on, so it stops calling the model. */
+function abortSessionBestEffort(client: SdkClient, sessionId: string, query: SdkDirectoryQuery | undefined): void {
+  void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
+}
+
+/** The id of a step-start part of `sessionId`, when `event` reports one. */
+function stepStartPartId(event: unknown, sessionId: string): string | undefined {
+  if (!isRecord(event) || event.type !== "message.part.updated" || !isRecord(event.properties)) return undefined;
+  const part = event.properties.part;
+  if (!isRecord(part) || part.type !== "step-start" || part.sessionID !== sessionId) return undefined;
+  return typeof part.id === "string" ? part.id : undefined;
+}
+
+/**
+ * Count a model-work session's steps on the server's event stream and abort
+ * the session once they pass `MODEL_WORK_STEPS` + `MODEL_WORK_STEP_GRACE`:
+ * opencode 1.18.25 only asks the model to stop at the agent's `steps`. Best
+ * effort: without the stream, the dispatch timeout still bounds the session.
+ */
+function watchModelWorkSteps(
+  client: SdkClient,
+  sessionId: string,
+  query: SdkDirectoryQuery | undefined,
+): { steps(): number; stop(): void } {
+  const steps = new Set<string>();
+  const controller = new AbortController();
+  const subscribe = client.event?.subscribe;
+  if (subscribe) {
+    void (async () => {
+      const { stream } = await subscribe.call(client.event, {
+        ...(query ? { query } : {}),
+        signal: controller.signal,
+        sseMaxRetryAttempts: 1,
+      });
+      for await (const event of stream) {
+        const id = stepStartPartId(event, sessionId);
+        if (id === undefined) continue;
+        steps.add(id);
+        if (steps.size > MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE) {
+          abortSessionBestEffort(client, sessionId, query);
+          break;
+        }
+      }
+    })().catch(() => {});
+  }
+  return { steps: () => steps.size, stop: () => controller.abort() };
+}
+
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
   return {
     ok: false,
@@ -859,12 +930,13 @@ export async function runOpencodeSdk(
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
 
   if (opts.signal?.aborted) return abortedBeforeSdkStart(profile);
+  const modelWork = isModelWorkTools(opts.dispatch?.tools);
 
   let client: SdkClient;
   if (_testServer) {
     client = _testServer.client;
   } else {
-    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource);
+    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource, modelWork);
     try {
       const startup = await raceSdkOperation(startupHandle.promise, {
         timeoutMs: remainingTimeoutMs(),
@@ -993,10 +1065,11 @@ export async function runOpencodeSdk(
   // dispatch request. Both were previously accepted on AgentDispatchRequest but
   // silently dropped on the SDK path, so SDK-mode dispatch ignored agent-asset
   // system prompts and tool policies entirely (the CLI path honours both).
+  // Model work runs the confined agent its server config defines; its tools are that agent's.
   const dispatch = opts.dispatch;
-  const agent = dispatch?.agent;
+  const agent = modelWork ? MODEL_WORK_OPENCODE_AGENT : dispatch?.agent;
   const system = dispatch?.systemPrompt;
-  const tools = toolsToSdkAllowlist(dispatch?.tools);
+  const tools = modelWork ? undefined : toolsToSdkAllowlist(dispatch?.tools);
   const body: {
     parts: { type: string; text: string }[];
     agent?: string;
@@ -1008,6 +1081,7 @@ export async function runOpencodeSdk(
   if (tools) body.tools = tools;
 
   let result: AgentRunResult;
+  const steps = modelWork ? watchModelWorkSteps(client, sessionId, query) : undefined;
 
   try {
     const prompted = await raceSdkOperation(
@@ -1023,6 +1097,10 @@ export async function runOpencodeSdk(
       },
     );
 
+    // A model-work session the dispatch stops early is aborted on the server too.
+    if (modelWork && (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT)) {
+      abortSessionBestEffort(client, sessionId, query);
+    }
     if (prompted === SDK_OPERATION_ABORTED) {
       result = {
         ok: false,
@@ -1054,8 +1132,22 @@ export async function runOpencodeSdk(
       // default sdk runner.
       const usage = extractUsage(prompted.data?.info);
       const sdkError = prompted.error ?? prompted.data?.info?.error;
+      const overSteps = steps !== undefined && steps.steps() > MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE;
 
-      if (sdkError) {
+      if (overSteps) {
+        const message = `opencode-sdk agent "${profile.name}" ran past the ${MODEL_WORK_STEPS}-step limit for model work; akm aborted the session.`;
+        result = {
+          ok: false,
+          stdout,
+          stderr: message,
+          durationMs: Date.now() - start,
+          exitCode: 1,
+          reason: "parse_error" as AgentFailureReason,
+          error: message,
+          sessionId,
+          ...(usage ? { usage } : {}),
+        };
+      } else if (sdkError) {
         const failure = sdkErrorFailure(sdkError);
         result = {
           ok: false,
@@ -1091,6 +1183,8 @@ export async function runOpencodeSdk(
       error: errorText(err),
       sessionId,
     };
+  } finally {
+    steps?.stop();
   }
 
   // Clean up session to prevent disk accumulation in ~/.local/share/opencode/.
