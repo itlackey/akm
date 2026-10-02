@@ -93,6 +93,8 @@ const CLI_SCRIPTS: Record<string, string> = {
   // Each counts its calls beside itself; repair answers prose first, then the reply.
   valid: `#!/bin/sh\n${COUNT_CALL}echo '${REPLY}'\n`,
   repair: `#!/bin/sh\n${COUNT_CALL}if [ "$n" -eq 1 ]; then echo 'not json'; else echo '${REPLY}'; fi\n`,
+  // opencode 1.18.25 ending a model-work run at its step limit: nothing on stdout, exit 0. Only a `--continue` run answers.
+  "step-limit": `#!/bin/sh\n${COUNT_CALL}case " $* " in *" --continue "*) echo '${REPLY}';; esac\n`,
 };
 
 /** A prompt call that never settles. */
@@ -105,6 +107,11 @@ const SDK_REPLIES: Record<string, unknown> = {
   reply: { data: { info: { tokens: { input: 3, output: 5 } }, parts: [{ type: "text", text: REPLY }] } },
   valid: sdkText(REPLY),
   repair: (call: number) => sdkText(call === 1 ? "not json" : REPLY),
+  // What opencode 1.18.25 returned for a session at its step limit: step parts only, no text, one output token.
+  "step-limit": (call: number) =>
+    call === 1
+      ? { data: { info: { tokens: { input: 120, output: 1 } }, parts: [{ type: "step-start" }] } }
+      : sdkText(REPLY),
   hang: SDK_HANG,
   // An HTTP error: without throwOnError the client resolves to `{ error }`.
   "client-error": { error: { name: "UnknownError", data: { message: PROVIDER_MESSAGE } } },
@@ -455,6 +462,20 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(path.basename(directory)).toStartWith("akm-model-work-");
     expect(directory.startsWith(fs.realpathSync(os.tmpdir())) || directory.startsWith(os.tmpdir())).toBe(true);
     expect(fs.existsSync(directory)).toBe(false);
+  });
+
+  // opencode ends a run at its step limit with no answer, which a qwen chat template turns into an empty reply. It is
+  // asked once more, in its own session with no tool on offer.
+  test.each([
+    ["opencode", CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport],
+    [OPENCODE_SDK.name, OPENCODE_SDK],
+  ] as [string, Transport][])("%s: a run that ends with no answer is asked once more", async (_name, transport) => {
+    fs.rmSync(path.join(bins.dir, "step-limit.count"), { force: true });
+
+    const outcome = await callStage({ feature: "distill", runner: runnerFor(transport, "step-limit"), prompt: PROMPT });
+
+    expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(REPLY) });
+    expect(calls(transport, "step-limit")).toBe(2);
   });
 });
 

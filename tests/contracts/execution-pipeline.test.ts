@@ -16,6 +16,8 @@ import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-
 import type { AkmConfig } from "../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
+import { MODEL_WORK_FINAL_TURN } from "../../src/execution/source";
+import type { AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import {
   buildExecution,
   buildExecutionFromWire,
@@ -24,6 +26,7 @@ import {
 } from "../../src/integrations/agent/execution";
 import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import type { AgentRunResult, RunAgentOptions } from "../../src/integrations/agent/spawn";
 import { withEnv } from "../_helpers/sandbox";
 
 function exitedWith(stdout: string): SpawnedSubprocess {
@@ -614,6 +617,73 @@ describe("the model-work tool policy", () => {
       error: 'Engine "claude" returned no answer.',
     });
     expect(await run(false)).toMatchObject({ ok: true, stdout: "  \n" });
+  });
+
+  // opencode ends a run at its step limit with no answer. It is asked once more: in the dispatch's own scratch
+  // directory (its session is scoped to it), with the question alone, within what is left of the timeout.
+  describe("opencode ends a run with no answer", () => {
+    /** One dispatch whose runs end as `replies` say: "" is no answer, "fail" a failed run. */
+    async function dispatched(
+      platform: string,
+      replies: string[],
+      { isModelWork = true, timeoutMs = 10_000 as number | null } = {},
+    ) {
+      const calls: { dispatch?: AgentDispatchRequest; cwd?: string; timeoutMs?: number | null }[] = [];
+      const runAgent = async (_profile: unknown, _prompt: string, opts: RunAgentOptions): Promise<AgentRunResult> => {
+        calls.push({ dispatch: opts.dispatch, cwd: opts.cwd, timeoutMs: opts.timeoutMs });
+        const reply = replies[calls.length - 1] ?? "an unexpected extra run";
+        if (reply !== "fail") return { ok: true, exitCode: 0, stdout: reply, stderr: "", durationMs: 40 };
+        return {
+          ok: false,
+          exitCode: 1,
+          stdout: "",
+          stderr: "",
+          durationMs: 40,
+          reason: "non_zero_exit",
+          error: "failed",
+        };
+      };
+      const resolved = resolveExecution({
+        content: "judge this",
+        config: config({ engines: { e: { kind: "agent", platform, timeoutMs } } }),
+        current: { engine: "e" },
+        modelWork: isModelWork,
+      });
+      const result = await runExecution(buildExecution(resolved.request, resolved.runner), { runAgent });
+      return { calls, result };
+    }
+
+    test("the extra turn runs in the same scratch directory, the question alone, within the engine's timeout", async () => {
+      const { calls, result } = await dispatched("opencode", ["  \n", '{"verdict":"ok"}']);
+
+      expect(result).toMatchObject({ ok: true, stdout: '{"verdict":"ok"}', durationMs: 80 });
+      const [first, final] = calls;
+      expect(first?.dispatch).toMatchObject({ modelWork: true });
+      expect(first?.dispatch?.finalTurn).toBeUndefined();
+      expect(final?.dispatch).toMatchObject({ modelWork: true, prompt: MODEL_WORK_FINAL_TURN, finalTurn: true });
+      expect(final?.cwd).toBe(first?.cwd);
+      expect(path.basename(first?.cwd ?? "")).toStartWith("akm-model-work-");
+      expect(fs.existsSync(first?.cwd ?? "")).toBe(false);
+      expect(calls.map((call) => call.timeoutMs)).toEqual([10_000, 9_960]);
+      // An engine with no timeout gives the extra turn none either.
+      const untimed = await dispatched("opencode", ["", "answer"], { timeoutMs: null });
+      expect(untimed.calls.map((call) => call.timeoutMs)).toEqual([null, null]);
+    });
+
+    test("it asks once, and only of opencode: every other ending is what it was", async () => {
+      const outcome = async (...args: Parameters<typeof dispatched>) => {
+        const { calls, result } = await dispatched(...args);
+        return [calls.length, result.ok, result.reason];
+      };
+
+      expect(await outcome("opencode", ["", " "])).toEqual([2, false, "parse_error"]);
+      expect(await outcome("opencode", ["", "fail"])).toEqual([2, false, "non_zero_exit"]);
+      expect(await outcome("opencode", ["an answer"])).toEqual([1, true, undefined]);
+      expect(await outcome("opencode", ["fail"])).toEqual([1, false, "non_zero_exit"]);
+      // Another harness cannot continue a session, so it would only run the task again; other work keeps its reply.
+      expect(await outcome("claude", [""])).toEqual([1, false, "parse_error"]);
+      expect(await outcome("opencode", [""], { isModelWork: false })).toEqual([1, true, undefined]);
+    });
   });
 
   // The owner's opencode engines name their model only in `args`, which model work otherwise leaves out.

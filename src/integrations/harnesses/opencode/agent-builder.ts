@@ -41,6 +41,10 @@ import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work
  * Model work's agent carries the request's inference options
  * (`./model-config.ts`). Any other dispatch injects nothing and carries none, so
  * the model's own opencode config applies: set inference there.
+ *
+ * A model-work run that ends with no answer is asked once more
+ * (`AgentDispatchRequest.finalTurn`, see `./model-work-agent.ts`): `--continue`
+ * reaches the session of the dispatch's own scratch directory.
  */
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
@@ -62,11 +66,12 @@ export const opencodeBuilder: AgentCommandBuilder = {
           "run",
           "--agent",
           MODEL_WORK_OPENCODE_AGENT,
+          ...(req.finalTurn ? ["--continue"] : []),
           ...(model ? ["--model", model] : []),
           "--",
           req.prompt,
         ],
-        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)) },
+        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions, req.finalTurn)) },
       };
     }
     const args: string[] = req.model ? [] : [...profile.args];

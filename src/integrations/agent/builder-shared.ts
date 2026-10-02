@@ -38,6 +38,8 @@ export interface AgentDispatchRequest {
   tools?: ShowResponse["toolPolicy"];
   /** Run under the model-work tool policy: the builder confines the run itself and `tools` is unset. */
   modelWork?: boolean;
+  /** Model work on `opencode` only: the one extra turn that asks for the answer the first run ended without. */
+  finalTurn?: boolean;
   /** Exact resolved inference object. Builders consume only fields their lowerer records as translated. */
   inference?: ExecutionJsonObject | null;
   /**

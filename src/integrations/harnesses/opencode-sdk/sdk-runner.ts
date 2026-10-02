@@ -98,6 +98,7 @@ import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor, XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { ExecutionJsonObject } from "../../../execution/json";
+import { MODEL_WORK_FINAL_TURN } from "../../../execution/source";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
@@ -881,6 +882,11 @@ function abortSessionBestEffort(client: SdkClient, sessionId: string, query: Sdk
   void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
 }
 
+/** The text of a reply's last text part: the answer, since earlier ones narrate the steps before it. */
+function replyText(parts: { type: string; text?: string }[] | undefined): string {
+  return (parts ?? []).filter((p) => p.type === "text").at(-1)?.text ?? "";
+}
+
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
   return {
     ok: false,
@@ -1067,18 +1073,38 @@ export async function runOpencodeSdk(
   let result: AgentRunResult;
 
   try {
-    const prompted = await raceSdkOperation(
-      client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) }),
-      {
-        timeoutMs: remainingTimeoutMs(),
-        setTimeoutFn: setTimeoutImpl,
-        clearTimeoutFn: clearTimeoutImpl,
-        signal: abortSignal,
-        onLateSettle: () => {
-          void deleteSessionBestEffort(client, sessionId as string, query, setTimeoutImpl, clearTimeoutImpl);
+    // One prompt on the session, under the dispatch's one deadline and the caller's signal.
+    const prompt = (promptBody: typeof body) =>
+      raceSdkOperation(
+        client.session.prompt({ path: { id: sessionId }, body: promptBody, ...(query ? { query } : {}) }),
+        {
+          timeoutMs: remainingTimeoutMs(),
+          setTimeoutFn: setTimeoutImpl,
+          clearTimeoutFn: clearTimeoutImpl,
+          signal: abortSignal,
+          onLateSettle: () => {
+            void deleteSessionBestEffort(client, sessionId as string, query, setTimeoutImpl, clearTimeoutImpl);
+          },
         },
-      },
-    );
+      );
+    let prompted = await prompt(body);
+
+    // A model-work reply with no answer (opencode's step limit, see `../opencode/model-work-agent`) gets one more turn
+    // in the same session, with every tool off. It is the only extra turn: no answer to it is the same failure.
+    if (
+      modelWork &&
+      typeof prompted === "object" &&
+      !prompted.error &&
+      !prompted.data?.info?.error &&
+      replyText(prompted.data?.parts).trim() === ""
+    ) {
+      prompted = await prompt({
+        parts: [{ type: "text", text: MODEL_WORK_FINAL_TURN }],
+        agent: MODEL_WORK_OPENCODE_AGENT,
+        ...(system ? { system } : {}),
+        tools: { "*": false },
+      });
+    }
 
     // A session the dispatch stops early is aborted on the server too.
     if (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT) {
@@ -1107,9 +1133,7 @@ export async function runOpencodeSdk(
         sessionId,
       };
     } else {
-      const parts = prompted.data?.parts ?? [];
-      // The last text part is the answer; earlier ones narrate the steps before it.
-      const stdout = parts.filter((p) => p.type === "text").at(-1)?.text ?? "";
+      const stdout = replyText(prompted.data?.parts);
       // Token accounting from the AssistantMessage (previously discarded) —
       // the seam that makes workflow budget.maxTokens meterable on the
       // default sdk runner.
