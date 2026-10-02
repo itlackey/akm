@@ -33,10 +33,6 @@ export class CodexHarness extends BaseHarness {
   readonly agentBuilder = codexBuilder;
   readonly resultExtractor = codexResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns `codex exec` locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // `--output-schema <file>` enforces a caller-supplied JSON schema natively.
-  readonly structuredOutput = "native-schema" as const;
   // No flag-shaped resume: codex resume is the `exec resume <id>` SUBCOMMAND
   // chain (see `codexResumeArgs` in ./agent-builder.ts).
   // Presence flag: CODEX_SANDBOX is stamped only on processes codex itself
