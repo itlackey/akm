@@ -918,7 +918,10 @@ describe("akmReflect — direct LLM output recovery", () => {
       chat: async (_config, messages) => {
         if (messages[0]?.role === "system") {
           judgeCalls += 1;
-          return JSON.stringify({ score: 1, reason: "The revision is not useful." });
+          return JSON.stringify({
+            scores: { need: 1, preservation: 1, quality: 1 },
+            reason: "The revision is not useful.",
+          });
         }
         reflectCalls += 1;
         return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# Weak revision\n\nReplace useful guidance with vague prose.\nAKM_REFLECT_CONTENT_END`;

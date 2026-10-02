@@ -7,6 +7,7 @@ import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { LoweringNotice } from "../src/execution/resolved-request";
 import { resolveIndexPassExecution } from "../src/llm/index-passes";
+import { asLlmRunner } from "./_helpers/llm-runner";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
 import { overrideSeam } from "./_helpers/seams";
 
@@ -41,7 +42,7 @@ function resolvedConnection(passName: string, config: AkmConfig): Record<string,
   const runner = resolveIndexPassExecution(passName, config).runner;
   return runner
     ? {
-        ...runner.connection,
+        ...asLlmRunner(runner).connection,
         ...(Object.hasOwn(runner, "timeoutMs") ? { timeoutMs: runner.timeoutMs } : {}),
       }
     : undefined;
@@ -69,8 +70,8 @@ describe("resolveIndexPassExecution", () => {
 
     const resolved = resolveIndexPassExecution("memory", config);
 
-    expect(resolved.runner?.connection.model).toBe("exact-index-model");
-    expect(resolved.runner?.connection).not.toHaveProperty("effort");
+    expect(asLlmRunner(resolved.runner).connection.model).toBe("exact-index-model");
+    expect(asLlmRunner(resolved.runner).connection).not.toHaveProperty("effort");
     expect(resolved.notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
@@ -117,8 +118,8 @@ describe("resolveIndexPassExecution", () => {
       engine: "index",
       credential: { names: ["AKM_INDEX_PASS_REQUIRED_KEY"], required: true },
     });
-    expect(runner?.connection).toEqual(SAMPLE_LLM);
-    expect(runner?.connection).not.toHaveProperty("apiKey");
+    expect(asLlmRunner(runner).connection).toEqual(SAMPLE_LLM);
+    expect(asLlmRunner(runner).connection).not.toHaveProperty("apiKey");
   });
 
   test("standalone enrichment preserves an explicit unbounded timeout", () => {
@@ -242,7 +243,7 @@ describe("resolveIndexPassExecution", () => {
     };
 
     const runner = resolveIndexPassExecution("enrichment", config).runner;
-    expect(runner?.connection).toMatchObject({
+    expect(asLlmRunner(runner).connection).toMatchObject({
       model: "pass-model",
       temperature: 0.2,
       maxTokens: 400,
@@ -351,7 +352,7 @@ describe("config loader: `index` block parsing", () => {
       index: { enrichment: { llm: { temperature: 0.2, maxTokens: 64 } } },
     });
     const resolved = resolveIndexPassExecution("enrichment", loadUserConfig()).runner;
-    expect(resolved?.connection).toMatchObject({ temperature: 0.2, maxTokens: 64 });
+    expect(asLlmRunner(resolved).connection).toMatchObject({ temperature: 0.2, maxTokens: 64 });
   });
 
   test("keeps an unknown key under a pass entry and names it once instead of failing config load", () => {

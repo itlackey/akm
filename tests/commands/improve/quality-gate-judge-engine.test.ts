@@ -9,6 +9,8 @@ import { resolveQualityGateJudge, runReflectQualityJudge } from "../../../src/co
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
 import { validateConfigShape } from "../../../src/core/config/config-schema";
 import { ConfigError } from "../../../src/core/errors";
+import { resolveEngine } from "../../../src/integrations/agent/engine-resolution";
+import { __setTestServer } from "../../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { compressMemoryToDerivedMemory } from "../../../src/llm/memory-infer";
 import {
   clearLlmUsageSink,
@@ -16,6 +18,7 @@ import {
   setLlmUsageSink,
   withLlmStage,
 } from "../../../src/llm/usage-telemetry";
+import { asLlmRunner } from "../../_helpers/llm-runner";
 
 function config(engines: Record<string, unknown> = {}): AkmConfig {
   return {
@@ -59,7 +62,7 @@ describe("resolveQualityGateJudge (#1011)", () => {
       "reflect",
     );
     expect(runner?.engine).toBe("judge");
-    expect(runner?.connection.model).toBe("judge-model");
+    expect(asLlmRunner(runner).connection.model).toBe("judge-model");
   });
 
   test("qualityGate.llm alone keeps the process's engine and overrides its settings", () => {
@@ -69,7 +72,7 @@ describe("resolveQualityGateJudge (#1011)", () => {
       "distill",
     );
     expect(runner?.engine).toBe("other");
-    expect(runner?.connection.temperature).toBe(0.5);
+    expect(asLlmRunner(runner).connection.temperature).toBe(0.5);
   });
 
   test("an explicit timeoutMs: null names a judge too", () => {
@@ -143,6 +146,28 @@ describe("the judge thinks only when its own engine enables thinking", () => {
       { llmRunner },
     );
     expect(thinking).toBe(true);
+  });
+
+  test("a judge on an opencode-sdk runner runs; its thinking comes from the provider fallback", async () => {
+    const cfg = config({ "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" } });
+    __setTestServer({
+      client: {
+        session: {
+          create: async () => ({ data: { id: "judge-session" } }),
+          prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: PASSING_VERDICT }] } }) as never,
+          delete: async () => ({}),
+        },
+      },
+      server: { close() {} },
+    });
+    try {
+      const result = await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
+        llmRunner: resolveEngine("sdk-judge", cfg),
+      });
+      expect(result.pass).toBe(true);
+    } finally {
+      __setTestServer(null);
+    }
   });
 
   test("otherwise the judge keeps thinking off, as before", async () => {

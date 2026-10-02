@@ -41,11 +41,12 @@ import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { warn, warnVerbose } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import { preFilterSession } from "../../integrations/session-logs/pre-filter";
 import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../integrations/session-logs/types";
-import { type ChatMessage, isJsonSchemaKnownUnsupported } from "../../llm/client";
+import type { ChatMessage } from "../../llm/client";
 import type { Database } from "../../storage/database";
 import {
   type ExtractedSessionRow,
@@ -75,7 +76,7 @@ import {
   sessionMeetsDurationGate,
   writeSessionAsset,
 } from "./session-asset";
-import { callStage, type LlmRunner, mintProposal, noticeSet } from "./stage";
+import { callStage, callStageOnce, mintProposal, noticeSet } from "./stage";
 
 export type { AkmExtractResult, ExtractedSessionResult } from "../../core/improve-types";
 
@@ -163,7 +164,7 @@ export interface AkmExtractOptions {
   stashDir?: string;
   config?: AkmConfig;
   /** Runner to use when no complete standalone plan is supplied. */
-  llmRunner?: ExtractLlmRunner;
+  llmRunner?: RunnerSpec;
   /** Complete standalone plan, resolved once at the CLI boundary. */
   resolvedPlan?: ResolvedExtractPlan;
   /** Test seam: harness registry. */
@@ -201,13 +202,11 @@ export interface ResolvedExtractPlan {
   engine: string;
   enabled: boolean;
   process: Readonly<ImproveProcessConfig>;
-  runner: Readonly<ExtractLlmRunner> | null;
+  runner: Readonly<RunnerSpec> | null;
   timeoutMs: number | null;
   embeddingConfig: Readonly<AkmConfig["embedding"]>;
   notices?: readonly Readonly<LoweringNotice>[];
 }
-
-type ExtractLlmRunner = LlmRunner;
 
 /** Resolve standalone extract selection once, before discovery, auto iteration or watch startup. */
 export function resolveStandaloneExtractPlan(
@@ -275,7 +274,7 @@ function emptyExtractResult(args: {
   type: string;
   warning: string;
   startMs: number;
-  llmRunner?: ExtractLlmRunner;
+  llmRunner?: RunnerSpec;
 }): AkmExtractResult {
   return {
     schemaVersion: 1,
@@ -538,7 +537,7 @@ interface ExtractRun {
   harness: SessionLogHarness;
   stashDir: string;
   config: AkmConfig;
-  llmRunner: ExtractLlmRunner;
+  llmRunner: RunnerSpec;
   notices: ReturnType<typeof noticeSet>;
   sourceRun: string;
   dryRun: boolean;
@@ -559,15 +558,16 @@ type SessionExtraction =
 const EXTRACT_LLM_UNAVAILABLE = Symbol("extract-llm-unavailable");
 
 /**
- * One session's extraction call. A connection without structured output gets
- * one corrective retry; configuration errors escape before any state is written.
+ * One session's extraction call, with one corrective retry; configuration
+ * errors escape before any state is written.
  */
 async function extractFromSession(run: ExtractRun, prompt: string): Promise<SessionExtraction> {
   const { llmRunner } = run;
   try {
     const result = await runStructured<ExtractPayload>({
       dispatch: async (feedback) => {
-        const outcome = await callStage({
+        // This loop parses and repairs the reply itself, so each attempt is one unvalidated dispatch.
+        const outcome = await callStageOnce({
           feature: "session_extraction",
           runner: llmRunner,
           prompt: feedback ? `${prompt}\n\n## Corrective output instruction\n\n${feedback}` : prompt,
@@ -588,10 +588,6 @@ async function extractFromSession(run: ExtractRun, prompt: string): Promise<Sess
         return payload.parseFailure ? undefined : payload;
       },
       validate: (payload) => ({ ok: true, value: payload as ExtractPayload }),
-      maxAttempts:
-        llmRunner.connection.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(llmRunner.connection)
-          ? 1
-          : 2,
       buildFeedback: () =>
         "Your previous response did not contain a valid extraction payload. Respond with ONLY a JSON object matching the requested schema, with a candidates array and no prose or code fences.",
     });
@@ -951,7 +947,7 @@ function resolveExtractRun(
   activeProfile: ImproveProfileConfig | undefined,
 ): Omit<ExtractRun, "options" | "harness" | "stashDir" | "config" | "sourceRun" | "dryRun" | "standardsContext"> {
   const notices = noticeSet();
-  let llmRunner: ExtractLlmRunner | null | undefined;
+  let llmRunner: RunnerSpec | null | undefined;
   if (options.resolvedPlan) {
     llmRunner = options.resolvedPlan.runner;
     notices.add(options.resolvedPlan.notices ?? []);
@@ -1031,7 +1027,7 @@ function discoverExtractCandidates(
   effectiveSince: string | undefined,
   startMs: number,
   dryRun: boolean,
-  llmRunner: ExtractLlmRunner,
+  llmRunner: RunnerSpec,
 ): { candidates: SessionSummary[] } | { notFound: AkmExtractResult } {
   const location = options.location ? { location: options.location } : {};
   if (options.sessionId) {

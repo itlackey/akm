@@ -320,10 +320,10 @@ describe("callStructured contract", () => {
     expect(seenEnableThinking).toBe(false);
   });
 
-  test("(11) timeoutMs key-presence is preserved: absent stays absent, explicit undefined stays present", async () => {
-    // Tri-state contract (see CallStructuredRequest doc): absent key = default
-    // timeout downstream; present-but-undefined = explicitly disabled. The
-    // seam must not materialize keys the caller never set.
+  test("(11) timeoutMs key-presence is preserved: absent takes the default, explicit undefined stays disabled", async () => {
+    // Tri-state contract (see CallStructuredRequest doc): absent key = the
+    // runner's own timeout, else the 600 s model-work default;
+    // present-but-undefined = explicitly disabled.
     let absentCaseOptions: Record<string, unknown> | undefined;
     await callStructured<string>({
       feature: "memory_inference",
@@ -340,7 +340,7 @@ describe("callStructured contract", () => {
       onError: () => "ERR",
       fallback: "FB",
     });
-    expect(absentCaseOptions !== undefined && Object.hasOwn(absentCaseOptions, "timeoutMs")).toBe(false);
+    expect(absentCaseOptions?.timeoutMs).toBe(600_000);
 
     let presentCaseOptions: Record<string, unknown> | undefined;
     await callStructured<string>({
@@ -363,6 +363,57 @@ describe("callStructured contract", () => {
     // The canonical request normalizes present-but-undefined to explicit null;
     // both spellings retain the historical "disable timeout" semantics.
     expect(presentCaseOptions?.timeoutMs).toBeNull();
+  });
+
+  test("(11b) model work is bounded: a runner with no timeout of its own gets 600 s, whatever its kind", () => {
+    const agent: RunnerSpec = {
+      kind: "agent",
+      engine: "structured-agent",
+      profile: {
+        name: "structured-agent",
+        platform: "opencode",
+        bin: "opencode",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    expect(resolveStructuredCurrent(undefined, undefined, agent)).toEqual({ timeout: 600_000 });
+    expect(resolveStructuredCurrent(undefined, undefined, runner())).toEqual({ timeout: 600_000 });
+    expect(resolveStructuredCurrent(undefined, undefined, { ...agent, timeoutMs: 1_234 })).toBeUndefined();
+    expect(resolveStructuredCurrent(undefined, undefined, { ...agent, timeoutMs: null })).toBeUndefined();
+    expect(resolveStructuredCurrent(undefined, { timeoutMs: 5 }, agent)).toEqual({ timeout: 5 });
+    expect(resolveStructuredCurrent({ timeout: 9 }, undefined, agent)).toEqual({ timeout: 9 });
+  });
+
+  test("(11c) the feature gate's timeout aborts the dispatch it bounds", async () => {
+    let seen: AbortSignal | undefined;
+    const result = await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      runner: runner(),
+      messages: MESSAGES,
+      request: {
+        timeoutMs: 50,
+        // Settles only when aborted (or long after the gate gave up).
+        chat: (_config, _messages, options) =>
+          new Promise<string>((resolve) => {
+            seen = options?.signal;
+            const late = setTimeout(() => resolve("late"), 2_000);
+            options?.signal?.addEventListener("abort", () => {
+              clearTimeout(late);
+              resolve("aborted");
+            });
+          }),
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "error",
+      fallback: "fallback",
+    });
+
+    expect(result).toBe("fallback");
+    expect(seen?.aborted).toBe(true);
   });
 
   test("(12) unsupported schema lowers optimistically, emits a structured notice, and preserves messages", async () => {

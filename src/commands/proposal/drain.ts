@@ -29,6 +29,7 @@ import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import {
@@ -267,7 +268,12 @@ async function dispatchJudgment(
 ): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Readonly<LoweringNotice>[]; error?: string }> {
   let notices: readonly Readonly<LoweringNotice>[] = [];
   try {
-    const prepared = resolveExecution({ content: prompt, runner });
+    // Model work is bounded on every runner kind: one with no timeout of its own gets the default.
+    const prepared = resolveExecution({
+      content: prompt,
+      runner,
+      ...(Object.hasOwn(runner, "timeoutMs") ? {} : { current: { timeout: DEFAULT_MODEL_WORK_TIMEOUT_MS } }),
+    });
     const lowered = buildExecution(prepared.request, prepared.runner);
     notices = lowered.notices;
     const chat = seams.chat;

@@ -10,7 +10,7 @@ import quick from "../../assets/improve-strategies/quick.json" with { type: "jso
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import { type AkmConfig, type ImproveProcessConfig, type ImproveProfileConfig } from "../../core/config/config";
+import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import {
@@ -20,7 +20,7 @@ import {
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { describeLlmCredentialAvailability } from "../../integrations/agent/engine-resolution";
-import type { RunnerSpec } from "../../integrations/agent/runner";
+import { type LlmRunner, type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
 import { applyAutonomyGate, type GatedLane } from "./autonomy-gate";
 import { resolveImproveExecution, resolveImproveLlmExecution } from "./execution";
 import { stripBundle } from "./ledger";
@@ -158,13 +158,12 @@ export function resolveImproveStrategy(name: string | undefined, config: AkmConf
   return { name: selectedName, config: ImproveProfileConfigSchema.parse(resolved) };
 }
 
-export type ImproveLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
 export type ImproveProcessName = keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES;
 
 export interface ResolvedImproveProcess {
   enabled: boolean;
   config: Readonly<ImproveProcessConfig>;
-  runner: ImproveLlmRunner | null;
+  runner: RunnerSpec | null;
   notices?: readonly Readonly<LoweringNotice>[];
 }
 
@@ -268,7 +267,11 @@ export function projectResolvedProcessRouting(plan: ResolvedImprovePlan): Proces
       process: processName,
       enabled: process.enabled,
       ...(process.runner
-        ? { engine: process.runner.engine, model: process.runner.connection.model, engineKind: process.runner.kind }
+        ? {
+            engine: process.runner.engine,
+            model: runnerLlmConnection(process.runner)?.model,
+            engineKind: process.runner.kind,
+          }
         : // #800/#957 round 3 — a credential-unavailable process never carries a
           // runner, but its structurally resolved engine/model is still worth
           // showing in the routing table (dry-run preview, health probe).
@@ -376,7 +379,7 @@ function buildImprovePlan(
   for (const processName of Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]) {
     const sourceProcessConfig = strategy.config.processes?.[processName] ?? {};
     const enabled = sourceProcessConfig.enabled === true;
-    let runner: ImproveLlmRunner | null = null;
+    let runner: LlmRunner | null = null;
     let notices: readonly Readonly<LoweringNotice>[] = [];
     if (IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName] !== "llm" || !enabled) {
       processes[processName] = Object.freeze({ enabled, config: cloneAndFreeze(sourceProcessConfig), runner });
@@ -437,7 +440,7 @@ function buildImprovePlan(
       });
       continue;
     }
-    if (runner) runner = cloneAndFreeze(runner) as ImproveLlmRunner;
+    if (runner) runner = cloneAndFreeze(runner) as LlmRunner;
     processes[processName] = Object.freeze({
       enabled,
       config: cloneAndFreeze(sourceProcessConfig),

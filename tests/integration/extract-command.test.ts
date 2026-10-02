@@ -36,6 +36,7 @@ import {
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
 import { durableItemRef } from "../_helpers/durable-ref";
+import { asLlmRunner } from "../_helpers/llm-runner";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { snapshotTree } from "../_helpers/snapshot-tree";
 
@@ -822,13 +823,14 @@ describe("akmExtract — candidate → proposal routing", () => {
 });
 
 describe("akmExtract — LLM call wiring", () => {
-  test("repairs malformed output once when the engine lacks JSON Schema support", async () => {
+  // The one corrective retry no longer depends on the engine's JSON Schema support.
+  test.each([false, true])("repairs malformed output once (supportsJsonSchema: %p)", async (supportsJsonSchema) => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
     const config = configEnabled(stash);
     const engine = config.engines?.default;
     if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.supportsJsonSchema = false;
+    engine.supportsJsonSchema = supportsJsonSchema;
     const responses = [
       "I found nothing worth keeping.",
       JSON.stringify({ candidates: [], rationale_if_empty: "No durable candidates were identified." }),
@@ -1590,8 +1592,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
 
     await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
       const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
-      expect(plan.runner?.credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
-      expect(plan.runner?.connection.apiKey).toBeUndefined();
+      expect(asLlmRunner(plan.runner).credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
+      expect(asLlmRunner(plan.runner).connection.apiKey).toBeUndefined();
 
       const result = await akmExtract({
         type: "claude",
@@ -1642,7 +1644,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.triage)).toBe(true);
     expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
-    expect(plan.runner?.connection).toMatchObject({
+    expect(asLlmRunner(plan.runner).connection).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
       temperature: 0.2,
@@ -1657,7 +1659,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     });
     expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
     expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
-    expect(timeoutOverridePlan.runner?.connection.model).toBe("process-model");
+    expect(asLlmRunner(timeoutOverridePlan.runner).connection.model).toBe("process-model");
 
     const engine = config.engines?.["extract-special"];
     if (engine?.kind === "llm") engine.model = "changed-after-watch-start";

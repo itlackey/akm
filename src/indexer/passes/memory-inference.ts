@@ -52,12 +52,12 @@ import { warn } from "../../core/warn";
 import { beginWriteProvenance, recordWrittenPath, type WriteProvenanceJournal } from "../../core/write-provenance";
 import { type WriteTargetSource, writeAssetToSource } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
 import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
-import type { StructuredLlmRunner } from "../../llm/structured-call";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
@@ -163,7 +163,7 @@ export interface MemoryInferencePassContext extends PassContext {
   onProgress?: (event: MemoryInferenceProgress) => void;
   options?: MemoryInferencePassOptions;
   /** Preferred invocation-owned symbolic runner. Omit only for standalone index passes. */
-  llmRunner?: StructuredLlmRunner | null;
+  llmRunner?: RunnerSpec | null;
 }
 
 interface MemoryRecord {
@@ -240,7 +240,7 @@ async function inferPendingMemoryRecord(
     signal?: AbortSignal;
     db?: MemoryInferencePassContext["db"];
     reEnrich?: boolean;
-    llmRunner: StructuredLlmRunner;
+    llmRunner: RunnerSpec;
     inferTelemetry: MemoryInferTelemetry;
     compressMemoryToDerivedMemory: typeof memoryInfer.compressMemoryToDerivedMemory;
     onNotices: (notices: readonly Readonly<LoweringNotice>[]) => void;
@@ -480,7 +480,7 @@ async function runMemoryInferencePassBody(
       }),
     // Caller-set connection concurrency or 1: `resolveLlmEngineUse` does
     // not forward `engines.<name>.concurrency`, so config cannot raise this.
-    llmRunner.connection.concurrency ?? 1,
+    runnerLlmConnection(llmRunner)?.concurrency ?? 1,
   );
   if (configFailure) throw configFailure;
 

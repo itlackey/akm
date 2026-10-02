@@ -20,6 +20,7 @@ import {
   redactSensitiveValue,
 } from "../../core/redaction";
 import { chatCompletion, LlmCallError } from "../../llm/client";
+import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
 import {
   lookupApiKeyFileValue,
@@ -129,6 +130,34 @@ function llmFailureReason(error: unknown): AgentFailureReason {
 
 type LlmCall = (connection: LlmConnectionConfig, opts: RunAgentOptions) => Promise<AgentRunResult>;
 
+const USAGE_ERROR_CODES: Partial<Record<AgentFailureReason, LlmUsageErrorCode>> = {
+  timeout: "timeout",
+  aborted: "aborted",
+  parse_error: "parse_error",
+  llm_rate_limit: "rate_limited",
+};
+
+/**
+ * One usage record for an agent or SDK dispatch, through the same sink and
+ * ambient `withLlmStage` attribution as the LLM transport's per-HTTP-attempt
+ * records: the request's model, and tokens when the runner reported them.
+ */
+function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult): void {
+  const { inputTokens, outputTokens, reasoningTokens } = result.usage ?? {};
+  const reported = [inputTokens, outputTokens, reasoningTokens].filter((count) => count !== undefined);
+  emitLlmUsage({
+    outcome: result.ok ? "success" : "error",
+    modelSource: "configured",
+    ...(execution.request.model?.resolved ? { model: execution.request.model.resolved } : {}),
+    durationMs: result.durationMs,
+    ...(inputTokens !== undefined ? { promptTokens: inputTokens } : {}),
+    ...(outputTokens !== undefined ? { completionTokens: outputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(reported.length > 0 ? { totalTokens: reported.reduce((sum, count) => sum + count, 0) } : {}),
+    ...(result.ok ? {} : { errorCode: (result.reason && USAGE_ERROR_CODES[result.reason]) ?? "unknown_error" }),
+  });
+}
+
 async function dispatchRunner(
   runner: RunnerSpec,
   prompt: string,
@@ -200,7 +229,10 @@ export async function runExecution(
       };
     }
   };
-  return dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  const result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  // The LLM transport records each HTTP attempt itself.
+  if (execution.runner.kind !== "llm") recordDispatchUsage(execution, result);
+  return result;
 }
 
 export interface InteractiveAgentInvocationOptions {

@@ -40,6 +40,7 @@ import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../..
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warnOnce } from "../../../core/warn";
+import { type RunnerSpec, runnerLlmConnection } from "../../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
 import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
 import { runGit } from "../../../sources/providers/git-install";
@@ -57,7 +58,7 @@ import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate"
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
-import { callStage, type LlmRunner } from "../stage";
+import { callStage } from "../stage";
 import { type ContinuitySearch, checkRetirementContinuity, createContinuitySearch } from "./continuity-check";
 
 export { PAIR_PASS_LEDGER_SOURCE };
@@ -565,7 +566,7 @@ interface PairPassContext {
   opts: AkmConsolidateOptions;
   config: AkmConfig;
   stashDir: string;
-  llmRunner: LlmRunner;
+  llmRunner: RunnerSpec;
   gitFirstAdded: ReadonlyMap<string, number> | undefined;
   labelCounts: Record<ConsolidatePairJudgeLabel, number>;
   perInitiatorProposed: Set<string>;
@@ -636,7 +637,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     request: {
       responseSchema: PAIR_JUDGE_JSON_SCHEMA,
       enableThinking: false,
-      timeoutMs: ctx.llmRunner.timeoutMs,
+      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
@@ -891,7 +892,7 @@ export async function runConsolidatePairPass(
     const results = await concurrentMap(
       judgeable,
       (candidate) => judgeOne(ctx, candidate),
-      llmRunner.connection.concurrency ?? 1,
+      runnerLlmConnection(llmRunner)?.concurrency ?? 1,
       { signal: opts.signal },
     );
     results.forEach((r, idx) => {

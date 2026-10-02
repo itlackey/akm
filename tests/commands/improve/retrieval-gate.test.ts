@@ -10,14 +10,14 @@
 
 import { describe, expect, test } from "bun:test";
 import { runRetrievalRegressionGate, usableRetrievalQueries } from "../../../src/commands/improve/retrieval-gate";
-import type { LlmRunner } from "../../../src/commands/improve/stage";
+import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import type { ChatMessage } from "../../../src/llm/client";
 
 const runner = {
   kind: "llm",
   engine: "judge",
   connection: { endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "judge-model" },
-} as unknown as LlmRunner;
+} as unknown as RunnerSpec;
 
 const OLD = "---\ndescription: Old description\n---\n\nOLD_BODY explains how to rotate the VPN key.\n";
 const NEW = "---\ndescription: New description\n---\n\nNEW_BODY talks about something else.\n";

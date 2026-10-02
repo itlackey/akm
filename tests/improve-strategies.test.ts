@@ -12,6 +12,7 @@ import {
 } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
+import { asLlmRunner } from "./_helpers/llm-runner";
 import { withEnvSync } from "./_helpers/sandbox";
 
 describe("resolveImproveStrategy", () => {
@@ -202,7 +203,7 @@ describe("resolveImprovePlan", () => {
     expect(plan.strategy.name).toBe("quick");
     expect(plan.processes.reflect.runner?.engine).toBe("default");
     expect(plan.processes.validation.runner?.engine).toBe("validation");
-    expect(plan.processes.validation.runner?.connection.model).toBe("repair");
+    expect(asLlmRunner(plan.processes.validation.runner).connection.model).toBe("repair");
     expect(plan.processes.distill).toMatchObject({ enabled: false, runner: null });
     expect(Object.keys(plan.processes).sort()).toEqual([
       "consolidate",
@@ -267,11 +268,11 @@ describe("resolveImprovePlan", () => {
         defaults: { llmEngine: "default" },
       });
 
-      expect(plan.processes.reflect.runner?.credential).toEqual({
+      expect(asLlmRunner(plan.processes.reflect.runner).credential).toEqual({
         names: ["IMPROVE_PLAN_API_KEY"],
         required: true,
       });
-      expect(plan.processes.reflect.runner?.connection.apiKey).toBeUndefined();
+      expect(asLlmRunner(plan.processes.reflect.runner).connection.apiKey).toBeUndefined();
       expect(JSON.stringify(plan)).not.toContain("plan-secret-sentinel");
     });
   });
