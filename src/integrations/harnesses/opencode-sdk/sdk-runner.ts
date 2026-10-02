@@ -97,11 +97,13 @@ import { createHash } from "node:crypto";
 import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
+import type { ExecutionJsonObject } from "../../../execution/json";
 import { isModelWorkTools } from "../../../execution/source";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
+import { opencodeInferenceConfig, opencodeModelConfig } from "../opencode/model-config";
 import {
   MODEL_WORK_OPENCODE_AGENT,
   MODEL_WORK_STEP_GRACE,
@@ -318,21 +320,40 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
   return out;
 }
 
+/** The inference a fallback LLM connection carries, which opencode can take. */
+function fallbackInference(llmConfig: LlmConnectionConfig | undefined): ExecutionJsonObject {
+  const out: Record<string, unknown> = {};
+  for (const key of ["temperature", "maxTokens", "contextLength", "enableThinking", "reasoningEffort"] as const) {
+    if (llmConfig?.[key] !== undefined) out[key] = llmConfig[key];
+  }
+  return out as ExecutionJsonObject;
+}
+
 /**
  * Assemble the OpenCode SDK server config from the profile + LLM fallback.
  * Pure and exported for tests. `profile.model` is already exact because model
  * aliases resolve once before harness lowering. A server for model work also
  * defines the confined model-work agent (`../opencode/model-work-agent`).
+ *
+ * The routed model carries the dispatch's inference (`../opencode/model-config`):
+ * the fallback LLM engine's, under `requestInference`, the request's own. A
+ * model the config routes through `akm-custom` is declared in full; any other
+ * model's entry merges over the user's own opencode config for it. For model
+ * work the options go on the confined agent instead of the model, which needs
+ * no model named: it runs whichever model opencode picks.
  */
 export function buildSdkConfig(
   profile: AgentProfile,
   llmConfig?: LlmConnectionConfig,
   modelWork = false,
+  requestInference?: ExecutionJsonObject | null,
 ): Record<string, unknown> {
   const endpoint = llmConfig?.endpoint;
   const apiKey = llmConfig?.apiKey;
   const profileModel = profile.model;
   const model = profileModel ?? llmConfig?.model;
+  const inference = requestInference === null ? undefined : { ...fallbackInference(llmConfig), ...requestInference };
+  const { entry, agentOptions } = opencodeInferenceConfig(inference, modelWork);
 
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
@@ -350,12 +371,15 @@ export function buildSdkConfig(
           baseURL: canonicalProviderBase(endpoint) ?? undefined,
           ...(apiKey ? { apiKey } : {}),
         },
-        ...(modelId ? { models: { [modelId]: {} } } : {}),
+        ...(modelId ? { models: { [modelId]: entry } } : {}),
       },
     };
     if (modelId) sdkConfig.model = `akm-custom/${modelId}`;
+  } else {
+    const modelConfig = opencodeModelConfig(model, entry);
+    if (modelConfig) Object.assign(sdkConfig, modelConfig);
   }
-  return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig() } : sdkConfig;
+  return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig(agentOptions) } : sdkConfig;
 }
 
 /** Digest the executable and exact environment received by the child. */
@@ -677,9 +701,10 @@ function getOrStartServer(
   env?: Record<string, string>,
   envSource: NodeJS.ProcessEnv = process.env,
   modelWork = false,
+  inference?: ExecutionJsonObject | null,
 ): { promise: Promise<SdkServer>; release(): void } {
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
-  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork);
+  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork, inference);
   const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
   const key = serverRegistryKey(profile, serverEnv);
   let entry = _servers.get(key);
@@ -936,7 +961,14 @@ export async function runOpencodeSdk(
   if (_testServer) {
     client = _testServer.client;
   } else {
-    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource, modelWork);
+    const startupHandle = getOrStartServer(
+      profile,
+      llmConfig,
+      opts.env,
+      opts.envSource,
+      modelWork,
+      opts.dispatch?.inference,
+    );
     try {
       const startup = await raceSdkOperation(startupHandle.promise, {
         timeoutMs: remainingTimeoutMs(),

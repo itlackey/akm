@@ -10,6 +10,7 @@
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
 import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
+import type { ExecutionJsonObject } from "../../execution/json";
 
 export type AgentStdioMode = "captured" | "interactive";
 export type AgentParseMode = "text" | "json";
@@ -46,6 +47,11 @@ export interface AgentProfile {
   readonly parseOutput: AgentParseMode;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
+  /**
+   * Inference the engine or the dispatch selected, kept so a journaled runner
+   * resolves to the same defaults again. A harness reads the request's own.
+   */
+  readonly inference?: ExecutionJsonObject;
 }
 
 // AKM_EVENT_SOURCE carries usage-event provenance (improve/task) so that akm

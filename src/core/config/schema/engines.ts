@@ -14,7 +14,11 @@ import { z } from "zod";
 // `config-types`, which type-derives from this barrel via
 // `typeof import("./config-schema")` — routing through config-types would mint
 // a config-schema ↔ config-types type cycle that collapses inference.
-import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../../integrations/harnesses/ids";
+import {
+  HARNESS_AGENT_DISPATCH_IDS,
+  harnessInferenceKeys,
+  VALID_HARNESS_IDS,
+} from "../../../integrations/harnesses/ids";
 import { WORKFLOW_MAX_TIMEOUT_MS } from "../../../workflows/resource-limits";
 import {
   chatCompletionsEndpoint,
@@ -121,6 +125,21 @@ const LlmEngineSchema = z
     }
   });
 
+/**
+ * The inference fields an agent engine may set: the ones its platform
+ * translates (`harnesses/ids.ts`). An asset's or a caller's inference reaches
+ * every engine and reports what the engine does not translate as a lowering
+ * notice; an engine the operator configures for a platform names only what
+ * that platform carries, so the rest is an error here.
+ */
+const AGENT_INFERENCE_KEYS = [
+  "temperature",
+  "maxTokens",
+  "contextLength",
+  "enableThinking",
+  "reasoningEffort",
+] as const;
+
 const AgentEngineSchema = z
   .object({
     kind: z.literal("agent"),
@@ -133,25 +152,31 @@ const AgentEngineSchema = z
     model: nonEmptyString.optional(),
     timeoutMs: timeoutMsField,
     llmEngine: engineName.optional(),
+    temperature: z.number().finite().optional(),
+    maxTokens: positiveInt.optional(),
+    contextLength: positiveInt.optional(),
+    enableThinking: z.boolean().optional(),
+    reasoningEffort: nonEmptyString.optional(),
   })
   .passthrough()
   .superRefine((value, ctx) => {
-    for (const key of [
-      "provider",
-      "endpoint",
-      "apiKey",
-      "apiKeyFile",
-      "temperature",
-      "maxTokens",
-      "concurrency",
-      "extraParams",
-      "contextLength",
-      "enableThinking",
-      "reasoningEffort",
-      "modelAliases",
-    ]) {
+    for (const key of ["provider", "endpoint", "apiKey", "apiKeyFile", "concurrency", "extraParams", "modelAliases"]) {
       if (key in value)
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is not valid on an agent engine` });
+    }
+    const translated = harnessInferenceKeys(value.platform);
+    for (const key of AGENT_INFERENCE_KEYS) {
+      if (key in value && !translated.includes(key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: `${key} is not valid on a ${value.platform} engine: ${
+            translated.length > 0
+              ? `the platform translates only ${translated.join(", ")}`
+              : "the platform translates no inference fields"
+          }`,
+        });
+      }
     }
     if (value.platform !== "opencode-sdk" && value.llmEngine !== undefined) {
       ctx.addIssue({

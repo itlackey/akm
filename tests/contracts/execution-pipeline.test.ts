@@ -144,11 +144,70 @@ describe("agent engines: config engine → argv", () => {
       interpretation: "alias",
       resolved: "claude-opus-4-7",
     });
-    expect(resolved.request.inference).toEqual({ effort: "high", temperature: 0.2 });
-    expect(resolved.provenance["/inference/effort"]).toEqual({
+    expect(resolved.request.inference).toEqual({ reasoningEffort: "high", temperature: 0.2 });
+    expect(resolved.provenance["/inference/reasoningEffort"]).toEqual({
       layer: "current-invocation",
       kind: "current",
       via: "model-alias",
+    });
+  });
+
+  // `effort` (a models.json alias, `effort:` frontmatter) and `reasoningEffort`
+  // (an engine, opencode, the LLM request) are one setting, with one word in
+  // the request: the nearest layer wins whichever word it used.
+  describe("one word for reasoning effort", () => {
+    const engine = { engines: { oc: { kind: "agent", platform: "opencode", reasoningEffort: "none" } } };
+
+    test("an alias's effort overrides the engine's reasoningEffort, because it is the nearer layer", () => {
+      const resolved = resolveExecution({
+        content: "Think.",
+        config: config({ ...engine, defaults: { engine: "oc" } }),
+        current: { model: "reasoning" },
+      });
+
+      expect(resolved.request.inference).toEqual({ reasoningEffort: "high" });
+    });
+
+    test("a nearer reasoningEffort overrides a farther effort", () => {
+      const resolved = resolveExecution({
+        content: "Think.",
+        config: config({ ...engine, defaults: { engine: "oc" } }),
+        commandLayer: { id: "command", values: { inference: { effort: "high" } } },
+        current: { inference: { reasoningEffort: "low" } },
+      });
+
+      expect(resolved.request.inference).toEqual({ reasoningEffort: "low" });
+    });
+
+    test("in one inference object reasoningEffort wins over effort", () => {
+      const resolved = resolveExecution({
+        content: "Think.",
+        config: config({ ...engine, defaults: { engine: "oc" } }),
+        current: { inference: { effort: "high", reasoningEffort: "low" } },
+      });
+
+      expect(resolved.request.inference).toEqual({ reasoningEffort: "low" });
+    });
+
+    test("an explicit null effort clears the engine's setting", () => {
+      const resolved = resolveExecution({
+        content: "Think.",
+        config: config({ ...engine, defaults: { engine: "oc" } }),
+        current: { inference: { effort: null } },
+      });
+
+      expect(resolved.request.inference).toEqual({ reasoningEffort: null });
+    });
+
+    test("the request never carries the other word", () => {
+      const resolved = resolveExecution({
+        content: "Think.",
+        config: config({ ...engine, defaults: { engine: "oc" } }),
+        current: { inference: { effort: "high", temperature: 0 } },
+      });
+
+      expect(resolved.request.inference).not.toHaveProperty("effort");
+      expect(Object.keys(resolved.provenance).filter((key) => key.endsWith("/effort"))).toEqual([]);
     });
   });
 

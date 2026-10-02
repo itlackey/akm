@@ -26,8 +26,15 @@ export interface AgentLowererOptions {
    * `harnesses/ids.ts`, which config validation reads.
    */
   readonly modelWorkTools?: boolean;
-  /** Inference keys this harness translates. */
-  readonly inference?: readonly string[];
+  /**
+   * The inference keys this harness translates; a harness whose translation
+   * depends on the request (opencode needs a `provider/model` to attach them
+   * to) gives a function of it. Mirrored by `inference` in `harnesses/ids.ts`,
+   * which config validation reads: its set is the most the function returns.
+   */
+  readonly inference?:
+    | readonly string[]
+    | ((profile: AgentProfile, request: ResolvedExecutionRequestV1) => readonly string[]);
 }
 
 /** A tool selection that actually names tools (not omitted, null, or empty). */
@@ -73,8 +80,10 @@ export function extensionFields(request: ResolvedExecutionRequestV1): string[] {
 export function createAgentRequestLowerer(
   options: AgentLowererOptions,
 ): (profile: AgentProfile, request: ResolvedExecutionRequestV1) => LoweredAgentDispatch {
-  const supportedInference = new Set(options.inference ?? []);
-  return (_profile, request) => {
+  return (profile, request) => {
+    const supportedInference = new Set(
+      typeof options.inference === "function" ? options.inference(profile, request) : (options.inference ?? []),
+    );
     const notices: Readonly<LoweringNotice>[] = [];
     const skip = (field: string): void => {
       notices.push(untranslated(options.adapter, field));
@@ -121,7 +130,6 @@ export function createAgentRequestLowerer(
       for (const key of Object.keys(request.inference ?? {}).sort()) {
         if (!supportedInference.has(key)) skip(`inference.${key}`);
       }
-      if (typeof request.inference?.effort === "string") dispatch.effort = request.inference.effort;
     }
     if (isModelWorkTools(request.tools)) {
       if (!options.modelWorkTools) {

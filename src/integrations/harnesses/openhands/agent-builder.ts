@@ -59,8 +59,9 @@
  *   conversation/session id opportunistically when the stream reveals one;
  *   akm's `workflow_run_units` remains the durable source of truth either way
  *   (plan §"Session, MCP, and identity across harnesses").
- * - **effort** — stays unconsumed (reserved; the shared request contract's
- *   "no builder consumes it yet" note stays true).
+ * - **inference** — not translated: the shared lowering reports each field of
+ *   the request's inference as untranslated (`inference` in `harnesses/ids.ts`
+ *   lists none for this harness).
  *
  * Registered: `openhandsBuilder` is `OpenhandsHarness.agentBuilder`
  * (`./index.ts`), one of the ten harnesses `HARNESS_REGISTRY` constructs

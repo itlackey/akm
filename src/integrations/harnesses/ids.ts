@@ -35,19 +35,29 @@ export interface HarnessIdEntry {
    * of `tests/contracts/engine-interchange.test.ts`.
    */
   readonly enforcesModelWorkTools: boolean;
+  /**
+   * The inference keys the harness's lowerer translates, out of `temperature`,
+   * `maxTokens`, `contextLength`, `enableThinking` and `reasoningEffort`. An
+   * agent engine on this platform may set exactly these. Pinned to each
+   * lowerer by the C7 rows of `tests/contracts/engine-interchange.test.ts`.
+   */
+  readonly inference: readonly string[];
 }
 
+/** What opencode carries on a model; see `harnesses/opencode/model-config.ts`. */
+const OPENCODE_INFERENCE = ["temperature", "maxTokens", "contextLength", "enableThinking", "reasoningEffort"] as const;
+
 export const HARNESS_ID_TABLE: readonly HarnessIdEntry[] = [
-  { id: "opencode", agentDispatch: true, enforcesModelWorkTools: true },
-  { id: "claude", agentDispatch: true, enforcesModelWorkTools: true },
-  { id: "opencode-sdk", agentDispatch: true, enforcesModelWorkTools: true },
-  { id: "codex", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "copilot", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "pi", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "gemini", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "aider", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "amazonq", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "openhands", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "opencode", agentDispatch: true, enforcesModelWorkTools: true, inference: OPENCODE_INFERENCE },
+  { id: "claude", agentDispatch: true, enforcesModelWorkTools: true, inference: ["reasoningEffort"] },
+  { id: "opencode-sdk", agentDispatch: true, enforcesModelWorkTools: true, inference: OPENCODE_INFERENCE },
+  { id: "codex", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
+  { id: "copilot", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
+  { id: "pi", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
+  { id: "gemini", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
+  { id: "aider", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
+  { id: "amazonq", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
+  { id: "openhands", agentDispatch: true, enforcesModelWorkTools: false, inference: [] },
 ] as const;
 
 /**
@@ -70,3 +80,8 @@ export const HARNESS_AGENT_DISPATCH_IDS: ReadonlySet<string> = new Set(
 export const HARNESS_MODEL_WORK_IDS: ReadonlySet<string> = new Set(
   HARNESS_ID_TABLE.filter((h) => h.enforcesModelWorkTools).map((h) => h.id),
 );
+
+/** The inference keys an agent engine on `platform` may set; none for a platform that is not registered. */
+export function harnessInferenceKeys(platform: string): readonly string[] {
+  return HARNESS_ID_TABLE.find((h) => h.id === platform)?.inference ?? [];
+}
