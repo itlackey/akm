@@ -38,7 +38,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
     personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
-    outputSchema: false,
   }),
   build(profile, req) {
     const args: string[] = req.model ? [] : [...profile.args];

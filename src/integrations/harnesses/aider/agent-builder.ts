@@ -40,13 +40,11 @@
  * - **schema** — the matrix places Aider in the "via prompt+validate" tier
  *   with *no* structured output mode at all (plan §"Structured-output
  *   normalization", tier "none"): there is no schema flag and no JSON output
- *   flag, so the JSON Schema is injected into the message payload using the
- *   exact directive wording of the engine's prompt assembly
- *   (`step-work.ts` `buildUnitPrompt`) and the pi builder, so all
- *   dispatch paths speak one dialect. Downstream, embedded-JSON extraction +
- *   the engine's shared retry-until-valid loop supply the validation Aider
- *   lacks. No temp schema file is written — that is Codex's native-schema
- *   mechanism (`--output-schema`), which Aider does not have.
+ *   flag, so the JSON Schema reaches it only as the instruction the shared
+ *   request lowering appends to the prompt. Downstream, embedded-JSON
+ *   extraction + the engine's shared retry-until-valid loop supply the
+ *   validation Aider lacks. No temp schema file is written — that is Codex's
+ *   native-schema mechanism (`--output-schema`), which Aider does not have.
  * - **tools** — deliberately unconsumed. Aider has no per-tool allowlist
  *   flag; tool-ish behaviour is governed by its own switches (`--yes-always`,
  *   git integration, shell-command confirmation). A restrictive policy is
@@ -75,29 +73,18 @@ import { createAgentRequestLowerer } from "../../agent/request-lowering";
 /** Canonical harness/platform id used for model-alias resolution. */
 export const AIDER_PLATFORM = "aider";
 
-/**
- * Assemble the `--message` payload: optional system text, the task prompt,
- * and — when a schema is requested — the same schema directive the workflow
- * engine's prompt assembly uses (Aider has no native structured output, so
- * the prompt is the only channel; plan §"Structured-output normalization",
- * tier "none").
- */
+/** Assemble the `--message` payload: optional system text, then the task prompt. */
 function buildMessagePayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
   if (req.systemPrompt) sections.push(req.systemPrompt);
   sections.push(req.prompt);
-  if (req.schema) {
-    sections.push(
-      `Respond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`,
-    );
-  }
   return sections.join("\n\n");
 }
 
 /**
  * Aider builder.
  * Command shape:
- *   aider [--model <m>] --yes-always --no-pretty --message=<[system\n\n]prompt[\n\nschema directive]>
+ *   aider [--model <m>] --yes-always --no-pretty --message=<[system\n\n]prompt>
  */
 export const aiderBuilder: AgentCommandBuilder = {
   platform: AIDER_PLATFORM,
@@ -106,7 +93,6 @@ export const aiderBuilder: AgentCommandBuilder = {
     adapter: AIDER_PLATFORM,
     personaChannel: "prompt",
     tools: "none",
-    outputSchema: true,
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];

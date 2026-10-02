@@ -24,44 +24,25 @@
  * agentBuilder dispatch akm's local-runner uses; the descriptor is aligned to
  * `native-json` to match this builder honestly.)
  *
- * So for a schema-bearing unit this builder emits `--output-format json` and
- * appends the SAME schema directive the engine's prompt assembly uses
- * (`step-work.ts` `buildUnitPrompt`) so a direct (non-workflow) dispatch is
- * self-sufficient — matching the copilot/gemini native-json builders. The
- * result envelope is unwrapped by `./result-extractor.ts`, and the engine's
- * shared `runStructured` retry-until-valid loop still validates the extracted
- * text against the node schema (constrained/hinted output is trusted but
- * verified). Without a schema the argv is byte-identical to the pre-fix shape.
+ * So for a schema-bearing unit this builder emits `--output-format json`; the
+ * shared request lowering has already appended the schema instruction to the
+ * prompt. The result envelope is unwrapped by `./result-extractor.ts`, and the
+ * engine's shared `runStructured` retry-until-valid loop still validates the
+ * extracted text against the node schema (constrained/hinted output is trusted
+ * but verified). Without a schema the argv is byte-identical to the pre-fix
+ * shape.
  *
  * The builder's `platform` stays `'claude'` (the canonical harness id).
  */
 
-import {
-  type AgentCommandBuilder,
-  type AgentDispatchRequest,
-  normalizeTools,
-  resolveDispatchModel,
-} from "../../agent/builder-shared";
+import { type AgentCommandBuilder, normalizeTools, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-
-/**
- * Assemble the positional prompt: the task prompt and — when a schema is
- * requested — the same schema directive the workflow engine's prompt assembly
- * uses (`step-work.ts` `buildUnitPrompt`), so both dispatch paths speak one
- * dialect. Claude Code takes the system prompt as a `--system-prompt` FLAG (it
- * has one, unlike copilot/gemini), so only the schema directive is folded in
- * here.
- */
-function buildPromptPayload(req: AgentDispatchRequest): string {
-  if (!req.schema) return req.prompt;
-  return `${req.prompt}\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`;
-}
 
 /**
  * Claude Code builder.
  * Command shape:
  *   claude [--agent <name>] [--system-prompt "..."] [--model <m>] [--allowedTools <t>]
- *          [--output-format json] --print -- "<prompt (+ schema directive)>"
+ *          [--output-format json] --print -- "<prompt>"
  *
  * --print switches Claude Code to non-interactive captured output mode.
  */
@@ -73,7 +54,6 @@ export const claudeBuilder: AgentCommandBuilder = {
     personaChannel: "native",
     nativeAgentSelector: true,
     tools: "all",
-    outputSchema: true,
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];
@@ -98,7 +78,7 @@ export const claudeBuilder: AgentCommandBuilder = {
     // --print = non-interactive, outputs to stdout — required for captured mode
     args.push("--print");
     args.push("--");
-    args.push(buildPromptPayload(req));
+    args.push(req.prompt);
     return { argv: [profile.bin, ...args] };
   },
 };

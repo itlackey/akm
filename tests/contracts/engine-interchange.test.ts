@@ -24,13 +24,15 @@
  *   C4  Failures and timeouts are reported the same way on every transport.
  *   C5  Credentials akm owns are checked before dispatch.
  *   C6  Every dispatch leaves one usage record.
- * C1 runs today. The other scenarios are todos until their transports meet them.
+ * C1 and C2's delivery row run today. The other scenarios are todos until
+ * their transports meet them.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
+import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
@@ -39,6 +41,7 @@ import { __setTestServer } from "../../src/integrations/harnesses/opencode-sdk/s
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
+const REPLY = '{"verdict":"ok"}';
 
 /** The LLM stub answers by the first path segment of the engine's endpoint. */
 const LLM_REPLIES: Record<string, () => Response> = {
@@ -46,15 +49,19 @@ const LLM_REPLIES: Record<string, () => Response> = {
   // OpenRouter answers a provider that fails after the headers with HTTP 200
   // and a body that holds only an `error` object and no `choices`.
   "http-200-error-body": () => Response.json({ error: { code: 502, message: PROVIDER_MESSAGE } }),
+  reply: () => Response.json({ choices: [{ message: { content: REPLY } }] }),
 };
 
 /** The fake binaries, one per scenario, shared by every CLI harness. */
 const CLI_SCRIPTS: Record<string, string> = {
   "exit-1": `#!/bin/sh\necho "${PROVIDER_MESSAGE}" >&2\nexit 1\n`,
+  // Prints the argv it was given, so a row can see what reached the harness.
+  reply: `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`,
 };
 
 /** What the fake SDK client's prompt call resolves to, per scenario. */
 const SDK_REPLIES: Record<string, unknown> = {
+  reply: { data: { info: {}, parts: [{ type: "text", text: REPLY }] } },
   // An HTTP error: without throwOnError the client resolves to `{ error }`.
   "client-error": { error: { name: "UnknownError", data: { message: PROVIDER_MESSAGE } } },
   // A provider rejection: HTTP 200 with the error on the assistant message.
@@ -65,13 +72,17 @@ const SDK_REPLIES: Record<string, unknown> = {
 
 let llmStub: ReturnType<typeof Bun.serve>;
 let bins: SandboxedDir;
+/** Request bodies the LLM stub and prompt bodies the fake SDK client received, in order. */
+let llmBodies: Record<string, unknown>[] = [];
+let sdkBodies: Record<string, unknown>[] = [];
 
 beforeAll(() => {
   llmStub = Bun.serve({
     hostname: "127.0.0.1",
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const scenario = new URL(req.url).pathname.split("/")[1] ?? "";
+      llmBodies.push((await req.json()) as Record<string, unknown>);
       return LLM_REPLIES[scenario]?.() ?? new Response("unknown scenario", { status: 404 });
     },
   });
@@ -88,7 +99,17 @@ afterAll(() => {
 
 afterEach(() => {
   __setTestServer(null);
+  llmBodies = [];
+  sdkBodies = [];
 });
+
+/** What one dispatch delivered to its transport. */
+interface Delivered {
+  /** Every prompt string the transport received, joined. */
+  readonly prompt: string;
+  /** The schema the transport received on a native channel, if any. */
+  readonly nativeSchema?: unknown;
+}
 
 interface Transport {
   readonly name: string;
@@ -96,6 +117,8 @@ interface Transport {
   engine(scenario: string): Record<string, unknown>;
   /** Install whatever the scenario needs outside the engine config. */
   arrange?(scenario: string): void;
+  /** What the last dispatch delivered, read after a `reply` scenario. */
+  delivered(result: AgentRunResult): Delivered;
 }
 
 const LLM: Transport = {
@@ -105,11 +128,29 @@ const LLM: Transport = {
     endpoint: `http://127.0.0.1:${llmStub.port}/${scenario}/v1/chat/completions`,
     model: "stub-model",
   }),
+  delivered: () => {
+    const body = llmBodies.at(-1) as {
+      messages: { content: string }[];
+      response_format?: { json_schema?: { schema?: unknown } };
+    };
+    return {
+      prompt: body.messages.map((message) => message.content).join("\n"),
+      ...(body.response_format ? { nativeSchema: body.response_format.json_schema?.schema } : {}),
+    };
+  },
 };
 
 const CLI_HARNESSES: Transport[] = HARNESS_ID_TABLE.filter((entry) => entry.id !== "opencode-sdk").map((entry) => ({
   name: entry.id,
   engine: (scenario) => ({ kind: "agent", platform: entry.id, bin: path.join(bins.dir, scenario) }),
+  delivered: (result) => {
+    const argv = JSON.parse(result.stdout) as string[];
+    const schemaFile = argv.includes("--output-schema") ? argv[argv.indexOf("--output-schema") + 1] : undefined;
+    return {
+      prompt: argv.join("\n"),
+      ...(schemaFile ? { nativeSchema: JSON.parse(fs.readFileSync(schemaFile, "utf8")) } : {}),
+    };
+  },
 }));
 
 const OPENCODE_SDK: Transport = {
@@ -121,23 +162,34 @@ const OPENCODE_SDK: Transport = {
       client: {
         session: {
           create: async () => ({ data: { id: "contract-session" } }),
-          prompt: async () => reply as never,
+          prompt: async (args) => {
+            sdkBodies.push(args.body as Record<string, unknown>);
+            return reply as never;
+          },
           delete: async () => ({}),
         },
       },
       server: { close() {} },
     });
   },
+  delivered: () => {
+    const body = sdkBodies.at(-1) as { system?: string; parts: { text: string }[] };
+    return { prompt: [body.system ?? "", ...body.parts.map((part) => part.text)].join("\n") };
+  },
 };
 
 /** Resolve, build and run one dispatch of `scenario` on `transport`. */
-async function dispatch(transport: Transport, scenario: string): Promise<AgentRunResult> {
+async function dispatch(
+  transport: Transport,
+  scenario: string,
+  current: UnresolvedExecutionDefaults = {},
+): Promise<AgentRunResult> {
   transport.arrange?.(scenario);
   const config = { configVersion: "0.9.0", engines: { contract: transport.engine(scenario) } } as unknown as AkmConfig;
   const resolved = resolveExecution({
     content: "Reply with the single word: pong",
     config,
-    current: { engine: "contract" },
+    current: { engine: "contract", ...current },
   });
   return runExecution(buildExecution(resolved.request, resolved.runner));
 }
@@ -162,6 +214,31 @@ describe("C1: a provider or harness error is ok:false, never ok with empty outpu
 
 // Each todo covers every transport above unless it says otherwise.
 describe("C2: structured output", () => {
+  const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
+  const instruction = `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(schema)}`;
+  // An LLM gets the schema as response_format; every agent transport gets the
+  // one instruction, and codex also gets its --output-schema file.
+  const rows: [string, Transport, { native: boolean; instructions: number }][] = [
+    [LLM.name, LLM, { native: true, instructions: 0 }],
+    ...CLI_HARNESSES.map((harness): [string, Transport, { native: boolean; instructions: number }] => [
+      harness.name,
+      harness,
+      { native: harness.name === "codex", instructions: 1 },
+    ]),
+    [OPENCODE_SDK.name, OPENCODE_SDK, { native: false, instructions: 1 }],
+  ];
+
+  test.each(
+    rows,
+  )("%s: the schema reaches the transport, natively or as the instruction", async (_name, transport, want) => {
+    const result = await dispatch(transport, "reply", { outputSchema: schema });
+
+    expect(result.ok).toBe(true);
+    const delivered = transport.delivered(result);
+    expect(delivered.prompt.split(instruction).length - 1).toBe(want.instructions);
+    expect(delivered.nativeSchema).toEqual(want.native ? schema : undefined);
+  });
+
   test.todo("a valid structured reply is parsed and validated against the schema", () => {});
   test.todo("a malformed structured reply is corrected by one repair turn", () => {});
   test.todo("an empty reply is a parse_error, never success", () => {});

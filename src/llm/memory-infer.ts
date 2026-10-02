@@ -62,9 +62,9 @@ export interface MemoryInferTelemetry {
 }
 
 /**
- * Strict JSON Schema for the derived-memory payload. Sent to providers that
- * opt in via `runner.connection.supportsJsonSchema = true`; the client
- * silently drops the schema for providers that don't.
+ * Strict JSON Schema for the derived-memory payload. Sent as `response_format`
+ * unless the engine sets `supportsJsonSchema: false`; the client drops it once
+ * for a provider that rejects it.
  *
  * Extends the responseSchema lift (PR 1, asset-writers-investigation §5) to
  * the memory-inference path. Mirrors the validation gate below

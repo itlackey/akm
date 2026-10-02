@@ -50,7 +50,6 @@ export class OpencodeSdkHarness extends BaseHarness {
       personaChannel: "native",
       nativeAgentSelector: true,
       tools: "sdk",
-      outputSchema: false,
     }),
   };
   // No flag-shaped resume: session reuse is programmatic — the SDK session id is

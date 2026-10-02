@@ -567,8 +567,9 @@ function buildLlm(
     if (!(LLM_INFERENCE_FIELDS as readonly string[]).includes(key)) skip(`inference.${key}`);
   }
   const chatOptions: ChatCompletionOptions = {};
+  // Sent unless the engine opts out; chatCompletion drops it once if the provider rejects it.
   if (request.outputSchema) {
-    if (runner.connection.supportsJsonSchema === true) chatOptions.responseSchema = request.outputSchema;
+    if (runner.connection.supportsJsonSchema !== false) chatOptions.responseSchema = request.outputSchema;
     else skip("outputSchema");
   }
   if (request.runtime.workspace) skip("runtime.workspace");

@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **One schema instruction, appended by the shared agent request lowering.**
+  Seven harness builders and the workflow engine each kept a copy of
+  "Respond with ONLY a JSON value matching this JSON Schema (no prose, no code
+  fences)". The lowering now appends it to every agent engine's prompt when a
+  schema is requested, so `codex` gets it beside `--output-schema` outside
+  workflows too. A workflow unit sends the same prompt bytes as before, less
+  the duplicate fixed below; a direct-LLM unit still carries the instruction
+  in its own prompt.
+
 ### Fixed
 
 - **An `opencode-sdk` engine with an LLM fallback now reaches its endpoint,
@@ -32,6 +43,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that carried a persona, including `akm agent <agent-ref> --engine opencode`.
   akm now composes the persona into the prompt in an `<AKM_PERSONA>` block,
   as it does for harnesses with no system-prompt option.
+- **`opencode` and `opencode-sdk` engines receive a requested output schema.**
+  They dropped it with only an `untranslated-field` warning, so a schema from
+  `akm agent`, `akm command run`, a command's frontmatter or a task's
+  `output:` never reached the model. They now get it as the same instruction
+  every other agent engine gets.
+- **An LLM engine sends a requested schema unless it opts out.** It sent
+  `response_format` only when the engine set `supportsJsonSchema: true`, so an
+  engine that left the flag unset never had its output constrained. It now
+  sends it unless the engine sets `supportsJsonSchema: false`. An endpoint
+  that rejects it with a 4xx is still retried once without it.
+- **A workflow unit on `claude`, `copilot`, `gemini`, `pi`, `aider`,
+  `amazonq` or `openhands` gets the schema instruction once.** The unit prompt
+  carried it and the harness builder appended a second copy.
 
 ## [0.9.24] - 2026-10-02
 

@@ -152,14 +152,12 @@ describe("amazonqBuilder — exact model selection", () => {
 describe("amazonqBuilder — schema passthrough (prompt+validate tier)", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
 
-  test("schema directive is injected into the prompt payload", () => {
+  test("the payload is the lowered prompt", () => {
     const cmd = amazonqBuilder.build(makeQProfile(), { prompt: "judge it", schema });
     const argv = cmd.argv as string[];
-    const payload = argv[argv.length - 1] as string;
     expect(argv[argv.length - 2]).toBe("--");
-    expect(payload).toStartWith("judge it");
-    expect(payload).toContain("Respond with ONLY a JSON value matching this JSON Schema");
-    expect(payload).toContain(JSON.stringify(schema));
+    // The shared lowering appended the schema instruction; the builder adds no second copy.
+    expect(argv[argv.length - 1]).toBe("judge it");
   });
 
   test("no native schema/json flags are invented (Q documents none)", () => {
@@ -170,12 +168,9 @@ describe("amazonqBuilder — schema passthrough (prompt+validate tier)", () => {
     expect(argv.includes("--output-format")).toBe(false);
   });
 
-  test("systemPrompt + prompt + schema directive compose in that order", () => {
+  test("systemPrompt + prompt compose in that order", () => {
     const cmd = amazonqBuilder.build(makeQProfile(), { prompt: "judge it", systemPrompt: "Be strict.", schema });
-    const payload = (cmd.argv as string[])[cmd.argv.length - 1] as string;
-    expect(payload.indexOf("Be strict.")).toBe(0);
-    expect(payload.indexOf("judge it")).toBeGreaterThan(payload.indexOf("Be strict."));
-    expect(payload.indexOf("JSON Schema")).toBeGreaterThan(payload.indexOf("judge it"));
+    expect((cmd.argv as string[])[cmd.argv.length - 1]).toBe("Be strict.\n\njudge it");
   });
 
   test("no schema → payload is exactly the prompt", () => {

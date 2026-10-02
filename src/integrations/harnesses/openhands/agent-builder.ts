@@ -45,10 +45,8 @@
  * - **schema** — the matrix places OpenHands in the "via prompt+validate"
  *   tier (plan §"Structured-output normalization", tier "native-json"): no
  *   Codex-style `--output-schema` flag exists, so NO temp schema file is
- *   written; the JSON Schema is injected into the task payload using the
- *   exact directive wording of the engine's prompt assembly
- *   (`step-work.ts` `buildUnitPrompt`) and the pi/aider builders, so
- *   all dispatch paths speak one dialect. Downstream, the extractor pulls the
+ *   written; the JSON Schema reaches it as the instruction the shared request
+ *   lowering appends to the prompt. Downstream, the extractor pulls the
  *   final message out of the JSONL stream and the engine's shared
  *   retry-until-valid loop performs the actual validation.
  * - **tools** — deliberately unconsumed. OpenHands has no per-tool allowlist
@@ -87,29 +85,18 @@ export const OPENHANDS_PLATFORM = "openhands";
  */
 export const OPENHANDS_MODEL_ENV = "LLM_MODEL";
 
-/**
- * Assemble the `--task` payload: optional system text, the task prompt, and —
- * when a schema is requested — the same schema directive the workflow
- * engine's prompt assembly uses (OpenHands has no native schema flag, so the
- * prompt is the schema's only channel; plan §"Structured-output
- * normalization").
- */
+/** Assemble the `--task` payload: optional system text, then the task prompt. */
 function buildTaskPayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
   if (req.systemPrompt) sections.push(req.systemPrompt);
   sections.push(req.prompt);
-  if (req.schema) {
-    sections.push(
-      `Respond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`,
-    );
-  }
   return sections.join("\n\n");
 }
 
 /**
  * OpenHands builder.
  * Command shape:
- *   openhands --headless --json --task=<[system\n\n]prompt[\n\nschema directive]>
+ *   openhands --headless --json --task=<[system\n\n]prompt>
  * with the resolved model (if any) carried on env as LLM_MODEL.
  */
 export const openhandsBuilder: AgentCommandBuilder = {
@@ -119,7 +106,6 @@ export const openhandsBuilder: AgentCommandBuilder = {
     adapter: OPENHANDS_PLATFORM,
     personaChannel: "prompt",
     tools: "none",
-    outputSchema: true,
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];

@@ -368,7 +368,8 @@ describe("provenance and notices", () => {
       current: { outputSchema: { type: "object" }, inference: { vendorKnob: 1 } },
     });
     const built = buildExecution(resolved.request, resolved.runner);
-    expect(built.notices.map((notice) => notice.field)).toEqual(["inference.vendorKnob", "outputSchema"]);
+    // The schema travels as the prompt instruction, so only the inference knob is noted.
+    expect(built.notices.map((notice) => notice.field)).toEqual(["inference.vendorKnob"]);
   });
 });
 
