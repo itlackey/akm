@@ -8,9 +8,8 @@
  * stub on 127.0.0.1 and spawns fake CLI harness binaries; opencode-sdk runs
  * through the runner's `__setTestServer` seam. Nothing leaves loopback.
  *
- * Every stub answers as an engine that follows its instructions. Asked for
- * the proposal as JSON, it prints JSON. Asked to write a draft file, which none
- * of them can do, it prints the `DRAFT_WRITTEN` line that instruction asks for.
+ * Every stub replays a scripted reply, so a row sees what reached the engine
+ * and what `proposal new` did with the reply.
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
@@ -33,14 +32,10 @@ const CONTENT =
 const PROPOSAL = JSON.stringify({ ref: `skills/${NAME}`, content: CONTENT, confidence: 0.8 });
 /** Valid JSON with no `content`: not a proposal. */
 const NOT_A_PROPOSAL = JSON.stringify({ ref: `skills/${NAME}` });
-/** From the draft-file instruction; an engine that receives it answers with the draft line. */
-const FILE_WRITE_INSTRUCTION = "Do NOT output JSON to stdout";
-const DRAFT_LINE = "DRAFT_WRITTEN confidence=0.9";
 const SCHEMA_INSTRUCTION = "Respond with ONLY a JSON value matching this JSON Schema";
 
-/** What an engine following `prompt` prints on its `call`th dispatch, from its scripted replies. */
-function answer(prompt: string, replies: readonly string[], call: number): string {
-  if (prompt.includes(FILE_WRITE_INSTRUCTION)) return DRAFT_LINE;
+/** What an engine prints on its `call`th dispatch, from its scripted replies. */
+function answer(replies: readonly string[], call: number): string {
   return replies[Math.min(call, replies.length) - 1] ?? "";
 }
 
@@ -67,11 +62,8 @@ fs.writeFileSync(countFile, String(call));
 fs.writeFileSync(self + ".argv." + call, JSON.stringify(argv));
 const schemaAt = argv.indexOf("--output-schema");
 if (schemaAt >= 0) fs.copyFileSync(argv[schemaAt + 1], self + ".schema." + call);
-const prompt = argv.at(-1) ?? "";
 const replies = ${JSON.stringify(replies)};
-const text = prompt.includes(${JSON.stringify(FILE_WRITE_INSTRUCTION)})
-  ? ${JSON.stringify(DRAFT_LINE)}
-  : replies[Math.min(call, replies.length) - 1];
+const text = replies[Math.min(call, replies.length) - 1];
 const format = argv.indexOf("--output-format");
 let out = text;
 if (${JSON.stringify(framing)} === "claude" && format >= 0 && argv[format + 1] === "json") {
@@ -109,10 +101,9 @@ beforeAll(() => {
       const scenario = new URL(req.url).pathname.split("/")[1] ?? "";
       const body = (await req.json()) as (typeof llmBodies)[number];
       llmBodies.push(body);
-      const prompt = body.messages.map((message) => message.content).join("\n");
       const replies = SCENARIOS[scenario];
       if (!replies) return new Response("unknown scenario", { status: 404 });
-      return Response.json({ choices: [{ message: { content: answer(prompt, replies, llmBodies.length) } }] });
+      return Response.json({ choices: [{ message: { content: answer(replies, llmBodies.length) } }] });
     },
   });
   bins = makeSandboxDir("akm-proposal-new-bin");
@@ -174,7 +165,7 @@ function arrangeSdk(replies: readonly string[]): void {
         prompt: async (args: { body: { parts: Array<{ text: string }> } }) => {
           const prompt = args.body.parts.map((part) => part.text).join("\n");
           sdkPrompts.push(prompt);
-          return { data: { info: {}, parts: [{ type: "text", text: answer(prompt, replies, sdkPrompts.length) }] } };
+          return { data: { info: {}, parts: [{ type: "text", text: answer(replies, sdkPrompts.length) }] } };
         },
         delete: async () => ({}),
       },
@@ -233,7 +224,6 @@ describe("proposal new returns JSON for every engine kind", () => {
     });
     const prompt = body.messages.map((message) => message.content).join("\n");
     expect(prompt).toContain("Respond ONLY with a single JSON object");
-    expect(prompt).not.toContain(FILE_WRITE_INSTRUCTION);
   });
 
   test("a claude engine's JSON result envelope is unwrapped by the claude result extractor", async () => {
@@ -243,7 +233,6 @@ describe("proposal new returns JSON for every engine kind", () => {
     const argv = harnessArgv("claude-envelope");
     expect(argv.join(" ")).toContain("--output-format json");
     expect(argv.at(-1)).toContain(SCHEMA_INSTRUCTION);
-    expect(argv.at(-1)).not.toContain(FILE_WRITE_INSTRUCTION);
   });
 
   test("a codex engine gets the schema in the strict form its --output-schema needs", async () => {
@@ -278,7 +267,6 @@ describe("proposal new returns JSON for every engine kind", () => {
     expectProposalCreated(result, "sdk");
     expect(sdkPrompts).toHaveLength(1);
     expect(sdkPrompts[0]).toContain(SCHEMA_INSTRUCTION);
-    expect(sdkPrompts[0]).not.toContain(FILE_WRITE_INSTRUCTION);
   });
 });
 

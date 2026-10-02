@@ -19,6 +19,7 @@ import path from "node:path";
 import { akmReflect } from "../../../src/commands/improve/reflect";
 import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/core/subprocess";
+import { reflectReply } from "../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -89,10 +90,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     const stash = makeStashDir();
     const config = agentModeConfig();
     let seen: { cmd: string[]; env: Record<string, string>; cwd?: string } | undefined;
-    const payload = JSON.stringify({
-      ref: "memories/alpha",
-      content: "---\ndescription: alpha\n---\n\nAlpha memory, revised.\n",
-    });
+    const payload = reflectReply("---\ndescription: alpha\n---\n\nAlpha memory, revised.\n");
 
     const result = await akmReflect({
       ref: "memories/alpha",
@@ -112,8 +110,8 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
       external_directory: "deny",
     });
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
-    // The proposal comes back as JSON on stdout: no draft file outside the scratch directory.
-    expect(seen?.cmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+    // The proposal comes back as the JSON reply of the output schema, which the prompt ends with.
+    expect(seen?.cmd.at(-1)).toContain("Respond with ONLY a JSON value matching this JSON Schema");
   });
 
   test("eventSource=improve refuses an agent engine that cannot confine the policy, before dispatch", async () => {

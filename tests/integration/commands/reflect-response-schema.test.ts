@@ -1,6 +1,6 @@
 /**
  * Tests for the structured-output (`responseSchema`) lift in
- * `runReflectViaLlm` (Issue B1, reflect-pipeline investigation 2026-05-21).
+ * `runReflectIteration` (Issue B1, reflect-pipeline investigation 2026-05-21).
  *
  * Mirrors the distill / consolidate lift in commit d2dee43. Providers that
  * honour `response_format: json_schema` enforce the
@@ -22,7 +22,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmReflect, REFLECT_JSON_SCHEMA, runReflectViaLlm } from "../../../src/commands/improve/reflect";
+import { akmReflect, REFLECT_JSON_SCHEMA, runReflectIteration } from "../../../src/commands/improve/reflect";
 import { listProposals } from "../../../src/commands/proposal/repository";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
 import type { AkmConfig, LlmProfileConfig } from "../../../src/core/config/config";
@@ -188,7 +188,7 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
 
 // ── 2. Wiring ───────────────────────────────────────────────────────────────
 
-describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () => {
+describe("runReflectIteration — responseSchema is plumbed to chatCompletion", () => {
   test("missing required symbolic credential remains a hard config failure", async () => {
     const runner: Extract<RunnerSpec, { kind: "llm" }> = {
       kind: "llm",
@@ -198,7 +198,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     };
 
     const failure = withEnv({ AKM_REFLECT_REQUIRED_KEY: undefined }, () =>
-      runReflectViaLlm({
+      runReflectIteration({
         prompt: "test prompt",
         runner,
         iteration: 0,
@@ -273,7 +273,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
       frontmatterPatch: { description: null, when_to_use: null },
     });
 
-    const result = await runReflectViaLlm({
+    const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
       iteration: 0,
@@ -292,7 +292,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     // seams that don't pass responseSchema continue to short-circuit around
     // the production chatCompletion path.
     let chatCalls = 0;
-    const result = await runReflectViaLlm({
+    const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
       iteration: 0,
@@ -321,7 +321,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
       confidence: 0.9,
       frontmatterPatch: { description: null, when_to_use: null },
     });
-    await runReflectViaLlm({
+    await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
       iteration: 0,
@@ -334,7 +334,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
   for (const timeoutMs of [1, null] as const) {
     test(`forwards normalized timeoutMs=${String(timeoutMs)} to an injected chat transport`, async () => {
       let received: number | null | undefined;
-      await runReflectViaLlm({
+      await runReflectIteration({
         prompt: "test prompt",
         runner: fakeLlmRunner(),
         iteration: 0,

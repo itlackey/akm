@@ -23,13 +23,19 @@
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import type { SpawnedSubprocess } from "../../src/core/subprocess";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
 import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { assertRunnerCredentials } from "../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig, ChatMessage } from "../../src/llm/client";
 import { LlmCallError } from "../../src/llm/client";
-import { callStructured, type LlmErrorClass, resolveStructuredCurrent } from "../../src/llm/structured-call";
+import {
+  callStructured,
+  dispatchFailureResult,
+  type LlmErrorClass,
+  resolveStructuredCurrent,
+} from "../../src/llm/structured-call";
 import { mutateScopedEnv, withEnv } from "../_helpers/sandbox";
 
 // Minimal LLM profile config. `chatCompletion` is replaced by the injected
@@ -515,6 +521,98 @@ describe("callStructured contract", () => {
       fallback: "FB",
     });
     await expect(refused).rejects.toThrow(/cannot enforce the model-work tool policy/);
+  });
+
+  test("(13b) an agent dispatch gets the caller's environment and spawn seam, and its failure keeps the dispatch's own result", async () => {
+    const opencode: RunnerSpec = {
+      kind: "agent",
+      engine: "structured-opencode",
+      profile: {
+        name: "structured-opencode",
+        platform: "opencode",
+        // Never run: the spawn seam stands in for it.
+        bin: "/nonexistent/structured-opencode",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    const text = (value: string) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(value));
+          controller.close();
+        },
+      });
+    const spawned: Array<Record<string, string> | undefined> = [];
+    const spawn = (_cmd: string[], opts: { env?: Record<string, string> }): SpawnedSubprocess => {
+      spawned.push(opts.env);
+      return {
+        exitCode: 7,
+        exited: Promise.resolve(7),
+        stdout: text(""),
+        stderr: text("boom"),
+        stdin: null,
+        kill: () => {},
+      };
+    };
+
+    const thrown = await callStructured<string>({
+      feature: "memory_inference",
+      runner: opencode,
+      current: { environment: { AKM_EVENT_SOURCE: "improve" } },
+      messages: [{ role: "user", content: "judge this" }],
+      request: { runOptions: { spawn } },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    }).catch((error: unknown) => error);
+
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toMatchObject({ AKM_EVENT_SOURCE: "improve" });
+    // The error carries the dispatch's own result: the exit code and stderr a caller reports.
+    expect(dispatchFailureResult(thrown)).toMatchObject({
+      ok: false,
+      reason: "non_zero_exit",
+      exitCode: 7,
+      stderr: "boom",
+    });
+  });
+
+  test("(13c) an SDK dispatch runs through the runSdk seam", async () => {
+    const sdk: RunnerSpec = {
+      kind: "sdk",
+      engine: "structured-sdk",
+      profile: {
+        name: "structured-sdk",
+        platform: "opencode-sdk",
+        // Never run: the runSdk seam stands in for it.
+        bin: "/nonexistent/structured-sdk",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    const prompts: string[] = [];
+    const value = await callStructured<string>({
+      feature: "memory_inference",
+      runner: sdk,
+      messages: [{ role: "user", content: "judge this" }],
+      request: {
+        runSdk: async (_profile, prompt) => {
+          prompts.push(prompt);
+          return { ok: true, exitCode: 0, stdout: "answer", stderr: "", durationMs: 1 };
+        },
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+
+    expect(value).toBe("answer");
+    expect(prompts).toEqual(["judge this"]);
   });
 
   test("(14) a provider failure is credential-redacted before ungated propagation", async () => {

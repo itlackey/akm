@@ -27,7 +27,7 @@ import {
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import { readEvents } from "../../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
-import { quietQualityGateConfig } from "../../../_helpers/factories";
+import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
   makeStashDir,
   sandboxXdgCacheHome,
@@ -235,7 +235,7 @@ const SOURCE_ASSET = [
 ].join("\n");
 
 function agentJson(content: string): string {
-  return JSON.stringify({ ref: "knowledge/sample", content });
+  return reflectReply(content);
 }
 
 async function runReflect(stash: string, agentStdout: string) {
@@ -318,7 +318,7 @@ describe("akm reflect — noise gate (#580)", () => {
       target: { source: "local", root: stash },
       assetContent: source,
       config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref: "skills/stack-diagnostics", content: renamedOnly })) },
+      runAgentOptions: { spawn: fakeSpawn(reflectReply(renamedOnly)) },
     });
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected suppression");

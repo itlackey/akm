@@ -18,11 +18,18 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
 import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
+import type { AgentRunResult } from "../../integrations/agent/spawn";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import type { LlmFeatureKey } from "../../llm/feature-gate";
-import { type CallStructuredRequest, callStructured, dispatchFailureReason } from "../../llm/structured-call";
+import {
+  type CallStructuredRequest,
+  callStructured,
+  dispatchFailureReason,
+  dispatchFailureResult,
+} from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
@@ -82,7 +89,13 @@ export function stageRunner(
 
 export type StageLlmOutcome =
   | { ok: true; raw: string }
-  | { ok: false; reason: "disabled" | "timeout" | "aborted" | "error"; error?: string };
+  | {
+      ok: false;
+      reason: "disabled" | "timeout" | "aborted" | "error";
+      error?: string;
+      /** The failed dispatch's own result (an agent's exit code and stderr, say), when the call reached a transport. */
+      result?: AgentRunResult;
+    };
 
 export interface StageLlmCall {
   feature: LlmFeatureKey;
@@ -92,6 +105,8 @@ export interface StageLlmCall {
   /** Earlier turns, sent before the terminal user prompt. */
   history?: ChatMessage[];
   request?: CallStructuredRequest;
+  /** Additional exact invocation fields for this call (the child environment of an agent, say). */
+  current?: UnresolvedExecutionDefaults;
   onNotices?: NoticeSink;
   /** Gate the call on the feature flag, with the stage's resolved enablement. */
   gate?: { config: AkmConfig; enabled?: boolean };
@@ -140,6 +155,12 @@ function failureReason(err: unknown): "timeout" | "aborted" | "error" {
   return reason === "timeout" || reason === "aborted" ? reason : "error";
 }
 
+/** A failed call: its reason and message, and the dispatch's own result when it reached a transport. */
+function failedCall(err: unknown): Extract<StageLlmOutcome, { ok: false }> {
+  const result = dispatchFailureResult(err);
+  return { ok: false, reason: failureReason(err), error: errMessage(err), ...(result ? { result } : {}) };
+}
+
 /**
  * One dispatch with no validation, for a caller that parses and repairs the
  * reply itself (reflect's repair turn, extract's own structured loop).
@@ -161,10 +182,11 @@ export async function callStageOnce(call: StageLlmCall): Promise<StageLlmOutcome
         runner: call.runner,
         messages,
         ...(call.request ? { request: call.request } : {}),
+        ...(call.current ? { current: call.current } : {}),
         ...(call.onNotices ? { onNotices: call.onNotices } : {}),
         parse: (r) => r ?? "",
         onError: (_cls, err) => {
-          failure = { ok: false, reason: failureReason(err), error: errMessage(err) };
+          failure = failedCall(err);
           return undefined;
         },
         fallback: undefined,
@@ -181,7 +203,7 @@ export async function callStageOnce(call: StageLlmCall): Promise<StageLlmOutcome
     return raw === undefined ? (failure ?? { ok: false, reason: "error" }) : { ok: true, raw };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
-    return { ok: false, reason: failureReason(err), error: errMessage(err) };
+    return failedCall(err);
   }
 }
 

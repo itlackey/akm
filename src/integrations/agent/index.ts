@@ -39,7 +39,6 @@ export {
   buildProposePrompt,
   buildReflectPrompt,
   buildSchemaRepairPrompt,
-  extractDraftConfidence,
   parseAgentProposalPayload,
 } from "./prompts";
 export type {

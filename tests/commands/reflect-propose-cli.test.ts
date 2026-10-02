@@ -21,7 +21,7 @@ import { akmReflect } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { durableItemRef } from "../_helpers/durable-ref";
-import { quietQualityGateConfig } from "../_helpers/factories";
+import { quietQualityGateConfig, reflectReply } from "../_helpers/factories";
 import { type Cleanup, sandboxXdgCacheHome, sandboxXdgConfigHome, withEnv } from "../_helpers/sandbox";
 
 const fixtureDirs: string[] = [];
@@ -89,11 +89,9 @@ function hangingSpawn(): SpawnFn {
   };
 }
 
-const VALID_LESSON_PAYLOAD = JSON.stringify({
-  ref: "lessons/rg-over-grep",
-  content:
-    "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
-});
+const VALID_LESSON_PAYLOAD = reflectReply(
+  "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
+);
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
   ref: "skills/hello",

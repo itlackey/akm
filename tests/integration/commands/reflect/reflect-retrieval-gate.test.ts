@@ -16,7 +16,7 @@ import { openStateDatabase } from "../../../../src/core/state-db";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
 import type { ChatMessage } from "../../../../src/llm/client";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
-import { quietQualityGateConfig } from "../../../_helpers/factories";
+import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
@@ -102,7 +102,7 @@ async function reflect(grades: { old: number; new: number }, relevancePrompts: s
     stashDir: storage.stashDir,
     config: config(),
     assetContent: OLD,
-    runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref: "knowledge/vpn-rotation", content: NEW })) },
+    runAgentOptions: { spawn: fakeSpawn(reflectReply(NEW)) },
     chat: judge(grades, relevancePrompts),
   });
 }
