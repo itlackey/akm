@@ -51,7 +51,10 @@ interface PromptCapture {
  */
 function makeFakeServer(
   capture: PromptCapture,
-  promptImpl?: () => Promise<{ data?: { parts?: { type: string; text?: string }[] } }>,
+  promptImpl?: () => Promise<{
+    error?: unknown;
+    data?: { info?: { tokens?: Record<string, number>; error?: unknown }; parts?: { type: string; text?: string }[] };
+  }>,
   overrides: {
     createImpl?: () => Promise<{ data?: { id?: string } }>;
     deleteImpl?: () => Promise<unknown>;
@@ -341,6 +344,88 @@ describe("runOpencodeSdk — one end-to-end deadline", () => {
   });
 });
 
+// ── #1015: an SDK error is a failed dispatch, never ok with empty output ─────
+//
+// Without `throwOnError`, @opencode-ai/sdk 1.2.20 resolves an HTTP error to
+// `{ error }` instead of throwing, and opencode answers a provider rejection
+// with HTTP 200 and `info.error` on the assistant message. Both carry an
+// opencode NamedError: `{ name, data: { message } }`.
+
+describe("runOpencodeSdk — SDK errors are failures (#1015)", () => {
+  test("an `{ error }` result is ok:false with opencode's error name and message", async () => {
+    const fake = makeFakeServer({}, async () => ({
+      error: { name: "UnknownError", data: { message: "Unexpected server error. Check server logs for details." } },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.stdout).toBe("");
+    expect(result.error).toBe("UnknownError: Unexpected server error. Check server logs for details.");
+    expect(result.stderr).toContain("UnknownError: Unexpected server error.");
+    expect(fake.deletedRef()).toBe(true);
+  });
+
+  test("a reply carrying `info.error` is ok:false with the provider's message", async () => {
+    const fake = makeFakeServer({}, async () => ({
+      data: {
+        info: { error: { name: "APIError", data: { message: "model 'stub-model' not found", isRetryable: false } } },
+        parts: [],
+      },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.error).toBe("APIError: model 'stub-model' not found");
+    expect(result.stderr).toContain("model 'stub-model' not found");
+  });
+
+  test.each([
+    ["ProviderAuthError", "non_zero_exit", { providerID: "akm-custom", message: "invalid api key" }],
+    ["APIError", "non_zero_exit", { message: "upstream 400", isRetryable: false }],
+    ["UnknownError", "non_zero_exit", { message: "boom" }],
+    ["MessageAbortedError", "aborted", { message: "aborted" }],
+    ["MessageOutputLengthError", "parse_error", {}],
+  ])("info.error %s maps to reason %s", async (name, reason, data) => {
+    const fake = makeFakeServer({}, async () => ({
+      data: { info: { error: { name, data } }, parts: [{ type: "text", text: "partial" }] },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe(reason as NonNullable<typeof result.reason>);
+    expect(result.error).toStartWith(name);
+  });
+
+  // B13: a multi-step reply narrates before it answers; the answer is last.
+  test("the last text part of a reply is its output, not the first", async () => {
+    const fake = makeFakeServer({}, async () => ({
+      data: {
+        parts: [
+          { type: "step-start" },
+          { type: "text", text: "Let me read the file first." },
+          { type: "tool" },
+          { type: "text", text: "final answer" },
+          { type: "step-finish" },
+        ],
+      },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("final answer");
+  });
+});
+
 // ── buildSdkConfig — exact model selection on the SDK path ──────────────────
 
 describe("buildSdkConfig — exact model selection", () => {
@@ -392,6 +477,28 @@ describe("buildSdkConfig — exact model selection", () => {
       model: "fallback/provider/model",
     });
     expect(cfg.model).toBe("akm-custom/fallback/provider/model");
+  });
+
+  // #1015: opencode registers only the models a custom provider lists, so an
+  // undeclared model failed every dispatch with ProviderModelNotFoundError.
+  test("declares the routed model under the akm-custom provider's models map (#1015)", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const endpoint = "http://127.0.0.1:18080/v1/chat/completions";
+    const inherited = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" });
+    expect(inherited).toEqual({
+      model: "akm-custom/stub-model",
+      provider: {
+        "akm-custom": {
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "http://127.0.0.1:18080/v1" },
+          models: { "stub-model": {} },
+        },
+      },
+    });
+
+    const own = buildSdkConfig({ ...baseProfile, model: "akm-custom/own/model" }, { endpoint, model: "stub-model" });
+    expect(own.model).toBe("akm-custom/own/model");
+    expect((own.provider as Record<string, { models?: unknown }>)["akm-custom"]?.models).toEqual({ "own/model": {} });
   });
 });
 
