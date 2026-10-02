@@ -44,10 +44,10 @@ export interface AgentDispatchRequest {
   /** Exact resolved inference object. Builders consume only fields their lowerer records as translated. */
   inference?: ExecutionJsonObject | null;
   /**
-   * JSON Schema the unit's output must validate against. Reserved for the
-   * workflow engine's structured-output normalization: harnesses with native
-   * schema flags (e.g. Codex `--output-schema`) will pass it through; others
-   * get it injected into the prompt. No builder consumes it yet.
+   * JSON Schema the output must validate against. The shared request lowering
+   * has already appended the schema instruction to `prompt`; a builder reads
+   * this only for a native channel (codex `--output-schema`, a JSON output
+   * mode).
    */
   schema?: Record<string, unknown>;
 }

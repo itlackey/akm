@@ -405,10 +405,11 @@ describe("akm workflow plan <ref> — compile warnings surface in warnings[] (B-
 });
 
 describe("akm workflow plan <ref> — lowering notices from freeze surface in notices[] (B-57)", () => {
-  // `test-llm` (writeWorkflowTestConfig) declares no `supportsJsonSchema`, so
-  // the direct-LLM builder (src/integrations/agent/execution.ts's buildLlm)
-  // rejects this step's declared unit output: schema with a real
-  // "untranslated-field" notice. That notice is computed at freeze time
+  // The unit opts its `test-llm` engine out of json_schema
+  // (`supports_json_schema: false`), so the direct-LLM builder
+  // (src/integrations/agent/execution.ts's buildLlm) cannot carry this step's
+  // declared unit output: schema and emits a real "untranslated-field"
+  // notice. That notice is computed at freeze time
   // (freeze/targets/command.ts's commandResult builds the execution) and was
   // once silently discarded — it is exactly the
   // freeze-time notice row B-57 requires `akm workflow plan` to surface,
@@ -424,6 +425,8 @@ describe("akm workflow plan <ref> — lowering notices from freeze surface in no
         "  - id: notify",
         "    unit:",
         "      engine: test-llm",
+        "      llm:",
+        "        supports_json_schema: false",
         "      output:",
         "        type: object",
         "        properties:",

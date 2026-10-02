@@ -25,9 +25,8 @@
  *   blank line.
  * - **schema** — the matrix places Copilot in the "via prompt+validate" tier
  *   (no native `--output-schema` equivalent, unlike Codex), so the JSON
- *   Schema is passed through the prompt: a directive matching the engine's
- *   wording (`step-work.ts` `buildUnitPrompt`) is appended to the `-p`
- *   payload, and `--output-format json` is emitted so stdout is the
+ *   Schema reaches it as the instruction the shared request lowering appends
+ *   to the prompt, and `--output-format json` is emitted so stdout is the
  *   documented JSON envelope the copilot result extractor normalizes. The
  *   engine's shared retry-until-valid loop performs the actual validation.
  * - **tools** — a string/array tool policy maps to repeated
@@ -71,20 +70,11 @@ function toolPolicyEntries(tools: NonNullable<AgentDispatchRequest["tools"]>): s
   return undefined;
 }
 
-/**
- * Assemble the `-p` payload: optional system prompt, the task prompt, and —
- * when a schema is requested — the same schema directive the workflow
- * engine's prompt assembly uses, so both dispatch paths speak one dialect.
- */
+/** Assemble the `-p` payload: optional system prompt, then the task prompt. */
 function buildPromptPayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
   if (req.systemPrompt) sections.push(req.systemPrompt);
   sections.push(req.prompt);
-  if (req.schema) {
-    sections.push(
-      `Respond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`,
-    );
-  }
   return sections.join("\n\n");
 }
 
@@ -92,7 +82,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
  * GitHub Copilot CLI builder.
  * Command shape:
  *   copilot [--model <m>] (--allow-all-tools | --allow-tool <t> ...)
- *           [--output-format json] -p "<systemPrompt?\n\nprompt\n\nschema?>"
+ *           [--output-format json] -p "<systemPrompt?\n\nprompt>"
  */
 export const copilotBuilder: AgentCommandBuilder = {
   platform: COPILOT_PLATFORM,
@@ -101,7 +91,6 @@ export const copilotBuilder: AgentCommandBuilder = {
     adapter: COPILOT_PLATFORM,
     personaChannel: "prompt",
     tools: "flat",
-    outputSchema: true,
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];

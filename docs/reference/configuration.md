@@ -116,6 +116,16 @@ settable via `extraParams`. A response with reasoning tokens despite
 `enableThinking: false` triggers a runtime warning and the `akm health`
 `thinking-control` advisory.
 
+When a call asks for JSON that matches a schema, an LLM engine sends the schema
+as `response_format` (`json_schema`, strict) unless the engine sets
+`supportsJsonSchema: false`. If the endpoint rejects it with a 4xx other than
+429, AKM retries once without `response_format` and stops sending it to that
+endpoint and model for the rest of the process. An agent engine receives the
+schema as one instruction at the end of its prompt (`Respond with ONLY a JSON
+value matching this JSON Schema (no prose, no code fences):` followed by the
+schema), plus the harness's own schema channel where it has one (codex
+`--output-schema`).
+
 An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
 Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection.

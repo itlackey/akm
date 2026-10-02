@@ -100,14 +100,12 @@ describe("geminiBuilder — schema passthrough (prompt+validate tier)", () => {
     expect(argv[idx + 1]).toBe("json");
   });
 
-  test("schema directive is injected into the -p payload (no native schema flag)", () => {
+  test("the -p payload is the lowered prompt (no native schema flag)", () => {
     const cmd = geminiBuilder.build(makeGeminiProfile(), { prompt: "judge it", schema });
     const argv = cmd.argv as string[];
-    const payload = argv[argv.length - 1] as string;
     expect(argv[argv.length - 2]).toBe("-p");
-    expect(payload).toStartWith("judge it");
-    expect(payload).toContain("Respond with ONLY a JSON value matching this JSON Schema");
-    expect(payload).toContain(JSON.stringify(schema));
+    // The shared lowering appended the schema instruction; the builder adds no second copy.
+    expect(argv[argv.length - 1]).toBe("judge it");
     // No codex-style schema flag leaks into gemini argv.
     expect(argv.includes("--output-schema")).toBe(false);
   });

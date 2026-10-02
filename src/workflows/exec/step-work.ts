@@ -15,6 +15,7 @@ import unitPreambleTemplate from "../../assets/prompts/workflow-unit-preamble.md
 import { UsageError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { withSchemaInstruction } from "../../core/structured";
 import { canonicalInputJson, type TaskInputBinding, validateInputs } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { WorkflowRunStatus } from "../../sources/types";
@@ -445,7 +446,9 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
         // `inputBindings`, when non-empty — see StepWorkUnitContext.taskInputs.
         ...(taskInputs && Object.keys(taskInputs).length > 0 ? { taskInputs } : {}),
         ...(input.gateFeedback ? { gateFeedback: input.gateFeedback } : {}),
-        ...(template.schema ? { schema: template.schema } : {}),
+        // An agent or SDK transport's request lowering appends the schema
+        // instruction itself; a direct-LLM unit carries it in its prompt.
+        ...(template.schema && ctx.runner === "llm" ? { schema: template.schema } : {}),
         instructions: template.instructions,
       });
   const inputHash = computeUnitInputHash(ctx, item);
@@ -613,11 +616,8 @@ export function buildUnitPrompt(input: BuildUnitPromptInput): string {
         : "")
     : "";
 
-  const schemaDirective = schema
-    ? `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${safeJson(schema)}`
-    : "";
-
-  return `${preamble}\n${instructions}${itemBlock}${inputsBlock}${taskInputsBlock}${gateBlock}${schemaDirective}`;
+  const prompt = `${preamble}\n${instructions}${itemBlock}${inputsBlock}${taskInputsBlock}${gateBlock}`;
+  return schema ? withSchemaInstruction(prompt, schema) : prompt;
 }
 
 /**

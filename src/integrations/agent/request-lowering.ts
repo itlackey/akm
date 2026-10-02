@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { ConfigError } from "../../core/errors";
+import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
 import type { ToolSelection } from "../../execution/source";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
@@ -17,7 +18,6 @@ export interface AgentLowererOptions {
   readonly adapter: string;
   readonly personaChannel: "native" | "prompt";
   readonly tools: ToolTranslation;
-  readonly outputSchema: boolean;
   /** The harness has an exact native-agent selector flag. */
   readonly nativeAgentSelector?: boolean;
   /** Inference keys this harness translates. */
@@ -102,6 +102,12 @@ export function createAgentRequestLowerer(
       }
       dispatch.agent = request.agent;
     }
+    // Every agent transport gets the schema as the one instruction; a harness
+    // with a native channel (codex --output-schema) also reads dispatch.schema.
+    if (request.outputSchema) {
+      prompt = withSchemaInstruction(prompt, request.outputSchema);
+      dispatch.schema = request.outputSchema as Record<string, unknown>;
+    }
     dispatch.prompt = prompt;
     if (request.model) dispatch.model = request.model.resolved;
     if (Object.hasOwn(request, "inference")) {
@@ -110,10 +116,6 @@ export function createAgentRequestLowerer(
         if (!supportedInference.has(key)) skip(`inference.${key}`);
       }
       if (typeof request.inference?.effort === "string") dispatch.effort = request.inference.effort;
-    }
-    if (request.outputSchema) {
-      if (!options.outputSchema) skip("outputSchema");
-      dispatch.schema = request.outputSchema as Record<string, unknown>;
     }
     if (request.tools !== undefined) {
       // An explicit empty selection still reaches the builder (e.g. an empty allowlist).

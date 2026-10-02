@@ -116,7 +116,6 @@ export const codexBuilder: AgentCommandBuilder = {
     adapter: "codex",
     personaChannel: "prompt",
     tools: "none",
-    outputSchema: true,
   }),
   build(profile, req) {
     // Built-in codex profiles ship `args: []`; headless dispatch is the `exec`

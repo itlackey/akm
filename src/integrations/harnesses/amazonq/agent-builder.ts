@@ -36,9 +36,8 @@
  *   blank line.
  * - **schema** — the matrix places Q in the NO-structured-output tier
  *   ("via prompt+validate": *(none documented)* — there is no `--json` or
- *   `--output-format` to ask for). The JSON Schema is therefore passed
- *   through the prompt: a directive matching the engine's wording
- *   (`step-work.ts` `buildUnitPrompt`) is appended to the payload.
+ *   `--output-format` to ask for). The JSON Schema therefore reaches it only
+ *   as the instruction the shared request lowering appends to the prompt.
  *   Stdout stays plain text; `./result-extractor.ts` strips terminal framing
  *   and the engine's shared embedded-JSON parse + retry-until-valid loop does
  *   the rest. No schema temp file is written — that seam is codex-only
@@ -89,21 +88,11 @@ function toolPolicyEntries(tools: NonNullable<AgentDispatchRequest["tools"]>): s
   return undefined;
 }
 
-/**
- * Assemble the positional prompt payload: optional system prompt, the task
- * prompt, and — when a schema is requested — the same schema directive the
- * workflow engine's prompt assembly uses, so both dispatch paths speak one
- * dialect.
- */
+/** Assemble the positional prompt payload: optional system prompt, then the task prompt. */
 function buildPromptPayload(req: AgentDispatchRequest): string {
   const sections: string[] = [];
   if (req.systemPrompt) sections.push(req.systemPrompt);
   sections.push(req.prompt);
-  if (req.schema) {
-    sections.push(
-      `Respond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`,
-    );
-  }
   return sections.join("\n\n");
 }
 
@@ -111,7 +100,7 @@ function buildPromptPayload(req: AgentDispatchRequest): string {
  * Amazon Q Developer CLI builder.
  * Command shape:
  *   q chat --no-interactive (--trust-all-tools | --trust-tools=<t1,t2>)
- *          [--model <m>] -- "<systemPrompt?\n\nprompt\n\nschema directive?>"
+ *          [--model <m>] -- "<systemPrompt?\n\nprompt>"
  */
 export const amazonqBuilder: AgentCommandBuilder = {
   platform: AMAZONQ_PLATFORM,
@@ -120,7 +109,6 @@ export const amazonqBuilder: AgentCommandBuilder = {
     adapter: AMAZONQ_PLATFORM,
     personaChannel: "prompt",
     tools: "flat",
-    outputSchema: true,
   }),
   build(profile, req) {
     // Built-in q profiles would ship `args: []`; headless dispatch is the
@@ -147,8 +135,8 @@ export const amazonqBuilder: AgentCommandBuilder = {
       const resolved = resolveDispatchModel(req, profile, AMAZONQ_PLATFORM) as string;
       args.push("--model", resolved);
     }
-    // No system-prompt / schema flags exist on `q chat` — both travel in the
-    // positional payload, after the end-of-options separator.
+    // No system-prompt flag exists on `q chat` — it travels in the positional
+    // payload, after the end-of-options separator.
     args.push("--");
     args.push(buildPromptPayload(req));
     return { argv: [profile.bin, ...args] };
