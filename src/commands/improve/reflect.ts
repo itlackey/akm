@@ -1253,6 +1253,7 @@ async function finalizeReflectProposal(args: {
     return reflectFailure(run, result, "quality_rejected", message, false);
   };
   let verdict: QualityJudgeResult | undefined;
+  let judgeFailed = false;
   if (judged) {
     verdict = await runReflectQualityJudge(run.config, payload.content, assetContent ?? "", feedback, options.chat, {
       runnerSelectionFrozen: true,
@@ -1261,7 +1262,9 @@ async function finalizeReflectProposal(args: {
       ...(options.signal ? { signal: options.signal } : {}),
       onNotices: run.notices.add,
     });
-    if (!verdict.pass) {
+    // A judge that timed out, errored or replied unparseably gave no verdict: a person reviews the revision.
+    judgeFailed = verdict.reviewNeeded === true && verdict.score === -1;
+    if (!verdict.pass && !judgeFailed) {
       return refuse(
         verdict.reason,
         {
@@ -1274,7 +1277,7 @@ async function finalizeReflectProposal(args: {
     }
   }
   // #722: a rewrite of an existing asset must not grade lower on its own retrieval queries.
-  if (judged && judge.runner && assetContent !== undefined) {
+  if (verdict?.pass && judge.runner && assetContent !== undefined) {
     const retrieval = await runRetrievalRegressionGate({
       ref: payload.ref,
       before: assetContent,
@@ -1308,6 +1311,7 @@ async function finalizeReflectProposal(args: {
   };
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
+    ...(judgeFailed ? ["judge-error"] : []),
     ...(sanitized.sizeGuardRatio ? ["reflect-size-ratio"] : []),
     ...(sanitized.truncationMarkerLeaked ? ["reflect-truncation-leak"] : []),
   ];
@@ -1328,7 +1332,8 @@ async function finalizeReflectProposal(args: {
       ? {
           review: {
             reason: reviewReasons.join("+"),
-            gate: "reflect",
+            // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
+            gate: judgeFailed ? "quality-gate" : "reflect",
             ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
           },
         }
@@ -1343,6 +1348,7 @@ async function finalizeReflectProposal(args: {
         source: "reflect",
         engine: run.engineName,
         ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
+        ...(judgeFailed ? { qualityReason: verdict?.reason } : {}),
         ...(sanitized.sizeGuardRatio
           ? { sizeGuardRatio: sanitized.sizeGuardRatio.code, sizeGuardRatioValue: sanitized.sizeGuardRatio.ratio }
           : {}),

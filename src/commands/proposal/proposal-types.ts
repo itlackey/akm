@@ -117,7 +117,8 @@ export interface ProposalGateDecision {
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
    * `no-judge-configured`, `judgment-deferred`, `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
-   * `quality-review` for a human. Also `expired` and `asset-missing`; older
+   * `quality-review` for a human, `judge-error` for a human when reflect's
+   * judge gave no verdict. Also `expired` and `asset-missing`; older
    * releases wrote `max-diff-lines`, `min-content-lines`, `policy-accept`,
    * `mid-band` and `possible-dup`.
    */

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **Reflect sends a revision to review when its judge fails, instead of
+  rejecting it.** A quality judge that timed out, errored or returned a reply
+  that could not be parsed gave no verdict, but reflect treated that as a
+  rejection. It created no proposal, recorded a `quality_rejected` attempt that
+  kept the asset from being reflected again for 14 days, and reported
+  `quality gate rejected: score=-1` with a reason saying the revision had been
+  routed to review. Reflect now creates the proposal and leaves it pending for
+  a person, deferred by the quality gate with the reason `judge-error`, as
+  distill does when its judge fails. The triage drain leaves it alone. It has
+  not been through the retrieval regression check, which runs only on a
+  revision the judge passes. A revision the judge scores too low is still
+  refused.
+
 ## [0.9.23] - 2026-10-01
 
 ### Added
