@@ -64,8 +64,13 @@ const MODEL_WORK_PERMISSION = {
   websearch: "deny",
 } as const;
 
-/** The opencode config fragment that defines and confines the model-work agent. */
-export function modelWorkOpencodeConfig(): Record<string, unknown> {
+/**
+ * The opencode config fragment that defines and confines the model-work agent.
+ * The agent carries the request's inference options (`model-config.ts`), which
+ * apply to its calls only: opencode's own calls on the same model, a title for
+ * the session, keep the model's defaults.
+ */
+export function modelWorkOpencodeConfig(options?: Record<string, unknown>): Record<string, unknown> {
   return {
     permission: { ...MODEL_WORK_PERMISSION },
     compaction: { auto: false },
@@ -75,6 +80,7 @@ export function modelWorkOpencodeConfig(): Record<string, unknown> {
         description: "akm unattended model work: read and edit inside its working directory only.",
         prompt: MODEL_WORK_PROMPT,
         steps: MODEL_WORK_STEPS,
+        ...(options ? { options } : {}),
         permission: { ...MODEL_WORK_PERMISSION },
       },
     },

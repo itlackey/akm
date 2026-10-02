@@ -176,7 +176,7 @@ export function canonicalResolvedRequestForTest(input: TestResolvedRequestInput)
 
 /** Project the production WP1 request without branching on its engine kind. */
 export function projectResolvedExecutionRequestForTest(request: ResolvedExecutionRequestV1): TestResolvedRequestInput {
-  const effort = request.inference?.effort;
+  const effort = request.inference?.reasoningEffort;
   return {
     command: {
       content: request.command.content,

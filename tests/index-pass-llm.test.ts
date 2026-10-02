@@ -57,7 +57,7 @@ describe("resolveIndexPassExecution", () => {
         version: 1,
         aliases: {
           reasoning: {
-            index: { model: "exact-index-model", inference: { effort: "high" } },
+            index: { model: "exact-index-model", inference: { topP: 0.9 } },
           },
         },
       }),
@@ -71,13 +71,13 @@ describe("resolveIndexPassExecution", () => {
     const resolved = resolveIndexPassExecution("memory", config);
 
     expect(asLlmRunner(resolved.runner).connection.model).toBe("exact-index-model");
-    expect(asLlmRunner(resolved.runner).connection).not.toHaveProperty("effort");
+    expect(asLlmRunner(resolved.runner).connection).not.toHaveProperty("topP");
     expect(resolved.notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
         severity: "warning",
         adapter: "llm",
-        field: "inference.effort",
+        field: "inference.topP",
       }) as LoweringNotice,
     ]);
   });

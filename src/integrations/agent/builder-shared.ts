@@ -36,11 +36,6 @@ export interface AgentDispatchRequest {
   model?: string;
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
-  /**
-   * Reasoning-effort hint for harnesses that accept one (reserved for the
-   * workflow engine's IR `effort` field; no builder consumes it yet).
-   */
-  effort?: string;
   /** Exact resolved inference object. Builders consume only fields their lowerer records as translated. */
   inference?: ExecutionJsonObject | null;
   /**

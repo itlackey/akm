@@ -111,6 +111,58 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workflow's frozen concurrency cap, `akm health`, and
   `akm improve --require-engines`, which now check an SDK engine's fallback
   endpoint only when it sets `llmEngine`.
+- **Inference reaches `opencode`, `opencode-sdk` and `claude` engines.** A
+  request's `temperature`, `maxTokens`, `contextLength`, `enableThinking` and
+  `reasoningEffort` came from the engine's own settings, an improve process's
+  `llm` overlay, a task, command or agent asset's `inference`, a workflow's
+  `llm:` and a `models.json` alias, and every agent engine dropped all of them
+  with an `untranslated-field` notice. Each platform now translates what it can
+  carry, and the nearest layer wins, field by field, as on an LLM engine. With
+  no setting anywhere akm sends nothing of its own, so the model's configured
+  default still applies, such as a `reasoningEffort: "none"` in your opencode
+  config.
+  - **`claude`** gets `reasoningEffort` as `--effort <level>`, passed as given
+    (Claude Code 2.1.283 takes `low`, `medium`, `high`, `xhigh` and `max`).
+    Its other four fields are still reported as untranslated.
+  - **`opencode` and `opencode-sdk`** get inference as opencode config, which
+    merges over your own opencode config for the same provider and model:
+    `temperature` and `reasoningEffort` become `options.temperature` and
+    `options.reasoningEffort` (opencode drops the snake_case spelling),
+    `enableThinking` becomes both wire forms an LLM engine sends, and
+    `maxTokens` with `contextLength` becomes `limit.output` and
+    `limit.context`. Set both limit fields: opencode refuses half a limit, and
+    a half would overwrite the other half of one you declared, so a lone one
+    is reported as untranslated. Without `limit.output` opencode asks for
+    `max_tokens: 32000`, which a small-context server rejects, and a wrong
+    `limit.context` lets it build requests past the server's window. The fields
+    need a `provider/model`: the request's model, or the `--model` an
+    `opencode` engine's `args` name. Model work needs none for its options, so
+    an `opencode-sdk` engine with no `model` and no `llmEngine` gets them too.
+  - **Where it goes.** Model work puts the options on the `akm-model-work`
+    agent that runs it, so opencode's own title call on the same model keeps
+    the model's defaults. Any other dispatch runs your own agent, whose name
+    akm cannot rely on, so its options go on the model and the title call sees
+    them too. `opencode-sdk` makes no title call. An `opencode-sdk` engine
+    declares its `llmEngine` fallback's model with the fallback's own
+    inference, under the engine's and the request's; each distinct set starts
+    its own `opencode serve`, as a different model does.
+- **An agent engine may set the inference fields its platform translates.**
+  `engines.<name>` of `kind: "agent"` took none, so an engine could not carry a
+  `temperature` or a `reasoningEffort` of its own. `opencode` and
+  `opencode-sdk` may set `temperature`, `maxTokens`, `contextLength`,
+  `enableThinking` and `reasoningEffort`, `claude` may set `reasoningEffort`,
+  and every other platform none. A field its platform does not translate fails
+  to load, naming the platform and the fields it does translate. `provider`,
+  `endpoint`, `apiKey`, `apiKeyFile`, `concurrency` and `extraParams` stay
+  invalid on an agent engine.
+- **Reasoning effort has one word in a request, `reasoningEffort`.** The
+  starter `reasoning` alias, an alias in your `models.json` and an asset's
+  `effort:` frontmatter said `effort`, and engines, opencode and the LLM
+  request said `reasoningEffort`. `effort` is now read as `reasoningEffort`
+  where layers are merged, so the nearest layer wins whichever word it used.
+  On an LLM engine an alias's or asset's `effort` is therefore sent as
+  `reasoning_effort`; it was reported as untranslated and dropped before. An
+  LLM engine's own request is unchanged.
 
 ### Removed
 
@@ -125,6 +177,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   an agent engine, it used the engine's `llmEngine`, then `defaults.llmEngine`,
   and warned. Only the implicit SDK fallback above could reach it, so nothing
   you run changes. An agent engine passed to it is now an error.
+- **An `effort` hint on the agent dispatch request that nothing read.** The
+  lowering set it from `inference.effort`, reserved for a workflow field, and
+  no builder consumed it. `reasoningEffort` in the request's inference is read
+  where it is translated, and the field is gone.
 
 ### Fixed
 
@@ -187,6 +243,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fallback engine borrowed `defaults.llmEngine`'s connection whenever one was
   set, so opencode got an akm-generated provider and model instead. It now runs
   on opencode's own configuration, as announced.
+- **`model: reasoning` set no effort on `claude`, `opencode` or `opencode-sdk`.**
+  The starter alias supplies `effort: high` for all three, and each dropped it
+  with an `untranslated-field` notice, so the alias chose a stronger model and
+  nothing more. It now sets `--effort high` on `claude` and
+  `options.reasoningEffort` on opencode (see "Inference reaches `opencode`,
+  `opencode-sdk` and `claude` engines" above). An improve process's
+  `llm.reasoningEffort` and `llm.temperature` overlay now reaches those
+  engines the same way.
 
 ## [0.9.24] - 2026-10-02
 

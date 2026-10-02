@@ -51,8 +51,9 @@
  *   falling back to `--trust-all-tools` (never silently widen a restriction)
  *   — Q then refuses untrusted tool actions in non-interactive mode, which is
  *   the conservative failure mode.
- * - **effort** — stays unconsumed (reserved; the shared request contract's
- *   "no builder consumes it yet" note stays true).
+ * - **inference** — not translated: the shared lowering reports each field of
+ *   the request's inference as untranslated (`inference` in `harnesses/ids.ts`
+ *   lists none for this harness).
  *
  * Registered: `amazonqBuilder` is `AmazonqHarness.agentBuilder`
  * (`./index.ts`), one of the ten harnesses `HARNESS_REGISTRY` constructs

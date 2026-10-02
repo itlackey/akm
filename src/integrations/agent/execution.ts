@@ -23,7 +23,7 @@ import type { AkmConfig, EngineConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import type { ExecutionJsonObject } from "../../execution/json";
+import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import {
   createInlineResolvedCommand,
@@ -199,8 +199,11 @@ function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): 
     modelMapKey: own.model === undefined ? fallbackName : "opencode-sdk",
     values: {
       ...(inherited.model !== undefined ? { model: inherited.model } : {}),
-      ...(inherited.inference !== undefined ? { inference: inherited.inference } : {}),
       ...values,
+      // The engine's own inference is added over the fallback's, field by field.
+      ...(inherited.inference !== undefined || own.inference !== undefined
+        ? { inference: { ...inherited.inference, ...own.inference } }
+        : {}),
       timeout: Object.hasOwn(engine, "timeoutMs")
         ? (engine.timeoutMs ?? null)
         : Object.hasOwn(fallback, "timeoutMs")
@@ -229,7 +232,11 @@ function runnerDefaults(runner: RunnerSpec): EngineDefaults {
   const platform = runner.profile.platform ?? runner.profile.name;
   const fallback = runner.kind === "sdk" ? runner.fallbackConnection : undefined;
   const model = runner.profile.model ?? fallback?.model;
-  const inference = fallback ? inferenceOf(fallback as Record<string, unknown>) : undefined;
+  const fallbackInference = fallback ? inferenceOf(fallback as Record<string, unknown>) : undefined;
+  const inference =
+    fallbackInference !== undefined || runner.profile.inference !== undefined
+      ? { ...fallbackInference, ...runner.profile.inference }
+      : undefined;
   return {
     kind: runner.kind,
     platform,
@@ -370,14 +377,16 @@ function applyRequest(base: RunnerSpec, request: ResolvedExecutionRequestV1): Ru
       ...timeout,
     };
   }
-  const { model: _model, workspace: _workspace, ...profile } = base.profile;
+  const { model: _model, workspace: _workspace, inference: ownInference, ...profile } = base.profile;
   const workspace = request.runtime.workspace;
+  const inference = Object.hasOwn(request, "inference") ? request.inference : ownInference;
   const next = {
     ...base,
     profile: {
       ...profile,
       ...(model !== undefined ? { model } : {}),
       ...(typeof workspace === "string" ? { workspace } : {}),
+      ...(inference ? { inference } : {}),
     },
     ...timeout,
   };
@@ -390,17 +399,32 @@ function applyRequest(base: RunnerSpec, request: ResolvedExecutionRequestV1): Ru
   return next as RunnerSpec;
 }
 
+/**
+ * Reasoning effort has one word in a request: `reasoningEffort`, which is what
+ * engines, opencode and the LLM request body call it. `effort` is the same
+ * setting as a `models.json` alias or an asset's `effort:` frontmatter spells
+ * it, and becomes `reasoningEffort` here, in the one place every layer's
+ * inference is merged, so the nearest layer wins whichever word it used. When
+ * one inference object has both, `reasoningEffort` wins.
+ */
+function withReasoningEffort(inference: ExecutionJsonObject): ExecutionJsonObject {
+  if (!Object.hasOwn(inference, "effort")) return inference;
+  const { effort, ...rest } = inference;
+  return Object.hasOwn(rest, "reasoningEffort") ? rest : { ...rest, reasoningEffort: effort as ExecutionJsonValue };
+}
+
 function mergeInference(
   current: ExecutionJsonObject | null | undefined,
-  next: ExecutionJsonObject | null,
+  layerInference: ExecutionJsonObject | null,
   source: ExecutionFieldProvenance,
   provenance: Record<string, ExecutionFieldProvenance>,
 ): ExecutionJsonObject | null {
   provenance["/inference"] = source;
-  if (next === null) {
+  if (layerInference === null) {
     for (const key of Object.keys(provenance)) if (key.startsWith("/inference/")) delete provenance[key];
     return null;
   }
+  const next = withReasoningEffort(layerInference);
   for (const key of Object.keys(next)) {
     provenance[`/inference/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`] = source;
   }

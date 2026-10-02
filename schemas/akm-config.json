@@ -146,6 +146,24 @@
                 "type": "string",
                 "maxLength": 63,
                 "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+              },
+              "temperature": {
+                "type": "number"
+              },
+              "maxTokens": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "contextLength": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "enableThinking": {
+                "type": "boolean"
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "minLength": 1
               }
             },
             "required": [
@@ -1798,6 +1816,24 @@
                     "type": "string",
                     "maxLength": 63,
                     "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
+                  },
+                  "temperature": {
+                    "type": "number"
+                  },
+                  "maxTokens": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "contextLength": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0
+                  },
+                  "enableThinking": {
+                    "type": "boolean"
+                  },
+                  "reasoningEffort": {
+                    "type": "string",
+                    "minLength": 1
                   }
                 },
                 "required": [

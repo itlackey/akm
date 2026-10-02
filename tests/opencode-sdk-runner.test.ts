@@ -504,6 +504,218 @@ describe("buildSdkConfig — exact model selection", () => {
   });
 });
 
+// ── buildSdkConfig — inference ───────────────────────────────────────────────
+//
+// The routed model carries the dispatch's inference as opencode config
+// (`harnesses/opencode/model-config.ts`): the fallback LLM engine's, under the
+// request's own. The entry shapes were checked against opencode 1.18.25 and a
+// local stub.
+
+describe("buildSdkConfig — inference", () => {
+  const baseProfile: AgentProfile = {
+    name: "opencode-sdk",
+    bin: "",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [],
+    parseOutput: "text",
+  };
+  const endpoint = "http://127.0.0.1:18080/v1/chat/completions";
+  const models = (config: Record<string, unknown>, provider = "akm-custom") =>
+    (config.provider as Record<string, { models: Record<string, unknown> }>)[provider]?.models;
+
+  test("the routed model carries temperature, reasoning effort, thinking and the limit", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, false, {
+      temperature: 0.2,
+      reasoningEffort: "low",
+      enableThinking: false,
+      maxTokens: 4096,
+      contextLength: 120000,
+    });
+
+    expect(models(config)).toEqual({
+      "stub-model": {
+        options: {
+          temperature: 0.2,
+          reasoningEffort: "low",
+          chat_template_kwargs: { enable_thinking: false },
+          enable_thinking: false,
+        },
+        limit: { context: 120000, output: 4096 },
+      },
+    });
+  });
+
+  test("the fallback LLM engine's inference reaches the model, and the request's own wins field by field", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const fallback = {
+      endpoint,
+      model: "stub-model",
+      temperature: 0,
+      reasoningEffort: "none",
+      maxTokens: 3000,
+      contextLength: 100000,
+    };
+
+    expect(models(buildSdkConfig(baseProfile, fallback))).toEqual({
+      "stub-model": {
+        options: { temperature: 0, reasoningEffort: "none" },
+        limit: { context: 100000, output: 3000 },
+      },
+    });
+    expect(models(buildSdkConfig(baseProfile, fallback, false, { reasoningEffort: "high", maxTokens: 2048 }))).toEqual({
+      "stub-model": {
+        options: { temperature: 0, reasoningEffort: "high" },
+        limit: { context: 100000, output: 2048 },
+      },
+    });
+  });
+
+  test("an explicit null request inference clears the fallback's", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model", temperature: 0 }, false, null);
+
+    expect(models(config)).toEqual({ "stub-model": {} });
+  });
+
+  // opencode refuses half a limit, and a half would overwrite the other half
+  // of a limit the user declared for the model.
+  test.each([
+    ["maxTokens", { maxTokens: 4096 }],
+    ["contextLength", { contextLength: 120000 }],
+  ])("%s alone declares no limit", async (_key, inference) => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+
+    expect(models(buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, false, inference))).toEqual({
+      "stub-model": {},
+    });
+  });
+
+  test("no inference declares the bare model, as before (#1015)", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+
+    expect(models(buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, false, {}))).toEqual({
+      "stub-model": {},
+    });
+  });
+
+  test("without a fallback endpoint the entry merges under the model's own provider", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig({ ...baseProfile, model: "krang/chat/qwen3.8-27b" }, undefined, false, {
+      reasoningEffort: "low",
+    });
+
+    expect(config).toEqual({
+      model: "krang/chat/qwen3.8-27b",
+      provider: { krang: { models: { "chat/qwen3.8-27b": { options: { reasoningEffort: "low" } } } } },
+    });
+  });
+
+  test("a model with no provider to attach to carries nothing", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+
+    expect(
+      buildSdkConfig({ ...baseProfile, model: "unqualified" }, undefined, false, { reasoningEffort: "low" }),
+    ).toEqual({
+      model: "unqualified",
+    });
+  });
+
+  // opencode makes a title call of its own on the model and applies the
+  // model's options to it; the model-work agent is akm's, so its options reach
+  // only the work.
+  test("model work: the confined agent carries the options and the model only the limit", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const inference = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
+    const owned = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true, inference);
+    const merged = buildSdkConfig({ ...baseProfile, model: "krang/m" }, undefined, true, inference);
+
+    for (const config of [owned, merged]) {
+      const agent = (config.agent as Record<string, { options?: unknown; permission: unknown }>)["akm-model-work"];
+      expect(agent?.options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
+      expect(agent?.permission).toMatchObject({ "*": "deny", bash: "deny" });
+    }
+    expect(models(owned)).toEqual({ "stub-model": { limit: { context: 120000, output: 4096 } } });
+    expect(models(merged, "krang")).toEqual({ m: { limit: { context: 120000, output: 4096 } } });
+  });
+
+  // The model-work agent runs whichever model opencode picks, so it carries the
+  // options with no model named: the zero-config `opencode-sdk` engine has none.
+  test("model work with no model named: the agent still carries the options, and no limit is declared", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, undefined, true, {
+      reasoningEffort: "low",
+      maxTokens: 4096,
+      contextLength: 120000,
+    });
+
+    expect(config).not.toHaveProperty("provider");
+    expect(config).not.toHaveProperty("model");
+    expect((config.agent as Record<string, { options?: unknown }>)["akm-model-work"]?.options).toEqual({
+      reasoningEffort: "low",
+    });
+  });
+
+  test("an ordinary dispatch with no model named carries nothing", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+
+    expect(buildSdkConfig(baseProfile, undefined, false, { reasoningEffort: "low" })).toEqual({});
+  });
+
+  test("model work with no inference defines the agent without options", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true);
+
+    expect((config.agent as Record<string, object>)["akm-model-work"]).not.toHaveProperty("options");
+  });
+});
+
+describe("runOpencodeSdk — the dispatch's inference reaches the server config", () => {
+  afterEach(() => {
+    __setServerFactory(null);
+    closeServer();
+  });
+
+  test("the request's inference is declared on the model the server routes to", async () => {
+    let started: Record<string, unknown> | undefined;
+    __setServerFactory((async (options: { config?: Record<string, unknown> }) => {
+      started = options.config;
+      return makeFakeServer({}).server as never;
+    }) as never);
+
+    const result = await runOpencodeSdk(
+      baseProfile,
+      "p",
+      { timeoutMs: null, dispatch: { prompt: "p", inference: { reasoningEffort: "low", temperature: 0.2 } } },
+      { endpoint: "http://127.0.0.1:18080/v1/chat/completions", model: "stub-model", temperature: 0 },
+    );
+
+    expect(result.ok).toBe(true);
+    const provider = started?.provider as Record<string, { models: Record<string, unknown> }>;
+    expect(provider["akm-custom"]?.models).toEqual({
+      "stub-model": { options: { temperature: 0.2, reasoningEffort: "low" } },
+    });
+  });
+
+  test("a different inference starts its own server, as a different model or key does", async () => {
+    const configs: Record<string, unknown>[] = [];
+    __setServerFactory((async (options: { config?: Record<string, unknown> }) => {
+      configs.push(options.config ?? {});
+      return makeFakeServer({}).server as never;
+    }) as never);
+    const fallback = { endpoint: "http://127.0.0.1:18080/v1/chat/completions", model: "stub-model" };
+    const run = (inference: Record<string, string>) =>
+      runOpencodeSdk(baseProfile, "p", { timeoutMs: null, dispatch: { prompt: "p", inference } }, fallback);
+
+    await run({ reasoningEffort: "low" });
+    await run({ reasoningEffort: "low" });
+    expect(configs).toHaveLength(1);
+    await run({ reasoningEffort: "high" });
+    expect(configs).toHaveLength(2);
+  });
+});
+
 // ── P0.5 seams: usage + sessionId + cooperative abort ─────────────────────────
 
 describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
