@@ -56,10 +56,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `opencode` and `opencode-sdk` run an injected `akm-model-work` agent that
   can read and edit only inside the working directory and has no bash:
   opencode checks a bash rule against the command's words only, so
-  `akm show x > ~/stash/asset.md` would pass an `akm show *` rule. Every other
-  harness refuses the policy. Such a dispatch ignores the engine's `args` and
-  `workspace`, and refuses to start when the temporary directory is inside a
-  git repository, which opencode would treat as its working directory.
+  `akm show x > ~/stash/asset.md` would pass an `akm show *` rule. The agent
+  has its own short prompt in place of opencode's coding-assistant prompt, an
+  8-step limit, and no automatic compaction. opencode only asks the model to
+  stop at that limit, so `opencode-sdk` aborts the session two steps past it,
+  and aborts a session the dispatch times out on; on `opencode` the dispatch
+  timeout is the bound. Every other harness refuses the policy. Such a
+  dispatch ignores the engine's `args` and `workspace`, refuses to start when
+  the temporary directory is inside a git repository, which opencode would
+  treat as its working directory, and fails with `parse_error` when the agent
+  ends with no answer, as opencode can at its step limit.
 
 ### Fixed
 

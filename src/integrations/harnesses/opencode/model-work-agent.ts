@@ -16,14 +16,34 @@
  *     matches a bash rule against the command's words only, so
  *     `akm show x > ~/stash/asset.md` would pass an `akm show *` rule and
  *     write anywhere.
- *   - every other tool is denied. Each permission opencode knows is named, so
- *     a same-named agent in the user's config cannot re-allow one through
+ *   - every other tool is denied, `doom_loop` included (its default, `ask`,
+ *     would hang a headless server). Each permission opencode knows is named,
+ *     so a same-named agent in the user's config cannot re-allow one through
  *     opencode's config merge, and `*` covers the rest.
  * The same rules also go in the top-level `permission`, so an opencode that
  * falls back to its default agent is confined too.
+ *
+ * The agent also keeps opencode's coding-assistant defaults out of model work:
+ *   - its own short `prompt` replaces the provider's coding prompt, which
+ *     tells the model to search extensively; opencode appends a request's
+ *     system text after it and never substitutes it;
+ *   - `steps` bounds the agentic loop. opencode only asks the model to stop
+ *     at the limit, so the SDK runner also aborts the session a little past
+ *     it (`MODEL_WORK_STEP_GRACE`); on the CLI the dispatch timeout bounds it;
+ *   - automatic compaction is off, so a long run cannot summarize the task
+ *     away.
  */
 
 export const MODEL_WORK_OPENCODE_AGENT = "akm-model-work";
+
+/** The agentic iterations a model-work run may take: a judge answers in one, a generator in a few. */
+export const MODEL_WORK_STEPS = 8;
+
+/** Steps past {@link MODEL_WORK_STEPS} after which the SDK runner aborts the session. */
+export const MODEL_WORK_STEP_GRACE = 2;
+
+const MODEL_WORK_PROMPT =
+  "You do one bounded task for akm. Use tools only to check what the task needs, never repeat a tool call, and reply with exactly what the task asks for.";
 
 const MODEL_WORK_PERMISSION = {
   "*": "deny",
@@ -48,10 +68,13 @@ const MODEL_WORK_PERMISSION = {
 export function modelWorkOpencodeConfig(): Record<string, unknown> {
   return {
     permission: { ...MODEL_WORK_PERMISSION },
+    compaction: { auto: false },
     agent: {
       [MODEL_WORK_OPENCODE_AGENT]: {
         mode: "primary",
         description: "akm unattended model work: read and edit inside its working directory only.",
+        prompt: MODEL_WORK_PROMPT,
+        steps: MODEL_WORK_STEPS,
         permission: { ...MODEL_WORK_PERMISSION },
       },
     },

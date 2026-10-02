@@ -227,7 +227,9 @@ function createModelWorkDirectory(): string {
 /**
  * Run a built execution. Credentials are read here, once per call, and never
  * returned. Model work on an agent or SDK engine runs in a scratch working
- * directory that akm creates for the dispatch and removes after it.
+ * directory that akm creates for the dispatch and removes after it, and must
+ * end with an answer: an agent that stops with none (opencode at its step
+ * limit, for one) has failed with `parse_error`.
  */
 export async function runExecution(
   execution: BuiltExecution,
@@ -244,12 +246,13 @@ export async function runExecution(
   }
 }
 
+/** `scratch` is the model-work working directory, set only for model work on an agent or SDK engine. */
 async function runBuiltExecution(
   execution: BuiltExecution,
   options: RunExecutionOptions,
-  cwd: string | undefined,
+  scratch: string | undefined,
 ): Promise<AgentRunResult> {
-  const opts: RunAgentOptions = { ...execution.options, ...(cwd ? { cwd } : {}) };
+  const opts: RunAgentOptions = { ...execution.options, ...(scratch ? { cwd: scratch } : {}) };
   const operational = options.runOptions ?? {};
   for (const key of OPERATIONAL_OPTIONS) {
     if (operational[key] !== undefined) (opts as Record<string, unknown>)[key] = operational[key];
@@ -282,7 +285,11 @@ async function runBuiltExecution(
       };
     }
   };
-  const result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  let result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  if (scratch !== undefined && result.ok && result.stdout.trim() === "") {
+    const error = `Engine "${execution.runner.engine}" returned no answer.`;
+    result = { ...result, ok: false, reason: "parse_error", error };
+  }
   // The LLM transport records each HTTP attempt itself.
   if (execution.runner.kind !== "llm") recordDispatchUsage(execution, result);
   return result;

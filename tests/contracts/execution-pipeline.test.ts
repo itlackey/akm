@@ -492,6 +492,21 @@ describe("the model-work tool policy", () => {
     }
   });
 
+  test("an agent that ends with no answer has failed with parse_error; other work keeps its empty reply", async () => {
+    const runAgent = async () => ({ ok: true, exitCode: 0, stdout: "  \n", stderr: "", durationMs: 1 });
+    const run = (current: Record<string, unknown>) => {
+      const resolved = resolveExecution({ content: "x", config: modelWork, current });
+      return runExecution(buildExecution(resolved.request, resolved.runner), { runAgent });
+    };
+
+    expect(await run({ tools: MODEL_WORK_TOOLS })).toMatchObject({
+      ok: false,
+      reason: "parse_error",
+      error: 'Engine "claude" returned no answer.',
+    });
+    expect(await run({})).toMatchObject({ ok: true, stdout: "  \n" });
+  });
+
   test("a scratch directory inside a git repository is refused before anything runs", async () => {
     // opencode would let the agent edit anywhere in that repository.
     const sandbox = makeSandboxDir("akm-model-work-repo");

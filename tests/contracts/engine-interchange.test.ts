@@ -353,8 +353,16 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     edit: "allow",
     external_directory: "deny",
     bash: "deny",
+    doom_loop: "deny",
     webfetch: "deny",
     task: "deny",
+  };
+  /** Its own prompt in place of opencode's coding prompt, a step bound, and no auto-compaction. */
+  const OPENCODE_AGENT = {
+    mode: "primary",
+    prompt:
+      "You do one bounded task for akm. Use tools only to check what the task needs, never repeat a tool call, and reply with exactly what the task asks for.",
+    steps: 8,
   };
 
   /** What a confining CLI harness must show: its exact command and injected config. */
@@ -381,9 +389,10 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       argv: [bin, "run", "--agent", MODEL_WORK_OPENCODE_AGENT, "--", PROMPT],
       config: expect.objectContaining({
         permission: expect.objectContaining(OPENCODE_RULES),
+        compaction: { auto: false },
         agent: {
           [MODEL_WORK_OPENCODE_AGENT]: expect.objectContaining({
-            mode: "primary",
+            ...OPENCODE_AGENT,
             permission: expect.objectContaining(OPENCODE_RULES),
           }),
         },
@@ -456,7 +465,8 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(result.ok).toBe(true);
     expect(started?.config).toMatchObject({
       permission: OPENCODE_RULES,
-      agent: { [MODEL_WORK_OPENCODE_AGENT]: { mode: "primary", permission: OPENCODE_RULES } },
+      compaction: { auto: false },
+      agent: { [MODEL_WORK_OPENCODE_AGENT]: { ...OPENCODE_AGENT, permission: OPENCODE_RULES } },
     });
     expect(sdkBodies.at(-1)).toMatchObject({ agent: MODEL_WORK_OPENCODE_AGENT });
     expect(sdkBodies.at(-1)).not.toHaveProperty("tools");
