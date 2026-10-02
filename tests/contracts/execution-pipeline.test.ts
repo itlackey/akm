@@ -16,6 +16,7 @@ import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-
 import type { AkmConfig } from "../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
+import { MODEL_WORK_TOOLS } from "../../src/execution/source";
 import {
   buildExecution,
   buildExecutionFromWire,
@@ -24,7 +25,7 @@ import {
 } from "../../src/integrations/agent/execution";
 import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
-import { withEnv } from "../_helpers/sandbox";
+import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
 function exitedWith(stdout: string): SpawnedSubprocess {
   const stream = (text: string) =>
@@ -445,5 +446,78 @@ describe("dispatch options", () => {
     expect(env.KEEP).toBe("request-value");
     expect(env.AKM_EVENT_SOURCE).toBe("task");
     expect(cwd).toBeUndefined();
+  });
+});
+
+describe("the model-work tool policy", () => {
+  const engines = { claude: { kind: "agent", platform: "claude", workspace: "/configured/workspace" } };
+  const modelWork = config({ engines, defaults: { engine: "claude" } });
+
+  test("is akm's own: allowed without execution.allowedTools, on a runner-only resolution too", () => {
+    const { runner } = resolveExecution({ content: "x", config: modelWork });
+    const again = resolveExecution({ content: "y", runner, current: { tools: MODEL_WORK_TOOLS } });
+    expect(again.request.authorization).toMatchObject({ status: "allowed", policy: { id: "model-work" } });
+    expect(() => buildExecution(again.request, again.runner)).not.toThrow();
+  });
+
+  test("cannot run a native agent, which would replace the confined one", () => {
+    const resolved = resolveExecution({
+      content: "x",
+      config: modelWork,
+      current: { agent: "reviewer", tools: MODEL_WORK_TOOLS },
+    });
+    expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
+      /native agent "reviewer" under the model-work tool policy/,
+    );
+  });
+
+  test("an agent runs in a fresh scratch directory, removed afterwards even when the dispatch throws", async () => {
+    const resolved = resolveExecution({ content: "x", config: modelWork, current: { tools: MODEL_WORK_TOOLS } });
+    const built = buildExecution(resolved.request, resolved.runner);
+    const seen: string[] = [];
+    const runAgent = async (_profile: unknown, _prompt: string, opts: { cwd?: string }) => {
+      seen.push(opts.cwd ?? "");
+      if (seen.length === 2) throw new Error("dispatch exploded");
+      return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
+    };
+    await runExecution(built, { runAgent });
+    await expect(runExecution(built, { runAgent })).rejects.toThrow("dispatch exploded");
+
+    expect(seen).toHaveLength(2);
+    expect(new Set(seen).size).toBe(2);
+    for (const cwd of seen) {
+      // Not the engine's configured workspace, which could be the stash.
+      expect(path.basename(cwd)).toStartWith("akm-model-work-");
+      expect(fs.existsSync(cwd)).toBe(false);
+    }
+  });
+
+  test("a scratch directory inside a git repository is refused before anything runs", async () => {
+    // opencode would let the agent edit anywhere in that repository.
+    const sandbox = makeSandboxDir("akm-model-work-repo");
+    try {
+      fs.mkdirSync(path.join(sandbox.dir, ".git"));
+      fs.writeFileSync(path.join(sandbox.dir, ".git", "HEAD"), "ref: refs/heads/main\n");
+      const tmp = path.join(sandbox.dir, "tmp");
+      fs.mkdirSync(tmp);
+      const resolved = resolveExecution({ content: "x", config: modelWork, current: { tools: MODEL_WORK_TOOLS } });
+      let spawned = false;
+      await withEnv({ TMPDIR: tmp }, async () => {
+        await expect(
+          runExecution(buildExecution(resolved.request, resolved.runner), {
+            runOptions: {
+              spawn: () => {
+                spawned = true;
+                return exitedWith("ok");
+              },
+            },
+          }),
+        ).rejects.toThrow(/outside any git repository/);
+      });
+      expect(spawned).toBe(false);
+      expect(fs.readdirSync(tmp)).toEqual([]);
+    } finally {
+      sandbox.cleanup();
+    }
   });
 });

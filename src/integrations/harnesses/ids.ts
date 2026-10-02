@@ -29,19 +29,25 @@ export interface HarnessIdEntry {
   readonly id: string;
   /** Mirrors `AkmHarness.capabilities.agentDispatch`. */
   readonly agentDispatch: boolean;
+  /**
+   * The harness confines the model-work tool policy (`MODEL_WORK_TOOLS`), so
+   * unattended model work may run on it. Pinned to each lowerer by the C3 rows
+   * of `tests/contracts/engine-interchange.test.ts`.
+   */
+  readonly enforcesModelWorkTools: boolean;
 }
 
 export const HARNESS_ID_TABLE: readonly HarnessIdEntry[] = [
-  { id: "opencode", agentDispatch: true },
-  { id: "claude", agentDispatch: true },
-  { id: "opencode-sdk", agentDispatch: true },
-  { id: "codex", agentDispatch: true },
-  { id: "copilot", agentDispatch: true },
-  { id: "pi", agentDispatch: true },
-  { id: "gemini", agentDispatch: true },
-  { id: "aider", agentDispatch: true },
-  { id: "amazonq", agentDispatch: true },
-  { id: "openhands", agentDispatch: true },
+  { id: "opencode", agentDispatch: true, enforcesModelWorkTools: true },
+  { id: "claude", agentDispatch: true, enforcesModelWorkTools: true },
+  { id: "opencode-sdk", agentDispatch: true, enforcesModelWorkTools: true },
+  { id: "codex", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "copilot", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "pi", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "gemini", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "aider", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "amazonq", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "openhands", agentDispatch: true, enforcesModelWorkTools: false },
 ] as const;
 
 /**

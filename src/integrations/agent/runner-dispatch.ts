@@ -10,15 +10,19 @@
  * from the result.
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { assertNever } from "../../core/assert";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
+import { ConfigError, UsageError } from "../../core/errors";
 import {
   collectSensitiveValues,
   isEnvPassthroughValueSafeToExpose,
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
+import { isModelWorkTools } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
@@ -191,12 +195,61 @@ async function dispatchRunner(
   return redactResult(result, collectSensitiveValues(secrets));
 }
 
-/** Run a built execution. Credentials are read here, once per call, and never returned. */
+/** The git repository a directory is inside, if any: a `.git` file, or a `.git` directory with a HEAD. */
+function enclosingGitRepository(dir: string): string | undefined {
+  for (let current = fs.realpathSync(dir); ; current = path.dirname(current)) {
+    const marker = path.join(current, ".git");
+    if (fs.existsSync(path.join(marker, "HEAD")) || (fs.existsSync(marker) && fs.statSync(marker).isFile())) {
+      return current;
+    }
+    if (path.dirname(current) === current) return undefined;
+  }
+}
+
+/**
+ * The scratch working directory for one model-work dispatch on an agent or SDK
+ * engine, so the edit the model-work tool policy grants never reaches the
+ * stash. opencode counts a whole git repository as inside its working
+ * directory, so a scratch directory inside one is refused.
+ */
+function createModelWorkDirectory(): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
+  const repository = enclosingGitRepository(dir);
+  if (repository === undefined) return dir;
+  fs.rmSync(dir, { recursive: true, force: true });
+  throw new ConfigError(
+    `Model work runs an agent in a scratch directory outside any git repository, but ${dir} is inside the repository at ${repository}.`,
+    "INVALID_CONFIG_FILE",
+    "Point TMPDIR at a directory outside any git repository.",
+  );
+}
+
+/**
+ * Run a built execution. Credentials are read here, once per call, and never
+ * returned. Model work on an agent or SDK engine runs in a scratch working
+ * directory that akm creates for the dispatch and removes after it.
+ */
 export async function runExecution(
   execution: BuiltExecution,
   options: RunExecutionOptions = {},
 ): Promise<AgentRunResult> {
-  const opts: RunAgentOptions = { ...execution.options };
+  const scratch =
+    execution.runner.kind !== "llm" && isModelWorkTools(execution.request.tools)
+      ? createModelWorkDirectory()
+      : undefined;
+  try {
+    return await runBuiltExecution(execution, options, scratch);
+  } finally {
+    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+async function runBuiltExecution(
+  execution: BuiltExecution,
+  options: RunExecutionOptions,
+  cwd: string | undefined,
+): Promise<AgentRunResult> {
+  const opts: RunAgentOptions = { ...execution.options, ...(cwd ? { cwd } : {}) };
   const operational = options.runOptions ?? {};
   for (const key of OPERATIONAL_OPTIONS) {
     if (operational[key] !== undefined) (opts as Record<string, unknown>)[key] = operational[key];

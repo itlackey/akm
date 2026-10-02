@@ -16,8 +16,10 @@
  * (the canonical harness id).
  */
 
+import { isModelWorkTools } from "../../../execution/source";
 import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work-agent";
 
 /**
  * OpenCode builder.
@@ -28,7 +30,12 @@ import { createAgentRequestLowerer } from "../../agent/request-lowering";
  * into the prompt.
  *
  * Tool policy is omitted — opencode manages tool access through its own agent
- * config files, not via CLI flags.
+ * config files, not via CLI flags. The one exception is the model-work tool
+ * policy: the builder injects its confined agent through
+ * `OPENCODE_CONFIG_CONTENT` and selects it with `--agent`. That command is
+ * akm's own (`opencode run --agent akm-model-work`): the engine's `args` are
+ * left out, because one such as `--attach` or `--dir` would move the run out
+ * of the injected config or the scratch working directory.
  */
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
@@ -38,8 +45,23 @@ export const opencodeBuilder: AgentCommandBuilder = {
     personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
+    modelWorkTools: true,
   }),
   build(profile, req) {
+    if (isModelWorkTools(req.tools)) {
+      return {
+        argv: [
+          profile.bin,
+          "run",
+          "--agent",
+          MODEL_WORK_OPENCODE_AGENT,
+          ...(req.model ? ["--model", req.model] : []),
+          "--",
+          req.prompt,
+        ],
+        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig()) },
+      };
+    }
     const args: string[] = req.model ? [] : [...profile.args];
     if (req.model) {
       for (let index = 0; index < profile.args.length; index += 1) {

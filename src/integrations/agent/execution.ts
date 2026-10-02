@@ -39,6 +39,7 @@ import {
 } from "../../execution/resolved-request";
 import {
   cloneToolSelection,
+  isModelWorkTools,
   isPortableExecutionAgentSelector,
   type ToolSelection,
   type UnresolvedExecutionDefaults,
@@ -317,9 +318,16 @@ function requestedToolNames(tools: Exclude<ToolSelection, null>): readonly strin
   return Object.keys(policy).filter((tool) => policy[tool] === true);
 }
 
-/** Assets may only narrow the host's `execution.allowedTools`; without a config nothing is allowed. */
+/**
+ * Assets may only narrow the host's `execution.allowedTools`; without a config
+ * nothing is allowed. The model-work policy is akm's own and always allowed:
+ * it confines an engine more tightly than leaving tools unset does.
+ */
 function authorizeTools(tools: ToolSelection | undefined, config: AkmConfig | undefined): ToolAuthorizationResult {
   if (!hasToolSelection(tools)) return { status: "not-required" };
+  if (isModelWorkTools(tools)) {
+    return { status: "allowed", reason: "The model-work tool policy is akm's own.", policy: { id: "model-work" } };
+  }
   if (!config) {
     return {
       status: "denied",
@@ -556,7 +564,8 @@ function buildLlm(
       "INVALID_CONFIG_FILE",
     );
   }
-  if (hasToolSelection(request.tools)) {
+  // An LLM has no tools, which already meets the model-work policy.
+  if (hasToolSelection(request.tools) && !isModelWorkTools(request.tools)) {
     throw new ConfigError("The direct LLM transport cannot enforce the resolved tool policy.", "INVALID_CONFIG_FILE");
   }
   const notices: Readonly<LoweringNotice>[] = [...request.notices];

@@ -97,10 +97,12 @@ import { createHash } from "node:crypto";
 import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
+import { isModelWorkTools } from "../../../execution/source";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "../opencode/model-work-agent";
 
 /** Per-call working-directory scope (see module doc — SDK `query.directory`). */
 interface SdkDirectoryQuery {
@@ -307,9 +309,14 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
 /**
  * Assemble the OpenCode SDK server config from the profile + LLM fallback.
  * Pure and exported for tests. `profile.model` is already exact because model
- * aliases resolve once before harness lowering.
+ * aliases resolve once before harness lowering. A server for model work also
+ * defines the confined model-work agent (`../opencode/model-work-agent`).
  */
-export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
+export function buildSdkConfig(
+  profile: AgentProfile,
+  llmConfig?: LlmConnectionConfig,
+  modelWork = false,
+): Record<string, unknown> {
   const endpoint = llmConfig?.endpoint;
   const apiKey = llmConfig?.apiKey;
   const profileModel = profile.model;
@@ -336,7 +343,7 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
     };
     if (modelId) sdkConfig.model = `akm-custom/${modelId}`;
   }
-  return sdkConfig;
+  return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig() } : sdkConfig;
 }
 
 /** Digest the executable and exact environment received by the child. */
@@ -657,9 +664,10 @@ function getOrStartServer(
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
   envSource: NodeJS.ProcessEnv = process.env,
+  modelWork = false,
 ): { promise: Promise<SdkServer>; release(): void } {
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
-  const sdkConfig = buildSdkConfig(profile, llmConfig);
+  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork);
   const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
   const key = serverRegistryKey(profile, serverEnv);
   let entry = _servers.get(key);
@@ -859,12 +867,13 @@ export async function runOpencodeSdk(
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
 
   if (opts.signal?.aborted) return abortedBeforeSdkStart(profile);
+  const modelWork = isModelWorkTools(opts.dispatch?.tools);
 
   let client: SdkClient;
   if (_testServer) {
     client = _testServer.client;
   } else {
-    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource);
+    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource, modelWork);
     try {
       const startup = await raceSdkOperation(startupHandle.promise, {
         timeoutMs: remainingTimeoutMs(),
@@ -993,10 +1002,11 @@ export async function runOpencodeSdk(
   // dispatch request. Both were previously accepted on AgentDispatchRequest but
   // silently dropped on the SDK path, so SDK-mode dispatch ignored agent-asset
   // system prompts and tool policies entirely (the CLI path honours both).
+  // Model work runs the confined agent its server config defines; its tools are that agent's.
   const dispatch = opts.dispatch;
-  const agent = dispatch?.agent;
+  const agent = modelWork ? MODEL_WORK_OPENCODE_AGENT : dispatch?.agent;
   const system = dispatch?.systemPrompt;
-  const tools = toolsToSdkAllowlist(dispatch?.tools);
+  const tools = modelWork ? undefined : toolsToSdkAllowlist(dispatch?.tools);
   const body: {
     parts: { type: string; text: string }[];
     agent?: string;
