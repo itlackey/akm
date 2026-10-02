@@ -110,7 +110,7 @@ export async function akmShowUnified(input: {
   //     resolved here before the index lookup; meta docs are not asset refs.
   {
     const metaRef = parseMetaRef(ref);
-    if (metaRef) return showStashMeta(metaRef, input.skipLogging);
+    if (metaRef) return showStashMeta(metaRef);
   }
 
   const legacyReplacement = legacyColonRefReplacement(ref);
@@ -180,7 +180,7 @@ function legacyColonRefReplacement(ref: string): string | undefined {
  * to that stash; an uninstalled origin yields an actionable "not installed"
  * error. The file is read directly from disk — `.meta/` is never indexed.
  */
-async function showStashMeta(metaRef: MetaRef, skipLogging?: boolean): Promise<ShowResponse> {
+async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
   const allSources = resolveSourceEntries();
   const sources = resolveSourcesForOrigin(metaRef.origin, allSources);
 
@@ -196,9 +196,7 @@ async function showStashMeta(metaRef: MetaRef, skipLogging?: boolean): Promise<S
     const metaFile = readMetaFile(source.path, metaRef.name);
     if (!metaFile) continue;
     const editable = isEditable(metaFile.path, config, allSources);
-    if (!skipLogging) {
-      appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
-    }
+    appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
     return {
       type: "meta",
       name: metaRef.name,
