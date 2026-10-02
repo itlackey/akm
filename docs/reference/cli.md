@@ -2326,7 +2326,8 @@ or inference payload was selected.
 
 **Platform-specific dispatch:** akm uses a platform builder to construct the
 CLI argv for each engine's harness platform. `platform: "opencode"` engines emit:
-`opencode run [--system-prompt "..."] [--model opencode/claude-opus-4-7] "<prompt>"`.
+`opencode run [--model opencode/claude-opus-4-7] "<prompt>"`. `opencode run` has
+no system-prompt option, so akm composes a persona into the prompt.
 `platform: "claude"` engines emit:
 `claude [--system-prompt "..."] [--model claude-opus-4-7] --print -- "<prompt>"`.
 Agent engines may set `bin`, `args`, `workspace`, `model`, and `timeoutMs` in

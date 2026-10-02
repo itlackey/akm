@@ -80,18 +80,14 @@ describe("opencodeBuilder — basic dispatch", () => {
     ]);
   });
 
-  test("with systemPrompt: --system-prompt flag present before prompt", async () => {
+  // `opencode run` 1.18.25 has no --system-prompt: it prints its usage and
+  // exits 1. A persona reaches opencode through the prompt instead.
+  test("never emits --system-prompt; the persona channel is the prompt", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
-    const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work", systemPrompt: "You are helpful." };
-    const cmd = builder.build(profile, req);
-    const argv = cmd.argv as string[];
-    const idx = argv.indexOf("--system-prompt");
-    expect(idx).toBeGreaterThan(-1);
-    expect(argv[idx + 1]).toBe("You are helpful.");
-    // Prompt is last
-    expect(argv[argv.length - 1]).toBe("do work");
+    expect(builder.personaChannel).toBe("prompt");
+    expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run", "--", "do work"]);
   });
 
   test("with pre-resolved model: --model flag present", async () => {

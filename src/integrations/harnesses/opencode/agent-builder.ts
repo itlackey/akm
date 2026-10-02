@@ -21,17 +21,21 @@ import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /**
  * OpenCode builder.
- * Command shape: opencode run [--system-prompt "..."] [--agent <name>] [--model <m>] "<prompt>"
+ * Command shape: opencode run [--agent <name>] [--model <m>] -- "<prompt>"
+ *
+ * `opencode run` has no system-prompt option (1.18.25 prints its usage and
+ * exits 1 on `--system-prompt`), so the shared lowerer composes a persona
+ * into the prompt.
  *
  * Tool policy is omitted — opencode manages tool access through its own agent
  * config files, not via CLI flags.
  */
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
-  personaChannel: "native",
+  personaChannel: "prompt",
   lower: createAgentRequestLowerer({
     adapter: "opencode",
-    personaChannel: "native",
+    personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
     outputSchema: false,
@@ -48,9 +52,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
           args.push(arg);
         }
       }
-    }
-    if (req.systemPrompt) {
-      args.push("--system-prompt", req.systemPrompt);
     }
     if (req.agent) {
       args.push("--agent", req.agent);

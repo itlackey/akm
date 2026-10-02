@@ -96,6 +96,20 @@ describe("agent engines: config engine → argv", () => {
     ]);
   });
 
+  test("opencode gets the persona composed into its prompt, since `opencode run` has no --system-prompt", async () => {
+    const { argv } = await spawnedFor({
+      content: "Review the diff.",
+      config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
+      persona: reviewer(),
+    });
+    expect(argv).toEqual([
+      "opencode",
+      "run",
+      "--",
+      "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
+    ]);
+  });
+
   test("opencode replaces its profile model flag with the resolved one", async () => {
     const { argv } = await spawnedFor({
       content: "Summarise.",
