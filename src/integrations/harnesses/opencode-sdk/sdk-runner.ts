@@ -94,6 +94,7 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
 import type { ShowResponse } from "../../../sources/types";
@@ -123,11 +124,15 @@ interface SdkClient {
       };
       query?: SdkDirectoryQuery;
     }): Promise<{
+      // The client is created without `throwOnError`, so an HTTP error
+      // resolves to `{ error }` (the parsed response body) instead of throwing.
+      error?: unknown;
       data?: {
         // AssistantMessage projection (SDK 1.2.20 types.gen.d.ts): token
-        // accounting lives on info.tokens. Fields optional here so a fake or
-        // an older server that omits them cannot crash extraction.
-        info?: { tokens?: { input?: number; output?: number; reasoning?: number } };
+        // accounting lives on info.tokens, and a provider failure on
+        // info.error. Fields optional here so a fake or an older server that
+        // omits them cannot crash extraction.
+        info?: { tokens?: { input?: number; output?: number; reasoning?: number }; error?: unknown };
         parts?: { type: string; text?: string }[];
       };
     }>;
@@ -313,7 +318,12 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
   if (endpoint || apiKey) {
-    // Configure a custom OpenAI-compatible provider
+    // The first path segment selects the OpenCode provider. Model IDs may
+    // themselves contain slashes, but still belong to this custom endpoint.
+    const modelId = model?.startsWith("akm-custom/") ? model.slice("akm-custom/".length) : model;
+    // Configure a custom OpenAI-compatible provider. OpenCode registers only
+    // the models a custom provider lists, so the routed model is declared
+    // (#1015: without it every dispatch failed with ProviderModelNotFoundError).
     sdkConfig.provider = {
       "akm-custom": {
         npm: "@ai-sdk/openai-compatible",
@@ -321,11 +331,10 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
           baseURL: canonicalProviderBase(endpoint) ?? undefined,
           ...(apiKey ? { apiKey } : {}),
         },
+        ...(modelId ? { models: { [modelId]: {} } } : {}),
       },
     };
-    // The first path segment selects the OpenCode provider. Model IDs may
-    // themselves contain slashes, but still belong to this custom endpoint.
-    if (model) sdkConfig.model = model.startsWith("akm-custom/") ? model : `akm-custom/${model}`;
+    if (modelId) sdkConfig.model = `akm-custom/${modelId}`;
   }
   return sdkConfig;
 }
@@ -781,6 +790,24 @@ function appendStderr(stderr: string, message: string): string {
   return stderr ? `${stderr}\n${message}` : message;
 }
 
+/**
+ * Map an SDK `{ error }` result or a reply's `info.error` onto a failure
+ * (#1015). Both are opencode NamedErrors, `{ name, data: { message } }`. An
+ * aborted message is `aborted`, a reply cut off at the output limit is
+ * `parse_error`, and every other error (auth, API, unknown, an HTTP error
+ * body) is `non_zero_exit`.
+ */
+function sdkErrorFailure(error: unknown): { reason: AgentFailureReason; message: string } {
+  if (!isRecord(error) || typeof error.name !== "string") {
+    return { reason: "non_zero_exit", message: typeof error === "string" ? error : JSON.stringify(error) };
+  }
+  const detail = isRecord(error.data) ? error.data.message : undefined;
+  const message = typeof detail === "string" ? `${error.name}: ${detail}` : error.name;
+  if (error.name === "MessageAbortedError") return { reason: "aborted", message };
+  if (error.name === "MessageOutputLengthError") return { reason: "parse_error", message };
+  return { reason: "non_zero_exit", message };
+}
+
 async function deleteSessionBestEffort(
   client: SdkClient,
   sessionId: string,
@@ -1020,22 +1047,38 @@ export async function runOpencodeSdk(
       };
     } else {
       const parts = prompted.data?.parts ?? [];
-      const textPart = parts.find((p) => p.type === "text");
-      const stdout = textPart?.text ?? "";
+      // The last text part is the answer; earlier ones narrate the steps before it.
+      const stdout = parts.filter((p) => p.type === "text").at(-1)?.text ?? "";
       // Token accounting from the AssistantMessage (previously discarded) —
       // the seam that makes workflow budget.maxTokens meterable on the
       // default sdk runner.
       const usage = extractUsage(prompted.data?.info);
+      const sdkError = prompted.error ?? prompted.data?.info?.error;
 
-      result = {
-        ok: true,
-        stdout,
-        stderr: "",
-        durationMs: Date.now() - start,
-        exitCode: 0,
-        sessionId,
-        ...(usage ? { usage } : {}),
-      };
+      if (sdkError) {
+        const failure = sdkErrorFailure(sdkError);
+        result = {
+          ok: false,
+          stdout,
+          stderr: failure.message,
+          durationMs: Date.now() - start,
+          exitCode: failure.reason === "aborted" ? null : 1,
+          reason: failure.reason,
+          error: failure.message,
+          sessionId,
+          ...(usage ? { usage } : {}),
+        };
+      } else {
+        result = {
+          ok: true,
+          stdout,
+          stderr: "",
+          durationMs: Date.now() - start,
+          exitCode: 0,
+          sessionId,
+          ...(usage ? { usage } : {}),
+        };
+      }
     }
   } catch (err) {
     result = {

@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+
+- **An `opencode-sdk` engine with an LLM fallback now reaches its endpoint,
+  and a failed dispatch is reported as a failure (#1015).** The `akm-custom`
+  provider that akm generates for the fallback listed no models, so opencode
+  could not find the model and failed every dispatch. akm now declares the
+  routed model under the provider's `models`. The runner also ignored the
+  error that the SDK client returns for an HTTP error, and the error opencode
+  puts on a reply when the provider rejects a request, and reported
+  `ok: true` with empty output. Both now give `ok: false`, with opencode's
+  error name and message in `error` and `stderr`. An aborted message is
+  `aborted`, a reply cut off at the output limit is `parse_error`, and any
+  other error is `non_zero_exit`. A reply with several text parts now returns
+  the last one, which is the answer, instead of the first.
+
 ## [0.9.24] - 2026-10-02
 
 ### Changed
