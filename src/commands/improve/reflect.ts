@@ -1177,8 +1177,9 @@ const NOISE_SUBREASONS = {
 
 /**
  * Sanitize, drop a no-op/cosmetic (and optionally low-value) change, judge the
- * exact content that would be persisted, then mint. Size-flagged or
- * truncation-leaking content skips the judge and waits for review.
+ * exact content that would be persisted, then mint. A judge pass is staged only
+ * when the body is unchanged; a body edit it passes waits for review.
+ * Size-flagged or truncation-leaking content skips the judge and waits for review.
  */
 async function finalizeReflectProposal(args: {
   run: ReflectRun;
@@ -1303,6 +1304,15 @@ async function finalizeReflectProposal(args: {
     }
   }
 
+  // A judge pass auto-accepts only a revision that leaves the body as it was: on labelled
+  // edits, the passed body edits were good 12 times in 37 and the frontmatter-only ones 13
+  // in 13. A body edit, or a revision with no source to compare, waits for a person.
+  const bodyOf = (content: string) => splitFrontmatter(content).body.replace(/\s+/g, " ").trim();
+  const bodyEditPass =
+    verdict?.pass && (assetContent === undefined || bodyOf(assetContent) !== bodyOf(payload.content))
+      ? verdict
+      : undefined;
+
   // A lesson reflect wrote is marked so a later reflect on the same skill does
   // not read it back as independent evidence.
   const frontmatter: Record<string, unknown> = {
@@ -1312,6 +1322,7 @@ async function finalizeReflectProposal(args: {
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
     ...(judgeFailed ? ["judge-error"] : []),
+    ...(bodyEditPass ? ["body-edit"] : []),
     ...(sanitized.sizeGuardRatio ? ["reflect-size-ratio"] : []),
     ...(sanitized.truncationMarkerLeaked ? ["reflect-truncation-leak"] : []),
   ];
@@ -1335,6 +1346,9 @@ async function finalizeReflectProposal(args: {
             // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
             gate: judgeFailed ? "quality-gate" : "reflect",
             ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
+            // The reviewer sees why the judge passed it.
+            ...(bodyEditPass?.criteria ? { scores: bodyEditPass.criteria } : {}),
+            ...(bodyEditPass ? { judgeReason: bodyEditPass.reason } : {}),
           },
         }
       : { judged: verdict },

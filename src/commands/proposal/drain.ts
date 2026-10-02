@@ -14,8 +14,8 @@
  *     is configured, and whatever stays undecided is left for review
  *     (`review_needed` in the improve ledger).
  * `maxAccepts` caps promotions across both tiers; `applyMode: "queue"` never
- * promotes; `excludeIds` keeps this run's fresh proposals out; a proposal the
- * distill quality gate routed to a human is left for that human.
+ * promotes; `excludeIds` keeps this run's fresh proposals out; a proposal that
+ * a generating stage routed to a person is left for that person.
  */
 
 import fs from "node:fs";
@@ -424,10 +424,10 @@ export async function drainProposals(
     // nothing meaningful to read on a delete-primary change anyway.
     if (isRetireProposal(proposal)) continue;
     const decision = proposal.gateDecision;
-    // Another gate's rejection stands; a human-review deferral from the distill
-    // quality gate is left for that human.
+    // Another gate's rejection stands, and another gate's deferral is a
+    // generating stage's hand-off to a person: it is left for that person.
     if (decision?.outcome === "auto-rejected" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
-    if (decision?.outcome === "deferred" && decision.gate === "quality-gate") continue;
+    if (decision?.outcome === "deferred" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
     if (isEmptyDiff(proposal)) {
       empties.push(proposal.id);
     } else if (decision?.outcome === "staged" && decision.contentHash === proposalContentHash(proposal)) {

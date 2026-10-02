@@ -3039,9 +3039,11 @@ Drain the standing pending-proposal backlog instead of adjudicating proposals
 one at a time. One rule decides each proposal: a proposal whose quality judge
 passed on its current content is accepted (unless its target changed since it
 was minted — that one is auto-rejected as `stale-target`); an empty diff is
-rejected; everything else goes to the judgment tier when one is enabled, and
-is otherwise left for review. Default mode stages decisions (queue mode); pass
-`--promote` to actually accept.
+rejected; a proposal that reflect or distill deferred for review is left for a
+person; everything else goes to the judgment tier when one is enabled, and
+is otherwise left for review. A reflect revision that changes the body is
+deferred for review even when its judge passes it. Default mode stages
+decisions (queue mode); pass `--promote` to actually accept.
 
 ```sh
 akm proposal drain --dry-run                        # Preview without writing

@@ -96,6 +96,15 @@ const LONG_SOURCE_BODY = [
   "- Check `/var/log/AdGuardHome/query.log` shows both legs.",
 ].join("\n");
 
+function reflectLedgerRows() {
+  const db = openStateDatabase();
+  try {
+    return listImproveLedgerRows(db, makeStashDir(), ["reflect"]);
+  } finally {
+    db.close();
+  }
+}
+
 // ── 1. Type guard — reflect refuses executable / non-markdown types ───────────
 
 describe("Reflect type guard — refuses non-markdown asset types", () => {
@@ -557,10 +566,11 @@ describe("Reflect quality gate — source context", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a proposal");
-    // The pass is stamped with the judge's evidence, so a later audit can read why it passed.
+    // A body edit the judge passed waits for review, with the judge's evidence on the stamp for the reviewer.
     expect(result.proposal.gateDecision).toMatchObject({
-      outcome: "staged",
-      gate: "quality-gate",
+      outcome: "deferred",
+      reason: "body-edit",
+      gate: "reflect",
       scores: { need: 5, preservation: 4, quality: 4 },
       judgeReason: "adds useful detail",
     });
@@ -741,15 +751,6 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
     });
   }
 
-  function reflectLedgerRows() {
-    const db = openStateDatabase();
-    try {
-      return listImproveLedgerRows(db, makeStashDir(), ["reflect"]);
-    } finally {
-      db.close();
-    }
-  }
-
   /** Queued for a person by the quality gate, as distill queues its judge failures; never recorded as a rejection. */
   async function expectDeferredToReview(reflecting: ReturnType<typeof reflectJudgedBy>, judgeReason: string) {
     const result = await reflecting;
@@ -813,6 +814,95 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
       qualityRejected: true,
       qualityReason: "rewords a correct asset",
     });
+  });
+});
+
+describe("Reflect quality gate — a judge pass is auto-accepted only when the body is unchanged", () => {
+  const sourceContent = `---\ndescription: Body edit routing\n---\n\n${LONG_SOURCE_BODY}\n`;
+  const bodyEdit = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+  const pass = async () =>
+    JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "restores the cut-off heading" });
+
+  /** Reflect `ref` to the agent's `revision` of `assetContent` (no source when omitted), judged by `chat`. */
+  function reflectRevision(
+    ref: string,
+    revision: { content: string; frontmatter?: Record<string, unknown> },
+    chat: () => Promise<string>,
+    assetContent?: string,
+  ) {
+    return akmReflect({
+      ref,
+      stashDir: makeStashDir(),
+      config: {
+        ...quietQualityGateConfig(),
+        engines: {
+          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+          judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+        },
+        defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
+        improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
+      } as AkmConfig,
+      ...(assetContent !== undefined ? { assetContent } : {}),
+      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, ...revision }), "", 0) },
+      chat,
+    });
+  }
+
+  test("a judge-passed body edit waits for review, with the judge's scores and reason on the stamp", async () => {
+    const result = await reflectRevision("knowledge/body-edit", { content: bodyEdit }, pass, sourceContent);
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: {
+        outcome: "deferred",
+        reason: "body-edit",
+        gate: "reflect",
+        scores: { need: 5, preservation: 4, quality: 4 },
+        judgeReason: "restores the cut-off heading",
+      },
+    });
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "body-edit" }]);
+  });
+
+  test("a judge-passed frontmatter-only edit is staged for the drain to accept", async () => {
+    // Re-wrapped and padded: a body that differs only in whitespace is unchanged.
+    const result = await reflectRevision(
+      "knowledge/frontmatter-only",
+      {
+        content: `${LONG_SOURCE_BODY.replace(" from the LAN.", "\n  from the LAN.")}\n\n\n`,
+        frontmatter: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
+      },
+      pass,
+      sourceContent,
+    );
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal.gateDecision).toMatchObject({
+      outcome: "staged",
+      reason: "quality-judge",
+      gate: "quality-gate",
+      scores: { need: 5, preservation: 4, quality: 4 },
+      judgeReason: "restores the cut-off heading",
+    });
+  });
+
+  test("a judge-passed revision with no source to compare against waits for review", async () => {
+    const result = await reflectRevision("knowledge/no-source", { content: LONG_SOURCE_BODY }, pass);
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal.gateDecision).toMatchObject({ outcome: "deferred", reason: "body-edit", gate: "reflect" });
+  });
+
+  test("a body edit the judge fails is still refused", async () => {
+    const result = await reflectRevision(
+      "knowledge/failed-body-edit",
+      { content: bodyEdit },
+      async () =>
+        JSON.stringify({ scores: { need: 1, preservation: 2, quality: 2 }, reason: "rewords a correct asset" }),
+      sourceContent,
+    );
+    if (result.ok) throw new Error("expected the quality gate to refuse the revision");
+    expect(result.reason).toBe("quality_rejected");
+    expect(listProposals(makeStashDir())).toEqual([]);
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "quality_rejected", detail: "rewords a correct asset" }]);
   });
 });
 
