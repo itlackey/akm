@@ -34,11 +34,6 @@ export class AmazonqHarness extends BaseHarness {
   readonly agentBuilder = amazonqBuilder;
   readonly resultExtractor = amazonqResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns `q chat` locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // No documented structured output: akm injects the schema into the prompt
-  // and extracts embedded JSON from plain-text stdout.
-  readonly structuredOutput = "none" as const;
   // No `identityEnv`: the matrix lists Q's identity markers as uncertain, and
   // Q stamps no session var onto child processes.
   readonly capabilities = caps({

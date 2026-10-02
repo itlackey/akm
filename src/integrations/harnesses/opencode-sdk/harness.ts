@@ -36,12 +36,6 @@ export class OpencodeSdkHarness extends BaseHarness {
   readonly id = "opencode-sdk" as const;
   readonly displayName = "OpenCode SDK";
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // Embedded-SDK dispatch on this machine ⇒ local-runner (the matrix's
-  // "local (sdk/cli)" row, SDK half).
-  readonly pattern = "local-runner" as const;
-  // `session.prompt` returns structured SDK events/messages; akm extracts the
-  // final message then validates against the node schema ⇒ native-json tier.
-  readonly structuredOutput = "native-json" as const;
   readonly executionLowerer = {
     platform: "opencode-sdk",
     personaChannel: "native" as const,

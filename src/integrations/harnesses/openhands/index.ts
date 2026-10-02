@@ -33,11 +33,6 @@ export class OpenhandsHarness extends BaseHarness {
   readonly agentBuilder = openhandsBuilder;
   readonly resultExtractor = openhandsResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns `openhands --headless` locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // `--json` emits a documented JSONL event stream akm parses, then validates
-  // against the node schema ⇒ native-json tier.
-  readonly structuredOutput = "native-json" as const;
   // No flag-shaped resume: per the matrix OpenHands resumes from workspace state, not a
   // session-id flag. The extractor still captures a conversation id
   // opportunistically; akm's `workflow_run_units` remains the durable source

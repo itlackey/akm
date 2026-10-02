@@ -17,12 +17,7 @@
  * The headless `claude -p` (`--print`) CLI has NO native output-SCHEMA flag
  * (unlike Codex's `--output-schema <file>`). Its documented structured path is
  * `--output-format json`, which wraps the run in a RESULT ENVELOPE
- * (`{"type":"result","result":"<final answer>","session_id":"…", …}`) — the
- * "native-json" tier, NOT "native-schema". (The registry's earlier
- * `native-schema` claim described Claude Code's IN-HARNESS `Workflow`/`agent()`
- * tool-input-schema path, which is a different execution surface than the
- * agentBuilder dispatch akm's local-runner uses; the descriptor is aligned to
- * `native-json` to match this builder honestly.)
+ * (`{"type":"result","result":"<final answer>","session_id":"…", …}`).
  *
  * So for a schema-bearing unit this builder emits `--output-format json`; the
  * shared request lowering has already appended the schema instruction to the

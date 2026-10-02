@@ -63,8 +63,7 @@
  * one of the ten harnesses `HARNESS_REGISTRY` constructs
  * (`harnesses/index.ts`); `agent/builders.ts` derives `BUILTIN_BUILDERS` from
  * that registry, so this builder is reachable under the `"aider"` platform
- * name without any further wiring. The registry entry also declares
- * `structuredOutput: "none"` alongside it (`./index.ts`).
+ * name without any further wiring.
  */
 
 import { type AgentCommandBuilder, type AgentDispatchRequest, resolveDispatchModel } from "../../agent/builder-shared";

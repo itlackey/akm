@@ -42,14 +42,6 @@ export class OpencodeHarness extends BaseHarness {
   readonly setupDetectionDir = ".config/opencode";
   readonly agentBuilder = opencodeBuilder;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // This entry is the CLI spawn path (`opencode run …`): akm launches the
-  // harness locally per unit ⇒ local-runner. (The SDK path is the separate
-  // `opencode-sdk` harness.)
-  readonly pattern = "local-runner" as const;
-  // The CLI path emits plain text — no JSON stream akm consumes — so the
-  // engine uses the prompt-injected schema + embedded-JSON extraction tier
-  // (the matrix's "via prompt+validate"). The SDK entry is native-json.
-  readonly structuredOutput = "none" as const;
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
   readonly sessionLogProvider = (): SessionLogHarness => new OpenCodeProvider();

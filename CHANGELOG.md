@@ -45,6 +45,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   you see the queued proposal, not the agent at work, and no draft file is
   written.
 
+### Removed
+
+- **Two harness metadata fields that nothing read.** Each of the ten harness
+  descriptors carried an execution `pattern` and a `structuredOutput` tier.
+  No code branched on either: the shared request lowering appends the schema
+  instruction to every agent prompt, and a harness's own argv builder adds its
+  native channel, as codex does with `--output-schema`. The fields, their two
+  types and the tests that pinned their values are gone. Nothing you run
+  changes.
+
 ### Fixed
 
 - **An `opencode-sdk` engine with an LLM fallback now reaches its endpoint,

@@ -33,11 +33,6 @@ export class PiHarness extends BaseHarness {
   readonly agentBuilder = piBuilder;
   readonly resultExtractor = piResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns the `pi` CLI locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // `--mode json` emits a documented JSONL event stream akm parses, then
-  // validates against the node schema ⇒ native-json tier.
-  readonly structuredOutput = "native-json" as const;
   // Session-id env marker only — the matrix's bare PI_* presence vars must
   // not stamp identity onto manual runs (see `AkmHarness.identityEnv`).
   readonly identityEnv = ["PI_SESSION_ID"] as const;
