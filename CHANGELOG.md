@@ -8,19 +8,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- **Reflect no longer auto-accepts a revision that changes the body; when the
-  quality judge passes one, it waits for review.** On 396 labelled reflect
-  edits, the judge-passed edits that changed the body were good 12 times in 37,
-  and those that changed only the frontmatter 13 times in 13. A revision whose
-  body differs from the asset's, ignoring whitespace, is now created pending
-  and deferred for review with the reason `body-edit` (gate `reflect`), and the
-  judge's scores and reason stay on its gate decision. A revision whose source
-  could not be read is treated the same way. These judge-passed body edits now
-  appear in the review queue (`akm proposal list`) instead of being accepted by
-  the next triage drain, and `akm proposal show <id>` gives the reason and the
-  judge's scores. A judge-passed revision that leaves the body unchanged is
-  still staged and accepted by the drain, and a revision the judge fails is
-  still refused.
+- **Reflect never auto-accepts a revision that changes the body; it waits for
+  review.** On 396 labelled reflect edits, the judge-passed edits that changed
+  the body were good 12 times in 37, and those that changed only the
+  frontmatter 13 times in 13. A revision whose body differs from the asset's,
+  ignoring whitespace, or whose source could not be read, is now created
+  pending and deferred for review with the reason `body-edit` (gate
+  `reflect`). When the quality judge passed it, the judge's scores and reason
+  stay on its gate decision. With `processes.reflect.qualityGate` off, no
+  judge ran, so the decision carries none. Before, the triage drain accepted a
+  judge-passed body edit, and its judgment tier could accept one made with the
+  gate off. These body edits now appear in the review queue
+  (`akm proposal list`), and `akm proposal show <id>` gives the reason and any
+  judge scores. A judge-passed revision that leaves the body unchanged is
+  still staged and accepted by the drain. A frontmatter-only revision made
+  with the gate off is still left to the drain, and a revision the judge fails
+  is still refused.
 
 ### Fixed
 
@@ -40,7 +43,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   person.** It skipped a deferred proposal only when the quality gate had
   deferred it. Reflect defers with its own gate, `reflect`: a revision whose
   size the size guard flagged, one that echoed the truncation notice, one made
-  with no judge configured, and now a judge-passed body edit. With
+  with no judge configured, and now a body edit. With
   `processes.triage.judgment` enabled, the drain's judgment tier decided those
   proposals, and under `applyMode: promote` it could accept them before anyone
   saw them. The drain now skips every deferral it did not make itself, and

@@ -817,18 +817,25 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
   });
 });
 
-describe("Reflect quality gate — a judge pass is auto-accepted only when the body is unchanged", () => {
+describe("Reflect routing — a revision that changes the body is never auto-accepted", () => {
   const sourceContent = `---\ndescription: Body edit routing\n---\n\n${LONG_SOURCE_BODY}\n`;
   const bodyEdit = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+  // Re-wrapped and padded: a body that differs only in whitespace is unchanged.
+  const frontmatterOnly = {
+    content: `${LONG_SOURCE_BODY.replace(" from the LAN.", "\n  from the LAN.")}\n\n\n`,
+    frontmatter: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
+  };
   const pass = async () =>
     JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "restores the cut-off heading" });
 
-  /** Reflect `ref` to the agent's `revision` of `assetContent` (no source when omitted), judged by `chat`. */
+  /**
+   * Reflect `ref` to the agent's `revision` of `source` (none when omitted),
+   * judged by `judge`. Without a `judge` the gate is off.
+   */
   function reflectRevision(
     ref: string,
     revision: { content: string; frontmatter?: Record<string, unknown> },
-    chat: () => Promise<string>,
-    assetContent?: string,
+    { judge, source }: { judge?: () => Promise<string>; source?: string },
   ) {
     return akmReflect({
       ref,
@@ -840,16 +847,26 @@ describe("Reflect quality gate — a judge pass is auto-accepted only when the b
           judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
         },
         defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-        improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
+        improve: {
+          strategies: { default: { processes: { reflect: { qualityGate: { enabled: judge !== undefined } } } } },
+        },
       } as AkmConfig,
-      ...(assetContent !== undefined ? { assetContent } : {}),
+      ...(source !== undefined ? { assetContent: source } : {}),
       runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, ...revision }), "", 0) },
-      chat,
+      chat:
+        judge ??
+        (async () => {
+          throw new Error("the gate is off: nothing may judge the revision");
+        }),
     });
   }
 
   test("a judge-passed body edit waits for review, with the judge's scores and reason on the stamp", async () => {
-    const result = await reflectRevision("knowledge/body-edit", { content: bodyEdit }, pass, sourceContent);
+    const result = await reflectRevision(
+      "knowledge/body-edit",
+      { content: bodyEdit },
+      { judge: pass, source: sourceContent },
+    );
     if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
     expect(result.proposal).toMatchObject({
       status: "pending",
@@ -865,16 +882,10 @@ describe("Reflect quality gate — a judge pass is auto-accepted only when the b
   });
 
   test("a judge-passed frontmatter-only edit is staged for the drain to accept", async () => {
-    // Re-wrapped and padded: a body that differs only in whitespace is unchanged.
-    const result = await reflectRevision(
-      "knowledge/frontmatter-only",
-      {
-        content: `${LONG_SOURCE_BODY.replace(" from the LAN.", "\n  from the LAN.")}\n\n\n`,
-        frontmatter: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
-      },
-      pass,
-      sourceContent,
-    );
+    const result = await reflectRevision("knowledge/frontmatter-only", frontmatterOnly, {
+      judge: pass,
+      source: sourceContent,
+    });
     if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
     expect(result.proposal.gateDecision).toMatchObject({
       outcome: "staged",
@@ -886,7 +897,7 @@ describe("Reflect quality gate — a judge pass is auto-accepted only when the b
   });
 
   test("a judge-passed revision with no source to compare against waits for review", async () => {
-    const result = await reflectRevision("knowledge/no-source", { content: LONG_SOURCE_BODY }, pass);
+    const result = await reflectRevision("knowledge/no-source", { content: LONG_SOURCE_BODY }, { judge: pass });
     if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
     expect(result.proposal.gateDecision).toMatchObject({ outcome: "deferred", reason: "body-edit", gate: "reflect" });
   });
@@ -895,14 +906,41 @@ describe("Reflect quality gate — a judge pass is auto-accepted only when the b
     const result = await reflectRevision(
       "knowledge/failed-body-edit",
       { content: bodyEdit },
-      async () =>
-        JSON.stringify({ scores: { need: 1, preservation: 2, quality: 2 }, reason: "rewords a correct asset" }),
-      sourceContent,
+      {
+        judge: async () =>
+          JSON.stringify({ scores: { need: 1, preservation: 2, quality: 2 }, reason: "rewords a correct asset" }),
+        source: sourceContent,
+      },
     );
     if (result.ok) throw new Error("expected the quality gate to refuse the revision");
     expect(result.reason).toBe("quality_rejected");
     expect(listProposals(makeStashDir())).toEqual([]);
     expect(reflectLedgerRows()).toMatchObject([{ outcome: "quality_rejected", detail: "rewords a correct asset" }]);
+  });
+
+  test("with the gate off, a body edit waits for review, with no scores on the stamp", async () => {
+    const result = await reflectRevision(
+      "knowledge/gate-off-body-edit",
+      { content: bodyEdit },
+      { source: sourceContent },
+    );
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: { outcome: "deferred", reason: "body-edit", gate: "reflect" },
+    });
+    expect(result.proposal.gateDecision?.scores).toBeUndefined();
+    expect(result.proposal.gateDecision?.judgeReason).toBeUndefined();
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "body-edit" }]);
+  });
+
+  test("with the gate off, a frontmatter-only edit is left to the drain, as before", async () => {
+    const result = await reflectRevision("knowledge/gate-off-frontmatter-only", frontmatterOnly, {
+      source: sourceContent,
+    });
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal.status).toBe("pending");
+    expect(result.proposal.gateDecision).toBeUndefined();
   });
 });
 

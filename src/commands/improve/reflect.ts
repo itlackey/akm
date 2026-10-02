@@ -1178,8 +1178,9 @@ const NOISE_SUBREASONS = {
 /**
  * Sanitize, drop a no-op/cosmetic (and optionally low-value) change, judge the
  * exact content that would be persisted, then mint. A judge pass is staged only
- * when the body is unchanged; a body edit it passes waits for review.
- * Size-flagged or truncation-leaking content skips the judge and waits for review.
+ * when the body is unchanged: a body edit the judge passes, or one made with the
+ * gate off, waits for review. Size-flagged or truncation-leaking content skips
+ * the judge and waits for review.
  */
 async function finalizeReflectProposal(args: {
   run: ReflectRun;
@@ -1304,15 +1305,6 @@ async function finalizeReflectProposal(args: {
     }
   }
 
-  // A judge pass auto-accepts only a revision that leaves the body as it was: on labelled
-  // edits, the passed body edits were good 12 times in 37 and the frontmatter-only ones 13
-  // in 13. A body edit, or a revision with no source to compare, waits for a person.
-  const bodyOf = (content: string) => splitFrontmatter(content).body.replace(/\s+/g, " ").trim();
-  const bodyEditPass =
-    verdict?.pass && (assetContent === undefined || bodyOf(assetContent) !== bodyOf(payload.content))
-      ? verdict
-      : undefined;
-
   // A lesson reflect wrote is marked so a later reflect on the same skill does
   // not read it back as independent evidence.
   const frontmatter: Record<string, unknown> = {
@@ -1322,10 +1314,17 @@ async function finalizeReflectProposal(args: {
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
     ...(judgeFailed ? ["judge-error"] : []),
-    ...(bodyEditPass ? ["body-edit"] : []),
     ...(sanitized.sizeGuardRatio ? ["reflect-size-ratio"] : []),
     ...(sanitized.truncationMarkerLeaked ? ["reflect-truncation-leak"] : []),
   ];
+  // A revision that changes the body is never auto-accepted: on labelled edits, the judge's
+  // passes on body edits were good 12 times in 37, and on frontmatter-only edits 13 in 13.
+  // One that nothing above holds for review (the judge passed it, or the gate is off) waits
+  // for a person, as does a revision with no source to compare.
+  const bodyOf = (content: string) => splitFrontmatter(content).body.replace(/\s+/g, " ").trim();
+  const bodyEdit =
+    reviewReasons.length === 0 && (assetContent === undefined || bodyOf(assetContent) !== bodyOf(payload.content));
+  if (bodyEdit) reviewReasons.push("body-edit");
   const proposal = mintProposal(
     run.stash,
     options.ctx,
@@ -1346,9 +1345,9 @@ async function finalizeReflectProposal(args: {
             // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
             gate: judgeFailed ? "quality-gate" : "reflect",
             ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
-            // The reviewer sees why the judge passed it.
-            ...(bodyEditPass?.criteria ? { scores: bodyEditPass.criteria } : {}),
-            ...(bodyEditPass ? { judgeReason: bodyEditPass.reason } : {}),
+            // The reviewer sees why the judge passed it (with the gate off, nothing judged it).
+            ...(bodyEdit && verdict?.criteria ? { scores: verdict.criteria } : {}),
+            ...(bodyEdit && verdict ? { judgeReason: verdict.reason } : {}),
           },
         }
       : { judged: verdict },
