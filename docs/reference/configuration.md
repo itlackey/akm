@@ -103,10 +103,11 @@ An LLM engine may set `enableThinking: false` to turn thinking off and
 `reasoningEffort` to a value such as `"none"`, `"low"`, or `"high"`. AKM sends
 **both** wire forms — `chat_template_kwargs.enable_thinking` and top-level
 `enable_thinking` — whenever `enableThinking` resolves, from engine config
-or a calling process (improve's `consolidate`/`reflect` and the distill
-quality gate always request `enableThinking: false` for a machine-readable
-payload); `reasoningEffort` is always sent as top-level `reasoning_effort`
-when set. Backend support: llama.cpp direct honors both forms
+or a calling process (improve's `consolidate`/`reflect` always request
+`enableThinking: false` for a machine-readable payload, and the reflect and
+distill quality-gate judges do too unless the judge's engine sets
+`enableThinking: true`); `reasoningEffort` is always sent as top-level
+`reasoning_effort` when set. Backend support: llama.cpp direct honors both forms
 (`reasoning_effort` from build ≥ b10644); vLLM honors
 `chat_template_kwargs`; Bifrost drops `chat_template_kwargs` and passes
 `reasoning_effort` through, so also set `reasoningEffort: "none"` behind it; a
@@ -346,6 +347,42 @@ guidance. When enabled, engine selection is judgment → triage → strategy →
             "enabled": true,
             "judgment": { "enabled": true, "engine": "reviewer" }
           }
+        }
+      }
+    }
+  }
+}
+```
+
+`processes.reflect.qualityGate` and `processes.distill.qualityGate` control
+each process's LLM-as-judge quality gate. Each is on unless it sets
+`enabled: false`, and each follows only its own switch. The judge is the
+process's own LLM engine, or `defaults.llmEngine` when an agent generates.
+`engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
+resolved over the process's settings the way `triage.judgment` resolves over
+triage's. A gate whose settings resolve to no LLM engine fails before anything
+is generated; it never falls back to another engine. The judge runs at
+temperature 0 with thinking off unless its engine sets `enableThinking: true`.
+Thinking is slow: on a 27B llama.cpp server, a thinking judgment took a median
+of 30–67 s and up to about 3 minutes, against about 5 s without.
+Behind a gateway that drops `chat_template_kwargs` (Bifrost), point a thinking
+judge's engine at the server directly.
+
+```jsonc
+{
+  "engines": {
+    "judge": {
+      "kind": "llm",
+      "endpoint": "http://127.0.0.1:8080/v1/chat/completions",
+      "model": "qwen3-27b",
+      "enableThinking": true
+    }
+  },
+  "improve": {
+    "strategies": {
+      "nightly": {
+        "processes": {
+          "reflect": { "qualityGate": { "engine": "judge" } }
         }
       }
     }

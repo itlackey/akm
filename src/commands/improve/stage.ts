@@ -255,6 +255,41 @@ type QualityJudgeChat = (
   options?: ChatCompletionOptions,
 ) => Promise<string>;
 
+/**
+ * The judge a quality gate names for itself (#1011): the gate's `engine`,
+ * `model`, `timeoutMs` and `llm` over the process's own settings, as
+ * `processes.triage.judgment` resolves over triage. `undefined` when the gate
+ * is off or sets none of them, so the caller keeps its own judge. Throws when
+ * they resolve to no LLM engine, before anything is generated: a judge must be
+ * one, and the gate never falls back to another.
+ */
+export function resolveQualityGateJudge(
+  config: AkmConfig,
+  profile: ImproveProfileConfig | undefined,
+  processName: "reflect" | "distill",
+  onNotices?: NoticeSink,
+): LlmRunner | undefined {
+  const process = profile?.processes?.[processName];
+  const gate = process?.qualityGate;
+  if (!gate || gate.enabled === false) return undefined;
+  if (!["engine", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) return undefined;
+  const resolved = resolveImproveLlmExecution({
+    config,
+    processName: `${processName}-quality-judge`,
+    ...(profile ? { profile } : {}),
+    ...(process ? { process } : {}),
+    current: gate,
+  });
+  if (!resolved) {
+    throw new ConfigError(
+      `The ${processName} quality gate's judge must be an LLM engine. Set processes.${processName}.qualityGate.engine to one.`,
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  onNotices?.(resolved.notices);
+  return resolved.runner;
+}
+
 export interface QualityJudgeOptions {
   similarLessons?: Array<{ ref: string; content: string }>;
   /** The exact runner selected for this judge. */
@@ -472,7 +507,8 @@ async function runQualityJudge(
     system: "Return only valid JSON. No prose.",
     prompt,
     request: {
-      enableThinking: false,
+      // Off unless the judge's own engine enables thinking (a slower, separate judge engine, #1011).
+      enableThinking: runner.connection.enableThinking === true,
       temperature: 0,
       responseSchema: judgeResponseSchema(keys),
       ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),

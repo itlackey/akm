@@ -65,8 +65,7 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
       strategies: {
         default: {
           processes: {
-            reflect: { enabled: true, engine: "fake-agent" },
-            distill: { qualityGate: { enabled: false } },
+            reflect: { enabled: true, engine: "fake-agent", qualityGate: { enabled: false } },
           },
         },
       },
@@ -121,8 +120,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         strategies: {
           default: {
             processes: {
-              reflect: { enabled: true, engine: "judge" },
-              distill: { qualityGate: { enabled: false } },
+              reflect: { enabled: true, engine: "judge", qualityGate: { enabled: false } },
             },
           },
         },

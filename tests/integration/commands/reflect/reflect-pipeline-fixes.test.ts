@@ -533,7 +533,7 @@ describe("Reflect quality gate — source context", () => {
       },
       defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
       improve: {
-        strategies: { default: { processes: { distill: { qualityGate: { enabled: true } } } } },
+        strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } },
       },
     } as AkmConfig;
     let judgePrompt = "";
@@ -579,7 +579,7 @@ describe("Reflect quality gate — source context", () => {
         judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
       },
       defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { distill: { qualityGate: { enabled: true } } } } } },
+      improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
     } as AkmConfig;
     let judgeInvoked = false;
 
@@ -605,6 +605,112 @@ describe("Reflect quality gate — source context", () => {
     expect(judgeInvoked).toBe(false);
     if (!result.ok) throw new Error("expected success");
     expect(listProposals(stash)[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-size-ratio" });
+  });
+
+  test("the reflect gate follows its own switch, not distill's", async () => {
+    const stash = makeStashDir();
+    const sourceContent = `---\ndescription: Own switch\n---\n\n${LONG_SOURCE_BODY}\n`;
+    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+    let judged = 0;
+    const reflectWith = (ref: string, processes: Record<string, unknown>) =>
+      akmReflect({
+        ref,
+        stashDir: stash,
+        config: {
+          ...quietQualityGateConfig(),
+          engines: {
+            "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+            judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+          },
+          defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
+          improve: { strategies: { default: { processes } } },
+        } as AkmConfig,
+        assetContent: sourceContent,
+        runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, content: candidateContent }), "", 0) },
+        chat: async () => {
+          judged += 1;
+          return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
+        },
+      });
+
+    await reflectWith("knowledge/distill-gate-off", { distill: { qualityGate: { enabled: false } } });
+    expect(judged).toBe(1);
+    await reflectWith("knowledge/reflect-gate-off", { reflect: { qualityGate: { enabled: false } } });
+    expect(judged).toBe(1);
+  });
+
+  test("qualityGate.engine judges with its own engine instead of the default LLM", async () => {
+    const stash = makeStashDir();
+    const sourceContent = `---\ndescription: Separate judge\n---\n\n${LONG_SOURCE_BODY}\n`;
+    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+    const config = {
+      ...quietQualityGateConfig(),
+      engines: {
+        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
+        judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
+      },
+      defaults: { engine: "fake-agent", llmEngine: "general", improveStrategy: "default" },
+      improve: { strategies: { default: { processes: { reflect: { qualityGate: { engine: "judge" } } } } } },
+    } as AkmConfig;
+    const models: string[] = [];
+
+    const result = await akmReflect({
+      ref: "knowledge/separate-judge",
+      stashDir: stash,
+      config,
+      assetContent: sourceContent,
+      runAgentOptions: {
+        spawn: fakeSpawn(JSON.stringify({ ref: "knowledge/separate-judge", content: candidateContent }), "", 0),
+      },
+      chat: async (connection) => {
+        models.push(connection.model);
+        return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(models).toEqual(["judge-model"]);
+  });
+
+  test("a gate whose settings resolve to no LLM judge fails before anything is generated", async () => {
+    const stash = makeStashDir();
+    const config = {
+      ...quietQualityGateConfig(),
+      engines: {
+        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
+      },
+      defaults: { engine: "fake-agent", llmEngine: "general", improveStrategy: "default" },
+      improve: {
+        strategies: {
+          default: { processes: { reflect: { engine: "fake-agent", qualityGate: { llm: { temperature: 0 } } } } },
+        },
+      },
+    } as AkmConfig;
+    let spawned = 0;
+
+    await expect(
+      akmReflect({
+        ref: "knowledge/agent-judge",
+        stashDir: stash,
+        config,
+        assetContent: `---\ndescription: Agent judge\n---\n\n${LONG_SOURCE_BODY}\n`,
+        runAgentOptions: {
+          spawn: (...args) => {
+            spawned += 1;
+            return fakeSpawn(
+              JSON.stringify({ ref: "knowledge/agent-judge", content: LONG_SOURCE_BODY }),
+              "",
+              0,
+            )(...args);
+          },
+        },
+        chat: async () => JSON.stringify({ score: 5, reason: "must not run" }),
+      }),
+    ).rejects.toBeInstanceOf(ConfigError);
+    expect(spawned).toBe(0);
+    expect(listProposals(stash)).toEqual([]);
   });
 });
 

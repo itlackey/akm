@@ -85,7 +85,7 @@ describe.skipIf(!REAL_AGENT_TESTS)("real-profile integration (opt-in via AKM_REA
         engines: { claude: { kind: "agent", platform: "claude" } },
         defaults: { engine: "claude", improveStrategy: "default" },
         improve: {
-          strategies: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+          strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
         },
       },
       timeoutMs: 60_000,

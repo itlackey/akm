@@ -295,7 +295,11 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       }
     }
     for (const [processName, process] of Object.entries(strategy.processes ?? {})) {
-      const processConfig = process as { engine?: string; judgment?: { enabled?: boolean; engine?: string } };
+      const processConfig = process as {
+        engine?: string;
+        judgment?: { enabled?: boolean; engine?: string };
+        qualityGate?: { engine?: string };
+      };
       const capability =
         IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName as keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES];
       if (processConfig.engine && capability === null) {
@@ -333,6 +337,16 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
             message: "engine does not name a configured engine",
           });
         }
+      }
+      const gateEngine = processConfig.qualityGate?.engine;
+      if (gateEngine && config.engines?.[gateEngine]?.kind !== "llm") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["improve", "strategies", strategyName, "processes", processName, "qualityGate", "engine"],
+          message: config.engines?.[gateEngine]
+            ? "a quality-gate judge must be an LLM engine"
+            : "engine does not name a configured engine",
+        });
       }
     }
   }

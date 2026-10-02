@@ -817,7 +817,7 @@ function fallbackEligibleConfig(): AkmConfig {
       "opencode-sdk": { kind: "agent", platform: "aider", bin: "/bin/true" },
     },
     improve: {
-      strategies: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+      strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
     },
   } as AkmConfig;
 }
