@@ -104,7 +104,7 @@ export function targetConcurrency(runner: RunnerSpec, config: AkmConfig): number
   }
   if (runner.kind !== "sdk" || !runner.fallbackConnection) return undefined;
   const selected = typeof runner.engine === "string" ? config.engines?.[runner.engine] : undefined;
-  const fallbackName = selected?.kind === "agent" ? (selected.llmEngine ?? config.defaults?.llmEngine) : undefined;
+  const fallbackName = selected?.kind === "agent" ? selected.llmEngine : undefined;
   const fallback = fallbackName ? config.engines?.[fallbackName] : undefined;
   return defaultLlmEngineConcurrency(
     runner.fallbackConnection.endpoint,

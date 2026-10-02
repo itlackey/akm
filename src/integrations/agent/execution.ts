@@ -182,8 +182,9 @@ function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): 
   if (engine.platform !== "opencode-sdk") {
     return { kind: "agent", platform: engine.platform, modelMapKey: engine.platform, values };
   }
-  // An SDK engine runs its LLM fallback's model/inference/timeout unless it sets its own.
-  const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
+  // An SDK engine runs its own `llmEngine`'s model/inference/timeout unless it sets its own. With no
+  // `llmEngine` it has no fallback, and opencode picks the model: `defaults.llmEngine` is not borrowed.
+  const fallbackName = engine.llmEngine;
   const fallback =
     fallbackName && config.engines && Object.hasOwn(config.engines, fallbackName)
       ? config.engines[fallbackName]
