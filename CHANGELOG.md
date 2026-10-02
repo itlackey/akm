@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `aborted`, a reply cut off at the output limit is `parse_error`, and any
   other error is `non_zero_exit`. A reply with several text parts now returns
   the last one, which is the answer, instead of the first.
+- **An LLM engine reports a provider error sent with HTTP 200 as a failure.**
+  OpenRouter, for one, answers a request whose provider fails after the
+  response has started with HTTP 200 and a body that holds only an `error`
+  object and no `choices`. akm returned that as an empty reply with
+  `ok: true`. It is now a provider error with the body in its message, as an
+  error status is.
 
 ## [0.9.24] - 2026-10-02
 

@@ -27,4 +27,5 @@ section names are intentionally absent from this active suite.
 | `extension-points.test.ts` | Supported source and registry provider boundaries |
 | `improve-cli-surface.test.ts` | Current improvement CLI surface |
 | `engine-boundary.test.ts` | Engine lowering and stateless LLM boundary |
+| `engine-interchange.test.ts` | One cross-engine contract over the LLM path, every CLI harness and opencode-sdk |
 | `lesson-type.test.ts` | Lesson registration and lint behavior |
