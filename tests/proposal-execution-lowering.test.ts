@@ -201,6 +201,51 @@ describe("proposal consumers lower resolved execution requests", () => {
     expect(JSON.stringify(result)).not.toContain(replacement);
   });
 
+  // The caller's envSource is the one environment for the preflight, the
+  // dispatch, and the secrets kept out of the queue.
+  test.each([
+    ["is accepted, and the proposal is queued", false],
+    ["is accepted, and a reply echoing it is refused", true],
+  ])("a credential set only in the caller's envSource %s", async (_case, echo) => {
+    const stashDir = proposalStash();
+    const secret = "proposal-envsource-only-092";
+    let authorization: string | null = null;
+    const body = echo ? `The provider echoed ${secret}.` : "Use the caller's environment.";
+    const result = await withEnv({ PROPOSAL_ENVSOURCE_KEY: undefined }, () =>
+      withMockedFetch(
+        () =>
+          akmPropose({
+            type: "skill",
+            name: "envsource-bound",
+            task: "Read the credential from the caller's environment.",
+            engine: "direct",
+            stashDir,
+            agentConfig: directConfig(stashDir, "$PROPOSAL_ENVSOURCE_KEY"),
+            runAgentOptions: { envSource: { PROPOSAL_ENVSOURCE_KEY: secret } },
+          }),
+        (_url, init) => {
+          authorization = new Headers(init?.headers).get("authorization");
+          const content = `---\ndescription: Proposal bound to the caller's environment\n---\n\n${body}\n`;
+          return Response.json({
+            choices: [{ message: { content: JSON.stringify({ ref: "skills/envsource-bound", content }) } }],
+          });
+        },
+      ),
+    );
+
+    expect(authorization as string | null).toBe(`Bearer ${secret}`);
+    expect(JSON.stringify(result)).not.toContain(secret);
+    if (echo) {
+      expect(result).toMatchObject({ ok: false, reason: "parse_error", engine: "direct" });
+      if (result.ok) throw new Error("expected the echoed credential to be refused");
+      expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+      expect(listProposals(stashDir)).toEqual([]);
+    } else {
+      expect(result.ok).toBe(true);
+      expect(listProposals(stashDir)).toHaveLength(1);
+    }
+  });
+
   test("SDK replies that echo a symbolic fallback credential are rejected instead of persisting redacted text", async () => {
     const stashDir = proposalStash();
     const secret = "proposal-sdk-fallback-secret-092";

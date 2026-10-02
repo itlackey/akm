@@ -59,7 +59,7 @@ export interface AkmProposeOptions {
   engine?: string;
   timeoutMs?: number;
   stashDir?: string;
-  runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
+  runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn" | "envSource">;
   agentConfig?: AkmConfig;
   ctx?: ProposalsContext;
   /** Test seam invoked after credential acquisition and before provider dispatch. */
@@ -165,8 +165,10 @@ async function dispatchProposalPrompt(
 
   // Validate every required symbolic credential before the entry event opens
   // durable state. Provider/runtime failures still occur after the event,
-  // preserving the command-attempt observability contract.
-  assertRunnerCredentials(lowered.runner);
+  // preserving the command-attempt observability contract. The dispatch reads
+  // the same caller environment.
+  const envSource = options.runAgentOptions?.envSource;
+  assertRunnerCredentials(lowered.runner, envSource);
   onDispatchReady();
   options.onDispatchReady?.();
   // runStructured dispatches at least once, so a returned or DISPATCH_FAILED exchange has a result.
@@ -193,7 +195,7 @@ async function dispatchProposalPrompt(
     engineName,
     ...(lowered.runner.kind === "llm" ? {} : { engineBin: lowered.runner.profile.bin }),
     notices: lowered.notices,
-    sensitiveValues: collectDispatchSensitiveValues(lowered.runner, {}),
+    sensitiveValues: collectDispatchSensitiveValues(lowered.runner, {}, envSource),
   };
 }
 
