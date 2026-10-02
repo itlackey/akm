@@ -26,6 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   object and no `choices`. akm returned that as an empty reply with
   `ok: true`. It is now a provider error with the body in its message, as an
   error status is.
+- **An `opencode` engine runs a persona instead of failing.** akm passed the
+  persona to `opencode run` as `--system-prompt`, which opencode 1.18 does
+  not accept, so opencode printed its usage and exited 1 on every dispatch
+  that carried a persona, including `akm agent <agent-ref> --engine opencode`.
+  akm now composes the persona into the prompt in an `<AKM_PERSONA>` block,
+  as it does for harnesses with no system-prompt option.
 
 ## [0.9.24] - 2026-10-02
 
