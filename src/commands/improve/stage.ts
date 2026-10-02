@@ -319,6 +319,8 @@ export interface QualityJudgeResult {
   reviewNeeded?: boolean;
   /** Per-criterion 1-5 scores the average came from (absent for the old `{"score"}` shape). */
   criteria?: Record<string, number>;
+  /** With no verdict (`score` -1): the provider's error, or the start of the reply that did not parse. */
+  error?: string;
 }
 
 type QualityJudgeChat = (
@@ -591,10 +593,24 @@ async function runQualityJudge(
     ...(options.onNotices ? { onNotices: options.onNotices } : {}),
   });
   if (!outcome.ok) {
-    return { pass: false, score: -1, reason: "judge timeout/error — routed to review", reviewNeeded: true };
+    return {
+      pass: false,
+      score: -1,
+      reason: "judge timeout/error — routed to review",
+      reviewNeeded: true,
+      ...(outcome.error ? { error: outcome.error } : {}),
+    };
   }
   const parsed = parseJudgeResponse(outcome.raw, keys);
-  if (!parsed) return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
+  if (!parsed) {
+    return {
+      pass: false,
+      score: -1,
+      reason: "judge parse failed — routed to review",
+      reviewNeeded: true,
+      error: `reply: ${outcome.raw.slice(0, 500)}`,
+    };
+  }
   const { score, lowest, reason, criteria } = parsed;
   const grounding = criteria?.[GROUNDING_CRITERION];
   if (criteria && grounding !== undefined && grounding <= UNGROUNDED_MAX_SCORE) {

@@ -22,6 +22,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm mcp` fails the call and asks for `akm index`, because a build is a
   write and can outlast a client's tool timeout. The protocol is a small
   JSON-RPC 2.0 implementation with no new dependency.
+- **`akm improve judge <ref> --candidate <file>` runs reflect's quality judge on
+  a candidate revision you supply.** It exists to try a judge engine, a setting
+  or a rubric on real edits before the gate changes. There is no second judge:
+  it uses reflect's prompt builder, rubric and pass rule (every criterion of
+  `need`, `preservation` and `quality` at 4 or more), and selects the judge
+  engine as reflect does: the gate's own engine, else the reflect engine when
+  it is an LLM, else the `defaults.llmEngine` cascade. `--engine` overrides the
+  engine, `--source` the source (default: the asset in the stash),
+  `--feedback` or `--feedback-file` the feedback, and `--strategy` the strategy.
+  The call runs under the model-work tool policy on any engine kind. It prints
+  `{ok, engine, model, scores, reason, passes, durationMs, usage?, notices?}`;
+  a judge that gives no verdict prints `ok: false` with its reason and exits 1.
+  It writes nothing: no proposal, ledger row or event, and the usage in the
+  result is read from an in-memory sink, not persisted as `llm_usage` events.
+
+### Changed
+
+- **A quality judge that gives no verdict says why.** The result reflect's gate
+  reads now carries the provider's error, or the start of a reply that did not
+  parse, as `error`. Reflect itself still records the same reason.
 
 ### Removed
 

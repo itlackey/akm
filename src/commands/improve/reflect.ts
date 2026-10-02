@@ -57,6 +57,7 @@ import {
   type RunExecutionOptions,
 } from "../../integrations/agent/runner-dispatch";
 import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, LlmCallError } from "../../llm/client";
+import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../llm/usage-telemetry";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
@@ -65,6 +66,7 @@ import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/ch
 import { deriveLessonRef } from "./distill";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
+import { resolveImproveStrategy } from "./improve-strategies";
 import { recordLedgerAttempt } from "./ledger";
 import { classifyReflectChange, splitFrontmatter } from "./reflect-noise";
 import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
@@ -948,6 +950,25 @@ function resolveReflectRunner(options: AkmReflectOptions): {
 }
 
 /**
+ * The engine reflect's quality gate judges with: the one the gate names, else
+ * the reflect engine when it is an LLM, else the `reflect_proposal_quality-judge`
+ * engine cascade. `undefined` when none resolves.
+ */
+function selectReflectJudge(
+  config: AkmConfig,
+  strategy: ImproveProfileConfig | undefined,
+  reflectRunner: RunnerSpec,
+  onNotices: (notices: readonly Notice[]) => void,
+): RunnerSpec | undefined {
+  const gateJudge = resolveQualityGateJudge(config, strategy, "reflect", onNotices);
+  if (gateJudge) return gateJudge;
+  if (runnerIsLlm(reflectRunner)) return reflectRunner;
+  const resolved = resolveImproveExecution({ config, processName: "reflect_proposal_quality-judge" });
+  if (resolved) onNotices(resolved.notices);
+  return resolved?.runner;
+}
+
+/**
  * Lower a runner under the model-work tool policy and check its credentials,
  * so a bad transport, or one that cannot confine the policy, fails before any work.
  */
@@ -1374,6 +1395,151 @@ export async function renderReflectPromptPreview(
   return { ref, prompt, engine: engineName, engineKind: runnerSpec.kind };
 }
 
+/** What `akm improve judge` reads: a candidate revision, and where its source and judge come from. */
+export interface ReflectJudgeOptions {
+  /** The asset the candidate revises. */
+  ref: string;
+  /** The revision to judge. */
+  candidate: string;
+  /** What the candidate revises. Default: the asset at `ref`. */
+  source?: string;
+  /** Feedback lines the judge reads, as reflect passes its own. */
+  feedback?: string[];
+  /** Judge with this named engine, in place of the one the quality gate would pick. */
+  engine?: string;
+  /** The improve strategy whose quality gate and engines apply (default: the configured one). */
+  strategy?: string;
+  config?: AkmConfig;
+  stashDir?: string;
+}
+
+/** Model calls and tokens a judge spent, summed over its attempts. */
+export interface ReflectJudgeUsage {
+  calls: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+  reasoningTokens?: number;
+}
+
+interface ReflectJudgeRun {
+  engine: string;
+  model?: string;
+  durationMs: number;
+  usage?: ReflectJudgeUsage;
+  notices?: readonly Notice[];
+}
+
+/** The judge's verdict on the candidate (`passes` is the quality gate's own rule), or why it gave none. */
+export type ReflectJudgeResult =
+  | (ReflectJudgeRun & { ok: true; scores: Record<string, number>; reason: string; passes: boolean })
+  | (ReflectJudgeRun & { ok: false; reason: string; error?: string });
+
+function sumJudgeUsage(records: readonly LlmUsageRecord[]): ReflectJudgeUsage | undefined {
+  if (records.length === 0) return undefined;
+  const usage: ReflectJudgeUsage = { calls: records.length };
+  for (const key of ["promptTokens", "completionTokens", "totalTokens", "reasoningTokens"] as const) {
+    const counts = records.flatMap((record) => (record[key] === undefined ? [] : [record[key]]));
+    if (counts.length > 0) usage[key] = counts.reduce((sum, count) => sum + count, 0);
+  }
+  return usage;
+}
+
+/**
+ * `akm improve judge`: the quality judge reflect's gate runs, on a candidate you
+ * supply. The prompt, the rubric, the pass rule and the judge's engine selection
+ * are reflect's own; `engine` replaces the gate's engine and nothing else. It
+ * writes nothing: no proposal, ledger row or event, and its usage is read from
+ * an in-memory sink instead of being persisted as `llm_usage` events.
+ */
+export async function judgeReflectCandidate(options: ReflectJudgeOptions): Promise<ReflectJudgeResult> {
+  const { ref } = options;
+  const stash = options.stashDir ?? resolveStashDir();
+  const config = options.config ?? loadConfig();
+  const strategy = resolveImproveStrategy(options.strategy, config).config;
+  const notices = noticeSet();
+
+  const reflectOptions: AkmReflectOptions = {
+    ref,
+    config,
+    stashDir: stash,
+    ...(options.source !== undefined ? { assetContent: options.source } : {}),
+  };
+  const found = await resolveReflectSource(reflectOptions, stash, () => {});
+  if ("failure" in found) {
+    throw new UsageError(
+      (!found.failure.ok && found.failure.error) || `Reflect cannot judge ref "${ref}".`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (found.assetContent === undefined) {
+    throw new UsageError(
+      `No asset found for "${ref}" to compare the candidate with. Pass --source <file>.`,
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+
+  let runner: RunnerSpec | undefined;
+  if (options.engine) {
+    const gate = strategy.processes?.reflect?.qualityGate;
+    const overridden: ImproveProfileConfig = {
+      ...strategy,
+      processes: {
+        ...strategy.processes,
+        reflect: { ...strategy.processes?.reflect, qualityGate: { ...gate, enabled: true, engine: options.engine } },
+      },
+    };
+    runner = resolveQualityGateJudge(config, overridden, "reflect", notices.add);
+  } else {
+    const reflect = resolveReflectRunner({ ...reflectOptions, improveProfile: strategy });
+    notices.add(reflect.notices);
+    runner = selectReflectJudge(config, strategy, reflect.runnerSpec, notices.add);
+  }
+  if (!runner) {
+    throw new ConfigError(
+      "No judge engine is configured for reflect's quality gate.",
+      "LLM_NOT_CONFIGURED",
+      "Set processes.reflect.qualityGate.engine or defaults.llmEngine, or pass --engine <name>.",
+    );
+  }
+  preflightReflectDispatch(runner, notices.add);
+
+  const usage: LlmUsageRecord[] = [];
+  setLlmUsageSink((record) => usage.push(record));
+  const startedAt = Date.now();
+  let verdict: QualityJudgeResult;
+  try {
+    verdict = await runReflectQualityJudge(
+      config,
+      options.candidate,
+      found.assetContent,
+      options.feedback ?? [],
+      undefined,
+      {
+        runnerSelectionFrozen: true,
+        llmRunner: runner,
+        onNotices: notices.add,
+      },
+    );
+  } finally {
+    clearLlmUsageSink();
+  }
+  const model =
+    usage.find((record) => record.model)?.model ??
+    (runner.kind === "llm" ? runner.connection.model : runner.profile.model);
+  const who = { engine: runner.engine, ...(model ? { model } : {}) };
+  const spent = {
+    durationMs: Date.now() - startedAt,
+    ...(usage.length > 0 ? { usage: sumJudgeUsage(usage) } : {}),
+    ...notices.fields(),
+  };
+  // `score` -1 is the judge's own mark for "no verdict": a provider failure or a reply it could not read.
+  if (verdict.score === -1 || !verdict.criteria) {
+    return { ok: false, ...who, reason: verdict.reason, ...(verdict.error ? { error: verdict.error } : {}), ...spent };
+  }
+  return { ok: true, ...who, scores: verdict.criteria, reason: verdict.reason, passes: verdict.pass, ...spent };
+}
+
 export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmReflectResult> {
   const stash = options.stashDir ?? resolveStashDir();
   const { emitInvoked, emitFailed } = reflectEmitters(options);
@@ -1388,19 +1554,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
   const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;
-  let judgeRunner: RunnerSpec | undefined;
-  if (judgeWanted) {
-    const gateJudge = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
-    if (gateJudge) {
-      judgeRunner = gateJudge;
-    } else if (runnerIsLlm(runnerSpec)) {
-      judgeRunner = runnerSpec;
-    } else {
-      const resolved = resolveImproveExecution({ config, processName: "reflect_proposal_quality-judge" });
-      if (resolved) notices.add(resolved.notices);
-      judgeRunner = resolved?.runner;
-    }
-  }
+  const judgeRunner = judgeWanted ? selectReflectJudge(config, activeStrategy, runnerSpec, notices.add) : undefined;
   const skippedNoJudge = judgeWanted && !judgeRunner;
   if (skippedNoJudge) {
     warnOnce(

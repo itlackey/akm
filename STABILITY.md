@@ -84,6 +84,7 @@ enumeration of the whole `proposal` noun group.
 | `akm agent` | Evolving | |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
+| `akm improve judge` | Experimental | New in 0.9.25; reflect's quality judge on a supplied candidate, for evaluating judges. Writes nothing. |
 | `akm proposal list` | Stable | See reconciliation note above. |
 | `akm proposal show` | Evolving | |
 | `akm proposal diff` | Evolving | |

@@ -2,15 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import fs from "node:fs";
 import path from "node:path";
 import { defineCommand } from "citty";
 import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
+import { EXIT_CODES, GLOBAL_OUTPUT_ARGS, output, outputWithExitCode, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
@@ -39,7 +40,7 @@ import {
   resolveImprovePlan,
 } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
-import { renderReflectPromptPreview } from "./reflect";
+import { judgeReflectCandidate, renderReflectPromptPreview } from "./reflect";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -260,6 +261,87 @@ function rejectReportOnlyFlags(args: { run?: string; since?: string }): void {
   );
 }
 
+function readFlagFile(flag: string, file: string): string {
+  try {
+    return fs.readFileSync(path.resolve(file), "utf8");
+  } catch (error) {
+    throw new NotFoundError(
+      `${flag} ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      "FILE_NOT_FOUND",
+    );
+  }
+}
+
+/** `akm improve judge <ref> --candidate <file>`: reflect's quality judge on a candidate revision you supply. */
+async function runImproveJudgeCli(args: {
+  _?: unknown;
+  candidate?: string;
+  source?: string;
+  feedback?: string;
+  "feedback-file"?: string;
+  engine?: string;
+  strategy?: string;
+}): Promise<void> {
+  const positionals = Array.isArray(args._) ? args._.map(String) : [];
+  const refArg = positionals[1];
+  if (!refArg) {
+    throw new UsageError(
+      "`akm improve judge` requires an asset ref: `akm improve judge <ref> --candidate <file>`.",
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+  if (positionals.length > 2) {
+    throw new UsageError(
+      `\`akm improve judge\` takes one ref, but got ${positionals
+        .slice(1)
+        .map((token) => `"${token}"`)
+        .join(" ")}.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  parseRefInput(refArg);
+  const candidateArg = getStringArg(args, "candidate");
+  if (!candidateArg) {
+    throw new UsageError("`akm improve judge` requires `--candidate <file>`.", "MISSING_REQUIRED_ARGUMENT");
+  }
+  const sourceArg = getStringArg(args, "source");
+  const feedbackArg = getStringArg(args, "feedback");
+  const feedbackFileArg = getStringArg(args, "feedback-file");
+  if (feedbackArg !== undefined && feedbackFileArg !== undefined) {
+    throw new UsageError("Pass either --feedback <text> or --feedback-file <file>, not both.", "INVALID_FLAG_VALUE");
+  }
+  // reflect hands the judge one line per feedback note, with no blank edges.
+  const feedbackText = (feedbackFileArg ? readFlagFile("--feedback-file", feedbackFileArg) : feedbackArg)?.trim();
+  const config = loadConfig();
+  const result = await judgeReflectCandidate({
+    ref: refArg,
+    candidate: readFlagFile("--candidate", candidateArg),
+    ...(sourceArg ? { source: readFlagFile("--source", sourceArg) } : {}),
+    ...(feedbackText ? { feedback: feedbackText.split("\n") } : {}),
+    ...(getStringArg(args, "engine") ? { engine: getStringArg(args, "engine") } : {}),
+    ...(getStringArg(args, "strategy") ? { strategy: getStringArg(args, "strategy") } : {}),
+    config,
+  });
+  const sensitiveValues = collectEngineCredentialValues(config);
+  outputWithExitCode(
+    "improve-judge",
+    !result.ok && result.error ? { ...result, error: redactSensitiveText(result.error, sensitiveValues) } : result,
+    result.ok ? undefined : EXIT_CODES.GENERAL,
+  );
+}
+
+/** The flags only `judge` reads; elsewhere citty would silently ignore them. */
+function rejectJudgeOnlyFlags(args: Record<string, unknown>): void {
+  const flag = ["candidate", "source", "feedback", "feedback-file", "engine"].find(
+    (name) => getStringArg(args, name) !== undefined,
+  );
+  if (flag === undefined) return;
+  throw new UsageError(
+    `\`--${flag}\` only applies to \`akm improve judge\`. Use \`akm improve judge <ref> --candidate <file> --${flag} <value>\` instead.`,
+    "INVALID_FLAG_VALUE",
+  );
+}
+
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
@@ -331,6 +413,30 @@ export const improveCommand = defineCommand({
       description:
         'Only with the "report" scope (`akm improve report --since <window>`): aggregate the LLM usage/routing report over every real run started since <window> (a duration like "24h"/"7d", or an ISO timestamp) instead of showing one run. Mutually exclusive with --run.',
     },
+    candidate: {
+      type: "string",
+      description:
+        'Only with the "judge" scope (`akm improve judge <ref> --candidate <file>`): the file holding the candidate revision to judge.',
+    },
+    source: {
+      type: "string",
+      description:
+        'Only with the "judge" scope: the file holding the source the candidate revises. Default: the asset at the ref in the configured stash.',
+    },
+    feedback: {
+      type: "string",
+      description:
+        'Only with the "judge" scope: feedback text the judge reads, one note per line. Mutually exclusive with --feedback-file.',
+    },
+    "feedback-file": {
+      type: "string",
+      description: 'Only with the "judge" scope: a file holding the feedback text. Mutually exclusive with --feedback.',
+    },
+    engine: {
+      type: "string",
+      description:
+        'Only with the "judge" scope: judge with this named engine instead of the one the strategy\'s reflect quality gate selects.',
+    },
     strategy: {
       type: "string",
       description:
@@ -354,6 +460,11 @@ export const improveCommand = defineCommand({
         return;
       }
       rejectReportOnlyFlags(args);
+      if (getStringArg(args, "scope") === "judge") {
+        await runImproveJudgeCli(args);
+        return;
+      }
+      rejectJudgeOnlyFlags(args);
       rejectRetiredImproveTargetFlag();
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");

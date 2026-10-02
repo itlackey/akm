@@ -84,6 +84,21 @@ describe("current improvement CLI documentation contract", () => {
     expect(section).toContain("noCalls");
   });
 
+  test("improve registers the judge scope's flags and documents the judge command (0.9.25)", () => {
+    const args = improveCommand.args as Record<string, { type?: string }>;
+    for (const flag of ["candidate", "source", "feedback", "feedback-file", "engine"]) {
+      expect(args[flag]).toMatchObject({ type: "string" });
+    }
+
+    const section = extractSection(cli, "### improve");
+    expect(section).toContain("akm improve judge <ref> --candidate <file>");
+    for (const flag of ["--candidate <file>", "--source <file>", "--feedback-file <file>", "--engine <name>"]) {
+      expect(section).toContain(flag);
+    }
+    expect(section).toContain("every criterion at 4 or more");
+    expect(section).toContain("It writes nothing.");
+  });
+
   test("proposal documents the complete current lifecycle grammar", () => {
     const section = extractSection(cli, "### proposal");
     for (const verb of ["extract", "new", "list", "show", "diff", "accept", "reject", "revert"]) {

@@ -2481,12 +2481,18 @@ akm improve lessons/my-lesson --show-prompt --format text # print the composed r
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
+akm improve judge lessons/my-lesson --candidate revised.md   # run reflect's quality judge on a candidate revision; nothing is written
+akm improve judge lessons/my-lesson --candidate revised.md --source original.md --feedback-file notes.txt --engine judge-b
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--run <id>` | `report` scope only (#944): show the usage report for one specific `improve_runs` row instead of the most recent real run. Mutually exclusive with `--since`. Rejected with any other scope, or no scope. |
 | `--since <window>` | `report` scope only (#944): aggregate the usage report over every real (non-dry-run) run started since `<window>` (a duration like `24h`/`7d`, or an ISO timestamp) instead of one run. Mutually exclusive with `--run`. Rejected with any other scope, or no scope. |
+| `--candidate <file>` | `judge` scope only: the file holding the candidate revision to judge. Required there; rejected with any other scope, or no scope. |
+| `--source <file>` | `judge` scope only: the file holding the source the candidate revises. Default: the asset at the ref in the configured stash. |
+| `--feedback <text>` / `--feedback-file <file>` | `judge` scope only: the feedback the judge reads, one note per line, as reflect hands it an asset's recent feedback events. Mutually exclusive; with neither, the judge reads "No explicit feedback supplied." |
+| `--engine <name>` | `judge` scope only: judge with this named engine in place of the one reflect's quality gate selects. Everything else in the gate (its model, timeout and `llm` settings) still applies. |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
@@ -2494,7 +2500,7 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
 | `--require-feedback-signal` | Turn the fallback lanes (high salience, proactive maintenance) off for the run: they only select and score assets, and a rewrite needs negative feedback |
-| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
+| `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`). With `judge`, it picks the strategy whose reflect quality gate and engines apply. |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
 | `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH, and an `opencode-sdk` engine's is both its binary and, when it sets `llmEngine`, that LLM fallback's endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
@@ -2709,6 +2715,61 @@ that run's own `llm_usage` events instead of erroring, sets `noCalls` to `[]`
 (eligibility reasons are not reconstructable after the fact), and adds a
 `notes` entry saying so rather than fabricating precision the old row can't
 support.
+
+#### improve judge
+
+`akm improve judge <ref> --candidate <file>` runs the quality judge that
+reflect's gate runs on a candidate revision you supply, so a judge engine, a
+setting or a rubric can be tried on real edits before the gate changes. Like
+`report`, `judge` is a `scope` value rather than a subcommand, so it is
+intercepted before any lock, log or index side effect.
+
+There is no second judge: the command calls the one reflect calls, so the
+prompt is reflect's own, the rubric is `need`, `preservation` and `quality`
+scored 1 to 5, and `passes` is the gate's rule, every criterion at 4 or more.
+The judge's engine is selected the way reflect selects it: the gate's own
+engine (`processes.reflect.qualityGate.engine`), else the reflect engine when
+that is an LLM, else the `defaults.llmEngine` cascade. `--engine` replaces that
+choice, and `--strategy` picks the strategy whose gate applies. It judges even
+when the strategy turns the gate off. The call is
+unattended model work, so it runs under the model-work tool policy on any
+engine kind: an LLM engine has no tools, and `claude`, `opencode` and
+`opencode-sdk` run confined in a scratch working directory akm creates for the
+call and removes after it. An engine that cannot confine the policy is refused
+before anything runs. A `secret`, and a type reflect cannot revise, are
+refused without being read.
+
+```json
+{
+  "ok": true,
+  "engine": "judge",
+  "model": "qwen3.8-27b",
+  "scores": { "need": 4, "preservation": 5, "quality": 4 },
+  "reason": "Fixes the truncated description and keeps every command.",
+  "passes": true,
+  "durationMs": 5210,
+  "usage": { "calls": 1, "promptTokens": 1830, "completionTokens": 74, "totalTokens": 1904 },
+  "shape": "improve-judge",
+  "schemaVersion": 1
+}
+```
+
+`model` is the model the provider reports serving the call, else the one the
+engine configures. `usage` sums the call's attempts (a reply that fails the
+schema gets one corrective retry) and omits token counts a provider did not
+report. `notices` lists the lowering notices the engine's transport emitted,
+when there are any.
+
+A judge that gives no verdict, because the provider failed or its reply was not
+a verdict, is a failure, not a rejection: the result is `{"ok": false, "engine",
+"reason", "error", ...}` on stdout with exit `1`, and carries no `scores` or
+`passes`. Everything that goes wrong before the call, such as a bad flag, a
+missing file, an unknown engine or strategy, or no judge engine configured,
+fails as every other command does, on stderr.
+
+**It writes nothing.** No proposal, ledger row or event is recorded, and the
+judge's usage is not persisted as `llm_usage` events: the `usage` in the result
+is read from an in-memory sink. Reflect's own judge calls are recorded as usual.
 
 ### proposal
 
