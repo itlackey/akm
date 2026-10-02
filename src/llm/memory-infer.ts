@@ -128,7 +128,8 @@ export async function compressMemoryToDerivedMemory(
       { role: "user", content: userPrompt },
     ],
     request: {
-      temperature: 0.1,
+      // The engine's or the process's configured temperature; 0.1 only when neither sets one.
+      temperature: llmRunner.connection.temperature ?? 0.1,
       timeoutMs: llmRunner.timeoutMs,
       signal,
       responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,

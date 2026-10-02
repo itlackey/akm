@@ -1007,6 +1007,64 @@ describe("akmDistill — queued proposal", () => {
     expect(listProposals(stash)).toHaveLength(1);
   });
 
+  test("a promotion judged by the gate's own engine needs only the judge's credential", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "judged-promotion.md");
+    fs.writeFileSync(
+      memoryFile,
+      [
+        "---",
+        "description: A promotion the gate's own judge scores",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "tags: [deploy, ops]",
+        "---",
+        "",
+        "Always validate the deployment manifest before release.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    const config = distillConfig(stash, { qualityGate: { enabled: true, engine: "judge" } });
+    config.engines = {
+      default: {
+        kind: "llm",
+        endpoint: "http://localhost:11434/v1/chat/completions",
+        model: "test-model",
+        apiKey: "$AKM_UNUSED_PROMOTION_GENERATOR_KEY",
+      },
+      judge: {
+        kind: "llm",
+        endpoint: "http://localhost:11435/v1/chat/completions",
+        model: "judge-model",
+        apiKey: "$AKM_PROMOTION_JUDGE_KEY",
+      },
+    };
+    const models: string[] = [];
+
+    const result = await withEnv(
+      { AKM_UNUSED_PROMOTION_GENERATOR_KEY: undefined, AKM_PROMOTION_JUDGE_KEY: "judge-secret" },
+      () =>
+        akmDistill({
+          ref: "memories/judged-promotion",
+          proposalKind: "auto",
+          config,
+          stashDir: stash,
+          chat: async (connection) => {
+            models.push(connection.model);
+            return JSON.stringify({ score: 4.5, reason: "adds new info" });
+          },
+          lookupFn: async (ref) => (ref === "memories/judged-promotion" ? memoryFile : null),
+          readEventsFn: eventsFor("memories/judged-promotion", ["positive", "positive"]),
+        }),
+    );
+
+    expect(result.outcome).toBe("queued");
+    expect(result.proposalKind).toBe("knowledge");
+    expect(models).toEqual(["judge-model"]);
+  });
+
   test("explicit knowledge mode uses knowledge validation instead of lesson lint", async () => {
     const stash = makeStashDir();
     let receivedPrompt = "";
@@ -2002,6 +2060,32 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     const persisted = JSON.stringify(listProposals(stash));
     expect(persisted).not.toContain(secret);
     expect(persisted).not.toContain(rotated);
+  });
+
+  test("qualityGate.engine judges the lesson on its own engine; generation stays on the default", async () => {
+    const stash = makeStashDir();
+    const config = distillConfig(stash, { enabled: true, qualityGate: { enabled: true, engine: "judge" } });
+    config.engines = {
+      ...config.engines,
+      judge: { kind: "llm", endpoint: "http://localhost:11435/v1/chat/completions", model: "judge-model" },
+    };
+    const calls: string[] = [];
+
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config,
+      stashDir: stash,
+      chat: async (connection, messages) => {
+        const judging = messages.some((m) => m.content.includes("Score this lesson"));
+        calls.push(`${judging ? "judge" : "generate"}:${connection.model}`);
+        return judging ? JSON.stringify({ score: 4.5, reason: "adds new info" }) : VALID_LESSON;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(calls).toEqual(["generate:test-model", "judge:judge-model"]);
   });
 
   test("queued lesson stamps judgeConfidence on the event and content-scores the OUTPUT ref", async () => {

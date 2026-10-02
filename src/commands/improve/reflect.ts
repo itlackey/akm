@@ -78,6 +78,7 @@ import {
   noticeSet,
   type QualityJudgeResult,
   rejectedProposalContext,
+  resolveQualityGateJudge,
   runReflectQualityJudge,
 } from "./stage";
 
@@ -1410,12 +1411,13 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   const run: ReflectRun = { options, stash, config, runnerSpec, engineName, notices, emitInvoked, emitFailed };
 
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
-  const judgeWanted =
-    (activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? false) ||
-    (activeStrategy?.processes?.distill?.qualityGate?.enabled ?? true);
+  const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;
   let judgeRunner: LlmRunner | undefined;
   if (judgeWanted) {
-    if (runnerIsLlm(runnerSpec)) {
+    const gateJudge = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
+    if (gateJudge) {
+      judgeRunner = gateJudge;
+    } else if (runnerIsLlm(runnerSpec)) {
       judgeRunner = runnerSpec;
     } else {
       const resolved = resolveImproveLlmExecution({ config, processName: "reflect_proposal_quality-judge" });

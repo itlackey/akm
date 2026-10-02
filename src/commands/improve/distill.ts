@@ -66,6 +66,7 @@ import {
   noticeSet,
   type QualityJudgeResult,
   rejectedProposalContext,
+  resolveQualityGateJudge,
   runLessonQualityJudge,
   stageRunner,
 } from "./stage";
@@ -353,6 +354,8 @@ interface DistillRun {
   config: AkmConfig;
   profile: ImproveProfileConfig;
   runner?: LlmRunner;
+  /** The lesson gate's own judge (#1011); `undefined` when the gate names none. */
+  judgeRunner?: LlmRunner;
   notices: NoticeSet;
   eligMeta: { eligibilitySource?: EligibilitySource };
   /** `excludeFeedbackFromRefs` diagnostics, present only when the option was given. */
@@ -426,6 +429,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     config,
     profile,
     runner: stageRunner(options, config, profile, "distill", notices.add),
+    judgeRunner: resolveQualityGateJudge(config, profile, "distill", notices.add),
     notices,
     eligMeta,
     asset,
@@ -449,7 +453,9 @@ async function distill(
   // A reinforced memory graduates to knowledge without a generation call.
   const promotion = targetKind === "lesson" ? null : await planPromotion(run, feedbackEvents);
   if (promotion) {
-    if (run.runner && (promotion.existing || qualityGateEnabled(run))) assertRunnerCredentials(run.runner);
+    if (run.runner && promotion.existing) assertRunnerCredentials(run.runner);
+    const judge = run.judgeRunner ?? run.runner;
+    if (judge && qualityGateEnabled(run)) assertRunnerCredentials(judge);
     const promoted = await promoteToKnowledge(run, promotion);
     stampInputSalience(run);
     return promoted;
@@ -592,7 +598,7 @@ async function judgeAndQueue(
     const source = out.source ? parseFrontmatter(out.source).content.trim() : "";
     const verdict = await runLessonQualityJudge(run.config, content, source, run.options.chat, {
       ...(similarLessons.length > 0 ? { similarLessons } : {}),
-      ...(run.runner ? { llmRunner: run.runner } : {}),
+      ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
       ...(run.options.signal ? { signal: run.options.signal } : {}),
       onNotices: run.notices.add,
     });

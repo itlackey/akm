@@ -63,7 +63,13 @@ function twoBundleConfig(defaultBundle = "primary"): AkmConfig {
     },
     defaultBundle,
     defaultWriteTarget: "primary",
-    improve: { strategies: { default: { processes: { distill: { qualityGate: { enabled: false } } } } } },
+    improve: {
+      strategies: {
+        default: {
+          processes: { distill: { qualityGate: { enabled: false } }, reflect: { qualityGate: { enabled: false } } },
+        },
+      },
+    },
   } as AkmConfig);
 }
 

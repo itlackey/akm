@@ -66,12 +66,23 @@ const excludeRefPrefixesField = z.array(z.string().min(1)).optional();
 const processLimitField = positiveInt.optional();
 
 /**
- * Distill process: LLM-as-judge lesson quality gate. Default ON (R3);
- * fail-open — judge failure/timeout/parse errors pass through. Set
- * `enabled: false` on the distill process to opt out. Also read on the
- * `reflect` process (proposal-side quality gate; see reflect.ts).
+ * The distill and reflect LLM-as-judge quality gates. Default ON; set
+ * `enabled: false` on the process to opt out. A judge error, timeout or
+ * unparsable reply never passes: distill sends the lesson to review and
+ * reflect refuses the edit. `engine`, `model`, `timeoutMs` and `llm` give the
+ * gate a judge of its own (#1011), resolved over the process's own settings;
+ * with none set, the gate judges with the generator's runner.
  */
-const qualityGateField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
+const qualityGateField = z
+  .object({
+    enabled: z.boolean().optional(),
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    llm: LlmInvocationOverridesSchema.passthrough().optional(),
+  })
+  .passthrough()
+  .optional();
 
 /**
  * WS-3b: CLS (Complementary Learning System) interleaving (step 9).

@@ -4,6 +4,44 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.23] - 2026-10-01
+
+### Added
+
+- **A quality gate can judge with an engine of its own (#1011).**
+  `processes.reflect.qualityGate` and `processes.distill.qualityGate` take
+  `engine`, `model`, `timeoutMs` and `llm`. These resolve over the process's own
+  settings, the way `processes.triage.judgment` resolves over triage's. Before,
+  a gate could not choose its judge. Config validation
+  rejects a gate `engine` that is missing or is not an LLM engine. A gate whose
+  settings resolve to no LLM engine fails before anything is generated, and
+  never falls back to another engine. The judge's LLM usage is recorded under
+  its own engine, so the improve report shows it on its own row.
+
+### Changed
+
+- **A judge whose engine sets `enableThinking: true` now thinks.** The reflect
+  and distill judges always turned thinking off. They still do, unless the
+  judge's engine turns it on, so a thinking judge can be configured. To keep a
+  thinking engine's judge from thinking, set
+  `qualityGate.llm.enableThinking: false`. In the maintainer's replay of
+  labelled reflect edits, a thinking judge passed more of the good edits, and
+  more of the bad ones too. It used about 20 times the tokens and took a median
+  of 30–67 s per judgment, against about 5 s, so it stays opt-in.
+
+### Fixed
+
+- **The reflect quality gate follows its own switch.** It ran when either
+  `processes.reflect.qualityGate.enabled` was true or distill's gate was on,
+  which it is by default. So `reflect.qualityGate.enabled: false` did nothing
+  unless distill's gate was off too, and turning distill's gate off also turned
+  off reflect's. Each gate now follows only its own `enabled`, which defaults to
+  on.
+- **Memory inference uses the configured temperature.** It always sent 0.1,
+  ignoring the engine's `temperature` and
+  `processes.memoryInference.llm.temperature`. It now sends the configured
+  temperature, and 0.1 only when nothing sets one.
+
 ## [0.9.22] - 2026-10-01
 
 ### Fixed

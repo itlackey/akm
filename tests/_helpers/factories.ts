@@ -36,7 +36,11 @@ export function quietQualityGateConfig(): AkmConfig {
     },
     defaults: { engine: "fake-agent", improveStrategy: "default" },
     improve: {
-      strategies: { default: { processes: { distill: { qualityGate: { enabled: false } } } } },
+      strategies: {
+        default: {
+          processes: { distill: { qualityGate: { enabled: false } }, reflect: { qualityGate: { enabled: false } } },
+        },
+      },
     },
   } as AkmConfig;
 }
