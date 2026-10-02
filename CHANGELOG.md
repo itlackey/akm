@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **A prompt builder that nothing called.** `buildSchemaRepairPrompt` and its
+  `SchemaRepairPromptInput` type were left behind when the schema-repair pass
+  moved to a direct LLM call, which builds its own request. They are gone, with
+  the tests that covered only them. Nothing you run changes.
+
+### Fixed
+
+- **An agent engine that names its model only in `args` is named in the usage
+  report.** An `opencode` engine with `args: ["run", "--model",
+  "krang/chat/qwen3.8-27b"]` and no `model` field ran that model, but its usage
+  records carried none, so the improve usage report showed `unattributed`. The
+  record now takes the model from `args` when the request names none, as the
+  command does. A model the request names still wins. An `opencode-sdk`
+  engine's `args` never reach its server, so one that names no model still
+  shows `unattributed`: opencode picks the model.
+- **`akm-eval` counts an agent or SDK engine's invalid reflect reply as
+  schema-shape (tooling only).** Since 0.9.25-alpha.1 such a failure reads
+  `Engine "<name>" reply was not a valid reflect proposal after 2 attempts: …`.
+  The `reflect-quality` classifier knew only the older messages, so it counted
+  these under `other` and the schema-shape rate left them out.
+
 ## [0.9.25-alpha.1] - 2026-10-02
 
 ### Changed

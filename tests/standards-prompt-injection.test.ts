@@ -14,7 +14,6 @@
  * Covered authoring prompts:
  *   - buildReflectPrompt        (improve reflect — edit an asset)
  *   - buildProposePrompt        (propose — author a new asset)
- *   - buildSchemaRepairPrompt   (schema-repair — fix frontmatter)
  *   - buildDistillPrompt        (distill — lesson/knowledge)
  *   - buildExtractPrompt        (extract — lessons/memories from a session)
  *
@@ -38,7 +37,7 @@ import { buildDistillPrompt } from "../src/commands/improve/distill";
 import { buildExtractPrompt } from "../src/commands/improve/extract-prompt";
 import { resolveStandardsContext } from "../src/core/standards/resolve-standards-context";
 import { resolveStashStandards } from "../src/core/standards/resolve-stash-standards";
-import { buildProposePrompt, buildReflectPrompt, buildSchemaRepairPrompt } from "../src/integrations/agent/prompts";
+import { buildProposePrompt, buildReflectPrompt } from "../src/integrations/agent/prompts";
 
 /** The lead-in line shared by every authoring prompt's standards section. */
 const LEAD_IN = "Standards to follow (the rulebook for this target)";
@@ -75,18 +74,6 @@ const BUILDERS: Array<{ name: string; render: (standardsContext?: string) => str
   {
     name: "buildProposePrompt",
     render: (s) => buildProposePrompt({ type: "skill", name: "foo", task: "do a thing", standardsContext: s }),
-  },
-  {
-    name: "buildSchemaRepairPrompt",
-    render: (s) =>
-      buildSchemaRepairPrompt({
-        ref: "skills/foo",
-        type: "skill",
-        name: "foo",
-        reason: "missing description",
-        assetContent: "body",
-        standardsContext: s,
-      }),
   },
   {
     name: "buildDistillPrompt",

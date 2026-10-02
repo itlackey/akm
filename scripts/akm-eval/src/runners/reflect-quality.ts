@@ -16,7 +16,10 @@
  *   - schema-shape      : reflect-failed AND error matches
  *                         "missing required string field" |
  *                         "JSON Parse error" |
- *                         "Unterminated string"
+ *                         "Unterminated string" |
+ *                         `Engine "<name>" reply was not a valid reflect
+ *                         proposal after N attempts: …` (an agent or SDK
+ *                         engine's reply that broke the reflect contract)
  *   - content-policy    : reflect-failed AND error starts with
  *                         "Reflect rejected: EXCESSIVE_"
  *                         (EXCESSIVE_EXPANSION / EXCESSIVE_SHRINKAGE)
@@ -75,6 +78,13 @@ export interface ReflectActionInput {
 }
 
 /**
+ * An agent or SDK engine's reflect reply that failed the contract (`reflect.ts`
+ * `invalidReply`): the engine is named, and the count is one attempt when no
+ * repair turn was allowed.
+ */
+const ENGINE_INVALID_REPLY = /^Engine ".*" reply was not a valid reflect proposal after \d+ attempts?:/;
+
+/**
  * Pure classifier. Returns `null` when the action is not a reflect /
  * reflect-failed (callers filter this out).
  *
@@ -105,7 +115,8 @@ export function classifyReflectAction(
   if (
     err.includes("missing required string field") ||
     err.includes("JSON Parse error") ||
-    err.includes("Unterminated string")
+    err.includes("Unterminated string") ||
+    ENGINE_INVALID_REPLY.test(err)
   ) {
     return { runId, ref, mode, classification: "schemaShape", errSnippet };
   }

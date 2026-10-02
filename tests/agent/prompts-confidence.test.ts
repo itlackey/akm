@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildProposePrompt, buildReflectPrompt, buildSchemaRepairPrompt } from "../../src/integrations/agent/prompts";
+import { buildProposePrompt, buildReflectPrompt } from "../../src/integrations/agent/prompts";
 
 describe("explicit confidence elicitation", () => {
   test("buildReflectPrompt asks for a self-rated confidence score in [0, 1]", () => {
@@ -24,16 +24,5 @@ describe("explicit confidence elicitation", () => {
     expect(prompt).toMatch(/0\.\.1|0\s*[–-]\s*1|\[0,\s*1\]|0\.0-1\.0|0\.0–1\.0/);
     expect(prompt).not.toMatch(/auto-accept/i);
     expect(prompt).toMatch(/reviewer/i);
-  });
-
-  test("buildSchemaRepairPrompt asks for a self-rated confidence score", () => {
-    const prompt = buildSchemaRepairPrompt({
-      ref: "lessons/demo",
-      type: "lesson",
-      name: "demo",
-      reason: "missing description",
-      assetContent: "body",
-    });
-    expect(prompt).toMatch(/confidence/i);
   });
 });
