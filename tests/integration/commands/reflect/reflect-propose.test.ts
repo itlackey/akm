@@ -51,14 +51,6 @@ function makeTempDir(prefix: string): string {
   return dir;
 }
 
-function extractProposalDraftPath(prompt: string): string | undefined {
-  const prefix = path.join(os.tmpdir(), "akm-propose-");
-  const prefixIndex = prompt.indexOf(prefix);
-  if (prefixIndex < 0) return undefined;
-  const filenameTail = prompt.slice(prefixIndex + prefix.length).match(/^[^\s`"']+\.md/)?.[0];
-  return filenameTail ? `${prefix}${filenameTail}` : undefined;
-}
-
 function makeStashDir(): string {
   // sandboxStashDir already creates lessons/skills/memories/knowledge;
   // this helper is used for inline stash dirs (not the env-var-backed one)
@@ -606,34 +598,30 @@ describe("akm propose", () => {
     expect(events.events[0]?.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
 
-  test("file-written drafts use the resolved bundle name rather than the source root", async () => {
+  test("proposals use the resolved bundle name rather than the source root", async () => {
     const stash = makeStashDir();
     const config = {
       ...quietQualityGateConfig(),
       bundles: { team: { path: stash, writable: true } },
       defaultBundle: "team",
     } as ReturnType<typeof quietQualityGateConfig>;
-    const spawn: SpawnFn = (cmd) => {
-      const prompt = cmd.join(" ");
-      expect(prompt).toContain(path.join(os.tmpdir(), "akm-propose-"));
-      const draftPath = extractProposalDraftPath(prompt);
-      if (!draftPath) throw new Error("draft path missing from propose prompt");
-      fs.writeFileSync(draftPath, "---\ndescription: A file-written skill draft\n---\n\nDraft body.\n", "utf8");
-      return fakeSpawn("", "", 0)(cmd, {});
-    };
+    const payload = JSON.stringify({
+      ref: "skills/bundle-named",
+      content: "---\ndescription: A skill proposed into a named bundle\n---\n\nBundle body.\n",
+    });
 
     const result = await akmPropose({
       type: "skill",
-      name: "file-draft",
-      task: "Write through the draft file",
+      name: "bundle-named",
+      task: "Propose into the named bundle",
       stashDir: stash,
       agentConfig: config,
-      runAgentOptions: { spawn },
+      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.proposal.ref).toBe("team//skills/file-draft");
+    expect(result.proposal.ref).toBe("team//skills/bundle-named");
   });
 
   test("rejects unknown type with UsageError", async () => {

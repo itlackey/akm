@@ -3,13 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { type AkmProposeOptions, akmPropose } from "../src/commands/proposal/propose";
 import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
-import { buildProposePrompt } from "../src/integrations/agent/prompts";
+import { buildProposePrompt, PROPOSAL_JSON_SCHEMA } from "../src/integrations/agent/prompts";
 import { __setTestServer, closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { makeStashDir, mutateScopedEnv, type SandboxedDir, withEnv, withMockedFetch } from "./_helpers/sandbox";
 
@@ -24,14 +21,6 @@ function proposalStash(): string {
   const sandbox = makeStashDir();
   sandboxes.push(sandbox);
   return sandbox.dir;
-}
-
-function extractProposalDraftPath(prompt: string): string | undefined {
-  const prefix = path.join(os.tmpdir(), "akm-propose-");
-  const prefixIndex = prompt.indexOf(prefix);
-  if (prefixIndex < 0) return undefined;
-  const filenameTail = prompt.slice(prefixIndex + prefix.length).match(/^[^\s`"']+\.md/)?.[0];
-  return filenameTail ? `${prefix}${filenameTail}` : undefined;
 }
 
 function directConfig(stashDir: string, apiKey?: string): AkmConfig {
@@ -82,7 +71,7 @@ function sdkFallbackConfig(stashDir: string): AkmConfig {
 }
 
 describe("proposal consumers lower resolved execution requests", () => {
-  test("proposal new sends exact live fields without changing the legacy user prompt", async () => {
+  test("proposal new sends exact live fields, the proposal prompt and its JSON Schema", async () => {
     const stashDir = proposalStash();
     let requestBody: Record<string, unknown> | undefined;
 
@@ -122,23 +111,18 @@ describe("proposal consumers lower resolved execution requests", () => {
       max_tokens: 222,
       enable_thinking: false,
       seed: 92,
+      response_format: { type: "json_schema", json_schema: { schema: PROPOSAL_JSON_SCHEMA } },
     });
-    const messages = requestBody?.messages as Array<Record<string, unknown>>;
-    expect(messages).toHaveLength(1);
-    const content = String(messages[0]?.content);
-    expect(content).toContain(path.join(os.tmpdir(), "akm-propose-"));
-    const draftFilePath = extractProposalDraftPath(content);
-    expect(draftFilePath).toBeDefined();
-    expect(messages[0]).toEqual({
-      role: "user",
-      content: buildProposePrompt({
-        type: "skill",
-        name: "lowered",
-        task: "AUTHORING-CONTENT-MUST-NOT-ENTER-NOTICES",
-        draftFilePath: draftFilePath as string,
-      }),
-    });
-    expect(requestBody).not.toHaveProperty("response_format");
+    expect(requestBody?.messages).toEqual([
+      {
+        role: "user",
+        content: buildProposePrompt({
+          type: "skill",
+          name: "lowered",
+          task: "AUTHORING-CONTENT-MUST-NOT-ENTER-NOTICES",
+        }),
+      },
+    ]);
     expect(requestBody).not.toHaveProperty("tools");
     const notices = (result as typeof result & { notices?: Array<Record<string, unknown>> }).notices ?? [];
     expect(JSON.stringify(notices)).not.toContain("AUTHORING-CONTENT-MUST-NOT-ENTER-NOTICES");
@@ -217,24 +201,62 @@ describe("proposal consumers lower resolved execution requests", () => {
     expect(JSON.stringify(result)).not.toContain(replacement);
   });
 
-  test("file-written SDK drafts reject a symbolic fallback credential instead of persisting redacted text", async () => {
+  // The caller's envSource is the one environment for the preflight, the
+  // dispatch, and the secrets kept out of the queue.
+  test.each([
+    ["is accepted, and the proposal is queued", false],
+    ["is accepted, and a reply echoing it is refused", true],
+  ])("a credential set only in the caller's envSource %s", async (_case, echo) => {
+    const stashDir = proposalStash();
+    const secret = "proposal-envsource-only-092";
+    let authorization: string | null = null;
+    const body = echo ? `The provider echoed ${secret}.` : "Use the caller's environment.";
+    const result = await withEnv({ PROPOSAL_ENVSOURCE_KEY: undefined }, () =>
+      withMockedFetch(
+        () =>
+          akmPropose({
+            type: "skill",
+            name: "envsource-bound",
+            task: "Read the credential from the caller's environment.",
+            engine: "direct",
+            stashDir,
+            agentConfig: directConfig(stashDir, "$PROPOSAL_ENVSOURCE_KEY"),
+            runAgentOptions: { envSource: { PROPOSAL_ENVSOURCE_KEY: secret } },
+          }),
+        (_url, init) => {
+          authorization = new Headers(init?.headers).get("authorization");
+          const content = `---\ndescription: Proposal bound to the caller's environment\n---\n\n${body}\n`;
+          return Response.json({
+            choices: [{ message: { content: JSON.stringify({ ref: "skills/envsource-bound", content }) } }],
+          });
+        },
+      ),
+    );
+
+    expect(authorization as string | null).toBe(`Bearer ${secret}`);
+    expect(JSON.stringify(result)).not.toContain(secret);
+    if (echo) {
+      expect(result).toMatchObject({ ok: false, reason: "parse_error", engine: "direct" });
+      if (result.ok) throw new Error("expected the echoed credential to be refused");
+      expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
+      expect(listProposals(stashDir)).toEqual([]);
+    } else {
+      expect(result.ok).toBe(true);
+      expect(listProposals(stashDir)).toHaveLength(1);
+    }
+  });
+
+  test("SDK replies that echo a symbolic fallback credential are rejected instead of persisting redacted text", async () => {
     const stashDir = proposalStash();
     const secret = "proposal-sdk-fallback-secret-092";
     __setTestServer({
       client: {
         session: {
           create: async () => ({ data: { id: "proposal-sdk-session" } }),
-          prompt: async (args: { body: { parts: Array<{ type: string; text: string }> } }) => {
-            const prompt = args.body.parts[0]?.text ?? "";
-            expect(prompt).toContain(path.join(os.tmpdir(), "akm-propose-"));
-            const draftFilePath = extractProposalDraftPath(prompt);
-            if (!draftFilePath) throw new Error("proposal SDK fixture did not receive the draft path");
-            fs.writeFileSync(
-              draftFilePath,
-              `---\ndescription: SDK fallback draft\n---\n\nThe provider echoed ${secret}.\n`,
-              "utf8",
-            );
-            return { data: { parts: [{ type: "text", text: "" }] } };
+          prompt: async () => {
+            const content = `---\ndescription: SDK fallback proposal\n---\n\nThe provider echoed ${secret}.\n`;
+            const reply = JSON.stringify({ ref: "skills/sdk-fallback-redaction", content });
+            return { data: { parts: [{ type: "text", text: reply }] } };
           },
           delete: async () => ({}),
         },
@@ -257,7 +279,7 @@ describe("proposal consumers lower resolved execution requests", () => {
     if (result.ok) throw new Error("expected unsafe content rejection");
     expect(result.engine).toBe("sdk");
     expect(result.reason).toBe("parse_error");
-    expect(result.error).toContain("configured credential");
+    expect(result.error).toMatch(/configured credential|\[REDACTED\]/);
     expect(JSON.stringify(result)).not.toContain(secret);
     expect(listProposals(stashDir)).toEqual([]);
   });

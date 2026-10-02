@@ -2122,7 +2122,8 @@ jq -s -e '
   all($proposal[]; .authorizationPresent == true) and
   $proposal[0].maxTokensPresent == false and
   $proposal[1].maxTokensPresent == true and
-  all(.[]; .responseFormatPresent == false)
+  $enrich[0].responseFormatPresent == false and
+  all($proposal[]; .responseFormatPresent == true)
 ' \
   "$AKM_QA_SERVICE_LOG"
 ```

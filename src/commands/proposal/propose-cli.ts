@@ -30,7 +30,7 @@ const EXIT_GENERAL = EXIT_CODES.GENERAL;
 export const proposeCommand = defineCommand({
   meta: {
     name: "new",
-    description: "Ask the configured agent CLI to author a brand-new asset and queue it as a proposal",
+    description: "Ask the configured engine to author a brand-new asset as JSON and queue it as a proposal",
   },
   // Raw defineCommand: declare the global output flags so their space-separated
   // values are consumed rather than shifting the `type` / `name` positionals.
@@ -53,7 +53,7 @@ export const proposeCommand = defineCommand({
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
     engine: { type: "string", description: "Engine to use (defaults to defaults.engine)" },
-    "timeout-ms": { type: "string", description: "Override the agent CLI timeout in milliseconds" },
+    "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {

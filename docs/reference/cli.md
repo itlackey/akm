@@ -2756,10 +2756,23 @@ akm proposal new skill code-review --path team --task "PR-style review skill"  #
 | `--path` | Relative subdirectory under the type dir to place the proposed asset in (e.g. `release`). The filename comes from `<name>`. |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--engine` | Override the default execution engine |
+| `--engine` | Override the default execution engine. Any kind works: an LLM engine, an agent CLI or `opencode-sdk` |
 | `--timeout-ms` | Override the selected engine timeout for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
+
+Every engine kind returns the proposal the same way: as one JSON object on
+stdout with the asset's `ref`, its full `content` and a self-rated
+`confidence`. akm sends the object's JSON Schema with the request, as
+`response_format` to an LLM engine and as an instruction at the end of the
+prompt to an agent engine (codex also gets it as `--output-schema`). akm
+captures the reply; an agent CLI runs headless, with no live terminal session,
+and writes no draft file. A harness's own JSON envelope, such as claude's
+`--output-format json` result, is unwrapped first.
+A reply that is not a valid proposal gets one corrective retry that says what
+was wrong. If that reply is not valid either, the command exits 1 with
+`reason: "parse_error"` and an error that names the engine, for example
+`Engine "local" reply was not valid proposal JSON after 2 attempts: …`.
 
 **Prompt-task `timeoutMs`:** a version-2 prompt task may set `timeoutMs` to
 override its selected engine timeout. Set it to `null` to disable the timer, or
