@@ -4,7 +4,8 @@
  *
  * Covers:
  *   - schema-shape detection (missing required string field / JSON
- *     Parse error / Unterminated string).
+ *     Parse error / Unterminated string, and an agent or SDK engine's
+ *     "reply was not a valid reflect proposal").
  *   - content-policy detection (Reflect rejected: EXCESSIVE_*).
  *   - gate-refused detection (Reflect refused:).
  *   - the LLM-touched denominator excludes gate-refused.
@@ -203,6 +204,20 @@ describe("classifyReflectAction", () => {
       "run-1",
     );
     expect(result?.classification).toBe("schemaShape");
+  });
+
+  // PR 9 (#1027): an agent or SDK engine's reply that breaks the reflect contract fails
+  // with the engine named, after the repair turn; the reason is whatever the parser said.
+  test("classifies an agent or SDK engine's invalid reply as schemaShape", () => {
+    for (const error of [
+      'Engine "oc" reply was not a valid reflect proposal after 2 attempts: direct reflect response was not valid JSON',
+      'Engine "opencode-sdk-lab" reply was not a valid reflect proposal after 2 attempts: direct reflect response fields must be exactly: confidence, content, frontmatterPatch',
+      // The repair turn is off for an invocation that has spent its budget: one attempt.
+      'Engine "oc" reply was not a valid reflect proposal after 1 attempt: direct reflect response was not valid JSON',
+    ]) {
+      const result = classifyReflectAction({ mode: "reflect-failed", ref: "memories/foo", result: { error } }, "run-1");
+      expect(result?.classification).toBe("schemaShape");
+    }
   });
 
   test("classifies EXCESSIVE_EXPANSION as contentPolicy", () => {

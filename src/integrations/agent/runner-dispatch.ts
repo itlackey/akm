@@ -27,6 +27,7 @@ import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { modelFromArgs } from "./builder-shared";
 import {
   lookupApiKeyFileValue,
   lookupApiKeySecretRefValue,
@@ -143,17 +144,28 @@ const USAGE_ERROR_CODES: Partial<Record<AgentFailureReason, LlmUsageErrorCode>> 
 };
 
 /**
+ * The model an agent or SDK dispatch ran: the request's, else the one an agent
+ * CLI's own `args` select, which its command carries when the request names
+ * none. An SDK server never sees `args`, so an SDK engine with no model named
+ * has none to report: opencode picks it.
+ */
+function dispatchedModel({ request, runner }: BuiltExecution): string | undefined {
+  return request.model?.resolved ?? (runner.kind === "agent" ? modelFromArgs(runner.profile.args) : undefined);
+}
+
+/**
  * One usage record for an agent or SDK dispatch, through the same sink and
  * ambient `withLlmStage` attribution as the LLM transport's per-HTTP-attempt
- * records: the request's model, and tokens when the runner reported them.
+ * records: the model it ran, and tokens when the runner reported them.
  */
 function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult): void {
   const { inputTokens, outputTokens, reasoningTokens } = result.usage ?? {};
   const reported = [inputTokens, outputTokens, reasoningTokens].filter((count) => count !== undefined);
+  const model = dispatchedModel(execution);
   emitLlmUsage({
     outcome: result.ok ? "success" : "error",
     modelSource: "configured",
-    ...(execution.request.model?.resolved ? { model: execution.request.model.resolved } : {}),
+    ...(model ? { model } : {}),
     durationMs: result.durationMs,
     ...(inputTokens !== undefined ? { promptTokens: inputTokens } : {}),
     ...(outputTokens !== undefined ? { completionTokens: outputTokens } : {}),

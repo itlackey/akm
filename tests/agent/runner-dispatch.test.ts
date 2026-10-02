@@ -10,6 +10,7 @@ import { type BuiltExecution, buildExecution, resolveExecution } from "../../src
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { type RunExecutionOptions, runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../src/llm/usage-telemetry";
 import { withEnv } from "../_helpers/sandbox";
 
 function okResult(stdout: string): AgentRunResult {
@@ -233,5 +234,68 @@ describe("runExecution redacts what the child could have seen", () => {
     }
     for (const secret of partialCredentials) expect(JSON.stringify(result)).not.toContain(secret);
     expect(result.stdout).toBe("[REDACTED] | [REDACTED] | [REDACTED] | [REDACTED]");
+  });
+});
+
+describe("runExecution's usage record names the model the dispatch ran", () => {
+  const agentRunner = (args: string[]): RunnerSpec => ({
+    kind: "agent",
+    engine: "oc",
+    profile: { ...agentProfile, args },
+  });
+
+  /** The usage records one dispatch of `runner` leaves. */
+  async function usageOf(runner: RunnerSpec, current?: UnresolvedExecutionDefaults): Promise<LlmUsageRecord[]> {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+    try {
+      await runExecution(built(runner, "p", current), {
+        runAgent: async () => okResult("ok"),
+        runSdk: async () => okResult("ok"),
+      });
+    } finally {
+      clearLlmUsageSink();
+    }
+    return records;
+  }
+
+  test("an agent engine that names its model only in args is attributed to it", async () => {
+    const records = await usageOf(agentRunner(["run", "--model", "krang/chat/qwen3.8-27b"]));
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.model).toBe("krang/chat/qwen3.8-27b");
+  });
+
+  test("the --model=<id> form is read too, and the last --model wins", async () => {
+    const equals = await usageOf(agentRunner(["run", "--model=krang/chat/qwen3.8-27b"]));
+    const twice = await usageOf(agentRunner(["--model", "first/model", "run", "--model=second/model"]));
+
+    expect(equals[0]?.model).toBe("krang/chat/qwen3.8-27b");
+    expect(twice[0]?.model).toBe("second/model");
+  });
+
+  test("a model the request names wins over the one in args", async () => {
+    const records = await usageOf(agentRunner(["run", "--model", "from/args"]), { model: "from/request" });
+
+    expect(records[0]?.model).toBe("from/request");
+  });
+
+  test("an agent engine that names no model stays unattributed", async () => {
+    const records = await usageOf(agentRunner(["run"]));
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).not.toHaveProperty("model");
+  });
+
+  test("an sdk engine's args are not read: its server never sees them", async () => {
+    const { model: _model, ...unmodelled } = sdkProfile;
+    const records = await usageOf({
+      kind: "sdk",
+      engine: "sdk",
+      profile: { ...unmodelled, args: ["--model", "from/args"] },
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).not.toHaveProperty("model");
   });
 });

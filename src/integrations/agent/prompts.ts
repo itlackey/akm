@@ -548,64 +548,6 @@ export function buildProposePrompt(input: ProposePromptInput): string {
   return sections.join("\n\n");
 }
 
-export interface SchemaRepairPromptInput {
-  ref: string;
-  type: string;
-  name: string;
-  /** Validation failure reason (e.g. "missing description"). */
-  reason: string;
-  /** Current verbatim file content of the failing asset. */
-  assetContent: string;
-  /**
-   * Standards "rulebook" for this target — wiki schema (wiki page) or stash
-   * convention/meta facts (non-wiki asset). Empty/omitted when neither fires;
-   * gated on non-empty before injection.
-   */
-  standardsContext?: string;
-}
-
-/**
- * Build the prompt for the schema repair pass in `akm improve`. Asks the
- * agent to add the minimal required frontmatter to an asset that failed
- * validation — without rewriting the body.
- */
-export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string {
-  const sections: string[] = [];
-  sections.push(
-    `This ${input.type} asset failed schema validation with the error: "${input.reason}". ` +
-      `Your task is to fix the schema issue by adding or correcting the missing/invalid field(s) ` +
-      `while preserving all existing content.`,
-  );
-  sections.push(`Target ref: ${input.ref}`);
-  sections.push(`Schema requirements for ${input.type} assets: ${hintForType(input.type)}`);
-  if (input.standardsContext?.trim()) {
-    sections.push("Standards to follow (the rulebook for this target):");
-    sections.push(input.standardsContext.trim());
-  }
-  {
-    const authoringRules = authoringRulesForType(input.type);
-    if (authoringRules) {
-      sections.push(authoringRules);
-    }
-  }
-  const CONTENT_CAP = 3000;
-  const body = input.assetContent.trimEnd();
-  const truncated = body.length > CONTENT_CAP;
-  sections.push("Current asset content (first 3000 chars — sufficient to generate missing frontmatter):");
-  sections.push("```");
-  sections.push(truncated ? `${body.slice(0, CONTENT_CAP)}\n... [truncated]` : body);
-  sections.push("```");
-  sections.push(
-    "Produce the minimal fix: add ONLY the missing required frontmatter field(s). " +
-      "Do not rewrite the body unless it is empty. " +
-      "If `description` is missing, generate a concise one-sentence description from the content. " +
-      "If `when_to_use` is missing, generate a one-line trigger sentence. " +
-      "Preserve all existing frontmatter keys and the full body verbatim.",
-  );
-  sections.push(RESPONSE_CONTRACT_JSON);
-  return sections.join("\n\n");
-}
-
 /**
  * Parse agent stdout into a proposal payload. The agent contract requires a
  * single JSON object; anything else is reported as a parse error so callers

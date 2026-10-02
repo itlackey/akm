@@ -13,7 +13,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { buildDistillPrompt } from "../src/commands/improve/distill";
-import { buildProposePrompt, buildReflectPrompt, buildSchemaRepairPrompt } from "../src/integrations/agent/prompts";
+import { buildProposePrompt, buildReflectPrompt } from "../src/integrations/agent/prompts";
 
 /**
  * Distinctive substrings from FRONTMATTER_BODY_RULES in authoring-rules.ts.
@@ -70,28 +70,6 @@ describe("authoring-rules injection", () => {
       type: "lesson",
       name: "foo-lesson",
       task: "Document what we learned about foos.",
-    });
-
-    test("contains FRONTMATTER_BODY_RULES snippet", () => {
-      expect(rendered).toContain(HARD_RULE_FRONTMATTER);
-    });
-
-    test("contains fence rule snippet", () => {
-      expect(rendered).toContain(HARD_RULE_FENCE);
-    });
-
-    test("contains when_to_use REQUIRED rule", () => {
-      expect(rendered).toContain(HARD_RULE_WHEN_TO_USE);
-    });
-  });
-
-  describe("buildSchemaRepairPrompt (lesson type)", () => {
-    const rendered = buildSchemaRepairPrompt({
-      ref: "lessons/foo-lesson",
-      type: "lesson",
-      name: "foo-lesson",
-      reason: "missing description",
-      assetContent: "---\nwhen_to_use: When foo is used.\n---\n\nBody text.",
     });
 
     test("contains FRONTMATTER_BODY_RULES snippet", () => {
