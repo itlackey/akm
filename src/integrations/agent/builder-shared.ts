@@ -148,6 +148,20 @@ export interface AgentCommandBuilder {
 }
 
 /**
+ * The model an engine's own `args` select, as `--model X` or `--model=X` (the
+ * last one wins), for a builder that writes its own argv in place of those args.
+ */
+export function modelFromArgs(args: readonly string[]): string | undefined {
+  let model: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--model") model = args[index + 1];
+    else if (arg?.startsWith("--model=")) model = arg.slice("--model=".length);
+  }
+  return model;
+}
+
+/**
  * Normalize a toolPolicy value to a comma-separated string suitable for a
  * CLI flag. Structured policy objects are JSON-serialized.
  */

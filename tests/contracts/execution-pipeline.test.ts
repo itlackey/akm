@@ -507,6 +507,22 @@ describe("the model-work tool policy", () => {
     expect(await run({})).toMatchObject({ ok: true, stdout: "  \n" });
   });
 
+  // The owner's opencode engines name their model only in `args`, which model work otherwise leaves out.
+  test.each([
+    ["opencode", ["run", "--model", "openai/gpt-5.6-terra"], "openai/gpt-5.6-terra"],
+    ["claude", ["--verbose", "--model=claude-args-model"], "claude-args-model"],
+  ])("%s: a model named only in the engine's args reaches the model-work argv", async (platform, args, model) => {
+    const engines = { argsonly: { kind: "agent", platform, args } };
+    const { argv } = await spawnedFor({
+      content: "x",
+      config: config({ engines }),
+      current: { engine: "argsonly", tools: MODEL_WORK_TOOLS },
+    });
+    expect(argv[argv.indexOf("--model") + 1]).toBe(model);
+    // The rest of the engine's args stay out of model work.
+    expect(argv).not.toContain("--verbose");
+  });
+
   test("a scratch directory inside a git repository is refused before anything runs", async () => {
     // opencode would let the agent edit anywhere in that repository.
     const sandbox = makeSandboxDir("akm-model-work-repo");

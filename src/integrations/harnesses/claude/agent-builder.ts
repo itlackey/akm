@@ -36,7 +36,12 @@
  */
 
 import { isModelWorkTools } from "../../../execution/source";
-import { type AgentCommandBuilder, normalizeTools, resolveDispatchModel } from "../../agent/builder-shared";
+import {
+  type AgentCommandBuilder,
+  modelFromArgs,
+  normalizeTools,
+  resolveDispatchModel,
+} from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** The model-work tool policy on Claude Code: read, edit in the working directory, `akm search`, `akm show`. */
@@ -71,7 +76,7 @@ export const MODEL_WORK_CLAUDE_FLAGS: readonly string[] = Object.freeze([
  *     and `--permission-mode dontAsk` denies everything else instead of
  *     prompting, including a compound, redirected or substituted command.
  * The engine's `args` are left out because `--add-dir`, `--settings` or a
- * second `--allowedTools` would widen that.
+ * second `--allowedTools` would widen that. Only the model they name is kept.
  */
 export const claudeBuilder: AgentCommandBuilder = {
   platform: "claude",
@@ -95,6 +100,9 @@ export const claudeBuilder: AgentCommandBuilder = {
     if (req.model) {
       const resolved = resolveDispatchModel(req, profile, "claude") as string;
       args.push("--model", resolved);
+    } else if (modelWork) {
+      const model = modelFromArgs(profile.args);
+      if (model) args.push("--model", model);
     }
     if (req.tools && !modelWork) {
       args.push("--allowedTools", normalizeTools(req.tools));

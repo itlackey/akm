@@ -17,7 +17,7 @@
  */
 
 import { isModelWorkTools } from "../../../execution/source";
-import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
+import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work-agent";
 
@@ -35,7 +35,8 @@ import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work
  * `OPENCODE_CONFIG_CONTENT` and selects it with `--agent`. That command is
  * akm's own (`opencode run --agent akm-model-work`): the engine's `args` are
  * left out, because one such as `--attach` or `--dir` would move the run out
- * of the injected config or the scratch working directory.
+ * of the injected config or the scratch working directory. Only the model they
+ * name is kept.
  */
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
@@ -49,13 +50,14 @@ export const opencodeBuilder: AgentCommandBuilder = {
   }),
   build(profile, req) {
     if (isModelWorkTools(req.tools)) {
+      const model = req.model ?? modelFromArgs(profile.args);
       return {
         argv: [
           profile.bin,
           "run",
           "--agent",
           MODEL_WORK_OPENCODE_AGENT,
-          ...(req.model ? ["--model", req.model] : []),
+          ...(model ? ["--model", model] : []),
           "--",
           req.prompt,
         ],
