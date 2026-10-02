@@ -102,7 +102,6 @@ import "./commands/health/renderers";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { improveCommand } from "./commands/improve/improve-cli";
-import { mcpCommand } from "./commands/mcp/mcp-cli";
 import { migrateCommand } from "./commands/migrate-cli";
 import { modelsCommand } from "./commands/models-cli";
 import { logCommand } from "./commands/observability-cli";
@@ -525,7 +524,6 @@ const commands = {
   task: taskCommand,
   models: modelsCommand,
   hints: hintsCommand,
-  mcp: mcpCommand,
 };
 
 function commandHelpTopic(name: string, command: AnyCittyCommand): AnyCittyCommand {
@@ -859,7 +857,7 @@ const HELP_SECTIONS: ReadonlyArray<{
 }> = [
   {
     title: "AGENT LOOP",
-    commands: ["curate", "search", "show", "feedback", "remember", "mcp"],
+    commands: ["curate", "search", "show", "feedback", "remember"],
   },
   {
     title: "ASSETS",

@@ -44,8 +44,6 @@ const EXEMPT_COMMANDS: ReadonlySet<string> = new Set([
   "help",
   // Embedded agent guide document.
   "hints",
-  // A JSON-RPC stream on stdio, not a result envelope.
-  "mcp",
 ]);
 
 /**

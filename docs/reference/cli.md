@@ -51,9 +51,9 @@ self-contained document with no external references, so it can be redirected to
 a file and opened directly.
 
 A small set of commands is **format-exempt** because their output is not a
-result envelope at all — `completions`, `mcp` (a JSON-RPC stream on stdio),
-child-process passthrough (`env run` and `secret run`), document payloads
-(`help`, `help migrate`), and `env path` (a bare filesystem path is the payload, the
+result envelope at all — `completions`, child-process passthrough (`env run`
+and `secret run`), document payloads (`help`,
+`help migrate`), and `env path` (a bare filesystem path is the payload, the
 documented shell-substitution primitive — wrapping it in an envelope would
 break `$(akm env path <ref>)` substitutions). Passing `--format` to one of
 those **warns on stderr** and is otherwise ignored; the exempt set is declared
@@ -1905,56 +1905,6 @@ short-first form and accepts `--full`.
 akm hints
 akm hints --detail brief
 ```
-
-### mcp
-
-Serve `search` and `show` to a Model Context Protocol client over stdio, with
-no shell between the client and the stash. It exists for a client that must not
-run a shell, such as unattended model work on opencode: opencode matches a bash
-permission against a command's words only, so a rule for `akm show` would also
-pass `akm show x > ~/stash/y`. An MCP tool takes typed arguments and has no
-redirect to abuse.
-
-```sh
-akm mcp
-```
-
-Register it as a local (stdio) MCP server whose command is `akm mcp`, for
-example `{"mcpServers": {"akm": {"command": "akm", "args": ["mcp"]}}}`. The
-process's own environment decides which stash it serves: `AKM_BUNDLE_DIR`,
-`AKM_CONFIG_DIR`, `AKM_DATA_DIR` and the XDG variables apply as they do to
-every other command, and a config that fails to load stops the server at
-startup with exit 78. The server inherits its client's environment, so a client
-that scrubs it (akm's own dispatch of opencode passes `HOME`, `PATH`, the XDG
-variables and little else) has to hand over any `AKM_*` override itself:
-opencode's `environment` map on a local MCP entry does. Without it the server
-finds the stash from `HOME` and the XDG variables alone, and a stash that needs
-an override fails every call with `No bundle directory found`.
-
-The wire format is newline-delimited JSON-RPC 2.0, one message per line on
-stdin and stdout; stderr carries warnings. It answers `initialize` (protocol
-versions `2025-06-18`, `2025-03-26` and `2024-11-05`; a client asking for
-another is answered with `2025-06-18`), `ping`, `tools/list` and `tools/call`,
-and ignores notifications such as `notifications/initialized`. Any other method
-is error `-32601`, a batch array is `-32600`, a line that is not JSON is
-`-32700`, and a `tools/call` for a tool it does not serve is `-32602`. It
-exits `0` when the client closes stdin.
-
-| Tool | Arguments | Returns |
-| --- | --- | --- |
-| `search` | `query` (string, required; empty lists assets), `type` (string), `limit` (integer, at least 1) | JSON text: `{"hits": [{"ref", "type", "description", "score"}], "tip"?, "warnings"?}`. Local hits from the same search `akm search` runs; `description` is capped at 250 characters. |
-| `show` | `ref` (string, required; `#fragment` selects one markdown section) | The text `akm show <ref>` prints by default. `secret` assets show their name only and `env` assets their key names, as in the CLI, never a value. |
-
-A failure inside a tool, such as an unknown ref or a bad argument, is a tool
-result with `isError: true` and the message as text; the server keeps running.
-
-**It writes nothing.** Both tools run with usage logging off, so a search or a
-show leaves no usage event, no `show` event and no search-selection link, even
-for a `meta:` doc, and neither tool opens a write path of its own. Where
-`akm search` builds a missing or unusable index on its first read, `akm mcp`
-fails the call with a message telling you to run `akm index`: building an index
-is a write, and can take minutes, longer than an MCP client waits for a tool.
-It never searches a registry.
 
 ### env vs secret — which do I use?
 

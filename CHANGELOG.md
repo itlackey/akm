@@ -6,23 +6,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Added
-
-- **`akm mcp` serves read-only `search` and `show` to an MCP client over
-  stdio.** Unattended model work on opencode could not run `akm search` or
-  `akm show`: opencode matches a bash permission against a command's words
-  only, so a rule for `akm show` would also pass `akm show x > ~/stash/y`. An
-  MCP tool has no shell, so a client can be given exactly these two. `search`
-  takes `{query, type?, limit?}` and returns compact hits (`ref`, `type`,
-  `description`, `score`); `show` takes `{ref}` and returns the text
-  `akm show` prints, with `secret` and `env` assets showing names only. The
-  process's own environment (`AKM_CONFIG_DIR`, `AKM_DATA_DIR` and the rest)
-  decides which stash it serves. It writes nothing: both tools run with usage
-  logging off, and where `akm search` builds a missing index on its first read,
-  `akm mcp` fails the call and asks for `akm index`, because a build is a
-  write and can outlast a client's tool timeout. The protocol is a small
-  JSON-RPC 2.0 implementation with no new dependency.
-
 ### Removed
 
 - **A prompt builder that nothing called.** `buildSchemaRepairPrompt` and its
@@ -68,8 +51,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     `opencode` unit of a run frozen before this release still gets none of the
     four until the workflow is started again. An `opencode-sdk` unit gets them
     either way, because the server's allowlist is not part of the plan.
-- **`akm show meta:<name> --no-track-usage` recorded a `show` event.** A
-  stash's `.meta/` doc ignored the flag that every other show honours.
 
 ## [0.9.25-alpha.1] - 2026-10-02
 
