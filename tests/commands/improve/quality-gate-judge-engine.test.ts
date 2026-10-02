@@ -10,6 +10,12 @@ import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/c
 import { validateConfigShape } from "../../../src/core/config/config-schema";
 import { ConfigError } from "../../../src/core/errors";
 import { compressMemoryToDerivedMemory } from "../../../src/llm/memory-infer";
+import {
+  clearLlmUsageSink,
+  type LlmUsageRecord,
+  setLlmUsageSink,
+  withLlmStage,
+} from "../../../src/llm/usage-telemetry";
 
 function config(engines: Record<string, unknown> = {}): AkmConfig {
   return {
@@ -146,6 +152,40 @@ describe("the judge thinks only when its own engine enables thinking", () => {
       return PASSING_VERDICT;
     });
     expect(thinking).toBe(false);
+  });
+});
+
+describe("a judge's usage is credited to the engine that served it", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    clearLlmUsageSink();
+  });
+
+  test("inside a stage planned on another engine", async () => {
+    const llmRunner = resolveQualityGateJudge(
+      config(),
+      strategy({ reflect: { qualityGate: { engine: "judge" } } }),
+      "reflect",
+    );
+    if (!llmRunner) throw new Error("expected the judge engine to resolve");
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ choices: [{ message: { content: PASSING_VERDICT } }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })) as unknown as typeof fetch;
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+
+    await withLlmStage(
+      "reflect",
+      () => runReflectQualityJudge(config(), "candidate", "source", [], undefined, { llmRunner }),
+      { engine: "default", process: "reflect" },
+    );
+
+    expect(records.map((record) => [record.stage, record.process, record.engine])).toEqual([
+      ["reflect", "reflect", "judge"],
+    ]);
   });
 });
 

@@ -21,7 +21,7 @@ import type { RunnerSpec } from "../../integrations/agent/runner";
 import { type ChatCompletionOptions, type ChatMessage, LlmCallError } from "../../llm/client";
 import type { LlmFeatureKey } from "../../llm/feature-gate";
 import { type CallStructuredRequest, callStructured } from "../../llm/structured-call";
-import { withLlmStage } from "../../llm/usage-telemetry";
+import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
   type CreateProposalInput,
@@ -108,25 +108,32 @@ export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
   ];
   let failure: Extract<StageLlmOutcome, { ok: false }> | undefined;
   try {
-    const raw = await callStructured<string | undefined>({
-      feature: call.feature,
-      ...(call.gate
-        ? { akmConfig: call.gate.config, ...(call.gate.enabled !== undefined ? { enabled: call.gate.enabled } : {}) }
-        : {}),
-      runner: call.runner,
-      messages,
-      ...(call.request ? { request: call.request } : {}),
-      ...(call.onNotices ? { onNotices: call.onNotices } : {}),
-      parse: (r) => r ?? "",
-      onError: (_cls, err) => {
-        failure = { ok: false, reason: "error", error: errMessage(err) };
-        return undefined;
-      },
-      fallback: undefined,
-      onFallback: (event) => {
-        failure ??= { ok: false, reason: event.reason, ...(event.error ? { error: event.error.message } : {}) };
-      },
-    });
+    const dispatch = () =>
+      callStructured<string | undefined>({
+        feature: call.feature,
+        ...(call.gate
+          ? { akmConfig: call.gate.config, ...(call.gate.enabled !== undefined ? { enabled: call.gate.enabled } : {}) }
+          : {}),
+        runner: call.runner,
+        messages,
+        ...(call.request ? { request: call.request } : {}),
+        ...(call.onNotices ? { onNotices: call.onNotices } : {}),
+        parse: (r) => r ?? "",
+        onError: (_cls, err) => {
+          failure = { ok: false, reason: "error", error: errMessage(err) };
+          return undefined;
+        },
+        fallback: undefined,
+        onFallback: (event) => {
+          failure ??= { ok: false, reason: event.reason, ...(event.error ? { error: event.error.message } : {}) };
+        },
+      });
+    // Usage is credited to the engine that serves the call, which for a gate's own judge
+    // (#1011) is not the stage's planned engine.
+    const stage = currentLlmStage();
+    const raw = await (stage === undefined
+      ? dispatch()
+      : withLlmStage(stage, dispatch, { engine: call.runner.engine }));
     return raw === undefined ? (failure ?? { ok: false, reason: "error" }) : { ok: true, raw };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
