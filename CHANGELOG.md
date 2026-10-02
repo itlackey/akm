@@ -15,7 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a gate could not choose its judge. Config validation
   rejects a gate `engine` that is missing or is not an LLM engine. A gate whose
   settings resolve to no LLM engine fails before anything is generated, and
-  never falls back to another engine.
+  never falls back to another engine. The judge's LLM usage is recorded under
+  its own engine, so the improve report shows it on its own row.
 
 ### Changed
 
