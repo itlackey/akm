@@ -50,6 +50,32 @@ export const COMMON_SPAWN_ENV_PASSTHROUGH = [
 ] as const;
 
 /**
+ * The XDG base-directory variables. opencode resolves its config, data, cache
+ * and state directories from them, so it must receive them: an akm that runs
+ * under a custom `XDG_CONFIG_HOME` otherwise spawns an opencode that reads
+ * `$HOME/.config/opencode` and misses the provider config its caller named.
+ *
+ * Deliberately NOT part of {@link COMMON_SPAWN_ENV_PASSTHROUGH}, which is every
+ * harness's baseline, the workflow exec unit's default allowlist (a documented
+ * list) and, through profile `envPassthrough`, frozen into workflow plans.
+ * codex, gemini and pi keep their own dotdirs under `$HOME`, and handing the
+ * names to a shell command would redirect the `git` and `gh` config it reads. A
+ * harness that reads them asks for them by name: the opencode profile's list,
+ * and the opencode-sdk server's allowlist (`opencodeSdkServerEnvironmentNames`).
+ *
+ * A name added to a profile's list changes the plans frozen after it (their
+ * bytes, so their `plan_hash`); a stored plan keeps the list it was frozen with
+ * and still resumes, because nothing gates on that hash. The SDK server's
+ * allowlist is not part of a plan, so it takes the names by code.
+ */
+export const XDG_BASE_DIR_ENV_PASSTHROUGH = [
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
+  "XDG_STATE_HOME",
+] as const;
+
+/**
  * The names Windows itself requires of ANY child, whatever the caller's
  * allowlist says. Applied at build time rather than added to
  * {@link COMMON_SPAWN_ENV_PASSTHROUGH} because profile `envPassthrough` is

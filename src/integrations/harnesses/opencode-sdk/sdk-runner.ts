@@ -96,7 +96,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
-import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
+import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor, XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { ExecutionJsonObject } from "../../../execution/json";
 import { isModelWorkTools } from "../../../execution/source";
 import type { ShowResponse } from "../../../sources/types";
@@ -390,9 +390,21 @@ function serverRegistryKey(profile: AgentProfile, env: Record<string, string>): 
     .digest("hex");
 }
 
-/** @internal Exact environment allowlist used to start the OpenCode SDK server. */
+/**
+ * @internal Exact environment allowlist used to start the OpenCode SDK server:
+ * the common baseline, the XDG base-directory variables opencode resolves its
+ * config, data, cache and state from, and the profile's own names. The XDG names
+ * are the server's, not the profile's: profile `envPassthrough` is frozen into
+ * workflow plans, and an SDK profile's list has always been empty.
+ */
 export function opencodeSdkServerEnvironmentNames(profile: AgentProfile): string[] {
-  return [...new Set([...spawnEnvNamesFor(COMMON_SPAWN_ENV_PASSTHROUGH), ...(profile.envPassthrough ?? [])])];
+  return [
+    ...new Set([
+      ...spawnEnvNamesFor(COMMON_SPAWN_ENV_PASSTHROUGH),
+      ...XDG_BASE_DIR_ENV_PASSTHROUGH,
+      ...(profile.envPassthrough ?? []),
+    ]),
+  ];
 }
 
 function buildServerEnv(
