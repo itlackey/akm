@@ -95,6 +95,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
     and its LLM fallback's endpoint. It probed only LLM connections before.
     The usage report and `akm health` count a process's calls whatever its
     engine's kind.
+- **An `opencode-sdk` engine gets its LLM fallback connection only from its own
+  `llmEngine`. `defaults.llmEngine` no longer supplies one.** An SDK engine
+  that set no `llmEngine` used to borrow `defaults.llmEngine`: its connection,
+  its model (unless the engine set its own) and its timeout. `defaults.llmEngine`
+  names the default engine for unattended model work, and since that work may
+  now run on an agent engine it can be one too, so it is no longer also a
+  connection that every SDK engine shares. **If you relied on the inheritance,
+  set `llmEngine` on the SDK engine**, for example
+  `"sdk": { "kind": "agent", "platform": "opencode-sdk", "llmEngine": "fast" }`.
+  Without one, the SDK engine runs on opencode's own provider and auth, and on
+  its own `model` if it sets one: akm sends it no connection. An SDK engine
+  that sets `llmEngine` is unchanged, and so is a config with no `opencode-sdk`
+  engine. The rule holds everywhere the fallback is read: dispatch, a
+  workflow's frozen concurrency cap, `akm health`, and
+  `akm improve --require-engines`, which now check an SDK engine's fallback
+  endpoint only when it sets `llmEngine`.
 
 ### Removed
 
@@ -105,6 +121,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   native channel, as codex does with `--output-schema`. The fields, their two
   types and the tests that pinned their values are gone. Nothing you run
   changes.
+- **`resolveLlmEngineUse`'s swap of an agent engine for an LLM engine.** Given
+  an agent engine, it used the engine's `llmEngine`, then `defaults.llmEngine`,
+  and warned. Only the implicit SDK fallback above could reach it, so nothing
+  you run changes. An agent engine passed to it is now an error.
 
 ### Fixed
 
@@ -162,6 +182,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   explicit "no timeout", so the 600-second bound for model work never applied
   to it. An engine's own `timeoutMs`, `null` included, still applies, and
   other work on an agent engine still runs until it finishes.
+- **The announcement of the implicit `opencode-sdk` fallback is now true.** It
+  says provider, model and auth come from opencode's own configuration, but the
+  fallback engine borrowed `defaults.llmEngine`'s connection whenever one was
+  set, so opencode got an akm-generated provider and model instead. It now runs
+  on opencode's own configuration, as announced.
 
 ## [0.9.24] - 2026-10-02
 

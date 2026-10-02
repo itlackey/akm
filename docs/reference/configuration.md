@@ -128,7 +128,10 @@ schema), plus the harness's own schema channel where it has one (codex
 
 An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
 Only `platform: "opencode-sdk"` may set `llmEngine`; it names
-the LLM engine used as that SDK engine's fallback connection.
+the LLM engine used as that SDK engine's fallback connection. With no
+`llmEngine`, an SDK engine has no fallback connection and opencode resolves
+provider, model and auth from its own configuration. `defaults.llmEngine` is
+not a substitute.
 
 On an engine without `timeoutMs`, model work (an improve process, a quality or
 triage judge, or an index pass) stops after 600 seconds, whatever the engine's
@@ -338,6 +341,11 @@ synthesized, config-free `opencode-sdk` engine when the `opencode` binary is on
 PATH — announced once per run, and preempted by any `opencode-sdk` engine you
 configure yourself. Naming an engine that is not configured is always an error
 and is never rescued by that fallback.
+
+`defaults.llmEngine` is not an `opencode-sdk` engine's fallback connection. An
+SDK engine gets an LLM fallback only from its own `llmEngine`, so the
+synthesized engine, which sets none, runs on opencode's own provider, model and
+auth.
 
 Index passes select engines through `index.defaults.engine` or
 `index.<pass>.engine`, which follow

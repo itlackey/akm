@@ -494,7 +494,9 @@ External coding agents are reachable via two execution paths:
 - `runOpencodeSdk(profile, prompt, opts, llmConfig?)` uses the embedded
   `@opencode-ai/sdk` instead of `Bun.spawn`. No agent CLI binary is required.
 - Selected by an agent engine whose `platform` is `"opencode-sdk"`. Its optional
-  `llmEngine` (then `defaults.llmEngine`) supplies the LLM fallback connection.
+  `llmEngine` supplies the LLM fallback connection. With none, there is no
+  fallback and opencode uses its own configuration; `defaults.llmEngine` is not
+  borrowed.
 - Manages a single per-process singleton server, creating one fresh session
   per call to avoid history accumulation and unbounded token growth.
 - Concurrent calls share startup by server material, but each call races that

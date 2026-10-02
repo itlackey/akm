@@ -17,6 +17,7 @@ import type { AkmConfig } from "../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
 import { MODEL_WORK_TOOLS } from "../../src/execution/source";
+import { FALLBACK_ANNOUNCEMENT, fallbackAnnouncement } from "../../src/integrations/agent/engine-fallback";
 import {
   buildExecution,
   buildExecutionFromWire,
@@ -25,6 +26,7 @@ import {
 } from "../../src/integrations/agent/execution";
 import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { buildSdkConfig } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
 
 function exitedWith(stdout: string): SpawnedSubprocess {
@@ -202,6 +204,54 @@ describe("opencode-sdk engines", () => {
     });
   });
 
+  test("an SDK engine with no llmEngine of its own borrows nothing from defaults.llmEngine", async () => {
+    const resolved = resolveExecution({
+      content: "Draft it.",
+      config: config({
+        engines: {
+          sdk: { kind: "agent", platform: "opencode-sdk" },
+          local: { ...LLM_ENGINE, timeoutMs: 90_000 },
+        },
+        defaults: { engine: "sdk", llmEngine: "local" },
+      }),
+    });
+    expect(resolved.request.engine).toEqual({ name: "sdk", kind: "sdk", platform: "opencode-sdk" });
+    // No model, no timeout and no connection: opencode picks its own.
+    expect(resolved.request.model).toBeUndefined();
+    expect(Object.hasOwn(resolved.request.runtime, "timeoutMs")).toBe(false);
+    expect(resolved.runner.timeoutMs).toBeUndefined();
+    expect(resolved.provenance.model).toBeUndefined();
+
+    await withEnv({ AKM_PIPELINE_TEST_KEY: "sk-must-not-reach-the-sdk" }, async () => {
+      let seen: { model?: string; fallback?: unknown } | undefined;
+      const result = await runExecution(buildExecution(resolved.request, resolved.runner), {
+        runSdk: async (profile, _prompt, _opts, fallback) => {
+          seen = { model: profile.model, fallback };
+          return { ok: true, exitCode: 0, stdout: "done", stderr: "", durationMs: 1 };
+        },
+      });
+      expect(result.ok).toBe(true);
+      expect(seen).toEqual({ model: undefined, fallback: undefined });
+    });
+  });
+
+  test("an SDK engine's own llmEngine, not defaults.llmEngine, supplies the model, timeout and credential", async () => {
+    const resolved = resolveExecution({
+      content: "Draft it.",
+      config: config({
+        engines: {
+          sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "own" },
+          own: { ...LLM_ENGINE, model: "own/model", timeoutMs: 45_000 },
+          local: { ...LLM_ENGINE, timeoutMs: 90_000 },
+        },
+        defaults: { engine: "sdk", llmEngine: "local" },
+      }),
+    });
+    expect(resolved.request.model?.resolved).toBe("own/model");
+    expect(resolved.runner.timeoutMs).toBe(45_000);
+    expect(resolved.runner.kind === "sdk" && resolved.runner.fallbackConnection?.endpoint).toBe(LLM_ENGINE.endpoint);
+  });
+
   test("a conversation prefix is composed into one prompt block for CLI harnesses", () => {
     const resolved = resolveExecution({
       content: "Now finish.",
@@ -256,6 +306,31 @@ describe("engine selection is an ordered list", () => {
         expect(() => resolveExecution({ content: "x", config: config({ engines }) })).toThrow(
           /no usable `opencode` binary/,
         );
+      });
+    } finally {
+      fs.rmSync(bin, { recursive: true, force: true });
+    }
+  });
+
+  test("the opencode-sdk fallback uses opencode's own configuration, as announced, even with defaults.llmEngine set", async () => {
+    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-bin-"));
+    fs.writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\n", { mode: 0o755 });
+    try {
+      await withEnv({ PATH: bin, AKM_PIPELINE_TEST_KEY: "sk-must-not-reach-opencode" }, () => {
+        const resolved = resolveExecution({
+          content: "x",
+          config: config({ engines: { local: LLM_ENGINE }, defaults: { llmEngine: "local" } }),
+        });
+        expect(fallbackAnnouncement(resolved.fallbackEngineName, resolved.request.engine.name)).toBe(
+          FALLBACK_ANNOUNCEMENT,
+        );
+        expect(FALLBACK_ANNOUNCEMENT).toContain("provider, model, and auth come from opencode's own configuration");
+        if (resolved.runner.kind !== "sdk") throw new Error("expected the opencode-sdk fallback");
+        // No connection, model or credential of akm's reaches the server: opencode resolves its own.
+        expect(resolved.runner.fallbackConnection).toBeUndefined();
+        expect(resolved.runner.fallbackCredential).toBeUndefined();
+        expect(resolved.request.model).toBeUndefined();
+        expect(buildSdkConfig(resolved.runner.profile, resolved.runner.fallbackConnection)).toEqual({});
       });
     } finally {
       fs.rmSync(bin, { recursive: true, force: true });

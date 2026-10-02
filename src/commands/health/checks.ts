@@ -366,7 +366,7 @@ async function runConfiguredEngineProbe(
         evidence: { engine: engineName, runtimeKind: "sdk", binaryAvailable: false },
       };
     }
-    const fallbackEngine = configuredEngine.llmEngine ?? config.defaults?.llmEngine;
+    const fallbackEngine = configuredEngine.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
     let fallbackCredential: Extract<RunnerSpec, { kind: "llm" }>["credential"];
     let fallbackApiKeyFile: string | undefined;

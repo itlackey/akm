@@ -1179,8 +1179,8 @@ and return HTTP 500 — a hard failure, so loopback endpoints stay at 1 and a
 `engines.<name>.concurrency` yourself. Remote providers fail softly (a
 retryable 429), and four concurrent completions is well inside any hosted
 provider's entry tier. Agent engines carry no concurrency limit of their own —
-except an `opencode-sdk` engine with an `llmEngine` fallback, which inherits
-that fallback engine's limit.
+except an `opencode-sdk` engine that sets `llmEngine`, which inherits that
+fallback engine's limit.
 
 #### What counts as a loopback endpoint
 

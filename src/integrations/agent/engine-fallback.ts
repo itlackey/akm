@@ -7,11 +7,13 @@
  *
  * The default engine is chosen from an ordered list: `defaults.engine`, then
  * `opencode-sdk` when the `opencode` binary is on PATH. The fallback carries no
- * model, endpoint, or credential, so `opencode serve` resolves provider, model,
- * and auth from opencode's own configuration. Resolution is by NAME only: a
- * task or workflow that explicitly names an unconfigured engine is an error and
- * is never rescued here. `setup/*` does not apply it, because setup's job is to
- * detect engines and write `defaults.engine`.
+ * model, endpoint, credential, or `llmEngine`, and an SDK engine gets an LLM
+ * connection only from its own `llmEngine` (`defaults.llmEngine` never reaches
+ * it), so `opencode serve` resolves provider, model, and auth from opencode's
+ * own configuration. Resolution is by NAME only: a task or workflow that
+ * explicitly names an unconfigured engine is an error and is never rescued
+ * here. `setup/*` does not apply it, because setup's job is to detect engines
+ * and write `defaults.engine`.
  */
 
 import type { AkmConfig, EngineConfig } from "../../core/config/config";

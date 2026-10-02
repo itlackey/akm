@@ -522,7 +522,7 @@ export function writeSandboxConfig(partial: Record<string, unknown>): void {
 export function writeWorkflowTestConfig(): void {
   writeSandboxConfig({
     engines: {
-      "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      "test-agent": { kind: "agent", platform: "opencode-sdk", llmEngine: "test-llm" },
       "test-llm": { kind: "llm", endpoint: "http://localhost:1/v1/chat/completions", model: "test-model" },
     },
     defaults: { engine: "test-agent", llmEngine: "test-llm" },
