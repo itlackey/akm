@@ -130,6 +130,12 @@ An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
 Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection.
 
+On an engine without `timeoutMs`, model work (an improve process, a quality or
+triage judge, or an index pass) stops after 600 seconds, whatever the engine's
+kind; other work on an agent engine runs until it finishes. An improve stage's
+reply that does not match the stage's JSON Schema gets one corrective retry
+before the stage reads it.
+
 Executable assets may request tools, but the request is not authority. Configure
 the host-local `execution.allowedTools` list to define the ceiling; `"*"` is an
 explicit allow-all. The default is an empty list. Asset frontmatter cannot set

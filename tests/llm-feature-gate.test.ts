@@ -150,14 +150,9 @@ describe("tryLlmFeature", () => {
   });
 
   test("returns the fallback on hard timeout", async () => {
-    // RUNTIME-08: `runWithTimeout` (src/llm/feature-gate.ts:188-199) has no
-    // cancellation path, so the `fn` below keeps running in the background
-    // after the 25ms gate timeout wins the race — its own 200ms `setTimeout`
-    // fires for real, orphaned, well after this test's assertions are done.
-    // Production has no seam to cancel it (adding one is out of scope here),
-    // but since the test itself owns the `fn` closure, it can clear that
-    // real timer directly the instant the gate settles, with no change to
-    // production behaviour and no fake-timer choreography needed.
+    // The `fn` below ignores the abort signal the timeout fires, so its own
+    // 200ms `setTimeout` would outlive this test; the test owns the closure
+    // and clears that timer the instant the gate settles.
     const events: { reason: string; error?: Error }[] = [];
     let lateTimer: ReturnType<typeof setTimeout> | undefined;
     const result = await tryLlmFeature(
@@ -172,6 +167,24 @@ describe("tryLlmFeature", () => {
     expect(events).toHaveLength(1);
     expect(events[0]!.reason).toBe("timeout");
     expect(events[0]!.error).toBeInstanceOf(LlmFeatureTimeoutError);
+  });
+
+  test("the hard timeout aborts the signal fn was given, so its work stops", async () => {
+    let seen: AbortSignal | undefined;
+    const result = await tryLlmFeature(
+      "memory_inference",
+      configWith({ memory_inference: true }),
+      (signal) =>
+        new Promise<string>((resolve) => {
+          seen = signal;
+          signal?.addEventListener("abort", () => resolve("stopped"));
+        }),
+      "fallback",
+      { timeoutMs: 25 },
+    );
+    expect(result).toBe("fallback");
+    expect(seen?.aborted).toBe(true);
+    expect(seen?.reason).toBeInstanceOf(LlmFeatureTimeoutError);
   });
 
   test("returns fn's result when enabled and successful", async () => {

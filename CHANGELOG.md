@@ -16,6 +16,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workflows too. A workflow unit sends the same prompt bytes as before, less
   the duplicate fixed below; a direct-LLM unit still carries the instruction
   in its own prompt.
+- **Model work is bounded at 600 seconds on every engine kind.** An improve
+  process, a quality or triage judge, or an index pass whose engine sets no
+  `timeoutMs` now stops after 600 seconds. Before, an agent or `opencode-sdk`
+  engine ran until it finished, and so did memory inference and consolidation
+  on an LLM engine. An engine's own `timeoutMs` still applies.
+- **An improve stage's reply that fails its JSON Schema gets one corrective
+  retry.** The stage retries once with the validation errors, then reads the
+  last reply with its own parser as before. `akm extract` now allows its
+  corrective retry on every engine, not only on one without JSON Schema
+  support. Reflect keeps its own repair turn.
+- **Agent and `opencode-sdk` dispatches leave a usage record.** Each one now
+  writes one `llm_usage` record through the same sink and stage attribution as
+  the LLM path, with the request's model and the tokens the runner reports. An
+  LLM engine still records each HTTP attempt.
 
 ### Fixed
 
@@ -56,6 +70,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **A workflow unit on `claude`, `copilot`, `gemini`, `pi`, `aider`,
   `amazonq` or `openhands` gets the schema instruction once.** The unit prompt
   carried it and the harness builder appended a second copy.
+- **A feature gate's timeout now stops the call it bounds.** When an improve
+  stage's gate timed out (600 seconds unless the call sets its own), the model
+  call kept running in the background, on an engine with `timeoutMs: 900000`
+  for up to five more minutes. The gate now aborts it.
+- **A stage call reports a timeout or abort by the dispatch's own reason.** A
+  timed-out or aborted agent or `opencode-sdk` dispatch, and an LLM timeout
+  inside a feature gate, came back as `error`. They now come back as `timeout`
+  or `aborted`.
 
 ## [0.9.24] - 2026-10-02
 

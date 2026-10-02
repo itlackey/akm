@@ -71,8 +71,7 @@ import { recordLedgerAttempt } from "./ledger";
 import { classifyReflectChange, splitFrontmatter } from "./reflect-noise";
 import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
 import {
-  callStage,
-  type LlmRunner,
+  callStageOnce,
   mintProposal,
   type Notice,
   noticeSet,
@@ -493,7 +492,7 @@ const REFLECT_CRITIQUE_PROMPT =
 
 export interface RunReflectViaLlmOptions {
   prompt: string | undefined;
-  runner: LlmRunner;
+  runner: RunnerSpec;
   timeoutMs?: number | null;
   signal?: AbortSignal;
   /** Prior draft for self-refine critique (iterations > 0). */
@@ -661,8 +660,9 @@ export async function runReflectViaLlm(opts: RunReflectViaLlmOptions): Promise<A
       parsed: { outputMode: opts.outputMode, repairAttempts },
     };
   };
+  // Reflect parses and repairs its own reply (the repair turn below), so one dispatch, unvalidated.
   const call = async (callMessages: ChatMessage[], repairTimeoutMs?: number): Promise<string> => {
-    const outcome = await callStage({
+    const outcome = await callStageOnce({
       feature: "reflect_proposal",
       runner: opts.runner,
       prompt: callMessages.at(-1)?.content ?? "",
@@ -1187,7 +1187,7 @@ async function finalizeReflectProposal(args: {
   payload: ReflectPayload;
   assetContent: string | undefined;
   result: AgentRunResult;
-  judge: { enabled: boolean; skippedNoJudge: boolean; runner: LlmRunner | undefined };
+  judge: { enabled: boolean; skippedNoJudge: boolean; runner: RunnerSpec | undefined };
   feedback: string[];
 }): Promise<AkmReflectResult> {
   const { run, assetContent, result, judge, feedback } = args;
@@ -1431,7 +1431,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
 
   // Judge selection is frozen before dispatch so a missing judge credential fails first.
   const judgeWanted = activeStrategy?.processes?.reflect?.qualityGate?.enabled ?? true;
-  let judgeRunner: LlmRunner | undefined;
+  let judgeRunner: RunnerSpec | undefined;
   if (judgeWanted) {
     const gateJudge = resolveQualityGateJudge(config, activeStrategy, "reflect", notices.add);
     if (gateJudge) {

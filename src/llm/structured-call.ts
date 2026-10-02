@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `callStructured<T>()` — the shared LLM-call-and-classify seam.
+ * `callStructured<T>()` — the shared model-call-and-classify seam.
  *
- * Centralizes the scaffold replicated across ~20 in-tree LLM call sites:
+ * Centralizes the scaffold replicated across ~20 in-tree model call sites:
  *
  *   tryLlmFeature(feature, akmConfig, …)
- *     -> resolved request -> engine lowering -> direct LLM dispatch
+ *     -> resolved request -> engine lowering -> dispatch on any runner kind
  *     -> classify(error) into one of EXACTLY three buckets
  *          (context_limit | html | other)
  *     -> parse(raw) / onError(cls, err)
@@ -40,9 +40,11 @@ import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
+import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { runExecution } from "../integrations/agent/runner-dispatch";
+import type { AgentFailureReason } from "../integrations/agent/spawn";
 import { type ChatCompletionConfig, type ChatMessage, isContextSizeError, LlmCallError } from "./client";
 import {
   isLlmFeatureEnabled,
@@ -56,8 +58,6 @@ import {
  * Matches exactly what `classifyLlmError` returns; no speculative 4th variant.
  */
 export type LlmErrorClass = "context_limit" | "html" | "other";
-
-export type StructuredLlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
 
 /**
  * Classify a thrown LLM error into one of the three buckets. This is the single
@@ -79,11 +79,12 @@ export function classifyLlmError(err: unknown): LlmErrorClass {
  *
  * KEY-PRESENCE SEMANTICS (`timeoutMs`): both the feature-gate wrapper and the
  * transport are tri-state — an ABSENT `timeoutMs` key means "use the default"
- * (600 s wrapper / config-derived transport timeout), while a PRESENT key set
- * to `undefined`/`null` means "timeout explicitly disabled". `callStructured`
- * therefore forwards each option key only when it is present on `request`
- * (`Object.hasOwn`), so callers that omit the key keep the defaults and
- * callers that set it — even to `undefined` — keep the explicit override.
+ * (600 s wrapper; the runner's own timeout, else 600 s on every runner kind),
+ * while a PRESENT key set to `undefined`/`null` means "timeout explicitly
+ * disabled". `callStructured` therefore forwards each option key only when it
+ * is present on `request` (`Object.hasOwn`), so callers that omit the key keep
+ * the defaults and callers that set it — even to `undefined` — keep the
+ * explicit override.
  */
 export interface CallStructuredRequest {
   temperature?: number;
@@ -130,10 +131,10 @@ export interface CallStructuredOptions<T> {
    */
   enabled?: boolean;
   /**
-   * Already-resolved symbolic runner. Production callers use this path so
-   * authorization precedes credential lookup and aliases are never re-run.
+   * Already-resolved symbolic runner, of any kind. Production callers use this
+   * path so authorization precedes credential lookup and aliases are never re-run.
    */
-  runner?: StructuredLlmRunner;
+  runner?: RunnerSpec;
   /** Additional exact invocation fields for the current call. */
   current?: UnresolvedExecutionDefaults;
   /** Receives the stable, secret-free notices emitted by the selected lowerer. */
@@ -163,10 +164,15 @@ function own(value: object | undefined, key: PropertyKey): boolean {
   return value !== undefined && Object.hasOwn(value, key);
 }
 
-/** @internal Exact request-to-cascade projection, exported for presence-semantics contracts. */
+/**
+ * @internal Exact request-to-cascade projection, exported for presence-semantics contracts.
+ * Model work is bounded: with no timeout from the request or the runner, it
+ * gets {@link DEFAULT_MODEL_WORK_TIMEOUT_MS} on every runner kind.
+ */
 export function resolveStructuredCurrent(
   current: UnresolvedExecutionDefaults | undefined,
   request: CallStructuredRequest | undefined,
+  runner?: RunnerSpec,
 ): UnresolvedExecutionDefaults | undefined {
   const out: Record<string, unknown> = current ? { ...current } : {};
   const requestHasInference =
@@ -187,6 +193,9 @@ export function resolveStructuredCurrent(
     out.outputSchema = request.responseSchema;
   }
   if (own(request, "timeoutMs")) out.timeout = request?.timeoutMs ?? null;
+  else if (runner && !Object.hasOwn(runner, "timeoutMs") && !own(current, "timeout")) {
+    out.timeout = DEFAULT_MODEL_WORK_TIMEOUT_MS;
+  }
   return Object.keys(out).length > 0 ? (out as UnresolvedExecutionDefaults) : undefined;
 }
 
@@ -204,9 +213,15 @@ function requireTerminalUserMessage(messages: readonly ChatMessage[]): {
   };
 }
 
-function dispatchFailure(result: Awaited<ReturnType<typeof runExecution>>): Error {
-  const message = result.error ?? result.stderr ?? result.reason ?? "LLM dispatch failed";
-  return result.llmErrorCode ? new LlmCallError(message, result.llmErrorCode) : new Error(message);
+function dispatchFailure(result: Awaited<ReturnType<typeof runExecution>>): Error & { reason?: AgentFailureReason } {
+  const message = result.error ?? result.stderr ?? result.reason ?? "dispatch failed";
+  const error = result.llmErrorCode ? new LlmCallError(message, result.llmErrorCode) : new Error(message);
+  return Object.assign(error, { reason: result.reason });
+}
+
+/** The runner's failure reason (`timeout`, `aborted`, …) a failed dispatch threw with, whatever its kind. */
+export function dispatchFailureReason(err: unknown): AgentFailureReason | undefined {
+  return err instanceof Error ? (err as { reason?: AgentFailureReason }).reason : undefined;
 }
 
 export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise<T> {
@@ -225,11 +240,12 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
   }
 
   const runner = opts.runner;
-  if (!runner) throw new TypeError("callStructured requires a resolved LLM runner");
+  if (!runner) throw new TypeError("callStructured requires a resolved runner");
   const terminal = requireTerminalUserMessage(messages);
 
-  const prepareInvocation = (): (() => Promise<T>) => {
-    const current = resolveStructuredCurrent(opts.current, request);
+  // `gateSignal` aborts when the feature gate's timeout fires, so the dispatch stops with it.
+  const prepareInvocation = (): ((gateSignal?: AbortSignal) => Promise<T>) => {
+    const current = resolveStructuredCurrent(opts.current, request, runner);
     const prepared = resolveExecution({
       content: terminal.content,
       conversation: terminal.conversation,
@@ -238,11 +254,13 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
     });
     const lowered = buildExecution(prepared.request, prepared.runner);
     opts.onNotices?.(lowered.notices);
-    return async () => {
+    return async (gateSignal) => {
+      const signal =
+        request?.signal && gateSignal ? AbortSignal.any([request.signal, gateSignal]) : (request?.signal ?? gateSignal);
       const result = await runExecution(lowered, {
         ...(request?.chat ? { chat: request.chat } : {}),
         ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
-        ...(own(request, "signal") ? { runOptions: { signal: request?.signal } } : {}),
+        ...(signal ? { runOptions: { signal } } : {}),
       });
       if (!result.ok) throw dispatchFailure(result);
       return parse(result.stdout);
@@ -265,9 +283,9 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
   const outcome = await tryLlmFeature<{ kind: "value"; value: T } | { kind: "config-error"; error: ConfigError }>(
     feature,
     akmConfig,
-    async () => {
+    async (gateSignal) => {
       try {
-        return { kind: "value", value: await invoke() };
+        return { kind: "value", value: await invoke(gateSignal) };
       } catch (err) {
         // Credential materialization remains dispatch-owned, so a missing
         // required symbolic credential can surface here. Preserve config

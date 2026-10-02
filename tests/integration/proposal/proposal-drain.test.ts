@@ -857,6 +857,24 @@ describe("drainProposals — judgment tier (agent mode)", () => {
     expect(promoteFn).toHaveBeenCalledTimes(1);
   });
 
+  test("an agent judgment runner with no timeout of its own is bounded at 600 s", async () => {
+    const stash = makeStashDir();
+    seed(stash, "lessons/big", "consolidate", BIG_LESSON);
+    const { timeoutMs: _own, ...unbounded } = FAKE_AGENT_RUNNER;
+    let seenTimeoutMs: number | null | undefined;
+    const runAgentFn: NonNullable<JudgmentSeams["runAgentFn"]> = mock(async (_profile, _prompt, options) => {
+      seenTimeoutMs = options.timeoutMs;
+      return agentResult(JSON.stringify({ decision: "defer", reason: "needs a person" }));
+    });
+
+    await drainProposals(baseOpts(stash, { judgment: unbounded as RunnerSpec }), fakeAccept(), fakeReject(), {
+      runAgentFn,
+    });
+
+    expect(runAgentFn).toHaveBeenCalledTimes(1);
+    expect(seenTimeoutMs).toBe(600_000);
+  });
+
   test("a failed agent run leaves the item unresolved", async () => {
     const stash = makeStashDir();
     const deferred = seed(stash, "lessons/big", "consolidate", BIG_LESSON);

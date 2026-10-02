@@ -455,7 +455,7 @@ describe("Reflect quality gate — source context", () => {
         },
         chat: async (connection) => {
           observed.push(connection.apiKey);
-          return JSON.stringify({ score: 5, reason: "pass" });
+          return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
         },
       }),
     );
@@ -516,7 +516,7 @@ describe("Reflect quality gate — source context", () => {
           },
           chat: async (connection) => {
             observedJudge.push(connection.apiKey);
-            return JSON.stringify({ score: 5, reason: "pass" });
+            return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
           },
         }),
     );

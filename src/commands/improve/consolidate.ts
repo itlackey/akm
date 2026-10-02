@@ -40,6 +40,7 @@ import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-s
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
+import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import type { Database } from "../../storage/database";
@@ -64,7 +65,7 @@ import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
-import { callStage, type LlmRunner, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
+import { callStage, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
 
 export interface MemoryEntry {
   name: string;
@@ -133,7 +134,7 @@ export interface AkmConsolidateOptions {
   stashDir?: string;
   config?: AkmConfig;
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
-  llmRunner?: LlmRunner | null;
+  llmRunner?: RunnerSpec | null;
   onNotices?: NoticeSink;
   /** Chunk size cap (1–50). */
   maxChunkSize?: number;
@@ -719,7 +720,7 @@ async function judgeConsolidationChunks(args: {
       request: {
         responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA,
         enableThinking: false,
-        timeoutMs: llmRunner.timeoutMs,
+        ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
         signal: opts.signal,
       },
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
@@ -778,7 +779,7 @@ async function planConsolidation(
   // 500 body chars per memory keep the judgement useful; chunk size varies instead.
   const bodyTruncation = 500;
   const chunkSize = computeSafeChunkSize(
-    llmRunner?.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
+    (llmRunner && runnerLlmConnection(llmRunner)?.contextLength) ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
     bodyTruncation,
     opts.maxChunkSize,
   );

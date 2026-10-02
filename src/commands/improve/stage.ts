@@ -13,14 +13,16 @@ import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../..
 import { getImproveProcessConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
+import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
-import type { RunnerSpec } from "../../integrations/agent/runner";
-import { type ChatCompletionOptions, type ChatMessage, LlmCallError } from "../../llm/client";
+import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
+import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import type { LlmFeatureKey } from "../../llm/feature-gate";
-import { type CallStructuredRequest, callStructured } from "../../llm/structured-call";
+import { type CallStructuredRequest, callStructured, dispatchFailureReason } from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
@@ -36,7 +38,6 @@ import {
 import { resolveImproveLlmExecution } from "./execution";
 import type { ImproveProcessName, ResolvedImprovePlan } from "./improve-strategies";
 
-export type LlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
 export type Notice = Readonly<LoweringNotice>;
 export type NoticeSink = (notices: readonly Notice[]) => void;
 
@@ -58,16 +59,16 @@ export function noticeSet(forward?: NoticeSink) {
 export type NoticeSet = ReturnType<typeof noticeSet>;
 
 /**
- * A stage's LLM runner: the one the improve plan froze for it (an own
+ * A stage's runner: the one the improve plan froze for it (an own
  * `llmRunner` key, `null` meaning "none"), else the process engine cascade.
  */
 export function stageRunner(
-  frozen: { llmRunner?: LlmRunner | null },
+  frozen: { llmRunner?: RunnerSpec | null },
   config: AkmConfig,
   profile: ImproveProfileConfig | undefined,
   processName: ImproveProcessName,
   onNotices?: NoticeSink,
-): LlmRunner | undefined {
+): RunnerSpec | undefined {
   if (Object.hasOwn(frozen, "llmRunner")) return frozen.llmRunner ?? undefined;
   const resolved = resolveImproveLlmExecution({
     config,
@@ -81,11 +82,11 @@ export function stageRunner(
 
 export type StageLlmOutcome =
   | { ok: true; raw: string }
-  | { ok: false; reason: "disabled" | "timeout" | "error"; error?: string };
+  | { ok: false; reason: "disabled" | "timeout" | "aborted" | "error"; error?: string };
 
 export interface StageLlmCall {
   feature: LlmFeatureKey;
-  runner: LlmRunner;
+  runner: RunnerSpec;
   prompt: string;
   system?: string;
   /** Earlier turns, sent before the terminal user prompt. */
@@ -96,11 +97,54 @@ export interface StageLlmCall {
   gate?: { config: AkmConfig; enabled?: boolean };
 }
 
+const TRANSPORT_FAILED = Symbol("stage-transport-failed");
+
 /**
- * One model call. Provider trouble (transport error, timeout, a disabled
- * feature) comes back as `{ ok: false }`; only a configuration failure throws.
+ * One model call. Provider trouble (transport error, timeout, abort, a
+ * disabled feature) comes back as `{ ok: false }`; only a configuration
+ * failure throws. A reply to a call with `request.responseSchema` that fails
+ * the schema gets one corrective retry. The caller's own parse still decides
+ * what it accepts, so the last reply comes back even when it fails the schema.
  */
 export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
+  const schema = call.request?.responseSchema;
+  if (!schema) return callStageOnce(call);
+  let reply = undefined as StageLlmOutcome | undefined;
+  let failure = undefined as StageLlmOutcome | undefined;
+  try {
+    await runStructured<unknown>({
+      dispatch: async (feedback) => {
+        const outcome = await callStageOnce(feedback ? { ...call, prompt: `${call.prompt}\n\n${feedback}` } : call);
+        if (!outcome.ok) {
+          failure = outcome;
+          throw TRANSPORT_FAILED;
+        }
+        reply = outcome;
+        return outcome.raw;
+      },
+      validate: (candidate) => {
+        const errors = validateJsonSchemaSubset(candidate, schema);
+        return errors.length === 0 ? { ok: true, value: candidate } : { ok: false, errors };
+      },
+    });
+  } catch (err) {
+    if (err !== TRANSPORT_FAILED) throw err;
+  }
+  // A retry that fails in transport keeps the first reply, which the caller may still accept.
+  return reply ?? failure ?? { ok: false, reason: "error" };
+}
+
+/** Timeout and abort come from the dispatch's own reason, whatever the runner's kind. */
+function failureReason(err: unknown): "timeout" | "aborted" | "error" {
+  const reason = dispatchFailureReason(err);
+  return reason === "timeout" || reason === "aborted" ? reason : "error";
+}
+
+/**
+ * One dispatch with no validation, for a caller that parses and repairs the
+ * reply itself (reflect's repair turn, extract's own structured loop).
+ */
+export async function callStageOnce(call: StageLlmCall): Promise<StageLlmOutcome> {
   const messages: ChatMessage[] = [
     ...(call.system ? [{ role: "system" as const, content: call.system }] : []),
     ...(call.history ?? []),
@@ -120,7 +164,7 @@ export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
         ...(call.onNotices ? { onNotices: call.onNotices } : {}),
         parse: (r) => r ?? "",
         onError: (_cls, err) => {
-          failure = { ok: false, reason: "error", error: errMessage(err) };
+          failure = { ok: false, reason: failureReason(err), error: errMessage(err) };
           return undefined;
         },
         fallback: undefined,
@@ -137,8 +181,7 @@ export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
     return raw === undefined ? (failure ?? { ok: false, reason: "error" }) : { ok: true, raw };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
-    const timedOut = err instanceof LlmCallError && err.code === "timeout";
-    return { ok: false, reason: timedOut ? "timeout" : "error", error: errMessage(err) };
+    return { ok: false, reason: failureReason(err), error: errMessage(err) };
   }
 }
 
@@ -275,7 +318,7 @@ export function resolveQualityGateJudge(
   profile: ImproveProfileConfig | undefined,
   processName: "reflect" | "distill",
   onNotices?: NoticeSink,
-): LlmRunner | undefined {
+): RunnerSpec | undefined {
   const process = profile?.processes?.[processName];
   const gate = process?.qualityGate;
   if (!gate || gate.enabled === false) return undefined;
@@ -300,7 +343,7 @@ export function resolveQualityGateJudge(
 export interface QualityJudgeOptions {
   similarLessons?: Array<{ ref: string; content: string }>;
   /** The exact runner selected for this judge. */
-  llmRunner?: LlmRunner;
+  llmRunner?: RunnerSpec;
   /** The caller already froze judge selection: no runner means fail closed, never re-resolve. */
   runnerSelectionFrozen?: true;
   timeoutMs?: number | null;
@@ -515,7 +558,7 @@ async function runQualityJudge(
     prompt,
     request: {
       // Off unless the judge's own engine enables thinking (a slower, separate judge engine, #1011).
-      enableThinking: runner.connection.enableThinking === true,
+      enableThinking: runnerLlmConnection(runner)?.enableThinking === true,
       temperature: 0,
       responseSchema: judgeResponseSchema(keys),
       ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),

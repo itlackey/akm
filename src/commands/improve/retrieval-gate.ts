@@ -21,9 +21,10 @@ import type { LlmConnectionConfig } from "../../core/config/config";
 import { nonTaskInput } from "../../core/non-task-input";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { listRetrievalQueries } from "../../indexer/usage/usage-events";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { type LedgerAccess, readLedgerDb, stripBundle } from "./ledger";
-import { callStage, type LlmRunner, type NoticeSink } from "./stage";
+import { callStage, type NoticeSink } from "./stage";
 
 /** Queries graded per rewrite, as measured. */
 const MAX_QUERIES = 5;
@@ -107,7 +108,7 @@ export async function runRetrievalRegressionGate(args: {
   before: string;
   after: string;
   queries: readonly string[];
-  runner: LlmRunner;
+  runner: RunnerSpec;
   chat?: JudgeChat;
   timeoutMs?: number | null;
   signal?: AbortSignal;

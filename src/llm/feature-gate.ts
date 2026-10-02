@@ -14,9 +14,10 @@
  *   - `isLlmFeatureEnabled(config, feature)` — pure predicate, no side
  *     effects, no I/O.
  *   - `tryLlmFeature(feature, config, fn, fallback, opts?)` — single-call
- *     wrapper that runs `fn()` only when the gate is open, enforces a hard
- *     timeout (default 600s — overridable per call via `opts.timeoutMs`),
- *     and returns `fallback` on disablement, throw, or timeout.
+ *     wrapper that runs `fn(signal)` only when the gate is open, enforces a
+ *     hard timeout (default 600s — overridable per call via `opts.timeoutMs`)
+ *     that also aborts `signal`, and returns `fallback` on disablement,
+ *     throw, or timeout.
  *
  * The 0.9.0 config shape selects named engines and configures standalone index
  * features through their corresponding `index.*` pass entries. Feature keys
@@ -120,12 +121,13 @@ const DEFAULT_TIMEOUT_MS = 600_000;
 /**
  * Run `fn()` only if `isLlmFeatureEnabled(config, feature)` is `true`. On
  * disablement, throw, or timeout, return `fallback` (or — if it is a
- * thunk — the value produced by calling it).
+ * thunk — the value produced by calling it). The timeout aborts the signal
+ * `fn` receives, so the work it started stops too.
  */
 export async function tryLlmFeature<T>(
   feature: LlmFeatureKey,
   config: AkmConfig | undefined,
-  fn: () => Promise<T> | T,
+  fn: (signal: AbortSignal) => Promise<T> | T,
   fallback: T | (() => Promise<T> | T),
   opts?: TryLlmFeatureOptions,
 ): Promise<T> {
@@ -140,7 +142,7 @@ export async function tryLlmFeature<T>(
   const timeoutMs = opts && Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : DEFAULT_TIMEOUT_MS;
   try {
     if (timeoutMs === null || timeoutMs <= 0) {
-      return await fn();
+      return await fn(new AbortController().signal);
     }
     return await runWithTimeout(fn, timeoutMs, feature);
   } catch (err) {
@@ -181,13 +183,22 @@ export class LlmFeatureTimeoutError extends Error {
   }
 }
 
-async function runWithTimeout<T>(fn: () => Promise<T> | T, timeoutMs: number, feature: LlmFeatureKey): Promise<T> {
+async function runWithTimeout<T>(
+  fn: (signal: AbortSignal) => Promise<T> | T,
+  timeoutMs: number,
+  feature: LlmFeatureKey,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const controller = new AbortController();
   try {
     return await new Promise<T>((resolve, reject) => {
-      timer = setTimeout(() => reject(new LlmFeatureTimeoutError(feature, timeoutMs)), timeoutMs);
+      timer = setTimeout(() => {
+        const timedOut = new LlmFeatureTimeoutError(feature, timeoutMs);
+        controller.abort(timedOut);
+        reject(timedOut);
+      }, timeoutMs);
       Promise.resolve()
-        .then(() => fn())
+        .then(() => fn(controller.signal))
         .then(resolve, reject);
     });
   } finally {

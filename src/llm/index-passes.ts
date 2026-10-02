@@ -8,13 +8,13 @@ import { cloneExecutionJsonObject } from "../execution/json";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
-import type { StructuredLlmRunner } from "./structured-call";
+import type { RunnerSpec } from "../integrations/agent/runner";
 
 const NO_LOWERING_NOTICES: readonly Readonly<LoweringNotice>[] = Object.freeze([]);
 
 /** One frozen standalone-index selection, including its safe lowering diagnostics. */
 export interface ResolvedIndexPassExecution {
-  readonly runner: StructuredLlmRunner | undefined;
+  readonly runner: RunnerSpec | undefined;
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
 

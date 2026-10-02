@@ -114,7 +114,8 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
     EngineUnavailableProcessName,
     ResolvedImproveProcess,
   ][]) {
-    if (process.runner) {
+    // Only an LLM connection can be probed.
+    if (process.runner?.kind === "llm") {
       targets.push({
         process: processName,
         engine: process.runner.engine,

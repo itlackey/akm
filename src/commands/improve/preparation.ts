@@ -34,6 +34,7 @@ import type {
 import { withStateDb } from "../../core/state-db";
 import { info, warn } from "../../core/warn";
 import { countUsageEventsByType, USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
+import { runnerLlmConnection } from "../../integrations/agent/runner";
 import { getAvailableHarnesses } from "../../integrations/session-logs";
 import type { SessionLogHarness } from "../../integrations/session-logs/types";
 import type { Database } from "../../storage/database";
@@ -213,7 +214,8 @@ function planConsolidationPass(args: {
   // A credential-unavailable engine still resolved its context length.
   const unavailable = resolvedPlan.engineUnavailable.find((item) => item.process === "consolidate");
   const chunkSize = computeSafeChunkSize(
-    resolvedPlan.processes.consolidate.runner?.connection.contextLength ??
+    (resolvedPlan.processes.consolidate.runner &&
+      runnerLlmConnection(resolvedPlan.processes.consolidate.runner)?.contextLength) ??
       unavailable?.contextLength ??
       DEFAULT_CONTEXT_LENGTH_TOKENS,
     500,

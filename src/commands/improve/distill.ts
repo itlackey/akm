@@ -36,6 +36,7 @@ import { withStateDb } from "../../core/state-db";
 import { warn, warnVerbose } from "../../core/warn";
 import { recordWrittenPath } from "../../core/write-provenance";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import type { chatCompletion } from "../../llm/client";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -60,7 +61,6 @@ import { recordLedgerAttempt } from "./ledger";
 import { computeSalience, upsertAssetSalience } from "./salience";
 import {
   callStage,
-  type LlmRunner,
   mintProposal,
   type NoticeSet,
   noticeSet,
@@ -92,7 +92,7 @@ export interface AkmDistillOptions {
   stashDir?: string;
   config?: AkmConfig;
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
-  llmRunner?: LlmRunner | null;
+  llmRunner?: RunnerSpec | null;
   /** Shared improve deadline for generation and judging. */
   signal?: AbortSignal;
   /** Test seam: transport override. */
@@ -353,9 +353,9 @@ interface DistillRun {
   stash: string;
   config: AkmConfig;
   profile: ImproveProfileConfig;
-  runner?: LlmRunner;
+  runner?: RunnerSpec;
   /** The lesson gate's own judge (#1011); `undefined` when the gate names none. */
-  judgeRunner?: LlmRunner;
+  judgeRunner?: RunnerSpec;
   notices: NoticeSet;
   eligMeta: { eligibilitySource?: EligibilitySource };
   /** `excludeFeedbackFromRefs` diagnostics, present only when the option was given. */

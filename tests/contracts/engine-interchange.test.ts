@@ -24,32 +24,51 @@
  *   C4  Failures and timeouts are reported the same way on every transport.
  *   C5  Credentials akm owns are checked before dispatch.
  *   C6  Every dispatch leaves one usage record.
- * C1 and C2's delivery row run today. The other scenarios are todos until
- * their transports meet them.
+ * C1, C2's delivery and repair rows, C4 and C6 run today. The other
+ * scenarios are todos until their transports meet them.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { callStage } from "../../src/commands/improve/stage";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
+import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
 import { HARNESS_ID_TABLE } from "../../src/integrations/harnesses/ids";
 import { __setTestServer } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
+/** Shell that counts a fake binary's calls in a file beside it, as `$n`. */
+const COUNT_CALL = 'n=$(cat "$0.count" 2>/dev/null || echo 0)\nn=$((n + 1))\necho "$n" > "$0.count"\n';
 
 /** The LLM stub answers by the first path segment of the engine's endpoint. */
-const LLM_REPLIES: Record<string, () => Response> = {
+const LLM_REPLIES: Record<string, (req: Request) => Response | Promise<Response>> = {
   "http-500": () => Response.json({ error: { message: PROVIDER_MESSAGE } }, { status: 500 }),
   // OpenRouter answers a provider that fails after the headers with HTTP 200
   // and a body that holds only an `error` object and no `choices`.
   "http-200-error-body": () => Response.json({ error: { code: 502, message: PROVIDER_MESSAGE } }),
-  reply: () => Response.json({ choices: [{ message: { content: REPLY } }] }),
+  reply: () =>
+    Response.json({
+      choices: [{ message: { content: REPLY } }],
+      usage: { prompt_tokens: 3, completion_tokens: 5, total_tokens: 8 },
+    }),
+  valid: () => Response.json({ choices: [{ message: { content: REPLY } }] }),
+  // Prose first, then the reply, as a model corrected by a repair turn.
+  repair: () => Response.json({ choices: [{ message: { content: llmBodies.length === 1 ? "not json" : REPLY } }] }),
+  // Answers only once the client gives up.
+  hang: (req) =>
+    new Promise((resolve) => {
+      const late = setTimeout(() => resolve(new Response("late", { status: 504 })), 5_000);
+      late.unref();
+      req.signal.addEventListener("abort", () => resolve(new Response("aborted", { status: 499 })));
+    }),
 };
 
 /** The fake binaries, one per scenario, shared by every CLI harness. */
@@ -57,11 +76,24 @@ const CLI_SCRIPTS: Record<string, string> = {
   "exit-1": `#!/bin/sh\necho "${PROVIDER_MESSAGE}" >&2\nexit 1\n`,
   // Prints the argv it was given, so a row can see what reached the harness.
   reply: `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`,
+  // Records its pid beside itself, then outlives any timeout a row sets.
+  hang: `#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n`,
+  // Each counts its calls beside itself; repair answers prose first, then the reply.
+  valid: `#!/bin/sh\n${COUNT_CALL}echo '${REPLY}'\n`,
+  repair: `#!/bin/sh\n${COUNT_CALL}if [ "$n" -eq 1 ]; then echo 'not json'; else echo '${REPLY}'; fi\n`,
 };
 
-/** What the fake SDK client's prompt call resolves to, per scenario. */
+/** A prompt call that never settles. */
+const SDK_HANG = Symbol("sdk-hang");
+
+const sdkText = (text: string) => ({ data: { info: {}, parts: [{ type: "text", text }] } });
+
+/** What the fake SDK client's prompt call resolves to, per scenario; a function gets the call's number. */
 const SDK_REPLIES: Record<string, unknown> = {
-  reply: { data: { info: {}, parts: [{ type: "text", text: REPLY }] } },
+  reply: { data: { info: { tokens: { input: 3, output: 5 } }, parts: [{ type: "text", text: REPLY }] } },
+  valid: sdkText(REPLY),
+  repair: (call: number) => sdkText(call === 1 ? "not json" : REPLY),
+  hang: SDK_HANG,
   // An HTTP error: without throwOnError the client resolves to `{ error }`.
   "client-error": { error: { name: "UnknownError", data: { message: PROVIDER_MESSAGE } } },
   // A provider rejection: HTTP 200 with the error on the assistant message.
@@ -83,7 +115,7 @@ beforeAll(() => {
     async fetch(req) {
       const scenario = new URL(req.url).pathname.split("/")[1] ?? "";
       llmBodies.push((await req.json()) as Record<string, unknown>);
-      return LLM_REPLIES[scenario]?.() ?? new Response("unknown scenario", { status: 404 });
+      return LLM_REPLIES[scenario]?.(req) ?? new Response("unknown scenario", { status: 404 });
     },
   });
   bins = makeSandboxDir("akm-engine-interchange-bin");
@@ -164,7 +196,8 @@ const OPENCODE_SDK: Transport = {
           create: async () => ({ data: { id: "contract-session" } }),
           prompt: async (args) => {
             sdkBodies.push(args.body as Record<string, unknown>);
-            return reply as never;
+            if (reply === SDK_HANG) return new Promise<never>(() => {});
+            return (typeof reply === "function" ? reply(sdkBodies.length) : reply) as never;
           },
           delete: async () => ({}),
         },
@@ -177,6 +210,13 @@ const OPENCODE_SDK: Transport = {
     return { prompt: [body.system ?? "", ...body.parts.map((part) => part.text)].join("\n") };
   },
 };
+
+/** The resolved runner that runs `scenario` on `transport`. */
+function runnerFor(transport: Transport, scenario: string): RunnerSpec {
+  transport.arrange?.(scenario);
+  const config = { configVersion: "0.9.0", engines: { contract: transport.engine(scenario) } } as unknown as AkmConfig;
+  return resolveExecution({ content: "engine selection", config, current: { engine: "contract" } }).runner;
+}
 
 /** Resolve, build and run one dispatch of `scenario` on `transport`. */
 async function dispatch(
@@ -192,6 +232,27 @@ async function dispatch(
     current: { engine: "contract", ...current },
   });
   return runExecution(buildExecution(resolved.request, resolved.runner));
+}
+
+const ALL_TRANSPORTS: [string, Transport][] = [LLM, ...CLI_HARNESSES, OPENCODE_SDK].map((transport) => [
+  transport.name,
+  transport,
+]);
+
+/** How many times `transport` was called for `scenario` in this test. */
+function calls(transport: Transport, scenario: string): number {
+  if (transport === LLM) return llmBodies.length;
+  if (transport === OPENCODE_SDK) return sdkBodies.length;
+  return Number(fs.readFileSync(path.join(bins.dir, `${scenario}.count`), "utf8").trim());
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 describe("C1: a provider or harness error is ok:false, never ok with empty output", () => {
@@ -239,8 +300,34 @@ describe("C2: structured output", () => {
     expect(delivered.nativeSchema).toEqual(want.native ? schema : undefined);
   });
 
-  test.todo("a valid structured reply is parsed and validated against the schema", () => {});
-  test.todo("a malformed structured reply is corrected by one repair turn", () => {});
+  // A stage call validates the reply against its schema and retries once when it fails.
+  test.each(ALL_TRANSPORTS)("%s: a valid structured reply is validated and kept", async (_name, transport) => {
+    fs.rmSync(path.join(bins.dir, "valid.count"), { force: true });
+    const outcome = await callStage({
+      feature: "distill",
+      runner: runnerFor(transport, "valid"),
+      prompt: "Reply with a verdict.",
+      request: { responseSchema: schema },
+    });
+
+    expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(REPLY) });
+    expect(calls(transport, "valid")).toBe(1);
+  });
+
+  test.each(
+    ALL_TRANSPORTS,
+  )("%s: a malformed structured reply is corrected by one repair turn", async (_name, transport) => {
+    fs.rmSync(path.join(bins.dir, "repair.count"), { force: true });
+    const outcome = await callStage({
+      feature: "distill",
+      runner: runnerFor(transport, "repair"),
+      prompt: "Reply with a verdict.",
+      request: { responseSchema: schema },
+    });
+
+    expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(REPLY) });
+    expect(calls(transport, "repair")).toBe(2);
+  });
   test.todo("an empty reply is a parse_error, never success", () => {});
 });
 
@@ -249,7 +336,45 @@ describe("C3: tool policy", () => {
 });
 
 describe("C4: failures and timeouts", () => {
-  test.todo("a timeout is reason timeout, and the child is killed", () => {});
+  test.each(ALL_TRANSPORTS)("%s: a timeout is reason timeout", async (_name, transport) => {
+    const result = await dispatch(transport, "hang", { timeout: 300 });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("timeout");
+  });
+
+  test.each(
+    CLI_HARNESSES.map((harness): [string, Transport] => [harness.name, harness]),
+  )("%s: a timed-out child is killed", async (_name, transport) => {
+    const pidFile = path.join(bins.dir, "hang.pid");
+    fs.rmSync(pidFile, { force: true });
+    await dispatch(transport, "hang", { timeout: 300 });
+
+    expect(processAlive(Number(fs.readFileSync(pidFile, "utf8").trim()))).toBe(false);
+  });
+
+  // A stage call branches on the dispatch's reason, never on the runner's kind.
+  test.each(ALL_TRANSPORTS)("%s: a stage call reports a timeout as timeout", async (_name, transport) => {
+    const outcome = await callStage({
+      feature: "distill",
+      runner: runnerFor(transport, "hang"),
+      prompt: "Reply with the single word: pong",
+      request: { timeoutMs: 300 },
+    });
+
+    expect(outcome).toMatchObject({ ok: false, reason: "timeout" });
+  });
+
+  test.each(ALL_TRANSPORTS)("%s: a stage call reports an abort as aborted", async (_name, transport) => {
+    const outcome = await callStage({
+      feature: "distill",
+      runner: runnerFor(transport, "hang"),
+      prompt: "Reply with the single word: pong",
+      request: { signal: AbortSignal.abort() },
+    });
+
+    expect(outcome).toMatchObject({ ok: false, reason: "aborted" });
+  });
 });
 
 describe("C5: credentials", () => {
@@ -257,5 +382,33 @@ describe("C5: credentials", () => {
 });
 
 describe("C6: usage", () => {
-  test.todo("one usage record per dispatch, attributed to its engine", () => {});
+  const reported = { promptTokens: 3, completionTokens: 5, totalTokens: 8 };
+  // The LLM path records each HTTP attempt; an agent or SDK path records the dispatch.
+  const rows: [string, Transport, Partial<LlmUsageRecord>][] = [
+    [LLM.name, LLM, reported],
+    ...CLI_HARNESSES.map((harness): [string, Transport, Partial<LlmUsageRecord>] => [harness.name, harness, {}]),
+    [OPENCODE_SDK.name, OPENCODE_SDK, reported],
+  ];
+
+  test.each(rows)("%s: one usage record per dispatch, attributed to its engine", async (_name, transport, tokens) => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+    try {
+      const result = await withLlmStage("contract-stage", () => dispatch(transport, "reply", { model: "stub-model" }), {
+        engine: "contract",
+      });
+      expect(result.ok).toBe(true);
+    } finally {
+      clearLlmUsageSink();
+    }
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      stage: "contract-stage",
+      engine: "contract",
+      outcome: "success",
+      model: "stub-model",
+      ...tokens,
+    });
+  });
 });
