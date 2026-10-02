@@ -30,6 +30,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   writes one `llm_usage` record through the same sink and stage attribution as
   the LLM path, with the request's model and the tokens the runner reports. An
   LLM engine still records each HTTP attempt.
+- **`akm proposal new` gets the proposal as JSON from every engine kind, with
+  no live session.** It told every engine to write the asset to a draft file
+  and print no JSON, then parsed stdout as JSON. An LLM engine that followed
+  the instruction could not succeed, and an agent engine succeeded only by
+  writing the file: an agent CLI ran in a live terminal session whose output
+  akm could not read, and otherwise failed with an "interactive mode" error.
+  Every engine now returns the proposal as one JSON object on stdout, and the
+  request carries its JSON Schema: as `response_format` for an LLM engine, as
+  the schema instruction for an agent engine. akm captures the reply, unwraps
+  a harness envelope such as claude's `--output-format json` result, and
+  validates it. A reply that is not a proposal gets one corrective retry, then
+  fails with an error that names the engine. An agent CLI now runs headless:
+  you see the queued proposal, not the agent at work, and no draft file is
+  written.
 
 ### Fixed
 

@@ -5,15 +5,14 @@
 /**
  * Shared prompt builders for proposal-producing agent commands (#226).
  *
- * `akm reflect` and `akm propose` both shell out to the configured agent CLI
- * (via {@link runAgent}) and ask it for a structured proposal payload. The
- * prompts are intentionally similar and share their construction here. Agent
- * and SDK stdout keeps the JSON/file-write contracts; direct LLM reflect adds
- * native-schema and framed-markdown contracts. Keeping the prompt builders in
- * `src/integrations/agent/` rather than `src/llm/` is deliberate: these are
- * shell-out prompts targeting an agent CLI, not in-tree LLM API calls.
+ * `akm reflect` and `akm proposal new` both ask the configured engine for a
+ * structured proposal payload. The prompts are intentionally similar and share
+ * their construction here. `proposal new` asks every engine kind for the JSON
+ * object below, with {@link PROPOSAL_JSON_SCHEMA} as the request's output
+ * schema. Reflect's agent and SDK stdout keeps the JSON/file-write contracts;
+ * direct LLM reflect adds native-schema and framed-markdown contracts.
  *
- * The stdout output an agent must produce is a strict JSON object:
+ * The stdout output an engine must produce is a strict JSON object:
  *
  * ```json
  * {
@@ -39,7 +38,10 @@ import {
   DESCRIPTION_MIN_CHARS,
   requiresDescription,
 } from "../../core/authoring-rules";
+import { isRecord } from "../../core/common";
 import { parseEmbeddedJsonResponse, stripCodeFences, stripThinkBlocks } from "../../core/parse";
+import type { StructuredValidation } from "../../core/structured";
+import type { ExecutionJsonObject } from "../../execution/json";
 
 /** Agent-returned proposal payload (after JSON parse). */
 export interface AgentProposalPayload {
@@ -131,6 +133,26 @@ const RESPONSE_CONTRACT_JSON = [
   "  • Below 0.50 — you are not confident this improves on the source. Prefer returning the source body roughly unchanged with a low score over inventing changes.",
   "Reviewers and the triage judge read this score when adjudicating the proposal queue. Overclaiming erodes trust in your proposals; underclaiming buries good ones. Be honest.",
 ].join("\n");
+
+/**
+ * The JSON Schema of {@link RESPONSE_CONTRACT_JSON}'s object, the output
+ * schema `proposal new` sends with its request: an LLM engine gets it as
+ * `response_format`, codex as `--output-schema`, every agent engine as the
+ * shared schema instruction. It is in the strict form those native channels
+ * accept (every property required, no others), so it leaves out the optional
+ * `frontmatter`, which `content` already carries. The reply is held only to
+ * what {@link validateProposalPayload} needs.
+ */
+export const PROPOSAL_JSON_SCHEMA: ExecutionJsonObject = {
+  type: "object",
+  required: ["ref", "content", "confidence"],
+  additionalProperties: false,
+  properties: {
+    ref: { type: "string", description: "The new asset's ref as a subdir-qualified conceptId." },
+    content: { type: "string", description: "The full file contents that will be written if accepted." },
+    confidence: { type: "number", minimum: 0, maximum: 1, description: "Self-rated confidence in [0, 1]." },
+  },
+};
 
 /**
  * Response contract used when a draft file path is available. Instructs the
@@ -553,17 +575,12 @@ export interface ProposePromptInput {
    * contract.
    */
   standardsContext?: string;
-  /**
-   * When provided, the agent is instructed to write the new asset content
-   * directly to this path using its file tools. No stdout JSON is expected.
-   * When absent, the configured engine returns the structured JSON payload.
-   */
-  draftFilePath?: string;
 }
 
 /**
- * Build the prompt for `akm propose <type> <name> --task ...`. Asks the
- * agent to author a brand-new asset of the given type fulfilling `task`.
+ * Build the prompt for `akm proposal new <type> <name> --task ...`. Asks the
+ * engine to author a brand-new asset of the given type fulfilling `task`, and
+ * to return it as the JSON object of {@link RESPONSE_CONTRACT_JSON}.
  */
 export function buildProposePrompt(input: ProposePromptInput): string {
   const sections: string[] = [];
@@ -586,7 +603,7 @@ export function buildProposePrompt(input: ProposePromptInput): string {
     }
   }
   sections.push("Produce a single proposal that, if accepted, would land as the asset described above.");
-  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
+  sections.push(RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }
 
@@ -668,9 +685,9 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
   const trimmed = stripCodeFences(stripThinkBlocks(stdout)).trim();
   if (!trimmed) throw new Error("agent produced empty output");
 
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    parsed = JSON.parse(trimmed);
   } catch (directErr) {
     // Agent output contains prose before/after the JSON object (e.g. a local
     // LLM that narrates before responding). Try extracting the first balanced
@@ -680,19 +697,29 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
     parsed = embedded;
   }
 
+  const verdict = validateProposalPayload(parsed);
+  if (!verdict.ok) throw new Error(verdict.errors.join("; "));
+  return verdict.value;
+}
+
+/**
+ * The proposal in a parsed reply, or why the reply is not one: `ref` and
+ * `content` must be non-empty strings. A malformed optional field is dropped,
+ * never refused.
+ */
+export function validateProposalPayload(parsed: unknown): StructuredValidation<AgentProposalPayload> {
+  if (!isRecord(parsed)) return { ok: false, errors: ["agent response is not a JSON object"] };
   if (typeof parsed.ref !== "string" || !parsed.ref.trim()) {
-    throw new Error('agent response missing required string field "ref"');
+    return { ok: false, errors: ['agent response missing required string field "ref"'] };
   }
   if (typeof parsed.content !== "string" || !parsed.content.trim()) {
-    throw new Error('agent response missing required string field "content"');
+    return { ok: false, errors: ['agent response missing required string field "content"'] };
   }
   const out: AgentProposalPayload = {
     ref: parsed.ref.trim(),
     content: parsed.content,
   };
-  if (parsed.frontmatter && typeof parsed.frontmatter === "object" && !Array.isArray(parsed.frontmatter)) {
-    out.frontmatter = parsed.frontmatter as Record<string, unknown>;
-  }
+  if (isRecord(parsed.frontmatter)) out.frontmatter = parsed.frontmatter;
   // Phase 6A: extract optional `confidence` (number in [0, 1]). Clamp gently
   // rather than reject — a model that returns 1.0 or 0 with extra precision
   // (e.g. 1.0000001) should still surface a usable score. Anything that isn't
@@ -702,5 +729,5 @@ export function parseAgentProposalPayload(stdout: string): AgentProposalPayload 
     const clamped = Math.max(0, Math.min(1, parsed.confidence));
     out.confidence = clamped;
   }
-  return out;
+  return { ok: true, value: out };
 }

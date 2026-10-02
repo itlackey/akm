@@ -182,10 +182,11 @@ akm proposal accept abc12345           # write it to the bundle
 
 ## akm proposal new
 
-`akm proposal new` authors a brand-new asset via the LLM pipeline — useful
+`akm proposal new` asks an engine to author a brand-new asset — useful
 when you want to create something from scratch rather than improving an
-existing asset. Output always goes to the proposal queue, never directly to
-the bundle.
+existing asset. Any engine kind works (an LLM engine, an agent CLI or
+`opencode-sdk`): the engine returns the asset as JSON, which akm validates.
+Output always goes to the proposal queue, never directly to the bundle.
 
 ```sh
 akm proposal new skill code-review --task "PR-style review skill for TypeScript repos"
