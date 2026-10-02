@@ -99,6 +99,7 @@ enumeration of the whole `proposal` noun group.
 | `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; `--detail brief` selects the compact version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
+| `akm mcp` | Experimental | Read-only MCP server on stdio serving `search` and `show`; format-exempt (a JSON-RPC stream). |
 | `akm env list` | Stable | Read-and-inject surface. |
 | `akm env path` | Stable | Read-and-inject surface. |
 | `akm env export` | Stable | Read-and-inject surface. |
@@ -196,9 +197,9 @@ enumeration of the whole `proposal` noun group.
   `--shape` (`human|agent|summary`) is the output-projection axis (see
   Experimental). A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
-  child-process passthrough in `env run` / `secret run`, a bare-path payload
-  from `env path`, and document payloads from `help` (bare, `help agents`, and
-  `help migrate`). The set is declared in
+  `mcp` (a JSON-RPC stream on stdio), child-process passthrough in `env run` /
+  `secret run`, a bare-path payload from `env path`, and document payloads from
+  `help` (bare, `help agents`, and `help migrate`). The set is declared in
   `src/output/format-exempt.ts`, and
   passing `--format` to one of them warns rather than silently doing something
   else. Scripted `setup` modes emit a normal format-aware result; interactive
