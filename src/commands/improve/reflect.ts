@@ -1177,8 +1177,10 @@ const NOISE_SUBREASONS = {
 
 /**
  * Sanitize, drop a no-op/cosmetic (and optionally low-value) change, judge the
- * exact content that would be persisted, then mint. Size-flagged or
- * truncation-leaking content skips the judge and waits for review.
+ * exact content that would be persisted, then mint. A judge pass is staged only
+ * when the body is unchanged: a body edit the judge passes, or one made with the
+ * gate off, waits for review. Size-flagged or truncation-leaking content skips
+ * the judge and waits for review.
  */
 async function finalizeReflectProposal(args: {
   run: ReflectRun;
@@ -1253,6 +1255,7 @@ async function finalizeReflectProposal(args: {
     return reflectFailure(run, result, "quality_rejected", message, false);
   };
   let verdict: QualityJudgeResult | undefined;
+  let judgeFailed = false;
   if (judged) {
     verdict = await runReflectQualityJudge(run.config, payload.content, assetContent ?? "", feedback, options.chat, {
       runnerSelectionFrozen: true,
@@ -1261,7 +1264,9 @@ async function finalizeReflectProposal(args: {
       ...(options.signal ? { signal: options.signal } : {}),
       onNotices: run.notices.add,
     });
-    if (!verdict.pass) {
+    // A judge that timed out, errored or replied unparseably gave no verdict: a person reviews the revision.
+    judgeFailed = verdict.reviewNeeded === true && verdict.score === -1;
+    if (!verdict.pass && !judgeFailed) {
       return refuse(
         verdict.reason,
         {
@@ -1274,7 +1279,7 @@ async function finalizeReflectProposal(args: {
     }
   }
   // #722: a rewrite of an existing asset must not grade lower on its own retrieval queries.
-  if (judged && judge.runner && assetContent !== undefined) {
+  if (verdict?.pass && judge.runner && assetContent !== undefined) {
     const retrieval = await runRetrievalRegressionGate({
       ref: payload.ref,
       before: assetContent,
@@ -1308,9 +1313,18 @@ async function finalizeReflectProposal(args: {
   };
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
+    ...(judgeFailed ? ["judge-error"] : []),
     ...(sanitized.sizeGuardRatio ? ["reflect-size-ratio"] : []),
     ...(sanitized.truncationMarkerLeaked ? ["reflect-truncation-leak"] : []),
   ];
+  // A revision that changes the body is never auto-accepted: on labelled edits, the judge's
+  // passes on body edits were good 12 times in 37, and on frontmatter-only edits 13 in 13.
+  // One that nothing above holds for review (the judge passed it, or the gate is off) waits
+  // for a person, as does a revision with no source to compare.
+  const bodyOf = (content: string) => splitFrontmatter(content).body.replace(/\s+/g, " ").trim();
+  const bodyEdit =
+    reviewReasons.length === 0 && (assetContent === undefined || bodyOf(assetContent) !== bodyOf(payload.content));
+  if (bodyEdit) reviewReasons.push("body-edit");
   const proposal = mintProposal(
     run.stash,
     options.ctx,
@@ -1328,8 +1342,12 @@ async function finalizeReflectProposal(args: {
       ? {
           review: {
             reason: reviewReasons.join("+"),
-            gate: "reflect",
+            // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
+            gate: judgeFailed ? "quality-gate" : "reflect",
             ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
+            // The reviewer sees why the judge passed it (with the gate off, nothing judged it).
+            ...(bodyEdit && verdict?.criteria ? { scores: verdict.criteria } : {}),
+            ...(bodyEdit && verdict ? { judgeReason: verdict.reason } : {}),
           },
         }
       : { judged: verdict },
@@ -1343,6 +1361,7 @@ async function finalizeReflectProposal(args: {
         source: "reflect",
         engine: run.engineName,
         ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
+        ...(judgeFailed ? { qualityReason: verdict?.reason } : {}),
         ...(sanitized.sizeGuardRatio
           ? { sizeGuardRatio: sanitized.sizeGuardRatio.code, sizeGuardRatioValue: sanitized.sizeGuardRatio.ratio }
           : {}),

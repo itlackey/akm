@@ -1019,8 +1019,10 @@ describe("drainProposals — judgment disabled", () => {
 // mint `deferred`/`quality-gate`. `classifyPendingProposals` must skip that
 // row entirely — not classify it, not re-stamp it, not send it to the
 // judgment tier, which could auto-accept it under `applyMode: promote` with
-// no human ever seeing content the gate explicitly refused to auto-queue. An
-// unstamped `distill` row is unaffected and still reaches judgment normally.
+// no human ever seeing content the gate explicitly refused to auto-queue.
+// Reflect's own deferrals (gate `reflect`) are skipped the same way. An
+// unstamped `distill` row, and a row the drain itself deferred, still reach
+// judgment normally.
 
 describe("drainProposals — REVIEW: quality-gate review-band rows are skipped, not judged", () => {
   test("a distill row stamped deferred/quality-gate stays pending and untouched; the judgment seam is never called", async () => {
@@ -1049,6 +1051,48 @@ describe("drainProposals — REVIEW: quality-gate review-band rows are skipped, 
     expect(result.rejected).toEqual([]);
     expect(result.deferred).toEqual([]);
     expect(getProposal(stash, reviewNeeded.id)).toEqual(before);
+  });
+
+  test("a reflect row stamped deferred/reflect stays pending and untouched; the judgment seam is never called", async () => {
+    const stash = makeStashDir();
+    const bodyEdit = seed(stash, "lessons/body-edit", "reflect", VALID_LESSON);
+    recordGateDecision(stash, bodyEdit.id, { outcome: "deferred", reason: "body-edit", gate: "reflect" });
+    const before = getProposal(stash, bodyEdit.id);
+
+    const chat = mock(async () => {
+      throw new Error("a reflect deferral reached the judgment tier");
+    });
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "promote" }),
+      fakeAccept(),
+      fakeReject(),
+      { chat },
+    );
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(result.promoted).toEqual([]);
+    expect(result.rejected).toEqual([]);
+    expect(result.deferred).toEqual([]);
+    expect(getProposal(stash, bodyEdit.id)).toEqual(before);
+  });
+
+  test("a row the drain itself deferred is judged again", async () => {
+    const stash = makeStashDir();
+    const drainDeferred = seed(stash, "lessons/drain-deferred", "consolidate", VALID_LESSON);
+    recordGateDecision(stash, drainDeferred.id, { outcome: "deferred", reason: "judgment-deferred", gate: "triage" });
+
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "genuinely useful" }));
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "promote" }),
+      fakeAccept(),
+      fakeReject(),
+      { chat },
+    );
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    expect(result.promoted).toEqual([drainDeferred.id]);
   });
 
   test("an unstamped distill row still reaches the judgment tier", async () => {

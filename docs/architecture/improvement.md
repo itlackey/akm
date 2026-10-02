@@ -196,7 +196,11 @@ reworded a correct asset through.
 A pass is stamped on the proposal as a `staged` decision from the `quality-gate`
 with the per-criterion `scores` and the judge's `judgeReason`; both stay on the
 proposal when the drain accepts it, so a later audit can read why it passed
-(`akm proposal show --format json`).
+(`akm proposal show --format json`). A reflect pass that changes the body, or
+whose source could not be read, is deferred for review instead (`body-edit`,
+gate `reflect`), with the same `scores` and `judgeReason`. On labelled edits,
+judge-passed body edits were good 12 times in 37, and frontmatter-only ones 13
+times in 13.
 
 ### Retrieval regression gate
 

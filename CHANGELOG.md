@@ -4,6 +4,51 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.9.24] - 2026-10-02
+
+### Changed
+
+- **Reflect never auto-accepts a revision that changes the body; it waits for
+  review.** On 396 labelled reflect edits, the judge-passed edits that changed
+  the body were good 12 times in 37, and those that changed only the
+  frontmatter 13 times in 13. A revision whose body differs from the asset's,
+  ignoring whitespace, or whose source could not be read, is now created
+  pending and deferred for review with the reason `body-edit` (gate
+  `reflect`). When the quality judge passed it, the judge's scores and reason
+  stay on its gate decision. With `processes.reflect.qualityGate` off, no
+  judge ran, so the decision carries none. Before, the triage drain accepted a
+  judge-passed body edit, and its judgment tier could accept one made with the
+  gate off. These body edits now appear in the review queue
+  (`akm proposal list`), and `akm proposal show <id>` gives the reason and any
+  judge scores. A judge-passed revision that leaves the body unchanged is
+  still staged and accepted by the drain. A frontmatter-only revision made
+  with the gate off is still left to the drain, and a revision the judge fails
+  is still refused.
+
+### Fixed
+
+- **Reflect sends a revision to review when its judge fails, instead of
+  rejecting it.** A quality judge that timed out, errored or returned a reply
+  that could not be parsed gave no verdict, but reflect treated that as a
+  rejection. It created no proposal, recorded a `quality_rejected` attempt that
+  kept the asset from being reflected again for 14 days, and reported
+  `quality gate rejected: score=-1` with a reason saying the revision had been
+  routed to review. Reflect now creates the proposal and leaves it pending for
+  a person, deferred by the quality gate with the reason `judge-error`, as
+  distill does when its judge fails. The triage drain leaves it alone. It has
+  not been through the retrieval regression check, which runs only on a
+  revision the judge passes. A revision the judge scores too low is still
+  refused.
+- **The triage drain leaves every proposal a stage deferred for review to a
+  person.** It skipped a deferred proposal only when the quality gate had
+  deferred it. Reflect defers with its own gate, `reflect`: a revision whose
+  size the size guard flagged, one that echoed the truncation notice, one made
+  with no judge configured, and now a body edit. With
+  `processes.triage.judgment` enabled, the drain's judgment tier decided those
+  proposals, and under `applyMode: promote` it could accept them before anyone
+  saw them. The drain now skips every deferral it did not make itself, and
+  judges again, as before, the ones it did.
+
 ## [0.9.23] - 2026-10-01
 
 ### Added

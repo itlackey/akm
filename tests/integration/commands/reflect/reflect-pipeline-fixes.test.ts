@@ -22,9 +22,12 @@ import { createProposal, listProposals } from "../../../../src/commands/proposal
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
+import { openStateDatabase } from "../../../../src/core/state-db";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
+import { LlmCallError } from "../../../../src/llm/client";
+import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { durableItemRef } from "../../../_helpers/durable-ref";
 import { makeConfig, quietQualityGateConfig } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
@@ -92,6 +95,15 @@ const LONG_SOURCE_BODY = [
   "- Run `dig @1.1.1.1 internal.example.com` externally and confirm NXDOMAIN.",
   "- Check `/var/log/AdGuardHome/query.log` shows both legs.",
 ].join("\n");
+
+function reflectLedgerRows() {
+  const db = openStateDatabase();
+  try {
+    return listImproveLedgerRows(db, makeStashDir(), ["reflect"]);
+  } finally {
+    db.close();
+  }
+}
 
 // ── 1. Type guard — reflect refuses executable / non-markdown types ───────────
 
@@ -554,10 +566,11 @@ describe("Reflect quality gate — source context", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a proposal");
-    // The pass is stamped with the judge's evidence, so a later audit can read why it passed.
+    // A body edit the judge passed waits for review, with the judge's evidence on the stamp for the reviewer.
     expect(result.proposal.gateDecision).toMatchObject({
-      outcome: "staged",
-      gate: "quality-gate",
+      outcome: "deferred",
+      reason: "body-edit",
+      gate: "reflect",
       scores: { need: 5, preservation: 4, quality: 4 },
       judgeReason: "adds useful detail",
     });
@@ -711,6 +724,223 @@ describe("Reflect quality gate — source context", () => {
     ).rejects.toBeInstanceOf(ConfigError);
     expect(spawned).toBe(0);
     expect(listProposals(stash)).toEqual([]);
+  });
+});
+
+describe("Reflect quality gate — a judge that gives no verdict defers the revision to review", () => {
+  const ref = "knowledge/judge-no-verdict";
+  const sourceContent = `---\ndescription: Judge failure routing\n---\n\n${LONG_SOURCE_BODY}\n`;
+  const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+
+  function reflectJudgedBy(chat: () => Promise<string>) {
+    return akmReflect({
+      ref,
+      stashDir: makeStashDir(),
+      config: {
+        ...quietQualityGateConfig(),
+        engines: {
+          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+          judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+        },
+        defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
+        improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
+      } as AkmConfig,
+      assetContent: sourceContent,
+      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, content: candidateContent }), "", 0) },
+      chat,
+    });
+  }
+
+  /** Queued for a person by the quality gate, as distill queues its judge failures; never recorded as a rejection. */
+  async function expectDeferredToReview(reflecting: ReturnType<typeof reflectJudgedBy>, judgeReason: string) {
+    const result = await reflecting;
+    if (!result.ok) throw new Error(`expected the revision to be deferred to review, got: ${result.error}`);
+    expect(listProposals(makeStashDir())).toHaveLength(1);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: { outcome: "deferred", reason: "judge-error", gate: "quality-gate" },
+    });
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "judge-error" }]);
+    const completed = readEvents({ type: "reflect_completed" }).events.at(-1)?.metadata;
+    expect(completed).toMatchObject({ proposalId: result.proposal.id, qualityReason: judgeReason });
+    expect(completed?.qualityRejected).toBeUndefined();
+  }
+
+  test("a judge reply that is not JSON defers the revision instead of rejecting it", async () => {
+    await expectDeferredToReview(
+      reflectJudgedBy(async () => "The revision looks fine to me."),
+      "judge parse failed — routed to review",
+    );
+  });
+
+  test.each([
+    ["errors", new Error("connect ECONNREFUSED 127.0.0.1:11434")],
+    ["times out", new LlmCallError("judge request timed out", "timeout")],
+  ])("a judge that %s defers the revision without a retrieval check against it", async (_kind, failure) => {
+    // A query that retrieved the asset: the retrieval check would grade on it if a judge failure fell through.
+    const db = openStateDatabase();
+    try {
+      db.prepare("INSERT INTO usage_events (event_type, entry_ref, query, source) VALUES ('search', ?, ?, 'user')").run(
+        `stash//${ref}`,
+        "adguard split horizon dns",
+      );
+    } finally {
+      db.close();
+    }
+    let judgeCalls = 0;
+    await expectDeferredToReview(
+      reflectJudgedBy(async () => {
+        judgeCalls += 1;
+        throw failure;
+      }),
+      "judge timeout/error — routed to review",
+    );
+    expect(judgeCalls).toBe(1);
+  });
+
+  test("a real low score is still refused", async () => {
+    // NEED 2 leaves the mean (3.33) in the review band: a real score that also carries reviewNeeded.
+    const result = await reflectJudgedBy(async () =>
+      JSON.stringify({ scores: { need: 2, preservation: 4, quality: 4 }, reason: "rewords a correct asset" }),
+    );
+    if (result.ok) throw new Error("expected the quality gate to refuse the revision");
+    expect(result.reason).toBe("quality_rejected");
+    expect(result.error).toContain('reason="rewords a correct asset"');
+    expect(listProposals(makeStashDir())).toEqual([]);
+    expect(reflectLedgerRows()).toMatchObject([
+      { ref, outcome: "quality_rejected", detail: "rewords a correct asset" },
+    ]);
+    expect(readEvents({ type: "reflect_completed" }).events.at(-1)?.metadata).toMatchObject({
+      qualityRejected: true,
+      qualityReason: "rewords a correct asset",
+    });
+  });
+});
+
+describe("Reflect routing — a revision that changes the body is never auto-accepted", () => {
+  const sourceContent = `---\ndescription: Body edit routing\n---\n\n${LONG_SOURCE_BODY}\n`;
+  const bodyEdit = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+  // Re-wrapped and padded: a body that differs only in whitespace is unchanged.
+  const frontmatterOnly = {
+    content: `${LONG_SOURCE_BODY.replace(" from the LAN.", "\n  from the LAN.")}\n\n\n`,
+    frontmatter: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
+  };
+  const pass = async () =>
+    JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "restores the cut-off heading" });
+
+  /**
+   * Reflect `ref` to the agent's `revision` of `source` (none when omitted),
+   * judged by `judge`. Without a `judge` the gate is off.
+   */
+  function reflectRevision(
+    ref: string,
+    revision: { content: string; frontmatter?: Record<string, unknown> },
+    { judge, source }: { judge?: () => Promise<string>; source?: string },
+  ) {
+    return akmReflect({
+      ref,
+      stashDir: makeStashDir(),
+      config: {
+        ...quietQualityGateConfig(),
+        engines: {
+          "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+          judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+        },
+        defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
+        improve: {
+          strategies: { default: { processes: { reflect: { qualityGate: { enabled: judge !== undefined } } } } },
+        },
+      } as AkmConfig,
+      ...(source !== undefined ? { assetContent: source } : {}),
+      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, ...revision }), "", 0) },
+      chat:
+        judge ??
+        (async () => {
+          throw new Error("the gate is off: nothing may judge the revision");
+        }),
+    });
+  }
+
+  test("a judge-passed body edit waits for review, with the judge's scores and reason on the stamp", async () => {
+    const result = await reflectRevision(
+      "knowledge/body-edit",
+      { content: bodyEdit },
+      { judge: pass, source: sourceContent },
+    );
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: {
+        outcome: "deferred",
+        reason: "body-edit",
+        gate: "reflect",
+        scores: { need: 5, preservation: 4, quality: 4 },
+        judgeReason: "restores the cut-off heading",
+      },
+    });
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "body-edit" }]);
+  });
+
+  test("a judge-passed frontmatter-only edit is staged for the drain to accept", async () => {
+    const result = await reflectRevision("knowledge/frontmatter-only", frontmatterOnly, {
+      judge: pass,
+      source: sourceContent,
+    });
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal.gateDecision).toMatchObject({
+      outcome: "staged",
+      reason: "quality-judge",
+      gate: "quality-gate",
+      scores: { need: 5, preservation: 4, quality: 4 },
+      judgeReason: "restores the cut-off heading",
+    });
+  });
+
+  test("a judge-passed revision with no source to compare against waits for review", async () => {
+    const result = await reflectRevision("knowledge/no-source", { content: LONG_SOURCE_BODY }, { judge: pass });
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal.gateDecision).toMatchObject({ outcome: "deferred", reason: "body-edit", gate: "reflect" });
+  });
+
+  test("a body edit the judge fails is still refused", async () => {
+    const result = await reflectRevision(
+      "knowledge/failed-body-edit",
+      { content: bodyEdit },
+      {
+        judge: async () =>
+          JSON.stringify({ scores: { need: 1, preservation: 2, quality: 2 }, reason: "rewords a correct asset" }),
+        source: sourceContent,
+      },
+    );
+    if (result.ok) throw new Error("expected the quality gate to refuse the revision");
+    expect(result.reason).toBe("quality_rejected");
+    expect(listProposals(makeStashDir())).toEqual([]);
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "quality_rejected", detail: "rewords a correct asset" }]);
+  });
+
+  test("with the gate off, a body edit waits for review, with no scores on the stamp", async () => {
+    const result = await reflectRevision(
+      "knowledge/gate-off-body-edit",
+      { content: bodyEdit },
+      { source: sourceContent },
+    );
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: { outcome: "deferred", reason: "body-edit", gate: "reflect" },
+    });
+    expect(result.proposal.gateDecision?.scores).toBeUndefined();
+    expect(result.proposal.gateDecision?.judgeReason).toBeUndefined();
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "body-edit" }]);
+  });
+
+  test("with the gate off, a frontmatter-only edit is left to the drain, as before", async () => {
+    const result = await reflectRevision("knowledge/gate-off-frontmatter-only", frontmatterOnly, {
+      source: sourceContent,
+    });
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    expect(result.proposal.status).toBe("pending");
+    expect(result.proposal.gateDecision).toBeUndefined();
   });
 });
 
