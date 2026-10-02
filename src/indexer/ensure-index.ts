@@ -170,7 +170,7 @@ export function isIndexStale(stashDir: string): boolean {
  * or built for a different stash), so those cases must rebuild inline.
  * `requireFresh` also demands that no indexable file is newer than the index.
  */
-function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean } = {}): boolean {
+export function indexCanServeStash(stashDir: string, options: { requireFresh?: boolean } = {}): boolean {
   const dbPath = getDbPath();
   // Raises on an index we cannot READ rather than calling it unusable — that
   // sends us into an inline reindex that will fail anyway, and whose failure
