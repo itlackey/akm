@@ -43,8 +43,8 @@ import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../execution
 import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
-import { runExecution } from "../integrations/agent/runner-dispatch";
-import type { AgentFailureReason } from "../integrations/agent/spawn";
+import { type RunExecutionOptions, runExecution } from "../integrations/agent/runner-dispatch";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../integrations/agent/spawn";
 import { type ChatCompletionConfig, type ChatMessage, isContextSizeError, LlmCallError } from "./client";
 import {
   isLlmFeatureEnabled,
@@ -96,6 +96,12 @@ export interface CallStructuredRequest {
   /** Override the connection's `enableThinking` for this call. */
   enableThinking?: boolean;
   onRetryAttempt?: () => void;
+  /**
+   * Transport overrides for tests: the SDK dispatch, and the agent spawn's
+   * operational options. Production callers leave them unset.
+   */
+  runSdk?: RunExecutionOptions["runSdk"];
+  runOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn">;
   /**
    * Transport override for tests. Production callers leave it unset.
    */
@@ -213,15 +219,20 @@ function requireTerminalUserMessage(messages: readonly ChatMessage[]): {
   };
 }
 
-function dispatchFailure(result: Awaited<ReturnType<typeof runExecution>>): Error & { reason?: AgentFailureReason } {
+function dispatchFailure(result: AgentRunResult): Error & { reason?: AgentFailureReason; result: AgentRunResult } {
   const message = result.error ?? result.stderr ?? result.reason ?? "dispatch failed";
   const error = result.llmErrorCode ? new LlmCallError(message, result.llmErrorCode) : new Error(message);
-  return Object.assign(error, { reason: result.reason });
+  return Object.assign(error, { reason: result.reason, result });
 }
 
 /** The runner's failure reason (`timeout`, `aborted`, …) a failed dispatch threw with, whatever its kind. */
 export function dispatchFailureReason(err: unknown): AgentFailureReason | undefined {
   return err instanceof Error ? (err as { reason?: AgentFailureReason }).reason : undefined;
+}
+
+/** The failed dispatch's own result (an agent's exit code and stderr, say), whatever its kind. */
+export function dispatchFailureResult(err: unknown): AgentRunResult | undefined {
+  return err instanceof Error ? (err as { result?: AgentRunResult }).result : undefined;
 }
 
 export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise<T> {
@@ -257,10 +268,12 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
     return async (gateSignal) => {
       const signal =
         request?.signal && gateSignal ? AbortSignal.any([request.signal, gateSignal]) : (request?.signal ?? gateSignal);
+      const runOptions = { ...request?.runOptions, ...(signal ? { signal } : {}) };
       const result = await runExecution(lowered, {
         ...(request?.chat ? { chat: request.chat } : {}),
+        ...(request?.runSdk ? { runSdk: request.runSdk } : {}),
         ...(request?.onRetryAttempt ? { onRetryAttempt: request.onRetryAttempt } : {}),
-        ...(signal ? { runOptions: { signal } } : {}),
+        ...(Object.keys(runOptions).length > 0 ? { runOptions } : {}),
       });
       if (!result.ok) throw dispatchFailure(result);
       return parse(result.stdout);

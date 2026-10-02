@@ -552,6 +552,30 @@ describe("C4: failures and timeouts", () => {
 
     expect(outcome).toMatchObject({ ok: false, reason: "aborted" });
   });
+
+  // A caller that reports a failure the way the transport did (an agent's exit code and stderr) reads the dispatch's own result.
+  const FAILING_SCENARIOS: Record<string, string> = {
+    llm: "http-500",
+    claude: "exit-1",
+    opencode: "exit-1",
+    "opencode-sdk": "client-error",
+  };
+
+  test.each(
+    MODEL_WORK_TRANSPORTS,
+  )("%s: a failed stage call keeps the dispatch's own result", async (name, transport) => {
+    const outcome = await callStage({
+      feature: "distill",
+      runner: runnerFor(transport, FAILING_SCENARIOS[name] ?? ""),
+      prompt: "Reply with the single word: pong",
+    });
+
+    expect(outcome).toMatchObject({ ok: false, reason: "error", result: { ok: false } });
+    const result = outcome.ok ? undefined : outcome.result;
+    expect([result?.error, result?.stderr].join("\n")).toContain(PROVIDER_MESSAGE);
+    // A CLI's exit code reaches the caller; an LLM or SDK call has none.
+    if (CLI_HARNESSES.some((harness) => harness.name === name)) expect(result?.exitCode).toBe(1);
+  });
 });
 
 describe("C5: credentials", () => {

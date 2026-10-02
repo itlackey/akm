@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmReflect } from "../../../../src/commands/improve/reflect";
+import { akmReflect, REFLECT_JSON_SCHEMA } from "../../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../../src/commands/proposal/propose";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
@@ -30,7 +30,7 @@ import {
 } from "../../../../src/integrations/agent/conversation-fallback";
 import { FALLBACK_ANNOUNCEMENT } from "../../../../src/integrations/agent/engine-fallback";
 import { durableItemRef } from "../../../_helpers/durable-ref";
-import { quietQualityGateConfig } from "../../../_helpers/factories";
+import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -121,12 +121,12 @@ function hangingSpawn(): SpawnFn {
   };
 }
 
-const VALID_LESSON_PAYLOAD = JSON.stringify({
-  ref: "lessons/rg-over-grep",
-  content:
-    "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
-  frontmatter: { description: "Use ripgrep before grep", when_to_use: "Searching large repos for patterns" },
-});
+/** What an engine of any kind replies to a reflect run on `lessons/rg-over-grep`. */
+const LESSON_FRONTMATTER = {
+  description: "Use ripgrep before grep",
+  when_to_use: "Searching large repos for patterns",
+};
+const VALID_LESSON_PAYLOAD = reflectReply("Prefer rg.\n", { frontmatterPatch: LESSON_FRONTMATTER });
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
   ref: "skills/hello",
@@ -243,7 +243,7 @@ describe("akm reflect", () => {
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: fakeSpawnWithCapture("not json", "", 0, (cmd) => {
-          prompt = cmd.at(-1) ?? "";
+          prompt ||= cmd.at(-1) ?? "";
         }),
       },
     });
@@ -453,12 +453,16 @@ describe("akm reflect", () => {
       metadata: { signal: "positive", note: "nice greeting" },
     });
     let prompt = "";
+    const unscoped = reflectReply("Prefer rg.\n", {
+      ref: "lessons/rg-over-grep",
+      frontmatterPatch: LESSON_FRONTMATTER,
+    });
     const result = await akmReflect({
       stashDir: stash,
       task: "Focus on the highest-value recent signal",
       config: quietQualityGateConfig(),
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
+        spawn: fakeSpawnWithCapture(unscoped, "", 0, (cmd) => {
           prompt = cmd.at(-1) ?? "";
         }),
       },
@@ -478,7 +482,7 @@ describe("akm reflect", () => {
     expect(events.events[0]?.metadata?.task).toBe("Focus on the highest-value recent signal");
   });
 
-  test("uses captured JSON contract for reflect prompts, with no draft file", async () => {
+  test("asks an agent for the same JSON reply as an LLM: its schema is the output schema", async () => {
     const stash = makeStashDir();
     let capturedCmd: string[] = [];
     let capturedStdoutMode: string | undefined;
@@ -502,10 +506,15 @@ describe("akm reflect", () => {
     expect(capturedStdoutMode).toBe("pipe");
     expect(capturedStderrMode).toBe("pipe");
     // Under the model-work tool policy an agent edits only its own scratch directory, so the
-    // proposal comes back on stdout rather than in a draft file.
-    expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
-    expect(capturedCmd.at(-1)).toContain("Respond ONLY with a single JSON object.");
-    expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
+    // proposal comes back on stdout, as the JSON object an LLM engine gets natively.
+    const prompt = capturedCmd.at(-1) ?? "";
+    expect(prompt).toContain("Task / focus: Tighten the guidance");
+    expect(prompt).toContain("Respond only through the provider's native JSON schema.");
+    expect(
+      prompt.endsWith(
+        `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(REFLECT_JSON_SCHEMA)}`,
+      ),
+    ).toBe(true);
   });
 });
 

@@ -30,7 +30,7 @@ import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/pr
 import { LlmCallError } from "../../../../src/llm/client";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { durableItemRef } from "../../../_helpers/durable-ref";
-import { makeConfig, quietQualityGateConfig } from "../../../_helpers/factories";
+import { makeConfig, quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
@@ -190,10 +190,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
   test("knowledge:* (markdown-canonical) is allowed by the type guard", async () => {
     const stash = makeStashDir();
     // No source asset on disk — reflect produces a proposal without size-guard checks.
-    const payload = JSON.stringify({
-      ref: "knowledge/foo",
-      content: "---\ndescription: Foo doc\n---\n\nBody of foo.",
-    });
+    const payload = reflectReply("---\ndescription: Foo doc\n---\n\nBody of foo.");
     const result = await akmReflect({
       ref: "knowledge/foo",
       stashDir: stash,
@@ -212,10 +209,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
   test("a type outside the fixed list is allowed when its content is genuinely frontmatter + markdown", async () => {
     const stash = makeStashDir();
     const sourceContent = "---\ndescription: Existing instruction doc\n---\n\nFollow these steps.\n";
-    const payload = JSON.stringify({
-      ref: "instructions/onboarding",
-      content: "---\ndescription: Existing instruction doc\n---\n\nFollow these revised steps.",
-    });
+    const payload = reflectReply("---\ndescription: Existing instruction doc\n---\n\nFollow these revised steps.");
     const result = await akmReflect({
       ref: "instructions/onboarding",
       stashDir: stash,
@@ -269,7 +263,7 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
 
     // LLM rewrites the body only — no frontmatter (correct per new prompt).
     const llmBody = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
-    const payload = JSON.stringify({ ref: "knowledge/policies/release", content: llmBody });
+    const payload = reflectReply(llmBody);
 
     const result = await akmReflect({
       ref: "knowledge/policies/release",
@@ -305,7 +299,7 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
       "",
       LONG_SOURCE_BODY,
     ].join("\n");
-    const payload = JSON.stringify({ ref: "knowledge/x", content: llmBlob });
+    const payload = reflectReply(llmBlob);
 
     const result = await akmReflect({
       ref: "knowledge/x",
@@ -359,11 +353,7 @@ describe("Reflect quality gate — source context", () => {
           runAgentOptions: {
             spawn: (...args) => {
               spawned += 1;
-              return fakeSpawn(
-                JSON.stringify({ ref: "knowledge/judge-preflight", content: candidateContent }),
-                "",
-                0,
-              )(...args);
+              return fakeSpawn(reflectReply(candidateContent), "", 0)(...args);
             },
           },
           chat: async () => JSON.stringify({ score: 5, reason: "pass" }),
@@ -398,11 +388,7 @@ describe("Reflect quality gate — source context", () => {
         runAgentOptions: {
           spawn: (...args) => {
             spawned += 1;
-            return fakeSpawn(
-              JSON.stringify({ ref: "knowledge/no-judge-runner", content: LONG_SOURCE_BODY }),
-              "",
-              0,
-            )(...args);
+            return fakeSpawn(reflectReply(LONG_SOURCE_BODY), "", 0)(...args);
           },
         },
       });
@@ -440,7 +426,7 @@ describe("Reflect quality gate — source context", () => {
     const original = "reflect-judge-original-secret";
     const rotated = "reflect-judge-rotated-secret";
     const observed: Array<string | undefined> = [];
-    const spawn = fakeSpawn(JSON.stringify({ ref: "knowledge/judge-rotation", content: candidateContent }), "", 0);
+    const spawn = fakeSpawn(reflectReply(candidateContent), "", 0);
 
     const result = await withEnv({ AKM_REFLECT_JUDGE_ROTATING_KEY: original }, () =>
       akmReflect({
@@ -510,7 +496,7 @@ describe("Reflect quality gate — source context", () => {
             return {
               ok: true,
               exitCode: 0,
-              stdout: JSON.stringify({ ref: "knowledge/sdk-judge-rotation", content: candidateContent }),
+              stdout: reflectReply(candidateContent),
               stderr: "",
               durationMs: 1,
             };
@@ -557,7 +543,7 @@ describe("Reflect quality gate — source context", () => {
       config,
       assetContent: sourceContent,
       runAgentOptions: {
-        spawn: fakeSpawn(JSON.stringify({ ref: "knowledge/quality-source", content: candidateContent }), "", 0),
+        spawn: fakeSpawn(reflectReply(candidateContent), "", 0),
       },
       chat: async (_connection, messages) => {
         judgePrompt = messages[1]?.content ?? "";
@@ -603,11 +589,7 @@ describe("Reflect quality gate — source context", () => {
       config,
       assetContent: sourceContent,
       runAgentOptions: {
-        spawn: fakeSpawn(
-          JSON.stringify({ ref: "knowledge/invalid-before-judge", content: "Tiny replacement." }),
-          "",
-          0,
-        ),
+        spawn: fakeSpawn(reflectReply("Tiny replacement."), "", 0),
       },
       chat: async () => {
         judgeInvoked = true;
@@ -640,7 +622,7 @@ describe("Reflect quality gate — source context", () => {
           improve: { strategies: { default: { processes } } },
         } as AkmConfig,
         assetContent: sourceContent,
-        runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, content: candidateContent }), "", 0) },
+        runAgentOptions: { spawn: fakeSpawn(reflectReply(candidateContent), "", 0) },
         chat: async () => {
           judged += 1;
           return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
@@ -675,7 +657,7 @@ describe("Reflect quality gate — source context", () => {
       config,
       assetContent: sourceContent,
       runAgentOptions: {
-        spawn: fakeSpawn(JSON.stringify({ ref: "knowledge/separate-judge", content: candidateContent }), "", 0),
+        spawn: fakeSpawn(reflectReply(candidateContent), "", 0),
       },
       chat: async (connection) => {
         models.push(connection.model);
@@ -720,10 +702,7 @@ describe("Reflect quality gate — source context", () => {
       assetContent: `---\ndescription: Agent judge\n---\n\n${LONG_SOURCE_BODY}\n`,
       runAgentOptions: {
         spawn: fakeSpawn(
-          JSON.stringify({
-            ref: "knowledge/agent-judge",
-            content: LONG_SOURCE_BODY.replace("## Required config", "## Required configuration"),
-          }),
+          reflectReply(LONG_SOURCE_BODY.replace("## Required config", "## Required configuration")),
           "",
           0,
         ),
@@ -766,7 +745,7 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
         improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
       } as AkmConfig,
       assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, content: candidateContent }), "", 0) },
+      runAgentOptions: { spawn: fakeSpawn(reflectReply(candidateContent), "", 0) },
       chat,
     });
   }
@@ -843,7 +822,7 @@ describe("Reflect routing — a revision that changes the body is never auto-acc
   // Re-wrapped and padded: a body that differs only in whitespace is unchanged.
   const frontmatterOnly = {
     content: `${LONG_SOURCE_BODY.replace(" from the LAN.", "\n  from the LAN.")}\n\n\n`,
-    frontmatter: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
+    frontmatterPatch: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
   };
   const pass = async () =>
     JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "restores the cut-off heading" });
@@ -854,7 +833,7 @@ describe("Reflect routing — a revision that changes the body is never auto-acc
    */
   function reflectRevision(
     ref: string,
-    revision: { content: string; frontmatter?: Record<string, unknown> },
+    revision: { content: string; frontmatterPatch?: Record<string, string> },
     { judge, source }: { judge?: () => Promise<string>; source?: string },
   ) {
     return akmReflect({
@@ -872,7 +851,7 @@ describe("Reflect routing — a revision that changes the body is never auto-acc
         },
       } as AkmConfig,
       ...(source !== undefined ? { assetContent: source } : {}),
-      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref, ...revision }), "", 0) },
+      runAgentOptions: { spawn: fakeSpawn(reflectReply(revision.content, revision), "", 0) },
       chat:
         judge ??
         (async () => {
@@ -973,7 +952,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // LLM returns a 3-line body (catastrophic shrinkage seen in the May 2026 review).
     const tinyBody = "Use AdGuard.\nDone.\n";
-    const payload = JSON.stringify({ ref: "knowledge/shrink", content: tinyBody });
+    const payload = reflectReply(tinyBody);
 
     const result = await akmReflect({
       ref: "knowledge/shrink",
@@ -1000,7 +979,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // LLM quintupled the asset with speculative material (5× > 2500-byte absolute ceiling).
     const bloatedBody = `${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}`;
-    const payload = JSON.stringify({ ref: "knowledge/expand", content: bloatedBody });
+    const payload = reflectReply(bloatedBody);
 
     const result = await akmReflect({
       ref: "knowledge/expand",
@@ -1023,7 +1002,7 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // Small, justified addition.
     const improvedBody = `${LONG_SOURCE_BODY}\n\n## Notes\n\nVerify with the on-call.`;
-    const payload = JSON.stringify({ ref: "knowledge/modest", content: improvedBody });
+    const payload = reflectReply(improvedBody);
 
     const result = await akmReflect({
       ref: "knowledge/modest",
@@ -1040,10 +1019,9 @@ describe("Reflect size guard — diff-size safety rails", () => {
 
     // 4× expansion would normally trip the guard, but source body is below the
     // REFLECT_SIZE_GUARD_MIN_BYTES floor so the rail is intentionally permissive.
-    const payload = JSON.stringify({
-      ref: "lessons/tiny",
-      content: "Use rg for searching large repositories. rg is faster than grep and respects .gitignore.\n",
-    });
+    const payload = reflectReply(
+      "Use rg for searching large repositories. rg is faster than grep and respects .gitignore.\n",
+    );
 
     const result = await akmReflect({
       ref: "lessons/tiny",
@@ -1089,7 +1067,7 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "",
       "A genuinely new troubleshooting paragraph added by the agent.",
     ].join("\n");
-    const payload = JSON.stringify({ ref: "skills/openpalm-stack-diagnostics", content: llmBlob });
+    const payload = reflectReply(llmBlob);
 
     const result = await akmReflect({
       ref: "skills/openpalm-stack-diagnostics",
@@ -1126,7 +1104,7 @@ describe("Reflect identity guard — protected frontmatter fields cannot be rena
       "",
       "A genuinely new paragraph added by the agent.",
     ].join("\n");
-    const payload = JSON.stringify({ ref: "knowledge/id-protected", content: llmBlob });
+    const payload = reflectReply(llmBlob);
 
     const result = await akmReflect({
       ref: "knowledge/id-protected",
@@ -1150,7 +1128,7 @@ describe("Reflect positive control — markdown assets still flow through", () =
     const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
 
     const improved = LONG_SOURCE_BODY.replace("## Verification", "## Verification steps");
-    const payload = JSON.stringify({ ref: "knowledge/control", content: improved });
+    const payload = reflectReply(improved);
 
     const result = await akmReflect({
       ref: "knowledge/control",
@@ -1180,7 +1158,7 @@ describe("Reflect positive control — markdown assets still flow through", () =
         "## Verification steps",
       ].join("\n"),
     );
-    const payload = JSON.stringify({ ref: "knowledge/scaffolding", content: improved });
+    const payload = reflectReply(improved);
     let prompt = "";
     const spawn: SpawnFn = (cmd, opts) => {
       prompt = cmd.at(-1) ?? "";
@@ -1224,10 +1202,7 @@ describe("Reflect feedback-framing guard — feedback is a signal to investigate
         note: "the storage section does not say which physical disk backs /data",
       },
     });
-    const payload = JSON.stringify({
-      ref: "knowledge/storage-guide",
-      content: "---\ndescription: Storage guide\n---\n\nUnchanged body.",
-    });
+    const payload = reflectReply("---\ndescription: Storage guide\n---\n\nUnchanged body.");
     let prompt = "";
     const spawn: SpawnFn = (cmd, opts) => {
       prompt = cmd.at(-1) ?? "";
@@ -1262,7 +1237,7 @@ describe("Reflect truncation-marker leak guard — a leaked cap notice is flagge
     // truncation-marker rail from the size-ratio rail.
     const sourceContent = "---\ndescription: Short doc under the size-guard floor\n---\n\nShort body.\n";
     const leakedBody = `Rewritten body.\n${REFLECT_TRUNCATION_MARKER}`;
-    const payload = JSON.stringify({ ref: "knowledge/leak-marker", content: leakedBody });
+    const payload = reflectReply(leakedBody);
 
     const result = await akmReflect({
       ref: "knowledge/leak-marker",
@@ -1300,7 +1275,7 @@ describe("Reflect truncation-marker leak guard — a leaked cap notice is flagge
     const sourceContent =
       "---\ndescription: Short lesson under the size-guard floor\nwhen_to_use: Testing the mint-time canonical gate\n---\n\nShort body.\n";
     const leakedBody = `Rewritten lesson body.\n${REFLECT_TRUNCATION_MARKER}`;
-    const payload = JSON.stringify({ ref: "lessons/leak-marker", content: leakedBody });
+    const payload = reflectReply(leakedBody);
 
     const result = await akmReflect({
       ref: "lessons/leak-marker",

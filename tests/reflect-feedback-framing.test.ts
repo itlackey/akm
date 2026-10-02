@@ -89,6 +89,9 @@ describe("buildReflectPrompt — feedback framing (#952)", () => {
 });
 
 describe("buildReflectPrompt — content budget / truncation marker (#952)", () => {
+  // The cap notice closes the shown asset content. The output contract also names the marker, to forbid echoing it.
+  const capNotice = `\n${REFLECT_TRUNCATION_MARKER}\n\n\`\`\``;
+
   test("marker is absent when content is within the default cap", () => {
     const body = "x".repeat(REFLECT_CONTENT_CAP - 1);
     const rendered = buildReflectPrompt({
@@ -97,7 +100,7 @@ describe("buildReflectPrompt — content budget / truncation marker (#952)", () 
       name: "foo",
       assetContent: body,
     }).prompt;
-    expect(rendered).not.toContain(REFLECT_TRUNCATION_MARKER);
+    expect(rendered).not.toContain(capNotice);
     expect(rendered).toContain("Current asset content (verbatim):");
   });
 
@@ -109,7 +112,7 @@ describe("buildReflectPrompt — content budget / truncation marker (#952)", () 
       name: "foo",
       assetContent: body,
     }).prompt;
-    expect(rendered).toContain(REFLECT_TRUNCATION_MARKER);
+    expect(rendered).toContain(capNotice);
   });
 
   test("a caller-supplied contentBudgetChars raises the cap: no truncation for content the default cap would have truncated", () => {
@@ -121,7 +124,7 @@ describe("buildReflectPrompt — content budget / truncation marker (#952)", () 
       assetContent: body,
       contentBudgetChars: REFLECT_CONTENT_CAP + 1000,
     }).prompt;
-    expect(rendered).not.toContain(REFLECT_TRUNCATION_MARKER);
+    expect(rendered).not.toContain(capNotice);
     expect(rendered).toContain(body);
   });
 
@@ -142,7 +145,7 @@ describe("buildReflectPrompt — content budget / truncation marker (#952)", () 
       contentBudgetChars: REFLECT_CONTENT_CAP * 2,
     }).prompt;
     expect(large.length).toBeGreaterThan(small.length);
-    expect(small).toContain(REFLECT_TRUNCATION_MARKER);
-    expect(large).toContain(REFLECT_TRUNCATION_MARKER);
+    expect(small).toContain(capNotice);
+    expect(large).toContain(capNotice);
   });
 });

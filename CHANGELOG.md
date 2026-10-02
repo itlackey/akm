@@ -163,6 +163,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   On an LLM engine an alias's or asset's `effort` is therefore sent as
   `reasoning_effort`; it was reported as untranslated and dropped before. An
   LLM engine's own request is unchanged.
+- **Reflect asks every engine kind for the same JSON reply, checks it the same
+  way and repairs it once.** An LLM engine was sent the reply's JSON Schema,
+  and its reply was held to exact fields and repaired once. An agent or
+  `opencode-sdk` engine got a looser contract in its prompt (`ref`, `content`
+  and an optional `frontmatter`) with no schema and no repair, so one invalid
+  reply failed the run. Every engine kind now runs the same iteration:
+  - **The request.** The prompt carries the same output contract, and the
+    reply's JSON Schema is the request's output schema: `response_format` for
+    an LLM engine, as before, and the schema instruction at the end of the
+    prompt for an agent engine. `claude` also gets `--output-format json`,
+    which akm unwraps. An LLM endpoint that rejects JSON Schema still gets the
+    framed-markdown contract.
+  - **The reply.** An agent now returns `content`, `confidence` and a
+    `frontmatterPatch` of `description` and `when_to_use`, and `ref` too when
+    no asset was named, as an LLM does. akm derives a named asset's ref and
+    merges the patch with the source's frontmatter, so an agent can no longer
+    set other frontmatter keys or retarget the proposal.
+  - **The repair.** A reply that fails the contract gets one repair turn that
+    carries the first reply, shared across self-refine passes. A reply that is
+    still invalid fails with `parse_error` and queues nothing. On an agent or
+    `opencode-sdk` engine the error names the engine, as in
+    `Engine "oc" reply was not a valid reflect proposal after 2 attempts: …`.
+    An LLM engine's message is unchanged, because improve feeds it into later
+    prompts as a pattern to avoid. A failed agent dispatch is still reported
+    with its exit code and stderr.
+  - **What reflect sends and reports on an agent engine.** Reflect asks every
+    engine kind for no visible chain of thought (`enableThinking: false`).
+    `opencode` and `opencode-sdk` carry it, as the inference entry above
+    says; `claude` reports it as an `untranslated-field` notice, as it does
+    for every other stage. `reflect_completed` carries `outputMode` and
+    `repairAttempts` for every engine kind.
+  - **Unchanged.** An LLM engine's requests are byte-identical to before:
+    reflect's generation and repair, and its quality judge. So are the
+    refine passes, the content budget (an LLM engine's context length), the
+    protected frontmatter fields, the review routing and the judge selection.
 
 ### Removed
 
@@ -181,6 +216,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   lowering set it from `inference.effort`, reserved for a workflow field, and
   no builder consumed it. `reasoningEffort` in the request's inference is read
   where it is translated, and the field is gone.
+- **The agent file-write contract.** An agent was once told to write its
+  proposal to a draft file and print `DRAFT_WRITTEN confidence=<n>`. Reflect and
+  `akm proposal new` had already stopped sending that instruction, because the
+  model-work scratch directory does not outlive a dispatch. The instruction, the
+  function that read the `DRAFT_WRITTEN` line and the `draftFilePath` prompt
+  inputs that nothing passed any more are gone, with their tests. So is
+  reflect's `ref_mismatch` check: a reflect that names an asset derives the
+  proposal's ref, so an engine can no longer name another one. Nothing you run
+  changes.
 
 ### Fixed
 

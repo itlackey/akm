@@ -2608,7 +2608,9 @@ default probe-on behavior) to check whether a named engine actually answers.
 builds the exact prompt reflect would send for one asset — the same source
 resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
 proposal gathering `akm improve`'s live reflect step uses — and prints it
-without reading a credential, so it never calls an engine. Add
+without reading a credential, so it never calls an engine. An LLM engine
+receives the reply's JSON Schema as `response_format`, and an agent engine as
+an instruction that dispatch appends to this prompt. Add
 `--format text` (the default JSON/yaml envelope escapes the prompt into one
 line, which defeats a by-eye read) to confirm by eye that recent feedback is
 framed as an unverified report to investigate (never a fact to insert
@@ -2768,8 +2770,8 @@ stdout with the asset's `ref`, its full `content` and a self-rated
 `confidence`. akm sends the object's JSON Schema with the request, as
 `response_format` to an LLM engine and as an instruction at the end of the
 prompt to an agent engine (codex also gets it as `--output-schema`). akm
-captures the reply; an agent CLI runs headless, with no live terminal session,
-and writes no draft file. A harness's own JSON envelope, such as claude's
+captures the reply; an agent CLI runs headless, with no live terminal session.
+A harness's own JSON envelope, such as claude's
 `--output-format json` result, is unwrapped first.
 A reply that is not a valid proposal gets one corrective retry that says what
 was wrong. If that reply is not valid either, the command exits 1 with

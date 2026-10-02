@@ -9,10 +9,10 @@
  * structured proposal payload. The prompts are intentionally similar and share
  * their construction here. `proposal new` asks every engine kind for the JSON
  * object below, with {@link PROPOSAL_JSON_SCHEMA} as the request's output
- * schema. Reflect's agent and SDK stdout keeps the JSON/file-write contracts;
- * direct LLM reflect adds native-schema and framed-markdown contracts.
+ * schema. Reflect asks every engine kind for its own contract, JSON Schema or
+ * framed markdown ({@link ReflectOutputMode}).
  *
- * The stdout output an engine must produce is a strict JSON object:
+ * The output an engine must produce for `proposal new` is a strict JSON object:
  *
  * ```json
  * {
@@ -113,10 +113,9 @@ export const REFLECT_CONTENT_CAP = 12_000;
 export const REFLECT_TRUNCATION_MARKER = "... [truncated — focus on the visible portion]";
 
 /**
- * Common envelope every prompt asks the agent to honour when NO draft file
- * path is available. The wrapper code uses `JSON.parse(stdout)` to extract
- * the payload — anything outside the JSON object will be treated as a parse
- * error.
+ * The JSON envelope `proposal new` asks the engine to honour. The wrapper code
+ * uses `JSON.parse(stdout)` to extract the payload — anything outside the JSON
+ * object will be treated as a parse error.
  */
 const RESPONSE_CONTRACT_JSON = [
   "Respond ONLY with a single JSON object. No prose before or after.",
@@ -154,47 +153,6 @@ export const PROPOSAL_JSON_SCHEMA: ExecutionJsonObject = {
   },
 };
 
-/**
- * Response contract used when a draft file path is available. Instructs the
- * agent to write the improved asset content directly to the file using its
- * native file-editing tools — no stdout JSON parsing required.
- */
-function fileWriteContract(draftFilePath: string): string {
-  return [
-    `Write the complete improved asset content to: ${draftFilePath}`,
-    "Use your file-editing tools to create or overwrite that file.",
-    "Do NOT output JSON to stdout. Do NOT print the file contents. Just write the file.",
-    `Never include the text "${REFLECT_TRUNCATION_MARKER}" or any other content from outside the provided asset content in the file you write.`,
-    "When done, output a single line on stdout: DRAFT_WRITTEN confidence=<0.0-1.0>",
-    "`confidence` is REQUIRED and must be your honest self-rated [0, 1] score for this proposal:",
-    "  • 0.90+ — fixes a real defect or adds load-bearing missing content; reviewer would clearly accept.",
-    "  • 0.70–0.89 — clear improvement, but a reviewer might prefer different framing.",
-    "  • 0.50–0.69 — marginal / judgment call.",
-    "  • Below 0.50 — not confident; prefer not writing changes at all.",
-    "Reviewers and the triage judge read this score during adjudication. Overclaim → trust erodes; underclaim → good changes buried.",
-  ].join("\n");
-}
-
-/**
- * Extract a confidence score from a `DRAFT_WRITTEN confidence=<n>` line emitted
- * by an agent following {@link fileWriteContract}. Tolerates trailing prose,
- * surrounding log lines, and missing/invalid confidence (returns `undefined`
- * so callers can keep the proposal without a score).
- *
- * Matched forms (case-insensitive, anywhere in stdout):
- *   - `DRAFT_WRITTEN confidence=0.85`
- *   - `DRAFT_WRITTEN confidence=0.85 ...trailing`
- *   - `DRAFT_WRITTEN` (no confidence — returns `undefined`)
- */
-export function extractDraftConfidence(stdout: string | undefined): number | undefined {
-  if (!stdout) return undefined;
-  const match = stdout.match(/\bDRAFT_WRITTEN\b[^\S\r\n]+confidence=([0-9]*\.?[0-9]+)/i);
-  if (!match) return undefined;
-  const value = Number.parseFloat(match[1] ?? "");
-  if (!Number.isFinite(value) || value < 0 || value > 1) return undefined;
-  return value;
-}
-
 /** A previously-rejected proposal injected as verbal-RL context (Reflexion pattern). */
 export interface RejectedProposalContext {
   /** Asset ref the rejected proposal targeted. */
@@ -230,12 +188,6 @@ export interface ReflectPromptInput {
    */
   standardsContext?: string;
   /**
-   * When provided, the agent is instructed to write the improved content
-   * directly to this path using its file tools. No stdout JSON is expected.
-   * When absent, the configured engine returns the structured JSON payload.
-   */
-  draftFilePath?: string;
-  /**
    * Error patterns from earlier assets in the same improve run. When non-empty,
    * a warning section is appended to the prompt so the agent avoids repeating
    * the same mistakes.
@@ -253,8 +205,8 @@ export interface ReflectPromptInput {
    * version. Self-Refine arXiv:2303.17651 — iterative feedback+revise loop.
    */
   priorDraft?: string;
-  /** Direct-LLM response contract. Omitted for the existing agent/SDK contract. */
-  outputMode?: ReflectLlmOutputMode;
+  /** The response contract, for any engine kind. Defaults to the JSON Schema contract. */
+  outputMode?: ReflectOutputMode;
   /**
    * Override for the asset-content character cap (#952). Undefined keeps
    * today's flat {@link REFLECT_CONTENT_CAP} (12 000 chars) — the safe
@@ -266,9 +218,9 @@ export interface ReflectPromptInput {
   contentBudgetChars?: number;
 }
 
-export type ReflectLlmOutputMode = "json_schema" | "framed_markdown";
+export type ReflectOutputMode = "json_schema" | "framed_markdown";
 
-export function reflectLlmResponseContract(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
+export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: boolean): string {
   if (mode === "json_schema") {
     return reflectLlmSchemaContract
       .replace(
@@ -287,14 +239,8 @@ export function reflectLlmResponseContract(mode: ReflectLlmOutputMode, targetSco
     .trim();
 }
 
-export function buildReflectOutputRepairPrompt(mode: ReflectLlmOutputMode, targetScoped: boolean): string {
-  return reflectOutputRepair.replace("{{OUTPUT_CONTRACT}}", reflectLlmResponseContract(mode, targetScoped)).trim();
-}
-
-function reflectResponseContract(input: ReflectPromptInput): string {
-  if (input.draftFilePath) return fileWriteContract(input.draftFilePath);
-  if (input.outputMode) return reflectLlmResponseContract(input.outputMode, input.ref !== undefined);
-  return RESPONSE_CONTRACT_JSON;
+export function buildReflectOutputRepairPrompt(mode: ReflectOutputMode, targetScoped: boolean): string {
+  return reflectOutputRepair.replace("{{OUTPUT_CONTRACT}}", reflectResponseContract(mode, targetScoped)).trim();
 }
 
 /**
@@ -552,12 +498,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
       ].join("\n"),
     );
   }
-  if (!input.draftFilePath && !input.outputMode && input.ref) {
-    // Reinforce that the `ref` field is mandatory and must exactly match the target.
-    // Small models frequently omit `ref` from the response JSON, causing parse errors.
-    sections.push(`IMPORTANT: The JSON "ref" field is REQUIRED. It MUST be exactly: "${input.ref}"`);
-  }
-  sections.push(reflectResponseContract(input));
+  sections.push(reflectResponseContract(input.outputMode ?? "json_schema", input.ref !== undefined));
   return { prompt: sections.join("\n\n") };
 }
 
@@ -621,12 +562,6 @@ export interface SchemaRepairPromptInput {
    * gated on non-empty before injection.
    */
   standardsContext?: string;
-  /**
-   * When provided, the agent writes directly to this file path using its
-   * file-editing tools. When absent, the agent returns a JSON payload via
-   * stdout (same contract as reflect/propose).
-   */
-  draftFilePath?: string;
 }
 
 /**
@@ -667,7 +602,7 @@ export function buildSchemaRepairPrompt(input: SchemaRepairPromptInput): string 
       "If `when_to_use` is missing, generate a one-line trigger sentence. " +
       "Preserve all existing frontmatter keys and the full body verbatim.",
   );
-  sections.push(input.draftFilePath ? fileWriteContract(input.draftFilePath) : RESPONSE_CONTRACT_JSON);
+  sections.push(RESPONSE_CONTRACT_JSON);
   return sections.join("\n\n");
 }
 
