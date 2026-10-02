@@ -3,11 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * P1.3 (meta-review 07, Chain G): unattended `akm improve` must never hand
- * reflect a tool-capable runner. When `eventSource: "improve"`, config that
- * resolves an agent/SDK runner fails loudly rather than falling back; a proper
- * LLM process engine is honored as-is; with no defaults.llmEngine to pin to,
- * reflect fails CLOSED instead of dispatching an agent with filesystem access.
+ * P1.3 (meta-review 07, Chain G), as the model-work tool policy now states it:
+ * unattended `akm improve` never hands reflect an agent that can write the
+ * stash. An agent process engine runs under the policy (its own scratch
+ * directory, no stash access beyond `akm search`/`akm show`); one whose
+ * harness cannot confine the policy is refused before dispatch; an LLM
+ * process engine is honored as-is; with no engine to resolve, reflect fails
+ * CLOSED instead of dispatching an agent.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -37,13 +39,13 @@ function asReadableStream(text: string): ReadableStream<Uint8Array> {
   });
 }
 
-function spySpawn(onSpawn: () => void): SpawnFn {
-  return () => {
-    onSpawn();
+function spySpawn(onSpawn: (cmd: string[], env: Record<string, string>, cwd?: string) => void, stdout = ""): SpawnFn {
+  return (cmd, options) => {
+    onSpawn(cmd, options.env ?? {}, options.cwd);
     const proc: SpawnedSubprocess = {
       exitCode: 0,
       exited: Promise.resolve(0),
-      stdout: asReadableStream(""),
+      stdout: asReadableStream(stdout),
       stderr: asReadableStream(""),
       stdin: null,
       kill: () => undefined,
@@ -83,10 +85,46 @@ afterEach(() => {
 });
 
 describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
-  test("eventSource=improve rejects an explicit agent engine without falling back", async () => {
+  test("eventSource=improve runs an agent process engine under the model-work tool policy", async () => {
     const stash = makeStashDir();
     const config = agentModeConfig();
-    let chatCalled = false;
+    let seen: { cmd: string[]; env: Record<string, string>; cwd?: string } | undefined;
+    const payload = JSON.stringify({
+      ref: "memories/alpha",
+      content: "---\ndescription: alpha\n---\n\nAlpha memory, revised.\n",
+    });
+
+    const result = await akmReflect({
+      ref: "memories/alpha",
+      stashDir: stash,
+      eventSource: "improve",
+      config,
+      improveProfile: config.improve?.strategies?.default,
+      runAgentOptions: { spawn: spySpawn((cmd, env, cwd) => (seen = { cmd, env, cwd }), payload) },
+    });
+
+    expect(result.ok).toBe(true);
+    // opencode runs the injected, confined agent in its own scratch directory, not the stash.
+    expect(seen?.cmd.slice(1, 4)).toEqual(["run", "--agent", "akm-model-work"]);
+    expect(JSON.parse(seen?.env.OPENCODE_CONFIG_CONTENT ?? "{}").agent["akm-model-work"].permission).toMatchObject({
+      "*": "deny",
+      bash: "deny",
+      external_directory: "deny",
+    });
+    expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
+    // The proposal comes back as JSON on stdout: no draft file outside the scratch directory.
+    expect(seen?.cmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+  });
+
+  test("eventSource=improve refuses an agent engine that cannot confine the policy, before dispatch", async () => {
+    const stash = makeStashDir();
+    const config = agentModeConfig({
+      engines: {
+        "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
+        "fake-agent": { kind: "agent", platform: "pi", bin: "fake-agent" },
+      },
+    } as Partial<AkmConfig>);
+    let spawned = false;
 
     await expect(
       akmReflect({
@@ -95,14 +133,10 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         eventSource: "improve",
         config,
         improveProfile: config.improve?.strategies?.default,
-        chat: async () => {
-          chatCalled = true;
-          throw new Error("must-not-run");
-        },
+        runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
       }),
-    ).rejects.toThrow("Reflect requires an LLM engine for the active improve strategy.");
-
-    expect(chatCalled).toBe(false);
+    ).rejects.toThrow("The pi transport cannot enforce the model-work tool policy.");
+    expect(spawned).toBe(false);
   });
 
   test("eventSource=improve honors an LLM process engine unchanged", async () => {
@@ -143,7 +177,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     expect(chatConnection?.model).toBe("block-model");
   });
 
-  test("eventSource=improve with no defaults.llmEngine fails CLOSED instead of dispatching an agent", async () => {
+  test("eventSource=improve with no engine to resolve fails CLOSED instead of dispatching an agent", async () => {
     const stash = makeStashDir();
     let spawned = false;
 
@@ -161,7 +195,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
         improveProfile: strategy,
         runAgentOptions: { spawn: spySpawn(() => (spawned = true)) },
       }),
-    ).rejects.toThrow(/requires an LLM engine/);
+    ).rejects.toThrow("Reflect requires an engine for the active improve strategy.");
     expect(spawned).toBe(false);
   });
 

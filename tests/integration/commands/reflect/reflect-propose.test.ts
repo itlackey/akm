@@ -478,7 +478,7 @@ describe("akm reflect", () => {
     expect(events.events[0]?.metadata?.task).toBe("Focus on the highest-value recent signal");
   });
 
-  test("uses captured JSON contract for reflect prompts", async () => {
+  test("uses captured JSON contract for reflect prompts, with no draft file", async () => {
     const stash = makeStashDir();
     let capturedCmd: string[] = [];
     let capturedStdoutMode: string | undefined;
@@ -501,7 +501,10 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(true);
     expect(capturedStdoutMode).toBe("pipe");
     expect(capturedStderrMode).toBe("pipe");
-    expect(capturedCmd.at(-1)).toContain("DRAFT_WRITTEN");
+    // Under the model-work tool policy an agent edits only its own scratch directory, so the
+    // proposal comes back on stdout rather than in a draft file.
+    expect(capturedCmd.at(-1)).not.toContain("DRAFT_WRITTEN");
+    expect(capturedCmd.at(-1)).toContain("Respond ONLY with a single JSON object.");
     expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
   });
 });
@@ -802,7 +805,8 @@ function fallbackEligibleConfig(): AkmConfig {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
     engines: {
-      "opencode-sdk": { kind: "agent", platform: "aider", bin: "/bin/true" },
+      // Reflect is model work, so the fallback engine must confine the model-work tool policy.
+      "opencode-sdk": { kind: "agent", platform: "opencode", bin: "/bin/true" },
     },
     improve: {
       strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },

@@ -58,7 +58,7 @@ import {
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
 import { contentHash } from "./content-hash";
-import { resolveImproveLlmExecution } from "./execution";
+import { resolveImproveExecution } from "./execution";
 import {
   buildExtractPrompt,
   EXTRACT_JSON_SCHEMA,
@@ -218,7 +218,7 @@ export function resolveStandaloneExtractPlan(
   }
   const selected = resolveImproveStrategy(selection.strategy, config);
   const process = cloneAndFreeze(getImproveProcessConfig("extract", selected.config) ?? {});
-  const resolved = resolveImproveLlmExecution({
+  const resolved = resolveImproveExecution({
     config,
     profile: selected.config,
     process,
@@ -230,7 +230,7 @@ export function resolveStandaloneExtractPlan(
   });
   if (!resolved) {
     throw new ConfigError(
-      "No LLM engine configured for extract. Set defaults.llmEngine, pass --engine, or select an improve strategy with processes.extract.engine.",
+      "No engine configured for extract. Set defaults.llmEngine, pass --engine, or select an improve strategy with processes.extract.engine.",
       "LLM_NOT_CONFIGURED",
     );
   }
@@ -954,13 +954,13 @@ function resolveExtractRun(
   } else if (options.llmRunner) {
     llmRunner = options.llmRunner;
   } else {
-    const resolved = resolveImproveLlmExecution({ config, profile: activeProfile, process, processName: "extract" });
+    const resolved = resolveImproveExecution({ config, profile: activeProfile, process, processName: "extract" });
     llmRunner = resolved?.runner;
     if (resolved) notices.add(resolved.notices);
   }
   if (!llmRunner) {
     throw new ConfigError(
-      "No LLM engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
+      "No engine configured for extract. Set defaults.llmEngine or improve.strategies.<name>.processes.extract.engine.",
       "LLM_NOT_CONFIGURED",
     );
   }

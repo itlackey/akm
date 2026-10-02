@@ -85,6 +85,8 @@ const CLI_SCRIPTS: Record<string, string> = {
   reply: `#!${process.execPath}\nconsole.log(JSON.stringify(process.argv.slice(2)));\n`,
   // Prints what reached it: argv, working directory and the injected opencode config.
   probe: `#!${process.execPath}\nconsole.log(JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), config: process.env.OPENCODE_CONFIG_CONTENT ?? null }));\n`,
+  // Claude Code's --output-format json result envelope around the reply.
+  envelope: `#!/bin/sh\necho '${JSON.stringify({ type: "result", result: REPLY, session_id: "envelope-session" })}'\n`,
   // Records its pid beside itself, then outlives any timeout a row sets.
   hang: `#!/bin/sh\necho $$ > "$0.pid"\nexec sleep 30\n`,
   // Each counts its calls beside itself; repair answers prose first, then the reply.
@@ -250,6 +252,11 @@ const ALL_TRANSPORTS: [string, Transport][] = [LLM, ...CLI_HARNESSES, OPENCODE_S
   transport,
 ]);
 
+/** A stage call is model work: it runs on the transports that confine the model-work tool policy. */
+const MODEL_WORK_TRANSPORTS = ALL_TRANSPORTS.filter(
+  ([name]) => name === LLM.name || HARNESS_ID_TABLE.some((entry) => entry.id === name && entry.enforcesModelWorkTools),
+);
+
 /** How many times `transport` was called for `scenario` in this test. */
 function calls(transport: Transport, scenario: string): number {
   if (transport === LLM) return llmBodies.length;
@@ -312,7 +319,7 @@ describe("C2: structured output", () => {
   });
 
   // A stage call validates the reply against its schema and retries once when it fails.
-  test.each(ALL_TRANSPORTS)("%s: a valid structured reply is validated and kept", async (_name, transport) => {
+  test.each(MODEL_WORK_TRANSPORTS)("%s: a valid structured reply is validated and kept", async (_name, transport) => {
     fs.rmSync(path.join(bins.dir, "valid.count"), { force: true });
     const outcome = await callStage({
       feature: "distill",
@@ -326,7 +333,7 @@ describe("C2: structured output", () => {
   });
 
   test.each(
-    ALL_TRANSPORTS,
+    MODEL_WORK_TRANSPORTS,
   )("%s: a malformed structured reply is corrected by one repair turn", async (_name, transport) => {
     fs.rmSync(path.join(bins.dir, "repair.count"), { force: true });
     const outcome = await callStage({
@@ -432,6 +439,28 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(fs.existsSync(seen.cwd)).toBe(false);
   });
 
+  // Model work, a stage call for one, runs only where the policy is confined.
+  test.each(
+    ALL_TRANSPORTS.filter((row) => !MODEL_WORK_TRANSPORTS.includes(row)),
+  )("%s: a stage call is refused before dispatch", async (_name, transport) => {
+    fs.rmSync(path.join(bins.dir, "valid.count"), { force: true });
+    await expect(
+      callStage({ feature: "distill", runner: runnerFor(transport, "valid"), prompt: "Reply with a verdict." }),
+    ).rejects.toThrow(/cannot enforce the model-work tool policy/);
+    expect(fs.existsSync(path.join(bins.dir, "valid.count"))).toBe(false);
+  });
+
+  test("claude: a stage call gets the answer out of claude's result envelope", async () => {
+    const outcome = await callStage({
+      feature: "distill",
+      runner: runnerFor(CLI_HARNESSES.find((harness) => harness.name === "claude") as Transport, "envelope"),
+      prompt: "Reply with a verdict.",
+      request: { responseSchema: { type: "object", properties: { verdict: { type: "string" } } } },
+    });
+
+    expect(outcome).toEqual({ ok: true, raw: REPLY });
+  });
+
   test("opencode-sdk: the server defines the confined agent and the prompt selects it", async () => {
     let started: { config?: Record<string, unknown> } | undefined;
     const queries: unknown[] = [];
@@ -496,7 +525,7 @@ describe("C4: failures and timeouts", () => {
   });
 
   // A stage call branches on the dispatch's reason, never on the runner's kind.
-  test.each(ALL_TRANSPORTS)("%s: a stage call reports a timeout as timeout", async (_name, transport) => {
+  test.each(MODEL_WORK_TRANSPORTS)("%s: a stage call reports a timeout as timeout", async (_name, transport) => {
     const outcome = await callStage({
       feature: "distill",
       runner: runnerFor(transport, "hang"),
@@ -507,7 +536,7 @@ describe("C4: failures and timeouts", () => {
     expect(outcome).toMatchObject({ ok: false, reason: "timeout" });
   });
 
-  test.each(ALL_TRANSPORTS)("%s: a stage call reports an abort as aborted", async (_name, transport) => {
+  test.each(MODEL_WORK_TRANSPORTS)("%s: a stage call reports an abort as aborted", async (_name, transport) => {
     const outcome = await callStage({
       feature: "distill",
       runner: runnerFor(transport, "hang"),

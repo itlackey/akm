@@ -381,18 +381,18 @@ describe("runSetupWithDefaults — idempotency", () => {
     expect(fs.existsSync(backupDir())).toBe(false);
   });
 
-  test("rejects a conflicting engine kind before config or stash side effects", async () => {
+  test("rejects an engine that cannot run model work before config or stash side effects", async () => {
     const stashDir = path.join(process.env.HOME as string, "akm");
     fs.rmSync(stashDir, { recursive: true, force: true });
     await expect(
       runSetupFromConfig({
         configJson: JSON.stringify({
-          engines: { agent: { kind: "agent", platform: "claude" } },
+          engines: { agent: { kind: "agent", platform: "pi" } },
           defaults: { llmEngine: "agent" },
         }),
         noInit: false,
       }),
-    ).rejects.toThrow(/llmEngine must name an LLM engine/);
+    ).rejects.toThrow(/cannot confine the model-work tool policy/);
     expect(fs.existsSync(getConfigPath())).toBe(false);
     expect(fs.existsSync(stashDir)).toBe(false);
   });

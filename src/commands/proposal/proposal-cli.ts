@@ -20,7 +20,7 @@ import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { installLlmUsagePersistenceIfAbsent } from "../../llm/usage-persist";
 import { withLlmStage } from "../../llm/usage-telemetry";
@@ -542,13 +542,6 @@ const proposalDrainCommand = defineJsonCommand({
           })
         : null;
     const judgment = judgmentResolution?.runner ?? null;
-    const effectiveJudgmentLlm = triageConfig?.judgment?.llm ?? triageConfig?.llm ?? selectedStrategy.config.llm;
-    if (judgment && judgment.kind !== "llm" && effectiveJudgmentLlm) {
-      throw new ConfigError(
-        `Triage judgment engine "${judgment.engine ?? "unknown"}" is an agent engine and cannot receive llm overrides.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
 
     // #576: persist + attribute per-call LLM usage for the standalone drain
     // path. `IfAbsent` keeps an enclosing `akm improve` sink in charge when

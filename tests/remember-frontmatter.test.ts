@@ -492,7 +492,7 @@ describe("remember --enrich graceful degradation", () => {
     // `hasStructuredArgs` omitted `args.enrich`, so this invocation silently
     // took the zero-flag raw-write hot path and never attempted enrichment
     // (§24.2 "Agent/LLM" release gate).
-    expect(result.stderr).toContain("--enrich requires an LLM to be configured");
+    expect(result.stderr).toContain("--enrich requires an engine to be configured");
 
     const json = JSON.parse(result.stdout) as { path: string };
     const content = fs.readFileSync(json.path, "utf8");

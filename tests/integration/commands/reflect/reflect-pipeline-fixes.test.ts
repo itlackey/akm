@@ -15,6 +15,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
 import path from "node:path";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
@@ -412,7 +413,7 @@ describe("Reflect quality gate — source context", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected reflect to succeed with the gate skipped");
     expect(spawned).toBe(1);
-    expect(warnings.some((line) => line.includes("no LLM configured"))).toBe(true);
+    expect(warnings.some((line) => line.includes("no engine configured"))).toBe(true);
     const proposals = listProposals(stash);
     expect(proposals).toHaveLength(1);
     expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "no-judge-configured" });
@@ -686,12 +687,20 @@ describe("Reflect quality gate — source context", () => {
     expect(models).toEqual(["judge-model"]);
   });
 
-  test("a gate whose settings resolve to no LLM judge fails before anything is generated", async () => {
+  test("a gate whose settings resolve to an agent judges with that agent, under the model-work tool policy", async () => {
     const stash = makeStashDir();
+    // The judge's dispatch runs this binary for real: it records its argv and passes the revision.
+    const judgeBin = path.join(stash, "judge-agent.sh");
+    const argvLog = path.join(stash, "judge-argv.log");
+    fs.writeFileSync(
+      judgeBin,
+      `#!/bin/sh\necho "$@" >> "${argvLog}"\necho '${JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" })}'\n`,
+      { mode: 0o755 },
+    );
     const config = {
       ...quietQualityGateConfig(),
       engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+        "fake-agent": { kind: "agent", platform: "opencode", bin: judgeBin },
         general: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "general-model" },
       },
       defaults: { engine: "fake-agent", llmEngine: "general", improveStrategy: "default" },
@@ -701,29 +710,40 @@ describe("Reflect quality gate — source context", () => {
         },
       },
     } as AkmConfig;
-    let spawned = 0;
+    let chatRan = false;
 
-    await expect(
-      akmReflect({
-        ref: "knowledge/agent-judge",
-        stashDir: stash,
-        config,
-        assetContent: `---\ndescription: Agent judge\n---\n\n${LONG_SOURCE_BODY}\n`,
-        runAgentOptions: {
-          spawn: (...args) => {
-            spawned += 1;
-            return fakeSpawn(
-              JSON.stringify({ ref: "knowledge/agent-judge", content: LONG_SOURCE_BODY }),
-              "",
-              0,
-            )(...args);
-          },
-        },
-        chat: async () => JSON.stringify({ score: 5, reason: "must not run" }),
-      }),
-    ).rejects.toBeInstanceOf(ConfigError);
-    expect(spawned).toBe(0);
-    expect(listProposals(stash)).toEqual([]);
+    const result = await akmReflect({
+      ref: "knowledge/agent-judge",
+      stashDir: stash,
+      config,
+      improveProfile: config.improve?.strategies?.default,
+      assetContent: `---\ndescription: Agent judge\n---\n\n${LONG_SOURCE_BODY}\n`,
+      runAgentOptions: {
+        spawn: fakeSpawn(
+          JSON.stringify({
+            ref: "knowledge/agent-judge",
+            content: LONG_SOURCE_BODY.replace("## Required config", "## Required configuration"),
+          }),
+          "",
+          0,
+        ),
+      },
+      chat: async () => {
+        chatRan = true;
+        return "must not run";
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("expected a proposal");
+    expect(chatRan).toBe(false);
+    // The agent judged it, under the model-work policy, and its scores reach the review stamp.
+    expect(fs.readFileSync(argvLog, "utf8")).toStartWith("run --agent akm-model-work");
+    expect(result.proposal.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "body-edit",
+      scores: { need: 5, preservation: 5, quality: 5 },
+    });
   });
 });
 

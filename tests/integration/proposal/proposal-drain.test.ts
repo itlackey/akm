@@ -23,6 +23,7 @@ import type { AkmConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import type { EventsContext } from "../../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
+import { MODEL_WORK_TOOLS } from "../../../src/execution/source";
 import type { AgentRunResult } from "../../../src/integrations/agent";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
@@ -849,7 +850,8 @@ describe("drainProposals — judgment tier (agent mode)", () => {
         }),
       }),
     );
-    expect(capturedDispatch).not.toHaveProperty("tools");
+    // A triage judgment is unattended model work: it runs under the model-work tool policy.
+    expect(capturedDispatch?.tools).toEqual(MODEL_WORK_TOOLS);
     expect(capturedDispatch).not.toHaveProperty("schema");
     expect(result.notices).toBeUndefined();
     expect(result.promoted).toEqual([deferred.id]);

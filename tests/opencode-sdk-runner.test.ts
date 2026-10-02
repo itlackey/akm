@@ -989,21 +989,14 @@ describe("runOpencodeSdk — model work is bounded on the server too", () => {
   });
   const modelWork = { dispatch: { prompt: "judge this", tools: [...MODEL_WORK_TOOLS] } } as RunAgentOptions;
 
-  /** A fake whose event stream reports `steps` step-starts, and whose prompt settles when the session is aborted. */
+  /** A fake whose session holds `steps` step-starts, and whose prompt settles when the session is aborted. */
   function loopingServer(steps: number) {
     const aborted: string[] = [];
     let release: (() => void) | undefined;
     const settled = new Promise<void>((resolve) => {
       release = resolve;
     });
-    async function* stream() {
-      for (let index = 0; index < steps; index += 1) {
-        yield {
-          type: "message.part.updated",
-          properties: { part: { id: `step-${index}`, type: "step-start", sessionID: "sess-1", messageID: "m" } },
-        };
-      }
-    }
+    const messages = Array.from({ length: steps }, () => ({ parts: [{ type: "step-start" }, { type: "tool" }] }));
     const server = {
       client: {
         session: {
@@ -1018,8 +1011,8 @@ describe("runOpencodeSdk — model work is bounded on the server too", () => {
             release?.();
             return {};
           },
+          messages: async () => ({ data: messages }),
         },
-        event: { subscribe: async () => ({ stream: stream() }) },
       },
       server: { close() {} },
     };
@@ -1040,7 +1033,8 @@ describe("runOpencodeSdk — model work is bounded on the server too", () => {
   test("a session within the limit is not aborted", async () => {
     const fake = loopingServer(MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE);
     __setTestServer(fake.server);
-    setTimeout(fake.release, 50);
+    // Settles after the first poll has counted the steps.
+    setTimeout(fake.release, 1_500);
 
     const result = await runOpencodeSdk(baseProfile, "judge this", { ...modelWork, timeoutMs: 5_000 });
 

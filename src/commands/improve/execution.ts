@@ -5,7 +5,7 @@
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import type { UnresolvedExecutionDefaults } from "../../execution/source";
+import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
@@ -58,6 +58,8 @@ export interface ResolvedImproveExecution {
 /**
  * Resolve improve-owned model work through the canonical execution cascade:
  * defaults.llmEngine -> strategy -> index.<pass> -> process -> current invocation.
+ * The engine may be of any kind that confines the model-work tool policy: one
+ * that cannot, chosen with `--engine` say, is refused here, before any work.
  */
 export function resolveImproveExecution(options: ResolveImproveExecutionOptions): ResolvedImproveExecution | null {
   const defaultEngine = options.config.defaults?.llmEngine;
@@ -73,7 +75,7 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
     mergeDefaults(defaultEngine ? { engine: defaultEngine } : {}, profileDefaults),
     indexDefaults,
   );
-  const current = mergeDefaults(processDefaults, currentDefaults);
+  const current = { ...mergeDefaults(processDefaults, currentDefaults), tools: MODEL_WORK_TOOLS };
   const prepared = resolveExecution({
     content: `improve ${options.processName} execution selection`,
     config: options.config,
@@ -82,15 +84,4 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
   return Object.freeze({ runner: lowered.runner, notices: lowered.notices });
-}
-
-export function resolveImproveLlmExecution(
-  options: ResolveImproveExecutionOptions,
-): { runner: Extract<RunnerSpec, { kind: "llm" }>; notices: readonly Readonly<LoweringNotice>[] } | null {
-  const resolved = resolveImproveExecution(options);
-  if (!resolved) return null;
-  if (resolved.runner.kind !== "llm") {
-    return null;
-  }
-  return { runner: resolved.runner, notices: resolved.notices };
 }

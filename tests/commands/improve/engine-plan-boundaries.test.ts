@@ -48,7 +48,7 @@ describe("improve engine-plan boundaries", () => {
         },
         ensureIndexFn,
       }),
-    ).rejects.toThrow('"reflect" requires an LLM engine that is not configured');
+    ).rejects.toThrow('"reflect" requires an engine that is not configured');
     expect(ensureIndexFn).not.toHaveBeenCalled();
   });
 

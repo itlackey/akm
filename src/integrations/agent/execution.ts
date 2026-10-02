@@ -46,7 +46,7 @@ import {
 } from "../../execution/source";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
-import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import {
   FALLBACK_ENGINE_NAME,
   fallbackEngineConfig,
@@ -189,15 +189,7 @@ function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): 
       ? config.engines[fallbackName]
       : undefined;
   if (fallback?.kind !== "llm" || !fallbackName) {
-    return {
-      kind: "sdk",
-      platform: "opencode-sdk",
-      modelMapKey: "opencode-sdk",
-      values: {
-        ...values,
-        timeout: has(values, "timeout") ? (values.timeout as number | null) : DEFAULT_AGENT_TIMEOUT_MS,
-      },
-    };
+    return { kind: "sdk", platform: "opencode-sdk", modelMapKey: "opencode-sdk", values };
   }
   const inherited = engineModelAndInference(fallback);
   return {

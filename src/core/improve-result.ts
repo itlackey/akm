@@ -4,7 +4,7 @@
 
 import { cloneExecutionJsonObject } from "../execution/json";
 import { isRecord } from "./common";
-import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./config/engine-semantics";
+import { IMPROVE_PROCESS_NAMES } from "./config/engine-semantics";
 import type { AkmImproveResult } from "./improve-types";
 
 export type ImproveResultEnvelope = AkmImproveResult;
@@ -200,10 +200,10 @@ function validateProactivePlan(value: unknown): void {
   }
 }
 
-/** #947 — plan.processes: one row per IMPROVE_PROCESS_ENGINE_CAPABILITIES name, plus an optional "triage.judgment" row. */
+/** #947 — plan.processes: one row per IMPROVE_PROCESS_NAMES name, plus an optional "triage.judgment" row. */
 function validateProcessRoutingRows(value: unknown): void {
   if (!Array.isArray(value)) fail("plan.processes must be an array");
-  const canonicalNames = Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES);
+  const canonicalNames: readonly string[] = IMPROVE_PROCESS_NAMES;
   const engineKinds = new Set(["llm", "agent", "sdk"]);
   const seen = new Set<string>();
   for (const row of value) {

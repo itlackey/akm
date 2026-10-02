@@ -1721,7 +1721,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
         }),
         harnesses: [makeFakeHarness([fakeSession("no-fallback", Date.now())])],
       }),
-    ).rejects.toThrow("No LLM engine configured for extract");
+    ).rejects.toThrow("No engine configured for extract");
   });
 
   test("honors processes.extract.engine to pick a non-default LLM", async () => {
@@ -1760,16 +1760,13 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedModel).toBe("default-model");
   });
 
-  test("rejects an explicit non-LLM process engine without fallback", async () => {
+  test("refuses a process engine that cannot confine the model-work tool policy, before any dispatch", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
-    // Build a config where the agent profile EXISTS so the runner resolver
-    // succeeds and akmExtract's own kind-check fires (not the resolver's
-    // missing-profile guard).
     const config = configWithStrategy(stash, { engine: "fake-agent" });
     config.engines = {
       ...config.engines,
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
+      "fake-agent": { kind: "agent", platform: "pi", bin: "pi-must-not-run" },
     };
     await expect(
       akmExtract({
@@ -1780,7 +1777,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
         harnesses: [makeFakeHarness([session])],
         chat: async () => JSON.stringify({ candidates: [] }),
       }),
-    ).rejects.toThrow(/no llm engine configured for extract/i);
+    ).rejects.toThrow(/cannot enforce the model-work tool policy/);
   });
 
   test("honors process timeoutMs override", async () => {

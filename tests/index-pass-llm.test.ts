@@ -3,13 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
 import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
+import { validateConfigShape } from "../src/core/config/config-schema";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { LoweringNotice } from "../src/execution/resolved-request";
 import { resolveIndexPassExecution } from "../src/llm/index-passes";
 import { asLlmRunner } from "./_helpers/llm-runner";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
-import { overrideSeam } from "./_helpers/seams";
 
 // Tests for standalone index-pass engine resolution.
 
@@ -159,21 +159,28 @@ describe("resolveIndexPassExecution", () => {
       expect(() => resolveIndexPassExecution("memory", config)).toThrow(/missing/i);
     });
 
-    test("a non-LLM engine on a pass degrades to no runner (with a warning) instead of aborting the whole index run", () => {
-      const seen: unknown[][] = [];
-      overrideSeam(_setWarnSinkForTests, (level, args) => {
-        if (level === "warn") seen.push(args);
-      });
+    test("an agent engine that confines the model-work tool policy runs the pass", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
-        engines: { wrong: { kind: "agent", platform: "pi" } },
-        index: { defaults: { engine: "primary" }, memory: { engine: "wrong" } },
+        engines: { primary: { kind: "llm", ...PRIMARY }, agent: { kind: "agent", platform: "claude" } },
+        index: { defaults: { engine: "primary" }, memory: { engine: "agent" } },
       };
-      expect(() => resolveIndexPassExecution("memory", config)).not.toThrow();
       const resolved = resolveIndexPassExecution("memory", config);
-      expect(resolved.runner).toBeUndefined();
-      expect(resolved.notices).toEqual([]);
-      expect(seen.some((args) => args.some((a) => String(a).includes("memory")))).toBe(true);
+      expect(resolved.runner).toMatchObject({ kind: "agent", engine: "agent" });
+    });
+
+    test("an index pass engine that cannot confine the policy is refused when the config loads", () => {
+      const result = validateConfigShape({
+        configVersion: "0.9.0",
+        engines: { wrong: { kind: "agent", platform: "pi" } },
+        index: { memory: { engine: "wrong" } },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toContainEqual({
+        path: "index.memory.engine",
+        message: expect.stringContaining('engine "wrong" (platform pi) cannot confine the model-work tool policy'),
+      });
     });
 
     test("index.<pass>.enabled === false opts the pass out", () => {
