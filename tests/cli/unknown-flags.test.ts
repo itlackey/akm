@@ -63,7 +63,7 @@ describe("accepts every legitimate spelling", () => {
     ["global flag, equals form", ["search", "foo", "--format=json"]],
     ["command flag with a value", ["search", "foo", "--limit", "3"]],
     ["repeated flags", ["search", "foo", "--type", "skill", "--type", "command"]],
-    ["boolean negation", ["show", "knowledge/a", "--no-track-usage"]],
+    ["boolean negation", ["setup", "--no-init"]],
     ["short alias", ["index", "-q"]],
     ["bundled boolean aliases", ["proposal", "accept", "p-1", "-qy"]],
     ["short alias with attached value", ["sync", "-mrelease"]],
@@ -79,7 +79,7 @@ describe("accepts every legitimate spelling", () => {
     // `--no-limit` used to be accepted by resolving against the value flag
     // `--limit`; mri then handed `limit: false` to a string parser, so the
     // user got an internal error (exit 70) instead of a usage error.
-    expect(() => check(["show", "knowledge/a", "--no-track-usage"])).not.toThrow();
+    expect(() => check(["setup", "--no-init"])).not.toThrow();
     expect(errorFor(["search", "foo", "--no-limit"]).code).toBe("UNKNOWN_FLAG");
   });
 

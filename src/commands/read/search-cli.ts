@@ -93,21 +93,6 @@ export const searchCommand = defineJsonCommand({
         "Include session assets (excluded from default search results via config.search.defaultExcludeTypes).",
       default: false,
     },
-    // Declared as the POSITIVE name with `default: true` so citty's native
-    // `--no-<name>` negation (it strips a leading `--no-` from ANY token and
-    // negates the remainder BEFORE consulting the declared-args table — see
-    // node_modules/citty/dist/index.mjs) does the work, the same pattern
-    // `sync --push/--no-push` uses. A flag DECLARED as `no-track-usage` could
-    // never be negated: `--no-track-usage` parses as "negate `track-usage`",
-    // a name nothing declared, leaving the real key at its default forever
-    // (F1/A1).
-    "track-usage": {
-      type: "boolean",
-      default: true,
-      description:
-        "A successful search records usage-events telemetry. Default: on. Use --no-track-usage to run a " +
-        "search that records nothing.",
-    },
   },
   async run({ args }) {
     rejectRetiredSourceFlag();
@@ -121,7 +106,6 @@ export const searchCommand = defineJsonCommand({
     const filters = parseScopeFilterFlags(filterTokens, "--filter");
     const includeProposed = args["include-proposed"] === true;
     const belief = parseBeliefFilterMode(typeof args.belief === "string" ? args.belief : undefined);
-    const skipLogging = args["track-usage"] === false;
     const includeSessions = args["include-sessions"];
     const assets = args.assets === true;
     const outputMode = getOutputMode();
@@ -134,7 +118,6 @@ export const searchCommand = defineJsonCommand({
       includeProposed,
       belief,
       includeSessions,
-      skipLogging,
       assets,
       eventSource: resolveUsageEventSource(),
       attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
@@ -171,16 +154,6 @@ export const curateCommand = defineJsonCommand({
         "with a workflow asset's own `budget` field (a run-cost cap) — this is a context-size target for this " +
         "one curate call.",
     },
-    // Declared as the POSITIVE name with `default: true` — see the
-    // `track-usage` comment on `searchCommand` above for why a flag NAME
-    // must never start with `no-`.
-    "track-usage": {
-      type: "boolean",
-      default: true,
-      description:
-        "A successful curate records usage-events telemetry for the curated items. Default: on. Use " +
-        "--no-track-usage to run a curate that records nothing.",
-    },
   },
   async run({ args }) {
     rejectRetiredSourceFlag();
@@ -195,7 +168,6 @@ export const curateCommand = defineJsonCommand({
     const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
     const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
     const source = parseSearchSource(args.from ?? "local");
-    const skipLogging = args["track-usage"] === false;
     const outputMode = getOutputMode();
     const packBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
     const curated = await akmCurate({
@@ -203,7 +175,6 @@ export const curateCommand = defineJsonCommand({
       type,
       limit,
       source,
-      skipLogging,
       eventSource: resolveUsageEventSource(),
       attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
     });
@@ -326,16 +297,6 @@ export const showCommand = defineJsonCommand({
       type: "string",
       description: "Exact context budget in characters. Requires --context lead; mutually exclusive with --max-tokens.",
     },
-    // Declared as the POSITIVE name with `default: true` — see the
-    // `track-usage` comment on `searchCommand` above for why a flag NAME
-    // must never start with `no-`.
-    "track-usage": {
-      type: "boolean",
-      default: true,
-      description:
-        "A successful show records usage-events telemetry, including the search-selection linkage when this " +
-        "show follows a recent search. Default: on. Use --no-track-usage to run a show that records nothing.",
-    },
   },
   async run({ args }) {
     // `[origin//]meta[:name]` targets the stash `.meta/` convention, which is
@@ -384,14 +345,12 @@ export const showCommand = defineJsonCommand({
     if (maxContextChars !== undefined && !Number.isSafeInteger(maxContextChars)) {
       throw new UsageError("Fragment context budget is too large.", "INVALID_FLAG_VALUE");
     }
-    const skipLogging = args["track-usage"] === false;
     const result = await akmShowUnified({
       ref: args.ref,
       detail: showDetail,
       contextMode,
       maxContextChars,
       scope,
-      skipLogging,
       eventSource: resolveUsageEventSource(),
     });
     output("show", result);

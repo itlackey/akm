@@ -214,7 +214,7 @@ const setupCommand = defineCommand({
     // the work, matching the `sync --push/--no-push` pattern. A flag
     // DECLARED as `no-init` can never be negated: `--no-init` parses as
     // "negate `init`", a name nothing declared, leaving the real key at its
-    // default forever — see `search --no-track-usage`'s identical fix.
+    // default forever.
     init: {
       type: "boolean",
       default: true,
