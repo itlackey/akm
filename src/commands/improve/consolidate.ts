@@ -90,6 +90,11 @@ interface RawChunkPlan {
   warnings?: unknown[];
 }
 
+function parsePlan(raw: string) {
+  const plan = parseEmbeddedJsonResponse<RawChunkPlan>(raw);
+  return plan && Array.isArray(plan.operations) ? { ...plan, operations: plan.operations } : undefined;
+}
+
 /** A plan op worth acting on. Retired advisory ops (merge/delete/contradict) are dropped, never thrown on. */
 export function isValidOp(op: unknown): op is ConsolidatePromoteOp {
   if (typeof op !== "object" || op === null) return false;
@@ -723,6 +728,7 @@ async function judgeConsolidationChunks(args: {
         ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
         signal: opts.signal,
       },
+      parse: parsePlan,
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
     });
     if (!outcome.ok) {
@@ -730,8 +736,8 @@ async function judgeConsolidationChunks(args: {
       continue;
     }
     warnVerbose(`[akm:consolidate] ${label} raw response (first 500 chars): ${outcome.raw.slice(0, 500)}`);
-    const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(outcome.raw);
-    if (!parsed || !Array.isArray(parsed.operations)) {
+    const parsed = parsePlan(outcome.raw);
+    if (!parsed) {
       const hint =
         outcome.raw.trim() === "" ? " (empty response — if using a thinking model, disable thinking mode)" : "";
       const msg = `Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`;

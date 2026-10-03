@@ -7,7 +7,7 @@
  * surface this flip removes.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 
 import {
   buildJudgePrompt,
@@ -135,15 +135,12 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     "5.1",
     "1e999",
   ])("an out-of-range or non-finite score routes to review instead of being rejected: %s", async (score) => {
-    const result = await runLessonQualityJudge(
-      configWithLlm(),
-      "some lesson body",
-      "some source body",
-      async () => `{"score":${score},"reason":"invalid"}`,
-    );
+    const chat = mock(async () => `{"score":${score},"reason":"invalid"}`);
+    const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", chat);
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
     expect(result.reviewNeeded).toBe(true);
+    expect(chat).toHaveBeenCalledTimes(2); // the judge's own parser rejected it: one corrective retry
   });
 
   test("forwards the shared signal and remaining timeout", async () => {

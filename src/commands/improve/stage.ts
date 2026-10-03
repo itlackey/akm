@@ -13,9 +13,8 @@ import type { AkmConfig, ImproveProfileConfig, LlmConnectionConfig } from "../..
 import { getImproveProcessConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
-import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
-import { runStructured } from "../../core/structured";
+import { defaultFeedback } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../../execution/source";
@@ -105,6 +104,8 @@ export interface StageLlmCall {
   /** Earlier turns, sent before the terminal user prompt. */
   history?: ChatMessage[];
   request?: CallStructuredRequest;
+  /** The stage's own parser of the reply, `undefined` for one it rejects. Default: any JSON in it is accepted. */
+  parse?: (raw: string) => unknown;
   /** Additional exact invocation fields for this call (the child environment of an agent, say). */
   current?: UnresolvedExecutionDefaults;
   onNotices?: NoticeSink;
@@ -112,41 +113,21 @@ export interface StageLlmCall {
   gate?: { config: AkmConfig; enabled?: boolean };
 }
 
-const TRANSPORT_FAILED = Symbol("stage-transport-failed");
-
 /**
  * One model call. Provider trouble (transport error, timeout, abort, a
  * disabled feature) comes back as `{ ok: false }`; only a configuration
- * failure throws. A reply to a call with `request.responseSchema` that fails
- * the schema gets one corrective retry. The caller's own parse still decides
- * what it accepts, so the last reply comes back even when it fails the schema.
+ * failure throws. A reply to a call with `request.responseSchema` that the
+ * stage's own `parse` rejects gets one corrective retry; the last reply comes
+ * back either way, and the caller parses it again.
  */
 export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
-  const schema = call.request?.responseSchema;
-  if (!schema) return callStageOnce(call);
-  let reply = undefined as StageLlmOutcome | undefined;
-  let failure = undefined as StageLlmOutcome | undefined;
-  try {
-    await runStructured<unknown>({
-      dispatch: async (feedback) => {
-        const outcome = await callStageOnce(feedback ? { ...call, prompt: `${call.prompt}\n\n${feedback}` } : call);
-        if (!outcome.ok) {
-          failure = outcome;
-          throw TRANSPORT_FAILED;
-        }
-        reply = outcome;
-        return outcome.raw;
-      },
-      validate: (candidate) => {
-        const errors = validateJsonSchemaSubset(candidate, schema);
-        return errors.length === 0 ? { ok: true, value: candidate } : { ok: false, errors };
-      },
-    });
-  } catch (err) {
-    if (err !== TRANSPORT_FAILED) throw err;
-  }
+  const reply = await callStageOnce(call);
+  if (!reply.ok || !call.request?.responseSchema) return reply;
+  if ((call.parse ?? parseEmbeddedJsonResponse)(reply.raw) !== undefined) return reply;
+  const feedback = defaultFeedback({ reason: "parse_error", errors: [] });
+  const retry = await callStageOnce({ ...call, prompt: `${call.prompt}\n\n${feedback}` });
   // A retry that fails in transport keeps the first reply, which the caller may still accept.
-  return reply ?? failure ?? { ok: false, reason: "error" };
+  return retry.ok ? retry : reply;
 }
 
 /** Timeout and abort come from the dispatch's own reason, whatever the runner's kind. */
@@ -588,6 +569,7 @@ async function runQualityJudge(
       ...(options.signal ? { signal: options.signal } : {}),
       ...(chat ? { chat } : {}),
     },
+    parse: (raw) => parseJudgeResponse(raw, keys),
     ...(options.onNotices ? { onNotices: options.onNotices } : {}),
   });
   if (!outcome.ok) {

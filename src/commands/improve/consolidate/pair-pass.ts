@@ -641,6 +641,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
       signal: ctx.opts.signal,
       ...(ctx.chat ? { chat: ctx.chat } : {}),
     },
+    parse: parsePairJudgeResponse,
     ...(ctx.opts.onNotices ? { onNotices: ctx.opts.onNotices } : {}),
   });
   if (!outcome.ok) return { failed: true };

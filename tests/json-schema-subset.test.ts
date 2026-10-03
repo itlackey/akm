@@ -41,6 +41,10 @@ describe("validateJsonSchemaSubset", () => {
     expect(validateJsonSchemaSubset(1.5, { type: "number" })).toEqual([]);
   });
 
+  test("maximum bounds a number", () => {
+    expect(validateJsonSchemaSubset(6, { type: "integer", maximum: 5 })).toEqual(["$: 6 is above maximum 5"]);
+  });
+
   test("enum constrains primitive values", () => {
     const schema = { type: "string", enum: ["low", "high"] };
     expect(validateJsonSchemaSubset("low", schema)).toEqual([]);
