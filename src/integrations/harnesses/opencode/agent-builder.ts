@@ -19,7 +19,7 @@
 import { isModelWorkTools } from "../../../execution/source";
 import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { opencodeCarriedKeys, opencodeInferenceConfig, opencodeModelConfig, splitOpencodeModel } from "./model-config";
+import { opencodeInferenceConfig } from "./model-config";
 import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work-agent";
 
 /**
@@ -39,11 +39,9 @@ import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work
  * of the injected config or the scratch working directory. Only the model they
  * name is kept.
  *
- * Inference reaches the run the same way (`./model-config.ts`): the model it
- * names gets an entry in the injected config, which merges over the user's own
- * config for that model, and model work's agent carries the options, whether
- * or not a model is named. A dispatch whose request carries no translatable
- * inference injects nothing, so its argv and env are as they were.
+ * Model work's agent carries the request's inference options
+ * (`./model-config.ts`). Any other dispatch injects nothing and carries none, so
+ * the model's own opencode config applies: set inference there.
  */
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
@@ -53,22 +51,11 @@ export const opencodeBuilder: AgentCommandBuilder = {
     personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
-    inference: (profile, request) => {
-      const model = request.model?.resolved ?? modelFromArgs(profile.args);
-      return opencodeCarriedKeys(
-        model !== undefined && splitOpencodeModel(model) !== undefined,
-        request.inference,
-        isModelWorkTools(request.tools),
-      );
-    },
   }),
   build(profile, req) {
-    const model = req.model ?? modelFromArgs(profile.args);
-    const modelWork = isModelWorkTools(req.tools);
-    // What goes on the model needs a `provider/model` to go on; model work's agent options do not.
-    const { entry, agentOptions } = opencodeInferenceConfig(req.inference, modelWork);
-    const modelConfig = opencodeModelConfig(model, entry);
-    if (modelWork) {
+    if (isModelWorkTools(req.tools)) {
+      const model = req.model ?? modelFromArgs(profile.args);
+      const { agentOptions } = opencodeInferenceConfig(req.inference, true);
       return {
         argv: [
           profile.bin,
@@ -79,7 +66,7 @@ export const opencodeBuilder: AgentCommandBuilder = {
           "--",
           req.prompt,
         ],
-        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ ...modelWorkOpencodeConfig(agentOptions), ...modelConfig }) },
+        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)) },
       };
     }
     const args: string[] = req.model ? [] : [...profile.args];
@@ -103,9 +90,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
     }
     args.push("--");
     args.push(req.prompt);
-    return {
-      argv: [profile.bin, ...args],
-      ...(modelConfig ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(modelConfig) } } : {}),
-    };
+    return { argv: [profile.bin, ...args] };
   },
 };

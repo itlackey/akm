@@ -3,33 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * An agent engine on any platform may set the inference fields. What its
- * platform does not translate is reported as a lowering notice at dispatch, as
- * for an asset's or a caller's inference, not refused at load.
+ * An agent engine takes no connection or inference of its own: inference for
+ * opencode belongs in opencode's own config, and an improve process's `llm`
+ * overlay carries it into model work.
  */
 
 import { expect, test } from "bun:test";
 import { validateConfigShape } from "../src/core/config/config-schema";
-import { VALID_HARNESS_IDS } from "../src/integrations/harnesses/ids";
 
-const INFERENCE = {
-  temperature: 0.2,
-  maxTokens: 4096,
-  contextLength: 120000,
-  enableThinking: false,
-  reasoningEffort: "high",
-} as const;
-
-test.each([...VALID_HARNESS_IDS])("%s: an agent engine may set every inference field", (platform) => {
-  const result = validateConfigShape({
-    configVersion: "0.9.0",
-    engines: { e: { kind: "agent", platform, ...INFERENCE } },
-  });
-
-  expect(result.ok).toBe(true);
-});
-
-// These describe a connection or a wire format, which no agent platform has.
 test.each([
   "provider",
   "endpoint",
@@ -37,7 +18,12 @@ test.each([
   "apiKeyFile",
   "concurrency",
   "extraParams",
-])("%s is still not valid on an agent engine", (key) => {
+  "temperature",
+  "maxTokens",
+  "contextLength",
+  "enableThinking",
+  "reasoningEffort",
+])("%s is not valid on an agent engine", (key) => {
   const result = validateConfigShape({
     configVersion: "0.9.0",
     engines: { e: { kind: "agent", platform: "opencode", [key]: "x" } },

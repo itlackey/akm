@@ -299,15 +299,12 @@ families) plus the orchestration keys:
 - `defaults` — run-level dispatch defaults (`engine`, `model`, `llm`,
   `timeout`, `on_error`), overridable per unit. `llm:` tuning reaches an engine
   of any kind, and a document-level `llm:` reaches EVERY step. An LLM engine
-  sends it; an agent engine translates what its platform can carry
-  (`temperature`, `reasoning_effort`, `enable_thinking`, and `max_tokens` with
-  `context_length` on `opencode` and `opencode-sdk`; `reasoning_effort` on
-  `claude`; see
-  [Inference on an agent engine](configuration.md#inference-on-an-agent-engine))
-  and reports the rest as an `untranslated-field` notice on that step. There is
-  no per-step opt-out (`llm: {}` is a no-op and `llm: null` is a parse error),
-  so in a mixed document put `llm:` on the `unit:` of each step it is meant for
-  instead of in `defaults:`.
+  sends it; an agent engine reports it as an `untranslated-field` notice on that
+  step (see
+  [Inference on an agent engine](configuration.md#inference-on-an-agent-engine)).
+  There is no per-step opt-out (`llm: {}` is a no-op and `llm: null` is a parse
+  error), so in a mixed document put `llm:` on the `unit:` of each step it is
+  meant for instead of in `defaults:`.
 - `outputs` — name → `{ from, schema? }`, a run-level export projected from
   a step's own artifact (Markdown-only; see [Workflow
   outputs](#workflow-outputs) below).

@@ -133,15 +133,23 @@ const AgentEngineSchema = z
     model: nonEmptyString.optional(),
     timeoutMs: timeoutMsField,
     llmEngine: engineName.optional(),
-    temperature: z.number().finite().optional(),
-    maxTokens: positiveInt.optional(),
-    contextLength: positiveInt.optional(),
-    enableThinking: z.boolean().optional(),
-    reasoningEffort: nonEmptyString.optional(),
   })
   .passthrough()
   .superRefine((value, ctx) => {
-    for (const key of ["provider", "endpoint", "apiKey", "apiKeyFile", "concurrency", "extraParams", "modelAliases"]) {
+    for (const key of [
+      "provider",
+      "endpoint",
+      "apiKey",
+      "apiKeyFile",
+      "temperature",
+      "maxTokens",
+      "concurrency",
+      "extraParams",
+      "contextLength",
+      "enableThinking",
+      "reasoningEffort",
+      "modelAliases",
+    ]) {
       if (key in value)
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is not valid on an agent engine` });
     }

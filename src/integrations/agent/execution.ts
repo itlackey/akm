@@ -199,11 +199,8 @@ function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): 
     modelMapKey: own.model === undefined ? fallbackName : "opencode-sdk",
     values: {
       ...(inherited.model !== undefined ? { model: inherited.model } : {}),
+      ...(inherited.inference !== undefined ? { inference: inherited.inference } : {}),
       ...values,
-      // The engine's own inference is added over the fallback's, field by field.
-      ...(inherited.inference !== undefined || own.inference !== undefined
-        ? { inference: { ...inherited.inference, ...own.inference } }
-        : {}),
       timeout: Object.hasOwn(engine, "timeoutMs")
         ? (engine.timeoutMs ?? null)
         : Object.hasOwn(fallback, "timeoutMs")

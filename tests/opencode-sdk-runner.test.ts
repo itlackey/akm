@@ -519,8 +519,8 @@ describe("buildSdkConfig — inference", () => {
     parseOutput: "text",
   };
   const endpoint = "http://127.0.0.1:18080/v1/chat/completions";
-  const models = (config: Record<string, unknown>, provider = "akm-custom") =>
-    (config.provider as Record<string, { models: Record<string, unknown> }>)[provider]?.models;
+  const models = (config: Record<string, unknown>) =>
+    (config.provider as Record<string, { models: Record<string, unknown> }>)["akm-custom"]?.models;
 
   test("the fallback LLM engine's inference reaches the model, and the request's own wins field by field", async () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
@@ -575,26 +575,18 @@ describe("buildSdkConfig — inference", () => {
     });
   });
 
-  test("without a fallback endpoint the entry merges under the model's own provider", async () => {
+  // A model the user's own opencode config provides is the user's to configure: no provider is written for it.
+  test.each([
+    undefined,
+    "unqualified",
+    "krang/chat/qwen3.8-27b",
+  ])("with no fallback, a model named %j carries nothing", async (model) => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-    const config = buildSdkConfig({ ...baseProfile, model: "krang/chat/qwen3.8-27b" }, undefined, false, {
+    const config = buildSdkConfig({ ...baseProfile, ...(model ? { model } : {}) }, undefined, false, {
       reasoningEffort: "low",
     });
 
-    expect(config).toEqual({
-      model: "krang/chat/qwen3.8-27b",
-      provider: { krang: { models: { "chat/qwen3.8-27b": { options: { reasoningEffort: "low" } } } } },
-    });
-  });
-
-  test("a model with no provider to attach to carries nothing", async () => {
-    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-
-    expect(
-      buildSdkConfig({ ...baseProfile, model: "unqualified" }, undefined, false, { reasoningEffort: "low" }),
-    ).toEqual({
-      model: "unqualified",
-    });
+    expect(config).toEqual(model ? { model } : {});
   });
 
   // opencode makes a title call of its own on the model and applies the
@@ -603,16 +595,12 @@ describe("buildSdkConfig — inference", () => {
   test("model work: the confined agent carries the options and the model only the limit", async () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
     const inference = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
-    const owned = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true, inference);
-    const merged = buildSdkConfig({ ...baseProfile, model: "krang/m" }, undefined, true, inference);
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true, inference);
 
-    for (const config of [owned, merged]) {
-      const agent = (config.agent as Record<string, { options?: unknown; permission: unknown }>)["akm-model-work"];
-      expect(agent?.options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
-      expect(agent?.permission).toMatchObject({ "*": "deny", bash: "deny" });
-    }
-    expect(models(owned)).toEqual({ "stub-model": { limit: { context: 120000, output: 4096 } } });
-    expect(models(merged, "krang")).toEqual({ m: { limit: { context: 120000, output: 4096 } } });
+    const agent = (config.agent as Record<string, { options?: unknown; permission: unknown }>)["akm-model-work"];
+    expect(agent?.options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
+    expect(agent?.permission).toMatchObject({ "*": "deny", bash: "deny" });
+    expect(models(config)).toEqual({ "stub-model": { limit: { context: 120000, output: 4096 } } });
   });
 
   // The model-work agent runs whichever model opencode picks, so it carries the
@@ -630,12 +618,6 @@ describe("buildSdkConfig — inference", () => {
     expect((config.agent as Record<string, { options?: unknown }>)["akm-model-work"]?.options).toEqual({
       reasoningEffort: "low",
     });
-  });
-
-  test("an ordinary dispatch with no model named carries nothing", async () => {
-    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-
-    expect(buildSdkConfig(baseProfile, undefined, false, { reasoningEffort: "low" })).toEqual({});
   });
 
   test("model work with no inference defines the agent without options", async () => {
