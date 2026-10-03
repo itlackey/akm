@@ -44,8 +44,7 @@
  *     field yet); {@link codexResumeArgs} exposes the argv prefix for the
  *     integration task that wires session-id reuse from `workflow_run_units`.
  *   - The request's inference is not translated: the shared lowering reports
- *     each field as untranslated (`inference` in `harnesses/ids.ts` lists none
- *     for codex). codex would take `reasoningEffort` as
+ *     each field as untranslated. codex would take `reasoningEffort` as
  *     `-c model_reasoning_effort=<v>`, which is left to the integration task.
  *
  * Registered: `codexBuilder` is `CodexHarness.agentBuilder` (`./index.ts`),

@@ -66,7 +66,7 @@ export interface AgentEngineConfig {
   model?: string;
   timeoutMs?: number | null;
   llmEngine?: string;
-  /** Inference the platform translates (`harnesses/ids.ts`); config validation rejects the others. */
+  /** Inference for this engine; the platform's lowerer reports any field it does not translate. */
   temperature?: number;
   maxTokens?: number;
   contextLength?: number;

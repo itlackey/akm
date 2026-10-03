@@ -60,8 +60,7 @@
  *   akm's `workflow_run_units` remains the durable source of truth either way
  *   (plan §"Session, MCP, and identity across harnesses").
  * - **inference** — not translated: the shared lowering reports each field of
- *   the request's inference as untranslated (`inference` in `harnesses/ids.ts`
- *   lists none for this harness).
+ *   the request's inference as untranslated.
  *
  * Registered: `openhandsBuilder` is `OpenhandsHarness.agentBuilder`
  * (`./index.ts`), one of the ten harnesses `HARNESS_REGISTRY` constructs

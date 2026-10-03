@@ -284,3 +284,15 @@ describe("proposal consumers lower resolved execution requests", () => {
     expect(listProposals(stashDir)).toEqual([]);
   });
 });
+
+// codex's --output-schema takes only OpenAI-style strict schemas: every property required, no other allowed.
+test("the proposal schema is strict", () => {
+  const schema = PROPOSAL_JSON_SCHEMA as {
+    required: string[];
+    properties: Record<string, unknown>;
+    additionalProperties: unknown;
+  };
+
+  expect([...schema.required].sort()).toEqual(Object.keys(schema.properties).sort());
+  expect(schema.additionalProperties).toBe(false);
+});

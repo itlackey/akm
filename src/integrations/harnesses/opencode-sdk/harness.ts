@@ -46,7 +46,6 @@ export class OpencodeSdkHarness extends BaseHarness {
       personaChannel: "native",
       nativeAgentSelector: true,
       tools: "sdk",
-      modelWorkTools: true,
       // The server config gives the routed model its inference entry, so the request must name a model, except
       // that model work's agent carries its options whichever model opencode picks.
       inference: (_profile, request) =>

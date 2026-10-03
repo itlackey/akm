@@ -6,6 +6,7 @@ import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
 import { isModelWorkTools, type ToolSelection } from "../../execution/source";
+import { HARNESS_MODEL_WORK_IDS } from "../harnesses/ids";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
 import { composePersonaFallbackPrompt } from "./persona-fallback";
@@ -21,16 +22,9 @@ export interface AgentLowererOptions {
   /** The harness has an exact native-agent selector flag. */
   readonly nativeAgentSelector?: boolean;
   /**
-   * The harness builder confines the model-work tool policy (see
-   * `MODEL_WORK_TOOLS`). Mirrored by `enforcesModelWorkTools` in
-   * `harnesses/ids.ts`, which config validation reads.
-   */
-  readonly modelWorkTools?: boolean;
-  /**
    * The inference keys this harness translates; a harness whose translation
    * depends on the request (opencode needs a `provider/model` to attach them
-   * to) gives a function of it. Mirrored by `inference` in `harnesses/ids.ts`,
-   * which config validation reads: its set is the most the function returns.
+   * to) gives a function of it.
    */
   readonly inference?:
     | readonly string[]
@@ -132,7 +126,7 @@ export function createAgentRequestLowerer(
       }
     }
     if (isModelWorkTools(request.tools)) {
-      if (!options.modelWorkTools) {
+      if (!HARNESS_MODEL_WORK_IDS.has(options.adapter)) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
           "INVALID_CONFIG_FILE",

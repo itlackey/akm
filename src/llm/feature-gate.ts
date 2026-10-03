@@ -25,6 +25,7 @@
  */
 
 import type { AkmConfig } from "../core/config/config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 
 /**
  * Internal feature keys used by bounded LLM call sites.
@@ -114,11 +115,6 @@ export interface TryLlmFeatureFallbackEvent {
 }
 
 /**
- * Default hard timeout for every bounded in-tree LLM call.
- */
-const DEFAULT_TIMEOUT_MS = 600_000;
-
-/**
  * Run `fn()` only if `isLlmFeatureEnabled(config, feature)` is `true`. On
  * disablement, throw, or timeout, return `fallback` (or — if it is a
  * thunk — the value produced by calling it). The timeout aborts the signal
@@ -139,7 +135,7 @@ export async function tryLlmFeature<T>(
     return resolveFallback();
   }
 
-  const timeoutMs = opts && Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : DEFAULT_TIMEOUT_MS;
+  const timeoutMs = opts && Object.hasOwn(opts, "timeoutMs") ? (opts.timeoutMs ?? null) : DEFAULT_LLM_TIMEOUT_MS;
   try {
     if (timeoutMs === null || timeoutMs <= 0) {
       return await fn(new AbortController().signal);

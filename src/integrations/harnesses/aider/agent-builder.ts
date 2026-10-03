@@ -57,8 +57,7 @@
  *   session model (plan §"Session, MCP, and identity across harnesses" —
  *   Aider is the plan's named example).
  * - **inference** — not translated: the shared lowering reports each field of
- *   the request's inference as untranslated (`inference` in `harnesses/ids.ts`
- *   lists none for this harness).
+ *   the request's inference as untranslated.
  *
  * Registered: `aiderBuilder` is `AiderHarness.agentBuilder` (`./index.ts`),
  * one of the ten harnesses `HARNESS_REGISTRY` constructs

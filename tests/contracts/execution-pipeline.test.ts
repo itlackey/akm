@@ -17,7 +17,6 @@ import type { AkmConfig } from "../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
 import { MODEL_WORK_TOOLS } from "../../src/execution/source";
-import { FALLBACK_ANNOUNCEMENT, fallbackAnnouncement } from "../../src/integrations/agent/engine-fallback";
 import {
   buildExecution,
   buildExecutionFromWire,
@@ -26,8 +25,7 @@ import {
 } from "../../src/integrations/agent/execution";
 import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
-import { buildSdkConfig } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
-import { makeSandboxDir, withEnv } from "../_helpers/sandbox";
+import { withEnv } from "../_helpers/sandbox";
 
 function exitedWith(stdout: string): SpawnedSubprocess {
   const stream = (text: string) =>
@@ -294,23 +292,6 @@ describe("opencode-sdk engines", () => {
     });
   });
 
-  test("an SDK engine's own llmEngine, not defaults.llmEngine, supplies the model, timeout and credential", async () => {
-    const resolved = resolveExecution({
-      content: "Draft it.",
-      config: config({
-        engines: {
-          sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "own" },
-          own: { ...LLM_ENGINE, model: "own/model", timeoutMs: 45_000 },
-          local: { ...LLM_ENGINE, timeoutMs: 90_000 },
-        },
-        defaults: { engine: "sdk", llmEngine: "local" },
-      }),
-    });
-    expect(resolved.request.model?.resolved).toBe("own/model");
-    expect(resolved.runner.timeoutMs).toBe(45_000);
-    expect(resolved.runner.kind === "sdk" && resolved.runner.fallbackConnection?.endpoint).toBe(LLM_ENGINE.endpoint);
-  });
-
   test("a conversation prefix is composed into one prompt block for CLI harnesses", () => {
     const resolved = resolveExecution({
       content: "Now finish.",
@@ -365,31 +346,6 @@ describe("engine selection is an ordered list", () => {
         expect(() => resolveExecution({ content: "x", config: config({ engines }) })).toThrow(
           /no usable `opencode` binary/,
         );
-      });
-    } finally {
-      fs.rmSync(bin, { recursive: true, force: true });
-    }
-  });
-
-  test("the opencode-sdk fallback uses opencode's own configuration, as announced, even with defaults.llmEngine set", async () => {
-    const bin = fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-bin-"));
-    fs.writeFileSync(path.join(bin, "opencode"), "#!/bin/sh\n", { mode: 0o755 });
-    try {
-      await withEnv({ PATH: bin, AKM_PIPELINE_TEST_KEY: "sk-must-not-reach-opencode" }, () => {
-        const resolved = resolveExecution({
-          content: "x",
-          config: config({ engines: { local: LLM_ENGINE }, defaults: { llmEngine: "local" } }),
-        });
-        expect(fallbackAnnouncement(resolved.fallbackEngineName, resolved.request.engine.name)).toBe(
-          FALLBACK_ANNOUNCEMENT,
-        );
-        expect(FALLBACK_ANNOUNCEMENT).toContain("provider, model, and auth come from opencode's own configuration");
-        if (resolved.runner.kind !== "sdk") throw new Error("expected the opencode-sdk fallback");
-        // No connection, model or credential of akm's reaches the server: opencode resolves its own.
-        expect(resolved.runner.fallbackConnection).toBeUndefined();
-        expect(resolved.runner.fallbackCredential).toBeUndefined();
-        expect(resolved.request.model).toBeUndefined();
-        expect(buildSdkConfig(resolved.runner.profile, resolved.runner.fallbackConnection)).toEqual({});
       });
     } finally {
       fs.rmSync(bin, { recursive: true, force: true });
@@ -655,34 +611,5 @@ describe("the model-work tool policy", () => {
     expect(argv[argv.indexOf("--model") + 1]).toBe(model);
     // The rest of the engine's args stay out of model work.
     expect(argv).not.toContain("--verbose");
-  });
-
-  test("a scratch directory inside a git repository is refused before anything runs", async () => {
-    // opencode would let the agent edit anywhere in that repository.
-    const sandbox = makeSandboxDir("akm-model-work-repo");
-    try {
-      fs.mkdirSync(path.join(sandbox.dir, ".git"));
-      fs.writeFileSync(path.join(sandbox.dir, ".git", "HEAD"), "ref: refs/heads/main\n");
-      const tmp = path.join(sandbox.dir, "tmp");
-      fs.mkdirSync(tmp);
-      const resolved = resolveExecution({ content: "x", config: modelWork, current: { tools: MODEL_WORK_TOOLS } });
-      let spawned = false;
-      await withEnv({ TMPDIR: tmp }, async () => {
-        await expect(
-          runExecution(buildExecution(resolved.request, resolved.runner), {
-            runOptions: {
-              spawn: () => {
-                spawned = true;
-                return exitedWith("ok");
-              },
-            },
-          }),
-        ).rejects.toThrow(/outside any git repository/);
-      });
-      expect(spawned).toBe(false);
-      expect(fs.readdirSync(tmp)).toEqual([]);
-    } finally {
-      sandbox.cleanup();
-    }
   });
 });

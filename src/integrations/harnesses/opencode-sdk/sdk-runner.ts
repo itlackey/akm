@@ -104,12 +104,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
 import { opencodeInferenceConfig, opencodeModelConfig } from "../opencode/model-config";
-import {
-  MODEL_WORK_OPENCODE_AGENT,
-  MODEL_WORK_STEP_GRACE,
-  MODEL_WORK_STEPS,
-  modelWorkOpencodeConfig,
-} from "../opencode/model-work-agent";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "../opencode/model-work-agent";
 
 /** Per-call working-directory scope (see module doc — SDK `query.directory`). */
 interface SdkDirectoryQuery {
@@ -148,11 +143,6 @@ interface SdkClient {
     delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
     // Optional so a fake that omits them cannot crash a dispatch; the real client has both.
     abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
-    // A session's messages, polled to count a model-work session's steps.
-    messages?(args: {
-      path: { id: string };
-      query?: SdkDirectoryQuery;
-    }): Promise<{ data?: { parts?: { type: string }[] }[] }>;
   };
 }
 
@@ -895,52 +885,6 @@ function abortSessionBestEffort(client: SdkClient, sessionId: string, query: Sdk
   void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
 }
 
-/** How often a model-work session's messages are polled for its step count. */
-const MODEL_WORK_STEP_POLL_MS = 1_000;
-
-/**
- * Count a model-work session's steps, its `step-start` parts, once a second
- * and abort the session once they pass `MODEL_WORK_STEPS` +
- * `MODEL_WORK_STEP_GRACE`: opencode 1.18.25 only asks the model to stop at the
- * agent's `steps`. Polled rather than read from the server's event stream,
- * because the SDK's stream cannot be closed mid-read without an unhandled
- * AbortError (its abort handler drops the promise `reader.cancel()` returns),
- * which the CLI turns into a crash. Best effort: the dispatch timeout still
- * bounds the session.
- */
-function watchModelWorkSteps(
-  client: SdkClient,
-  sessionId: string,
-  query: SdkDirectoryQuery | undefined,
-  timers: { setTimeoutFn: typeof setTimeout; clearTimeoutFn: typeof clearTimeout },
-): { steps(): number; stop(): void } {
-  let steps = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let stopped = false;
-  const poll = async (): Promise<void> => {
-    const listed = await client.session.messages?.({ path: { id: sessionId }, ...(query ? { query } : {}) });
-    if (stopped) return;
-    steps = (listed?.data ?? [])
-      .flatMap((message) => message.parts ?? [])
-      .filter((p) => p.type === "step-start").length;
-    if (steps > MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE) abortSessionBestEffort(client, sessionId, query);
-    else schedule();
-  };
-  const schedule = (): void => {
-    if (stopped || !client.session.messages) return;
-    timer = timers.setTimeoutFn(() => void poll().catch(() => schedule()), MODEL_WORK_STEP_POLL_MS);
-    if (typeof timer !== "number") timer.unref?.();
-  };
-  schedule();
-  return {
-    steps: () => steps,
-    stop: () => {
-      stopped = true;
-      if (timer !== undefined) timers.clearTimeoutFn(timer);
-    },
-  };
-}
-
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
   return {
     ok: false,
@@ -1125,9 +1069,6 @@ export async function runOpencodeSdk(
   if (tools) body.tools = tools;
 
   let result: AgentRunResult;
-  const steps = modelWork
-    ? watchModelWorkSteps(client, sessionId, query, { setTimeoutFn: setTimeoutImpl, clearTimeoutFn: clearTimeoutImpl })
-    : undefined;
 
   try {
     const prompted = await raceSdkOperation(
@@ -1143,8 +1084,8 @@ export async function runOpencodeSdk(
       },
     );
 
-    // A model-work session the dispatch stops early is aborted on the server too.
-    if (modelWork && (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT)) {
+    // A session the dispatch stops early is aborted on the server too.
+    if (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT) {
       abortSessionBestEffort(client, sessionId, query);
     }
     if (prompted === SDK_OPERATION_ABORTED) {
@@ -1178,22 +1119,8 @@ export async function runOpencodeSdk(
       // default sdk runner.
       const usage = extractUsage(prompted.data?.info);
       const sdkError = prompted.error ?? prompted.data?.info?.error;
-      const overSteps = steps !== undefined && steps.steps() > MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE;
 
-      if (overSteps) {
-        const message = `opencode-sdk agent "${profile.name}" ran past the ${MODEL_WORK_STEPS}-step limit for model work; akm aborted the session.`;
-        result = {
-          ok: false,
-          stdout,
-          stderr: message,
-          durationMs: Date.now() - start,
-          exitCode: 1,
-          reason: "parse_error" as AgentFailureReason,
-          error: message,
-          sessionId,
-          ...(usage ? { usage } : {}),
-        };
-      } else if (sdkError) {
+      if (sdkError) {
         const failure = sdkErrorFailure(sdkError);
         result = {
           ok: false,
@@ -1229,8 +1156,6 @@ export async function runOpencodeSdk(
       error: errorText(err),
       sessionId,
     };
-  } finally {
-    steps?.stop();
   }
 
   // Clean up session to prevent disk accumulation in ~/.local/share/opencode/.

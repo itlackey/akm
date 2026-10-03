@@ -52,8 +52,7 @@
  *   — Q then refuses untrusted tool actions in non-interactive mode, which is
  *   the conservative failure mode.
  * - **inference** — not translated: the shared lowering reports each field of
- *   the request's inference as untranslated (`inference` in `harnesses/ids.ts`
- *   lists none for this harness).
+ *   the request's inference as untranslated.
  *
  * Registered: `amazonqBuilder` is `AmazonqHarness.agentBuilder`
  * (`./index.ts`), one of the ten harnesses `HARNESS_REGISTRY` constructs

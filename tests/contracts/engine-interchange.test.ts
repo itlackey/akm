@@ -25,11 +25,8 @@
  *   C4  Failures and timeouts are reported the same way on every transport.
  *   C5  Credentials akm owns are checked before dispatch.
  *   C6  Every dispatch leaves one usage record.
- *   C7  Inference reaches the transport, or is reported as untranslated: each
- *       harness translates the fields its row in harnesses/ids.ts lists, and
- *       says so for the rest.
- * C1, C2's delivery and repair rows, C3, C4, C6 and C7 run today. The other
- * scenarios are todos until their transports meet them.
+ *   C7  Inference reaches the transport, or is reported as untranslated.
+ * C5 and C2's empty-reply case have no rows.
  */
 
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
@@ -51,6 +48,7 @@ import {
   closeServer,
 } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
+import { serveLlmStub } from "../_helpers/engine-stubs";
 import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
@@ -116,22 +114,12 @@ const SDK_REPLIES: Record<string, unknown> = {
   },
 };
 
-let llmStub: ReturnType<typeof Bun.serve>;
+/** The request bodies the LLM stub received, and the prompt bodies the fake SDK client did, in order. */
+const { server: llmStub, bodies: llmBodies } = serveLlmStub(LLM_REPLIES);
 let bins: SandboxedDir;
-/** Request bodies the LLM stub and prompt bodies the fake SDK client received, in order. */
-let llmBodies: Record<string, unknown>[] = [];
 let sdkBodies: Record<string, unknown>[] = [];
 
 beforeAll(() => {
-  llmStub = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    async fetch(req) {
-      const scenario = new URL(req.url).pathname.split("/")[1] ?? "";
-      llmBodies.push((await req.json()) as Record<string, unknown>);
-      return LLM_REPLIES[scenario]?.(req) ?? new Response("unknown scenario", { status: 404 });
-    },
-  });
   bins = makeSandboxDir("akm-engine-interchange-bin");
   for (const [scenario, script] of Object.entries(CLI_SCRIPTS)) {
     fs.writeFileSync(path.join(bins.dir, scenario), script, { mode: 0o755 });
@@ -147,7 +135,7 @@ afterEach(async () => {
   __setTestServer(null);
   __setServerFactory(null);
   await closeServer();
-  llmBodies = [];
+  llmBodies.length = 0;
   sdkBodies = [];
 });
 
@@ -297,7 +285,6 @@ describe("C1: a provider or harness error is ok:false, never ok with empty outpu
   });
 });
 
-// Each todo covers every transport above unless it says otherwise.
 describe("C2: structured output", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
   const instruction = `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(schema)}`;
@@ -352,7 +339,6 @@ describe("C2: structured output", () => {
     expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(REPLY) });
     expect(calls(transport, "repair")).toBe(2);
   });
-  test.todo("an empty reply is a parse_error, never success", () => {});
 });
 
 describe("C3: the model-work tool policy is confined or refused at build", () => {
@@ -370,48 +356,17 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     webfetch: "deny",
     task: "deny",
   };
-  /** Its own prompt in place of opencode's coding prompt, a step bound, and no auto-compaction. */
-  const OPENCODE_AGENT = {
-    mode: "primary",
-    prompt:
-      "You do one bounded task for akm. Use tools only to check what the task needs, never repeat a tool call, and reply with exactly what the task asks for.",
-    steps: 8,
-  };
 
-  /** What a confining CLI harness must show: its exact command and injected config. */
-  const CLI_MECHANISMS: Record<string, (bin: string) => { argv: string[]; config: unknown }> = {
-    // Checked against Claude Code 2.1.283: see MODEL_WORK_CLAUDE_FLAGS.
-    claude: (bin) => ({
-      argv: [
-        bin,
-        "--restricted",
-        "--strict-mcp-config",
-        "--tools",
-        "Read,Edit,Bash",
-        "--allowedTools",
-        "Read,Edit,Bash(akm search *),Bash(akm show *)",
-        "--permission-mode",
-        "dontAsk",
-        "--print",
-        "--",
-        PROMPT,
-      ],
-      config: null,
-    }),
-    opencode: (bin) => ({
-      argv: [bin, "run", "--agent", MODEL_WORK_OPENCODE_AGENT, "--", PROMPT],
-      config: expect.objectContaining({
-        permission: expect.objectContaining(OPENCODE_RULES),
-        compaction: { auto: false },
-        agent: {
-          [MODEL_WORK_OPENCODE_AGENT]: expect.objectContaining({
-            ...OPENCODE_AGENT,
-            permission: expect.objectContaining(OPENCODE_RULES),
-          }),
-        },
-      }),
-    }),
-  };
+  /** What the fake `probe` binary saw of one model-work dispatch on the CLI harness `name`. */
+  async function probeModelWork(name: string) {
+    const transport = CLI_HARNESSES.find((harness) => harness.name === name) as Transport;
+    const result = await dispatch(transport, "probe", modelWork);
+    const seen = JSON.parse(result.stdout) as { argv: string[]; cwd: string; config: string | null };
+    // Its own scratch working directory, removed after the dispatch.
+    expect(path.basename(seen.cwd)).toStartWith("akm-model-work-");
+    expect(fs.existsSync(seen.cwd)).toBe(false);
+    return { argv: seen.argv, config: seen.config === null ? null : JSON.parse(seen.config) };
+  }
 
   test("llm: an LLM gets no tools, which meets the policy", async () => {
     const result = await dispatch(LLM, "reply", modelWork);
@@ -420,29 +375,27 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(llmBodies.at(-1)).not.toHaveProperty("tools");
   });
 
-  // The column config validation reads is pinned to what each lowerer does.
-  test.each(
-    CLI_HARNESSES.map((harness): [string, Transport] => [harness.name, harness]),
-  )("%s: the enforcesModelWorkTools column matches the lowerer", async (name, transport) => {
-    const enforces = HARNESS_ID_TABLE.find((entry) => entry.id === name)?.enforcesModelWorkTools;
-    const config = { configVersion: "0.9.0", engines: { contract: transport.engine("probe") } } as unknown as AkmConfig;
-    const resolved = resolveExecution({ content: PROMPT, config, current: { engine: "contract", ...modelWork } });
-    if (!enforces) {
-      expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
-        /cannot enforce the model-work tool policy/,
-      );
-      return;
-    }
-    const result = await runExecution(buildExecution(resolved.request, resolved.runner));
-    const seen = JSON.parse(result.stdout) as { argv: string[]; cwd: string; config: string | null };
-    const want = CLI_MECHANISMS[name]?.(path.join(bins.dir, "probe"));
+  // Checked against Claude Code 2.1.283: see MODEL_WORK_CLAUDE_FLAGS.
+  test("claude: the model is offered Read, Edit, and akm search and show, and denied the rest", async () => {
+    const { argv } = await probeModelWork("claude");
+    const value = (flag: string) => argv[argv.indexOf(flag) + 1];
 
-    expect(want).toBeDefined();
-    expect([path.join(bins.dir, "probe"), ...seen.argv]).toEqual(want?.argv as string[]);
-    expect(seen.config === null ? null : JSON.parse(seen.config)).toEqual(want?.config);
-    // Its own scratch working directory, removed after the dispatch.
-    expect(path.basename(seen.cwd)).toStartWith("akm-model-work-");
-    expect(fs.existsSync(seen.cwd)).toBe(false);
+    expect(value("--tools")).toBe("Read,Edit,Bash");
+    expect(value("--allowedTools")).toBe("Read,Edit,Bash(akm search *),Bash(akm show *)");
+    expect(value("--permission-mode")).toBe("dontAsk");
+    expect(argv).toContain("--restricted");
+    expect(argv).toContain("--strict-mcp-config");
+  });
+
+  test("opencode: the confined agent is the one selected, and allows read and edit only", async () => {
+    const { argv, config } = await probeModelWork("opencode");
+
+    expect(argv.slice(argv.indexOf("--agent"), argv.indexOf("--agent") + 2)).toEqual([
+      "--agent",
+      MODEL_WORK_OPENCODE_AGENT,
+    ]);
+    expect(config.permission).toMatchObject(OPENCODE_RULES);
+    expect(config.agent[MODEL_WORK_OPENCODE_AGENT].permission).toMatchObject(OPENCODE_RULES);
   });
 
   // Model work, a stage call for one, runs only where the policy is confined.
@@ -500,8 +453,7 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(result.ok).toBe(true);
     expect(started?.config).toMatchObject({
       permission: OPENCODE_RULES,
-      compaction: { auto: false },
-      agent: { [MODEL_WORK_OPENCODE_AGENT]: { ...OPENCODE_AGENT, permission: OPENCODE_RULES } },
+      agent: { [MODEL_WORK_OPENCODE_AGENT]: { permission: OPENCODE_RULES } },
     });
     expect(sdkBodies.at(-1)).toMatchObject({ agent: MODEL_WORK_OPENCODE_AGENT });
     expect(sdkBodies.at(-1)).not.toHaveProperty("tools");
@@ -578,10 +530,6 @@ describe("C4: failures and timeouts", () => {
   });
 });
 
-describe("C5: credentials", () => {
-  test.todo("a missing akm-owned credential (llm, opencode-sdk fallback) is a ConfigError before dispatch", () => {});
-});
-
 describe("C7: inference reaches the transport, or is reported as untranslated", () => {
   const PROMPT = "Reply with the single word: pong";
   const INFERENCE = {
@@ -591,7 +539,6 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     enableThinking: false,
     reasoningEffort: "high",
   };
-  const KEYS = Object.keys(INFERENCE).sort();
   /** A model that opencode can attach inference to: provider/model. */
   const MODEL = "krang/stub-model";
 
@@ -634,18 +581,6 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
       chat_template_kwargs: { enable_thinking: false },
       enable_thinking: false,
     });
-  });
-
-  test("claude: reasoningEffort is --effort; the other four are untranslated", async () => {
-    const claude = CLI_HARNESSES.find((harness) => harness.name === "claude") as Transport;
-    const { result, untranslated } = await dispatchBuilt(claude, "probe", {
-      model: "claude-opus-4-7",
-      inference: INFERENCE,
-    });
-    const { argv } = probed(result);
-
-    expect(argv.slice(argv.indexOf("--effort"), argv.indexOf("--effort") + 2)).toEqual(["--effort", "high"]);
-    expect(untranslated).toEqual(["contextLength", "enableThinking", "maxTokens", "temperature"]);
   });
 
   test("opencode: the model it names carries every field, as injected config", async () => {
@@ -758,33 +693,10 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     });
   });
 
-  // The column config validation reads is pinned to what each lowerer reports.
-  test.each(
-    HARNESS_ID_TABLE.map((entry): [string, readonly string[]] => [entry.id, entry.inference]),
-  )("%s: the inference column matches the lowerer", async (name, column) => {
-    const transport =
-      name === OPENCODE_SDK.name
-        ? OPENCODE_SDK_UNARRANGED
-        : (CLI_HARNESSES.find((harness) => harness.name === name) as Transport);
-    const config = { configVersion: "0.9.0", engines: { contract: transport.engine("probe") } } as unknown as AkmConfig;
-    const resolved = resolveExecution({
-      content: PROMPT,
-      config,
-      current: { engine: "contract", model: MODEL, inference: INFERENCE },
-    });
-    const built = buildExecution(resolved.request, resolved.runner);
-    const untranslated = untranslatedKeys(built.notices);
-    const translated = KEYS.filter((key) => !untranslated.includes(key));
-
-    expect(translated).toEqual([...column].sort());
-  });
-
   test("a harness that translates nothing sends nothing: its command is the one without inference", async () => {
     const without = async (transport: Transport) =>
       probed((await dispatchBuilt(transport, "probe", { model: MODEL })).result).argv;
-    for (const harness of CLI_HARNESSES.filter(
-      (candidate) => HARNESS_ID_TABLE.find((entry) => entry.id === candidate.name)?.inference.length === 0,
-    )) {
+    for (const harness of CLI_HARNESSES.filter((candidate) => candidate.name !== "opencode")) {
       const { result } = await dispatchBuilt(harness, "probe", { model: MODEL, inference: INFERENCE });
 
       expect(probed(result).argv).toEqual(await without(harness));
@@ -795,13 +707,6 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
   // (an engine, opencode, the LLM request) are one setting.
   test("an alias's `effort` is reasoningEffort on every transport that translates it", async () => {
     const llm = await dispatchBuilt(LLM, "reply", { inference: { effort: "high" } });
-    const claude = await dispatchBuilt(
-      CLI_HARNESSES.find((harness) => harness.name === "claude") as Transport,
-      "probe",
-      {
-        inference: { effort: "high" },
-      },
-    );
     const opencode = await dispatchBuilt(
       CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport,
       "probe",
@@ -812,11 +717,10 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     );
 
     expect(llmBodies.at(-1)).toMatchObject({ reasoning_effort: "high" });
-    expect(probed(claude.result).argv).toContain("--effort");
     expect(JSON.parse(probed(opencode.result).config ?? "null").provider.krang.models["stub-model"].options).toEqual({
       reasoningEffort: "high",
     });
-    expect([llm.untranslated, claude.untranslated, opencode.untranslated]).toEqual([[], [], []]);
+    expect([llm.untranslated, opencode.untranslated]).toEqual([[], []]);
   });
 });
 

@@ -30,7 +30,7 @@ import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../
 import { info, warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { MODEL_WORK_TOOLS } from "../../execution/source";
-import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../../integrations/agent/config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import {
@@ -275,7 +275,7 @@ async function dispatchJudgment(
       content: prompt,
       runner,
       current: {
-        ...(Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_MODEL_WORK_TIMEOUT_MS }),
+        ...(Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_LLM_TIMEOUT_MS }),
         tools: MODEL_WORK_TOOLS,
       },
     });

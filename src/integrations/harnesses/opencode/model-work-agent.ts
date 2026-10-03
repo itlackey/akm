@@ -28,8 +28,7 @@
  *     tells the model to search extensively; opencode appends a request's
  *     system text after it and never substitutes it;
  *   - `steps` bounds the agentic loop. opencode only asks the model to stop
- *     at the limit, so the SDK runner also aborts the session a little past
- *     it (`MODEL_WORK_STEP_GRACE`); on the CLI the dispatch timeout bounds it;
+ *     at the limit, so the dispatch timeout bounds one that does not;
  *   - automatic compaction is off, so a long run cannot summarize the task
  *     away.
  */
@@ -38,9 +37,6 @@ export const MODEL_WORK_OPENCODE_AGENT = "akm-model-work";
 
 /** The agentic iterations a model-work run may take: a judge answers in one, a generator in a few. */
 export const MODEL_WORK_STEPS = 8;
-
-/** Steps past {@link MODEL_WORK_STEPS} after which the SDK runner aborts the session. */
-export const MODEL_WORK_STEP_GRACE = 2;
 
 const MODEL_WORK_PROMPT =
   "You do one bounded task for akm. Use tools only to check what the task needs, never repeat a tool call, and reply with exactly what the task asks for.";

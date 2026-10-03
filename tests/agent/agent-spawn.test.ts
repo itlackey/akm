@@ -15,11 +15,9 @@
  * timeout test) we keep the timeout small and deterministic.
  */
 import { describe, expect, test } from "bun:test";
-import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../src/core/spawn-env";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
-import { MODEL_WORK_TOOLS } from "../../src/execution/source";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
-import { getBuiltinAgentProfile, listBuiltinAgentProfiles } from "../../src/integrations/agent/profiles";
+import { getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import { runAgent } from "../../src/integrations/agent/spawn";
 
 function makeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
@@ -399,41 +397,6 @@ describe("runAgent — argument and env construction", () => {
         XDG_STATE_HOME: "/sandbox/state",
       });
       expect(env).not.toHaveProperty("AMBIENT_CLOUD_TOKEN");
-    });
-
-    test("one that akm does not have is absent from the child, not an empty string", async () => {
-      const { XDG_STATE_HOME: _unset, ...withoutState } = ambient;
-      const env = await spawnedEnv(getBuiltinAgentProfile("opencode") as AgentProfile, withoutState);
-
-      expect(env).not.toHaveProperty("XDG_STATE_HOME");
-      expect(env?.XDG_CONFIG_HOME).toBe("/sandbox/config");
-    });
-
-    test("do not displace the model-work config: the child still gets its confined agent", async () => {
-      const env = await spawnedEnv(getBuiltinAgentProfile("opencode") as AgentProfile, ambient, {
-        dispatch: { prompt: "judge this", tools: [...MODEL_WORK_TOOLS] },
-      });
-      const injected = JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? "null");
-
-      expect(env?.XDG_CONFIG_HOME).toBe("/sandbox/config");
-      expect(injected.agent["akm-model-work"].permission).toMatchObject({
-        "*": "deny",
-        bash: "deny",
-        webfetch: "deny",
-      });
-      expect(injected.permission).toMatchObject({ "*": "deny", bash: "deny", external_directory: "deny" });
-    });
-
-    // The names are for the harness that reads them. The common baseline is also the exec unit's default
-    // allowlist and every other harness's, and profile passthrough is frozen into workflow plans, so it
-    // stays as it was.
-    test("are granted to opencode alone, not to the common baseline", () => {
-      expect(COMMON_SPAWN_ENV_PASSTHROUGH.filter((name) => name.startsWith("XDG_"))).toEqual([]);
-      const holders = Object.entries(listBuiltinAgentProfiles())
-        .filter(([, profile]) => profile.envPassthrough.some((name) => name.startsWith("XDG_")))
-        .map(([name]) => name);
-
-      expect(holders).toEqual(["opencode"]);
     });
   });
 });

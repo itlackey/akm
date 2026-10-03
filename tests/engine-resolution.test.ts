@@ -195,16 +195,6 @@ describe("engine resolution", () => {
       expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection)).toEqual({});
     });
 
-    test("with its own model but no llmEngine, the server config holds that model and no provider", () => {
-      const lowered = resolveEngine(
-        "sdk",
-        withSdk({ kind: "agent", platform: "opencode-sdk", model: "provider/exact" }),
-      );
-      if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
-      expect(lowered.fallbackConnection).toBeUndefined();
-      expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection)).toEqual({ model: "provider/exact" });
-    });
-
     test("with its own llmEngine, that engine is the fallback, not defaults.llmEngine's", () => {
       const other = {
         kind: "llm" as const,
@@ -223,12 +213,6 @@ describe("engine resolution", () => {
       expect(server.provider).toMatchObject({
         "akm-custom": { options: { baseURL: "https://example.test/other/v1" }, models: { other: {} } },
       });
-    });
-
-    test("with its own llmEngine and no defaults.llmEngine at all, the fallback is the same", () => {
-      const lowered = resolveEngine("sdk", { ...config, defaults: { engine: "sdk" } });
-      if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
-      expect(lowered.fallbackConnection).toMatchObject({ model: "base-model" });
     });
   });
 

@@ -6,343 +6,98 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A failed reflect reply reads the same on every engine kind:** the parser's
+  own message. 0.9.25-alpha.1 named the engine on an agent engine.
+- **An agent engine on any platform may set the inference fields.** One its
+  platform does not translate is an `untranslated-field` notice at dispatch,
+  not a config error, and `claude` takes no `--effort`.
+- **An `opencode-sdk` session the dispatch times out on or aborts is aborted on
+  the server for every dispatch,** not only model work.
+
 ### Removed
 
-- **A prompt builder that nothing called.** `buildSchemaRepairPrompt` and its
-  `SchemaRepairPromptInput` type were left behind when the schema-repair pass
-  moved to a direct LLM call, which builds its own request. They are gone, with
-  the tests that covered only them. Nothing you run changes.
+- **The `opencode-sdk` step watcher and the git-repository refusal for model
+  work's scratch directory.** A model that ignores opencode's step limit runs
+  until the dispatch timeout, as it does on `opencode`.
+- **A prompt builder that nothing called** (`buildSchemaRepairPrompt`).
 
 ### Fixed
 
 - **An agent engine that names its model only in `args` is named in the usage
-  report.** An `opencode` engine with `args: ["run", "--model",
-  "krang/chat/qwen3.8-27b"]` and no `model` field ran that model, but its usage
-  records carried none, so the improve usage report showed `unattributed`. The
-  record now takes the model from `args` when the request names none, as the
-  command does. A model the request names still wins. An `opencode-sdk`
-  engine's `args` never reach its server, so one that names no model still
-  shows `unattributed`: opencode picks the model.
-- **`akm-eval` counts an agent or SDK engine's invalid reflect reply as
-  schema-shape (tooling only).** Since 0.9.25-alpha.1 such a failure reads
-  `Engine "<name>" reply was not a valid reflect proposal after 2 attempts: …`.
-  The `reflect-quality` classifier knew only the older messages, so it counted
-  these under `other` and the schema-shape rate left them out.
+  report,** where it showed `unattributed`.
 - **`opencode` and `opencode-sdk` engines receive the XDG base-directory
-  variables.** akm starts an agent CLI, and the `opencode serve` server for
-  `opencode-sdk`, with an allowlisted environment, and `XDG_CONFIG_HOME`,
-  `XDG_DATA_HOME`, `XDG_CACHE_HOME` and `XDG_STATE_HOME` were not on it. In a
-  sandbox that sets `XDG_CONFIG_HOME` to its own directory, the opencode that akm
-  started read `$HOME/.config/opencode` instead, missed the provider config
-  under `XDG_CONFIG_HOME`, and failed every dispatch with `Unexpected server
-  error`. Both engines now get the four variables that akm's own environment
-  has. Every other harness and every workflow `exec` unit gets the same
-  environment as before.
-  - **Model work stays confined.** The variables only move where opencode reads
-    its own config from. With a permissive user config under `XDG_CONFIG_HOME`
-    (opencode 1.18.25), the confined `akm-model-work` agent still advertises
-    only `read`, `edit` and `write`, and the model's `bash` and outside-the-
-    directory `write` do not run, on the CLI and on the SDK.
-  - **Workflow plans.** A unit's runner profile, with its `envPassthrough`, is
-    frozen into the plan, so a plan frozen from now on lists the four names on an
-    `opencode` unit, and its `plan_hash` differs from the one the same workflow
-    froze to before. Nothing treats that hash as a gate. A plan frozen earlier
-    decodes and resumes as before, with the list it was frozen with: an
-    `opencode` unit of a run frozen before this release still gets none of the
-    four until the workflow is started again. An `opencode-sdk` unit gets them
-    either way, because the server's allowlist is not part of the plan.
+  variables.** Under a custom `XDG_CONFIG_HOME` the spawned opencode missed its
+  provider config and failed every dispatch with `Unexpected server error`.
 
 ## [0.9.25-alpha.1] - 2026-10-02
 
 ### Changed
 
-- **One schema instruction, appended by the shared agent request lowering.**
-  Seven harness builders and the workflow engine each kept a copy of
-  "Respond with ONLY a JSON value matching this JSON Schema (no prose, no code
-  fences)". The lowering now appends it to every agent engine's prompt when a
-  schema is requested, so `codex` gets it beside `--output-schema` outside
-  workflows too. A workflow unit sends the same prompt bytes as before, less
-  the duplicate fixed below; a direct-LLM unit still carries the instruction
-  in its own prompt.
-- **Model work is bounded at 600 seconds on every engine kind.** An improve
-  process, a quality or triage judge, or an index pass whose engine sets no
-  `timeoutMs` now stops after 600 seconds. Before, an agent or `opencode-sdk`
-  engine ran until it finished, and so did memory inference and consolidation
-  on an LLM engine. An engine's own `timeoutMs` still applies.
+- **Unattended model work runs under one tool policy, on any engine that
+  confines it.** The model may read, edit inside a scratch directory akm removes
+  after the dispatch, and run `akm search` and `akm show`; the stash stays
+  read-only. An LLM engine has no tools, `claude` confines the policy, and
+  `opencode` and `opencode-sdk` run an injected `akm-model-work` agent with
+  read and edit only. Every other harness refuses it before the request starts.
+- **One config rule names the engines model work may use.** Every key it reads
+  its engine from (`defaults.llmEngine`, `index.*.engine`, a strategy's or
+  process's `engine`, an enabled triage `judgment.engine`, a
+  `qualityGate.engine`) must name an LLM engine or a `claude`, `opencode` or
+  `opencode-sdk` agent engine, or the config fails to load. `--require-engines`
+  and `akm health` check agent engines too.
+- **Model work is bounded at 600 seconds on every engine kind** whose engine
+  sets no `timeoutMs`; agent and `opencode-sdk` engines ran until they finished.
+- **`akm proposal new` returns the proposal as JSON on every engine kind,**
+  with no draft file and no live session. A reply that is not a proposal gets
+  one retry.
+- **Reflect asks every engine kind for the same JSON reply and repairs it
+  once.** An agent or `opencode-sdk` engine gets reflect's JSON Schema and a
+  repair turn, as an LLM engine did. An LLM engine's requests are unchanged.
 - **An improve stage's reply that fails its JSON Schema gets one corrective
-  retry.** The stage retries once with the validation errors, then reads the
-  last reply with its own parser as before. `akm extract` now allows its
-  corrective retry on every engine, not only on one without JSON Schema
-  support. Reflect keeps its own repair turn.
-- **Agent and `opencode-sdk` dispatches leave a usage record.** Each one now
-  writes one `llm_usage` record through the same sink and stage attribution as
-  the LLM path, with the request's model and the tokens the runner reports. An
-  LLM engine still records each HTTP attempt.
-- **`akm proposal new` gets the proposal as JSON from every engine kind, with
-  no live session.** It told every engine to write the asset to a draft file
-  and print no JSON, then parsed stdout as JSON. An LLM engine that followed
-  the instruction could not succeed, and an agent engine succeeded only by
-  writing the file: an agent CLI ran in a live terminal session whose output
-  akm could not read, and otherwise failed with an "interactive mode" error.
-  Every engine now returns the proposal as one JSON object on stdout, and the
-  request carries its JSON Schema: as `response_format` for an LLM engine, as
-  the schema instruction for an agent engine. akm captures the reply, unwraps
-  a harness envelope such as claude's `--output-format json` result, and
-  validates it. A reply that is not a proposal gets one corrective retry, then
-  fails with an error that names the engine. An agent CLI now runs headless:
-  you see the queued proposal, not the agent at work, and no draft file is
-  written.
-- **Unattended model work has one tool policy, which each engine confines or
-  refuses when the request is built.** The policy allows reading, editing only
-  inside a scratch working directory that akm creates for the dispatch and
-  removes after it, and running `akm search` and `akm show`. The stash stays
-  read-only. An LLM engine has no tools. `claude` runs it with `--restricted`
-  (its user, project and local settings, whose allow rules could pre-approve
-  any command or path, are ignored, and its file tools stay in the working
-  directory), `--strict-mcp-config`, `--tools Read,Edit,Bash`, `--allowedTools`
-  for Read, Edit and the two `akm` commands, and `--permission-mode dontAsk`.
-  `opencode` and `opencode-sdk` run an injected `akm-model-work` agent that
-  can read and edit only inside the working directory and has no bash:
-  opencode checks a bash rule against the command's words only, so
-  `akm show x > ~/stash/asset.md` would pass an `akm show *` rule. The agent
-  has its own short prompt in place of opencode's coding-assistant prompt, an
-  8-step limit, and no automatic compaction. opencode only asks the model to
-  stop at that limit, so `opencode-sdk` aborts the session two steps past it,
-  and aborts a session the dispatch times out on; on `opencode` the dispatch
-  timeout is the bound. Every other harness refuses the policy. Such a
-  dispatch ignores the engine's `args` and `workspace`, refuses to start when
-  the temporary directory is inside a git repository, which opencode would
-  treat as its working directory, and fails with `parse_error` when the agent
-  ends with no answer, as opencode can at its step limit.
-- **Unattended model work runs on any engine that confines the model-work
-  tool policy, and config checks that with one rule.**
-  - **Who sends the policy.** The improve processes, the quality, triage and
-    retrieval-gate judges, index passes and `akm remember --enrich` now send
-    it, so they may run on an LLM engine or on a `claude`, `opencode` or
-    `opencode-sdk` agent engine, where they could only use an LLM engine
-    before.
-  - **The one rule.** Every key model work reads its engine from must name
-    such an engine. The keys are `defaults.llmEngine`, `index.defaults.engine`,
-    `index.<pass>.engine`, a strategy's `engine`, a process's `engine`, an
-    enabled triage `judgment.engine`, and a `qualityGate.engine`. A config
-    that breaks the rule fails to load, naming the key, the engine and its
-    platform. The rule replaces six checks that each required an LLM engine
-    for some of those keys, or let the triage judgment use any agent.
-  - **What else is gone.** The plan, reflect, the quality gate and index
-    passes no longer turn an agent engine away. A triage judgment on an agent
-    engine takes a strategy's `llm` overrides as `untranslated-field`
-    notices, where it was refused before.
-  - **Reflect on an agent engine.** The agent returns its proposal as JSON on
-    stdout instead of writing a draft file, which the policy's scratch working
-    directory would not keep.
-  - **The answer is unwrapped.** A model-work reply from an agent engine goes
-    through its harness's result extractor, so a stage call on `claude` gets
-    the answer, not the `--output-format json` envelope around it.
-  - **`--require-engines` checks agent engines too.** It checks an agent
-    engine by its binary on PATH, and an `opencode-sdk` engine by its binary
-    and its LLM fallback's endpoint. It probed only LLM connections before.
-    The usage report and `akm health` count a process's calls whatever its
-    engine's kind.
-- **An `opencode-sdk` engine gets its LLM fallback connection only from its own
-  `llmEngine`. `defaults.llmEngine` no longer supplies one.** An SDK engine
-  that set no `llmEngine` used to borrow `defaults.llmEngine`: its connection,
-  its model (unless the engine set its own) and its timeout. `defaults.llmEngine`
-  names the default engine for unattended model work, and since that work may
-  now run on an agent engine it can be one too, so it is no longer also a
-  connection that every SDK engine shares. **If you relied on the inheritance,
-  set `llmEngine` on the SDK engine**, for example
-  `"sdk": { "kind": "agent", "platform": "opencode-sdk", "llmEngine": "fast" }`.
-  Without one, the SDK engine runs on opencode's own provider and auth, and on
-  its own `model` if it sets one: akm sends it no connection. An SDK engine
-  that sets `llmEngine` is unchanged, and so is a config with no `opencode-sdk`
-  engine. The rule holds everywhere the fallback is read: dispatch, a
-  workflow's frozen concurrency cap, `akm health`, and
-  `akm improve --require-engines`, which now check an SDK engine's fallback
-  endpoint only when it sets `llmEngine`.
-- **Inference reaches `opencode`, `opencode-sdk` and `claude` engines.** A
-  request's `temperature`, `maxTokens`, `contextLength`, `enableThinking` and
-  `reasoningEffort` came from the engine's own settings, an improve process's
-  `llm` overlay, a task, command or agent asset's `inference`, a workflow's
-  `llm:` and a `models.json` alias, and every agent engine dropped all of them
-  with an `untranslated-field` notice. Each platform now translates what it can
-  carry, and the nearest layer wins, field by field, as on an LLM engine. With
-  no setting anywhere akm sends nothing of its own, so the model's configured
-  default still applies, such as a `reasoningEffort: "none"` in your opencode
-  config.
-  - **`claude`** gets `reasoningEffort` as `--effort <level>`, passed as given
-    (Claude Code 2.1.283 takes `low`, `medium`, `high`, `xhigh` and `max`).
-    Its other four fields are still reported as untranslated.
-  - **`opencode` and `opencode-sdk`** get inference as opencode config, which
-    merges over your own opencode config for the same provider and model:
-    `temperature` and `reasoningEffort` become `options.temperature` and
-    `options.reasoningEffort` (opencode drops the snake_case spelling),
-    `enableThinking` becomes both wire forms an LLM engine sends, and
-    `maxTokens` with `contextLength` becomes `limit.output` and
-    `limit.context`. Set both limit fields: opencode refuses half a limit, and
-    a half would overwrite the other half of one you declared, so a lone one
-    is reported as untranslated. Without `limit.output` opencode asks for
-    `max_tokens: 32000`, which a small-context server rejects, and a wrong
-    `limit.context` lets it build requests past the server's window. The fields
-    need a `provider/model`: the request's model, or the `--model` an
-    `opencode` engine's `args` name. Model work needs none for its options, so
-    an `opencode-sdk` engine with no `model` and no `llmEngine` gets them too.
-  - **Where it goes.** Model work puts the options on the `akm-model-work`
-    agent that runs it, so opencode's own title call on the same model keeps
-    the model's defaults. Any other dispatch runs your own agent, whose name
-    akm cannot rely on, so its options go on the model and the title call sees
-    them too. `opencode-sdk` makes no title call. An `opencode-sdk` engine
-    declares its `llmEngine` fallback's model with the fallback's own
-    inference, under the engine's and the request's; each distinct set starts
-    its own `opencode serve`, as a different model does.
-- **An agent engine may set the inference fields its platform translates.**
-  `engines.<name>` of `kind: "agent"` took none, so an engine could not carry a
-  `temperature` or a `reasoningEffort` of its own. `opencode` and
-  `opencode-sdk` may set `temperature`, `maxTokens`, `contextLength`,
-  `enableThinking` and `reasoningEffort`, `claude` may set `reasoningEffort`,
-  and every other platform none. A field its platform does not translate fails
-  to load, naming the platform and the fields it does translate. `provider`,
-  `endpoint`, `apiKey`, `apiKeyFile`, `concurrency` and `extraParams` stay
-  invalid on an agent engine.
-- **Reasoning effort has one word in a request, `reasoningEffort`.** The
-  starter `reasoning` alias, an alias in your `models.json` and an asset's
-  `effort:` frontmatter said `effort`, and engines, opencode and the LLM
-  request said `reasoningEffort`. `effort` is now read as `reasoningEffort`
-  where layers are merged, so the nearest layer wins whichever word it used.
-  On an LLM engine an alias's or asset's `effort` is therefore sent as
-  `reasoning_effort`; it was reported as untranslated and dropped before. An
-  LLM engine's own request is unchanged.
-- **Reflect asks every engine kind for the same JSON reply, checks it the same
-  way and repairs it once.** An LLM engine was sent the reply's JSON Schema,
-  and its reply was held to exact fields and repaired once. An agent or
-  `opencode-sdk` engine got a looser contract in its prompt (`ref`, `content`
-  and an optional `frontmatter`) with no schema and no repair, so one invalid
-  reply failed the run. Every engine kind now runs the same iteration:
-  - **The request.** The prompt carries the same output contract, and the
-    reply's JSON Schema is the request's output schema: `response_format` for
-    an LLM engine, as before, and the schema instruction at the end of the
-    prompt for an agent engine. `claude` also gets `--output-format json`,
-    which akm unwraps. An LLM endpoint that rejects JSON Schema still gets the
-    framed-markdown contract.
-  - **The reply.** An agent now returns `content`, `confidence` and a
-    `frontmatterPatch` of `description` and `when_to_use`, and `ref` too when
-    no asset was named, as an LLM does. akm derives a named asset's ref and
-    merges the patch with the source's frontmatter, so an agent can no longer
-    set other frontmatter keys or retarget the proposal.
-  - **The repair.** A reply that fails the contract gets one repair turn that
-    carries the first reply, shared across self-refine passes. A reply that is
-    still invalid fails with `parse_error` and queues nothing. On an agent or
-    `opencode-sdk` engine the error names the engine, as in
-    `Engine "oc" reply was not a valid reflect proposal after 2 attempts: …`.
-    An LLM engine's message is unchanged, because improve feeds it into later
-    prompts as a pattern to avoid. A failed agent dispatch is still reported
-    with its exit code and stderr.
-  - **What reflect sends and reports on an agent engine.** Reflect asks every
-    engine kind for no visible chain of thought (`enableThinking: false`).
-    `opencode` and `opencode-sdk` carry it, as the inference entry above
-    says; `claude` reports it as an `untranslated-field` notice, as it does
-    for every other stage. `reflect_completed` carries `outputMode` and
-    `repairAttempts` for every engine kind.
-  - **Unchanged.** An LLM engine's requests are byte-identical to before:
-    reflect's generation and repair, and its quality judge. So are the
-    refine passes, the content budget (an LLM engine's context length), the
-    protected frontmatter fields, the review routing and the judge selection.
+  retry,** then the stage reads the last reply with its own parser.
+- **One schema instruction for every agent engine,** appended by the shared
+  request lowering: `opencode` and `opencode-sdk` now receive a requested
+  schema, and a workflow unit on seven harnesses no longer carries it twice.
+- **Agent and `opencode-sdk` dispatches leave a usage record.**
+- **An `opencode-sdk` engine's LLM fallback comes only from its own
+  `llmEngine`; `defaults.llmEngine` no longer supplies one.** If you relied on
+  that, set `llmEngine` on the SDK engine. Without one, opencode uses its own
+  provider, model and auth.
+- **Inference reaches `opencode`, `opencode-sdk` and `claude` engines.**
+  `temperature`, `maxTokens`, `contextLength`, `enableThinking` and
+  `reasoningEffort` from an engine, an improve process's `llm` overlay, an
+  asset, a workflow or a `models.json` alias were dropped on every agent
+  engine. An agent engine may set them, and `claude` takes `reasoningEffort` as
+  `--effort`.
+- **Reasoning effort has one word, `reasoningEffort`.** `effort` in a
+  `models.json` alias or an asset is read as it, so an LLM engine now sends it
+  as `reasoning_effort`.
 
 ### Removed
 
-- **Two harness metadata fields that nothing read.** Each of the ten harness
-  descriptors carried an execution `pattern` and a `structuredOutput` tier.
-  No code branched on either: the shared request lowering appends the schema
-  instruction to every agent prompt, and a harness's own argv builder adds its
-  native channel, as codex does with `--output-schema`. The fields, their two
-  types and the tests that pinned their values are gone. Nothing you run
-  changes.
-- **`resolveLlmEngineUse`'s swap of an agent engine for an LLM engine.** Given
-  an agent engine, it used the engine's `llmEngine`, then `defaults.llmEngine`,
-  and warned. Only the implicit SDK fallback above could reach it, so nothing
-  you run changes. An agent engine passed to it is now an error.
-- **An `effort` hint on the agent dispatch request that nothing read.** The
-  lowering set it from `inference.effort`, reserved for a workflow field, and
-  no builder consumed it. `reasoningEffort` in the request's inference is read
-  where it is translated, and the field is gone.
-- **The agent file-write contract.** An agent was once told to write its
-  proposal to a draft file and print `DRAFT_WRITTEN confidence=<n>`. Reflect and
-  `akm proposal new` had already stopped sending that instruction, because the
-  model-work scratch directory does not outlive a dispatch. The instruction, the
-  function that read the `DRAFT_WRITTEN` line and the `draftFilePath` prompt
-  inputs that nothing passed any more are gone, with their tests. So is
-  reflect's `ref_mismatch` check: a reflect that names an asset derives the
-  proposal's ref, so an engine can no longer name another one. Nothing you run
-  changes.
+- **Dead code; nothing you run changes:** each harness's unused `pattern` and
+  `structuredOutput` fields, `resolveLlmEngineUse`'s swap of an agent engine
+  for an LLM engine, the agent request's unread `effort` hint, and the agent
+  file-write contract (`DRAFT_WRITTEN`, reflect's `ref_mismatch` check).
 
 ### Fixed
 
-- **An `opencode-sdk` engine with an LLM fallback now reaches its endpoint,
-  and a failed dispatch is reported as a failure (#1015).** The `akm-custom`
-  provider that akm generates for the fallback listed no models, so opencode
-  could not find the model and failed every dispatch. akm now declares the
-  routed model under the provider's `models`. The runner also ignored the
-  error that the SDK client returns for an HTTP error, and the error opencode
-  puts on a reply when the provider rejects a request, and reported
-  `ok: true` with empty output. Both now give `ok: false`, with opencode's
-  error name and message in `error` and `stderr`. An aborted message is
-  `aborted`, a reply cut off at the output limit is `parse_error`, and any
-  other error is `non_zero_exit`. A reply with several text parts now returns
-  the last one, which is the answer, instead of the first.
-- **An LLM engine reports a provider error sent with HTTP 200 as a failure.**
-  OpenRouter, for one, answers a request whose provider fails after the
-  response has started with HTTP 200 and a body that holds only an `error`
-  object and no `choices`. akm returned that as an empty reply with
-  `ok: true`. It is now a provider error with the body in its message, as an
-  error status is.
-- **An `opencode` engine runs a persona instead of failing.** akm passed the
-  persona to `opencode run` as `--system-prompt`, which opencode 1.18 does
-  not accept, so opencode printed its usage and exited 1 on every dispatch
-  that carried a persona, including `akm agent <agent-ref> --engine opencode`.
-  akm now composes the persona into the prompt in an `<AKM_PERSONA>` block,
-  as it does for harnesses with no system-prompt option.
-- **`opencode` and `opencode-sdk` engines receive a requested output schema.**
-  They dropped it with only an `untranslated-field` warning, so a schema from
-  `akm agent`, `akm command run`, a command's frontmatter or a task's
-  `output:` never reached the model. They now get it as the same instruction
-  every other agent engine gets.
-- **An LLM engine sends a requested schema unless it opts out.** It sent
-  `response_format` only when the engine set `supportsJsonSchema: true`, so an
-  engine that left the flag unset never had its output constrained. It now
-  sends it unless the engine sets `supportsJsonSchema: false`. An endpoint
-  that rejects it with a 4xx is still retried once without it.
-- **A workflow unit on `claude`, `copilot`, `gemini`, `pi`, `aider`,
-  `amazonq` or `openhands` gets the schema instruction once.** The unit prompt
-  carried it and the harness builder appended a second copy.
-- **A feature gate's timeout now stops the call it bounds.** When an improve
-  stage's gate timed out (600 seconds unless the call sets its own), the model
-  call kept running in the background, on an engine with `timeoutMs: 900000`
-  for up to five more minutes. The gate now aborts it.
-- **A stage call reports a timeout or abort by the dispatch's own reason.** A
-  timed-out or aborted agent or `opencode-sdk` dispatch, and an LLM timeout
-  inside a feature gate, came back as `error`. They now come back as `timeout`
-  or `aborted`.
-
-- **`akm proposal new` keeps the reply's confidence.** The engine's
-  self-rated `confidence` was parsed and then dropped, so a proposal from
-  `proposal new` never carried the field the reference says it has.
-- **Model work on an agent or `opencode-sdk` engine that sets no `timeoutMs` now
-  stops after 600 seconds, as documented.** Such an engine resolved to an
-  explicit "no timeout", so the 600-second bound for model work never applied
-  to it. An engine's own `timeoutMs`, `null` included, still applies, and
-  other work on an agent engine still runs until it finishes.
-- **The announcement of the implicit `opencode-sdk` fallback is now true.** It
-  says provider, model and auth come from opencode's own configuration, but the
-  fallback engine borrowed `defaults.llmEngine`'s connection whenever one was
-  set, so opencode got an akm-generated provider and model instead. It now runs
-  on opencode's own configuration, as announced.
-- **`model: reasoning` set no effort on `claude`, `opencode` or `opencode-sdk`.**
-  The starter alias supplies `effort: high` for all three, and each dropped it
-  with an `untranslated-field` notice, so the alias chose a stronger model and
-  nothing more. It now sets `--effort high` on `claude` and
-  `options.reasoningEffort` on opencode (see "Inference reaches `opencode`,
-  `opencode-sdk` and `claude` engines" above). An improve process's
-  `llm.reasoningEffort` and `llm.temperature` overlay now reaches those
-  engines the same way.
+- **An `opencode-sdk` engine with an LLM fallback reaches its endpoint, and a
+  failed dispatch is a failure (#1015).** An SDK error or provider rejection is
+  `ok: false` with opencode's message, and a reply's last text part is its answer.
+- **An LLM engine reports a provider error sent with HTTP 200 as a failure**
+  (OpenRouter does this), not as an empty reply.
+- **An `opencode` engine runs a persona** instead of failing on
+  `--system-prompt`, which opencode 1.18 rejects.
+- **An LLM engine sends a requested schema** unless it sets
+  `supportsJsonSchema: false`; it sent one only when it set `true`.
+- **A feature gate's timeout stops the call it bounds,** and a stage call
+  reports a timeout or abort as `timeout` or `aborted`, not `error`.
+- **`akm proposal new` keeps the reply's `confidence`.**
+- **Model work on an agent or `opencode-sdk` engine with no `timeoutMs` stops
+  after 600 seconds** as documented; it resolved to no timeout.
 
 ## [0.9.24] - 2026-10-02
 

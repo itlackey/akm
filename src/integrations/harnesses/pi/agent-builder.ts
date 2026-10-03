@@ -41,8 +41,7 @@
  *   produce a silently broken command. A restrictive policy is therefore
  *   dropped rather than approximated — never silently widened.
  * - **inference** — not translated: the shared lowering reports each field of
- *   the request's inference as untranslated (`inference` in `harnesses/ids.ts`
- *   lists none for this harness).
+ *   the request's inference as untranslated.
  *
  * Registered: `piBuilder` is `PiHarness.agentBuilder` (`./index.ts`), one of
  * the ten harnesses `HARNESS_REGISTRY` constructs (`harnesses/index.ts`);
