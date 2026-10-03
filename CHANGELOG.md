@@ -31,8 +31,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The agent-engine inference fields,** which 0.9.25-alpha.1 accepted: they
   fail to load again.
 - **The `opencode-sdk` step watcher and the git-repository refusal for model
-  work's scratch directory.** A model that ignores opencode's step limit runs
-  until the dispatch timeout, as it does on `opencode`.
+  work's scratch directory.**
+- **opencode model work's step limit.** At the limit opencode sends a "maximum
+  steps" message as a trailing assistant message, which a qwen chat template
+  (LM Studio, llama-server) renders as the start of the model's reply: LM
+  Studio returned nothing, llama-server returned that message as the answer,
+  and the dispatch failed. The dispatch timeout bounds a run.
 - **A prompt builder that nothing called** (`buildSchemaRepairPrompt`).
 - **The `--track-usage` / `--no-track-usage` flag on `akm search`, `akm curate`
   and `akm show`.** A successful read always records its usage event, stamped
@@ -51,13 +55,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`opencode` and `opencode-sdk` engines receive the XDG base-directory
   variables.** Under a custom `XDG_CONFIG_HOME` the spawned opencode missed its
   provider config and failed every dispatch with `Unexpected server error`.
-- **opencode model work that ends at its step limit with no answer is asked once
-  more instead of failing.** A qwen chat template (LM Studio, llama-server)
-  renders opencode's "maximum steps" message as a prefill, so the model stopped
-  with an empty reply and the dispatch failed with `parse_error`. An `opencode`
-  or `opencode-sdk` dispatch with no answer now gets one extra turn in its own
-  session with no tool on offer, within the dispatch's timeout; no answer to it
-  still fails with `parse_error`.
 
 ## [0.9.25-alpha.1] - 2026-10-02
 

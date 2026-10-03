@@ -12,7 +12,6 @@
 // `session.prompt()` with no timer, so a stalled SDK call blocked the caller.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { MODEL_WORK_FINAL_TURN } from "../src/execution/source";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { RunAgentOptions } from "../src/integrations/agent/spawn";
 import {
@@ -1216,107 +1215,5 @@ describe("runOpencodeSdk — a session the dispatch gives up on is aborted on th
 
     expect(result).toMatchObject({ ok: false, reason: "timeout" });
     expect(aborted).toEqual(["sess-1"]);
-  });
-});
-
-describe("runOpencodeSdk — a model-work reply with no answer gets one more turn", () => {
-  const modelWork: RunAgentOptions = {
-    dispatch: { prompt: "judge this", modelWork: true, systemPrompt: "You are a judge." },
-    timeoutMs: 5_000,
-  };
-  /** What opencode 1.18.25 returned at its step limit: step parts only, no text, one output token. */
-  const NO_ANSWER = { data: { info: { tokens: { input: 120, output: 1 } }, parts: [{ type: "step-start" }] } };
-  const answer = (text: string) => ({
-    data: { info: { tokens: { input: 130, output: 20 } }, parts: [{ type: "text", text }] },
-  });
-
-  /** A fake server whose prompt answers from `replies` in turn, recording each prompt and every abort. */
-  function scripted(replies: unknown[]) {
-    const prompts: { session: string; directory?: string; body: unknown }[] = [];
-    const aborted: string[] = [];
-    __setTestServer({
-      client: {
-        session: {
-          create: async () => ({ data: { id: "sess-1" } }),
-          prompt: async (args) => {
-            prompts.push({ session: args.path.id, directory: args.query?.directory, body: args.body });
-            const next = replies[prompts.length - 1];
-            return (typeof next === "function" ? next() : next) as never;
-          },
-          delete: async () => ({}),
-          abort: async (args) => {
-            aborted.push(args.path.id);
-            return {};
-          },
-        },
-      },
-      server: { close() {} },
-    });
-    return { prompts, aborted };
-  }
-
-  test("the answer comes from one more prompt in the same session and directory, with every tool off", async () => {
-    const fake = scripted([NO_ANSWER, answer('{"verdict":"ok"}')]);
-
-    const result = await runOpencodeSdk(baseProfile, "judge this", { ...modelWork, cwd: "/scratch" });
-
-    expect(result).toMatchObject({ ok: true, stdout: '{"verdict":"ok"}', sessionId: "sess-1" });
-    expect(result.usage).toEqual({ inputTokens: 130, outputTokens: 20 });
-    const system = "You are a judge.";
-    expect(fake.prompts).toEqual([
-      {
-        session: "sess-1",
-        directory: "/scratch",
-        body: { parts: [{ type: "text", text: "judge this" }], agent: "akm-model-work", system },
-      },
-      {
-        session: "sess-1",
-        directory: "/scratch",
-        body: {
-          parts: [{ type: "text", text: MODEL_WORK_FINAL_TURN }],
-          agent: "akm-model-work",
-          system,
-          tools: { "*": false },
-        },
-      },
-    ]);
-  });
-
-  test("a reply with an answer, a failed reply and work that is not model work are not asked again", async () => {
-    const failed = {
-      data: { info: { error: { name: "APIError", data: { message: "provider exploded" } } }, parts: [] },
-    };
-    const httpError = { error: { name: "UnknownError", data: { message: "server error" } } };
-    const ordinary: RunAgentOptions = { dispatch: { prompt: "do it" }, timeoutMs: 5_000 };
-    for (const [reply, opts] of [
-      [answer("the answer"), modelWork],
-      [failed, modelWork],
-      [httpError, modelWork],
-      [NO_ANSWER, ordinary],
-    ] as const) {
-      const fake = scripted([reply]);
-
-      await runOpencodeSdk(baseProfile, "judge this", opts);
-
-      expect(fake.prompts).toHaveLength(1);
-    }
-  });
-
-  test("it asks once: a blank reply is no answer, and a final turn with none either leaves the empty reply", async () => {
-    const fake = scripted([answer(" \n"), answer("  \n")]);
-
-    const result = await runOpencodeSdk(baseProfile, "judge this", modelWork);
-
-    expect(fake.prompts).toHaveLength(2);
-    expect(result).toMatchObject({ ok: true, stdout: "  \n" });
-  });
-
-  test("a final turn the dispatch times out on is aborted on the server and reported as a timeout", async () => {
-    const fake = scripted([NO_ANSWER, () => new Promise<never>(() => {})]);
-
-    const result = await runOpencodeSdk(baseProfile, "judge this", { ...modelWork, timeoutMs: 100 });
-
-    expect(result).toMatchObject({ ok: false, reason: "timeout" });
-    expect(fake.aborted).toEqual(["sess-1"]);
   });
 });
