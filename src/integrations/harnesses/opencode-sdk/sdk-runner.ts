@@ -104,7 +104,7 @@ import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
 import { opencodeInferenceConfig } from "../opencode/model-config";
-import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "../opencode/model-work-agent";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "../opencode/model-work-agent";
 
 /** Per-call working-directory scope (see module doc — SDK `query.directory`). */
 interface SdkDirectoryQuery {
@@ -399,6 +399,7 @@ function buildServerEnv(
   config: Record<string, unknown>,
   bindings: Record<string, string> | undefined,
   envSource: NodeJS.ProcessEnv,
+  modelWork: boolean,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of opencodeSdkServerEnvironmentNames(profile)) {
@@ -406,6 +407,7 @@ function buildServerEnv(
     if (value !== undefined) env[key] = value;
   }
   for (const [key, value] of Object.entries(bindings ?? {})) env[key] = value;
+  if (modelWork) Object.assign(env, modelWorkPluginEnv());
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
   return env;
 }
@@ -704,7 +706,7 @@ function getOrStartServer(
 ): { promise: Promise<SdkServer>; release(): void } {
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
   const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork, inference);
-  const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
+  const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource, modelWork);
   const key = serverRegistryKey(profile, serverEnv);
   let entry = _servers.get(key);
   if (!entry) {

@@ -29,7 +29,7 @@
  * C5 and C2's empty-reply case have no rows.
  */
 
-import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -49,7 +49,7 @@ import {
 } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
-import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
@@ -346,17 +346,40 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
   const modelWork = { modelWork: true };
   const PROMPT = "Reply with the single word: pong";
 
-  /** The rules the injected opencode agent must carry, checked against opencode 1.18.25. */
-  const OPENCODE_RULES = {
-    "*": "deny",
-    read: "allow",
-    edit: "allow",
-    external_directory: "deny",
-    bash: "deny",
-    doom_loop: "deny",
-    webfetch: "deny",
-    task: "deny",
-  };
+  let stash: SandboxedDir;
+  beforeEach(() => {
+    stash = sandboxStashDir();
+  });
+  afterEach(() => stash.cleanup());
+
+  /**
+   * The permission block the injected opencode agent must carry, checked against opencode 1.18.25. Its order is part
+   * of the rule, since opencode lets the last match win, so rows compare it as JSON.
+   */
+  const opencodeRules = () =>
+    JSON.stringify({
+      "*": "deny",
+      read: "allow",
+      grep: "allow",
+      glob: "allow",
+      edit: { "*": "allow", [`${stash.dir.slice(1)}/*`]: "deny" },
+      external_directory: { [`${stash.dir}/*`]: "allow", "~/.local/share/opencode/tool-output/*": "deny" },
+      akm_search: "allow",
+      akm_show: "allow",
+      akm_feedback: "deny",
+      akm_remember: "deny",
+      akm_curate: "deny",
+      bash: "deny",
+      doom_loop: "deny",
+      list: "deny",
+      lsp: "deny",
+      question: "deny",
+      skill: "deny",
+      task: "deny",
+      todowrite: "deny",
+      webfetch: "deny",
+      websearch: "deny",
+    });
 
   /** What the fake `probe` binary saw of one model-work dispatch on the CLI harness `name`. */
   async function probeModelWork(name: string) {
@@ -388,15 +411,15 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     expect(argv).toContain("--strict-mcp-config");
   });
 
-  test("opencode: the confined agent is the one selected, and allows read and edit only", async () => {
+  test("opencode: the confined agent is the one selected, with the stash readable and nothing writable but its working directory", async () => {
     const { argv, config } = await probeModelWork("opencode");
 
     expect(argv.slice(argv.indexOf("--agent"), argv.indexOf("--agent") + 2)).toEqual([
       "--agent",
       MODEL_WORK_OPENCODE_AGENT,
     ]);
-    expect(config.permission).toMatchObject(OPENCODE_RULES);
-    expect(config.agent[MODEL_WORK_OPENCODE_AGENT].permission).toMatchObject(OPENCODE_RULES);
+    expect(JSON.stringify(config.permission)).toBe(opencodeRules());
+    expect(JSON.stringify(config.agent[MODEL_WORK_OPENCODE_AGENT].permission)).toBe(opencodeRules());
   });
 
   // Model work, a stage call for one, runs only where the policy is confined.
@@ -452,10 +475,9 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
     const result = await runExecution(buildExecution(resolved.request, resolved.runner));
 
     expect(result.ok).toBe(true);
-    expect(started?.config).toMatchObject({
-      permission: OPENCODE_RULES,
-      agent: { [MODEL_WORK_OPENCODE_AGENT]: { permission: OPENCODE_RULES } },
-    });
+    const serverConfig = started?.config as { permission: unknown; agent: Record<string, { permission: unknown }> };
+    expect(JSON.stringify(serverConfig.permission)).toBe(opencodeRules());
+    expect(JSON.stringify(serverConfig.agent[MODEL_WORK_OPENCODE_AGENT]?.permission)).toBe(opencodeRules());
     expect(sdkBodies.at(-1)).toMatchObject({ agent: MODEL_WORK_OPENCODE_AGENT });
     expect(sdkBodies.at(-1)).not.toHaveProperty("tools");
     const directory = (queries[0] as { directory: string }).directory;

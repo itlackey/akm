@@ -215,7 +215,7 @@ describe("opencodeBuilder — the model-work final turn", () => {
     ]);
     // The work's permissions, every one now denied, on the agent and at the top level.
     const workPermission = configOf(work).agent["akm-model-work"].permission;
-    expect(workPermission).toMatchObject({ read: "allow", edit: "allow" });
+    expect(workPermission).toMatchObject({ read: "allow", akm_search: "allow" });
     for (const permission of [configOf(final).agent["akm-model-work"].permission, configOf(final).permission]) {
       expect(Object.keys(permission)).toEqual(Object.keys(workPermission));
       expect(Object.values(permission).every((action) => action === "deny")).toBe(true);

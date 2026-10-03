@@ -9,13 +9,15 @@
  * it to its server config and names it in the prompt body.
  *
  * What opencode 1.18.25 confines, checked against a local stub:
- *   - read and edit stay inside the session directory (`external_directory`
- *     is denied). Write is part of opencode's edit permission, so it is
- *     confined the same way and cannot be denied on its own.
- *   - bash is denied, so `akm search` and `akm show` are not granted: opencode
- *     matches a bash rule against the command's words only, so
- *     `akm show x > ~/stash/asset.md` would pass an `akm show *` rule and
- *     write anywhere.
+ *   - read, grep and glob work in the session directory and akm's primary
+ *     stash, and nowhere else. edit works in the session directory only: the
+ *     stash is denied, by its path without the leading slash, because opencode
+ *     matches edit patterns root-relative (to the git root, when the session
+ *     directory is in a repository). Write is part of the edit permission.
+ *   - `akm_search` and `akm_show` are the akm-opencode plugin's read tools; its
+ *     other three are denied. bash is denied: opencode matches a bash rule
+ *     against the command's words only, so `akm show x > ~/stash/asset.md`
+ *     would pass an `akm show *` rule and write anywhere.
  *   - every other tool is denied, `doom_loop` included (its default, `ask`,
  *     would hang a headless server). Each permission opencode knows is named,
  *     so a same-named agent in the user's config cannot re-allow one through
@@ -41,6 +43,10 @@
  * with every permission denied, and opencode offers such an agent no tool.
  */
 
+import path from "node:path";
+import { resolveStashDir } from "../../../core/common";
+import { getStateDir } from "../../../core/paths";
+
 export const MODEL_WORK_OPENCODE_AGENT = "akm-model-work";
 
 /** The agentic iterations a model-work run may take: a judge answers in one, a generator in a few. */
@@ -49,29 +55,50 @@ export const MODEL_WORK_STEPS = 8;
 const MODEL_WORK_PROMPT =
   "You do one bounded task for akm. Use tools only to check what the task needs, never repeat a tool call, and reply with exactly what the task asks for.";
 
-const MODEL_WORK_PERMISSION = {
-  "*": "deny",
-  read: "allow",
-  edit: "allow",
-  external_directory: "deny",
-  bash: "deny",
-  doom_loop: "deny",
-  glob: "deny",
-  grep: "deny",
-  list: "deny",
-  lsp: "deny",
-  question: "deny",
-  skill: "deny",
-  task: "deny",
-  todowrite: "deny",
-  webfetch: "deny",
-  websearch: "deny",
-} as const;
+function modelWorkPermission(stash: string | undefined) {
+  return {
+    "*": "deny",
+    read: "allow",
+    grep: "allow",
+    glob: "allow",
+    edit: { "*": "allow", ...(stash ? { [`${stash.slice(1)}/*`]: "deny" } : {}) },
+    external_directory: {
+      ...(stash ? { [`${stash}/*`]: "allow" } : {}),
+      "~/.local/share/opencode/tool-output/*": "deny",
+    },
+    akm_search: "allow",
+    akm_show: "allow",
+    akm_feedback: "deny",
+    akm_remember: "deny",
+    akm_curate: "deny",
+    bash: "deny",
+    doom_loop: "deny",
+    list: "deny",
+    lsp: "deny",
+    question: "deny",
+    skill: "deny",
+    task: "deny",
+    todowrite: "deny",
+    webfetch: "deny",
+    websearch: "deny",
+  };
+}
 
-/** Every permission of the policy, denied: the agent of a final turn is offered no tool. */
-const MODEL_WORK_FINAL_TURN_PERMISSION = Object.fromEntries(
-  Object.keys(MODEL_WORK_PERMISSION).map((name) => [name, "deny"]),
-);
+/**
+ * What an opencode model-work dispatch gives the akm-opencode plugin (it comes from the user's opencode config and gives
+ * the model `akm_search` and `akm_show`): its own switches off, and its state in akm's state directory, the same for every
+ * dispatch because an SDK server outlives its dispatch. win32 has no /bin/true, so the plugin keeps its CLI there.
+ */
+export function modelWorkPluginEnv(): Record<string, string> {
+  return {
+    AKM_AUTO_CURATE: "0",
+    AKM_AUTO_LEARNING: "0",
+    AKM_AUTO_SKILL_PROPOSALS: "0",
+    AKM_WRITE_GATE: "off",
+    XDG_STATE_HOME: path.join(getStateDir(), "opencode-model-work"),
+    ...(process.platform === "win32" ? {} : { AKM_OPENCODE_CLI: "/bin/true" }),
+  };
+}
 
 /**
  * The opencode config fragment that defines and confines the model-work agent.
@@ -81,7 +108,14 @@ const MODEL_WORK_FINAL_TURN_PERMISSION = Object.fromEntries(
  * comment) the same agent has every permission denied.
  */
 export function modelWorkOpencodeConfig(options?: Record<string, unknown>, finalTurn = false): Record<string, unknown> {
-  const permission = finalTurn ? MODEL_WORK_FINAL_TURN_PERMISSION : MODEL_WORK_PERMISSION;
+  let stash: string | undefined;
+  try {
+    stash = resolveStashDir();
+  } catch {
+    // akm has no stash here, so the agent is given no path into one.
+  }
+  const work = modelWorkPermission(stash);
+  const permission = finalTurn ? Object.fromEntries(Object.keys(work).map((name) => [name, "deny"])) : work;
   return {
     permission: { ...permission },
     compaction: { auto: false },

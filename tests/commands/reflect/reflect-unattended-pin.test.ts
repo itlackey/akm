@@ -107,7 +107,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     expect(JSON.parse(seen?.env.OPENCODE_CONFIG_CONTENT ?? "{}").agent["akm-model-work"].permission).toMatchObject({
       "*": "deny",
       bash: "deny",
-      external_directory: "deny",
+      akm_feedback: "deny",
     });
     expect(path.basename(seen?.cwd ?? "")).toStartWith("akm-model-work-");
     // The proposal comes back as the JSON reply of the output schema, which the prompt ends with.
