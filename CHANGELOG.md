@@ -16,6 +16,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Reflect refuses three kinds of defective revision before the judge runs,**
+  with the quality gate on or off: one that adds placeholder text (`TODO`,
+  `TBD`, `FIXME`, "please confirm", "to be confirmed", a bare `# Title`
+  heading), one that talks about its own edit ("the feedback says", "this
+  revision", "the source asset", a quoted gate rejection), and one that copies
+  frontmatter into its body (key lines such as `sources:` or `updated:` outside
+  code, or a `sources`, `xrefs` or `contradictedBy` value). Each rule counts
+  only what the revision adds to its source. A hit is a `quality_rejected`
+  refusal with no proposal and no judge call, and the event names the rule
+  (`reflectDefect`). On 396 labelled reflect edits the three rules hit 32 of
+  313 bad edits and none of 83 good ones.
 - **The reflect quality judge's rubric names what it kept missing.** Tuned on
   the labelled judge-gate set (plain judge, qwen3.8-27b): a description with a
   sentence split by a stray period or an unbalanced quote is broken text; a
