@@ -2424,6 +2424,7 @@ akm improve lessons/my-lesson --show-prompt --format text # print the composed r
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
+akm improve judge < revision.json      # reflect's quality judge on one revision; writes nothing
 ```
 
 | Flag | Description |
@@ -2652,6 +2653,16 @@ that run's own `llm_usage` events instead of erroring, sets `noCalls` to `[]`
 (eligibility reasons are not reconstructable after the fact), and adds a
 `notes` entry saying so rather than fabricating precision the old row can't
 support.
+
+#### improve judge
+
+`akm improve judge` runs reflect's quality judge on one revision and prints its
+verdict, for testing a judge engine on revisions whose right answer you know. It
+reads `{"source": "...", "candidate": "...", "feedback": "..."}` JSON from stdin
+(`feedback` is optional), judges with the engine the strategy's
+`processes.reflect.qualityGate.engine` names (`--strategy` picks the strategy),
+and prints `{ engine, pass, score, reason, criteria }` with the gate's prompt and
+pass rule. A `score` of `-1` means the judge gave no verdict. It writes nothing.
 
 ### proposal
 

@@ -22,6 +22,7 @@ import { collectEngineCredentialValues } from "../../integrations/agent/engine-r
 import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
+import { readStdin } from "../../runtime";
 import { akmImprove, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
@@ -37,9 +38,11 @@ import {
   type ResolvedImprovePlan,
   type ResolvedImproveProcess,
   resolveImprovePlan,
+  resolveImproveStrategy,
 } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
+import { resolveQualityGateJudge, runReflectQualityJudge } from "./stage";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -260,6 +263,38 @@ function rejectReportOnlyFlags(args: { run?: string; since?: string }): void {
   );
 }
 
+/**
+ * `akm improve judge`: reflect's quality judge on one revision, read as
+ * `{"source", "candidate", "feedback"}` JSON from stdin, with the engine the
+ * strategy's reflect quality gate names. It writes nothing.
+ */
+async function runImproveJudgeCli(strategyName: string | undefined): Promise<void> {
+  const input = process.stdin.isTTY
+    ? {}
+    : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
+  const { source, candidate, feedback } = input;
+  if (typeof source !== "string" || typeof candidate !== "string") {
+    throw new UsageError(
+      '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "..."} JSON from stdin.',
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+  const config = loadConfig();
+  const judge = resolveQualityGateJudge(config, resolveImproveStrategy(strategyName, config).config, "reflect");
+  if (!judge) {
+    throw new ConfigError(
+      "`akm improve judge` judges with the reflect quality gate's engine. Set processes.reflect.qualityGate.engine.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  const notes = typeof feedback === "string" && feedback.trim() !== "" ? [feedback.trim()] : [];
+  const verdict = await runReflectQualityJudge(config, candidate, source, notes, undefined, {
+    runnerSelectionFrozen: true,
+    llmRunner: judge,
+  });
+  output("improve-judge", { engine: judge.engine, ...verdict });
+}
+
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
@@ -354,6 +389,10 @@ export const improveCommand = defineCommand({
         return;
       }
       rejectReportOnlyFlags(args);
+      if (getStringArg(args, "scope") === "judge") {
+        await runImproveJudgeCli(getStringArg(args, "strategy"));
+        return;
+      }
       rejectRetiredImproveTargetFlag();
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
