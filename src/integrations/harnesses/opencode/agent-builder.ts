@@ -19,7 +19,7 @@
 import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 import { MODEL_WORK_AGENT_INFERENCE, opencodeInferenceConfig } from "./model-config";
-import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work-agent";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "./model-work-agent";
 
 /**
  * OpenCode builder.
@@ -71,7 +71,10 @@ export const opencodeBuilder: AgentCommandBuilder = {
           "--",
           req.prompt,
         ],
-        env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions, req.finalTurn)) },
+        env: {
+          ...modelWorkPluginEnv(),
+          OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions, req.finalTurn)),
+        },
       };
     }
     const args: string[] = req.model ? [] : [...profile.args];

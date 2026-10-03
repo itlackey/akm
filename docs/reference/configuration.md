@@ -201,7 +201,7 @@ cannot enforce:
 |---|---|
 | LLM | No tools. |
 | `claude` | Read and Edit inside the working directory, and Bash for `akm search` and `akm show` only. akm runs it with `--restricted`, so your user, project and local settings cannot widen that. |
-| `opencode`, `opencode-sdk` | Read and edit inside the working directory, through an injected `akm-model-work` agent. No bash, so no `akm search` or `akm show`, because opencode cannot stop a redirect such as `akm show x > file` from writing elsewhere. |
+| `opencode`, `opencode-sdk` | Read, grep and glob in the working directory and the stash, edit in the working directory only, and `akm_search` and `akm_show`, through an injected `akm-model-work` agent. No bash, because opencode cannot stop a redirect such as `akm show x > file` from writing elsewhere. |
 | `codex`, `copilot`, `pi`, `gemini`, `aider`, `amazonq`, `openhands` | Cannot run model work: akm refuses the request before it starts. |
 
 **The one rule.** Every key model work reads its engine from must name an
@@ -225,6 +225,13 @@ key, the engine and its platform. Other engine keys, `defaults.engine` and
   `opencode` and `opencode-sdk` (see
   [Inference on an agent engine](#inference-on-an-agent-engine)); on any other
   agent engine it is reported as `untranslated-field` notices, not errors.
+- opencode model work may read the stash and write only its working directory.
+  `akm_search` and `akm_show` come from the akm-opencode plugin (0.9.21 or
+  later), which akm does not load: put it in your opencode config
+  (`"plugin": ["akm-opencode"]`). akm turns off the plugin's curation, learning
+  and write gate for these dispatches and keeps its state in akm's state
+  directory. The stash is protected from edits only while the temporary
+  directory is outside a git repository.
 - opencode ends a run at its step limit with a message that a qwen chat template
   (LM Studio, llama-server) renders as a prefill, so the model stops with an
   empty reply. An `opencode` or `opencode-sdk` dispatch that ends with no answer

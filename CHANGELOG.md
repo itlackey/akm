@@ -19,6 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the server for every dispatch,** not only model work.
 - **An improve stage retries a reply only when the stage cannot read it,** not
   when it misses the JSON Schema. A reply it can read costs no second call.
+- **opencode model work can read the stash and search it.** The `akm-model-work`
+  agent reads, greps and globs in the stash and its working directory, edits
+  only in the working directory, and has `akm_search` and `akm_show` from the
+  akm-opencode plugin (0.9.21 or later, in your own opencode config). The
+  plugin's curation, learning and write gate are off for these dispatches, and
+  its state goes to akm's state directory, not `~/.local/state/akm-opencode`.
 
 ### Removed
 
