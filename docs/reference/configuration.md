@@ -505,6 +505,46 @@ judge's engine at the server directly.
 }
 ```
 
+`processes.reflect.defectFilter` sets the wording of the checks reflect runs
+before the judge. With the quality gate on or off, reflect refuses a revision
+that adds placeholder text, talks about its own edit, or copies frontmatter into
+its body: no proposal, and no judge call. Each rule counts only what the
+revision adds to its source, so wording the asset already had and kept is not
+held against it. Each of the three lists is optional. A list you set replaces
+that rule's default list, and `[]` turns the rule off.
+
+| List | Rule | Default |
+|---|---|---|
+| `placeholders` | `placeholder_added` | `please confirm`, `please verify`, `to be confirmed`, `to be determined`, `to be verified` |
+| `metaCommentary` | `meta_commentary_added` | `feedback signal`, `feedback signals`, `feedback indicate`, `feedback indicates`, `feedback suggest`, `feedback suggests`, `feedback ask`, `feedback asks`, `feedback says`, `feedback report`, `feedback reports`, `feedback request`, `feedback requests`, `this revision`, `the source asset`, `the source note`, `the source memory`, `the original asset`, `the original note`, `the original memory`, `the original version of this`, `quality gate rejected`, `proposal rejected` |
+| `frontmatterKeys` | `frontmatter_copied_into_body` | `sources`, `updated`, `inferenceProcessed`, `captureMode`, `beliefState`, `xrefs`, `contradictedBy`, `outcomeData`, `orderedActions`, `generated`, `verified`, `description`, `when_to_use`, `tags`, `searchHints`, `quality`, `salience`, `salienceInputs`, `lint_skip`, `type` |
+
+`placeholders` and `metaCommentary` entries are plain phrases, not patterns:
+whole words, in any case, with any run of whitespace between words.
+`frontmatterKeys` entries are exact key names: a line outside a code fence that
+starts with `key:` counts. The rule also refuses a `sources`, `xrefs` or
+`contradictedBy` value copied into the body; `frontmatterKeys: []` turns that
+off too. Every entry must be a non-empty string, or the config does not load.
+
+```jsonc
+{
+  "improve": {
+    "strategies": {
+      "nightly": {
+        "processes": {
+          "reflect": {
+            "defectFilter": {
+              "placeholders": ["please confirm", "to be confirmed", "[draft]"],
+              "frontmatterKeys": []
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
 No shipped strategy turns improve-stage session extraction on.
 `proactiveMaintenance` is on only in the `proactive-maintenance` preset; run
 `akm improve --strategy proactive-maintenance` to use that opt-in preset.

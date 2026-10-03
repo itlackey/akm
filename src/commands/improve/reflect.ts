@@ -65,7 +65,7 @@ import { deriveLessonRef } from "./distill";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
-import { classifyReflectChange, splitFrontmatter } from "./reflect-noise";
+import { classifyReflectChange, findReflectDefect, type ReflectDefectFilter, splitFrontmatter } from "./reflect-noise";
 import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
 import {
   callStageOnce,
@@ -111,6 +111,8 @@ export interface AkmReflectOptions {
   eventSource?: "user" | "improve";
   /** Defer "low-value" micro-rewrites like no-op/cosmetic ones (`processes.reflect.lowValueFilter`). */
   lowValueFilter?: boolean;
+  /** The wording lists of the pre-judge defect rules (`processes.reflect.defectFilter`); a list left out takes its default. */
+  defectFilter?: ReflectDefectFilter;
   /** Self-refine passes (default 1; each later pass critiques the prior draft). */
   maxRefineIters?: number;
   /** Test seam: pre-loaded source content instead of the index lookup. */
@@ -1131,7 +1133,8 @@ const NOISE_SUBREASONS = {
  * exact content that would be persisted, then mint. A judge pass is staged only
  * when the body is unchanged: a body edit the judge passes, or one made with the
  * gate off, waits for review. Size-flagged or truncation-leaking content skips
- * the judge and waits for review.
+ * the judge and waits for review. A revision with a deterministic defect is
+ * refused before the judge runs, whether or not the gate is on.
  */
 async function finalizeReflectProposal(args: {
   run: ReflectRun;
@@ -1205,6 +1208,10 @@ async function finalizeReflectProposal(args: {
     );
     return reflectFailure(run, result, "quality_rejected", message, false);
   };
+  // A defect no judge needs to weigh is refused before any judge call, whether or not the gate is on.
+  const defect =
+    assetContent === undefined ? undefined : findReflectDefect(assetContent, payload.content, options.defectFilter);
+  if (defect) return refuse(defect, { reflectDefect: defect }, `Reflect proposal refused before the judge: ${defect}`);
   let verdict: QualityJudgeResult | undefined;
   let judgeFailed = false;
   if (judged) {

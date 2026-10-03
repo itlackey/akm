@@ -221,6 +221,9 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     ...(reflectErrors.length > 0 ? { avoidPatterns: [...reflectErrors] } : {}),
     eventSource: "improve" as const,
     lowValueFilter: improveProfile.processes?.reflect?.lowValueFilter?.enabled === true,
+    ...(improveProfile.processes?.reflect?.defectFilter
+      ? { defectFilter: improveProfile.processes.reflect.defectFilter }
+      : {}),
     ...(budgetMs > 0 ? { timeoutMs: budgetMs } : {}),
     signal: env.budgetSignal,
     eventsCtx: env.eventsCtx,

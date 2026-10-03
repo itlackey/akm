@@ -115,6 +115,22 @@ const fidelityCheckField = z.object({ enabled: z.boolean().optional() }).passthr
 const lowValueFilterField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
 
 /**
+ * The wording lists of reflect's pre-judge defect filter (`findReflectDefect`).
+ * Each list is optional: one that is set replaces that rule's default list, and
+ * an empty one turns the rule off. Phrases (`placeholders`, `metaCommentary`)
+ * match as whole words in any case; `frontmatterKeys` are exact key names.
+ * Reflect process only.
+ */
+const defectFilterField = z
+  .object({
+    placeholders: z.array(nonEmptyString).optional(),
+    metaCommentary: z.array(nonEmptyString).optional(),
+    frontmatterKeys: z.array(nonEmptyString).optional(),
+  })
+  .passthrough()
+  .optional();
+
+/**
  * #626 — extract process: pre-LLM heuristic triage gate. When enabled, a
  * deterministic scorer decides BEFORE the extraction LLM call whether a
  * session carries enough signal to be worth extracting; low-signal sessions
@@ -178,6 +194,7 @@ const REFLECT_PROCESS_FIELDS = {
   limit: processLimitField,
   qualityGate: qualityGateField,
   lowValueFilter: lowValueFilterField,
+  defectFilter: defectFilterField,
 };
 
 const DISTILL_PROCESS_FIELDS = {
