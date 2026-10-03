@@ -76,7 +76,7 @@ export function withSchemaInstruction(prompt: string, schema: unknown): string {
   return `${prompt}\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(schema)}`;
 }
 
-function defaultFeedback(failure: { reason: "parse_error" | "validation_error"; errors: string[] }): string {
+export function defaultFeedback(failure: { reason: "parse_error" | "validation_error"; errors: string[] }): string {
   if (failure.reason === "parse_error") {
     return "Your previous response contained no parseable JSON. Respond with ONLY a JSON value that matches the requested schema — no prose, no code fences.";
   }

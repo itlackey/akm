@@ -137,10 +137,10 @@ not a substitute.
 On an engine without `timeoutMs`, model work (an improve process, a quality or
 triage judge, or an index pass) stops after 600 seconds, whatever the engine's
 kind; other work on an agent engine runs until it finishes. An improve stage's
-reply that does not match the stage's JSON Schema gets one corrective retry
-before the stage reads it. Reflect holds its reply to its own contract the same
-way on every engine kind: a reply that is not the JSON object of reflect's
-schema gets one repair turn, and one still invalid fails with `parse_error`.
+reply that the stage cannot read gets one corrective retry. Reflect holds its
+reply to its own contract the same way on every engine kind: a reply that is not
+the JSON object of reflect's schema gets one repair turn, and one still invalid
+fails with `parse_error`.
 
 Executable assets may request tools, but the request is not authority. Configure
 the host-local `execution.allowedTools` list to define the ceiling; `"*"` is an

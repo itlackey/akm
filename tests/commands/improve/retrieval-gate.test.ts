@@ -8,7 +8,7 @@
  * at a time, with the retrieval-eval judge's prompt.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { runRetrievalRegressionGate, usableRetrievalQueries } from "../../../src/commands/improve/retrieval-gate";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import type { ChatMessage } from "../../../src/llm/client";
@@ -87,14 +87,12 @@ describe("runRetrievalRegressionGate", () => {
     expect(users.some((user) => user.includes("Description: New description"))).toBe(true);
   });
 
-  test("fails closed when a grade cannot be read", async () => {
-    const verdict = await runRetrievalRegressionGate({
-      ...base,
-      queries: ["rotate the vpn key"],
-      chat: async () => "not json",
-    });
+  test("fails closed, after one corrective retry, when a grade cannot be read", async () => {
+    const chat = mock(async () => '{"grade":7,"reason":"out of range"}');
+    const verdict = await runRetrievalRegressionGate({ ...base, queries: ["rotate the vpn key"], chat });
     expect(verdict.pass).toBe(false);
     expect(verdict.reason).toContain("could not");
+    expect(chat).toHaveBeenCalledTimes(2);
   });
 });
 

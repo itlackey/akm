@@ -17,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   0.9.25-alpha.1. `claude` takes no `--effort`.
 - **An `opencode-sdk` session the dispatch times out on or aborts is aborted on
   the server for every dispatch,** not only model work.
+- **An improve stage retries a reply only when the stage cannot read it,** not
+  when it misses the JSON Schema. A reply it can read costs no second call.
 
 ### Removed
 

@@ -40,6 +40,11 @@ const GRADE_SCHEMA: Record<string, unknown> = {
   properties: { grade: { type: "integer", minimum: 0, maximum: 3 }, reason: { type: "string" } },
 };
 
+function parseGrade(raw: string): number | undefined {
+  const grade = parseEmbeddedJsonResponse<{ grade?: unknown }>(raw)?.grade;
+  return typeof grade === "number" && Number.isInteger(grade) && grade >= 0 && grade <= 3 ? grade : undefined;
+}
+
 /** Up to five distinct task queries, in the given order, whitespace collapsed. */
 export function usableRetrievalQueries(raw: readonly string[]): string[] {
   const out: string[] = [];
@@ -132,10 +137,11 @@ export async function runRetrievalRegressionGate(args: {
           ...(args.signal ? { signal: args.signal } : {}),
           ...(args.chat ? { chat: args.chat } : {}),
         },
+        parse: parseGrade,
         ...(args.onNotices ? { onNotices: args.onNotices } : {}),
       });
-      const grade = outcome.ok ? parseEmbeddedJsonResponse<{ grade?: unknown }>(outcome.raw)?.grade : undefined;
-      if (typeof grade !== "number" || !Number.isInteger(grade) || grade < 0 || grade > 3) {
+      const grade = outcome.ok ? parseGrade(outcome.raw) : undefined;
+      if (grade === undefined) {
         return {
           pass: false,
           queries: args.queries.length,

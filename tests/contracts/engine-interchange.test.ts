@@ -312,33 +312,26 @@ describe("C2: structured output", () => {
     expect(delivered.nativeSchema).toEqual(want.native ? schema : undefined);
   });
 
-  // A stage call validates the reply against its schema and retries once when it fails.
-  test.each(MODEL_WORK_TRANSPORTS)("%s: a valid structured reply is validated and kept", async (_name, transport) => {
-    fs.rmSync(path.join(bins.dir, "valid.count"), { force: true });
-    const outcome = await callStage({
-      feature: "distill",
-      runner: runnerFor(transport, "valid"),
-      prompt: "Reply with a verdict.",
-      request: { responseSchema: schema },
-    });
-
-    expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(REPLY) });
-    expect(calls(transport, "valid")).toBe(1);
-  });
-
+  // A stage call retries once when the stage's own parser rejects the reply, whatever the schema says.
   test.each(
     MODEL_WORK_TRANSPORTS,
-  )("%s: a malformed structured reply is corrected by one repair turn", async (_name, transport) => {
-    fs.rmSync(path.join(bins.dir, "repair.count"), { force: true });
-    const outcome = await callStage({
-      feature: "distill",
-      runner: runnerFor(transport, "repair"),
-      prompt: "Reply with a verdict.",
-      request: { responseSchema: schema },
-    });
+  )("%s: only a reply the stage's parser rejects is retried", async (_name, transport) => {
+    for (const [parse, want, count] of [
+      [(raw: string) => raw, "not json", 1],
+      [undefined, REPLY, 2],
+    ] as const) {
+      fs.rmSync(path.join(bins.dir, "repair.count"), { force: true });
+      const outcome = await callStage({
+        feature: "distill",
+        runner: runnerFor(transport, "repair"),
+        prompt: "Reply with a verdict.",
+        request: { responseSchema: schema },
+        ...(parse ? { parse } : {}),
+      });
 
-    expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(REPLY) });
-    expect(calls(transport, "repair")).toBe(2);
+      expect(outcome).toEqual({ ok: true, raw: expect.stringContaining(want) });
+      expect(calls(transport, "repair")).toBe(count);
+    }
   });
 });
 

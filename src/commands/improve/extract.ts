@@ -986,6 +986,7 @@ function resolveExtractRun(
         ...(options.signal ? { signal: options.signal } : {}),
         ...(options.chat ? { chat: options.chat } : {}),
       },
+      parse: parseSessionSummary,
       onNotices: notices.add,
     });
     return parseSessionSummary(outcome.ok ? outcome.raw : "");
