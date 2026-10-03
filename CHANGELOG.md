@@ -17,8 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **Reflect refuses three kinds of defective revision before the judge runs,**
-  with the quality gate on or off: one that adds placeholder text (`TODO`,
-  `TBD`, `FIXME`, "please confirm", "to be confirmed"), one that talks about
+  with the quality gate on or off: one that adds placeholder text ("please
+  confirm", "to be confirmed"; not `TODO`, `TBD` or `FIXME`), one that talks about
   its own edit ("the feedback says", "this revision", "the source asset", a
   quoted gate rejection), and one that copies frontmatter into its body (key
   lines such as `sources:` or `updated:` outside code, or a `sources`,
@@ -29,7 +29,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `placeholders` and `metaCommentary` are plain phrases, matched as whole words
   in any case, and `frontmatterKeys` are exact key names. A list left out keeps
   its default, and `[]` turns its rule off. On 396 labelled reflect edits the
-  default lists hit 31 of 313 bad edits and none of 83 good ones.
+  default lists hit 22 of 313 bad edits and none of 83 good ones.
 - **The reflect quality judge's rubric names what it kept missing.** Tuned on
   the labelled judge-gate set (plain judge, qwen3.8-27b): a description with a
   sentence split by a stray period or an unbalanced quote is broken text; a

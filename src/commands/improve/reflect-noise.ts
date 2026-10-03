@@ -58,10 +58,8 @@ export interface ReflectDefectFilter {
   frontmatterKeys?: readonly string[];
 }
 
+/** Not TODO, TBD or FIXME: an asset may carry those on purpose, and the owner does not want them refused. */
 const DEFAULT_PLACEHOLDERS = [
-  "TODO",
-  "TBD",
-  "FIXME",
   "please confirm",
   "please verify",
   "to be confirmed",
@@ -122,7 +120,7 @@ const DEFAULT_FRONTMATTER_KEYS = [
  * The first defect the candidate has and its source lacks, or `undefined`. Each
  * rule counts only what the revision adds, so text the asset already carried is
  * not held against it. On 396 labelled reflect edits (83 good, 313 bad) the
- * default lists hit 31 bad edits and no good one, so a hit is refused unjudged.
+ * default lists hit 22 bad edits and no good one, so a hit is refused unjudged.
  */
 export function findReflectDefect(
   sourceContent: string,

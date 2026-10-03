@@ -46,7 +46,7 @@ const withAdded = (text: string) => asset(`${BODY}\n\n${text}`);
 describe("findReflectDefect", () => {
   /** [defectFilter list, the rule it feeds, a minimal bad edit]. */
   const BAD_EDITS = [
-    ["placeholders", "placeholder_added", "TODO: confirm the retention window."],
+    ["placeholders", "placeholder_added", "Retention window: to be confirmed."],
     ["metaCommentary", "meta_commentary_added", "The feedback says the schedule is wrong."],
     ["frontmatterKeys", "frontmatter_copied_into_body", "updated: 2026-10-01"],
     ["frontmatterKeys", "frontmatter_copied_into_body", "Background: memories/export-job-notes."],
@@ -69,6 +69,7 @@ describe("findReflectDefect", () => {
       "when_to_use added",
       asset(BODY, FRONTMATTER.replace("type: knowledge", "type: knowledge\nwhen_to_use: When an export is late")),
     ],
+    ["TODO, FIXME and TBD markers", withAdded("TODO: link the runbook. FIXME: the retry count. Owner TBD.")],
     [
       "frontmatter-like lines inside a code fence",
       withAdded("Frontmatter looks like this:\n\n```yaml\ndescription: An example\ntype: knowledge\n```"),
@@ -78,17 +79,17 @@ describe("findReflectDefect", () => {
   });
 
   test("wording the source already has and keeps does not count, one more does", () => {
-    const kept = withAdded("TODO: link the runbook.\nThe feedback says nothing new yet.\ntype: knowledge");
+    const kept = withAdded("Runbook link to be confirmed.\nThe feedback says nothing new yet.\ntype: knowledge");
     const reworded = kept.replace("Check the queue depth.", "Check the queue depth first.");
 
     expect(findReflectDefect(kept, reworded)).toBeUndefined();
-    expect(findReflectDefect(kept, `${kept}TODO: add the owner.\n`)).toBe("placeholder_added");
+    expect(findReflectDefect(kept, `${kept}Owner to be confirmed.\n`)).toBe("placeholder_added");
   });
 
   test("a configured list replaces the default; phrases are plain whole words in any case", () => {
     const placeholders = { placeholders: ["draft me", "a.b"] };
 
-    expect(findReflectDefect(SOURCE, withAdded("TODO: confirm."), placeholders)).toBeUndefined();
+    expect(findReflectDefect(SOURCE, withAdded("To be confirmed."), placeholders)).toBeUndefined();
     expect(findReflectDefect(SOURCE, withAdded("Draft\n  ME later."), placeholders)).toBe("placeholder_added");
     expect(findReflectDefect(SOURCE, withAdded("The a.b setting."), placeholders)).toBe("placeholder_added");
     expect(findReflectDefect(SOURCE, withAdded("The axb setting."), placeholders)).toBeUndefined();
@@ -170,7 +171,7 @@ async function reflect(body: string, gate: boolean, defectFilter?: AkmReflectOpt
 }
 
 describe("akm reflect — a deterministic defect", () => {
-  const defective = `${BODY}\n\nTODO: confirm the retention window.`;
+  const defective = `${BODY}\n\nRetention window: to be confirmed.`;
 
   test.each([
     ["on", true],

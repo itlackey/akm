@@ -515,7 +515,7 @@ that rule's default list, and `[]` turns the rule off.
 
 | List | Rule | Default |
 |---|---|---|
-| `placeholders` | `placeholder_added` | `TODO`, `TBD`, `FIXME`, `please confirm`, `please verify`, `to be confirmed`, `to be determined`, `to be verified` |
+| `placeholders` | `placeholder_added` | `please confirm`, `please verify`, `to be confirmed`, `to be determined`, `to be verified` |
 | `metaCommentary` | `meta_commentary_added` | `feedback signal`, `feedback signals`, `feedback indicate`, `feedback indicates`, `feedback suggest`, `feedback suggests`, `feedback ask`, `feedback asks`, `feedback says`, `feedback report`, `feedback reports`, `feedback request`, `feedback requests`, `this revision`, `the source asset`, `the source note`, `the source memory`, `the original asset`, `the original note`, `the original memory`, `the original version of this`, `quality gate rejected`, `proposal rejected` |
 | `frontmatterKeys` | `frontmatter_copied_into_body` | `sources`, `updated`, `inferenceProcessed`, `captureMode`, `beliefState`, `xrefs`, `contradictedBy`, `outcomeData`, `orderedActions`, `generated`, `verified`, `description`, `when_to_use`, `tags`, `searchHints`, `quality`, `salience`, `salienceInputs`, `lint_skip`, `type` |
 
@@ -534,7 +534,7 @@ off too. Every entry must be a non-empty string, or the config does not load.
         "processes": {
           "reflect": {
             "defectFilter": {
-              "placeholders": ["TODO", "TBD", "FIXME", "[draft]"],
+              "placeholders": ["please confirm", "to be confirmed", "[draft]"],
               "frontmatterKeys": []
             }
           }
