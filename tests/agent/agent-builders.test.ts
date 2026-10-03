@@ -184,6 +184,50 @@ describe("opencodeBuilder — inference", () => {
   });
 });
 
+// A model-work run opencode ends with no answer is asked once more: `--continue` reaches the session of the
+// dispatch's scratch directory, and an agent whose every permission is denied is offered no tool.
+describe("opencodeBuilder — the model-work final turn", () => {
+  test("continues the session with every permission denied, and leaves the work's own command alone", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const build = (finalTurn: boolean) =>
+      getCommandBuilder("opencode").build(makeOpencodeProfile(), {
+        prompt: "p",
+        model: "krang/m",
+        modelWork: true,
+        inference: { temperature: 0.2 },
+        finalTurn,
+      });
+    const configOf = (cmd: ReturnType<typeof build>) => JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
+    const work = build(false);
+    const final = build(true);
+
+    expect(work.argv).toEqual(["opencode", "run", "--agent", "akm-model-work", "--model", "krang/m", "--", "p"]);
+    expect(final.argv).toEqual([
+      "opencode",
+      "run",
+      "--agent",
+      "akm-model-work",
+      "--continue",
+      "--model",
+      "krang/m",
+      "--",
+      "p",
+    ]);
+    // The work's permissions, every one now denied, on the agent and at the top level.
+    const workPermission = configOf(work).agent["akm-model-work"].permission;
+    expect(workPermission).toMatchObject({ read: "allow", edit: "allow" });
+    for (const permission of [configOf(final).agent["akm-model-work"].permission, configOf(final).permission]) {
+      expect(Object.keys(permission)).toEqual(Object.keys(workPermission));
+      expect(Object.values(permission).every((action) => action === "deny")).toBe(true);
+    }
+    // Everything else of the agent is the work's own.
+    const { permission: _work, ...workAgent } = configOf(work).agent["akm-model-work"];
+    const { permission: _final, ...finalAgent } = configOf(final).agent["akm-model-work"];
+    expect(finalAgent).toEqual(workAgent);
+    expect(finalAgent.options).toEqual({ temperature: 0.2 });
+  });
+});
+
 // ── builders.ts — claudeBuilder ───────────────────────────────────────────────
 
 describe("claudeBuilder — basic dispatch", () => {

@@ -22,7 +22,7 @@ import {
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
-import { MODEL_WORK_POLICY_ID } from "../../execution/source";
+import { MODEL_WORK_FINAL_TURN, MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
@@ -222,7 +222,8 @@ function createModelWorkDirectory(): string {
  * returned. Model work on an agent or SDK engine runs in a scratch working
  * directory that akm creates for the dispatch and removes after it, and must
  * end with an answer: an agent that stops with none (opencode at its step
- * limit, for one) has failed with `parse_error`.
+ * limit, for one) is asked once more on `opencode`, and has failed with
+ * `parse_error` when that has no answer either.
  */
 export async function runExecution(
   execution: BuiltExecution,
@@ -256,6 +257,42 @@ function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunRe
   };
   if (extracted.text.trim() !== "") return answer;
   return { ...answer, ok: false, reason: "parse_error", error: `Engine "${runner.engine}" returned no answer.` };
+}
+
+/**
+ * The result of a model-work run that did not fail: its answer, or the
+ * `parse_error` of one that ended with none. An `opencode` run with no answer
+ * (its step limit, see `opencode/model-work-agent.ts`) is asked once more: the
+ * run's own session, the question alone, no tool on offer, and what is left of
+ * the dispatch's timeout. No answer to that is the same failure. An SDK engine
+ * does the same inside its runner, which holds the session.
+ */
+async function modelWorkResult(
+  execution: BuiltExecution,
+  opts: RunAgentOptions,
+  seams: RunExecutionOptions,
+  first: AgentRunResult,
+): Promise<AgentRunResult> {
+  const { runner } = execution;
+  const answer = modelWorkAnswer(runner, first);
+  const opencode = runner.kind === "agent" && (runner.profile.platform ?? runner.profile.name) === "opencode";
+  if (answer.ok || !opts.dispatch || !opencode) return answer;
+  const final = await dispatchRunner(
+    runner,
+    MODEL_WORK_FINAL_TURN,
+    {
+      ...opts,
+      dispatch: { ...opts.dispatch, prompt: MODEL_WORK_FINAL_TURN, finalTurn: true },
+      ...(typeof opts.timeoutMs === "number" ? { timeoutMs: Math.max(1, opts.timeoutMs - first.durationMs) } : {}),
+    },
+    seams,
+  );
+  const both = {
+    ...final,
+    durationMs: first.durationMs + final.durationMs,
+    stderr: [first.stderr, final.stderr].filter((text) => text !== "").join("\n"),
+  };
+  return both.ok ? modelWorkAnswer(runner, both) : both;
 }
 
 /** `scratch` is the model-work working directory, set only for model work on an agent or SDK engine. */
@@ -298,7 +335,7 @@ async function runBuiltExecution(
     }
   };
   let result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
-  if (scratch !== undefined && result.ok) result = modelWorkAnswer(execution.runner, result);
+  if (scratch !== undefined && result.ok) result = await modelWorkResult(execution, opts, options, result);
   // The LLM transport records each HTTP attempt itself.
   if (execution.runner.kind !== "llm") recordDispatchUsage(execution, result);
   return result;

@@ -45,6 +45,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`opencode` and `opencode-sdk` engines receive the XDG base-directory
   variables.** Under a custom `XDG_CONFIG_HOME` the spawned opencode missed its
   provider config and failed every dispatch with `Unexpected server error`.
+- **opencode model work that ends at its step limit with no answer is asked once
+  more instead of failing.** A qwen chat template (LM Studio, llama-server)
+  renders opencode's "maximum steps" message as a prefill, so the model stopped
+  with an empty reply and the dispatch failed with `parse_error`. An `opencode`
+  or `opencode-sdk` dispatch with no answer now gets one extra turn in its own
+  session with no tool on offer, within the dispatch's timeout; no answer to it
+  still fails with `parse_error`.
 
 ## [0.9.25-alpha.1] - 2026-10-02
 

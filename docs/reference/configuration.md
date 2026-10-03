@@ -225,6 +225,12 @@ key, the engine and its platform. Other engine keys, `defaults.engine` and
   `opencode` and `opencode-sdk` (see
   [Inference on an agent engine](#inference-on-an-agent-engine)); on any other
   agent engine it is reported as `untranslated-field` notices, not errors.
+- opencode ends a run at its step limit with a message that a qwen chat template
+  (LM Studio, llama-server) renders as a prefill, so the model stops with an
+  empty reply. An `opencode` or `opencode-sdk` dispatch that ends with no answer
+  is asked once more, in its own session with no tool available and within the
+  dispatch's timeout; it fails with `parse_error` only when that turn has no
+  answer either.
 
 ### Model-map files
 
