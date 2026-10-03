@@ -40,7 +40,7 @@ import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
 import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../execution/source";
-import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../integrations/agent/config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 import { type RunExecutionOptions, runExecution } from "../integrations/agent/runner-dispatch";
@@ -173,7 +173,7 @@ function own(value: object | undefined, key: PropertyKey): boolean {
 /**
  * @internal Exact request-to-cascade projection, exported for presence-semantics contracts.
  * Model work is bounded: with no timeout from the request or the runner, it
- * gets {@link DEFAULT_MODEL_WORK_TIMEOUT_MS} on every runner kind.
+ * gets {@link DEFAULT_LLM_TIMEOUT_MS} on every runner kind.
  */
 export function resolveStructuredCurrent(
   current: UnresolvedExecutionDefaults | undefined,
@@ -200,7 +200,7 @@ export function resolveStructuredCurrent(
   }
   if (own(request, "timeoutMs")) out.timeout = request?.timeoutMs ?? null;
   else if (runner && !Object.hasOwn(runner, "timeoutMs") && !own(current, "timeout")) {
-    out.timeout = DEFAULT_MODEL_WORK_TIMEOUT_MS;
+    out.timeout = DEFAULT_LLM_TIMEOUT_MS;
   }
   return Object.keys(out).length > 0 ? (out as UnresolvedExecutionDefaults) : undefined;
 }

@@ -85,20 +85,6 @@ describe("improve model work on an agent engine", () => {
     expect(resolveAgain(runner).request.inference).toEqual({ reasoningEffort: "low", temperature: 0 });
   });
 
-  test("the overlay's effort reaches claude as --effort", () => {
-    const { config, profile } = configFor({ kind: "agent", platform: "claude" }, { reasoningEffort: "low" });
-    const { runner } = resolveReflect(config, profile);
-    const again = resolveAgain(runner);
-    const built = buildExecution(again.request, again.runner);
-    const argv = getHarness("claude")?.agentBuilder?.build(
-      agentProfile(built.runner),
-      built.options.dispatch ?? { prompt: "" },
-    ).argv;
-
-    expect(argv).toContain("--effort");
-    expect(argv?.[(argv?.indexOf("--effort") ?? -1) + 1]).toBe("low");
-  });
-
   test("with no setting anywhere, akm sends nothing of its own", () => {
     const { config, profile } = configFor(OPENCODE);
     const { runner } = resolveReflect(config, profile);

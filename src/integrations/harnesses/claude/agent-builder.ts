@@ -54,16 +54,10 @@ export const MODEL_WORK_CLAUDE_FLAGS: readonly string[] = Object.freeze([
 /**
  * Claude Code builder.
  * Command shape:
- *   claude [--agent <name>] [--system-prompt "..."] [--model <m>] [--effort <level>]
- *          [--allowedTools <t>] [--output-format json] --print -- "<prompt>"
+ *   claude [--agent <name>] [--system-prompt "..."] [--model <m>] [--allowedTools <t>]
+ *          [--output-format json] --print -- "<prompt>"
  *
  * --print switches Claude Code to non-interactive captured output mode.
- *
- * `--effort` carries the request's `reasoningEffort` as the harness's own
- * level (`low`, `medium`, `high`, `xhigh` or `max` in 2.1.283), passed through
- * as given: a value Claude Code rejects fails the dispatch. It is the only
- * inference field Claude Code takes on its command line, so the others are
- * reported as untranslated.
  *
  * The model-work tool policy lowers to {@link MODEL_WORK_CLAUDE_FLAGS} in place
  * of the engine's `args` and `--allowedTools`, verified against Claude Code
@@ -87,8 +81,6 @@ export const claudeBuilder: AgentCommandBuilder = {
     personaChannel: "native",
     nativeAgentSelector: true,
     tools: "all",
-    modelWorkTools: true,
-    inference: ["reasoningEffort"],
   }),
   build(profile, req) {
     const modelWork = isModelWorkTools(req.tools);
@@ -106,8 +98,6 @@ export const claudeBuilder: AgentCommandBuilder = {
       const model = modelFromArgs(profile.args);
       if (model) args.push("--model", model);
     }
-    const effort = req.inference?.reasoningEffort;
-    if (typeof effort === "string" && effort.length > 0) args.push("--effort", effort);
     if (req.tools && !modelWork) {
       args.push("--allowedTools", normalizeTools(req.tools));
     }

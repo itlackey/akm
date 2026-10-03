@@ -168,29 +168,6 @@ describe("opencodeBuilder — inference", () => {
     expect(cmd.env).toBeUndefined();
   });
 
-  test("injects the entry for the model the request names", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("opencode").build(makeOpencodeProfile(), {
-      prompt: "do work",
-      model: "krang/chat/qwen3.8-27b",
-      inference: INFERENCE,
-    });
-
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "krang/chat/qwen3.8-27b", "--", "do work"]);
-    expect(JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({
-      provider: {
-        krang: {
-          models: {
-            "chat/qwen3.8-27b": {
-              options: { temperature: 0.2, reasoningEffort: "low" },
-              limit: { context: 120000, output: 4096 },
-            },
-          },
-        },
-      },
-    });
-  });
-
   test("the model an engine's args name carries it when the request names none", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.6-terra"] });
@@ -213,44 +190,6 @@ describe("opencodeBuilder — inference", () => {
     expect(
       builder.build(makeOpencodeProfile(), { prompt: "p", model: "unqualified", inference: INFERENCE }).env,
     ).toBeUndefined();
-  });
-
-  // opencode makes a title call of its own on the model, and applies the
-  // model's options to it; the model-work agent is akm's, so its options reach
-  // only the work.
-  test("model work: the confined agent carries the options and the model carries only the limit", async () => {
-    const { MODEL_WORK_TOOLS } = await import("../../src/execution/source");
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("opencode").build(makeOpencodeProfile({ args: ["run", "--model", "krang/m"] }), {
-      prompt: "judge it",
-      tools: [...MODEL_WORK_TOOLS],
-      inference: INFERENCE,
-    });
-    const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
-
-    expect(cmd.argv).toEqual(["opencode", "run", "--agent", "akm-model-work", "--model", "krang/m", "--", "judge it"]);
-    expect(config.agent["akm-model-work"].options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
-    expect(config.provider).toEqual({ krang: { models: { m: { limit: { context: 120000, output: 4096 } } } } });
-    // The confinement is untouched.
-    expect(config.permission).toMatchObject({ "*": "deny", bash: "deny", external_directory: "deny" });
-    expect(config.agent["akm-model-work"].permission).toMatchObject({ "*": "deny", bash: "deny" });
-  });
-
-  // The model-work agent runs whichever model opencode picks, so it carries
-  // the options with no model named; the limit is the model's.
-  test("model work with no model named: the agent still carries the options, and no limit is declared", async () => {
-    const { MODEL_WORK_TOOLS } = await import("../../src/execution/source");
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("opencode").build(makeOpencodeProfile(), {
-      prompt: "judge it",
-      tools: [...MODEL_WORK_TOOLS],
-      inference: INFERENCE,
-    });
-    const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
-
-    expect(cmd.argv).toEqual(["opencode", "run", "--agent", "akm-model-work", "--", "judge it"]);
-    expect(config.agent["akm-model-work"].options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
-    expect(config).not.toHaveProperty("provider");
   });
 
   test("model work with no inference defines the agent and nothing else, as before", async () => {
@@ -360,58 +299,6 @@ describe("claudeBuilder — basic dispatch", () => {
     const req: AgentDispatchRequest = { prompt: "do work" };
     const cmd = builder.build(profile, req);
     expect((cmd.argv as string[]).includes("--allowedTools")).toBe(false);
-  });
-});
-
-describe("claudeBuilder — inference", () => {
-  test("reasoningEffort becomes --effort, after the model", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("claude").build(makeClaudeProfile(), {
-      prompt: "do work",
-      model: "claude-opus-4-7",
-      inference: { reasoningEffort: "high" },
-    });
-
-    expect(cmd.argv).toEqual(["claude", "--model", "claude-opus-4-7", "--effort", "high", "--print", "--", "do work"]);
-  });
-
-  test("the effort is passed as given: a value Claude Code rejects fails the dispatch, not the build", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("claude").build(makeClaudeProfile(), {
-      prompt: "p",
-      inference: { reasoningEffort: "none" },
-    });
-
-    expect(cmd.argv).toContain("none");
-  });
-
-  test.each([
-    ["no inference", undefined],
-    ["inference with no reasoningEffort", { temperature: 0.2 }],
-    ["a null reasoningEffort", { reasoningEffort: null }],
-    ["an empty reasoningEffort", { reasoningEffort: "" }],
-    ["a non-string reasoningEffort", { reasoningEffort: 3 }],
-  ])("%s: no --effort", async (_name, inference) => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("claude").build(makeClaudeProfile(), {
-      prompt: "p",
-      ...(inference ? { inference } : {}),
-    });
-
-    expect(cmd.argv).not.toContain("--effort");
-  });
-
-  test("model work keeps its confining flags and adds --effort", async () => {
-    const { MODEL_WORK_TOOLS } = await import("../../src/execution/source");
-    const { MODEL_WORK_CLAUDE_FLAGS } = await import("../../src/integrations/harnesses/claude/agent-builder");
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const cmd = getCommandBuilder("claude").build(makeClaudeProfile(), {
-      prompt: "judge it",
-      tools: [...MODEL_WORK_TOOLS],
-      inference: { reasoningEffort: "low" },
-    });
-
-    expect(cmd.argv).toEqual(["claude", ...MODEL_WORK_CLAUDE_FLAGS, "--effort", "low", "--print", "--", "judge it"]);
   });
 });
 

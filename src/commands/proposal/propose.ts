@@ -30,7 +30,7 @@ import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { fallbackAnnouncement } from "../../integrations/agent/engine-fallback";
-import { type BuiltExecution, buildExecution, resolveExecution } from "../../integrations/agent/execution";
+import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import {
   type AgentProposalPayload,
   buildProposePrompt,
@@ -41,8 +41,8 @@ import {
   assertRunnerCredentials,
   collectDispatchSensitiveValues,
   runExecution,
+  unwrapHarnessReply,
 } from "../../integrations/agent/runner-dispatch";
-import { getHarness } from "../../integrations/harnesses";
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import {
   type CreateProposalInput,
@@ -130,14 +130,6 @@ interface ProposalDispatchResult {
 
 const DISPATCH_FAILED = Symbol("proposal-dispatch-failed");
 
-/** A reply's text, unwrapped from its harness's framing (claude's `--output-format json` envelope). */
-function replyText(execution: BuiltExecution, result: AgentRunResult): string {
-  const runner = execution.runner;
-  if (runner.kind !== "agent") return result.stdout;
-  const extractor = getHarness(runner.profile.platform ?? runner.profile.name)?.resultExtractor;
-  return extractor ? extractor(result).text : result.stdout;
-}
-
 /**
  * Resolve, lower, and dispatch the already-rendered proposal prompt with the
  * proposal's JSON Schema as its output schema, and capture the reply. A reply
@@ -181,7 +173,7 @@ async function dispatchProposalPrompt(
         const result = await runExecution(execution, { runOptions: options.runAgentOptions ?? {} });
         results.push(result);
         if (!result.ok) throw DISPATCH_FAILED;
-        return replyText(execution, result);
+        return unwrapHarnessReply(execution.runner, result).text;
       },
       validate: validateProposalPayload,
     });

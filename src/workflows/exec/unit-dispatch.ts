@@ -6,9 +6,8 @@ import { ConfigError } from "../../core/errors";
 import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
 import { canonicalResolvedExecutionRequest, type LoweringNotice } from "../../execution/resolved-request";
 import { type BuiltExecution, buildExecutionFromWire } from "../../integrations/agent/execution";
-import { runExecution } from "../../integrations/agent/runner-dispatch";
+import { runExecution, unwrapHarnessReply } from "../../integrations/agent/runner-dispatch";
 import type { AgentTokenUsage } from "../../integrations/agent/spawn";
-import { getHarness } from "../../integrations/harnesses";
 import type { FrozenWorkflowTarget } from "../plan";
 
 /** Everything the dispatcher needs to run one frozen workflow unit. */
@@ -183,16 +182,9 @@ export async function dispatchWorkflowExecution(
     };
   }
 
-  let text = result.stdout;
-  let sessionId = result.sessionId;
-  if (lowered.runner.kind === "agent" && result.ok) {
-    const harness = getHarness(lowered.runner.profile.platform ?? lowered.runner.profile.name);
-    if (harness?.resultExtractor) {
-      const extraction = harness.resultExtractor(result);
-      text = extraction.text;
-      if (extraction.sessionId !== undefined) sessionId = extraction.sessionId;
-    }
-  }
+  const extraction = result.ok ? unwrapHarnessReply(lowered.runner, result) : undefined;
+  const text = extraction?.text ?? result.stdout;
+  const sessionId = extraction?.sessionId ?? result.sessionId;
 
   return {
     ok: result.ok,

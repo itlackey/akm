@@ -12,33 +12,12 @@
 import { describe, expect, test } from "bun:test";
 import {
   carriedInference,
-  opencodeCarriedKeys,
   opencodeInferenceConfig,
   opencodeModelConfig,
   splitOpencodeModel,
 } from "../../src/integrations/harnesses/opencode/model-config";
 
-const ALL = {
-  temperature: 0.2,
-  reasoningEffort: "low",
-  enableThinking: false,
-  maxTokens: 4096,
-  contextLength: 120000,
-} as const;
-
 describe("carriedInference", () => {
-  test("carries temperature, reasoningEffort and enableThinking, and the limit as one pair", () => {
-    const { carried, keys } = carriedInference(ALL);
-
-    expect(carried).toEqual({
-      temperature: 0.2,
-      reasoningEffort: "low",
-      enableThinking: false,
-      limit: { context: 120000, output: 4096 },
-    });
-    expect(keys).toEqual(["temperature", "reasoningEffort", "enableThinking", "maxTokens", "contextLength"]);
-  });
-
   // opencode refuses `limit` with only one of context and output, and the
   // entry merges over the user's own, so half a limit would overwrite the
   // other half of one the user declared.
@@ -78,11 +57,6 @@ describe("carriedInference", () => {
       keys: [],
     });
   });
-
-  test("no inference carries nothing", () => {
-    expect(carriedInference(undefined)).toEqual({ carried: {}, keys: [] });
-    expect(carriedInference(null)).toEqual({ carried: {}, keys: [] });
-  });
 });
 
 describe("splitOpencodeModel", () => {
@@ -96,76 +70,13 @@ describe("splitOpencodeModel", () => {
   });
 });
 
-describe("opencodeCarriedKeys", () => {
-  test("with a model to attach to, every carried key is carried, model work or not", () => {
-    for (const modelWork of [false, true]) {
-      expect(opencodeCarriedKeys(true, ALL, modelWork)).toEqual([
-        "temperature",
-        "reasoningEffort",
-        "enableThinking",
-        "maxTokens",
-        "contextLength",
-      ]);
-    }
-  });
-
-  test("without one, an ordinary dispatch carries nothing", () => {
-    expect(opencodeCarriedKeys(false, ALL, false)).toEqual([]);
-  });
-
-  // The model-work agent is akm's own and runs whichever model opencode picks,
-  // so it carries the options without a model named. The limit is the model's.
-  test("without one, model work carries its options but not the limit", () => {
-    expect(opencodeCarriedKeys(false, ALL, true)).toEqual(["temperature", "reasoningEffort", "enableThinking"]);
-  });
-});
-
 describe("opencodeInferenceConfig", () => {
-  test("an ordinary dispatch puts the options and the limit on the model", () => {
-    expect(opencodeInferenceConfig(ALL, false)).toEqual({
-      entry: {
-        options: {
-          temperature: 0.2,
-          reasoningEffort: "low",
-          chat_template_kwargs: { enable_thinking: false },
-          enable_thinking: false,
-        },
-        limit: { context: 120000, output: 4096 },
-      },
-    });
-  });
-
-  // opencode makes calls of its own on the same model (a title for the
-  // session) and applies the model's options to them. The model-work agent is
-  // akm's own, so its options reach only the work.
-  test("model work puts the options on the confined agent and only the limit on the model", () => {
-    expect(opencodeInferenceConfig(ALL, true)).toEqual({
-      entry: { limit: { context: 120000, output: 4096 } },
-      agentOptions: {
-        temperature: 0.2,
-        reasoningEffort: "low",
-        chat_template_kwargs: { enable_thinking: false },
-        enable_thinking: false,
-      },
-    });
-  });
-
   test("enableThinking is sent in both forms the LLM transport sends", () => {
     for (const enableThinking of [true, false]) {
       expect(opencodeInferenceConfig({ enableThinking }, false).entry).toEqual({
         options: { chat_template_kwargs: { enable_thinking: enableThinking }, enable_thinking: enableThinking },
       });
     }
-  });
-
-  test("camelCase reasoningEffort, never opencode's dropped snake_case spelling", () => {
-    const options = (opencodeInferenceConfig({ reasoningEffort: "none" }, false).entry.options ?? {}) as Record<
-      string,
-      unknown
-    >;
-
-    expect(options).toEqual({ reasoningEffort: "none" });
-    expect(options).not.toHaveProperty("reasoning_effort");
   });
 
   test("nothing to carry is an empty entry, and no agent options", () => {
@@ -175,12 +86,6 @@ describe("opencodeInferenceConfig", () => {
 });
 
 describe("opencodeModelConfig", () => {
-  test("gives the model's entry under its provider, splitting at the first slash", () => {
-    expect(opencodeModelConfig("krang/chat/qwen3.8-27b", { limit: { context: 1, output: 1 } })).toEqual({
-      provider: { krang: { models: { "chat/qwen3.8-27b": { limit: { context: 1, output: 1 } } } } },
-    });
-  });
-
   test("is undefined without a provider/model or an entry", () => {
     expect(opencodeModelConfig(undefined, { options: {} })).toBeUndefined();
     expect(opencodeModelConfig("unqualified", { options: {} })).toBeUndefined();

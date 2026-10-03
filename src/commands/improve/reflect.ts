@@ -33,7 +33,7 @@ import { warn, warnOnce } from "../../core/warn";
 import { MODEL_WORK_TOOLS } from "../../execution/source";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
-import { DEFAULT_MODEL_WORK_TIMEOUT_MS } from "../../integrations/agent/config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import {
   fallbackAnnouncement,
   NO_ENGINE_MESSAGE_SUFFIX,
@@ -641,7 +641,7 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
     ? (opts.timeoutMs ?? null)
     : Object.hasOwn(opts.runner, "timeoutMs")
       ? (opts.runner.timeoutMs ?? null)
-      : DEFAULT_MODEL_WORK_TIMEOUT_MS;
+      : DEFAULT_LLM_TIMEOUT_MS;
   const deadline = typeof configuredTimeout === "number" ? start + configuredTimeout : undefined;
   const messages: ChatMessage[] = [{ role: "user", content: opts.prompt ?? "" }];
   if (opts.priorDraft !== undefined && opts.iteration > 0) {
@@ -664,15 +664,8 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
       parsed: { outputMode: opts.outputMode, repairAttempts },
     };
   };
-  // A reply that broke the contract. An agent or SDK engine's failure names the engine; an LLM
-  // reply keeps its message, because improve feeds a failed reflect's `error` into the next
-  // prompts as a pattern to avoid, and rewording it would change those requests.
-  const invalidReply = (err: unknown, reply: string): AgentRunResult => {
-    if (runnerIsLlm(opts.runner)) return failure(err, "parse_error", reply, 0);
-    const attempts = repairAttempts + 1;
-    const message = `Engine "${opts.runner.engine}" reply was not a valid reflect proposal after ${attempts} attempt${attempts === 1 ? "" : "s"}: ${errMessage(err)}`;
-    return failure(new Error(message), "parse_error", reply, 0);
-  };
+  // A reply that broke the contract; its message is the parser's, on every engine kind.
+  const invalidReply = (err: unknown, reply: string): AgentRunResult => failure(err, "parse_error", reply, 0);
   // The result of the dispatch that failed, kept for an agent or SDK engine.
   let dispatched: AgentRunResult | undefined;
   // Reflect parses and repairs its own reply (the repair turn below), so one dispatch, unvalidated.

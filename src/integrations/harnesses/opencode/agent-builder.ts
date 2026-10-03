@@ -53,7 +53,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
     personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
-    modelWorkTools: true,
     inference: (profile, request) => {
       const model = request.model?.resolved ?? modelFromArgs(profile.args);
       return opencodeCarriedKeys(

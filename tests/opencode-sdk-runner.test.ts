@@ -12,10 +12,8 @@
 // `session.prompt()` with no timer, so a stalled SDK call blocked the caller.
 
 import { afterEach, describe, expect, test } from "bun:test";
-import { MODEL_WORK_TOOLS } from "../src/execution/source";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { RunAgentOptions } from "../src/integrations/agent/spawn";
-import { MODEL_WORK_STEP_GRACE, MODEL_WORK_STEPS } from "../src/integrations/harnesses/opencode/model-work-agent";
 import {
   __setServerFactory,
   __setTestServer,
@@ -523,29 +521,6 @@ describe("buildSdkConfig — inference", () => {
   const endpoint = "http://127.0.0.1:18080/v1/chat/completions";
   const models = (config: Record<string, unknown>, provider = "akm-custom") =>
     (config.provider as Record<string, { models: Record<string, unknown> }>)[provider]?.models;
-
-  test("the routed model carries temperature, reasoning effort, thinking and the limit", async () => {
-    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
-    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, false, {
-      temperature: 0.2,
-      reasoningEffort: "low",
-      enableThinking: false,
-      maxTokens: 4096,
-      contextLength: 120000,
-    });
-
-    expect(models(config)).toEqual({
-      "stub-model": {
-        options: {
-          temperature: 0.2,
-          reasoningEffort: "low",
-          chat_template_kwargs: { enable_thinking: false },
-          enable_thinking: false,
-        },
-        limit: { context: 120000, output: 4096 },
-      },
-    });
-  });
 
   test("the fallback LLM engine's inference reaches the model, and the request's own wins field by field", async () => {
     const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
@@ -1232,73 +1207,31 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
   });
 });
 
-describe("runOpencodeSdk — model work is bounded on the server too", () => {
+describe("runOpencodeSdk — a session the dispatch gives up on is aborted on the server", () => {
   afterEach(() => {
     __setTestServer(null);
   });
-  const modelWork = { dispatch: { prompt: "judge this", tools: [...MODEL_WORK_TOOLS] } } as RunAgentOptions;
 
-  /** A fake whose session holds `steps` step-starts, and whose prompt settles when the session is aborted. */
-  function loopingServer(steps: number) {
+  test("a dispatch that times out aborts its session, so the server stops calling the model", async () => {
     const aborted: string[] = [];
-    let release: (() => void) | undefined;
-    const settled = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const messages = Array.from({ length: steps }, () => ({ parts: [{ type: "step-start" }, { type: "tool" }] }));
-    const server = {
+    __setTestServer({
       client: {
         session: {
           create: async () => ({ data: { id: "sess-1" } }),
-          prompt: async () => {
-            if (steps > 0) await settled;
-            return { data: { info: {}, parts: [{ type: "text", text: "DONE" }] } };
-          },
+          prompt: () => new Promise<never>(() => {}),
           delete: async () => ({}),
           abort: async (args: { path: { id: string } }) => {
             aborted.push(args.path.id);
-            release?.();
             return {};
           },
-          messages: async () => ({ data: messages }),
         },
       },
       server: { close() {} },
-    };
-    return { server, aborted, release: () => release?.() };
-  }
+    });
 
-  test("a session past the step limit is aborted and reported as parse_error", async () => {
-    const fake = loopingServer(MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE + 1);
-    __setTestServer(fake.server);
-
-    const result = await runOpencodeSdk(baseProfile, "judge this", { ...modelWork, timeoutMs: 5_000 });
-
-    expect(fake.aborted).toEqual(["sess-1"]);
-    expect(result).toMatchObject({ ok: false, reason: "parse_error" });
-    expect(result.error).toContain(`${MODEL_WORK_STEPS}-step limit`);
-  });
-
-  test("a session within the limit is not aborted", async () => {
-    const fake = loopingServer(MODEL_WORK_STEPS + MODEL_WORK_STEP_GRACE);
-    __setTestServer(fake.server);
-    // Settles after the first poll has counted the steps.
-    setTimeout(fake.release, 1_500);
-
-    const result = await runOpencodeSdk(baseProfile, "judge this", { ...modelWork, timeoutMs: 5_000 });
-
-    expect(fake.aborted).toEqual([]);
-    expect(result).toMatchObject({ ok: true, stdout: "DONE" });
-  });
-
-  test("a model-work session the dispatch times out on is aborted on the server", async () => {
-    const fake = loopingServer(0);
-    fake.server.client.session.prompt = () => new Promise<never>(() => {});
-    __setTestServer(fake.server);
-
-    const result = await runOpencodeSdk(baseProfile, "judge this", { ...modelWork, timeoutMs: 50 });
+    const result = await runOpencodeSdk(baseProfile, "judge this", { timeoutMs: 50 });
 
     expect(result).toMatchObject({ ok: false, reason: "timeout" });
-    expect(fake.aborted).toEqual(["sess-1"]);
+    expect(aborted).toEqual(["sess-1"]);
   });
 });

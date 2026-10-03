@@ -15,7 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { assertNever } from "../../core/assert";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
-import { ConfigError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import {
   collectSensitiveValues,
   isEnvPassthroughValueSafeToExpose,
@@ -27,7 +27,7 @@ import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
-import { modelFromArgs } from "./builder-shared";
+import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import {
   lookupApiKeyFileValue,
   lookupApiKeySecretRefValue,
@@ -208,33 +208,13 @@ async function dispatchRunner(
   return redactResult(result, collectSensitiveValues(secrets));
 }
 
-/** The git repository a directory is inside, if any: a `.git` file, or a `.git` directory with a HEAD. */
-function enclosingGitRepository(dir: string): string | undefined {
-  for (let current = fs.realpathSync(dir); ; current = path.dirname(current)) {
-    const marker = path.join(current, ".git");
-    if (fs.existsSync(path.join(marker, "HEAD")) || (fs.existsSync(marker) && fs.statSync(marker).isFile())) {
-      return current;
-    }
-    if (path.dirname(current) === current) return undefined;
-  }
-}
-
 /**
  * The scratch working directory for one model-work dispatch on an agent or SDK
  * engine, so the edit the model-work tool policy grants never reaches the
- * stash. opencode counts a whole git repository as inside its working
- * directory, so a scratch directory inside one is refused.
+ * stash.
  */
 function createModelWorkDirectory(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
-  const repository = enclosingGitRepository(dir);
-  if (repository === undefined) return dir;
-  fs.rmSync(dir, { recursive: true, force: true });
-  throw new ConfigError(
-    `Model work runs an agent in a scratch directory outside any git repository, but ${dir} is inside the repository at ${repository}.`,
-    "INVALID_CONFIG_FILE",
-    "Point TMPDIR at a directory outside any git repository.",
-  );
+  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
 }
 
 /**
@@ -259,15 +239,16 @@ export async function runExecution(
   }
 }
 
-/**
- * A model-work reply's answer: the harness's result extractor strips its
- * framing (claude's `--output-format json` result envelope, for one), as a
- * workflow unit's does, and no answer is a `parse_error`.
- */
-function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
+/** A successful reply's text, unwrapped from its harness's framing (claude's `--output-format json` result envelope, for one). */
+export function unwrapHarnessReply(runner: RunnerSpec, result: AgentRunResult): AgentResultExtraction {
   const extractor =
     runner.kind === "agent" ? getHarness(runner.profile.platform ?? runner.profile.name)?.resultExtractor : undefined;
-  const extracted = extractor ? extractor(result) : { text: result.stdout };
+  return extractor ? extractor(result) : { text: result.stdout };
+}
+
+/** A model-work reply's answer: its harness's framing stripped, and no answer is a `parse_error`. */
+function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
+  const extracted = unwrapHarnessReply(runner, result);
   const answer = {
     ...result,
     stdout: extracted.text,

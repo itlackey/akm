@@ -88,25 +88,6 @@ describe("a frozen opencode-sdk target takes its LLM fallback only from its own 
       expect(target.concurrency).toBeUndefined();
     }
   });
-
-  test("with its own llmEngine it freezes that engine's connection and concurrency, not defaults.llmEngine's", async () => {
-    const { unit, judge } = await freezeTargets({
-      engines: {
-        sdk: { kind: "agent", platform: "opencode-sdk", llmEngine: "own" },
-        own: llm("own", 2),
-        shared: llm("shared", 3),
-      },
-      defaults: { engine: "sdk", llmEngine: "shared" },
-    });
-    for (const target of [unit, judge]) {
-      if (target.runner.kind !== "sdk") throw new Error("expected an SDK runner");
-      expect(target.runner.fallbackConnection).toMatchObject({
-        endpoint: "https://own.example.test/v1/chat/completions",
-        model: "own-model",
-      });
-      expect(target.concurrency).toBe(2);
-    }
-  });
 });
 
 describe("targetConcurrency", () => {
