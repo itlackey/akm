@@ -5,7 +5,7 @@
 import type { AkmConfig, IndexPassConfig } from "../core/config/config";
 import { cloneExecutionJsonObject } from "../execution/json";
 import type { LoweringNotice } from "../execution/resolved-request";
-import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../execution/source";
+import type { UnresolvedExecutionDefaults } from "../execution/source";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
@@ -55,7 +55,8 @@ export function resolveIndexPassExecution(passName: string, config: AkmConfig): 
     content: "",
     config,
     invocationDefaults,
-    current: { ...indexExecutionDefaults(pass), tools: MODEL_WORK_TOOLS },
+    current: indexExecutionDefaults(pass),
+    modelWork: true,
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
   return Object.freeze({ runner: lowered.runner, notices: lowered.notices });

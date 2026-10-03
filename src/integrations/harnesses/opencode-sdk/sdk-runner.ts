@@ -98,7 +98,6 @@ import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor, XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { ExecutionJsonObject } from "../../../execution/json";
-import { isModelWorkTools } from "../../../execution/source";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
@@ -908,7 +907,7 @@ export async function runOpencodeSdk(
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
 
   if (opts.signal?.aborted) return abortedBeforeSdkStart(profile);
-  const modelWork = isModelWorkTools(opts.dispatch?.tools);
+  const modelWork = opts.dispatch?.modelWork === true;
 
   let client: SdkClient;
   if (_testServer) {
@@ -1054,7 +1053,7 @@ export async function runOpencodeSdk(
   const dispatch = opts.dispatch;
   const agent = modelWork ? MODEL_WORK_OPENCODE_AGENT : dispatch?.agent;
   const system = dispatch?.systemPrompt;
-  const tools = modelWork ? undefined : toolsToSdkAllowlist(dispatch?.tools);
+  const tools = toolsToSdkAllowlist(dispatch?.tools);
   const body: {
     parts: { type: string; text: string }[];
     agent?: string;

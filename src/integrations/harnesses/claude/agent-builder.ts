@@ -30,7 +30,6 @@
  * The builder's `platform` stays `'claude'` (the canonical harness id).
  */
 
-import { isModelWorkTools } from "../../../execution/source";
 import {
   type AgentCommandBuilder,
   modelFromArgs,
@@ -83,7 +82,7 @@ export const claudeBuilder: AgentCommandBuilder = {
     tools: "all",
   }),
   build(profile, req) {
-    const modelWork = isModelWorkTools(req.tools);
+    const modelWork = req.modelWork === true;
     const args: string[] = modelWork ? [...MODEL_WORK_CLAUDE_FLAGS] : [...profile.args];
     if (req.agent) {
       args.push("--agent", req.agent);
@@ -98,7 +97,7 @@ export const claudeBuilder: AgentCommandBuilder = {
       const model = modelFromArgs(profile.args);
       if (model) args.push("--model", model);
     }
-    if (req.tools && !modelWork) {
+    if (req.tools) {
       args.push("--allowedTools", normalizeTools(req.tools));
     }
     if (req.schema) {

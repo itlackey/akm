@@ -24,6 +24,9 @@
 
 import type { ExecutionJsonObject } from "../../../execution/json";
 
+/** The inference keys model work's agent carries as options. */
+export const MODEL_WORK_AGENT_INFERENCE = ["temperature", "reasoningEffort", "enableThinking"] as const;
+
 const isPositiveInteger = (value: unknown): value is number =>
   typeof value === "number" && Number.isInteger(value) && value > 0;
 

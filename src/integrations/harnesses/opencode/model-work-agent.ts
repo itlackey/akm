@@ -4,7 +4,7 @@
 
 /**
  * The opencode agent that runs unattended model work under the model-work
- * tool policy (`MODEL_WORK_TOOLS`). The CLI builder injects it through
+ * tool policy (`MODEL_WORK_POLICY_ID`). The CLI builder injects it through
  * `OPENCODE_CONFIG_CONTENT` and selects it with `--agent`; the SDK runner adds
  * it to its server config and names it in the prompt body.
  *

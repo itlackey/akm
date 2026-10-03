@@ -30,7 +30,6 @@ import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { warn, warnOnce } from "../../core/warn";
-import { MODEL_WORK_TOOLS } from "../../execution/source";
 import { lookup } from "../../indexer/indexer";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
@@ -948,7 +947,7 @@ function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: r
   const prepared = resolveExecution({
     content: "Validate reflect operation transport before dispatch.",
     runner: runnerSpec,
-    current: { tools: MODEL_WORK_TOOLS },
+    modelWork: true,
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
   onNotices(lowered.notices);

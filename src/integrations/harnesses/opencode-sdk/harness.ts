@@ -24,6 +24,7 @@
  */
 
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import { MODEL_WORK_AGENT_INFERENCE } from "../opencode/model-config";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
 
@@ -44,6 +45,7 @@ export class OpencodeSdkHarness extends BaseHarness {
       personaChannel: "native",
       nativeAgentSelector: true,
       tools: "sdk",
+      inference: MODEL_WORK_AGENT_INFERENCE,
     }),
   };
   // No flag-shaped resume: session reuse is programmatic — the SDK session id is

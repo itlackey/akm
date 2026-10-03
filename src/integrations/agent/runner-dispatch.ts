@@ -22,7 +22,7 @@ import {
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
-import { isModelWorkTools } from "../../execution/source";
+import { MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
 import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
 import { getHarness } from "../harnesses";
@@ -229,7 +229,7 @@ export async function runExecution(
   options: RunExecutionOptions = {},
 ): Promise<AgentRunResult> {
   const scratch =
-    execution.runner.kind !== "llm" && isModelWorkTools(execution.request.tools)
+    execution.runner.kind !== "llm" && execution.request.authorization.policy?.id === MODEL_WORK_POLICY_ID
       ? createModelWorkDirectory()
       : undefined;
   try {

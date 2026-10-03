@@ -39,8 +39,8 @@ import {
 } from "../../execution/resolved-request";
 import {
   cloneToolSelection,
-  isModelWorkTools,
   isPortableExecutionAgentSelector,
+  MODEL_WORK_POLICY_ID,
   type ToolSelection,
   type UnresolvedExecutionDefaults,
 } from "../../execution/source";
@@ -91,6 +91,8 @@ export interface ResolveExecutionInput {
   readonly invocationDefaults?: UnresolvedExecutionDefaults;
   readonly current?: UnresolvedExecutionDefaults;
   readonly modelMap?: ResolvedModelMapV1;
+  /** Run under the model-work tool policy: akm's own, so no `execution.allowedTools`, and it replaces any `tools`. */
+  readonly modelWork?: boolean;
 }
 
 export interface ResolvedExecution {
@@ -320,11 +322,19 @@ function requestedToolNames(tools: Exclude<ToolSelection, null>): readonly strin
  * nothing is allowed. The model-work policy is akm's own and always allowed:
  * it confines an engine more tightly than leaving tools unset does.
  */
-function authorizeTools(tools: ToolSelection | undefined, config: AkmConfig | undefined): ToolAuthorizationResult {
-  if (!hasToolSelection(tools)) return { status: "not-required" };
-  if (isModelWorkTools(tools)) {
-    return { status: "allowed", reason: "The model-work tool policy is akm's own.", policy: { id: "model-work" } };
+function authorizeTools(
+  tools: ToolSelection | undefined,
+  config: AkmConfig | undefined,
+  modelWork: boolean,
+): ToolAuthorizationResult {
+  if (modelWork) {
+    return {
+      status: "allowed",
+      reason: "The model-work tool policy is akm's own.",
+      policy: { id: MODEL_WORK_POLICY_ID },
+    };
   }
+  if (!hasToolSelection(tools)) return { status: "not-required" };
   if (!config) {
     return {
       status: "denied",
@@ -522,13 +532,14 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
     return layer;
   };
   const schemaLayer = select("outputSchema", "outputSchema");
-  const toolsLayer = select("tools", "tools");
+  const modelWork = input.modelWork === true;
+  const toolsLayer = modelWork ? undefined : select("tools", "tools");
   const timeoutLayer = select("timeout", "runtime.timeoutMs");
   const workspaceLayer = select("workspace", "runtime.workspace");
   const environmentLayer = select("environment", "runtime.environment");
   const settingsLayer = select("runtime", "runtime.settings");
   const tools = toolsLayer ? cloneToolSelection(toolsLayer.values.tools ?? null, "tools") : undefined;
-  const authorization = authorizeTools(tools, input.runner ? undefined : input.config);
+  const authorization = authorizeTools(tools, input.runner ? undefined : input.config, modelWork);
   provenance.authorization = {
     layer: typeof authorization.policy?.id === "string" ? authorization.policy.id : "not-required",
     kind: "authorization",
@@ -578,8 +589,7 @@ function buildLlm(
       "INVALID_CONFIG_FILE",
     );
   }
-  // An LLM has no tools, which already meets the model-work policy.
-  if (hasToolSelection(request.tools) && !isModelWorkTools(request.tools)) {
+  if (hasToolSelection(request.tools)) {
     throw new ConfigError("The direct LLM transport cannot enforce the resolved tool policy.", "INVALID_CONFIG_FILE");
   }
   const notices: Readonly<LoweringNotice>[] = [...request.notices];

@@ -39,7 +39,7 @@
 import type { AkmConfig } from "../core/config/config";
 import { ConfigError } from "../core/errors";
 import type { LoweringNotice, ResolvedConversationMessage } from "../execution/resolved-request";
-import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../execution/source";
+import type { UnresolvedExecutionDefaults } from "../execution/source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
 import type { RunnerSpec } from "../integrations/agent/runner";
@@ -261,7 +261,8 @@ export async function callStructured<T>(opts: CallStructuredOptions<T>): Promise
       content: terminal.content,
       conversation: terminal.conversation,
       runner,
-      current: { ...resolveStructuredCurrent(opts.current, request, runner), tools: MODEL_WORK_TOOLS },
+      current: resolveStructuredCurrent(opts.current, request, runner),
+      modelWork: true,
     });
     const lowered = buildExecution(prepared.request, prepared.runner);
     opts.onNotices?.(lowered.notices);

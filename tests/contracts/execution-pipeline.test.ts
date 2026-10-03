@@ -16,7 +16,6 @@ import { renderMarkdownExecutionSource } from "../../src/core/adapter/execution-
 import type { AkmConfig } from "../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../src/core/subprocess";
 import { canonicalResolvedExecutionRequest, createResolvedPersona } from "../../src/execution/resolved-request";
-import { MODEL_WORK_TOOLS } from "../../src/execution/source";
 import {
   buildExecution,
   buildExecutionFromWire,
@@ -545,16 +544,36 @@ describe("the model-work tool policy", () => {
 
   test("is akm's own: allowed without execution.allowedTools, on a runner-only resolution too", () => {
     const { runner } = resolveExecution({ content: "x", config: modelWork });
-    const again = resolveExecution({ content: "y", runner, current: { tools: MODEL_WORK_TOOLS } });
+    const again = resolveExecution({ content: "y", runner, modelWork: true });
     expect(again.request.authorization).toMatchObject({ status: "allowed", policy: { id: "model-work" } });
     expect(() => buildExecution(again.request, again.runner)).not.toThrow();
+  });
+
+  // The caller asks for the policy; no `tools` value names it. An asset's or a task's own `tools:`, even the
+  // exact tools the policy allows, is ordinary tools: the operator's `execution.allowedTools` decides.
+  test("an asset's or a task's own tools, the policy's four included, are denied without execution.allowedTools", () => {
+    const tools = ["read", "edit", "akm search", "akm show"];
+    const layers = [
+      { agentLayer: { id: "agents/a", values: { tools } } },
+      { commandLayer: { id: "commands/c", values: { tools } } },
+      { current: { tools } },
+    ];
+    for (const layer of layers) {
+      const { request } = resolveExecution({ content: "x", config: modelWork, ...layer });
+
+      expect(request.authorization).toMatchObject({
+        status: "denied",
+        policy: { id: "config-execution-allowed-tools" },
+      });
+    }
   });
 
   test("cannot run a native agent, which would replace the confined one", () => {
     const resolved = resolveExecution({
       content: "x",
       config: modelWork,
-      current: { agent: "reviewer", tools: MODEL_WORK_TOOLS },
+      current: { agent: "reviewer" },
+      modelWork: true,
     });
     expect(() => buildExecution(resolved.request, resolved.runner)).toThrow(
       /native agent "reviewer" under the model-work tool policy/,
@@ -562,7 +581,7 @@ describe("the model-work tool policy", () => {
   });
 
   test("an agent runs in a fresh scratch directory, removed afterwards even when the dispatch throws", async () => {
-    const resolved = resolveExecution({ content: "x", config: modelWork, current: { tools: MODEL_WORK_TOOLS } });
+    const resolved = resolveExecution({ content: "x", config: modelWork, modelWork: true });
     const built = buildExecution(resolved.request, resolved.runner);
     const seen: string[] = [];
     const runAgent = async (_profile: unknown, _prompt: string, opts: { cwd?: string }) => {
@@ -584,17 +603,17 @@ describe("the model-work tool policy", () => {
 
   test("an agent that ends with no answer has failed with parse_error; other work keeps its empty reply", async () => {
     const runAgent = async () => ({ ok: true, exitCode: 0, stdout: "  \n", stderr: "", durationMs: 1 });
-    const run = (current: Record<string, unknown>) => {
-      const resolved = resolveExecution({ content: "x", config: modelWork, current });
+    const run = (isModelWork: boolean) => {
+      const resolved = resolveExecution({ content: "x", config: modelWork, modelWork: isModelWork });
       return runExecution(buildExecution(resolved.request, resolved.runner), { runAgent });
     };
 
-    expect(await run({ tools: MODEL_WORK_TOOLS })).toMatchObject({
+    expect(await run(true)).toMatchObject({
       ok: false,
       reason: "parse_error",
       error: 'Engine "claude" returned no answer.',
     });
-    expect(await run({})).toMatchObject({ ok: true, stdout: "  \n" });
+    expect(await run(false)).toMatchObject({ ok: true, stdout: "  \n" });
   });
 
   // The owner's opencode engines name their model only in `args`, which model work otherwise leaves out.
@@ -606,7 +625,8 @@ describe("the model-work tool policy", () => {
     const { argv } = await spawnedFor({
       content: "x",
       config: config({ engines }),
-      current: { engine: "argsonly", tools: MODEL_WORK_TOOLS },
+      current: { engine: "argsonly" },
+      modelWork: true,
     });
     expect(argv[argv.indexOf("--model") + 1]).toBe(model);
     // The rest of the engine's args stay out of model work.

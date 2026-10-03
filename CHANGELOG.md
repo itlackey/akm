@@ -29,6 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An asset's or a task's own `tools:` can no longer name the model-work
+  policy.** In 0.9.25-alpha.1 exactly `read`, `edit`, `akm search`, `akm show`,
+  in that order, skipped `execution.allowedTools`. It is ordinary tools now:
+  only akm's own model-work callers ask for the policy.
 - **An agent engine that names its model only in `args` is named in the usage
   report,** where it showed `unattributed`.
 - **`opencode` and `opencode-sdk` engines receive the XDG base-directory

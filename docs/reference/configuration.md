@@ -171,8 +171,8 @@ inference (`temperature`, `reasoningEffort`, `enableThinking`, `maxTokens`,
 
 Inference from an asset, a workflow's `llm:` or a `models.json` alias reaches an
 LLM engine. On an agent engine it is reported as an `untranslated-field`
-notice, for every field on `opencode` and `opencode-sdk`, those carried
-included, and dispatch continues.
+notice and dispatch continues; model work's agent carries `temperature`,
+`reasoningEffort` and `enableThinking` without one.
 
 Reasoning effort has one word in a request, `reasoningEffort`. `effort`, as a
 `models.json` alias or an asset's `effort:` frontmatter spells it, is read as

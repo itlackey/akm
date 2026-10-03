@@ -16,10 +16,9 @@
  * (the canonical harness id).
  */
 
-import { isModelWorkTools } from "../../../execution/source";
 import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { opencodeInferenceConfig } from "./model-config";
+import { MODEL_WORK_AGENT_INFERENCE, opencodeInferenceConfig } from "./model-config";
 import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "./model-work-agent";
 
 /**
@@ -51,9 +50,10 @@ export const opencodeBuilder: AgentCommandBuilder = {
     personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
+    inference: MODEL_WORK_AGENT_INFERENCE,
   }),
   build(profile, req) {
-    if (isModelWorkTools(req.tools)) {
+    if (req.modelWork) {
       const model = req.model ?? modelFromArgs(profile.args);
       const { agentOptions } = opencodeInferenceConfig(req.inference, true);
       return {
