@@ -517,7 +517,6 @@ kept.
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `all` | Memory belief filter. `current` keeps active memory beliefs; `historical` keeps contradicted/superseded/archived ones. |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level |
@@ -593,7 +592,6 @@ akm curate "learn the release workflow" --from all --format text
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search before curating |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
 enriches each with a preview, run details and up to two support refs: the
@@ -623,16 +621,12 @@ curated like any other.
 every prompt: it only ever reads the index as it currently stands (the same
 non-blocking `ensureIndex()` path `search` uses) and never waits on or
 contends with a full `akm index` rebuild in progress.
-Use `--no-track-usage` when this inspection must not record usage events.
 
 ### show
 
 Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
 unmatched fragment lists the available slugs.
-
-Successful reads record local usage events by default; pass
-`--no-track-usage` to suppress them.
 
 ```sh
 akm show scripts/deploy.sh
@@ -662,7 +656,6 @@ akm show memories/retro --filter user=alice --filter agent=claude
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable scope filter (`user`, `agent`, `run`, `channel`). |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read. |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory

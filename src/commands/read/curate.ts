@@ -118,7 +118,7 @@ export interface CurateOptions {
   /**
    * When true, skip logging usage events for this curate call (F2/R-055):
    * neither the top-level curate event nor the underlying search/show reads
-   * feed usage-events telemetry. Wired to `akm curate --no-track-usage`.
+   * feed usage-events telemetry.
    * Curate's own nested `akmSearch`/`akmShowUnified` calls always pass
    * `skipLogging: true` — this flag additionally silences curate's OWN
    * top-level event.

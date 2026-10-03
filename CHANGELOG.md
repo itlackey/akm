@@ -28,6 +28,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   work's scratch directory.** A model that ignores opencode's step limit runs
   until the dispatch timeout, as it does on `opencode`.
 - **A prompt builder that nothing called** (`buildSchemaRepairPrompt`).
+- **The `--track-usage` / `--no-track-usage` flag on `akm search`, `akm curate`
+  and `akm show`.** A successful read always records its usage event, stamped
+  with its source (`user`, `improve`, `task` or `audit`); only `user` events
+  feed ranking and eval, so machine reads never skew them. Either spelling now
+  fails as an unknown flag.
 
 ### Fixed
 
