@@ -81,7 +81,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   expansion ceiling is capped at 25,000 characters, so a source body longer than
   that was flagged `EXCESSIVE_EXPANSION` even when the proposed body was its own
   length (ratio 1.00), and went to review instead of the judge. A body no longer
-  than its source is never expansion; one that grows past the cap still is.
+  than its source is never expansion; one that grows past the cap still is, by
+  any amount. The reflect prompt agrees: it told the model its body could be at
+  most 25,000 characters even when the source was longer, and now gives such a
+  source's own length.
 - **An asset's or a task's own `tools:` can no longer name the model-work
   policy.** In 0.9.25-alpha.1 exactly `read`, `edit`, `akm search`, `akm show`,
   in that order, skipped `execution.allowedTools`. It is ordinary tools now:

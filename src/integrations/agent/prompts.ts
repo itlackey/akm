@@ -482,7 +482,8 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     // Embed concrete counts only when the gate will actually fire (source >= 200 chars).
     const showCharBounds = sourceBodyLen >= 200;
     const minChars = Math.max(Math.round(0.5 * sourceBodyLen), 150);
-    const maxChars = Math.min(Math.max(Math.round(2.5 * sourceBodyLen), 2500), 25000);
+    // A source already past the 25000 cap may not grow, and need not shrink to the cap.
+    const maxChars = Math.max(Math.min(Math.max(Math.round(2.5 * sourceBodyLen), 2500), 25000), sourceBodyLen);
     sections.push(
       [
         "## Content preservation rules (MUST follow)",
@@ -492,7 +493,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
           ? `3. DO NOT shrink the asset. Your body must be at least ${minChars} characters (source body is ${sourceBodyLen} chars; floor is 50%). If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. \`<!-- removed obsolete section X because ... -->\`).`
           : "3. DO NOT shrink the asset dramatically. The improved body must be at least 50% of the source body length. If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. `<!-- removed obsolete section X because ... -->`).",
         showCharBounds
-          ? `4. DO NOT pad the asset with speculative material. Your body must be at most ${maxChars} characters (source body is ${sourceBodyLen} chars; ceiling is 250%). Do not add invented sections, hypothetical examples, or padding prose.`
+          ? `4. DO NOT pad the asset with speculative material. Your body must be at most ${maxChars} characters (source body is ${sourceBodyLen} chars; ceiling is ${maxChars === sourceBodyLen ? "100%" : "250%"}). Do not add invented sections, hypothetical examples, or padding prose.`
           : "4. DO NOT pad the asset with speculative material. The improved body must be at most 250% of the source body length unless the feedback explicitly requests added sections.",
         "5. Improve clarity of surrounding prose, fix structural issues, add missing required frontmatter fields. Do NOT rewrite a runbook into an essay.",
       ].join("\n"),
