@@ -5,7 +5,7 @@
 import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
-import { isModelWorkTools, type ToolSelection } from "../../execution/source";
+import { MODEL_WORK_POLICY_ID, type ToolSelection } from "../../execution/source";
 import { HARNESS_MODEL_WORK_IDS } from "../harnesses/ids";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
@@ -21,7 +21,7 @@ export interface AgentLowererOptions {
   readonly tools: ToolTranslation;
   /** The harness has an exact native-agent selector flag. */
   readonly nativeAgentSelector?: boolean;
-  /** Inference keys this harness translates. */
+  /** Inference keys this harness's model-work dispatch carries; a dispatch of any other kind reports every key. */
   readonly inference?: readonly string[];
 }
 
@@ -70,6 +70,7 @@ export function createAgentRequestLowerer(
 ): (profile: AgentProfile, request: ResolvedExecutionRequestV1) => LoweredAgentDispatch {
   const supportedInference = new Set(options.inference ?? []);
   return (_profile, request) => {
+    const modelWork = request.authorization.policy?.id === MODEL_WORK_POLICY_ID;
     const notices: Readonly<LoweringNotice>[] = [];
     const skip = (field: string): void => {
       notices.push(untranslated(options.adapter, field));
@@ -114,10 +115,10 @@ export function createAgentRequestLowerer(
     if (Object.hasOwn(request, "inference")) {
       dispatch.inference = request.inference ?? null;
       for (const key of Object.keys(request.inference ?? {}).sort()) {
-        if (!supportedInference.has(key)) skip(`inference.${key}`);
+        if (!(modelWork && supportedInference.has(key))) skip(`inference.${key}`);
       }
     }
-    if (isModelWorkTools(request.tools)) {
+    if (modelWork) {
       if (!HARNESS_MODEL_WORK_IDS.has(options.adapter)) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
@@ -131,7 +132,7 @@ export function createAgentRequestLowerer(
           "INVALID_CONFIG_FILE",
         );
       }
-      dispatch.tools = request.tools as AgentDispatchRequest["tools"];
+      dispatch.modelWork = true;
     } else if (request.tools !== undefined) {
       // An explicit empty selection still reaches the builder (e.g. an empty allowlist).
       if (hasToolSelection(request.tools) && !translatesTools(options.tools, request.tools)) {

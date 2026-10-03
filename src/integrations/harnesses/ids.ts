@@ -30,7 +30,7 @@ export interface HarnessIdEntry {
   /** Mirrors `AkmHarness.capabilities.agentDispatch`. */
   readonly agentDispatch: boolean;
   /**
-   * The harness confines the model-work tool policy (`MODEL_WORK_TOOLS`), so
+   * The harness confines the model-work tool policy (`MODEL_WORK_POLICY_ID`), so
    * unattended model work may run on it. The one copy of this fact: the shared
    * lowerer (`agent/request-lowering.ts`) reads it too.
    */

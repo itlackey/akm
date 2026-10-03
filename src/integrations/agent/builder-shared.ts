@@ -36,6 +36,8 @@ export interface AgentDispatchRequest {
   model?: string;
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
+  /** Run under the model-work tool policy: the builder confines the run itself and `tools` is unset. */
+  modelWork?: boolean;
   /** Exact resolved inference object. Builders consume only fields their lowerer records as translated. */
   inference?: ExecutionJsonObject | null;
   /**

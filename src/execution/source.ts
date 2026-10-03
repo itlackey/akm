@@ -28,22 +28,15 @@ export type AdapterOwnedExtensions = Readonly<Record<string, ExecutionJsonObject
 export type ToolSelection = string | readonly string[] | ExecutionJsonObject | null;
 
 /**
- * The model-work tool policy: unattended model work (improve, the judges,
- * index passes, remember) may read, edit only inside the dispatch's own
- * scratch working directory, and run `akm search` and `akm show`. The stash
- * stays read-only to it. A transport grants what it can confine and refuses
- * the policy at build when it can confine nothing; an LLM has no tools.
+ * The model-work tool policy: unattended model work (improve, the judges, index
+ * passes, remember) may read, edit only inside the dispatch's own scratch
+ * working directory, and run `akm search` and `akm show`; the stash stays
+ * read-only to it. A transport grants what it can confine and refuses the policy
+ * at build when it can confine nothing; an LLM has no tools. A request carries it
+ * as `authorization.policy.id`, set only when its caller asks (`modelWork`): no
+ * `tools` value names it, so an asset's own `tools:` cannot.
  */
-export const MODEL_WORK_TOOLS: readonly string[] = Object.freeze(["read", "edit", "akm search", "akm show"]);
-
-/** Whether a selection names the model-work tool policy. */
-export function isModelWorkTools(tools: unknown): boolean {
-  return (
-    Array.isArray(tools) &&
-    tools.length === MODEL_WORK_TOOLS.length &&
-    tools.every((tool, index) => tool === MODEL_WORK_TOOLS[index])
-  );
-}
+export const MODEL_WORK_POLICY_ID = "model-work";
 
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {

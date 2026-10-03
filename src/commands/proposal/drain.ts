@@ -29,7 +29,6 @@ import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { MODEL_WORK_TOOLS } from "../../execution/source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
@@ -274,10 +273,8 @@ async function dispatchJudgment(
     const prepared = resolveExecution({
       content: prompt,
       runner,
-      current: {
-        ...(Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_LLM_TIMEOUT_MS }),
-        tools: MODEL_WORK_TOOLS,
-      },
+      current: Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_LLM_TIMEOUT_MS },
+      modelWork: true,
     });
     const lowered = buildExecution(prepared.request, prepared.runner);
     notices = lowered.notices;
@@ -453,7 +450,7 @@ export async function drainProposals(
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
       runner: opts.judgment,
-      current: { tools: MODEL_WORK_TOOLS },
+      modelWork: true,
     });
     assertRunnerCredentials(buildExecution(prepared.request, prepared.runner).runner);
   }

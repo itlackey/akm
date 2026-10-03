@@ -171,12 +171,11 @@ describe("opencodeBuilder — inference", () => {
   });
 
   test("model work with no inference defines the agent and nothing else, as before", async () => {
-    const { MODEL_WORK_TOOLS } = await import("../../src/execution/source");
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const cmd = getCommandBuilder("opencode").build(makeOpencodeProfile(), {
       prompt: "judge it",
       model: "krang/m",
-      tools: [...MODEL_WORK_TOOLS],
+      modelWork: true,
     });
     const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
 

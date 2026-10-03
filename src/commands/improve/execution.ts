@@ -5,7 +5,7 @@
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import type { LoweringNotice } from "../../execution/resolved-request";
-import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../../execution/source";
+import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 
@@ -75,12 +75,12 @@ export function resolveImproveExecution(options: ResolveImproveExecutionOptions)
     mergeDefaults(defaultEngine ? { engine: defaultEngine } : {}, profileDefaults),
     indexDefaults,
   );
-  const current = { ...mergeDefaults(processDefaults, currentDefaults), tools: MODEL_WORK_TOOLS };
   const prepared = resolveExecution({
     content: `improve ${options.processName} execution selection`,
     config: options.config,
     invocationDefaults,
-    current,
+    current: mergeDefaults(processDefaults, currentDefaults),
+    modelWork: true,
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
   return Object.freeze({ runner: lowered.runner, notices: lowered.notices });

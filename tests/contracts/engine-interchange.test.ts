@@ -35,7 +35,7 @@ import os from "node:os";
 import path from "node:path";
 import { callStage } from "../../src/commands/improve/stage";
 import type { AkmConfig } from "../../src/core/config/config";
-import { MODEL_WORK_TOOLS, type UnresolvedExecutionDefaults } from "../../src/execution/source";
+import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import { buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
@@ -225,18 +225,19 @@ function runnerFor(transport: Transport, scenario: string): RunnerSpec {
   return resolveExecution({ content: "engine selection", config, current: { engine: "contract" } }).runner;
 }
 
+/** What a row selects for one dispatch: invocation values, and whether it is model work. */
+type Selection = UnresolvedExecutionDefaults & { modelWork?: boolean };
+
 /** Resolve, build and run one dispatch of `scenario` on `transport`. */
-async function dispatch(
-  transport: Transport,
-  scenario: string,
-  current: UnresolvedExecutionDefaults = {},
-): Promise<AgentRunResult> {
+async function dispatch(transport: Transport, scenario: string, selection: Selection = {}): Promise<AgentRunResult> {
   transport.arrange?.(scenario);
   const config = { configVersion: "0.9.0", engines: { contract: transport.engine(scenario) } } as unknown as AkmConfig;
+  const { modelWork, ...current } = selection;
   const resolved = resolveExecution({
     content: "Reply with the single word: pong",
     config,
     current: { engine: "contract", ...current },
+    modelWork,
   });
   return runExecution(buildExecution(resolved.request, resolved.runner));
 }
@@ -342,7 +343,7 @@ describe("C2: structured output", () => {
 });
 
 describe("C3: the model-work tool policy is confined or refused at build", () => {
-  const modelWork = { tools: MODEL_WORK_TOOLS };
+  const modelWork = { modelWork: true };
   const PROMPT = "Reply with the single word: pong";
 
   /** The rules the injected opencode agent must carry, checked against opencode 1.18.25. */
@@ -447,7 +448,7 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       configVersion: "0.9.0",
       engines: { contract: OPENCODE_SDK.engine("valid") },
     } as unknown as AkmConfig;
-    const resolved = resolveExecution({ content: PROMPT, config, current: { engine: "contract", ...modelWork } });
+    const resolved = resolveExecution({ content: PROMPT, config, current: { engine: "contract" }, modelWork: true });
     const result = await runExecution(buildExecution(resolved.request, resolved.runner));
 
     expect(result.ok).toBe(true);
@@ -553,7 +554,7 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
   async function dispatchBuilt(
     transport: Transport,
     scenario: string,
-    current: UnresolvedExecutionDefaults,
+    selection: Selection,
     engines?: Record<string, unknown>,
   ): Promise<{ result: AgentRunResult; untranslated: string[] }> {
     transport.arrange?.(scenario);
@@ -561,7 +562,13 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
       configVersion: "0.9.0",
       engines: engines ?? { contract: transport.engine(scenario) },
     } as unknown as AkmConfig;
-    const resolved = resolveExecution({ content: PROMPT, config, current: { engine: "contract", ...current } });
+    const { modelWork, ...current } = selection;
+    const resolved = resolveExecution({
+      content: PROMPT,
+      config,
+      current: { engine: "contract", ...current },
+      modelWork,
+    });
     const built = buildExecution(resolved.request, resolved.runner);
     return { result: await runExecution(built), untranslated: untranslatedKeys(built.notices) };
   }
@@ -588,13 +595,15 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
   // only the work. The model itself is the user's, in the user's opencode config.
   test("opencode: model work puts the options on the confined agent, and nothing on the model", async () => {
     const opencode = CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport;
-    const { result } = await dispatchBuilt(opencode, "probe", {
+    const { result, untranslated } = await dispatchBuilt(opencode, "probe", {
       model: MODEL,
       inference: INFERENCE,
-      tools: MODEL_WORK_TOOLS,
+      modelWork: true,
     });
     const config = JSON.parse(probed(result).config ?? "null");
 
+    // The limit is the model's, which akm does not write for a CLI dispatch.
+    expect(untranslated).toEqual(["contextLength", "maxTokens"]);
     expect(config.agent[MODEL_WORK_OPENCODE_AGENT].options).toEqual({
       temperature: 0.2,
       reasoningEffort: "high",
@@ -663,7 +672,7 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     const opencode = await dispatchBuilt(
       CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport,
       "probe",
-      { inference: { effort: "high" }, tools: MODEL_WORK_TOOLS },
+      { inference: { effort: "high" }, modelWork: true },
     );
 
     expect(llmBodies.at(-1)).toMatchObject({ reasoning_effort: "high" });

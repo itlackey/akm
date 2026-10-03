@@ -13,7 +13,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolveImproveExecution } from "../../../src/commands/improve/execution";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
-import { MODEL_WORK_TOOLS } from "../../../src/execution/source";
 import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
 import type { AgentProfile } from "../../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
@@ -55,7 +54,7 @@ function agentProfile(runner: RunnerSpec): AgentProfile {
 
 /** What a stage call resolves from the runner the improve plan froze. */
 function resolveAgain(runner: ReturnType<typeof resolveReflect>["runner"]) {
-  return resolveExecution({ content: "Reflect.", runner, current: { tools: MODEL_WORK_TOOLS } });
+  return resolveExecution({ content: "Reflect.", runner, modelWork: true });
 }
 
 describe("improve model work on an agent engine", () => {
@@ -63,6 +62,7 @@ describe("improve model work on an agent engine", () => {
     const { config, profile } = configFor(OPENCODE, { reasoningEffort: "low", temperature: 0.2 });
     const resolved = resolveReflect(config, profile);
 
+    expect(resolved.notices.filter((notice) => (notice.field ?? "").startsWith("inference."))).toEqual([]);
     const again = resolveAgain(resolved.runner);
     expect(again.request.inference).toEqual({ reasoningEffort: "low", temperature: 0.2 });
     expect(again.runner.kind === "agent" && again.runner.profile.inference).toEqual({
