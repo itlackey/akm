@@ -158,6 +158,24 @@ describe("processImproveLoopRef — reflect half", () => {
     expect(tally.reflectsWithErrorContext).toBe(1);
   });
 
+  test("the profile's defectFilter reaches reflect", async () => {
+    const { stashDir } = freshSandbox();
+    const defectFilter = { placeholders: ["DRAFT"], frontmatterKeys: [] };
+    let received: unknown;
+    const env = makeEnv({
+      stashDir,
+      improveProfile: { processes: { reflect: { defectFilter } } },
+      reflectFn: (args) => {
+        received = args.defectFilter;
+        return Promise.resolve(reflectOk("knowledge/guide.md"));
+      },
+    });
+
+    await processImproveLoopRef(eligibleRef("knowledge/guide.md"), env);
+
+    expect(received).toEqual(defectFilter);
+  });
+
   test("profile type-filter records reflect-skipped without invoking the seam", async () => {
     const { stashDir } = freshSandbox();
     const env = makeEnv({

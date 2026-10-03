@@ -819,6 +819,33 @@
                           }
                         },
                         "additionalProperties": true
+                      },
+                      "defectFilter": {
+                        "type": "object",
+                        "properties": {
+                          "placeholders": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "metaCommentary": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          },
+                          "frontmatterKeys": {
+                            "type": "array",
+                            "items": {
+                              "type": "string",
+                              "minLength": 1
+                            }
+                          }
+                        },
+                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -2471,6 +2498,33 @@
                               }
                             },
                             "additionalProperties": true
+                          },
+                          "defectFilter": {
+                            "type": "object",
+                            "properties": {
+                              "placeholders": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "metaCommentary": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "frontmatterKeys": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              }
+                            },
+                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -3584,6 +3638,33 @@
           },
           "additionalProperties": true
         },
+        "defectFilter": {
+          "type": "object",
+          "properties": {
+            "placeholders": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "metaCommentary": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "frontmatterKeys": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "additionalProperties": true
+        },
         "requirePlannedRefs": {
           "type": "boolean"
         },
@@ -3970,6 +4051,33 @@
                   "properties": {
                     "enabled": {
                       "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": true
+                },
+                "defectFilter": {
+                  "type": "object",
+                  "properties": {
+                    "placeholders": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "metaCommentary": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "frontmatterKeys": {
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "minLength": 1
+                      }
                     }
                   },
                   "additionalProperties": true

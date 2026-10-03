@@ -65,7 +65,7 @@ import { deriveLessonRef } from "./distill";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
-import { classifyReflectChange, findReflectDefect, splitFrontmatter } from "./reflect-noise";
+import { classifyReflectChange, findReflectDefect, type ReflectDefectFilter, splitFrontmatter } from "./reflect-noise";
 import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
 import {
   callStageOnce,
@@ -111,6 +111,8 @@ export interface AkmReflectOptions {
   eventSource?: "user" | "improve";
   /** Defer "low-value" micro-rewrites like no-op/cosmetic ones (`processes.reflect.lowValueFilter`). */
   lowValueFilter?: boolean;
+  /** The wording lists of the pre-judge defect rules (`processes.reflect.defectFilter`); a list left out takes its default. */
+  defectFilter?: ReflectDefectFilter;
   /** Self-refine passes (default 1; each later pass critiques the prior draft). */
   maxRefineIters?: number;
   /** Test seam: pre-loaded source content instead of the index lookup. */
@@ -1207,7 +1209,8 @@ async function finalizeReflectProposal(args: {
     return reflectFailure(run, result, "quality_rejected", message, false);
   };
   // A defect no judge needs to weigh is refused before any judge call, whether or not the gate is on.
-  const defect = assetContent === undefined ? undefined : findReflectDefect(assetContent, payload.content);
+  const defect =
+    assetContent === undefined ? undefined : findReflectDefect(assetContent, payload.content, options.defectFilter);
   if (defect) return refuse(defect, { reflectDefect: defect }, `Reflect proposal refused before the judge: ${defect}`);
   let verdict: QualityJudgeResult | undefined;
   let judgeFailed = false;

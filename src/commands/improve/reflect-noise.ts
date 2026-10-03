@@ -45,60 +45,126 @@ export function classifyReflectChange(sourceContent: string, candidateContent: s
 export type ReflectDefect = "placeholder_added" | "meta_commentary_added" | "frontmatter_copied_into_body";
 
 /**
+ * The wording the defect rules look for, one list per rule
+ * (`processes.reflect.defectFilter`). A list that is set replaces that rule's
+ * default; an empty list turns the rule off.
+ */
+export interface ReflectDefectFilter {
+  /** Placeholder text. Phrases: whole words, any case, any run of whitespace between words. */
+  placeholders?: readonly string[];
+  /** An asset talking about its own edit. Phrases, matched like `placeholders`. */
+  metaCommentary?: readonly string[];
+  /** Frontmatter keys: a body line that starts `key:` is frontmatter copied into the body. Exact names. */
+  frontmatterKeys?: readonly string[];
+}
+
+const DEFAULT_PLACEHOLDERS = [
+  "TODO",
+  "TBD",
+  "FIXME",
+  "please confirm",
+  "please verify",
+  "to be confirmed",
+  "to be determined",
+  "to be verified",
+];
+
+const DEFAULT_META_COMMENTARY = [
+  "feedback signal",
+  "feedback signals",
+  "feedback indicate",
+  "feedback indicates",
+  "feedback suggest",
+  "feedback suggests",
+  "feedback ask",
+  "feedback asks",
+  "feedback says",
+  "feedback report",
+  "feedback reports",
+  "feedback request",
+  "feedback requests",
+  "this revision",
+  "the source asset",
+  "the source note",
+  "the source memory",
+  "the original asset",
+  "the original note",
+  "the original memory",
+  "the original version of this",
+  "quality gate rejected",
+  "proposal rejected",
+];
+
+const DEFAULT_FRONTMATTER_KEYS = [
+  "sources",
+  "updated",
+  "inferenceProcessed",
+  "captureMode",
+  "beliefState",
+  "xrefs",
+  "contradictedBy",
+  "outcomeData",
+  "orderedActions",
+  "generated",
+  "verified",
+  "description",
+  "when_to_use",
+  "tags",
+  "searchHints",
+  "quality",
+  "salience",
+  "salienceInputs",
+  "lint_skip",
+  "type",
+];
+
+/**
  * The first defect the candidate has and its source lacks, or `undefined`. Each
  * rule counts only what the revision adds, so text the asset already carried is
  * not held against it. On 396 labelled reflect edits (83 good, 313 bad) the
- * three rules hit 32 bad edits and no good one, so a hit is refused unjudged.
+ * default lists hit 31 bad edits and no good one, so a hit is refused unjudged.
  */
-export function findReflectDefect(sourceContent: string, candidateContent: string): ReflectDefect | undefined {
-  if (placeholderAdded(sourceContent, candidateContent)) return "placeholder_added";
-  if (metaCommentaryAdded(sourceContent, candidateContent)) return "meta_commentary_added";
-  if (frontmatterCopiedIntoBody(sourceContent, candidateContent)) return "frontmatter_copied_into_body";
+export function findReflectDefect(
+  sourceContent: string,
+  candidateContent: string,
+  filter: ReflectDefectFilter = {},
+): ReflectDefect | undefined {
+  if (gainsPhrases(filter.placeholders ?? DEFAULT_PLACEHOLDERS, sourceContent, candidateContent)) {
+    return "placeholder_added";
+  }
+  if (gainsPhrases(filter.metaCommentary ?? DEFAULT_META_COMMENTARY, sourceContent, candidateContent)) {
+    return "meta_commentary_added";
+  }
+  if (frontmatterCopiedIntoBody(sourceContent, candidateContent, filter.frontmatterKeys ?? DEFAULT_FRONTMATTER_KEYS)) {
+    return "frontmatter_copied_into_body";
+  }
   return undefined;
 }
 
-/** TODO, TBD, FIXME, "please confirm", "to be confirmed", or a bare `# Title` heading. */
-const PLACEHOLDER_PATTERNS = [
-  /\b(?:TODO|TBD|FIXME)\b/g,
-  /\b(?:please (?:confirm|verify)|to be (?:confirmed|determined|verified))\b/gi,
-  /^#[ \t]+Title[ \t]*$/gm,
-];
-
-/** The asset talking about its own edit: the feedback, the source asset, this revision, a gate rejection. */
-const META_COMMENTARY_PATTERNS = [
-  /\b(?:the )?feedback (?:signals?|indicates?|suggests?|asks?|says|reports?|requests?)\b/gi,
-  /\bthis revision\b/gi,
-  /\bthe (?:source|original) (?:asset|note|memory)\b/gi,
-  /\bthe original version of this\b/gi,
-  /\b(?:quality gate|proposal) rejected\b/gi,
-];
-
-/** A body line that starts with one of these frontmatter keys is frontmatter copied into the body. */
-const FRONTMATTER_KEY_LINE =
-  /^(?:sources|updated|inferenceProcessed|captureMode|beliefState|xrefs|contradictedBy|outcomeData|orderedActions|generated|verified|description|when_to_use|tags|searchHints|quality|salience|salienceInputs|lint_skip|type):(?:[ \t].*)?$/;
 /** Frontmatter fields that name other assets; one of their values newly in the body is provenance copied over. */
 const PROVENANCE_KEYS = ["sources", "xrefs", "contradictedBy"];
 /** Shorter values (a bare name or id) say too little to find in a body. */
 const PROVENANCE_VALUE_MIN_CHARS = 12;
 
-/** Whether the candidate holds more matches of `patterns` than the source. */
-function gainsMatches(patterns: readonly RegExp[], source: string, candidate: string): boolean {
-  const count = (text: string) => patterns.reduce((n, pattern) => n + (text.match(pattern)?.length ?? 0), 0);
-  return count(candidate) > count(source);
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function placeholderAdded(source: string, candidate: string): boolean {
-  return gainsMatches(PLACEHOLDER_PATTERNS, source, candidate);
+/** Whether the candidate holds more of the phrases than the source: whole words, any case, any whitespace between words. */
+function gainsPhrases(phrases: readonly string[], source: string, candidate: string): boolean {
+  const alternatives = phrases
+    .map((phrase) => phrase.trim().split(/\s+/).map(escapeRegExp).join("\\s+"))
+    .filter((alternative) => alternative !== "");
+  if (alternatives.length === 0) return false;
+  const pattern = new RegExp(`(?<!\\w)(?:${alternatives.join("|")})(?!\\w)`, "gi");
+  return (candidate.match(pattern)?.length ?? 0) > (source.match(pattern)?.length ?? 0);
 }
 
-function metaCommentaryAdded(source: string, candidate: string): boolean {
-  return gainsMatches(META_COMMENTARY_PATTERNS, source, candidate);
-}
-
-/** The body gains frontmatter key lines outside code, or a provenance value from either asset's frontmatter. */
-function frontmatterCopiedIntoBody(source: string, candidate: string): boolean {
-  const keyLines = (text: string) =>
-    parseLowValueSections(text).proseLines.filter((line) => FRONTMATTER_KEY_LINE.test(line)).length;
+/** The body gains a line that starts with one of the frontmatter keys outside code, or a provenance value from either asset's frontmatter. */
+function frontmatterCopiedIntoBody(source: string, candidate: string, keys: readonly string[]): boolean {
+  if (keys.length === 0) return false;
+  const keyLine = new RegExp(`^(?:${keys.map(escapeRegExp).join("|")}):(?:[ \\t].*)?$`);
+  const keyLines = (text: string) => parseLowValueSections(text).proseLines.filter((line) => keyLine.test(line)).length;
   if (keyLines(candidate) > keyLines(source)) return true;
   const sourceBody = lettersAndDigits(splitFrontmatter(source).body);
   const candidateBody = lettersAndDigits(splitFrontmatter(candidate).body);
