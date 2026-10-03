@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm improve judge`** runs reflect's quality judge on one revision, read as
+  `{"source", "candidate", "feedback"}` JSON from stdin, with the engine
+  `processes.reflect.qualityGate.engine` names, and prints the verdict. It
+  writes nothing: it tests a judge engine on revisions whose right answer you
+  know.
+
 ### Changed
 
 - **A failed reflect reply reads the same on every engine kind:** the parser's
