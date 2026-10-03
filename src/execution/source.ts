@@ -38,14 +38,6 @@ export type ToolSelection = string | readonly string[] | ExecutionJsonObject | n
  */
 export const MODEL_WORK_POLICY_ID = "model-work";
 
-/**
- * The one extra turn that asks for the answer a model-work run ended without.
- * It is sent in the run's own session with no tool on offer, so it states the
- * task's reply and nothing about why the run had none.
- */
-export const MODEL_WORK_FINAL_TURN =
-  "You have not given your answer yet, and no tools are available any more. Do not call a tool. Reply now with exactly what the task asks for, and nothing else.";
-
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {
   readonly agent?: string | null;

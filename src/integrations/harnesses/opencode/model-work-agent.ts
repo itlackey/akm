@@ -29,18 +29,13 @@
  *   - its own short `prompt` replaces the provider's coding prompt, which
  *     tells the model to search extensively; opencode appends a request's
  *     system text after it and never substitutes it;
- *   - `steps` bounds the agentic loop. opencode only asks the model to stop
- *     at the limit, so the dispatch timeout bounds one that does not;
+ *   - it sets no `steps`. At its step limit opencode sends a "maximum steps"
+ *     text as a trailing assistant message, which a qwen chat template (LM
+ *     Studio, llama-server) renders as the start of the model's reply: LM
+ *     Studio then returns nothing and llama-server returns that text as the
+ *     answer. The dispatch timeout bounds a run instead;
  *   - automatic compaction is off, so a long run cannot summarize the task
  *     away.
- *
- * At its step limit opencode sends a "maximum steps" text as a trailing
- * assistant message and still offers the tools. A qwen chat template (LM Studio,
- * llama-server) renders that as a prefill, so the model stops at once with an
- * empty reply, and no opencode setting changes it (`steps` only sets the limit).
- * A run that ends with no answer is asked once more, in its own session, with no
- * tool on offer: `opencode run` has no tools flag, so that turn runs the agent
- * with every permission denied, and opencode offers such an agent no tool.
  */
 
 import path from "node:path";
@@ -48,9 +43,6 @@ import { resolveStashDir } from "../../../core/common";
 import { getStateDir } from "../../../core/paths";
 
 export const MODEL_WORK_OPENCODE_AGENT = "akm-model-work";
-
-/** The agentic iterations a model-work run may take: a judge answers in one, a generator in a few. */
-export const MODEL_WORK_STEPS = 8;
 
 const MODEL_WORK_PROMPT =
   "You do one bounded task for akm. Use tools only to check what the task needs, never repeat a tool call, and reply with exactly what the task asks for.";
@@ -104,18 +96,16 @@ export function modelWorkPluginEnv(): Record<string, string> {
  * The opencode config fragment that defines and confines the model-work agent.
  * The agent carries the request's inference options (`model-config.ts`), which
  * apply to its calls only: opencode's own calls on the same model, a title for
- * the session, keep the model's defaults. For the final turn (see the module
- * comment) the same agent has every permission denied.
+ * the session, keep the model's defaults.
  */
-export function modelWorkOpencodeConfig(options?: Record<string, unknown>, finalTurn = false): Record<string, unknown> {
+export function modelWorkOpencodeConfig(options?: Record<string, unknown>): Record<string, unknown> {
   let stash: string | undefined;
   try {
     stash = resolveStashDir();
   } catch {
     // akm has no stash here, so the agent is given no path into one.
   }
-  const work = modelWorkPermission(stash);
-  const permission = finalTurn ? Object.fromEntries(Object.keys(work).map((name) => [name, "deny"])) : work;
+  const permission = modelWorkPermission(stash);
   return {
     permission: { ...permission },
     compaction: { auto: false },
@@ -124,7 +114,6 @@ export function modelWorkOpencodeConfig(options?: Record<string, unknown>, final
         mode: "primary",
         description: "akm unattended model work: read and edit inside its working directory only.",
         prompt: MODEL_WORK_PROMPT,
-        steps: MODEL_WORK_STEPS,
         ...(options ? { options } : {}),
         permission: { ...permission },
       },

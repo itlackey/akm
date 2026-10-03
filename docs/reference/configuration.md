@@ -232,12 +232,6 @@ key, the engine and its platform. Other engine keys, `defaults.engine` and
   and write gate for these dispatches and keeps its state in akm's state
   directory. The stash is protected from edits only while the temporary
   directory is outside a git repository.
-- opencode ends a run at its step limit with a message that a qwen chat template
-  (LM Studio, llama-server) renders as a prefill, so the model stops with an
-  empty reply. An `opencode` or `opencode-sdk` dispatch that ends with no answer
-  is asked once more, in its own session with no tool available and within the
-  dispatch's timeout; it fails with `parse_error` only when that turn has no
-  answer either.
 
 ### Model-map files
 
