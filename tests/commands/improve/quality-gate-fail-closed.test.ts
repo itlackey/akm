@@ -170,8 +170,12 @@ describe("buildReflectJudgePrompt", () => {
     const prompt = buildReflectJudgePrompt("candidate", "source", ["the port is wrong"]);
 
     expect(prompt).toContain("1. NEED: Does the revision fix a concrete problem in the source?");
-    expect(prompt).toContain("Score 1-2 when the source was already correct and the revision only rewords");
-    expect(prompt).toContain("2. PRESERVATION: Does it keep every concrete fact, identifier, command, path");
+    expect(prompt).toContain(
+      "Score 1-2 when the source was already complete and correct and the revision only rewords",
+    );
+    expect(prompt).toContain(
+      "2. PRESERVATION: Does it keep every concrete fact, identifier, command, path, number, example, caveat and frontmatter field",
+    );
     expect(prompt).toContain("3. QUALITY: Is it coherent and accurate");
     expect(prompt).toContain(
       '{"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}',

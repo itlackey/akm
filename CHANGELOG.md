@@ -16,6 +16,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The reflect quality judge's rubric names what it kept missing.** Tuned on
+  the labelled judge-gate set (plain judge, qwen3.8-27b): a description with a
+  sentence split by a stray period or an unbalanced quote is broken text; a
+  missing title, description or `when_to_use` is a concrete problem whether or
+  not the feedback mentions it, while a bare `type:` or a provenance stamp is
+  not; PRESERVATION and QUALITY are judged line by line in the changed region,
+  so a fix elsewhere no longer excuses a dropped fact, an invented or
+  strengthened claim, a hedge or a placeholder. On a stratified 100-case sample
+  the gate passed 31 of 40 good edits instead of 18 and 3 of 60 bad instead of 2.
 - **A failed reflect reply reads the same on every engine kind:** the parser's
   own message. 0.9.25-alpha.1 named the engine on an agent engine.
 - **Inference reaches opencode only where akm writes opencode's config:** an
