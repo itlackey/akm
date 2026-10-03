@@ -154,9 +154,9 @@ describe("agent engines: config engine → argv", () => {
   // (an engine, opencode, the LLM request) are one setting, with one word in
   // the request: the nearest layer wins whichever word it used.
   describe("one word for reasoning effort", () => {
-    const engine = { engines: { oc: { kind: "agent", platform: "opencode", reasoningEffort: "none" } } };
+    const engine = { engines: { oc: { kind: "agent", platform: "opencode" } } };
 
-    test("an alias's effort overrides the engine's reasoningEffort, because it is the nearer layer", () => {
+    test("an alias's effort is the request's reasoningEffort", () => {
       const resolved = resolveExecution({
         content: "Think.",
         config: config({ ...engine, defaults: { engine: "oc" } }),
@@ -187,7 +187,7 @@ describe("agent engines: config engine → argv", () => {
       expect(resolved.request.inference).toEqual({ reasoningEffort: "low" });
     });
 
-    test("an explicit null effort clears the engine's setting", () => {
+    test("an explicit null effort is a null reasoningEffort", () => {
       const resolved = resolveExecution({
         content: "Think.",
         config: config({ ...engine, defaults: { engine: "oc" } }),

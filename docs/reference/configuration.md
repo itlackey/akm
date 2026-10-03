@@ -126,10 +126,9 @@ value matching this JSON Schema (no prose, no code fences):` followed by the
 schema), plus the harness's own schema channel where it has one (codex
 `--output-schema`).
 
-An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`,
-and the inference fields (see
-[Inference on an agent engine](#inference-on-an-agent-engine)).
-Only `platform: "opencode-sdk"` may set `llmEngine`; it names
+An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`;
+it takes no inference of its own (see
+[Inference on an agent engine](#inference-on-an-agent-engine)). Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection. With no
 `llmEngine`, an SDK engine has no fallback connection and opencode resolves
 provider, model and auth from its own configuration. `defaults.llmEngine` is
@@ -157,30 +156,28 @@ with `npm i -g opencode-ai` or opencode's own installer.
 
 ### Inference on an agent engine
 
-A request's inference (`temperature`, `maxTokens`, `contextLength`,
-`enableThinking`, `reasoningEffort`) reaches an agent engine's harness from
-every place it can come from: the engine's own settings, an improve process's
-`llm` overlay, a task, command or agent asset's `inference`, a workflow's
-`llm:`, and a `models.json` alias. The nearest layer wins, field by field, as
-for an LLM engine. With no setting anywhere akm sends nothing of its own, so
-the model's own default applies: a `reasoningEffort: "none"` that your opencode
-config sets on a model stays in force until a layer overrides it.
+An agent engine sets no inference of its own. For `opencode`, set it on the
+model in your own opencode config, which akm leaves as it is. akm carries
+inference (`temperature`, `reasoningEffort`, `enableThinking`, `maxTokens`,
+`contextLength`) into opencode only where it writes opencode's config itself:
 
-Only `opencode` and `opencode-sdk` translate inference, as opencode config
-injected for the model the dispatch names (a `provider/model`: the request's
-model, or the `--model` an `opencode` engine's `args` name). It merges over your
-own opencode config for that model. Model work puts the options on its
-`akm-model-work` agent instead, which needs no model named.
-`maxTokens` and `contextLength` become `limit.output` and `limit.context`, and
-only together: opencode refuses half a `limit`. Every other platform, `claude`
-included, reports each field as an `untranslated-field` notice and dispatch
-continues, whether the field came from an engine's own settings or from an
-asset or a caller.
+- **Model work on `opencode` and `opencode-sdk`:** an improve process's `llm`
+  overlay becomes the options of the `akm-model-work` agent that runs the
+  dispatch, so opencode's own title call on the same model keeps its defaults.
+- **An `opencode-sdk` engine's `llmEngine` fallback:** the model akm declares for
+  it under `akm-custom` carries the fallback's inference and the request's.
+  `maxTokens` and `contextLength` become `limit.output` and `limit.context`, and
+  only together: opencode refuses half a `limit`.
+
+Inference from an asset, a workflow's `llm:` or a `models.json` alias reaches an
+LLM engine. On an agent engine it is reported as an `untranslated-field`
+notice, for every field on `opencode` and `opencode-sdk`, those carried
+included, and dispatch continues.
 
 Reasoning effort has one word in a request, `reasoningEffort`. `effort`, as a
-`models.json` alias or an asset's `effort:` frontmatter spells it, is the same
-setting and is read as `reasoningEffort` wherever layers are merged, so an LLM
-engine sends it as `reasoning_effort`.
+`models.json` alias or an asset's `effort:` frontmatter spells it, is read as
+`reasoningEffort` wherever layers are merged, so an LLM engine sends it as
+`reasoning_effort`.
 
 ### Engines for unattended model work
 
@@ -224,9 +221,10 @@ key, the engine and its platform. Other engine keys, `defaults.engine` and
 **Further details:**
 - A model-work dispatch builds its own command, so the engine's `args` do not
   apply to it, except a `--model` they name, and neither does its `workspace`.
-- `llm` overrides that reach an agent engine are translated when its platform
-  translates them (see [Inference on an agent engine](#inference-on-an-agent-engine))
-  and reported as `untranslated-field` notices, not errors, when it does not.
+- An improve process's `llm` overlay reaches the `akm-model-work` agent on
+  `opencode` and `opencode-sdk` (see
+  [Inference on an agent engine](#inference-on-an-agent-engine)); on any other
+  agent engine it is reported as `untranslated-field` notices, not errors.
 
 ### Model-map files
 
@@ -273,9 +271,7 @@ partial Claude override above does. After overlay, every alias/engine entry
 must have a usable model. Unknown profile fields are rejected; JSON-safe
 fields inside `inference` are preserved for engine adapters to lower
 optimistically. An `inference.effort` is read as `reasoningEffort`
-(see [Inference on an agent engine](#inference-on-an-agent-engine)), so the
-starter's `reasoning` alias carries `reasoningEffort: "high"` to the platforms
-that translate it.
+(see [Inference on an agent engine](#inference-on-an-agent-engine)).
 
 A profile's `engine` field (0.9.15, #946) borrows a column's `model` (and, for
 an `llm`-kind engine, its inference defaults) from a configured

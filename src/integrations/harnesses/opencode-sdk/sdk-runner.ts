@@ -103,7 +103,7 @@ import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
-import { opencodeInferenceConfig, opencodeModelConfig } from "../opencode/model-config";
+import { opencodeInferenceConfig } from "../opencode/model-config";
 import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig } from "../opencode/model-work-agent";
 
 /** Per-call working-directory scope (see module doc — SDK `query.directory`). */
@@ -325,12 +325,12 @@ function fallbackInference(llmConfig: LlmConnectionConfig | undefined): Executio
  * aliases resolve once before harness lowering. A server for model work also
  * defines the confined model-work agent (`../opencode/model-work-agent`).
  *
- * The routed model carries the dispatch's inference (`../opencode/model-config`):
- * the fallback LLM engine's, under `requestInference`, the request's own. A
- * model the config routes through `akm-custom` is declared in full; any other
- * model's entry merges over the user's own opencode config for it. For model
- * work the options go on the confined agent instead of the model, which needs
- * no model named: it runs whichever model opencode picks.
+ * The model the config routes through `akm-custom` is declared in full, with
+ * the dispatch's inference (`../opencode/model-config`): the fallback LLM
+ * engine's, under `requestInference`, the request's own. For model work the
+ * options go on the confined agent instead of the model, which needs no model
+ * named: it runs whichever model opencode picks. A model the user's own opencode
+ * config provides carries none: set inference there.
  */
 export function buildSdkConfig(
   profile: AgentProfile,
@@ -365,9 +365,6 @@ export function buildSdkConfig(
       },
     };
     if (modelId) sdkConfig.model = `akm-custom/${modelId}`;
-  } else {
-    const modelConfig = opencodeModelConfig(model, entry);
-    if (modelConfig) Object.assign(sdkConfig, modelConfig);
   }
   return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig(agentOptions) } : sdkConfig;
 }

@@ -21,14 +21,8 @@ export interface AgentLowererOptions {
   readonly tools: ToolTranslation;
   /** The harness has an exact native-agent selector flag. */
   readonly nativeAgentSelector?: boolean;
-  /**
-   * The inference keys this harness translates; a harness whose translation
-   * depends on the request (opencode needs a `provider/model` to attach them
-   * to) gives a function of it.
-   */
-  readonly inference?:
-    | readonly string[]
-    | ((profile: AgentProfile, request: ResolvedExecutionRequestV1) => readonly string[]);
+  /** Inference keys this harness translates. */
+  readonly inference?: readonly string[];
 }
 
 /** A tool selection that actually names tools (not omitted, null, or empty). */
@@ -74,10 +68,8 @@ export function extensionFields(request: ResolvedExecutionRequestV1): string[] {
 export function createAgentRequestLowerer(
   options: AgentLowererOptions,
 ): (profile: AgentProfile, request: ResolvedExecutionRequestV1) => LoweredAgentDispatch {
-  return (profile, request) => {
-    const supportedInference = new Set(
-      typeof options.inference === "function" ? options.inference(profile, request) : (options.inference ?? []),
-    );
+  const supportedInference = new Set(options.inference ?? []);
+  return (_profile, request) => {
     const notices: Readonly<LoweringNotice>[] = [];
     const skip = (field: string): void => {
       notices.push(untranslated(options.adapter, field));

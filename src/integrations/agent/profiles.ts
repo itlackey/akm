@@ -48,8 +48,8 @@ export interface AgentProfile {
   /** Exact model selected for this dispatch. */
   readonly model?: string;
   /**
-   * Inference the engine or the dispatch selected, kept so a journaled runner
-   * resolves to the same defaults again. A harness reads the request's own.
+   * The inference a dispatch resolved (an improve process's `llm` overlay, say),
+   * kept so a frozen runner resolves to it again. A harness reads the request's own.
    */
   readonly inference?: ExecutionJsonObject;
 }

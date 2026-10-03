@@ -15,7 +15,6 @@ import { collectSensitiveValues } from "../../core/redaction";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
 import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
-import { engineModelAndInference } from "./model-map";
 import { type AgentProfile, getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "./profiles";
 
 // `./runner.ts` imports values from this module, so RunnerSpec is referenced
@@ -66,12 +65,6 @@ export interface AgentEngineConfig {
   model?: string;
   timeoutMs?: number | null;
   llmEngine?: string;
-  /** Inference for this engine; the platform's lowerer reports any field it does not translate. */
-  temperature?: number;
-  maxTokens?: number;
-  contextLength?: number;
-  enableThinking?: boolean;
-  reasoningEffort?: string;
 }
 
 export type EngineConfig = LlmEngineConfig | AgentEngineConfig;
@@ -417,7 +410,6 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
   const platform = harness.id;
   const sdk = platform === "opencode-sdk";
   const builtin = getBuiltinAgentProfile(platform);
-  const { inference } = engineModelAndInference(engine);
   const profile: AgentProfile = {
     name,
     platform,
@@ -430,7 +422,6 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     parseOutput: "text",
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model ? { model: engine.model } : {}),
-    ...(inference ? { inference } : {}),
   };
   // An engine that sets no timeoutMs leaves it unset, so a caller's own default
   // (model work's 600 s) can apply; a dispatch with none runs unbounded.

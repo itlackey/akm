@@ -23,9 +23,7 @@
  * breaks the cycle.
  */
 
-import { isModelWorkTools } from "../../../execution/source";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { opencodeCarriedKeys } from "../opencode/model-config";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
 
@@ -46,10 +44,6 @@ export class OpencodeSdkHarness extends BaseHarness {
       personaChannel: "native",
       nativeAgentSelector: true,
       tools: "sdk",
-      // The server config gives the routed model its inference entry, so the request must name a model, except
-      // that model work's agent carries its options whichever model opencode picks.
-      inference: (_profile, request) =>
-        opencodeCarriedKeys(Boolean(request.model?.resolved), request.inference, isModelWorkTools(request.tools)),
     }),
   };
   // No flag-shaped resume: session reuse is programmatic — the SDK session id is

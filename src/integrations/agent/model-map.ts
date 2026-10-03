@@ -280,19 +280,6 @@ export interface EngineModelAndInference {
   readonly inference?: ExecutionJsonObject;
 }
 
-/** What `engineModelAndInference` reads of an engine: any configured engine, an `llm` or an `agent`, has this shape. */
-interface EngineInferenceSource {
-  readonly kind: "llm" | "agent";
-  readonly model?: string;
-  readonly temperature?: number;
-  readonly maxTokens?: number;
-  readonly supportsJsonSchema?: boolean;
-  readonly extraParams?: Record<string, unknown>;
-  readonly contextLength?: number;
-  readonly enableThinking?: boolean;
-  readonly reasoningEffort?: string;
-}
-
 /**
  * Derive the `{ model, inference }` a model-map profile borrows from a
  * configured engine (#946). `resolveExecution` derives an engine's own
@@ -300,24 +287,23 @@ interface EngineInferenceSource {
  * copied verbatim from the engine's own config value; it must already be
  * meaningful for the model-map column's platform (akm does not translate
  * between an engine's connection and an agent platform's own provider
- * registry). An agent-kind engine contributes only the inference fields its
- * platform translates (config validation rejects the rest); an `llm` engine
- * also contributes `supportsJsonSchema` and `extraParams`.
+ * registry). Only `kind: "llm"` engines contribute inference defaults — an
+ * agent-kind engine's schema carries no temperature/thinking fields.
  */
-export function engineModelAndInference(engine: EngineInferenceSource): EngineModelAndInference {
+export function engineModelAndInference(engine: EngineConfig): EngineModelAndInference {
   const out: { model?: string; inference?: ExecutionJsonObject } = {};
   if (Object.hasOwn(engine, "model") && engine.model !== undefined) out.model = engine.model;
-  const inference: Record<string, unknown> = {};
-  if (Object.hasOwn(engine, "temperature")) inference.temperature = engine.temperature;
-  if (Object.hasOwn(engine, "maxTokens")) inference.maxTokens = engine.maxTokens;
   if (engine.kind === "llm") {
+    const inference: Record<string, unknown> = {};
+    if (Object.hasOwn(engine, "temperature")) inference.temperature = engine.temperature;
+    if (Object.hasOwn(engine, "maxTokens")) inference.maxTokens = engine.maxTokens;
     if (Object.hasOwn(engine, "supportsJsonSchema")) inference.supportsJsonSchema = engine.supportsJsonSchema;
     if (Object.hasOwn(engine, "extraParams")) inference.extraParams = engine.extraParams;
+    if (Object.hasOwn(engine, "contextLength")) inference.contextLength = engine.contextLength;
+    if (Object.hasOwn(engine, "enableThinking")) inference.enableThinking = engine.enableThinking;
+    if (Object.hasOwn(engine, "reasoningEffort")) inference.reasoningEffort = engine.reasoningEffort;
+    if (Object.keys(inference).length > 0) out.inference = inference as ExecutionJsonObject;
   }
-  if (Object.hasOwn(engine, "contextLength")) inference.contextLength = engine.contextLength;
-  if (Object.hasOwn(engine, "enableThinking")) inference.enableThinking = engine.enableThinking;
-  if (Object.hasOwn(engine, "reasoningEffort")) inference.reasoningEffort = engine.reasoningEffort;
-  if (Object.keys(inference).length > 0) out.inference = inference as ExecutionJsonObject;
   return Object.freeze(out);
 }
 

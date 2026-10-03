@@ -3,13 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Inference reaches an agent engine wherever it already reaches an LLM engine:
- * the engine's own settings, and the improve process overlay
- * (`improve.strategies.<s>.processes.<p>.llm`). Model work resolves its runner
- * once, freezes it in the improve plan, and every stage call resolves from that
- * runner again, so the inference must survive that round trip. With no setting
- * anywhere, akm sends nothing of its own and the model's configured default
- * applies.
+ * An improve process's `llm` overlay (`improve.strategies.<s>.processes.<p>.llm`)
+ * reaches an agent engine's model work. Model work resolves its runner once,
+ * freezes it in the improve plan, and every stage call resolves from that
+ * runner again, so the overlay must survive that round trip. With no overlay,
+ * akm sends nothing of its own and the model's configured default applies.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -26,7 +24,6 @@ const OPENCODE = { kind: "agent", platform: "opencode", args: ["run", "--model",
 function configFor(
   engine: Record<string, unknown>,
   llm?: Record<string, unknown>,
-  extra: Record<string, unknown> = {},
 ): { config: AkmConfig; profile: ImproveProfileConfig } {
   const profile = {
     engine: "x",
@@ -34,7 +31,7 @@ function configFor(
   } as unknown as ImproveProfileConfig;
   const config = {
     configVersion: "0.9.0",
-    engines: { x: engine, ...extra },
+    engines: { x: engine },
     improve: { strategies: { s: profile } },
   } as unknown as AkmConfig;
   return { config, profile };
@@ -62,27 +59,25 @@ function resolveAgain(runner: ReturnType<typeof resolveReflect>["runner"]) {
 }
 
 describe("improve model work on an agent engine", () => {
-  test("the process overlay is translated, not reported untranslated, and survives the frozen runner", () => {
+  test("the process overlay survives the frozen runner and reaches the model-work agent", () => {
     const { config, profile } = configFor(OPENCODE, { reasoningEffort: "low", temperature: 0.2 });
     const resolved = resolveReflect(config, profile);
 
-    expect(resolved.notices.filter((notice) => (notice.field ?? "").startsWith("inference."))).toEqual([]);
     const again = resolveAgain(resolved.runner);
     expect(again.request.inference).toEqual({ reasoningEffort: "low", temperature: 0.2 });
     expect(again.runner.kind === "agent" && again.runner.profile.inference).toEqual({
       reasoningEffort: "low",
       temperature: 0.2,
     });
-  });
-
-  test("the overlay wins over the engine's own setting, field by field", () => {
-    const { config, profile } = configFor(
-      { ...OPENCODE, reasoningEffort: "none", temperature: 0 },
-      { reasoningEffort: "low" },
+    const built = buildExecution(again.request, again.runner);
+    const command = getHarness("opencode")?.agentBuilder?.build(
+      agentProfile(built.runner),
+      built.options.dispatch ?? { prompt: "" },
     );
-    const { runner } = resolveReflect(config, profile);
-
-    expect(resolveAgain(runner).request.inference).toEqual({ reasoningEffort: "low", temperature: 0 });
+    expect(JSON.parse(command?.env?.OPENCODE_CONFIG_CONTENT ?? "null").agent["akm-model-work"].options).toEqual({
+      reasoningEffort: "low",
+      temperature: 0.2,
+    });
   });
 
   test("with no setting anywhere, akm sends nothing of its own", () => {
@@ -101,29 +96,5 @@ describe("improve model work on an agent engine", () => {
     const injected = JSON.parse(command?.env?.OPENCODE_CONFIG_CONTENT ?? "null");
     expect(Object.keys(injected).sort()).toEqual(["agent", "compaction", "permission"]);
     expect(injected.agent["akm-model-work"]).not.toHaveProperty("options");
-  });
-
-  test("an opencode-sdk engine's own setting is added over its LLM fallback's, field by field", () => {
-    const { config, profile } = configFor(
-      { kind: "agent", platform: "opencode-sdk", llmEngine: "backing", reasoningEffort: "high" },
-      undefined,
-      {
-        backing: {
-          kind: "llm",
-          endpoint: "https://example.test/v1/chat/completions",
-          model: "stub-model",
-          temperature: 0,
-          reasoningEffort: "none",
-          enableThinking: false,
-        },
-      },
-    );
-    const { runner } = resolveReflect(config, profile);
-
-    expect(resolveAgain(runner).request.inference).toEqual({
-      temperature: 0,
-      reasoningEffort: "high",
-      enableThinking: false,
-    });
   });
 });

@@ -583,74 +583,28 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     });
   });
 
-  test("opencode: the model it names carries every field, as injected config", async () => {
-    const opencode = CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport;
-    const { result, untranslated } = await dispatchBuilt(opencode, "probe", { model: MODEL, inference: INFERENCE });
-    const seen = probed(result);
-
-    expect(untranslated).toEqual([]);
-    expect(JSON.parse(seen.config ?? "null")).toEqual({
-      provider: {
-        krang: {
-          models: {
-            "stub-model": {
-              options: {
-                temperature: 0.2,
-                reasoningEffort: "high",
-                chat_template_kwargs: { enable_thinking: false },
-                enable_thinking: false,
-              },
-              limit: { context: 120000, output: 4096 },
-            },
-          },
-        },
-      },
-    });
-  });
-
   // opencode makes a title call of its own on the model and applies the
   // model's options to it; the model-work agent is akm's, so its options reach
-  // only the work.
-  test("opencode: model work puts the options on the confined agent and only the limit on the model", async () => {
+  // only the work. The model itself is the user's, in the user's opencode config.
+  test("opencode: model work puts the options on the confined agent, and nothing on the model", async () => {
     const opencode = CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport;
-    const { result, untranslated } = await dispatchBuilt(opencode, "probe", {
+    const { result } = await dispatchBuilt(opencode, "probe", {
       model: MODEL,
       inference: INFERENCE,
       tools: MODEL_WORK_TOOLS,
     });
     const config = JSON.parse(probed(result).config ?? "null");
 
-    expect(untranslated).toEqual([]);
     expect(config.agent[MODEL_WORK_OPENCODE_AGENT].options).toEqual({
       temperature: 0.2,
       reasoningEffort: "high",
       chat_template_kwargs: { enable_thinking: false },
       enable_thinking: false,
     });
-    expect(config.provider).toEqual({
-      krang: { models: { "stub-model": { limit: { context: 120000, output: 4096 } } } },
-    });
-  });
-
-  // The model-work agent runs whichever model opencode picks, so it carries the
-  // options with no model named; the limit is the model's, and is reported.
-  test("opencode: model work with no model named carries the options and reports the limit", async () => {
-    const opencode = CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport;
-    const { result, untranslated } = await dispatchBuilt(opencode, "probe", {
-      inference: INFERENCE,
-      tools: MODEL_WORK_TOOLS,
-    });
-    const config = JSON.parse(probed(result).config ?? "null");
-
-    expect(untranslated).toEqual(["contextLength", "maxTokens"]);
-    expect(config.agent[MODEL_WORK_OPENCODE_AGENT].options).toMatchObject({
-      temperature: 0.2,
-      reasoningEffort: "high",
-    });
     expect(config).not.toHaveProperty("provider");
   });
 
-  test("opencode-sdk: the server config gives the routed model every field", async () => {
+  test("opencode-sdk: the server config gives the llmEngine fallback's model every field", async () => {
     let started: { config?: Record<string, unknown> } | undefined;
     __setServerFactory(async (options) => {
       started = options;
@@ -670,15 +624,9 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
       backing: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "stub-model" },
     };
     // Not the arranged transport: its fake client bypasses the server config.
-    const { result, untranslated } = await dispatchBuilt(
-      OPENCODE_SDK_UNARRANGED,
-      "valid",
-      { inference: INFERENCE },
-      engines,
-    );
+    const { result } = await dispatchBuilt(OPENCODE_SDK_UNARRANGED, "valid", { inference: INFERENCE }, engines);
 
     expect(result.ok).toBe(true);
-    expect(untranslated).toEqual([]);
     const provider = started?.config?.provider as Record<string, { models: Record<string, unknown> }>;
     expect(provider["akm-custom"]?.models).toEqual({
       "stub-model": {
@@ -693,34 +641,35 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
     });
   });
 
-  test("a harness that translates nothing sends nothing: its command is the one without inference", async () => {
-    const without = async (transport: Transport) =>
-      probed((await dispatchBuilt(transport, "probe", { model: MODEL })).result).argv;
-    for (const harness of CLI_HARNESSES.filter((candidate) => candidate.name !== "opencode")) {
-      const { result } = await dispatchBuilt(harness, "probe", { model: MODEL, inference: INFERENCE });
+  // Anything else runs through the user's own engine config, where inference is set.
+  test("any other dispatch sends nothing and reports every field untranslated, on every CLI harness", async () => {
+    const sent = ({ result }: { result: AgentRunResult }) => {
+      const { argv, config } = probed(result);
+      return { argv, config };
+    };
+    for (const harness of CLI_HARNESSES) {
+      const withInference = await dispatchBuilt(harness, "probe", { model: MODEL, inference: INFERENCE });
+      const without = await dispatchBuilt(harness, "probe", { model: MODEL });
 
-      expect(probed(result).argv).toEqual(await without(harness));
+      expect(sent(withInference)).toEqual(sent(without));
+      expect(withInference.untranslated).toEqual(Object.keys(INFERENCE).sort());
     }
   });
 
   // `effort` (a models.json alias, `effort:` frontmatter) and `reasoningEffort`
-  // (an engine, opencode, the LLM request) are one setting.
-  test("an alias's `effort` is reasoningEffort on every transport that translates it", async () => {
-    const llm = await dispatchBuilt(LLM, "reply", { inference: { effort: "high" } });
+  // (an LLM request, opencode's options) are one setting.
+  test("an alias's `effort` is reasoningEffort on an LLM and on model work's agent", async () => {
+    await dispatchBuilt(LLM, "reply", { inference: { effort: "high" } });
     const opencode = await dispatchBuilt(
       CLI_HARNESSES.find((harness) => harness.name === "opencode") as Transport,
       "probe",
-      {
-        model: MODEL,
-        inference: { effort: "high" },
-      },
+      { inference: { effort: "high" }, tools: MODEL_WORK_TOOLS },
     );
 
     expect(llmBodies.at(-1)).toMatchObject({ reasoning_effort: "high" });
-    expect(JSON.parse(probed(opencode.result).config ?? "null").provider.krang.models["stub-model"].options).toEqual({
+    expect(JSON.parse(probed(opencode.result).config ?? "null").agent[MODEL_WORK_OPENCODE_AGENT].options).toEqual({
       reasoningEffort: "high",
     });
-    expect([llm.untranslated, opencode.untranslated]).toEqual([[], []]);
   });
 });
 

@@ -152,44 +152,22 @@ describe("opencodeBuilder — basic dispatch", () => {
 
 // ── builders.ts — opencodeBuilder: inference ──────────────────────────────────
 //
-// Inference reaches opencode as injected config (`OPENCODE_CONFIG_CONTENT`); the
-// shapes were checked against opencode 1.18.25 and a local stub (see
-// `harnesses/opencode/model-config.ts`).
+// Inference reaches opencode only in the config akm injects for model work
+// (`OPENCODE_CONFIG_CONTENT`; see `harnesses/opencode/model-config.ts`).
 
 describe("opencodeBuilder — inference", () => {
   const INFERENCE = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
 
-  test("a request with no inference injects nothing: argv and env are as they were", async () => {
+  // Inference for an ordinary dispatch is the user's opencode config's to set, so akm injects nothing, whatever the request carries.
+  test("an ordinary dispatch injects nothing: argv and env are the engine's", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const profile = makeOpencodeProfile({ args: ["run", "--model", "krang/chat/qwen3.8-27b"] });
-    const cmd = getCommandBuilder("opencode").build(profile, { prompt: "do work", inference: {} });
+    for (const inference of [{}, INFERENCE]) {
+      const cmd = getCommandBuilder("opencode").build(profile, { prompt: "do work", inference });
 
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "krang/chat/qwen3.8-27b", "--", "do work"]);
-    expect(cmd.env).toBeUndefined();
-  });
-
-  test("the model an engine's args name carries it when the request names none", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const profile = makeOpencodeProfile({ args: ["run", "--model", "openai/gpt-5.6-terra"] });
-    const cmd = getCommandBuilder("opencode").build(profile, {
-      prompt: "do work",
-      inference: { reasoningEffort: "low" },
-    });
-
-    expect(cmd.argv).toEqual(["opencode", "run", "--model", "openai/gpt-5.6-terra", "--", "do work"]);
-    expect(JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null")).toEqual({
-      provider: { openai: { models: { "gpt-5.6-terra": { options: { reasoningEffort: "low" } } } } },
-    });
-  });
-
-  test("with no provider/model to attach to, nothing is injected", async () => {
-    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
-    const builder = getCommandBuilder("opencode");
-
-    expect(builder.build(makeOpencodeProfile(), { prompt: "p", inference: INFERENCE }).env).toBeUndefined();
-    expect(
-      builder.build(makeOpencodeProfile(), { prompt: "p", model: "unqualified", inference: INFERENCE }).env,
-    ).toBeUndefined();
+      expect(cmd.argv).toEqual(["opencode", "run", "--model", "krang/chat/qwen3.8-27b", "--", "do work"]);
+      expect(cmd.env).toBeUndefined();
+    }
   });
 
   test("model work with no inference defines the agent and nothing else, as before", async () => {

@@ -10,14 +10,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **A failed reflect reply reads the same on every engine kind:** the parser's
   own message. 0.9.25-alpha.1 named the engine on an agent engine.
-- **An agent engine on any platform may set the inference fields.** One its
-  platform does not translate is an `untranslated-field` notice at dispatch,
-  not a config error, and `claude` takes no `--effort`.
+- **Inference reaches opencode only where akm writes opencode's config:** an
+  improve process's `llm` overlay on model work's agent, and an `opencode-sdk`
+  engine's `llmEngine` fallback model. Set the rest in your opencode config; a
+  task's or workflow's `inference` is an `untranslated-field` notice, as before
+  0.9.25-alpha.1. `claude` takes no `--effort`.
 - **An `opencode-sdk` session the dispatch times out on or aborts is aborted on
   the server for every dispatch,** not only model work.
 
 ### Removed
 
+- **The agent-engine inference fields,** which 0.9.25-alpha.1 accepted: they
+  fail to load again.
 - **The `opencode-sdk` step watcher and the git-repository refusal for model
   work's scratch directory.** A model that ignores opencode's step limit runs
   until the dispatch timeout, as it does on `opencode`.
