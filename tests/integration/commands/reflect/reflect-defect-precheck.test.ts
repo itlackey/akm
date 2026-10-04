@@ -152,8 +152,12 @@ function config(gate: boolean): AkmConfig {
   } as AkmConfig;
 }
 
-/** Reflect `SOURCE` to a revision with `body`; `judgeCalls.count` is how often the judge was asked. */
-async function reflect(body: string, gate: boolean, defectFilter?: AkmReflectOptions["defectFilter"]) {
+/** Reflect `SOURCE` with `patch`; `judgeCalls.count` is how often the judge was asked. */
+async function reflect(
+  patch: { description: string },
+  gate: boolean,
+  defectFilter?: AkmReflectOptions["defectFilter"],
+) {
   const judgeCalls = { count: 0 };
   const result = await akmReflect({
     ref: REF,
@@ -161,7 +165,7 @@ async function reflect(body: string, gate: boolean, defectFilter?: AkmReflectOpt
     config: config(gate),
     assetContent: SOURCE,
     ...(defectFilter ? { defectFilter } : {}),
-    runAgentOptions: { spawn: fakeSpawn(reflectReply(body)) },
+    runAgentOptions: { spawn: fakeSpawn(reflectReply(patch)) },
     chat: async () => {
       judgeCalls.count += 1;
       return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "fine" });
@@ -171,7 +175,7 @@ async function reflect(body: string, gate: boolean, defectFilter?: AkmReflectOpt
 }
 
 describe("akm reflect — a deterministic defect", () => {
-  const defective = `${BODY}\n\nRetention window: to be confirmed.`;
+  const defective = { description: "How the nightly export job runs; its retention window is to be confirmed" };
 
   test.each([
     ["on", true],

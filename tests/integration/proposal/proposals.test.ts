@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { sanitizeReflectPayload } from "../../../src/commands/improve/reflect";
+import { applyReflectPatch } from "../../../src/commands/improve/reflect";
 import {
   akmProposalAccept,
   akmProposalDiff,
@@ -252,11 +252,13 @@ describe("createProposal / listProposals / getProposal", () => {
     const config = makeConfig(stash);
     const description =
       "Explains how the improve loop schedules reflect runs and the cooldowns between them that drive the rest of the pipeline between two scheduler ticks.";
-    const { content } = sanitizeReflectPayload(
-      { content: "Useful body.\n", frontmatter: { description, when_to_use: "When tuning improve cooldowns" } },
-      undefined,
+    const patched = applyReflectPatch(
+      { description, when_to_use: "When tuning improve cooldowns" },
+      "---\ndescription: Improve cooldowns\n---\n\nUseful body.\n",
       "lessons/folded-description",
     );
+    if (!patched) throw new Error("expected the patch to change the asset");
+    const { content } = patched;
     // The fixture must be the shape that triggers the bug: a wrapped description
     // whose first physical line ends in a connector word.
     expect(content.split("\n")[1]).toMatch(/^description: .+ the$/);

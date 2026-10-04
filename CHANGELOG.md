@@ -6,6 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Reflect changes only an asset's `description`, `when_to_use` and title;
+  akm keeps the body byte for byte.** On 396 labelled reflect edits, those that
+  fixed a frontmatter defect and left the body alone were good 24 times in 26;
+  those that also rewrote the body were bad 175 times in 224. The reply is now
+  `confidence` and a `frontmatterPatch` of `description`, `when_to_use` and
+  `title` (each a non-empty single-line string, or `null` for no change), plus
+  `ref` when no target was given, and no body: the JSON Schema, both output
+  contracts and the repair prompt say so, and the framed reply for an endpoint
+  that rejects JSON Schema has no content markers. akm applies the patch to the
+  asset it read: its frontmatter with the non-null `description` and
+  `when_to_use` set, and its body unchanged. A non-null `title` becomes a
+  `# <title>` heading and one blank line at the top of the body, only when the
+  body has no level-1 heading; otherwise it is ignored. A patch that changes
+  nothing, whether every field is `null` or equal to the source's, creates no
+  proposal (`no_change`); an asset that requires a `description` and has none
+  still gets one derived from its own text, as before (#636).
+- **Reflect may answer "nothing to change."** Its prompt forbade it: "your
+  proposal must correct or add something the source lacks", "must meaningfully
+  differ" from a rejected proposal, "do not return the same content
+  unchanged", and "you MUST generate" a `when_to_use`. On the same edits, those
+  that fixed no defect were bad 86 times in 93, and those driven by negative
+  feedback 50 times in 53; most of that feedback says the asset did not help
+  with an unrelated task. One goal sentence now covers every asset type: check
+  the three fields against the body and the feedback, and return `null` for
+  each that needs no fix. The feedback caveat says that feedback about a task
+  the asset never claims to cover needs no change, and with no feedback the
+  prompt says to fix only a missing or broken field. A rejected proposal is not
+  to be proposed again, and the engine returns `null` when no other change is
+  justified.
+- **`akm proposal accept` warns about an echoed "Avoid These Patterns"
+  section instead of refusing.** Reflect keeps a body as it is, so a proposal
+  for an asset that already carries the section (a leftover of the run-only
+  prompt text) would never be accepted, and the person accepting cannot edit
+  the proposal.
+
+### Removed
+
+- **Everything reflect needed to rewrite a body.** The prompt's "Content
+  preservation rules" and the size bounds computed for them; the related
+  distilled lessons section and the companion-doc
+  (`knowledge/skills/<skill>/references/<topic>`) option, with the gathering
+  behind them and the `derived_from_reflect` marker it read; the size guard and
+  the truncation-marker check on reflect's output, and their review reasons
+  `reflect-size-ratio` and `reflect-truncation-leak`; the stripping of an
+  appended frontmatter block and of an echoed "Avoid These Patterns" section
+  from a body; and the restore of identity fields, which a patch cannot name.
+  The accept-time size advisory and truncation-marker block stay.
+- **The `body-edit` review reason.** A reflect revision no longer changes the
+  body, so one the judge passed is stamped `staged` and the triage drain
+  accepts it, as before 0.9.24; with `processes.reflect.qualityGate` off it is
+  minted unstamped for the drain to decide. A proposal already deferred as
+  `body-edit` stays deferred.
+
 ## [0.9.25-alpha.2] - 2026-10-03
 
 ### Added

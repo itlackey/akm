@@ -62,20 +62,16 @@ describe("renderReflectPromptPreview (#952)", () => {
     expect(preview.ref).toBe("lessons/test-lesson");
     expect(preview.engine).toBe("test-improve-llm");
 
-    // #952 — feedback is framed as an unverified report, not a fact, and the
-    // actual feedback signal is present so the field can see it echoed in.
-    expect(preview.prompt).toContain("It is a signal to investigate, not a fact to insert.");
+    // #952 — feedback is framed as a signal, not a fact, and the actual
+    // feedback signal is present so the field can see it echoed in.
+    expect(preview.prompt).toContain("It is a signal, not a fact to insert.");
     expect(preview.prompt).toContain("the example command no longer works");
 
-    // #952 — the model is told never to emit the truncation marker or any
-    // content from outside the shown asset. The marker's literal text is
-    // quoted once inside that instruction; since this lesson body is short,
-    // the asset content itself was never truncated — the marker does not
-    // appear a second time as if it were part of the shown content, and the
-    // content section is introduced as verbatim rather than "(first N chars)".
-    expect(preview.prompt).toContain("Never include the truncation marker");
+    // This lesson body is short, so the asset content was never truncated: the
+    // content section is introduced as verbatim rather than "(first N chars)",
+    // and the truncation marker appears nowhere.
     expect(preview.prompt).toContain("Current asset content (verbatim):");
-    expect(preview.prompt.split(REFLECT_TRUNCATION_MARKER).length - 1).toBe(1);
+    expect(preview.prompt).not.toContain(REFLECT_TRUNCATION_MARKER);
   });
 
   test("#952 — the preview's prompt equals the real dispatch path's prompt for the same fixture inputs, avoidPatterns included", async () => {
@@ -108,9 +104,12 @@ describe("renderReflectPromptPreview (#952)", () => {
       chat: async (_connection, messages) => {
         dispatchPrompt = messages[0]?.content;
         return JSON.stringify({
-          content: "# Existing\n\nExample proposed content.\n",
           confidence: 0.9,
-          frontmatterPatch: { description: null, when_to_use: null },
+          frontmatterPatch: {
+            description: "An existing lesson, described more clearly",
+            when_to_use: null,
+            title: null,
+          },
         });
       },
     });

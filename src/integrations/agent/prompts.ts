@@ -105,10 +105,8 @@ export const REFLECT_CONTENT_CAP = 12_000;
 
 /**
  * Marker appended to truncated asset content when it exceeds the active
- * content budget (#952). Exported so `sanitizeReflectPayload` can detect a
- * model that echoed this notice back into its rewrite instead of proposing
- * real content, and so the output contracts can reference the exact string
- * to forbid.
+ * content budget (#952). Exported so the proposal validators can refuse a body
+ * that still carries it.
  */
 export const REFLECT_TRUNCATION_MARKER = "... [truncated — focus on the visible portion]";
 
@@ -176,8 +174,6 @@ export interface ReflectPromptInput {
   feedback?: string[];
   /** Optional schema/lint hints (e.g. lesson-lint findings). */
   schemaHints?: string[];
-  /** Related lesson content that may justify consolidating durable guidance. */
-  relatedLessons?: Array<{ ref: string; content: string }>;
   /** Optional operator task/focus hint. */
   task?: string;
   /**
@@ -226,17 +222,13 @@ export function reflectResponseContract(mode: ReflectOutputMode, targetScoped: b
       .replace(
         "{{FIELD_RULE}}",
         targetScoped
-          ? "The response has exactly the required fields `content`, `confidence`, and `frontmatterPatch`; do not echo `ref` or arbitrary `frontmatter`."
-          : "The response has exactly the required fields `ref`, `content`, `confidence`, and `frontmatterPatch`; `ref` must identify the selected asset.",
+          ? "The response has exactly the required fields `confidence` and `frontmatterPatch`; do not echo `ref` or arbitrary `frontmatter`."
+          : "The response has exactly the required fields `ref`, `confidence`, and `frontmatterPatch`; `ref` must identify the selected asset.",
       )
-      .replaceAll("{{TRUNCATION_MARKER}}", REFLECT_TRUNCATION_MARKER)
       .trim();
   }
   const refLine = targetScoped ? "" : "AKM_REFLECT_REF: <selected asset ref>\n";
-  return reflectLlmFramedContract
-    .replace("{{REF_LINE}}", refLine)
-    .replaceAll("{{TRUNCATION_MARKER}}", REFLECT_TRUNCATION_MARKER)
-    .trim();
+  return reflectLlmFramedContract.replace("{{REF_LINE}}", refLine).trim();
 }
 
 export function buildReflectOutputRepairPrompt(mode: ReflectOutputMode, targetScoped: boolean): string {
@@ -272,23 +264,18 @@ export interface ReflectPromptResult {
 }
 
 /**
- * Build the prompt for `akm reflect [ref]`. Asks the agent to review an
- * existing asset (plus any negative feedback / lint findings) and propose
- * an improved version. Returns a {@link ReflectPromptResult} containing the
- * prompt string and an optional character ceiling for max-tokens enforcement.
+ * Build the prompt for `akm reflect [ref]`. Asks the agent to check an
+ * existing asset's `description`, `when_to_use` and title against its body
+ * (plus any negative feedback / lint findings) and return the fields that
+ * need a fix. Returns a {@link ReflectPromptResult} containing the prompt
+ * string.
  */
 export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResult {
   const sections: string[] = [];
   if (input.ref && input.type && input.name) {
-    // Change 2 — type-conditioned goal framing
-    const isLesson = input.type === "lesson";
-    const isSkill = input.type === "skill";
-    const goalSentence = isLesson
-      ? `Your task is to distill what usage signals reveal about this ${input.type} asset — when to reach for it, what goes wrong without it, and what real use has revealed that the asset itself does not say. Do not reproduce the source content; your proposal must add information the source does not contain.`
-      : isSkill
-        ? "Your task is to review this skill asset, identify what the feedback and related distilled lessons show is broken, missing, unclear, or durable enough to promote into long-term documentation, and produce a single improved proposal. If the strongest evidence points to companion reference material rather than the main SKILL.md, you may instead propose a skill-adjacent knowledge doc such as `knowledge/skills/<skill>/references/<topic>`."
-        : `Your task is to review this ${input.type} asset, identify what the feedback signals as broken, missing, or unclear, and produce an improved version. Do not reproduce the source content unchanged; your proposal must correct or add something the source lacks.`;
-    sections.push(goalSentence);
+    sections.push(
+      `Your task is to check this ${input.type} asset's \`description\`, \`when_to_use\` and title against its body and the feedback below, and fix any that is missing, broken, or claims something the body does not cover. AKM keeps the body exactly as it is: you change only these fields, and when none needs a change you return null for each.`,
+    );
     sections.push(`Target ref: ${input.ref}`);
     sections.push(`Asset-type guidance: ${hintForType(input.type)}`);
   } else {
@@ -312,14 +299,10 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   } else if (!input.ref) {
     sections.push("Recent feedback / signals:");
     sections.push("- (no feedback events recorded)");
-  } else if (input.type === "skill" && input.relatedLessons && input.relatedLessons.length > 0) {
-    sections.push(
-      "No direct feedback events were recorded. Limit substantive changes to what is justified by the related distilled lessons below; do not speculate beyond that evidence.",
-    );
   } else {
-    // ref is set but no feedback — explicitly constrain scope to schema compliance
+    // ref is set but no feedback — explicitly constrain scope to broken or missing fields
     sections.push(
-      "No usage feedback recorded. Limit your proposal to schema and structural improvements only: missing required frontmatter fields, unclear `when_to_use`, ambiguous description, or broken formatting. Do not speculate about runtime weaknesses you have not observed.",
+      "No usage feedback recorded. Fix only a missing or broken `description`, `when_to_use` or title; otherwise return null for each.",
     );
   }
 
@@ -375,7 +358,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     sections.push(truncated ? `${body.slice(0, contentCap)}\n${REFLECT_TRUNCATION_MARKER}` : body);
     sections.push("```");
   } else if (input.ref) {
-    sections.push("(No existing content — propose a fresh asset that fits the ref.)");
+    sections.push("(No existing content.)");
   } else {
     sections.push("(No existing asset content was supplied.)");
   }
@@ -385,31 +368,11 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     for (const line of input.schemaHints) sections.push(`- ${line}`);
   }
 
-  if (input.relatedLessons && input.relatedLessons.length > 0) {
-    sections.push("Related distilled lessons to evaluate for consolidation:");
-    for (const lesson of input.relatedLessons) {
-      sections.push(`Lesson ref: ${lesson.ref}`);
-      sections.push("```");
-      sections.push(lesson.content.trimEnd());
-      sections.push("```");
-    }
-    sections.push(
-      "Evaluate whether these lessons contain strong evidence of factual, repeatable guidance that should be promoted into long-term skill documentation.",
-    );
-    sections.push(
-      "Promote only guidance that is durable, generally applicable, and supported by repeated evidence. Do not copy anecdotal details, one-off incidents, or duplicate wording verbatim.",
-    );
-    sections.push(
-      "If the guidance belongs in the main skill instructions, update the skill proposal. If it belongs in a companion reference document, return a `knowledge/skills/<skill>/references/<topic>` proposal instead.",
-    );
-  }
-
   if (input.rejectedProposals && input.rejectedProposals.length > 0) {
     const lines: string[] = ["## Previously Rejected Proposals"];
     lines.push(
       "The following proposals for this ref were already reviewed and rejected. " +
-        "Do NOT reproduce the same content or the same structural shape. " +
-        "Your new proposal must meaningfully differ from each of these in its approach, framing, or evidence used.",
+        "Do not propose the same change again; if no other change is justified, return null for each field.",
     );
     for (const rp of input.rejectedProposals) {
       lines.push(`\nRef: ${rp.ref}`);
@@ -439,9 +402,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
         "The following is your previous draft proposal. " +
         "Identify specific weaknesses: missing evidence, vague wording, incomplete frontmatter, " +
         "or claims that duplicate existing content without adding new signal. " +
-        "Then produce an improved version that addresses those weaknesses. " +
-        "The revised proposal must be meaningfully better than the draft below — " +
-        "do not return the same content unchanged.\n\n" +
+        "Then produce an improved version that addresses those weaknesses.\n\n" +
         "Previous draft:\n```\n" +
         input.priorDraft.trimEnd() +
         "\n```",
@@ -449,56 +410,9 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   }
 
   sections.push(
-    "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the proposal's frontmatter is missing `when_to_use`, you MUST generate one — a one-line trigger sentence describing exactly when a user should reach for this asset.",
+    "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the source has no `when_to_use`, write one: a single sentence, supported by the body, saying when to reach for this asset.",
   );
 
-  // Content-preservation safety rails (#reflect-pipeline-fixes).
-  // These rules counter the observed failure modes where reflect rewrites
-  // asset content into shorter prose, drops concrete structure, or strips
-  // load-bearing frontmatter. Loud and explicit so small models follow.
-  //
-  // Guard-audit finding 15: this used to also hand back a maxOutputChars
-  // value so an LLM-path caller could convert it into a hard `max_tokens`
-  // cap on the API request. llm/client.ts's own doc comment (and
-  // commands/improve/reflect.ts's recorded history of responses actually
-  // getting cut off) is explicit that a character-derived max_tokens causes
-  // silent truncation — a real model's output is measured in tokens, not
-  // characters, and the ratio between the two varies enough that any fixed
-  // conversion either truncates legitimate output or provides no real cap at
-  // all. The size policy below is already enforced twice more (the prompt
-  // rules the model reads, and the post-processor's own size check), so nothing
-  // is lost by not adding a THIRD, byte-derived enforcement point that can
-  // only ever cut a response off early, never usefully re-check it.
-  if (input.ref && input.assetContent?.trim()) {
-    // Strip frontmatter to get source body length — mirrors checkReflectSize which
-    // compares body-only lengths. Inline regex avoids importing parseFrontmatter.
-    const rawContent = input.assetContent.trimEnd();
-    const fmBodyMatch = rawContent.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?([\s\S]*)$/);
-    const sourceBodyLen = (fmBodyMatch ? fmBodyMatch[1]! : rawContent).trim().length;
-    // Compute concrete char bounds matching checkReflectSize constants:
-    //   REFLECT_SIZE_GUARD_MIN_BYTES=200, REFLECT_SHRINK_RATIO_MIN=0.5,
-    //   REFLECT_ABSOLUTE_FLOOR_BYTES=150, REFLECT_EXPAND_RATIO_MAX=2.5,
-    //   REFLECT_ABSOLUTE_CEILING_BYTES=2500, REFLECT_ABSOLUTE_MAX_BYTES=25000.
-    // Embed concrete counts only when the gate will actually fire (source >= 200 chars).
-    const showCharBounds = sourceBodyLen >= 200;
-    const minChars = Math.max(Math.round(0.5 * sourceBodyLen), 150);
-    // A source already past the 25000 cap may not grow, and need not shrink to the cap.
-    const maxChars = Math.max(Math.min(Math.max(Math.round(2.5 * sourceBodyLen), 2500), 25000), sourceBodyLen);
-    sections.push(
-      [
-        "## Content preservation rules (MUST follow)",
-        "1. PRESERVE ALL concrete content: code blocks, fenced snippets, CLI commands, numbered/bulleted checklists, tables, YAML/JSON examples, file paths, configuration keys, environment variable names, and CSS/HTML selectors. These are load-bearing — do NOT replace them with prose summaries.",
-        "2. PRESERVE the source asset's frontmatter. The post-processor reassembles the final asset from the original frontmatter plus your body. Do NOT emit `---` frontmatter delimiters at the top of `content` — start `content` with the markdown body (e.g. `# Heading` or the first paragraph). If you include frontmatter anyway, identity fields (`name`, `ref`, `id`, `slug`, `type`) will be reset to the original values.",
-        showCharBounds
-          ? `3. DO NOT shrink the asset. Your body must be at least ${minChars} characters (source body is ${sourceBodyLen} chars; floor is 50%). If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. \`<!-- removed obsolete section X because ... -->\`).`
-          : "3. DO NOT shrink the asset dramatically. The improved body must be at least 50% of the source body length. If you genuinely need to remove a major section, explain why in a comment line at the top of the body (e.g. `<!-- removed obsolete section X because ... -->`).",
-        showCharBounds
-          ? `4. DO NOT pad the asset with speculative material. Your body must be at most ${maxChars} characters (source body is ${sourceBodyLen} chars; ceiling is ${maxChars === sourceBodyLen ? "100%" : "250%"}). Do not add invented sections, hypothetical examples, or padding prose.`
-          : "4. DO NOT pad the asset with speculative material. The improved body must be at most 250% of the source body length unless the feedback explicitly requests added sections.",
-        "5. Improve clarity of surrounding prose, fix structural issues, add missing required frontmatter fields. Do NOT rewrite a runbook into an essay.",
-      ].join("\n"),
-    );
-  }
   sections.push(reflectResponseContract(input.outputMode ?? "json_schema", input.ref !== undefined));
   return { prompt: sections.join("\n\n") };
 }

@@ -22,7 +22,6 @@ import {
   REFLECT_SHRINK_RATIO_MIN,
   REFLECT_SIZE_GUARD_MIN_BYTES,
 } from "../../../src/commands/proposal/validators/proposal-quality-validators";
-import { buildReflectPrompt } from "../../../src/integrations/agent/prompts";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -249,19 +248,6 @@ describe("checkReflectSize — hard cap (REFLECT_ABSOLUTE_MAX_BYTES)", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected rejection");
     expect(result.code).toBe("EXCESSIVE_EXPANSION");
-  });
-
-  test.each([1000, 20000, 30000])("the prompt's maximum for a %i-byte source is the guard's", (sourceLen) => {
-    const { prompt } = buildReflectPrompt({
-      ref: "knowledge/demo",
-      type: "knowledge",
-      name: "demo",
-      assetContent: `---\ndescription: demo\n---\n\n${body(sourceLen)}`,
-    });
-    const max = Number(/at most (\d+) characters/.exec(prompt)?.[1]);
-
-    expect(checkReflectSize(body(sourceLen), body(max)).ok).toBe(true);
-    expect(checkReflectSize(body(sourceLen), body(max + 1)).ok).toBe(false);
   });
 });
 

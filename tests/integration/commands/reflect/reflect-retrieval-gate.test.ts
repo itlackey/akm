@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #722 — reflect refuses a rewrite that grades lower on the queries that
+ * #722 — reflect refuses a revision that grades lower on the queries that
  * retrieved the asset. Integration: reads the queries from a real state.db
  * and records the refusal in the improve ledger.
  */
@@ -56,8 +56,8 @@ const BODY = [
   "3. Restart `wg-quick@wg0` on the gateway, then on each peer.",
   "4. Confirm the handshake with `wg show` within two minutes.",
 ].join("\n");
-const OLD = `---\ndescription: How to rotate the VPN key\n---\n\nOLD_MARKER\n\n${BODY}\n`;
-const NEW = `NEW_MARKER\n\n${BODY.replace("# Rotating the VPN key", "# Rotating the WireGuard VPN key")}`;
+const OLD = `---\ndescription: OLD_MARKER How to rotate the VPN key\n---\n\n${BODY}\n`;
+const PATCH = { description: "NEW_MARKER How to rotate the WireGuard VPN key" };
 
 function config(): AkmConfig {
   return {
@@ -102,13 +102,13 @@ async function reflect(grades: { old: number; new: number }, relevancePrompts: s
     stashDir: storage.stashDir,
     config: config(),
     assetContent: OLD,
-    runAgentOptions: { spawn: fakeSpawn(reflectReply(NEW)) },
+    runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH)) },
     chat: judge(grades, relevancePrompts),
   });
 }
 
 describe("reflect retrieval regression gate", () => {
-  test("a rewrite that grades lower on the asset's own queries is refused and recorded", async () => {
+  test("a revision that grades lower on the asset's own queries is refused and recorded", async () => {
     recordQuery("stash//knowledge/vpn-rotation", "how do I rotate the vpn key");
     recordQuery("stash//knowledge/vpn-rotation", "wireguard key rotation");
     const prompts: string[] = [];
@@ -131,7 +131,7 @@ describe("reflect retrieval regression gate", () => {
     }
   });
 
-  test("a rewrite that grades the same is proposed", async () => {
+  test("a revision that grades the same is proposed", async () => {
     recordQuery("stash//knowledge/vpn-rotation", "how do I rotate the vpn key");
     const prompts: string[] = [];
 

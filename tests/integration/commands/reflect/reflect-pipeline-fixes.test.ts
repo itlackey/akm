@@ -4,20 +4,21 @@
  * Covers the regressions found in the May 2026 review of 323 reflect proposals:
  *
  *   1. Frontmatter stripped on rewrite (15+ cases).
- *   2. Catastrophic content shrinkage (75 → 3 lines, 200 → 4 lines).
- *   3. Reflect prepending YAML frontmatter to executable `.ts` script assets.
- *   4. Reflect renaming a skill's identity `name` field.
- *   5. Excessive expansion (>2× source).
+ *   2. Reflect prepending YAML frontmatter to executable `.ts` script assets.
+ *   3. Reflect renaming a skill's identity `name` field.
  *
- * Each defect is now a hard safety rail in `src/commands/reflect.ts`. These
- * tests lock the rails in place so future refactors cannot reintroduce the
- * regression silently.
+ * A reply is a patch of `description`, `when_to_use` and title, applied to the
+ * source asset: the body is the source's own, and nothing the model writes can
+ * shrink, expand or rename the asset. These tests lock the type guard, the
+ * source-frontmatter preservation and the judge routing in place so future
+ * refactors cannot reintroduce the regressions silently.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
+import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
@@ -73,11 +74,7 @@ afterEach(() => {
   storage.cleanup();
 });
 
-/**
- * A 500-character body of concrete content the LLM should be preserving.
- * The shrink / expand tests reference this so the size-guard thresholds
- * (50% min, 200% max) can be evaluated meaningfully.
- */
+/** A 500-character body of concrete content that reflect must keep as it is. */
 const LONG_SOURCE_BODY = [
   "# Krang split-horizon AdGuard YAML",
   "",
@@ -96,6 +93,9 @@ const LONG_SOURCE_BODY = [
   "- Run `dig @1.1.1.1 internal.example.com` externally and confirm NXDOMAIN.",
   "- Check `/var/log/AdGuardHome/query.log` shows both legs.",
 ].join("\n");
+
+/** A patch that changes the description of every source asset below. */
+const PATCH = { description: "Runbook for the required AdGuard config and how to verify it" };
 
 function reflectLedgerRows() {
   const db = openStateDatabase();
@@ -189,8 +189,8 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
   test("knowledge:* (markdown-canonical) is allowed by the type guard", async () => {
     const stash = makeStashDir();
-    // No source asset on disk — reflect produces a proposal without size-guard checks.
-    const payload = reflectReply("---\ndescription: Foo doc\n---\n\nBody of foo.");
+    // No source asset on disk: reflect has nothing to patch.
+    const payload = reflectReply({ description: "Foo doc, with a description" });
     const result = await akmReflect({
       ref: "knowledge/foo",
       stashDir: stash,
@@ -209,7 +209,7 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
   test("a type outside the fixed list is allowed when its content is genuinely frontmatter + markdown", async () => {
     const stash = makeStashDir();
     const sourceContent = "---\ndescription: Existing instruction doc\n---\n\nFollow these steps.\n";
-    const payload = reflectReply("---\ndescription: Existing instruction doc\n---\n\nFollow these revised steps.");
+    const payload = reflectReply({ description: "Existing instruction doc, onboarding steps" });
     const result = await akmReflect({
       ref: "instructions/onboarding",
       stashDir: stash,
@@ -244,12 +244,13 @@ describe("Reflect type guard — refuses non-markdown asset types", () => {
 
 // ── 2. Frontmatter preservation ─────────────────────────────────────────────────
 
-describe("Reflect frontmatter preservation — source frontmatter survives rewrite", () => {
-  test("LLM body without frontmatter still results in source frontmatter being present", async () => {
+describe("Reflect frontmatter preservation — a patch keeps the source's other frontmatter and its body", () => {
+  test("a description patch changes only the description", async () => {
     const stash = makeStashDir();
-    // Source asset has rich frontmatter the LLM does NOT emit.
+    // Source asset has rich frontmatter the reply never mentions.
     const sourceContent = [
       "---",
+      "name: release-policy",
       "description: Release policy for production deploys",
       "when_to_use: Whenever you cut a release branch",
       "tags:",
@@ -261,64 +262,30 @@ describe("Reflect frontmatter preservation — source frontmatter survives rewri
       "",
     ].join("\n");
 
-    // LLM rewrites the body only — no frontmatter (correct per new prompt).
-    const llmBody = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
-    const payload = reflectReply(llmBody);
-
     const result = await akmReflect({
       ref: "knowledge/policies/release",
       stashDir: stash,
       config: quietQualityGateConfig(),
       assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
+      runAgentOptions: {
+        spawn: fakeSpawn(reflectReply({ description: "Release policy for production deploys and hotfixes" }), "", 0),
+      },
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     const finalContent = result.proposal.payload.content;
-    // Frontmatter must be present and contain the original keys.
     expect(finalContent.startsWith("---\n")).toBe(true);
-    expect(finalContent).toContain("description: Release policy for production deploys");
+    expect(finalContent).toContain("description: Release policy for production deploys and hotfixes");
+    expect(finalContent).not.toContain("description: Release policy for production deploys\n");
+    // Every other key survives, the identity field included.
     expect(finalContent).toContain("when_to_use: Whenever you cut a release branch");
     expect(finalContent).toContain("- release");
     expect(finalContent).toContain("- policy");
-    // Body must include the improved heading.
-    expect(finalContent).toContain("## Required configuration");
-  });
-
-  test("LLM emits its own frontmatter block in body — stripped but kept via merge", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Original desc\ntags:\n  - one\n  - two\n---\n\n${LONG_SOURCE_BODY}\n`;
-
-    // LLM disobeys the prompt and emits frontmatter inside `content`.
-    const llmBlob = [
-      "---",
-      "description: Updated description by LLM",
-      "extra_field: added by LLM",
-      "---",
-      "",
-      LONG_SOURCE_BODY,
-    ].join("\n");
-    const payload = reflectReply(llmBlob);
-
-    const result = await akmReflect({
-      ref: "knowledge/x",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected ok");
-    const finalContent = result.proposal.payload.content;
-    // Source `tags` survive even though the LLM tried to replace the frontmatter.
-    expect(finalContent).toContain("- one");
-    expect(finalContent).toContain("- two");
-    // LLM's new field is merged in (LLM can ADD keys, not remove them).
-    expect(finalContent).toContain("extra_field");
-    // The frontmatter block appears exactly once (no double `---`).
-    const fmDelimCount = (finalContent.match(/^---$/gm) ?? []).length;
-    expect(fmDelimCount).toBe(2);
+    expect(result.proposal.payload.frontmatter?.name).toBe("release-policy");
+    // The body is the source's, byte for byte, and the frontmatter block appears exactly once.
+    expect(splitFrontmatter(finalContent).body).toBe(splitFrontmatter(sourceContent).body);
+    expect((finalContent.match(/^---$/gm) ?? []).length).toBe(2);
   });
 });
 
@@ -326,7 +293,6 @@ describe("Reflect quality gate — source context", () => {
   test("validates the separately resolved judge credential before agent generation or reflect events", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Judge preflight boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     const config = {
       ...quietQualityGateConfig(),
       engines: {
@@ -353,7 +319,7 @@ describe("Reflect quality gate — source context", () => {
           runAgentOptions: {
             spawn: (...args) => {
               spawned += 1;
-              return fakeSpawn(reflectReply(candidateContent), "", 0)(...args);
+              return fakeSpawn(reflectReply(PATCH), "", 0)(...args);
             },
           },
           chat: async () => JSON.stringify({ score: 5, reason: "pass" }),
@@ -385,10 +351,11 @@ describe("Reflect quality gate — source context", () => {
         ref: "knowledge/no-judge-runner",
         stashDir: stash,
         config,
+        assetContent: `---\ndescription: No judge runner\n---\n\n${LONG_SOURCE_BODY}\n`,
         runAgentOptions: {
           spawn: (...args) => {
             spawned += 1;
-            return fakeSpawn(reflectReply(LONG_SOURCE_BODY), "", 0)(...args);
+            return fakeSpawn(reflectReply(PATCH), "", 0)(...args);
           },
         },
       });
@@ -408,7 +375,6 @@ describe("Reflect quality gate — source context", () => {
   test("a separately resolved judge reads its credential at dispatch, after agent generation", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Judge credential boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     const config = {
       ...quietQualityGateConfig(),
       engines: {
@@ -426,7 +392,7 @@ describe("Reflect quality gate — source context", () => {
     const original = "reflect-judge-original-secret";
     const rotated = "reflect-judge-rotated-secret";
     const observed: Array<string | undefined> = [];
-    const spawn = fakeSpawn(reflectReply(candidateContent), "", 0);
+    const spawn = fakeSpawn(reflectReply(PATCH), "", 0);
 
     const result = await withEnv({ AKM_REFLECT_JUDGE_ROTATING_KEY: original }, () =>
       akmReflect({
@@ -455,7 +421,6 @@ describe("Reflect quality gate — source context", () => {
   test("SDK fallback generation and a separate judge each read their credential at dispatch", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: SDK and judge credential boundary\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     const config = {
       ...quietQualityGateConfig(),
       engines: {
@@ -496,7 +461,7 @@ describe("Reflect quality gate — source context", () => {
             return {
               ok: true,
               exitCode: 0,
-              stdout: reflectReply(candidateContent),
+              stdout: reflectReply(PATCH),
               stderr: "",
               durationMs: 1,
             };
@@ -518,8 +483,7 @@ describe("Reflect quality gate — source context", () => {
 
   test("judges the proposal against the source content already loaded by reflect", async () => {
     const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Source context regression guard\n---\n\nSOURCE_ONLY_MARKER\n\n${LONG_SOURCE_BODY}\n`;
-    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
+    const sourceContent = `---\ndescription: SOURCE_ONLY_MARKER Source context regression guard\n---\n\n${LONG_SOURCE_BODY}\n`;
     const config = {
       ...quietQualityGateConfig(),
       engines: {
@@ -543,7 +507,7 @@ describe("Reflect quality gate — source context", () => {
       config,
       assetContent: sourceContent,
       runAgentOptions: {
-        spawn: fakeSpawn(reflectReply(candidateContent), "", 0),
+        spawn: fakeSpawn(reflectReply(PATCH), "", 0),
       },
       chat: async (_connection, messages) => {
         judgePrompt = messages[1]?.content ?? "";
@@ -553,60 +517,31 @@ describe("Reflect quality gate — source context", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a proposal");
-    // A body edit the judge passed waits for review, with the judge's evidence on the stamp for the reviewer.
+    // The judge's pass is staged for the drain, with its evidence on the stamp.
     expect(result.proposal.gateDecision).toMatchObject({
-      outcome: "deferred",
-      reason: "body-edit",
-      gate: "reflect",
+      outcome: "staged",
+      reason: "quality-judge",
+      gate: "quality-gate",
       scores: { need: 5, preservation: 4, quality: 4 },
       judgeReason: "adds useful detail",
     });
-    expect(judgePrompt).toContain("SOURCE_ONLY_MARKER");
     expect(judgePrompt).toContain("NEED");
     expect(judgePrompt).toContain("PRESERVATION");
     expect(judgePrompt).not.toContain("Does the lesson add information not already present");
-    const proposedRevision = judgePrompt.split("Proposed revision:")[1] ?? "";
-    expect(proposedRevision).toContain("description: Source context regression guard");
-  });
-
-  test("flags an invalid-size candidate for review without invoking the judge", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Long doc\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const config = {
-      ...quietQualityGateConfig(),
-      engines: {
-        "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
-        judge: { kind: "llm", endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
-      },
-      defaults: { engine: "fake-agent", llmEngine: "judge", improveStrategy: "default" },
-      improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
-    } as AkmConfig;
-    let judgeInvoked = false;
-
-    const result = await akmReflect({
-      ref: "knowledge/invalid-before-judge",
-      stashDir: stash,
-      config,
-      assetContent: sourceContent,
-      runAgentOptions: {
-        spawn: fakeSpawn(reflectReply("Tiny replacement."), "", 0),
-      },
-      chat: async () => {
-        judgeInvoked = true;
-        return JSON.stringify({ score: 5, reason: "must not run" });
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    expect(judgeInvoked).toBe(false);
-    if (!result.ok) throw new Error("expected success");
-    expect(listProposals(stash)[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-size-ratio" });
+    // The source half of the prompt is the asset reflect loaded; the revision half is that asset with the patch,
+    // and the changed region is the description the patch replaced.
+    const [judgedSource = "", afterSource = ""] = judgePrompt.split("Proposed revision:");
+    const [proposedRevision = "", changedRegion = ""] = afterSource.split("Changed region:");
+    expect(judgedSource).toContain("SOURCE_ONLY_MARKER");
+    expect(proposedRevision).not.toContain("SOURCE_ONLY_MARKER");
+    expect(proposedRevision).toContain(`description: ${PATCH.description}`);
+    expect(proposedRevision).toContain("## Required config");
+    expect(changedRegion).toContain("SOURCE_ONLY_MARKER");
   });
 
   test("the reflect gate follows its own switch, not distill's", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Own switch\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     let judged = 0;
     const reflectWith = (ref: string, processes: Record<string, unknown>) =>
       akmReflect({
@@ -622,7 +557,7 @@ describe("Reflect quality gate — source context", () => {
           improve: { strategies: { default: { processes } } },
         } as AkmConfig,
         assetContent: sourceContent,
-        runAgentOptions: { spawn: fakeSpawn(reflectReply(candidateContent), "", 0) },
+        runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH), "", 0) },
         chat: async () => {
           judged += 1;
           return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "pass" });
@@ -638,7 +573,6 @@ describe("Reflect quality gate — source context", () => {
   test("qualityGate.engine judges with its own engine instead of the default LLM", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Separate judge\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
     const config = {
       ...quietQualityGateConfig(),
       engines: {
@@ -657,7 +591,7 @@ describe("Reflect quality gate — source context", () => {
       config,
       assetContent: sourceContent,
       runAgentOptions: {
-        spawn: fakeSpawn(reflectReply(candidateContent), "", 0),
+        spawn: fakeSpawn(reflectReply(PATCH), "", 0),
       },
       chat: async (connection) => {
         models.push(connection.model);
@@ -701,11 +635,7 @@ describe("Reflect quality gate — source context", () => {
       improveProfile: config.improve?.strategies?.default,
       assetContent: `---\ndescription: Agent judge\n---\n\n${LONG_SOURCE_BODY}\n`,
       runAgentOptions: {
-        spawn: fakeSpawn(
-          reflectReply(LONG_SOURCE_BODY.replace("## Required config", "## Required configuration")),
-          "",
-          0,
-        ),
+        spawn: fakeSpawn(reflectReply(PATCH), "", 0),
       },
       chat: async () => {
         chatRan = true;
@@ -716,11 +646,10 @@ describe("Reflect quality gate — source context", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected a proposal");
     expect(chatRan).toBe(false);
-    // The agent judged it, under the model-work policy, and its scores reach the review stamp.
+    // The agent judged it, under the model-work policy, and its scores reach the stamp.
     expect(fs.readFileSync(argvLog, "utf8")).toStartWith("run --agent akm-model-work");
     expect(result.proposal.gateDecision).toMatchObject({
-      outcome: "deferred",
-      reason: "body-edit",
+      outcome: "staged",
       scores: { need: 5, preservation: 5, quality: 5 },
     });
   });
@@ -729,7 +658,6 @@ describe("Reflect quality gate — source context", () => {
 describe("Reflect quality gate — a judge that gives no verdict defers the revision to review", () => {
   const ref = "knowledge/judge-no-verdict";
   const sourceContent = `---\ndescription: Judge failure routing\n---\n\n${LONG_SOURCE_BODY}\n`;
-  const candidateContent = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
 
   function reflectJudgedBy(chat: () => Promise<string>) {
     return akmReflect({
@@ -745,7 +673,7 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
         improve: { strategies: { default: { processes: { reflect: { qualityGate: { enabled: true } } } } } },
       } as AkmConfig,
       assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(reflectReply(candidateContent), "", 0) },
+      runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH), "", 0) },
       chat,
     });
   }
@@ -816,26 +744,14 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
   });
 });
 
-describe("Reflect routing — a revision that changes the body is never auto-accepted", () => {
-  const sourceContent = `---\ndescription: Body edit routing\n---\n\n${LONG_SOURCE_BODY}\n`;
-  const bodyEdit = LONG_SOURCE_BODY.replace("## Required config", "## Required configuration");
-  // Re-wrapped and padded: a body that differs only in whitespace is unchanged.
-  const frontmatterOnly = {
-    content: `${LONG_SOURCE_BODY.replace(" from the LAN.", "\n  from the LAN.")}\n\n\n`,
-    frontmatterPatch: { description: "Split-horizon DNS on AdGuard: the config and how to check it" },
-  };
+describe("Reflect routing — a judged patch is staged for the drain", () => {
+  const sourceContent = `---\ndescription: Routing source\n---\n\n${LONG_SOURCE_BODY}\n`;
+  const patch = { description: "Split-horizon DNS on AdGuard: the config and how to check it" };
   const pass = async () =>
-    JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "restores the cut-off heading" });
+    JSON.stringify({ scores: { need: 5, preservation: 4, quality: 4 }, reason: "fixes the description" });
 
-  /**
-   * Reflect `ref` to the agent's `revision` of `source` (none when omitted),
-   * judged by `judge`. Without a `judge` the gate is off.
-   */
-  function reflectRevision(
-    ref: string,
-    revision: { content: string; frontmatterPatch?: Record<string, string> },
-    { judge, source }: { judge?: () => Promise<string>; source?: string },
-  ) {
+  /** Reflect `ref` with `patch`, judged by `judge`. Without a `judge` the gate is off. */
+  function reflectPatched(ref: string, { judge }: { judge?: () => Promise<string> }) {
     return akmReflect({
       ref,
       stashDir: makeStashDir(),
@@ -850,8 +766,8 @@ describe("Reflect routing — a revision that changes the body is never auto-acc
           strategies: { default: { processes: { reflect: { qualityGate: { enabled: judge !== undefined } } } } },
         },
       } as AkmConfig,
-      ...(source !== undefined ? { assetContent: source } : {}),
-      runAgentOptions: { spawn: fakeSpawn(reflectReply(revision.content, revision), "", 0) },
+      assetContent: sourceContent,
+      runAgentOptions: { spawn: fakeSpawn(reflectReply(patch), "", 0) },
       chat:
         judge ??
         (async () => {
@@ -860,309 +776,49 @@ describe("Reflect routing — a revision that changes the body is never auto-acc
     });
   }
 
-  test("a judge-passed body edit waits for review, with the judge's scores and reason on the stamp", async () => {
-    const result = await reflectRevision(
-      "knowledge/body-edit",
-      { content: bodyEdit },
-      { judge: pass, source: sourceContent },
-    );
-    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
-    expect(result.proposal).toMatchObject({
-      status: "pending",
-      gateDecision: {
-        outcome: "deferred",
-        reason: "body-edit",
-        gate: "reflect",
-        scores: { need: 5, preservation: 4, quality: 4 },
-        judgeReason: "restores the cut-off heading",
-      },
-    });
-    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "body-edit" }]);
-  });
-
-  test("a judge-passed frontmatter-only edit is staged for the drain to accept", async () => {
-    const result = await reflectRevision("knowledge/frontmatter-only", frontmatterOnly, {
-      judge: pass,
-      source: sourceContent,
-    });
+  test("a judge-passed patch is staged for the drain to accept, with the judge's scores and reason on the stamp", async () => {
+    const result = await reflectPatched("knowledge/judged-patch", { judge: pass });
     if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
     expect(result.proposal.gateDecision).toMatchObject({
       outcome: "staged",
       reason: "quality-judge",
       gate: "quality-gate",
       scores: { need: 5, preservation: 4, quality: 4 },
-      judgeReason: "restores the cut-off heading",
+      judgeReason: "fixes the description",
     });
   });
 
-  test("a judge-passed revision with no source to compare against waits for review", async () => {
-    const result = await reflectRevision("knowledge/no-source", { content: LONG_SOURCE_BODY }, { judge: pass });
-    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
-    expect(result.proposal.gateDecision).toMatchObject({ outcome: "deferred", reason: "body-edit", gate: "reflect" });
-  });
-
-  test("a body edit the judge fails is still refused", async () => {
-    const result = await reflectRevision(
-      "knowledge/failed-body-edit",
-      { content: bodyEdit },
-      {
-        judge: async () =>
-          JSON.stringify({ scores: { need: 1, preservation: 2, quality: 2 }, reason: "rewords a correct asset" }),
-        source: sourceContent,
-      },
-    );
+  test("a patch the judge fails is still refused", async () => {
+    const result = await reflectPatched("knowledge/failed-patch", {
+      judge: async () =>
+        JSON.stringify({ scores: { need: 1, preservation: 2, quality: 2 }, reason: "rewords a correct description" }),
+    });
     if (result.ok) throw new Error("expected the quality gate to refuse the revision");
     expect(result.reason).toBe("quality_rejected");
     expect(listProposals(makeStashDir())).toEqual([]);
-    expect(reflectLedgerRows()).toMatchObject([{ outcome: "quality_rejected", detail: "rewords a correct asset" }]);
+    expect(reflectLedgerRows()).toMatchObject([
+      { outcome: "quality_rejected", detail: "rewords a correct description" },
+    ]);
   });
 
-  test("with the gate off, a body edit waits for review, with no scores on the stamp", async () => {
-    const result = await reflectRevision(
-      "knowledge/gate-off-body-edit",
-      { content: bodyEdit },
-      { source: sourceContent },
-    );
-    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
-    expect(result.proposal).toMatchObject({
-      status: "pending",
-      gateDecision: { outcome: "deferred", reason: "body-edit", gate: "reflect" },
-    });
-    expect(result.proposal.gateDecision?.scores).toBeUndefined();
-    expect(result.proposal.gateDecision?.judgeReason).toBeUndefined();
-    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "body-edit" }]);
-  });
-
-  test("with the gate off, a frontmatter-only edit is left to the drain, as before", async () => {
-    const result = await reflectRevision("knowledge/gate-off-frontmatter-only", frontmatterOnly, {
-      source: sourceContent,
-    });
+  test("with the gate off, a patch is left to the drain, with no stamp", async () => {
+    const result = await reflectPatched("knowledge/gate-off-patch", {});
     if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
     expect(result.proposal.status).toBe("pending");
     expect(result.proposal.gateDecision).toBeUndefined();
   });
 });
 
-// ── 3. Size guards — shrink and expand ────────────────────────────────────────
+// ── 3. Run-only guidance reaches the prompt, never the asset ──────────────────
 
-describe("Reflect size guard — diff-size safety rails", () => {
-  test("body shrunk below 50% of source is flagged for review, not discarded", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Long doc\n---\n\n${LONG_SOURCE_BODY}\n`;
-
-    // LLM returns a 3-line body (catastrophic shrinkage seen in the May 2026 review).
-    const tinyBody = "Use AdGuard.\nDone.\n";
-    const payload = reflectReply(tinyBody);
-
-    const result = await akmReflect({
-      ref: "knowledge/shrink",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    // A size-ratio hit says nothing about whether the revision is WRONG, only
-    // that it is unusual — the LLM responded fine. It no longer discards the
-    // revision (content_policy_reject); the proposal is still queued, flagged
-    // for review via its gateDecision instead.
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected success");
-    const proposals = listProposals(stash);
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-size-ratio" });
-    expect(proposals[0]?.gateDecision?.measured).toBeLessThan(50);
-  });
-
-  test("body expanded above 250% of source is flagged for review, not discarded", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Tight doc\n---\n\n${LONG_SOURCE_BODY}\n`;
-
-    // LLM quintupled the asset with speculative material (5× > 2500-byte absolute ceiling).
-    const bloatedBody = `${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}\n\n${LONG_SOURCE_BODY}`;
-    const payload = reflectReply(bloatedBody);
-
-    const result = await akmReflect({
-      ref: "knowledge/expand",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected success");
-    const proposals = listProposals(stash);
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-size-ratio" });
-    expect(proposals[0]?.gateDecision?.measured).toBeGreaterThan(250);
-  });
-
-  test("modest size change (~120%) passes the size guard", async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Doc\n---\n\n${LONG_SOURCE_BODY}\n`;
-
-    // Small, justified addition.
-    const improvedBody = `${LONG_SOURCE_BODY}\n\n## Notes\n\nVerify with the on-call.`;
-    const payload = reflectReply(improvedBody);
-
-    const result = await akmReflect({
-      ref: "knowledge/modest",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-  });
-
-  test("tiny source asset (<200 bytes) skips size guard so seed assets still work", async () => {
-    const stash = makeStashDir();
-
-    // 4× expansion would normally trip the guard, but source body is below the
-    // REFLECT_SIZE_GUARD_MIN_BYTES floor so the rail is intentionally permissive.
-    const payload = reflectReply(
-      "Use rg for searching large repositories. rg is faster than grep and respects .gitignore.\n",
-    );
-
-    const result = await akmReflect({
-      ref: "lessons/tiny",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent:
-        "---\ndescription: A tiny repository search lesson\nwhen_to_use: Testing the small-source size guard\n---\nUse rg.\n",
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-  });
-});
-
-// ── 4. Protected identity fields — name / ref / id / slug / type ──────────────
-
-describe("Reflect identity guard — protected frontmatter fields cannot be renamed", () => {
-  test("LLM renaming `name` is restored to the source value", async () => {
-    const stash = makeStashDir();
-    const sourceBody = LONG_SOURCE_BODY;
-    const sourceContent = [
-      "---",
-      "name: openpalm-stack-diagnostics",
-      "description: Diagnose the OpenPalm stack",
-      "when_to_use: When the stack reports degraded health",
-      "---",
-      "",
-      sourceBody,
-      "",
-    ].join("\n");
-
-    // LLM tries to rename the skill in frontmatter (#26941510). The body also
-    // carries a substantive edit — without one, restoring `name` would leave
-    // an empty diff and the #580 noise gate would suppress the proposal
-    // before the assertions below could inspect it.
-    const llmBlob = [
-      "---",
-      "name: diagnostic-checklist",
-      "description: Diagnose the OpenPalm stack",
-      "when_to_use: When the stack reports degraded health",
-      "---",
-      "",
-      sourceBody,
-      "",
-      "A genuinely new troubleshooting paragraph added by the agent.",
-    ].join("\n");
-    const payload = reflectReply(llmBlob);
-
-    const result = await akmReflect({
-      ref: "skills/openpalm-stack-diagnostics",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected ok");
-    const finalContent = result.proposal.payload.content;
-    // The `name` must be restored to the source value.
-    expect(finalContent).toContain("name: openpalm-stack-diagnostics");
-    expect(finalContent).not.toContain("name: diagnostic-checklist");
-    // payload frontmatter object should also carry the restored name.
-    expect(result.proposal.payload.frontmatter?.name).toBe("openpalm-stack-diagnostics");
-  });
-
-  test("LLM emitting a different `id` field is silently overwritten to source", async () => {
-    const stash = makeStashDir();
-    const sourceContent = ["---", "id: original-id-12345", "description: doc", "---", "", LONG_SOURCE_BODY, ""].join(
-      "\n",
-    );
-
-    // As above: include a substantive body edit so the restored-`id` proposal
-    // is not an empty diff (which the #580 noise gate would suppress).
-    const llmBlob = [
-      "---",
-      "id: fabricated-by-llm",
-      "description: doc",
-      "---",
-      "",
-      LONG_SOURCE_BODY,
-      "",
-      "A genuinely new paragraph added by the agent.",
-    ].join("\n");
-    const payload = reflectReply(llmBlob);
-
-    const result = await akmReflect({
-      ref: "knowledge/id-protected",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected ok");
-    expect(result.proposal.payload.content).toContain("id: original-id-12345");
-    expect(result.proposal.payload.content).not.toContain("fabricated-by-llm");
-  });
-});
-
-// ── 5. Positive control — reflect on a markdown asset works end-to-end ────────
-
-describe("Reflect positive control — markdown assets still flow through", () => {
-  test("reflect on a knowledge asset produces a proposal with body-only LLM output", async () => {
+describe("Reflect avoid-patterns — run-only guidance reaches the prompt, never the asset (#963)", () => {
+  test("the proposal is the source with the patch, whatever guidance the prompt carried", async () => {
     const stash = makeStashDir();
     const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
-
-    const improved = LONG_SOURCE_BODY.replace("## Verification", "## Verification steps");
-    const payload = reflectReply(improved);
-
-    const result = await akmReflect({
-      ref: "knowledge/control",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected ok");
-    const content = result.proposal.payload.content;
-    expect(content).toContain("description: Control");
-    expect(content).toContain("## Verification steps");
-    expect(listProposals(stash).length).toBe(1);
-  });
-
-  test('strips an echoed mid-document "Avoid These Patterns" block and preserves the next section (#963)', async () => {
-    const stash = makeStashDir();
-    const sourceContent = `---\ndescription: Control\n---\n\n${LONG_SOURCE_BODY}\n`;
-    const improved = LONG_SOURCE_BODY.replace(
-      "## Verification",
-      [
-        "## Avoid These Patterns",
-        "Previous assets in this run produced these errors — do not repeat them:",
-        "- Reflect rejected: unrelated run diagnostic.",
-        "",
-        "## Verification steps",
-      ].join("\n"),
-    );
-    const payload = reflectReply(improved);
     let prompt = "";
     const spawn: SpawnFn = (cmd, opts) => {
       prompt = cmd.at(-1) ?? "";
-      return fakeSpawn(payload, "", 0)(cmd, opts);
+      return fakeSpawn(reflectReply({ description: "Control doc, with a fuller description" }), "", 0)(cmd, opts);
     };
 
     const result = await akmReflect({
@@ -1177,13 +833,17 @@ describe("Reflect positive control — markdown assets still flow through", () =
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(prompt).toContain("Run-only guidance: do not copy this heading");
-    expect(result.proposal.payload.content).not.toContain("## Avoid These Patterns");
-    expect(result.proposal.payload.content).not.toContain("unrelated run diagnostic");
-    expect(result.proposal.payload.content).toContain("## Verification steps");
+    expect(prompt).toContain("Reflect rejected: unrelated run diagnostic.");
+    const content = result.proposal.payload.content;
+    expect(content).toContain("description: Control doc, with a fuller description");
+    expect(content).not.toContain("## Avoid These Patterns");
+    expect(content).not.toContain("unrelated run diagnostic");
+    expect(splitFrontmatter(content).body).toBe(splitFrontmatter(sourceContent).body);
+    expect(listProposals(stash).length).toBe(1);
   });
 });
 
-// ── 6. Feedback framing — feedback is a signal, not ground truth (#952) ────────
+// ── 4. Feedback framing — feedback is a signal, not ground truth (#952) ────────
 
 describe("Reflect feedback-framing guard — feedback is a signal to investigate, not a fact to insert", () => {
   test("a feedback line is preceded in the prompt by the 'not a fact to insert' caveat", async () => {
@@ -1202,7 +862,7 @@ describe("Reflect feedback-framing guard — feedback is a signal to investigate
         note: "the storage section does not say which physical disk backs /data",
       },
     });
-    const payload = reflectReply("---\ndescription: Storage guide\n---\n\nUnchanged body.");
+    const payload = reflectReply({ description: "Storage guide, with its layout caveats" });
     let prompt = "";
     const spawn: SpawnFn = (cmd, opts) => {
       prompt = cmd.at(-1) ?? "";
@@ -1219,7 +879,7 @@ describe("Reflect feedback-framing guard — feedback is a signal to investigate
     });
 
     expect(result.ok).toBe(true);
-    const caveatIndex = prompt.indexOf("It is a signal to investigate, not a fact to insert.");
+    const caveatIndex = prompt.indexOf("It is a signal, not a fact to insert.");
     const feedbackIndex = prompt.indexOf("the storage section does not say which physical disk backs /data");
     expect(caveatIndex).toBeGreaterThan(-1);
     expect(feedbackIndex).toBeGreaterThan(-1);
@@ -1227,77 +887,12 @@ describe("Reflect feedback-framing guard — feedback is a signal to investigate
   });
 });
 
-// ── 7. Truncation-marker leak guard (#952) ──────────────────────────────────
+// ── 5. Truncation-marker leak guard at accept (#952) ────────────────────────────
 
-describe("Reflect truncation-marker leak guard — a leaked cap notice is flagged for review, not queued silently", () => {
-  test("a proposed body echoing the truncation marker is deferred with reflect-truncation-leak, not discarded", async () => {
-    const stash = makeStashDir();
-    // Deliberately tiny source so the body-size ratio guard cannot also fire
-    // (source body stays under REFLECT_SIZE_GUARD_MIN_BYTES) — isolates the
-    // truncation-marker rail from the size-ratio rail.
-    const sourceContent = "---\ndescription: Short doc under the size-guard floor\n---\n\nShort body.\n";
-    const leakedBody = `Rewritten body.\n${REFLECT_TRUNCATION_MARKER}`;
-    const payload = reflectReply(leakedBody);
-
-    const result = await akmReflect({
-      ref: "knowledge/leak-marker",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected success");
-    const proposals = listProposals(stash);
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-truncation-leak" });
-    // Not discarded: the marker text itself is preserved in the queued
-    // proposal so a reviewer can see exactly what leaked.
-    expect(proposals[0]?.payload.content).toContain(REFLECT_TRUNCATION_MARKER);
-  });
-
-  // #952 review round 2: `createProposal`'s mint-time canonical-structure gate
-  // (repository.ts, `hasCanonicalProposalValidator`) only runs for ref types
-  // with a canonical validator — lesson/task/workflow — which the case above
-  // (a `knowledge/...` ref) never exercises. Before the fix, that mint-time
-  // gate ran the FULL `defaultProposalValidators` list, including the
-  // blocking `reflect-truncation-marker` validator, so a leaking `lessons/...`
-  // reflect proposal threw `invalid_canonical_structure` at CREATION time
-  // instead of being minted and deferred like the knowledge-ref case above —
-  // directly contradicting decision B / the addendum ("creation still defers
-  // with reflect-truncation-leak"). This locks in the fix: mint-time
-  // structural validation must stay canonical-structure-only.
-  test("a lessons/... ref whose body leaks the truncation marker is still minted and deferred, not rejected at creation", async () => {
-    const stash = makeStashDir();
-    // Deliberately tiny source, same as the knowledge-ref case above, so the
-    // body-size ratio guard cannot also fire.
-    const sourceContent =
-      "---\ndescription: Short lesson under the size-guard floor\nwhen_to_use: Testing the mint-time canonical gate\n---\n\nShort body.\n";
-    const leakedBody = `Rewritten lesson body.\n${REFLECT_TRUNCATION_MARKER}`;
-    const payload = reflectReply(leakedBody);
-
-    const result = await akmReflect({
-      ref: "lessons/leak-marker",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      assetContent: sourceContent,
-      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected success");
-    const proposals = listProposals(stash);
-    expect(proposals).toHaveLength(1);
-    expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-truncation-leak" });
-    expect(proposals[0]?.payload.content).toContain(REFLECT_TRUNCATION_MARKER);
-  });
-
-  // #952 Addendum (dev-team field review, 2026-09-09): the creation-time defer
-  // above is the FIRST layer. This is the second: a reflect proposal whose
-  // body still contains the marker when it reaches `proposal accept` (e.g. a
-  // deferred proposal a human accepts anyway, or any future reflect path that
-  // mints a proposal without going through sanitizeReflectPayload) must be
+describe("Reflect truncation-marker guard — a reflect proposal carrying the cap notice is not promoted", () => {
+  // A reflect proposal whose body still contains the marker when it reaches
+  // `proposal accept` (a proposal made before reflect kept the body, or any
+  // future path that mints one without going through reflect) must be
   // REJECTED, not promoted onto disk — a truncated body silently overwriting
   // a full asset is data loss. Exercises the same drain/promote codepath
   // `akm proposal accept` and drain's default `promoteFn` both use.
@@ -1305,10 +900,8 @@ describe("Reflect truncation-marker leak guard — a leaked cap notice is flagge
     const stash = makeStashDir();
     const config = makeConfig(stash);
 
-    // Bypass sanitizeReflectPayload (the creation-time defer path exercised
-    // above) by minting the proposal directly through the repository, the
-    // same way a defense-in-depth scenario would reach `proposal accept`
-    // with the marker already embedded.
+    // Minted directly through the repository, the way a proposal that never
+    // went through reflect's creation path would reach `proposal accept`.
     const created = createProposal(stash, {
       ref: "knowledge/leak-marker-accept",
       source: "reflect",

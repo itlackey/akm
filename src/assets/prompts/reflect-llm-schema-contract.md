@@ -1,5 +1,3 @@
 Respond only through the provider's native JSON schema. {{FIELD_RULE}}
 
-`content` must contain the complete improved markdown body only, without YAML frontmatter. `frontmatterPatch` must contain exactly `description` and `when_to_use`; set either field to `null` when it should not change, or to a non-empty string when adding or correcting it. AKM merges that narrow patch with the source frontmatter and preserves target identity itself. `confidence` is your honest self-rated quality confidence from 0 to 1. Do not add prose or Markdown fences around the JSON response.
-
-Never include the truncation marker (the literal text `{{TRUNCATION_MARKER}}`) or any other text from outside the quoted asset content shown to you, anywhere in `content`.
+`frontmatterPatch` must contain exactly `description`, `when_to_use` and `title`; set a field to `null` when it should not change, or to a non-empty single-line string. `title` is the text of a level-1 heading, without the leading `#`; AKM adds it only when the body has none. AKM applies the patch to the source asset, keeps the body itself, and preserves target identity. `confidence` is your honest self-rated quality confidence from 0 to 1. Do not add prose or Markdown fences around the JSON response.

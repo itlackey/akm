@@ -3,9 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm reflect [ref]` — ask an engine for a revised asset and queue it as a
- * proposal (`source: "reflect"`). Reflect never writes an asset: the proposal
- * queue is the only path, `akm proposal accept` the bridge.
+ * `akm reflect [ref]` — ask an engine whether an asset's `description`,
+ * `when_to_use` and title need a fix, and queue the asset with that fix as a
+ * proposal (`source: "reflect"`). The engine never writes the body: akm keeps
+ * it byte for byte. Reflect never writes an asset: the proposal queue is the
+ * only path, `akm proposal accept` the bridge.
  *
  * Every invocation closes with one `reflect_completed` event; `reflect_invoked`
  * is emitted once the dispatch has validated its credentials (deterministic
@@ -13,15 +15,14 @@
  */
 
 import fs from "node:fs";
-import path from "node:path";
-import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/asset-serialize";
+import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
+import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
 import { resolveStashDir } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
-import { generatedContentRejection, stripReflectPromptScaffolding } from "../../core/content-safety";
+import { generatedContentRejection } from "../../core/content-safety";
 import { ConfigError, UsageError } from "../../core/errors";
 import { appendEvent, type EventsContext, readEvents } from "../../core/events";
 import type { AkmReflectFailure, AkmReflectResult } from "../../core/improve-types";
@@ -43,9 +44,7 @@ import { buildExecution, resolveExecution } from "../../integrations/agent/execu
 import {
   buildReflectOutputRepairPrompt,
   buildReflectPrompt,
-  parseAgentProposalPayload,
   REFLECT_CONTENT_CAP,
-  REFLECT_TRUNCATION_MARKER,
   type ReflectOutputMode,
   type ReflectPromptInput,
 } from "../../integrations/agent/prompts";
@@ -59,9 +58,8 @@ import { type ChatMessage, type chatCompletion, isJsonSchemaKnownUnsupported, Ll
 import { baseFailureFields, enoentHintMessage, isEnoentFailure } from "../agent/agent-support";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
-import { checkReflectSize, isValidDescription } from "../proposal/validators/proposal-quality-validators";
+import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
-import { deriveLessonRef } from "./distill";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
@@ -147,7 +145,7 @@ function readRecentFeedback(ref?: string, eventsCtx?: EventsContext): string[] {
 }
 
 /**
- * Types reflect may rewrite: its output is frontmatter + markdown, which would
+ * Types reflect may patch: its output is frontmatter + markdown, which would
  * break a script or env file. Another type is allowed only when its current
  * content already has that shape; secrets are never read.
  */
@@ -163,98 +161,10 @@ export const REFLECT_ALLOWED_TYPES: ReadonlySet<string> = new Set([
 
 const REFLECT_REFUSED_TYPES: ReadonlySet<string> = new Set(["secret"]);
 
-/** Identity fields the model may never change (a renamed `name` breaks ref resolution). */
-const PROTECTED_FRONTMATTER_FIELDS: ReadonlySet<string> = new Set(["name", "ref", "id", "slug", "type"]);
-
 /** Lesson lint findings for the prompt: a concrete starting point for the revision. */
 function buildSchemaHints(type: string, content: string | undefined): string[] {
   if (!content || type !== "lesson") return [];
   return lintLessonContent(content, "reflect").findings.map((f) => `[${f.kind}] ${f.message}`);
-}
-
-interface RelatedLesson {
-  ref: string;
-  content: string;
-}
-
-/**
- * Lessons related to a skill: its derived lesson, lessons distilled from it,
- * and lessons citing it in `sources`. Without independent feedback on the skill,
- * lessons reflect itself produced are dropped so its own output is not fed
- * back as evidence.
- */
-async function readRelatedLessons(
-  stash: string,
-  ref: string,
-  parsedRef: { type: string; name: string },
-  itemRef: string | undefined,
-  eventsCtx: EventsContext | undefined,
-): Promise<RelatedLesson[]> {
-  if (parsedRef.type !== "skill") return [];
-  const cache = new Map<string, string>();
-  const read = (filePath: string): string => {
-    const key = path.resolve(filePath);
-    const cached = cache.get(key) ?? fs.readFileSync(filePath, "utf8");
-    cache.set(key, cached);
-    return cached;
-  };
-  const related = new Map<string, RelatedLesson>();
-  const derivedLessonRef = deriveLessonRef(ref);
-  const candidateRefs = new Set<string>([derivedLessonRef]);
-  const derivedLessonPath = path.join(stash, "lessons", `${parseRefInput(derivedLessonRef).name}.md`);
-  if (fs.existsSync(derivedLessonPath)) {
-    related.set(derivedLessonRef, { ref: derivedLessonRef, content: read(derivedLessonPath) });
-  }
-  try {
-    const keys = new Set([itemRef ?? ref]);
-    for (const event of readEvents({ type: "distill_invoked" }, readOnlyEventsContext(eventsCtx)).events) {
-      if (event.ref === undefined || !keys.has(event.ref)) continue;
-      const proposalRef = typeof event.metadata?.proposalRef === "string" ? event.metadata.proposalRef : undefined;
-      if (proposalRef && lenientRefType(proposalRef) === "lesson") candidateRefs.add(proposalRef);
-    }
-  } catch {
-    // best-effort
-  }
-  for (const candidateRef of candidateRefs) {
-    try {
-      const filePath = await findAssetFilePath(candidateRef, stash);
-      if (filePath && fs.existsSync(filePath))
-        related.set(candidateRef, { ref: candidateRef, content: read(filePath) });
-    } catch {
-      // An index miss is not fatal.
-    }
-  }
-  try {
-    const lessonsDir = path.join(stash, "lessons");
-    if (fs.existsSync(lessonsDir)) {
-      for (const fileName of fs.readdirSync(lessonsDir)) {
-        if (!fileName.endsWith(".md")) continue;
-        const content = read(path.join(lessonsDir, fileName));
-        const sources = parseFrontmatter(content).data.sources;
-        if (!Array.isArray(sources) || !sources.some((s) => typeof s === "string" && s.trim() === ref)) continue;
-        const lessonRef = conceptIdFromTypeName("lesson", fileName.slice(0, -3));
-        if (!related.has(lessonRef)) related.set(lessonRef, { ref: lessonRef, content });
-      }
-    }
-  } catch {
-    // best-effort
-  }
-  let hasIndependentFeedback = true;
-  try {
-    hasIndependentFeedback = readEvents({ type: "feedback", ref }, readOnlyEventsContext(eventsCtx)).events.length > 0;
-  } catch {
-    // Unknown: keep every lesson.
-  }
-  if (!hasIndependentFeedback) {
-    for (const [lessonRef, lesson] of related) {
-      try {
-        if (parseFrontmatter(lesson.content).data.derived_from_reflect === true) related.delete(lessonRef);
-      } catch {
-        // Unparseable frontmatter: keep it.
-      }
-    }
-  }
-  return [...related.values()];
 }
 
 /** The asset type of a maybe-ref, or `""` when it does not parse. */
@@ -267,48 +177,18 @@ function lenientRefType(ref: string | undefined): string {
   }
 }
 
-export interface ReflectSanitizeResult {
-  /** Sanitized content (source frontmatter restored + merged). */
-  content: string;
-  frontmatter?: Record<string, unknown>;
-  /** Non-fatal notes for the event. */
-  warnings: string[];
-  sizeGuardRatio?: { code: "EXCESSIVE_SHRINKAGE" | "EXCESSIVE_EXPANSION"; ratio: number };
-  /** The model echoed REFLECT_TRUNCATION_MARKER into its rewrite. */
-  truncationMarkerLeaked?: boolean;
-}
-
-/**
- * Cut a duplicate frontmatter block the model appended after its rewrite.
- * Requires a balanced fence AND `key:` lines so thematic breaks survive.
- */
-function stripAppendedFrontmatter(body: string): string {
-  const match = body.match(/\n---\r?\n([\s\S]*?)\n---\r?\n/);
-  if (!match || !/^\w[\w-]*:/m.test(match[1]!)) return body;
-  return body.slice(0, body.indexOf(match[0])).replace(/\s+$/, "");
-}
-
 /**
  * A description derived from existing metadata (title, first heading, first
  * prose sentence) that passes `isValidDescription`, or `undefined`. Never
  * free-form invention.
  */
-function deriveDescriptionFromAsset(
-  title: unknown,
-  proposedBody: string,
-  sourceBody: string,
-  targetRef: string,
-): string | undefined {
+function deriveDescriptionFromAsset(title: unknown, body: string, targetRef: string): string | undefined {
   const candidates: Array<{ text: string; kind: "fragment" | "prose" }> = [];
   if (typeof title === "string" && title.trim()) candidates.push({ text: title.trim(), kind: "fragment" });
-  for (const body of [proposedBody, sourceBody]) {
-    const heading = body.match(/^#{1,6}\s+(.+?)\s*$/m)?.[1];
-    if (heading) candidates.push({ text: heading.trim(), kind: "fragment" });
-  }
-  for (const body of [proposedBody, sourceBody]) {
-    const sentence = firstProseSentence(body);
-    if (sentence) candidates.push({ text: sentence, kind: "prose" });
-  }
+  const heading = body.match(/^#{1,6}\s+(.+?)\s*$/m)?.[1];
+  if (heading) candidates.push({ text: heading.trim(), kind: "fragment" });
+  const sentence = firstProseSentence(body);
+  if (sentence) candidates.push({ text: sentence, kind: "prose" });
   for (const { text, kind } of candidates) {
     const normalized = text
       .replace(/`/g, "")
@@ -335,92 +215,63 @@ function firstProseSentence(body: string): string {
   return "";
 }
 
-/**
- * Reflect's content rails: the source frontmatter is restored and the model's
- * frontmatter merged on top except identity fields; a stray or appended
- * frontmatter block and echoed run-only guidance are stripped; a missing
- * required description is derived deterministically; a body outside the size
- * ratios or echoing the truncation notice is flagged for review.
- */
-export function sanitizeReflectPayload(
-  payload: { content: string; frontmatter?: Record<string, unknown> },
-  sourceContent: string | undefined,
-  targetRef: string,
-): ReflectSanitizeResult {
-  const warnings: string[] = [];
-  const { fmText: sourceFmText, body: sourceBody } = sourceContent
-    ? splitFrontmatter(sourceContent)
-    : { fmText: null, body: "" };
-  const sourceFm = sourceFmText !== null ? parseFrontmatter(sourceContent ?? "").data : {};
-  const { fmText: llmFmText, body: rawLlmBody } = splitFrontmatter(payload.content);
-  let llmFm: Record<string, unknown> = {};
-  if (llmFmText !== null) {
-    warnings.push("LLM emitted frontmatter in content; stripped and merged through identity guard.");
-    try {
-      llmFm = parseFrontmatter(payload.content).data;
-    } catch {
-      llmFm = {};
-    }
-  }
-  if (payload.frontmatter && typeof payload.frontmatter === "object") llmFm = { ...llmFm, ...payload.frontmatter };
-  for (const field of PROTECTED_FRONTMATTER_FIELDS) {
-    if (field in llmFm && llmFm[field] !== sourceFm[field]) {
-      warnings.push(`LLM attempted to change protected frontmatter field "${field}"; restored from source.`);
-      delete llmFm[field];
-    }
-  }
-  const mergedFm: Record<string, unknown> = { ...sourceFm, ...llmFm };
-  for (const field of PROTECTED_FRONTMATTER_FIELDS) if (field in sourceFm) mergedFm[field] = sourceFm[field];
+/** What a reflect reply changes; a field it leaves out stays as the source has it. */
+interface ReflectPatch {
+  description?: string;
+  when_to_use?: string;
+  /** The text of a level-1 heading, added only to a body that has none. */
+  title?: string;
+}
 
-  const scaffolding = stripReflectPromptScaffolding(stripAppendedFrontmatter(rawLlmBody.replace(/^\s+/, "")));
-  const cleanedBody = scaffolding.content;
-  if (scaffolding.stripped) {
-    warnings.push('Removed echoed run-only "Avoid These Patterns" guidance from the proposed asset body (#963).');
-  }
+/**
+ * The asset with the patch applied, or `undefined` when the patch changes
+ * nothing (or there is no asset to patch). The body is the source's own, byte
+ * for byte; the one thing akm adds to it is a `# title` heading it lacks. A
+ * required description that neither the source nor the patch has is derived
+ * from the asset's own text (#636).
+ */
+export function applyReflectPatch(
+  patch: ReflectPatch,
+  sourceContent: string,
+  targetRef: string,
+): { content: string; frontmatter?: Record<string, unknown> } | undefined {
+  if (!sourceContent.trim()) return undefined;
+  const { fmText, body: sourceBody } = splitFrontmatter(sourceContent);
+  const sourceFm = fmText !== null ? parseFrontmatter(sourceContent).data : {};
+  const { title, ...fields } = patch;
+  const frontmatter: Record<string, unknown> = { ...sourceFm, ...fields };
+  const addTitle = title !== undefined && !/^#[ \t]+\S/m.test(sourceBody);
+  const body = addTitle ? `# ${title}\n\n${sourceBody.replace(/^(\r?\n)+/, "")}` : sourceBody;
 
   // Only a source that already has frontmatter but no description gets one:
   // injecting a whole block, or overwriting an authored one, is out of scope.
   const refType = lenientRefType(targetRef);
-  const desc = mergedFm.description;
-  const sourceHadFrontmatter = sourceFmText !== null && Object.keys(sourceFm).length > 0;
+  const desc = frontmatter.description;
   if (
     refType &&
     requiresDescription(refType) &&
     (typeof desc !== "string" || desc.trim().length === 0) &&
-    sourceHadFrontmatter
+    Object.keys(sourceFm).length > 0
   ) {
-    const derived = deriveDescriptionFromAsset(mergedFm.title, cleanedBody, sourceBody, targetRef);
-    if (derived) {
-      mergedFm.description = derived;
-      warnings.push(
-        "Synthesized a deterministic `description` from title/heading (#636) — source and proposal lacked one.",
-      );
-    }
+    const derived = deriveDescriptionFromAsset(frontmatter.title, body, targetRef);
+    if (derived) frontmatter.description = derived;
+  }
+  if (
+    !addTitle &&
+    frontmatter.description === sourceFm.description &&
+    frontmatter.when_to_use === sourceFm.when_to_use
+  ) {
+    return undefined;
   }
 
-  const size = checkReflectSize(sourceBody, cleanedBody);
-  let sizeGuardRatio: ReflectSanitizeResult["sizeGuardRatio"];
-  if (!size.ok) {
-    const shrink = size.code === "EXCESSIVE_SHRINKAGE";
-    warnings.push(
-      `${size.code} — proposed body is ${(size.ratio * 100).toFixed(0)}% of source (${shrink ? "minimum 50%" : "maximum 250%"}) for ref ${targetRef}. ${shrink ? "Concrete content was likely deleted." : "Speculative material was likely added."} Flagged for review.`,
-    );
-    sizeGuardRatio = { code: size.code, ratio: size.ratio };
-  }
-  const truncationMarkerLeaked = cleanedBody.includes(REFLECT_TRUNCATION_MARKER);
-  if (truncationMarkerLeaked) {
-    warnings.push(
-      `Proposed body for ref ${targetRef} contains the truncation-notice text the model was shown for a capped source asset ("${REFLECT_TRUNCATION_MARKER}"). The model likely echoed the notice instead of writing real content. Flagged for review.`,
-    );
-  }
-  // No frontmatter at all stays body-only, never gaining a stray `---`.
-  const hasFrontmatter = Object.keys(mergedFm).length > 0;
+  // No frontmatter at all stays body-only, never gaining a stray `---`. The
+  // blank line after a closing fence is part of the source body, so only a
+  // block akm adds brings its own.
+  const hasFrontmatter = Object.keys(frontmatter).length > 0;
+  const gap = fmText === null || addTitle ? "\n" : "";
   return {
-    content: hasFrontmatter ? assembleAssetFromString(serializeFrontmatter(mergedFm), cleanedBody) : cleanedBody,
-    ...(hasFrontmatter ? { frontmatter: mergedFm } : {}),
-    warnings,
-    ...(sizeGuardRatio ? { sizeGuardRatio } : {}),
-    ...(truncationMarkerLeaked ? { truncationMarkerLeaked } : {}),
+    content: hasFrontmatter ? `---\n${serializeFrontmatter(frontmatter)}\n---\n${gap}${body}` : body,
+    ...(hasFrontmatter ? { frontmatter } : {}),
   };
 }
 
@@ -433,11 +284,12 @@ export function sanitizeReflectPayload(
 
 const REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["description", "when_to_use"],
+  required: ["description", "when_to_use", "title"],
   additionalProperties: false,
   properties: {
     description: { type: ["string", "null"] },
     when_to_use: { type: ["string", "null"] },
+    title: { type: ["string", "null"] },
   },
 };
 
@@ -451,10 +303,9 @@ const REFLECT_CONFIDENCE_SCHEMA = {
 
 export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["content", "confidence", "frontmatterPatch"],
+  required: ["confidence", "frontmatterPatch"],
   additionalProperties: false,
   properties: {
-    content: { type: "string", description: "Complete improved markdown body without YAML frontmatter." },
     confidence: REFLECT_CONFIDENCE_SCHEMA,
     frontmatterPatch: REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA,
   },
@@ -462,11 +313,10 @@ export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
 
 const REFLECT_UNSCOPED_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["ref", "content", "confidence", "frontmatterPatch"],
+  required: ["ref", "confidence", "frontmatterPatch"],
   additionalProperties: false,
   properties: {
     ref: { type: "string", description: "Selected asset ref as a subdir-qualified conceptId." },
-    content: { type: "string", description: "Complete improved markdown body without YAML frontmatter." },
     confidence: { type: "number", minimum: 0, maximum: 1, description: "Self-reported quality confidence in [0, 1]." },
     frontmatterPatch: REFLECT_FRONTMATTER_PATCH_JSON_SCHEMA,
   },
@@ -538,67 +388,56 @@ function parseReflectConfidence(value: unknown): number {
   return value;
 }
 
-function parseReflectFrontmatterPatch(value: unknown): Record<string, unknown> | undefined {
+const REFLECT_PATCH_FIELDS = ["description", "when_to_use", "title"] as const;
+
+/** A parsed reflect reply: the asset it names, its confidence, and the fields it changes. */
+interface ReflectPayload {
+  ref: string;
+  confidence: number;
+  patch: ReflectPatch;
+}
+
+function parseReflectFrontmatterPatch(value: unknown): ReflectPatch {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error('direct reflect response missing required object field "frontmatterPatch"');
   }
-  const patch = value as Record<string, unknown>;
-  const keys = Object.keys(patch).sort();
-  if (keys.length !== 2 || keys[0] !== "description" || keys[1] !== "when_to_use") {
-    throw new Error("direct reflect frontmatterPatch fields must be exactly: description, when_to_use");
+  const fields = value as Record<string, unknown>;
+  if (Object.keys(fields).length !== REFLECT_PATCH_FIELDS.length || REFLECT_PATCH_FIELDS.some((f) => !(f in fields))) {
+    throw new Error(`direct reflect frontmatterPatch fields must be exactly: ${REFLECT_PATCH_FIELDS.join(", ")}`);
   }
-  const frontmatter: Record<string, unknown> = {};
-  for (const field of ["description", "when_to_use"] as const) {
-    const fieldValue = patch[field];
+  const patch: ReflectPatch = {};
+  for (const field of REFLECT_PATCH_FIELDS) {
+    const fieldValue = fields[field];
     if (fieldValue === null) continue;
     if (typeof fieldValue !== "string" || !fieldValue.trim() || /[\r\n]/.test(fieldValue)) {
       throw new Error(`direct reflect frontmatterPatch.${field} must be a non-empty single-line string or null`);
     }
-    frontmatter[field] = fieldValue.trim();
+    patch[field] = fieldValue.trim();
   }
-  return Object.keys(frontmatter).length > 0 ? frontmatter : undefined;
+  return patch;
 }
 
-function parseSchemaReflectOutput(raw: string, targetRef: string | undefined) {
+function parseSchemaReflectOutput(raw: string, targetRef: string | undefined): ReflectPayload {
   const parsed = parseEmbeddedJsonResponse<Record<string, unknown>>(raw);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("direct reflect response was not valid JSON");
   }
-  const expectedKeys = targetRef
-    ? ["confidence", "content", "frontmatterPatch"]
-    : ["confidence", "content", "frontmatterPatch", "ref"];
+  const expectedKeys = targetRef ? ["confidence", "frontmatterPatch"] : ["confidence", "frontmatterPatch", "ref"];
   const actualKeys = Object.keys(parsed).sort();
   if (actualKeys.length !== expectedKeys.length || actualKeys.some((key, index) => key !== expectedKeys[index])) {
     throw new Error(`direct reflect response fields must be exactly: ${expectedKeys.join(", ")}`);
   }
-  if (typeof parsed.content !== "string" || !parsed.content.trim()) {
-    throw new Error('direct reflect response missing required string field "content"');
-  }
   const ref = targetRef ?? (typeof parsed.ref === "string" ? parsed.ref.trim() : "");
   if (!ref) throw new Error('direct reflect response missing required string field "ref"');
-  const frontmatter = parseReflectFrontmatterPatch(parsed.frontmatterPatch);
   return {
     ref,
-    content: parsed.content,
     confidence: parseReflectConfidence(parsed.confidence),
-    ...(frontmatter ? { frontmatter } : {}),
+    patch: parseReflectFrontmatterPatch(parsed.frontmatterPatch),
   };
 }
 
-function parseFramedReflectOutput(raw: string, targetRef: string | undefined) {
-  const normalized = raw.replaceAll("\r\n", "\n").trim();
-  const beginMarker = "AKM_REFLECT_CONTENT_BEGIN\n";
-  const endMarker = "\nAKM_REFLECT_CONTENT_END";
-  const beginIndex = normalized.indexOf(beginMarker);
-  if (beginIndex < 0 || (beginIndex > 0 && normalized[beginIndex - 1] !== "\n")) {
-    throw new Error("direct reflect response missing AKM_REFLECT_CONTENT_BEGIN marker");
-  }
-  const contentStart = beginIndex + beginMarker.length;
-  const endIndex = normalized.lastIndexOf(endMarker);
-  if (endIndex < contentStart || normalized.slice(endIndex + endMarker.length).trim()) {
-    throw new Error("direct reflect response missing terminal AKM_REFLECT_CONTENT_END marker");
-  }
-  const headerLines = normalized.slice(0, beginIndex).trim().split("\n").filter(Boolean);
+function parseFramedReflectOutput(raw: string, targetRef: string | undefined): ReflectPayload {
+  const headerLines = raw.replaceAll("\r\n", "\n").trim().split("\n").filter(Boolean);
   const header = (prefix: string) => headerLines.find((line) => line.startsWith(prefix));
   const confidenceLine = header("AKM_REFLECT_CONFIDENCE:");
   const refLine = header("AKM_REFLECT_REF:");
@@ -613,17 +452,17 @@ function parseFramedReflectOutput(raw: string, targetRef: string | undefined) {
   }
   const ref = targetRef ?? refLine?.slice("AKM_REFLECT_REF:".length).trim() ?? "";
   if (!ref) throw new Error("direct reflect response contained an empty AKM_REFLECT_REF value");
-  const content = normalized.slice(contentStart, endIndex);
-  if (!content.trim()) throw new Error("direct reflect response contained empty framed content");
   let parsedPatch: unknown;
   try {
     parsedPatch = JSON.parse(patchLine.slice("AKM_REFLECT_FRONTMATTER_PATCH:".length).trim());
   } catch {
     throw new Error("direct reflect response contained invalid frontmatter patch JSON");
   }
-  const frontmatter = parseReflectFrontmatterPatch(parsedPatch);
-  const confidence = parseReflectConfidence(Number(confidenceText));
-  return { ref, content, confidence, ...(frontmatter ? { frontmatter } : {}) };
+  return {
+    ref,
+    confidence: parseReflectConfidence(Number(confidenceText)),
+    patch: parseReflectFrontmatterPatch(parsedPatch),
+  };
 }
 
 /**
@@ -755,8 +594,6 @@ export async function runReflectIteration(opts: RunReflectIterationOptions): Pro
 
 // ── Invocation ───────────────────────────────────────────────────────────────
 
-type ReflectPayload = ReturnType<typeof parseAgentProposalPayload>;
-
 /** One reflect invocation: its runner, notices, and the closing-event helpers. */
 interface ReflectRun {
   options: AkmReflectOptions;
@@ -846,7 +683,7 @@ function unsupportedTypeFailure(
   };
 }
 
-/** The target's parsed ref and current content, or a refusal for a type reflect cannot rewrite. */
+/** The target's parsed ref and current content, or a refusal for a type reflect cannot patch. */
 async function resolveReflectSource(
   options: AkmReflectOptions,
   stash: string,
@@ -875,7 +712,7 @@ async function resolveReflectSource(
         if (entry?.filePath && fs.existsSync(entry.filePath)) assetContent = fs.readFileSync(entry.filePath, "utf8");
       }
     } catch {
-      // An index miss is not fatal: the agent can still propose a fresh asset.
+      // An index miss is not fatal: reflect then has no content to patch.
     }
   }
   if (
@@ -959,7 +796,7 @@ function preflightReflectDispatch(runnerSpec: RunnerSpec, onNotices: (notices: r
 /**
  * The flat 12k content cap exists for CLI argv; the HTTP runner can spend half
  * its context window (after the rest of the prompt) on the asset, reserving
- * the other half for the rewrite. Never below the flat floor.
+ * the other half for the reply. Never below the flat floor.
  */
 function computeReflectContentBudgetChars(promptInput: ReflectPromptInput, runnerSpec: RunnerSpec): number | undefined {
   if (!runnerIsLlm(runnerSpec) || !promptInput.assetContent?.trim()) return undefined;
@@ -971,25 +808,20 @@ function computeReflectContentBudgetChars(promptInput: ReflectPromptInput, runne
 interface ReflectPromptSources {
   feedback: string[];
   schemaHints: string[];
-  relatedLessons: RelatedLesson[];
   rejectedProposals: ReturnType<typeof rejectedProposalContext>;
   standardsContext: string;
 }
 
 /** Every read-only prompt input, shared by dispatch and `--show-prompt`. */
-async function gatherReflectPromptSources(
+function gatherReflectPromptSources(
   options: AkmReflectOptions,
   stash: string,
   parsedRef: AssetRef | undefined,
   assetContent: string | undefined,
-): Promise<ReflectPromptSources> {
+): ReflectPromptSources {
   return {
     feedback: readRecentFeedback(options.ref ? (options.itemRef ?? options.ref) : undefined, options.eventsCtx),
     schemaHints: buildSchemaHints(parsedRef?.type ?? "", assetContent),
-    relatedLessons:
-      options.ref && parsedRef
-        ? await readRelatedLessons(stash, options.ref, parsedRef, options.itemRef, options.eventsCtx)
-        : [],
     rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx, options.eventsCtx),
     standardsContext: resolveStandardsContext(options.ref, stash),
   };
@@ -1005,7 +837,7 @@ function buildReflectPromptText(args: {
   priorDraft: string | undefined;
 }): { prompt: string; outputMode: ReflectOutputMode } {
   const { options, parsedRef, assetContent, sources, runnerSpec, priorDraft } = args;
-  const { feedback, schemaHints, relatedLessons, rejectedProposals, standardsContext } = sources;
+  const { feedback, schemaHints, rejectedProposals, standardsContext } = sources;
   // An LLM engine that rejects JSON Schema gets the framed contract; every other engine gets the JSON object.
   const outputMode: ReflectOutputMode =
     runnerIsLlm(runnerSpec) && !wantsJsonSchemaOutput(runnerSpec.connection) ? "framed_markdown" : "json_schema";
@@ -1016,7 +848,6 @@ function buildReflectPromptText(args: {
     ...(assetContent !== undefined ? { assetContent } : {}),
     ...(feedback.length > 0 ? { feedback } : {}),
     ...(schemaHints.length > 0 ? { schemaHints } : {}),
-    ...(relatedLessons.length > 0 ? { relatedLessons } : {}),
     ...(options.task ? { task: options.task } : {}),
     ...(standardsContext.trim() ? { standardsContext } : {}),
     ...(options.avoidPatterns && options.avoidPatterns.length > 0 ? { avoidPatterns: options.avoidPatterns } : {}),
@@ -1103,25 +934,6 @@ async function runReflectRefineIterations(args: {
   return result;
 }
 
-/** The proposal payload from a successful run: the JSON payload on stdout. */
-function resolveReflectPayload(
-  run: ReflectRun,
-  result: AgentRunResult,
-): { payload: ReflectPayload } | { failure: AkmReflectResult } {
-  const { options } = run;
-  try {
-    return { payload: parseAgentProposalPayload(result.stdout ?? "") };
-  } catch (err) {
-    run.emitFailed("parse_error", "parse_error", options.ref, {
-      ...exitCodeMeta(result),
-      ...(reflectTelemetry(result) ?? {}),
-    });
-    return {
-      failure: reflectFailure(run, result, "parse_error", err instanceof Error ? err.message : String(err), true),
-    };
-  }
-}
-
 const NOISE_SUBREASONS = {
   noop: "reflect_skipped_noop",
   cosmetic: "reflect_skipped_cosmetic",
@@ -1129,61 +941,48 @@ const NOISE_SUBREASONS = {
 } as const;
 
 /**
- * Sanitize, drop a no-op/cosmetic (and optionally low-value) change, judge the
- * exact content that would be persisted, then mint. A judge pass is staged only
- * when the body is unchanged: a body edit the judge passes, or one made with the
- * gate off, waits for review. Size-flagged or truncation-leaking content skips
- * the judge and waits for review. A revision with a deterministic defect is
- * refused before the judge runs, whether or not the gate is on.
+ * Apply the patch, drop a no-op/cosmetic (and optionally low-value) change,
+ * judge the exact content that would be persisted, then mint. A revision with a
+ * deterministic defect is refused before the judge runs, whether or not the
+ * gate is on.
  */
 async function finalizeReflectProposal(args: {
   run: ReflectRun;
   payload: ReflectPayload;
-  assetContent: string | undefined;
+  assetContent: string;
   result: AgentRunResult;
   judge: { enabled: boolean; skippedNoJudge: boolean; runner: RunnerSpec | undefined };
   feedback: string[];
 }): Promise<AkmReflectResult> {
-  const { run, assetContent, result, judge, feedback } = args;
+  const { run, payload, assetContent, result, judge, feedback } = args;
   const { options } = run;
   const telemetry = reflectTelemetry(result) ?? {};
-  const sanitized = sanitizeReflectPayload(
-    { content: args.payload.content, ...(args.payload.frontmatter ? { frontmatter: args.payload.frontmatter } : {}) },
-    assetContent,
-    args.payload.ref,
-  );
-  const payload: ReflectPayload = {
-    ...args.payload,
-    content: sanitized.content,
-    ...(sanitized.frontmatter ? { frontmatter: sanitized.frontmatter } : {}),
-  };
+  const patched = applyReflectPatch(payload.patch, assetContent, payload.ref);
+  // A patch that changes nothing leaves the asset as it is: an empty diff.
+  const content = patched?.content ?? assetContent;
 
-  if (assetContent !== undefined) {
-    const changeKind = classifyReflectChange(assetContent, payload.content);
-    if (
-      changeKind === "noop" ||
-      changeKind === "cosmetic" ||
-      (changeKind === "low-value" && options.lowValueFilter === true)
-    ) {
-      run.emitFailed("no_change", NOISE_SUBREASONS[changeKind], options.ref, { changeKind, ...telemetry });
-      const what =
-        changeKind === "noop"
-          ? "identical to the current asset (empty diff)"
-          : changeKind === "low-value"
-            ? "a low-value prose micro-rewrite (few changed tokens, no structural changes)"
-            : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
-      return reflectFailure(
-        run,
-        result,
-        "no_change",
-        `Reflect skipped: proposed content for ${payload.ref} is ${what}; no proposal created.`,
-        false,
-      );
-    }
+  const changeKind = classifyReflectChange(assetContent, content);
+  if (
+    changeKind === "noop" ||
+    changeKind === "cosmetic" ||
+    (changeKind === "low-value" && options.lowValueFilter === true)
+  ) {
+    run.emitFailed("no_change", NOISE_SUBREASONS[changeKind], options.ref, { changeKind, ...telemetry });
+    const what =
+      changeKind === "noop"
+        ? "identical to the current asset (empty diff)"
+        : changeKind === "low-value"
+          ? "a low-value prose micro-rewrite (few changed tokens, no structural changes)"
+          : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
+    return reflectFailure(
+      run,
+      result,
+      "no_change",
+      `Reflect skipped: proposed content for ${payload.ref} is ${what}; no proposal created.`,
+      false,
+    );
   }
 
-  const flagged = Boolean(sanitized.sizeGuardRatio || sanitized.truncationMarkerLeaked);
-  const judged = judge.enabled && !flagged;
   /** A judge refused the revision: record it for the ledger's rejection window and stop. */
   const refuse = (detail: string, metadata: Record<string, unknown>, message: string): AkmReflectResult => {
     if (options.ref) {
@@ -1209,13 +1008,12 @@ async function finalizeReflectProposal(args: {
     return reflectFailure(run, result, "quality_rejected", message, false);
   };
   // A defect no judge needs to weigh is refused before any judge call, whether or not the gate is on.
-  const defect =
-    assetContent === undefined ? undefined : findReflectDefect(assetContent, payload.content, options.defectFilter);
+  const defect = findReflectDefect(assetContent, content, options.defectFilter);
   if (defect) return refuse(defect, { reflectDefect: defect }, `Reflect proposal refused before the judge: ${defect}`);
   let verdict: QualityJudgeResult | undefined;
   let judgeFailed = false;
-  if (judged) {
-    verdict = await runReflectQualityJudge(run.config, payload.content, assetContent ?? "", feedback, options.chat, {
+  if (judge.enabled) {
+    verdict = await runReflectQualityJudge(run.config, content, assetContent, feedback, options.chat, {
       runnerSelectionFrozen: true,
       ref: payload.ref,
       ...(judge.runner ? { llmRunner: judge.runner } : {}),
@@ -1237,12 +1035,12 @@ async function finalizeReflectProposal(args: {
       );
     }
   }
-  // #722: a rewrite of an existing asset must not grade lower on its own retrieval queries.
-  if (verdict?.pass && judge.runner && assetContent !== undefined) {
+  // #722: a revision of an existing asset must not grade lower on its own retrieval queries.
+  if (verdict?.pass && judge.runner) {
     const retrieval = await runRetrievalRegressionGate({
       ref: payload.ref,
       before: assetContent,
-      after: payload.content,
+      after: content,
       queries: loadRetrievalQueries({ proposalsCtx: options.ctx, eventsCtx: options.eventsCtx }, payload.ref),
       runner: judge.runner,
       ...(options.chat ? { chat: options.chat } : {}),
@@ -1264,26 +1062,10 @@ async function finalizeReflectProposal(args: {
     }
   }
 
-  // A lesson reflect wrote is marked so a later reflect on the same skill does
-  // not read it back as independent evidence.
-  const frontmatter: Record<string, unknown> = {
-    ...(payload.frontmatter ?? {}),
-    ...(lenientRefType(payload.ref) === "lesson" ? { derived_from_reflect: true } : {}),
-  };
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
     ...(judgeFailed ? ["judge-error"] : []),
-    ...(sanitized.sizeGuardRatio ? ["reflect-size-ratio"] : []),
-    ...(sanitized.truncationMarkerLeaked ? ["reflect-truncation-leak"] : []),
   ];
-  // A revision that changes the body is never auto-accepted: on labelled edits, the judge's
-  // passes on body edits were good 12 times in 37, and on frontmatter-only edits 13 in 13.
-  // One that nothing above holds for review (the judge passed it, or the gate is off) waits
-  // for a person, as does a revision with no source to compare.
-  const bodyOf = (content: string) => splitFrontmatter(content).body.replace(/\s+/g, " ").trim();
-  const bodyEdit =
-    reviewReasons.length === 0 && (assetContent === undefined || bodyOf(assetContent) !== bodyOf(payload.content));
-  if (bodyEdit) reviewReasons.push("body-edit");
   const proposal = mintProposal(
     run.stash,
     options.ctx,
@@ -1292,8 +1074,8 @@ async function finalizeReflectProposal(args: {
       ...(options.target ? { target: options.target } : {}),
       source: "reflect",
       sourceRun: `reflect-${Date.now()}`,
-      payload: { content: payload.content, ...(Object.keys(frontmatter).length > 0 ? { frontmatter } : {}) },
-      ...(typeof payload.confidence === "number" ? { confidence: payload.confidence } : {}),
+      payload: { content, ...(patched?.frontmatter ? { frontmatter: patched.frontmatter } : {}) },
+      confidence: payload.confidence,
       ...(options.eligibilitySource ? { eligibilitySource: options.eligibilitySource } : {}),
       ...(options.itemRef ? { itemRef: options.itemRef, attemptedRefs: [options.itemRef] } : {}),
     },
@@ -1303,10 +1085,6 @@ async function finalizeReflectProposal(args: {
             reason: reviewReasons.join("+"),
             // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
             gate: judgeFailed ? "quality-gate" : "reflect",
-            ...(sanitized.sizeGuardRatio ? { measured: Math.round(sanitized.sizeGuardRatio.ratio * 100) } : {}),
-            // The reviewer sees why the judge passed it (with the gate off, nothing judged it).
-            ...(bodyEdit && verdict?.criteria ? { scores: verdict.criteria } : {}),
-            ...(bodyEdit && verdict ? { judgeReason: verdict.reason } : {}),
           },
         }
       : { judged: verdict },
@@ -1321,10 +1099,6 @@ async function finalizeReflectProposal(args: {
         engine: run.engineName,
         ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
         ...(judgeFailed ? { qualityReason: verdict?.reason } : {}),
-        ...(sanitized.sizeGuardRatio
-          ? { sizeGuardRatio: sanitized.sizeGuardRatio.code, sizeGuardRatioValue: sanitized.sizeGuardRatio.ratio }
-          : {}),
-        ...(sanitized.truncationMarkerLeaked ? { truncationMarkerLeaked: true } : {}),
         ...telemetry,
       },
     },
@@ -1362,7 +1136,7 @@ export async function renderReflectPromptPreview(
     );
   }
   const { runnerSpec, engineName } = resolveReflectRunner(options);
-  const sources = await gatherReflectPromptSources(options, stash, source.parsedRef, source.assetContent);
+  const sources = gatherReflectPromptSources(options, stash, source.parsedRef, source.assetContent);
   const { prompt } = buildReflectPromptText({
     options,
     parsedRef: source.parsedRef,
@@ -1411,7 +1185,7 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
   preflightReflectDispatch(runnerSpec, notices.add);
   if (judgeRunner && judgeRunner !== runnerSpec) preflightReflectDispatch(judgeRunner, notices.add);
 
-  const sources = await gatherReflectPromptSources(options, stash, parsedRef, assetContent);
+  const sources = gatherReflectPromptSources(options, stash, parsedRef, assetContent);
   const agentEnv: Record<string, string> = options.eventSource === "improve" ? { AKM_EVENT_SOURCE: "improve" } : {};
   const sensitiveValues = collectDispatchSensitiveValues(runnerSpec, {
     ...(Object.keys(agentEnv).length > 0 ? { env: agentEnv } : {}),
@@ -1448,26 +1222,28 @@ export async function akmReflect(options: AkmReflectOptions = {}): Promise<AkmRe
       });
       return { ...envelope, ...notices.fields() };
     }
-    const resolved = resolveReflectPayload(run, result);
-    if ("failure" in resolved) return resolved.failure;
-    payload = resolved.payload;
+    // The iteration parsed the reply and put its payload on stdout.
+    payload = JSON.parse(result.stdout) as ReflectPayload;
   } catch (error) {
     if (!(error instanceof ConfigError)) emitInvoked();
     throw error;
   }
 
-  const unsafeContent = generatedContentRejection(
-    payload.content,
-    redactSensitiveText(payload.content, sensitiveValues),
-  );
+  const generated = Object.values(payload.patch).join("\n");
+  const unsafeContent = generatedContentRejection(generated, redactSensitiveText(generated, sensitiveValues));
   if (unsafeContent) {
     emitFailed("parse_error", "parse_error", options.ref, exitCodeMeta(result));
     return reflectFailure(run, result, "parse_error", unsafeContent, false);
   }
+  // An unscoped reply names its asset only now: read it as a targeted run read its own before dispatch.
+  const target = options.ref
+    ? { assetContent }
+    : await resolveReflectSource({ ...options, ref: payload.ref }, stash, emitFailed);
+  if ("failure" in target) return target.failure;
   return finalizeReflectProposal({
     run,
     payload,
-    assetContent,
+    assetContent: target.assetContent ?? "",
     result,
     judge: { enabled: judgeWanted && !skippedNoJudge, skippedNoJudge, runner: judgeRunner },
     feedback: sources.feedback,

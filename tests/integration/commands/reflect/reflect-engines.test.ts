@@ -16,7 +16,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } fr
 import fs from "node:fs";
 import path from "node:path";
 import { akmReflect, REFLECT_JSON_SCHEMA } from "../../../../src/commands/improve/reflect";
+import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise";
 import { listProposals } from "../../../../src/commands/proposal/repository";
+import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
 import {
@@ -37,28 +39,20 @@ import {
 const REF = "lessons/rg-over-grep";
 const SOURCE =
   "---\ndescription: Prefer ripgrep for repository search\nwhen_to_use: When searching a source repository\n---\n\n# Prefer ripgrep\n\nUse rg for recursive repository searches. It respects .gitignore.\n\n## Examples\n\n- rg -n TODO src\n";
-const REVISED =
-  "# Prefer ripgrep\n\nUse rg for recursive repository searches. It respects .gitignore and skips binary files.\n\n## Examples\n\n- rg -n TODO src\n- rg --hidden API_URL .\n";
+const PATCH = { description: "Prefer ripgrep for recursive repository searches" };
 const PROSE = "I have improved the asset.";
-/** What the engine says to a reflect run that names no asset: the frontmatter a new lesson needs, and its ref. */
-const UNSCOPED_REPLY = reflectReply(REVISED, {
-  ref: REF,
-  frontmatterPatch: {
-    description: "Prefer ripgrep for repository search",
-    when_to_use: "When searching a source repository",
-  },
-});
 const SCHEMA_INSTRUCTION = "\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n";
 const REPAIR_REQUEST = "could not be extracted using the required output contract";
 
 /** The replies an engine gives to its first, second, … dispatch; the last one repeats. */
 const SCENARIOS: Record<string, readonly string[]> = {
-  valid: [reflectReply(REVISED)],
-  repair: [PROSE, reflectReply(REVISED)],
+  valid: [reflectReply(PATCH)],
+  repair: [PROSE, reflectReply(PATCH)],
   invalid: [PROSE],
-  unscoped: [UNSCOPED_REPLY],
+  // What the engine says to a reflect run that names no asset: the asset, too.
+  unscoped: [reflectReply(PATCH, { ref: REF })],
   // The first pass needs its repair; the second pass replies in prose again.
-  refine: [PROSE, reflectReply(REVISED), PROSE],
+  refine: [PROSE, reflectReply(PATCH), PROSE],
 };
 
 const { server: llmStub, bodies: llmBodies } = serveLlmStub(SCENARIOS);
@@ -155,9 +149,13 @@ describe("reflect asks every engine kind for the same JSON reply", () => {
     const proposals = listProposals(storage.stashDir);
     expect(proposals).toHaveLength(1);
     expect(proposals[0]).toMatchObject({ source: "reflect", status: "pending", confidence: 0.8 });
-    expect(proposals[0]?.payload.content).toContain("rg --hidden API_URL");
-    // The source's frontmatter survives the rewrite.
-    expect(proposals[0]?.payload.content).toContain("description: Prefer ripgrep for repository search");
+    // The patch changes the description; the body is the source's.
+    const content = proposals[0]?.payload.content ?? "";
+    expect(parseFrontmatter(content).data).toMatchObject({
+      description: PATCH.description,
+      when_to_use: "When searching a source repository",
+    });
+    expect(splitFrontmatter(content).body).toBe(splitFrontmatter(SOURCE).body);
     expect(completedEvent()).toMatchObject({ source: "reflect", engine: "contract", outputMode: "json_schema" });
   });
 
@@ -177,7 +175,7 @@ describe("reflect asks every engine kind for the same JSON reply", () => {
   });
 
   test.each(TRANSPORTS)("%s: a run that names no asset asks for the object that names it", async (name, transport) => {
-    const result = await reflect(transport, "unscoped", { ref: undefined, assetContent: undefined });
+    const result = await reflect(transport, "unscoped", { ref: undefined });
 
     if (!result.ok) throw new Error(`expected a proposal, got ${result.reason}: ${result.error}`);
     expect(result.ref).toContain(REF);
