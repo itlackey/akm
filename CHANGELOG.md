@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   them, without Codex's own instructions or injected context (AGENTS.md, the
   environment, an invoked skill). The reader lists a person's sessions,
   `codex exec` runs included. It leaves out the rollouts Codex writes for
-  subagents and guardian reviewers, which are not sessions of their own, and
+  subagents and its other internal agents, which are not sessions of their own, and
   unlike a Claude Code subagent transcript it does not fold them into their
   parent.
 

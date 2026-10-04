@@ -2729,7 +2729,7 @@ failed.
 The `codex` harness reads Codex's rollout files under `$CODEX_HOME/sessions`
 (`~/.codex/sessions` by default; `--location` points at another rollout
 directory). It lists a person's sessions, `codex exec` runs included, and
-leaves out the rollouts Codex writes for subagents and guardian reviewers:
+leaves out the rollouts Codex writes for subagents and its other internal agents:
 those are not sessions of their own.
 
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:

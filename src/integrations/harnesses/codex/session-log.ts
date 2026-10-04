@@ -45,7 +45,7 @@ interface RolloutMeta {
   /** The session's working directory. */
   cwd?: string;
   /**
-   * A subagent, guardian reviewer or other non-root agent. Codex gives these an
+   * A subagent or another of Codex's internal agents. Codex gives these an
    * object `source` (`{"subagent": ...}`, `{"internal": ...}`) where a person's
    * session has a bare string (`cli`, `vscode`, `exec`, ...), and writes each to a
    * rollout of its own: they are not sessions, so `listSessions` leaves them out.
