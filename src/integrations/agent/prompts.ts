@@ -410,7 +410,7 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
   }
 
   sections.push(
-    "Produce a single proposal that addresses the feedback and respects the asset-type contract. If the source has no `when_to_use`, write one: a single sentence, supported by the body, saying when to reach for this asset.",
+    "If the source has no `when_to_use`, write one: a single sentence, supported by the body, saying when to reach for this asset.",
   );
 
   sections.push(reflectResponseContract(input.outputMode ?? "json_schema", input.ref !== undefined));
