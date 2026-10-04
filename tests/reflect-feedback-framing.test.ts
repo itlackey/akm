@@ -174,11 +174,34 @@ describe("buildReflectPrompt — a patch of three fields, and 'nothing to change
     );
   });
 
-  test("a source with no when_to_use is asked for one sentence the body supports", () => {
-    const rendered = buildReflectPrompt(input).prompt;
+  test("akm names the problems it can see: a stray-period description, no when_to_use, no title", () => {
+    const rendered = buildReflectPrompt({
+      ...input,
+      assetContent: "---\ndescription: The indexer needs explicit calls. asset writes go stale.\n---\nBody text.\n",
+    }).prompt;
+    expect(rendered).toContain("akm found these problems in the asset; fix each one:");
     expect(rendered).toContain(
-      "If the source has no `when_to_use`, write one: a single sentence, supported by the body, saying when to reach for this asset.",
+      'a stray period splits a sentence ("The indexer needs explicit calls. asset writes go stale.")',
     );
+    expect(rendered).toContain(
+      "there is no `when_to_use`: write one, a single sentence the body supports, saying when to reach for this asset",
+    );
+    expect(rendered).toContain("the body has no level-1 title: give one in `title`");
+  });
+
+  test("an escaped quote breaks a description; an abbreviation's period does not", () => {
+    const quoted = buildReflectPrompt({
+      ...input,
+      assetContent:
+        '---\ndescription: "\\"Three modes: command" (shell) and workflow."\nwhen_to_use: When choosing a mode.\n---\n# Modes\n',
+    }).prompt;
+    expect(quoted).toContain("the `description` is broken by an escaped quote");
+    const clean = buildReflectPrompt({
+      ...input,
+      assetContent:
+        "---\ndescription: Compares bun vs. node, e.g. their startup times.\nwhen_to_use: When picking a runtime.\n---\n# Runtimes\n",
+    }).prompt;
+    expect(clean).toContain("akm found no missing or broken field.");
   });
 
   test("none of the sentences that demanded a change, or a body rewrite, is left", () => {

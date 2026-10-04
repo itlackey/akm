@@ -257,6 +257,43 @@ function sourceHasNonEmptyDescription(assetContent: string | undefined): boolean
   return value.length > 0;
 }
 
+/**
+ * The frontmatter problems akm can see for itself, named in the prompt so the
+ * model fixes them instead of having to spot them: a description split by a
+ * stray period or carrying an escaped quote, no `when_to_use`, no title. A
+ * missing description has its own instruction (#636).
+ */
+function frontmatterProblems(assetContent: string | undefined): string[] {
+  const fm = assetContent?.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
+  if (!assetContent || !fm) return [];
+  const block = fm[1] ?? "";
+  const problems: string[] = [];
+  const raw =
+    block
+      .match(/^description\s*:(.*(?:\r?\n[ \t]+.*)*)/m)?.[1]
+      ?.replace(/\s+/g, " ")
+      .trim() ?? "";
+  const split = [...raw.matchAll(/[\w`)\]]\. [a-z]/g)].find(
+    (m) => !/\b(?:e\.g|i\.e|vs|etc|cf)$/i.test(raw.slice(0, (m.index ?? 0) + 1)),
+  );
+  if (split) {
+    problems.push(
+      `the \`description\` is broken: a stray period splits a sentence ("${raw}"); rewrite it as complete sentences about what the body covers`,
+    );
+  } else if (raw.includes('\\"')) {
+    problems.push("the `description` is broken by an escaped quote; rewrite it without the quoting damage");
+  }
+  if (!/^when_to_use\s*:\s*(?:\S|\r?\n[ \t]+\S)/m.test(block)) {
+    problems.push(
+      "there is no `when_to_use`: write one, a single sentence the body supports, saying when to reach for this asset",
+    );
+  }
+  if (!/^title\s*:\s*\S/m.test(block) && !/^#[ \t]+\S/m.test(assetContent.slice(fm[0].length))) {
+    problems.push("the body has no level-1 title: give one in `title`");
+  }
+  return problems;
+}
+
 /** Result of {@link buildReflectPrompt}. */
 export interface ReflectPromptResult {
   /** Full prompt string to forward to the agent/LLM. */
@@ -409,9 +446,14 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     );
   }
 
-  sections.push(
-    "If the source has no `when_to_use`, write one: a single sentence, supported by the body, saying when to reach for this asset.",
-  );
+  if (input.ref && input.assetContent?.trim()) {
+    const problems = frontmatterProblems(input.assetContent);
+    sections.push(
+      problems.length > 0
+        ? `akm found these problems in the asset; fix each one:\n${problems.map((p) => `- ${p}`).join("\n")}`
+        : "akm found no missing or broken field.",
+    );
+  }
 
   sections.push(reflectResponseContract(input.outputMode ?? "json_schema", input.ref !== undefined));
   return { prompt: sections.join("\n\n") };
