@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.25-alpha.4] - 2026-10-04
+
 ### Changed
 
 - **The reflect quality judge's rubric is written for the frontmatter-only
