@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **akm learns from Codex sessions.** `akm proposal extract --type codex` reads
+  the rollout files Codex writes under `$CODEX_HOME/sessions` (`~/.codex/sessions`
+  by default), as it reads Claude Code's and opencode's session files. `--auto`
+  and `akm improve`'s session extraction include Codex on a machine that has
+  them, and a session is extracted once, as for the other harnesses. The model
+  sees what the person and Codex said and the tool calls and results between
+  them, without Codex's own instructions or injected context (AGENTS.md, the
+  environment, an invoked skill). The reader lists a person's sessions,
+  `codex exec` runs included. It leaves out the rollouts Codex writes for
+  subagents and guardian reviewers, which are not sessions of their own, and
+  unlike a Claude Code subagent transcript it does not fold them into their
+  parent.
+
 ### Changed
 
 - **Reflect changes only an asset's `description`, `when_to_use` and title;

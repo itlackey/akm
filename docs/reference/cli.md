@@ -2692,21 +2692,23 @@ authenticates its root; it never falls back to an ambient write target.
 #### proposal extract
 
 Extract durable insights from native coding-agent session files (claude-code,
-opencode) and queue them as proposals. This is the standalone entrypoint for
-session extraction — it replaces the legacy session-checkpoint hook and runs
-independently of the improve-stage extract toggle (see `improve` above).
+codex, opencode) and queue them as proposals. This is the standalone
+entrypoint for session extraction — it replaces the legacy session-checkpoint
+hook and runs independently of the improve-stage extract toggle (see `improve`
+above).
 
 ```sh
 akm proposal extract --type claude --session-id <id>
 akm proposal extract --type claude --since 24h
 akm proposal extract --type opencode --since 7d --dry-run
+akm proposal extract --type codex --since 24h
 akm proposal extract --auto                 # iterate every available harness
 akm proposal extract --type claude --location /custom/path --session-id <id>
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--type <harness>` | Harness name (`claude`, `opencode`). Required unless `--auto`. |
+| `--type <harness>` | Harness name (`claude`, `codex`, `opencode`). Required unless `--auto`. |
 | `--session-id <id>` | Process only this session ID. When absent, discover sessions via `--since`. |
 | `--location <path>` | Override the harness's default session-discovery location. |
 | `--since <cutoff>` | Discovery cutoff. ISO timestamp or duration (`24h`, `7d`, `30m`). Default `24h`. |
@@ -2723,6 +2725,12 @@ session-log location on the current machine — and returns an aggregated
 `extract-auto-result` envelope (`harnessesProcessed`, `totalProposals`,
 per-harness `results`); the run exits non-zero only when every harness
 failed.
+
+The `codex` harness reads Codex's rollout files under `$CODEX_HOME/sessions`
+(`~/.codex/sessions` by default; `--location` points at another rollout
+directory). It lists a person's sessions, `codex exec` runs included, and
+leaves out the rollouts Codex writes for subagents and guardian reviewers:
+those are not sessions of their own.
 
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:
 dropped — a foreground polling daemon in a one-shot CLI); the shipped

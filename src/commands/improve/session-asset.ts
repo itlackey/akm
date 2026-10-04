@@ -123,6 +123,12 @@ export function buildSessionAccessInstructions(harness: string, logPath: string,
       `Parse messages: jq -r 'select(.type=="message") | .message.content[]? | select(.type=="text") | .text' ${logPath}`,
     ].join("\n");
   }
+  if (harness === "codex") {
+    return [
+      `Read with: cat ${logPath}`,
+      `Parse messages: jq -r 'select(.type=="response_item" and .payload.type=="message") | .payload.content[]? | .text // empty' ${logPath}`,
+    ].join("\n");
+  }
   if (harness === "opencode") {
     return [
       `Open the SQLite database at ${JSON.stringify(logPath)} in read-only mode.`,

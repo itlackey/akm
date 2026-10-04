@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   akmExtract,
+  countNewExtractCandidates,
   deriveExtractCandidateRef,
   parseSinceArg,
   resolveStandaloneExtractPlan,
@@ -25,6 +26,8 @@ import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { detectTruncatedDescription } from "../../src/core/text-truncation";
 import { ClaudeCodeProvider } from "../../src/integrations/harnesses/claude/session-log";
+import { CodexProvider } from "../../src/integrations/harnesses/codex/session-log";
+import { getAvailableHarnesses } from "../../src/integrations/session-logs";
 import type {
   SessionData,
   SessionLogHarness,
@@ -35,6 +38,7 @@ import {
   getExtractedSessionsMap,
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
+import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { asLlmRunner } from "../_helpers/llm-runner";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -586,6 +590,126 @@ describe("akmExtract — subagent transcripts are never extracted as their own s
     expect(result.sessionsProcessed).toBe(0);
     expect(result.warnings.join(" ")).toMatch(/not found/);
     expect(chatCalls).toBe(0);
+  });
+});
+
+describe("akmExtract — Codex sessions", () => {
+  // Real CodexProvider against `withIsolatedAkmStorage()`'s isolated `CODEX_HOME`
+  // (its `sessions/` is the rollout root), so discovery, the subagent exclusion
+  // and the reader all run for real. `chat` is still injected.
+  const PERSON = "00000000-0000-7000-8000-000000000001";
+  const GUARDIAN = "00000000-0000-7000-8000-000000000002";
+
+  function seedRollouts(): void {
+    const sessions = path.join(storage.codexHomeDir, "sessions");
+    writeCodexRollout(sessions, { id: PERSON, source: "vscode", cwd: "/home/user/project-a" }, [
+      codexMessage("developer", "DEVELOPER_MARKER: sandbox mode instructions"),
+      codexMessage(
+        "user",
+        "# AGENTS.md instructions for /home/user/project-a\n\n<INSTRUCTIONS>\nAGENTS_MARKER\n</INSTRUCTIONS>",
+      ),
+      codexMessage("user", "Why does deploy.sh hang when I am off the VPN?"),
+      {
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell",
+          call_id: "c1",
+          arguments: JSON.stringify({ command: ["bash", "-lc", "./deploy.sh"] }),
+        },
+      },
+      {
+        type: "response_item",
+        payload: { type: "function_call_output", call_id: "c1", output: "stuck at: pushing to stage" },
+      },
+      codexMessage("assistant", "deploy.sh needs the corporate VPN; without it the push to stage stalls silently."),
+    ]);
+    writeCodexRollout(sessions, { id: GUARDIAN, source: { subagent: { other: "guardian" } } }, [
+      codexMessage("user", "GUARDIAN_MARKER: review this command for risk"),
+    ]);
+  }
+
+  test("extracts a person's rollout, never a subagent's, and only once", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    seedRollouts();
+    const db = openStateDatabase(":memory:");
+    let chatCalls = 0;
+    let capturedPrompt = "";
+    const run = () =>
+      akmExtract({
+        type: "codex",
+        stashDir: stash,
+        config,
+        harnesses: [new CodexProvider()],
+        since: "24h",
+        stateDb: db,
+        chat: async (_cfg, msgs) => {
+          chatCalls += 1;
+          capturedPrompt = msgs[0]?.content ?? "";
+          return JSON.stringify({ candidates: [] });
+        },
+      });
+    const newSessions = () =>
+      countNewExtractCandidates(config, { harnesses: [new CodexProvider()], since: "24h", stateDb: db });
+
+    // Improve's session count sees one candidate: the guardian rollout is not a session.
+    expect(newSessions()).toBe(1);
+
+    const first = await run();
+    expect(first.ok).toBe(true);
+    expect(first.sessionsProcessed).toBe(1);
+    expect(first.sessions.map((s) => [s.harness, s.sessionId])).toEqual([["codex", PERSON]]);
+    expect(chatCalls).toBe(1);
+    // The prompt carries the conversation and the tool work, not Codex's own
+    // instructions and injected context, and not the guardian's transcript.
+    expect(capturedPrompt).toContain("Why does deploy.sh hang when I am off the VPN?");
+    expect(capturedPrompt).toContain("deploy.sh needs the corporate VPN");
+    expect(capturedPrompt).toContain("[tool:shell] bash -lc ./deploy.sh");
+    expect(capturedPrompt).toContain("[tool_result] stuck at: pushing to stage");
+    for (const marker of ["DEVELOPER_MARKER", "AGENTS_MARKER", "GUARDIAN_MARKER"]) {
+      expect(capturedPrompt).not.toContain(marker);
+    }
+
+    // Seen once: recorded under `codex`, no longer new to improve, skipped by the next run.
+    expect(getExtractedSessionsMap(db, "codex", [PERSON]).get(PERSON)?.content_hash).toBe(
+      first.sessions[0]?.contentHash,
+    );
+    expect(newSessions()).toBe(0);
+    const second = await run();
+    expect(second.sessionsSkipped).toBe(1);
+    expect(second.sessions[0]?.skipReason).toBe("already_extracted");
+    expect(chatCalls).toBe(1);
+    db.close();
+  });
+
+  test("--session-id of a guardian rollout returns the not-found result, not an extraction", async () => {
+    const stash = makeStashDir();
+    seedRollouts();
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "codex",
+      sessionId: GUARDIAN,
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [new CodexProvider()],
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.sessionsProcessed).toBe(0);
+    expect(result.warnings.join(" ")).toMatch(/not found/);
+    expect(chatCalls).toBe(0);
+  });
+
+  test("the harness registry offers codex to --auto and improve once Codex has sessions", () => {
+    const available = () => getAvailableHarnesses().map((h) => h.name);
+    expect(available()).not.toContain("codex");
+    seedRollouts();
+    expect(available()).toContain("codex");
   });
 });
 

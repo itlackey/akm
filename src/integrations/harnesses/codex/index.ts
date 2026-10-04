@@ -6,21 +6,24 @@
  * OpenAI Codex CLI harness (P2 integration, plan §"The adapter contract").
  *
  * Per-harness barrel gathering the Codex integration surfaces:
+ *   - session-log reader    → ./session-log.ts      (CodexProvider)
  *   - agent command builder → ./agent-builder.ts    (codexBuilder)
  *   - result extractor      → ./result-extractor.ts (codexResultExtractor)
  *
  * It also defines {@link CodexHarness}, the {@link AkmHarness} descriptor that
- * `HARNESS_REGISTRY` registers. Dispatch-only: no native session-log reader or
- * config importer yet.
+ * `HARNESS_REGISTRY` registers. No config importer yet.
  */
 
+import type { SessionLogHarness } from "../../session-logs/types";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
 import { codexBuilder } from "./agent-builder";
 import { codexResultExtractor } from "./result-extractor";
+import { CodexProvider } from "./session-log";
 
 export { codexBuilder, codexResumeArgs, writeCodexOutputSchemaFile } from "./agent-builder";
 export { codexResultExtractor } from "./result-extractor";
+export { CodexProvider } from "./session-log";
 
 /**
  * OpenAI Codex CLI.
@@ -30,6 +33,8 @@ export { codexResultExtractor } from "./result-extractor";
 export class CodexHarness extends BaseHarness {
   readonly id = "codex" as const;
   readonly displayName = "OpenAI Codex CLI";
+  // No `setupDetectionDir`: `~/.codex` holds credentials and session rollouts,
+  // not assets, so `akm setup` must not offer it as a stash source.
   readonly agentBuilder = codexBuilder;
   readonly resultExtractor = codexResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
@@ -44,7 +49,9 @@ export class CodexHarness extends BaseHarness {
   // user config-dir var commonly exported in shell profiles, so it would stamp
   // identity onto manual runs (see `AkmHarness.presenceEnv`).
   readonly presenceEnv = ["CODEX_SANDBOX"] as const;
+  readonly sessionLogProvider = (): SessionLogHarness => new CodexProvider();
   readonly capabilities = caps({
+    sessionLogs: true,
     agentDispatch: true,
     detection: true,
   });

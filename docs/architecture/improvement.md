@@ -391,8 +391,9 @@ size and file count instead (`memory-cleanup-archive` advisory,
 ### Session extraction
 
 `akm proposal extract` is the standalone entry point for mining coding-agent
-session transcripts (`--type claude`, `--type opencode`, or `--auto` to
-iterate every harness with a detectable session-log location) into proposals.
+session transcripts (`--type claude`, `--type codex`, `--type opencode`, or
+`--auto` to iterate every harness with a detectable session-log location) into
+proposals.
 It replaced the legacy session-checkpoint hook and runs independently of
 whether a strategy's own `processes.extract` stage is enabled — no shipped
 strategy turns that improve-stage extraction on, and a direct

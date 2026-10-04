@@ -842,6 +842,7 @@ These paths are read by `akm improve` to scan for repeated failure patterns in a
 | `~/.claude/projects/**/*.jsonl` | Claude Code |
 | `~/.local/share/opencode/` (Linux) | OpenCode |
 | `~/Library/Application Support/opencode/` (macOS) | OpenCode |
+| `$CODEX_HOME/sessions/**/rollout-*.jsonl` (`~/.codex/sessions/` by default) | Codex |
 
 ---
 
@@ -922,6 +923,7 @@ not affect ranking, salience, real-query labels, or GRR.
 | 41 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | FM+Markdown | Improve regression eval cases |
 | 42 | `$STATE/improve/measurement/verdicts/<stash>/verdict-<ts>.{json,md}` | JSON+Markdown | `akm-eval-proactive-verdict` reports |
 | 43 | `$CACHE/index/unresolved-sources/<stash>/<name>` | N/A | Synthetic unresolved-source placeholder path (never written to disk) |
+| 44 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | JSONL | Codex session logs (read-only input; `~/.codex/sessions/` by default) |
 
 ---
 

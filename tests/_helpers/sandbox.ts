@@ -365,6 +365,8 @@ export interface IsolatedAkmStorage {
   readonly claudePluginsDir: string;
   /** Isolated OpenCode cache root (`AKM_OPENCODE_CACHE_DIR`), empty by default. */
   readonly opencodeCacheDir: string;
+  /** Isolated Codex home (`CODEX_HOME`), empty by default; its `sessions/` is the rollout root. */
+  readonly codexHomeDir: string;
   /** The single per-call temp root that contains every dir above. */
   readonly root: string;
   /** Restore every overridden env var and remove the temp root. Idempotent. */
@@ -426,6 +428,9 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
   const opencodeCacheDir = path.join(root, "opencode-cache");
   fs.mkdirSync(opencodeCacheDir, { recursive: true });
 
+  const codexHomeDir = path.join(root, "codex-home");
+  fs.mkdirSync(codexHomeDir, { recursive: true });
+
   const env: Record<string, string> = {
     AKM_BUNDLE_DIR: stashDir,
     XDG_DATA_HOME: dataDir,
@@ -444,6 +449,10 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     // fixture dir means "no OpenCode plugin installed" instead of reading
     // the host's real `~/.cache/opencode` package cache.
     AKM_OPENCODE_CACHE_DIR: opencodeCacheDir,
+    // Same reasoning for the Codex session-log scan: `CODEX_HOME` is Codex's own
+    // override of `~/.codex`, so a developer who exports it would otherwise have
+    // `extract --auto` and `improve` read their real rollouts.
+    CODEX_HOME: codexHomeDir,
   };
 
   // Snapshot + apply env (managed defaults first, then caller overrides so they
@@ -480,6 +489,7 @@ export function withIsolatedAkmStorage(overrides?: Record<string, string | undef
     sessionLogsDir,
     claudePluginsDir,
     opencodeCacheDir,
+    codexHomeDir,
     root,
     cleanup,
   };

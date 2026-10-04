@@ -183,14 +183,14 @@ export function isSessionLogHarness<H extends AkmHarness>(h: H): h is H & Sessio
  * `HarnessCapabilities` union type here, and each subclass narrows it to a
  * literal `sessionLogs: true`/`false` variant via `caps({...})`.
  * `sessionLogProvider` is intentionally NOT declared here at all (not even
- * optional): the 8 non-session-log subclasses simply never declare it, which
+ * optional): the 7 non-session-log subclasses simply never declare it, which
  * satisfies `NonSessionLogHarness`'s `sessionLogProvider?: undefined` (an
  * absent optional property satisfies an `undefined`-typed optional); had this
  * class declared it as `sessionLogProvider?: () => SessionLogHarness`
  * instead, every non-session-log subclass would inherit that (function |
  * undefined) type and fail to satisfy `NonSessionLogHarness` at the
- * `HARNESS_REGISTRY` `satisfies` check. The two session-log subclasses
- * (Claude, OpenCode) declare their own required `sessionLogProvider`.
+ * `HARNESS_REGISTRY` `satisfies` check. The three session-log subclasses
+ * (Claude, Codex, OpenCode) declare their own required `sessionLogProvider`.
  */
 export abstract class BaseHarness implements AkmHarnessCommon {
   abstract readonly id: string;

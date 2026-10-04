@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm extract` — read native session logs (claude, opencode) through the
+ * `akm extract` — read native session logs (claude, codex, opencode) through the
  * session-log harnesses, pre-filter the noise, and ask the model for
  * memory/lesson/knowledge candidates the agent did not already save. Each
  * candidate is queued as a proposal (`source: "extract"`), never written.

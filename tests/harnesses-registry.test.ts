@@ -70,8 +70,8 @@ describe("HARNESS_REGISTRY membership", () => {
 });
 
 describe("capability-derived sublists", () => {
-  it("SESSION_LOG_HARNESSES = harnesses with native session logs (claude, opencode)", () => {
-    expect(SESSION_LOG_HARNESSES.map((h) => h.id)).toEqual(["opencode", "claude"]);
+  it("SESSION_LOG_HARNESSES = harnesses with native session logs (claude, codex, opencode)", () => {
+    expect(SESSION_LOG_HARNESSES.map((h) => h.id)).toEqual(["opencode", "claude", "codex"]);
   });
 
   it("AGENT_DISPATCH_HARNESSES = every harness", () => {
