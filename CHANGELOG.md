@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **The reflect quality judge's rubric is written for the frontmatter-only
+  revisions reflect makes, and says what drove each one.** A revision answering
+  negative feedback (any `[negative]` line) is judged only on the fields it
+  changes, since it cannot change the body and need not resolve feedback about
+  it. A field change is justified when the field is missing or broken, claims
+  more than the body covers, or, for a note the feedback calls stale, needs to
+  name the version or date the body records. A maintenance revision needs a
+  missing or broken field, and rewording a sound one is churn. New values are
+  checked as claims against the body. On 113 frontmatter-only proposals
+  reviewed by Claude Opus, the production model passed 78 of the 95 good ones
+  and 3 of the 18 bad ones, against 53 and 7 under the previous rubric, which
+  was tuned on body rewrites. The agent judge's tool paragraph drops its
+  feedback-points check, which contradicted that rule.
+
 ## [0.9.25-alpha.3] - 2026-10-04
 
 ### Added
