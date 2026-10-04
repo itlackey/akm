@@ -169,11 +169,11 @@ processed each once.
 
 ### Quality judge
 
-Every reflect rewrite and every distilled lesson is scored by a judge before it
+Every reflect revision and every distilled lesson is scored by a judge before it
 is queued (`runQualityJudge`, `src/commands/improve/stage.ts`): one call at
 temperature 0, each criterion scored 1 to 5, failing closed (no runner, a
 timeout, or an unparseable or incomplete reply never passes content and goes to
-review). A reflect rewrite is scored on three criteria:
+review). A reflect revision is scored on three criteria:
 
 - **need**: does it fix a concrete problem in the source: something the
   feedback reports as wrong or missing, a factual error, or broken, garbled,
@@ -196,15 +196,14 @@ reworded a correct asset through.
 A pass is stamped on the proposal as a `staged` decision from the `quality-gate`
 with the per-criterion `scores` and the judge's `judgeReason`; both stay on the
 proposal when the drain accepts it, so a later audit can read why it passed
-(`akm proposal show --format json`). A reflect pass that changes the body, or
-whose source could not be read, is deferred for review instead (`body-edit`,
-gate `reflect`), with the same `scores` and `judgeReason`. On labelled edits,
-judge-passed body edits were good 12 times in 37, and frontmatter-only ones 13
-times in 13.
+(`akm proposal show --format json`). Reflect revises only an asset's
+`description`, `when_to_use` and title, never its body. On 396 labelled edits,
+those that fixed a frontmatter defect and left the body alone were good 24
+times in 26, and those that also rewrote the body were bad 175 times in 224.
 
 ### Retrieval regression gate
 
-Reflect refuses a rewrite of an existing asset that grades lower on the
+Reflect refuses a revision of an existing asset that grades lower on the
 asset's own retrieval queries (#722, `src/commands/improve/retrieval-gate.ts`).
 After the quality judge passes, up to five distinct user `search`/`curate`
 queries that returned the asset (envelopes, the stash README line and inputs

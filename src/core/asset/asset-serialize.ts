@@ -103,7 +103,7 @@ export function assembleAsset(frontmatter: Record<string, unknown>, body: string
  *   - exactly one `\n` terminates the file
  *
  * This helper is the single point of truth for the fence-and-body template.
- * Three command surfaces (`reflect`, `distill`, `consolidate`) call it
+ * Two command surfaces (`distill`, `consolidate`) call it
  * directly because their inputs are pre-validated LLM payloads where the
  * full `yamlStringify` may emit shapes (`|`-block scalars, anchors) that
  * the project's hand-rolled `parseFrontmatter` subset parser cannot read.

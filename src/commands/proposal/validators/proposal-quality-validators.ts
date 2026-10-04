@@ -374,7 +374,11 @@ const redactedContentValidator: ProposalValidator = {
   },
 };
 
-/** Defense in depth when a reflect proposal bypasses creation-time sanitization (#963). */
+/**
+ * The run-only "Avoid These Patterns" section (#963) in a reflect proposal: one
+ * made before reflect kept the body, or a body that already had it. Reflect
+ * keeps a body as it is, so a person accepting has no way to remove it.
+ */
 const reflectPromptScaffoldingValidator: ProposalValidator = {
   name: "reflect-prompt-scaffolding",
   appliesTo(proposal) {
@@ -404,15 +408,15 @@ function advisory(validator: ProposalValidator): ProposalValidator {
   };
 }
 
-/** The quality validators `validateProposal` runs; the last three protect durable content and block. */
+/** The quality validators `validateProposal` runs; the last two protect durable content and block. */
 export const defaultProposalQualityValidators: ProposalValidator[] = [
   ...[
     descriptionQualityValidator,
     lessonContentQualityValidator,
     sourceNotSupersededValidator,
     reflectSizeGuardValidator,
+    reflectPromptScaffoldingValidator,
   ].map(advisory),
   reflectTruncationMarkerValidator,
   redactedContentValidator,
-  reflectPromptScaffoldingValidator,
 ];

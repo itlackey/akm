@@ -2600,16 +2600,16 @@ default probe-on behavior) to check whether a named engine actually answers.
 
 `--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
 builds the exact prompt reflect would send for one asset — the same source
-resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
-proposal gathering `akm improve`'s live reflect step uses — and prints it
+resolution, runner selection, feedback/schema-hint/rejected-proposal
+gathering `akm improve`'s live reflect step uses — and prints it
 without reading a credential, so it never calls an engine. An LLM engine
 receives the reply's JSON Schema as `response_format`, and an agent engine as
 an instruction that dispatch appends to this prompt. Add
 `--format text` (the default JSON/yaml envelope escapes the prompt into one
 line, which defeats a by-eye read) to confirm by eye that recent feedback is
-framed as an unverified report to investigate (never a fact to insert
-verbatim) and that the response contract tells the model never to emit the
-truncation marker or any content from outside the shown asset.
+framed as a signal (never a fact to insert) and that the response contract asks
+only for `confidence` and a `frontmatterPatch` of `description`,
+`when_to_use` and `title`: akm keeps the body.
 
 When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`.

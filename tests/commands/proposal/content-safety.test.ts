@@ -28,18 +28,18 @@ describe("proposal durable-content safety (#962/#963)", () => {
     ).toBe(true);
   });
 
-  test("blocks reflect prompt scaffolding that bypassed the creation-time sanitizer", () => {
+  // Reflect keeps a body as it is, so a person accepting a proposal for an asset that already carries the
+  // run-only section cannot remove it: the finding warns, it does not block.
+  test("warns about reflect prompt scaffolding in a reflect proposal, without blocking acceptance", () => {
     const report = runProposalValidators(
       proposalWith(
         "---\ndescription: Prompt residue\n---\n\nUseful content.\n\n## Avoid These Patterns\n- unrelated diagnostic",
       ),
     );
 
-    expect(report.ok).toBe(false);
+    expect(report.ok).toBe(true);
     expect(
-      report.findings.some(
-        (finding) => finding.kind === "reflect-prompt-scaffolding" && finding.severity === undefined,
-      ),
+      report.findings.some((finding) => finding.kind === "reflect-prompt-scaffolding" && finding.severity === "warn"),
     ).toBe(true);
   });
 

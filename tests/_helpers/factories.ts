@@ -47,19 +47,18 @@ export function quietQualityGateConfig(): AkmConfig {
 
 /**
  * The reply a model gives reflect on any engine kind: the JSON object of
- * `REFLECT_JSON_SCHEMA`, with the body in `content` and a narrow frontmatter
- * patch. A reflect run with no target asks for the unscoped object, which names
- * the asset in `ref`.
+ * `REFLECT_JSON_SCHEMA`, a patch of the fields to change (each one left out is
+ * `null`: no change). A reflect run with no target asks for the unscoped
+ * object, which names the asset in `ref`.
  */
 export function reflectReply(
-  content: string,
-  options: { ref?: string; confidence?: number; frontmatterPatch?: Record<string, string | null> } = {},
+  patch: { description?: string; when_to_use?: string; title?: string } = {},
+  options: { ref?: string; confidence?: number } = {},
 ): string {
   return JSON.stringify({
     ...(options.ref !== undefined ? { ref: options.ref } : {}),
-    content,
     confidence: options.confidence ?? 0.8,
-    frontmatterPatch: { description: null, when_to_use: null, ...options.frontmatterPatch },
+    frontmatterPatch: { description: null, when_to_use: null, title: null, ...patch },
   });
 }
 

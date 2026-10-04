@@ -90,7 +90,7 @@ describe("unattended-improve reflect pin (07 Chain-G / P1.3)", () => {
     const stash = makeStashDir();
     const config = agentModeConfig();
     let seen: { cmd: string[]; env: Record<string, string>; cwd?: string } | undefined;
-    const payload = reflectReply("---\ndescription: alpha\n---\n\nAlpha memory, revised.\n");
+    const payload = reflectReply({ description: "Alpha, the first memory" });
 
     const result = await akmReflect({
       ref: "memories/alpha",

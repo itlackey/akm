@@ -201,8 +201,6 @@ describe("a scope ref no bundle owns", () => {
 });
 
 describe("an improve run never files another bundle's asset into its write target", () => {
-  const LLM_BODY = "Rewritten by the model.";
-
   /** Negative feedback on every skill in both bundles, so the loop would pick all of them. */
   function signalEverySkill(): void {
     for (const itemRef of [
@@ -225,9 +223,8 @@ describe("an improve run never files another bundle's asset into its write targe
         chat: async (_connection, messages) => {
           call.prompt = messages.map((message) => message.content).join("\n");
           return JSON.stringify({
-            content: `---\nname: rewritten\ndescription: rewritten skill\n---\n\n${LLM_BODY}\n`,
             confidence: 0.9,
-            frontmatterPatch: { description: null, when_to_use: null },
+            frontmatterPatch: { description: "A skill with a rewritten description", when_to_use: null, title: null },
           });
         },
       });
@@ -304,9 +301,12 @@ describe("reflect refuses an asset the write target does not own", () => {
         improveProfile: config.improve?.strategies?.default,
         chat: async () =>
           JSON.stringify({
-            content: "---\nname: team-skill\ndescription: team skill\n---\n\nRewritten by the model.\n",
             confidence: 0.9,
-            frontmatterPatch: { description: null, when_to_use: null },
+            frontmatterPatch: {
+              description: "A team skill with a rewritten description",
+              when_to_use: null,
+              title: null,
+            },
           }),
       }),
     ).rejects.toMatchObject({ code: "INVALID_PROPOSAL", message: expect.stringContaining('bundle "team" owns') });

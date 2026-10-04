@@ -89,9 +89,11 @@ function hangingSpawn(): SpawnFn {
   };
 }
 
-const VALID_LESSON_PAYLOAD = reflectReply(
-  "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
-);
+const VALID_LESSON_PAYLOAD = reflectReply({
+  description: "Use ripgrep before grep",
+  when_to_use: "Searching large repos for patterns",
+});
+const LESSON_SOURCE = "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n";
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
   ref: "skills/hello",
@@ -208,6 +210,7 @@ describe("akmReflect — argv-coerced calls (happy + failure)", () => {
       ...coerced,
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: {
         spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
           capturedCmd = cmd;

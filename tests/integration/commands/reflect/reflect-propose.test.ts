@@ -122,11 +122,13 @@ function hangingSpawn(): SpawnFn {
 }
 
 /** What an engine of any kind replies to a reflect run on `lessons/rg-over-grep`. */
-const LESSON_FRONTMATTER = {
+const LESSON_PATCH = {
   description: "Use ripgrep before grep",
   when_to_use: "Searching large repos for patterns",
 };
-const VALID_LESSON_PAYLOAD = reflectReply("Prefer rg.\n", { frontmatterPatch: LESSON_FRONTMATTER });
+const VALID_LESSON_PAYLOAD = reflectReply(LESSON_PATCH);
+/** The asset that reply patches. */
+const LESSON_SOURCE = "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n";
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
   ref: "skills/hello",
@@ -238,7 +240,7 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       itemRef,
-      assetContent: "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n",
+      assetContent: LESSON_SOURCE,
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: {
@@ -255,7 +257,7 @@ describe("akm reflect", () => {
   test("rejects an echoed engine environment credential instead of persisting redacted proposal text", async () => {
     const sentinel = "REFLECT-ECHO-SENTINEL";
     const stash = makeStashDir();
-    const echoed = VALID_LESSON_PAYLOAD.replace("Prefer rg.", `Prefer rg. ${sentinel}`);
+    const echoed = reflectReply({ description: `Use ripgrep before grep ${sentinel}` });
     const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
       akmReflect({
         ref: "lessons/rg-over-grep",
@@ -278,13 +280,15 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.proposal.source).toBe("reflect");
     expect(result.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
-    expect(result.proposal.payload.content).toContain("Prefer rg");
+    expect(result.proposal.payload.content).toContain("description: Use ripgrep before grep");
+    expect(result.proposal.payload.content).toEndWith("\n\nUse grep.\n");
 
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
@@ -301,6 +305,7 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
       eligibilitySource: "proactive",
     });
@@ -324,6 +329,7 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -453,14 +459,13 @@ describe("akm reflect", () => {
       metadata: { signal: "positive", note: "nice greeting" },
     });
     let prompt = "";
-    const unscoped = reflectReply("Prefer rg.\n", {
-      ref: "lessons/rg-over-grep",
-      frontmatterPatch: LESSON_FRONTMATTER,
-    });
+    const unscoped = reflectReply(LESSON_PATCH, { ref: "lessons/rg-over-grep" });
     const result = await akmReflect({
       stashDir: stash,
       task: "Focus on the highest-value recent signal",
       config: quietQualityGateConfig(),
+      // The asset the reply names, read once it has named it.
+      assetContent: LESSON_SOURCE,
       runAgentOptions: {
         spawn: fakeSpawnWithCapture(unscoped, "", 0, (cmd) => {
           prompt = cmd.at(-1) ?? "";
@@ -492,6 +497,7 @@ describe("akm reflect", () => {
       stashDir: stash,
       task: "Tighten the guidance",
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: {
         spawn: (cmd, opts) => {
           capturedCmd = cmd;
@@ -866,7 +872,7 @@ describe("engine fallback announcement on propose/reflect", () => {
     const warned = captureWarnings();
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
-      assetContent: "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n",
+      assetContent: LESSON_SOURCE,
       stashDir: stash,
       config: fallbackEligibleConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },

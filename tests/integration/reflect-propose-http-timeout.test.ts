@@ -87,9 +87,8 @@ test("reflect explicit null disables the direct HTTP timer", async () => {
   const server = delayedServer(
     JSON.stringify({
       ref: "lessons/delayed-reflect",
-      content: "Delayed reflect content.",
       confidence: 0.9,
-      frontmatterPatch: { description: null, when_to_use: null },
+      frontmatterPatch: { description: null, when_to_use: null, title: null },
     }),
     20,
   );

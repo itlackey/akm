@@ -6,15 +6,12 @@
  * Unit tests for the accept-time `reflect-truncation-marker` ProposalValidator
  * (#952 Addendum, dev-team field review 2026-09-09).
  *
- * `sanitizeReflectPayload` already flags-and-defers a proposal whose body
- * echoes `REFLECT_TRUNCATION_MARKER` at CREATION time (see
- * `tests/integration/commands/reflect/reflect-pipeline-fixes.test.ts`'s
- * "Reflect truncation-marker leak guard" describe block). This file locks in
- * the SECOND layer: a REJECT at `proposal accept` / drain promotion time, so
- * a leaked marker cannot be promoted onto disk even if it reaches the
- * validator by a path that skipped creation-time sanitize (a deferred
- * proposal a human accepts anyway, or any future reflect code path that
- * mints proposals directly). Unlike every other validator in
+ * A reflect proposal whose body carries `REFLECT_TRUNCATION_MARKER` (the
+ * notice a capped source is shown) is REJECTED at `proposal accept` / drain
+ * promotion time, so a truncated body cannot be promoted onto disk. Reflect
+ * keeps a source's body, so a body carries the marker only when its source
+ * did, or when the proposal was made before reflect kept the body. Unlike
+ * every other validator in
  * proposal-quality-validators.ts, this one is NOT advisory — it blocks,
  * because a truncated body silently replacing a full asset is data loss
  * (AGENTS.md's defensive-code carve-out for data-loss guards), not a prose

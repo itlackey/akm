@@ -467,9 +467,7 @@ guidance. When enabled, engine selection is judgment → triage → strategy →
 
 `processes.reflect.qualityGate` and `processes.distill.qualityGate` control
 each process's LLM-as-judge quality gate. Each is on unless it sets
-`enabled: false`, and each follows only its own switch. A reflect revision
-that changes the body is never auto-accepted; when the judge passes it, it
-waits for review. With the gate off, it waits for review too. The judge is the
+`enabled: false`, and each follows only its own switch. The judge is the
 process's own engine when that is an LLM engine, or the `defaults.llmEngine`
 engine when an agent generates. `engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
 resolved over the process's settings the way `triage.judgment` resolves over
