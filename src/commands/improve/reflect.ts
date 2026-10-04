@@ -228,7 +228,9 @@ interface ReflectPatch {
  * nothing (or there is no asset to patch). The body is the source's own, byte
  * for byte; the one thing akm adds to it is a `# title` heading it lacks. A
  * required description that neither the source nor the patch has is derived
- * from the asset's own text (#636).
+ * from the asset's own text (#636). Only the changed keys' frontmatter lines are
+ * rewritten: every other line is kept as it is, so a source whose YAML the
+ * parser reads only in part (a broken description beside a list) loses nothing.
  */
 export function applyReflectPatch(
   patch: ReflectPatch,
@@ -237,42 +239,57 @@ export function applyReflectPatch(
 ): { content: string; frontmatter?: Record<string, unknown> } | undefined {
   if (!sourceContent.trim()) return undefined;
   const { fmText, body: sourceBody } = splitFrontmatter(sourceContent);
+  // A fence that is opened and never closed (`---` fused onto the last value)
+  // would leave the old block in the body under a new one: a person fixes it.
+  if (fmText === null && /^---\r?\n/.test(sourceContent)) return undefined;
   const sourceFm = fmText !== null ? parseFrontmatter(sourceContent).data : {};
-  const { title, ...fields } = patch;
-  const frontmatter: Record<string, unknown> = { ...sourceFm, ...fields };
+  const { title, ...changes } = patch as Record<string, unknown> & { title?: string };
   const addTitle = title !== undefined && !/^#[ \t]+\S/m.test(sourceBody);
   const body = addTitle ? `# ${title}\n\n${sourceBody.replace(/^(\r?\n)+/, "")}` : sourceBody;
 
   // Only a source that already has frontmatter but no description gets one:
   // injecting a whole block, or overwriting an authored one, is out of scope.
   const refType = lenientRefType(targetRef);
-  const desc = frontmatter.description;
+  const desc = changes.description ?? sourceFm.description;
   if (
     refType &&
     requiresDescription(refType) &&
     (typeof desc !== "string" || desc.trim().length === 0) &&
     Object.keys(sourceFm).length > 0
   ) {
-    const derived = deriveDescriptionFromAsset(frontmatter.title, body, targetRef);
-    if (derived) frontmatter.description = derived;
+    const derived = deriveDescriptionFromAsset(sourceFm.title, body, targetRef);
+    if (derived) changes.description = derived;
   }
-  if (
-    !addTitle &&
-    frontmatter.description === sourceFm.description &&
-    frontmatter.when_to_use === sourceFm.when_to_use
-  ) {
-    return undefined;
-  }
+  for (const key of Object.keys(changes)) if (changes[key] === sourceFm[key]) delete changes[key];
+  if (!addTitle && Object.keys(changes).length === 0) return undefined;
 
-  // No frontmatter at all stays body-only, never gaining a stray `---`. The
+  // No frontmatter at all stays body-only unless the patch adds a field. The
   // blank line after a closing fence is part of the source body, so only a
-  // block akm adds brings its own.
-  const hasFrontmatter = Object.keys(frontmatter).length > 0;
-  const gap = fmText === null || addTitle ? "\n" : "";
-  return {
-    content: hasFrontmatter ? `---\n${serializeFrontmatter(frontmatter)}\n---\n${gap}${body}` : body,
-    ...(hasFrontmatter ? { frontmatter } : {}),
-  };
+  // block or heading akm adds brings its own.
+  if (fmText === null) {
+    if (Object.keys(changes).length === 0) return { content: body };
+    const content = `---\n${serializeFrontmatter(changes)}\n---\n\n${body}`;
+    return { content, frontmatter: parseFrontmatter(content).data };
+  }
+  const content = `---\n${patchFrontmatterLines(fmText, changes)}\n---\n${addTitle ? "\n" : ""}${body}`;
+  return { content, frontmatter: parseFrontmatter(content).data };
+}
+
+/** The frontmatter text with each changed key's lines (the key line and its indented continuation) replaced, or appended. */
+function patchFrontmatterLines(fmText: string, changes: Record<string, unknown>): string {
+  const lines = fmText.split(/\r?\n/);
+  for (const [key, value] of Object.entries(changes)) {
+    const replacement = serializeFrontmatter({ [key]: value }).split("\n");
+    const start = lines.findIndex((line) => line.startsWith(`${key}:`));
+    if (start === -1) {
+      lines.push(...replacement);
+      continue;
+    }
+    let end = start + 1;
+    while (end < lines.length && /^[ \t]/.test(lines[end] ?? "")) end++;
+    lines.splice(start, end - start, ...replacement);
+  }
+  return lines.join("\n");
 }
 
 // ── Output contract ──────────────────────────────────────────────────────────

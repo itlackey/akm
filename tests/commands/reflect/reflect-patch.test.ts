@@ -155,3 +155,40 @@ describe("applyReflectPatch — a description a required type lacks is derived f
     expect(applyReflectPatch({}, "---\ntitle: Release notes\n---\n\nBody.\n", "scripts/release")).toBeUndefined();
   });
 });
+
+describe("applyReflectPatch — frontmatter the parser reads only in part", () => {
+  test("a broken quoted description beside a block list: only the description's lines change", () => {
+    const source = [
+      "---",
+      'description: "\\"Three modes: command" (shell) and workflow."',
+      "contradictedBy:",
+      "  - memory:first-note",
+      "  - memory:second-note",
+      "updated: 2026-05-23",
+      "---",
+      "",
+      "# Modes",
+      "",
+      "Body.",
+      "",
+    ].join("\n");
+    const patched = applyReflectPatch({ description: NEW_DESCRIPTION }, source, REF);
+
+    if (!patched) throw new Error("expected the patch to change the asset");
+    const lines = patched.content.split("\n");
+    expect(lines.slice(2, 6)).toEqual([
+      "contradictedBy:",
+      "  - memory:first-note",
+      "  - memory:second-note",
+      "updated: 2026-05-23",
+    ]);
+    expect(parseFrontmatter(patched.content).data.contradictedBy).toEqual(["memory:first-note", "memory:second-note"]);
+    expect(splitFrontmatter(patched.content).body).toBe(splitFrontmatter(source).body);
+  });
+
+  test("a fence fused onto the last value gets no proposal, rather than a second block above the first", () => {
+    const source = "---\ndescription: A note about deployment steps\nsource: memories/note.derived---\n\nBody.\n";
+
+    expect(applyReflectPatch({ when_to_use: "When deploying." }, source, REF)).toBeUndefined();
+  });
+});

@@ -278,10 +278,12 @@ function frontmatterProblems(assetContent: string | undefined): string[] {
   );
   if (split) {
     problems.push(
-      `the \`description\` is broken: a stray period splits a sentence ("${raw}"); rewrite it as complete sentences about what the body covers`,
+      `the \`description\` is broken: a stray period splits a sentence ("${raw}"); repair only the break, keeping its wording and every name, number, path and status word in it`,
     );
   } else if (raw.includes('\\"')) {
-    problems.push("the `description` is broken by an escaped quote; rewrite it without the quoting damage");
+    problems.push(
+      "the `description` is broken by an escaped quote; repair only the quoting, keeping the rest of its wording",
+    );
   }
   if (!/^when_to_use\s*:\s*(?:\S|\r?\n[ \t]+\S)/m.test(block)) {
     problems.push(
