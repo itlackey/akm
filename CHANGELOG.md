@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.25-alpha.2] - 2026-10-03
+
 ### Added
 
 - **`akm improve judge`** runs reflect's quality judge on one revision, read as
