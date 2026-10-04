@@ -272,10 +272,10 @@ async function runImproveJudgeCli(strategyName: string | undefined): Promise<voi
   const input = process.stdin.isTTY
     ? {}
     : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
-  const { source, candidate, feedback } = input;
+  const { source, candidate, feedback, ref } = input;
   if (typeof source !== "string" || typeof candidate !== "string") {
     throw new UsageError(
-      '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "..."} JSON from stdin.',
+      '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "...", "ref": "..."} JSON from stdin.',
       "MISSING_REQUIRED_ARGUMENT",
     );
   }
@@ -291,6 +291,7 @@ async function runImproveJudgeCli(strategyName: string | undefined): Promise<voi
   const verdict = await runReflectQualityJudge(config, candidate, source, notes, undefined, {
     runnerSelectionFrozen: true,
     llmRunner: judge,
+    ...(typeof ref === "string" && ref ? { ref } : {}),
   });
   output("improve-judge", { engine: judge.engine, ...verdict });
 }

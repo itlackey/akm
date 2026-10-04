@@ -1217,6 +1217,7 @@ async function finalizeReflectProposal(args: {
   if (judged) {
     verdict = await runReflectQualityJudge(run.config, payload.content, assetContent ?? "", feedback, options.chat, {
       runnerSelectionFrozen: true,
+      ref: payload.ref,
       ...(judge.runner ? { llmRunner: judge.runner } : {}),
       ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.signal ? { signal: options.signal } : {}),

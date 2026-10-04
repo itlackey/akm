@@ -2658,8 +2658,9 @@ support.
 
 `akm improve judge` runs reflect's quality judge on one revision and prints its
 verdict, for testing a judge engine on revisions whose right answer you know. It
-reads `{"source": "...", "candidate": "...", "feedback": "..."}` JSON from stdin
-(`feedback` is optional), judges with the engine the strategy's
+reads `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON
+from stdin (`feedback` and `ref` are optional; `ref` names the revised asset,
+which a judge on an agent engine may read), judges with the engine the strategy's
 `processes.reflect.qualityGate.engine` names (`--strategy` picks the strategy),
 and prints `{ engine, pass, score, reason, criteria }` with the gate's prompt and
 pass rule. A `score` of `-1` means the judge gave no verdict. It writes nothing.

@@ -346,6 +346,8 @@ export function resolveQualityGateJudge(
 
 export interface QualityJudgeOptions {
   similarLessons?: Array<{ ref: string; content: string }>;
+  /** Reflect: the ref of the asset the candidate revises, for a judge on an agent engine to read. */
+  ref?: string;
   /** The exact runner selected for this judge. */
   llmRunner?: RunnerSpec;
   /** The caller already froze judge selection: no runner means fail closed, never re-resolve. */
@@ -419,8 +421,23 @@ function buildChangedRegion(sourceContent: string, candidateContent: string): st
   return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
 }
 
-/** Judge prompt for an in-place revision. */
-export function buildReflectJudgePrompt(candidateContent: string, sourceContent: string, feedback: string[]): string {
+/**
+ * What the judge may do with tools when it runs on an agent engine: verify a
+ * fact the revision adds or alters, and nothing else. The plain judge's prompt
+ * is unchanged (its rubric is tuned and measured without this paragraph).
+ */
+function reflectJudgeToolRules(ref: string | undefined): string {
+  const asset = ref ? `The asset is \`${ref}\`: read it with akm_show, ` : "Read an asset with akm_show ";
+  return `Tools: ${asset}or an asset the changed region names, only to verify a fact the revision adds or alters; the text above already shows every change. Do not search, do not read anything else, and do not use a tool to judge structure or wording. One or two reads at most. Before scoring, check three lists: (1) every statement the revision adds: find each in the asset, or as a fact the feedback states about the subject, and score QUALITY 1-2 if any is in neither; a statement is found only when the asset or the feedback says it, in any words: a new step, cause, consequence or detail that merely seems to follow is not found; feedback says what to fix and is not content, so an added statement about how the asset was used, found or verified is unsupported; (2) every fact, caveat and field of the source: find each in the revision, and score PRESERVATION 1-3 if any is missing; (3) every point the feedback makes: find the text it is about changed in the revision, and score NEED 2-3 if any is not; a note that restates the feedback does not address it. A read that finds nothing wrong raises no score above what these lists support. Then reply with the JSON.`;
+}
+
+/** Judge prompt for an in-place revision. `tools` is set when the judge runs on an agent engine. */
+export function buildReflectJudgePrompt(
+  candidateContent: string,
+  sourceContent: string,
+  feedback: string[],
+  tools?: { ref?: string },
+): string {
   return [
     "You are evaluating a proposed revision to an existing akm asset.",
     "",
@@ -449,6 +466,7 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
     buildChangedRegion(sourceContent, candidateContent),
     "```",
     "",
+    ...(tools ? [reflectJudgeToolRules(tools.ref), ""] : []),
     'Return ONLY valid JSON, no prose: {"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
   ].join("\n");
 }
@@ -627,6 +645,8 @@ export function runReflectQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  const prompt = buildReflectJudgePrompt(candidateContent, sourceContent, feedback);
+  // A judge on an agent engine gets the tool rules; the runner is the frozen one or none.
+  const tools = options.llmRunner && options.llmRunner.kind !== "llm" ? { ref: options.ref } : undefined;
+  const prompt = buildReflectJudgePrompt(candidateContent, sourceContent, feedback, tools);
   return runQualityJudge("proposal_quality_gate", config, prompt, REFLECT_JUDGE_CRITERIA, chat, options);
 }

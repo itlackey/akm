@@ -9,7 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - **`akm improve judge`** runs reflect's quality judge on one revision, read as
-  `{"source", "candidate", "feedback"}` JSON from stdin, with the engine
+  `{"source", "candidate", "feedback", "ref"}` JSON from stdin, with the engine
   `processes.reflect.qualityGate.engine` names, and prints the verdict. It
   writes nothing: it tests a judge engine on revisions whose right answer you
   know.
@@ -39,6 +39,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   so a fix elsewhere no longer excuses a dropped fact, an invented or
   strengthened claim, a hedge or a placeholder. On a stratified 100-case sample
   the gate passed 31 of 40 good edits instead of 18 and 3 of 60 bad instead of 2.
+- **A reflect quality judge on an agent engine reads only to verify what a
+  revision adds.** Its prompt names the revised asset's ref and adds one
+  paragraph: read that asset, or one the changed region names, with `akm_show`
+  only to check a fact the revision adds or alters, at most twice, and never
+  search; before scoring, find each added statement in the asset or the
+  feedback (a step or cause that merely seems to follow does not count), each
+  source fact in the revision, and each feedback point in a change to the text
+  it is about. The plain judge's prompt is unchanged. On the same 100 cases
+  (qwen3.8-27b, thinking on) the agent judge passed 38 of 40 good edits and 14
+  of 60 bad, against 34 and 12 for the plain judge on that model. Give the
+  engine's `llmEngine` `enableThinking: true`: without thinking the model
+  looped on tool calls.
 - **A failed reflect reply reads the same on every engine kind:** the parser's
   own message. 0.9.25-alpha.1 named the engine on an agent engine.
 - **Inference reaches opencode only where akm writes opencode's config:** an

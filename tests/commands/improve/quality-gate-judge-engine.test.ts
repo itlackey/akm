@@ -184,6 +184,40 @@ describe("the judge thinks only when its own engine enables thinking", () => {
     }
   });
 
+  test("a judge on an agent engine gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
+    const cfg = config({ "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" } });
+    let sent = "";
+    __setTestServer({
+      client: {
+        session: {
+          create: async () => ({ data: { id: "judge-session" } }),
+          prompt: (async (args: { body: { parts: { text: string }[] } }) => {
+            sent = args.body.parts.map((p) => p.text).join("\n");
+            return { data: { info: {}, parts: [{ type: "text", text: PASSING_VERDICT }] } };
+          }) as never,
+          delete: async () => ({}),
+        },
+      },
+      server: { close() {} },
+    });
+    try {
+      await runReflectQualityJudge(cfg, "candidate", "source", [], undefined, {
+        llmRunner: resolveEngine("sdk-judge", cfg),
+        ref: "knowledge/x",
+      });
+    } finally {
+      __setTestServer(null);
+    }
+    expect(sent).toContain("Tools: The asset is `knowledge/x`: read it with akm_show");
+    let plain = "";
+    await runReflectQualityJudge(config(), "candidate", "source", [], async (_connection, messages) => {
+      plain = messages.map((m) => m.content).join("\n");
+      return PASSING_VERDICT;
+    });
+    expect(plain).toContain("Return ONLY valid JSON");
+    expect(plain).not.toContain("Tools:");
+  });
+
   test("otherwise the judge keeps thinking off, as before", async () => {
     let thinking: boolean | undefined;
     await runReflectQualityJudge(config(), "candidate", "source", [], async (connection, _messages, options) => {
