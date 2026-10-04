@@ -450,8 +450,8 @@ export function buildReflectPrompt(input: ReflectPromptInput): ReflectPromptResu
     const problems = frontmatterProblems(input.assetContent);
     sections.push(
       problems.length > 0
-        ? `akm found these problems in the asset; fix each one:\n${problems.map((p) => `- ${p}`).join("\n")}\nLeave every other field null unless the feedback shows it claims more than the body covers.`
-        : "akm found no missing or broken field: return null for each unless the feedback shows one claims more than the body covers.",
+        ? `akm found these problems in the asset; fix each one:\n${problems.map((p) => `- ${p}`).join("\n")}`
+        : "akm found no missing or broken field.",
     );
   }
 

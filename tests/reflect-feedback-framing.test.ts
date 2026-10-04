@@ -201,9 +201,7 @@ describe("buildReflectPrompt — a patch of three fields, and 'nothing to change
       assetContent:
         "---\ndescription: Compares bun vs. node, e.g. their startup times.\nwhen_to_use: When picking a runtime.\n---\n# Runtimes\n",
     }).prompt;
-    expect(clean).toContain(
-      "akm found no missing or broken field: return null for each unless the feedback shows one claims more than the body covers.",
-    );
+    expect(clean).toContain("akm found no missing or broken field.");
   });
 
   test("none of the sentences that demanded a change, or a body rewrite, is left", () => {
