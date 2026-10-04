@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.25-alpha.3] - 2026-10-04
+
 ### Added
 
 - **akm learns from Codex sessions.** `akm proposal extract --type codex` reads
