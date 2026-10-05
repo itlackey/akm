@@ -82,6 +82,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   recording anything, naming the file and the path the proposal would write, and
   says to edit the file directly. Plain negative feedback on these assets is
   unaffected.
+- **A proposal no longer rewraps, reorders or strips a note's frontmatter to
+  add or correct its `type`.** When a proposal's content had no `type:` or a
+  different one, akm re-serialized the whole frontmatter block, so the reviewer
+  of a one-line correction also saw long values rewrapped, keys reordered and
+  YAML comments dropped. In practice 40 of 70 one-line correction proposals did
+  this. akm now adds a missing `type:` (and `updated:`) as a line before the
+  closing `---`, or replaces the existing `type:` line where it stands, and
+  leaves every other byte as written, line endings and body included. It
+  re-serializes only when it cannot do that safely, such as a `type` value that
+  spans several lines. The same write path serves `akm remember`, `akm import`
+  and `akm workflow create`, so a note akm writes without a `type` now carries
+  it, and `updated`, as its last frontmatter lines instead of its first.
+- **`akm lint --fix` keeps a CRLF note's line endings** when it adds a missing
+  `updated:`. It used to rewrite the whole file to LF, so one added line showed
+  as every line changed.
 
 ## [0.9.26-alpha.2] - 2026-10-05
 

@@ -223,15 +223,39 @@ function countLines(text: string): number {
  * frontmatter: round-tripping the mapping through the YAML serializer drops
  * comments and normalizes formatting, which is unacceptable for a write that
  * only needs to contribute one line. Shared by `ensureAkmMarkdownType`
- * (stamping `updated:` on write) and lint's `--fix` for `missing-updated`.
+ * (adding `type:` and `updated:` on write) and lint's `--fix` for
+ * `missing-updated`. The new line takes the block's own line ending.
  */
 export function spliceFrontmatterLine(raw: string, line: string): string | null {
-  const lines = raw.split(/\r?\n/);
-  if (lines[0]?.trim() !== "---") return null;
-  const closeIdx = lines.findIndex((l, i) => i > 0 && l.trim() === "---");
-  if (closeIdx === -1) return null;
-  lines.splice(closeIdx, 0, line);
-  return lines.join("\n");
+  // Alternating [line, eol, line, eol, …, line]: joining the parts back
+  // reproduces `raw` byte for byte, CRLF and all.
+  const parts = raw.split(/(\r?\n)/);
+  if (parts[0]?.trim() !== "---") return null;
+  const closeAt = parts.findIndex((part, i) => i > 0 && part.trim() === "---");
+  if (closeAt === -1) return null;
+  parts.splice(closeAt, 0, line, parts[1]!);
+  return parts.join("");
+}
+
+/**
+ * Replace the top-level `key:` line of an existing frontmatter block with
+ * `line`, leaving every other byte untouched — the counterpart to
+ * {@link spliceFrontmatterLine} for correcting a field's value in place.
+ *
+ * Only that one physical line is replaced, so a value that continues onto
+ * further lines (a block sequence, a folded scalar) would be left dangling:
+ * the caller must check that the result still parses to what it meant. Returns
+ * null when `raw` has no well-formed block or no such line.
+ */
+export function replaceFrontmatterLine(raw: string, key: string, line: string): string | null {
+  const parts = raw.split(/(\r?\n)/);
+  if (parts[0]?.trim() !== "---") return null;
+  const closeAt = parts.findIndex((part, i) => i > 0 && part.trim() === "---");
+  if (closeAt === -1) return null;
+  const at = parts.findIndex((part, i) => i > 0 && i < closeAt && part.match(/^(\w[\w-]*):(?:[ \t]|$)/)?.[1] === key);
+  if (at === -1) return null;
+  parts[at] = line;
+  return parts.join("");
 }
 
 /**
