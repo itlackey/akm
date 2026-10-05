@@ -53,6 +53,7 @@ import {
   makeConsolidateResult,
 } from "./consolidate";
 import { computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { contentHash } from "./content-hash";
 import {
   assetTypeOf,
   buildUtilityMap,
@@ -713,23 +714,30 @@ function isSignalEvent(metadata: unknown): boolean {
 }
 
 /**
- * Whether `candidate` was flagged wrong and not edited since: its newest
- * negative feedback inside the signal window is newer than its file's last
- * write. The edit signal is the file's mtime, the one the retrieval scope reads
- * for new material; a candidate with no readable file is not flagged.
+ * Whether `candidate` was flagged wrong and not edited since. A negative
+ * feedback inside the signal window that recorded the hash of the body it
+ * judged flags it exactly when the body still has that hash, so a later write
+ * that leaves the text alone (an inference stamp, a frontmatter repair) does not
+ * lift the flag. One without a hash flags it when it is newer than the file's
+ * last write: its mtime, the one the retrieval scope reads for new material. A
+ * candidate with no readable file is not flagged.
  */
 export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?: EventsContext): boolean {
   if (!candidate.filePath) return false;
   let editedAtMs: number;
+  let bodyHash: string;
   try {
     editedAtMs = fs.statSync(candidate.filePath).mtimeMs;
+    bodyHash = contentHash(fs.readFileSync(candidate.filePath, "utf8"), "body");
   } catch {
     return false;
   }
   const since = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
-  return readEvents({ type: "feedback", ref: keyOf(candidate), since }, eventsCtx).events.some(
-    (e) => (e.metadata as { signal?: unknown } | undefined)?.signal === "negative" && Date.parse(e.ts) > editedAtMs,
-  );
+  return readEvents({ type: "feedback", ref: keyOf(candidate), since }, eventsCtx).events.some((e) => {
+    const meta = e.metadata as { signal?: unknown; contentHash?: unknown } | undefined;
+    if (meta?.signal !== "negative") return false;
+    return typeof meta.contentHash === "string" ? meta.contentHash === bodyHash : Date.parse(e.ts) > editedAtMs;
+  });
 }
 
 interface SignalDeltaSnapshot {

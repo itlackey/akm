@@ -49,15 +49,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   list "unhelpful" among the reasons to flag a note, and their example reasons
   name a wrong fact instead of "wrong framework" or "incomplete-edge-cases".
 - **Distill skips a memory that was flagged wrong and not edited since.** A
-  memory whose newest negative feedback in the last 30 days is newer than its
-  file's last write is no source for a lesson, so the improve loop skips distill
-  for it: a `distill-skipped` action with the reason "flagged wrong since its
-  last edit" and an `improve_skipped` event (`distill_flagged_wrong`). The
-  attempt goes in the improve ledger as `unchanged`, so the memory waits for
-  newer feedback, and reflect still plans it. The file's modification time is the
-  edit signal, as in the retrieval scope's new-material test; any later write,
-  an accepted frontmatter repair included, ends the flag. An explicit
-  `akm improve <ref>` still distills it.
+  memory with negative feedback in the last 30 days on the text it still has is
+  no source for a lesson, so the improve loop skips distill for it: a
+  `distill-skipped` action with the reason "flagged wrong since its last edit"
+  and an `improve_skipped` event (`distill_flagged_wrong`). The attempt goes in
+  the improve ledger as `unchanged`, so the memory waits for newer feedback, and
+  reflect still plans it. Feedback records the hash of the body it judged
+  (`contentHash`), so a write that leaves the body alone, such as an inference
+  stamp or an accepted frontmatter repair, does not lift the flag; changing the
+  body does. Feedback recorded without a hash keeps the earlier test: it flags
+  the memory while it is newer than the file's last write (its modification
+  time, as in the retrieval scope's new-material test), so any later write ends
+  it. An explicit `akm improve <ref>` still distills it.
 
 ### Removed
 

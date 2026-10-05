@@ -17,6 +17,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { contentHash } from "../../../src/commands/improve/content-hash";
 import { type ImproveLedgerOutcome, type ImproveLedgerRow, ledgerKey } from "../../../src/commands/improve/ledger";
 import {
   buildSnapshotManifest,
@@ -383,11 +384,15 @@ describe("isFlaggedSinceLastEdit", () => {
   const DAY_MS = 24 * 3_600_000;
   const memory = "memories/port-note";
 
-  /** A memory file last written `editedAgoMs` ago; a candidate naming it. */
-  function candidateEditedAgo(editedAgoMs: number, extra: Partial<ImproveEligibleRef> = {}): ImproveEligibleRef {
+  /** A memory file (holding `text`) last written `editedAgoMs` ago; a candidate naming it. */
+  function candidateEditedAgo(
+    editedAgoMs: number,
+    extra: Partial<ImproveEligibleRef> = {},
+    text = "The default port is 8000.\n",
+  ): ImproveEligibleRef {
     const filePath = path.join(freshStash(), "memories", "port-note.md");
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, "The default port is 8000.\n");
+    fs.writeFileSync(filePath, text);
     const editedAt = new Date(Date.now() - editedAgoMs);
     fs.utimesSync(filePath, editedAt, editedAt);
     return ref(memory, { filePath, ...extra });
@@ -436,5 +441,49 @@ describe("isFlaggedSinceLastEdit", () => {
 
     feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" }, `stash//${memory}`);
     expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+  });
+
+  describe("a negative event is judged by the hash of the body it recorded, when it recorded one", () => {
+    const original = "---\ndescription: Server ports\n---\nThe default port is 8000.\n";
+    const frontmatterOnlyWrite =
+      "---\ndescription: Server ports\ninferredAt: 2026-10-05\n---\nThe default port is 8000.\n";
+    const bodyEdit = "---\ndescription: Server ports\n---\nThe default port is 4096.\n";
+    const negative = { signal: "negative", reason: "the default port is 4096" };
+    const judged = { ...negative, contentHash: contentHash(original, "body") };
+
+    test("it still flags after a write that leaves the body alone", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, original);
+      feedbackAgo(DAY_MS, judged);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+
+      // An inference stamp or a frontmatter repair: newer than the feedback, the text it judged unchanged.
+      fs.writeFileSync(candidate.filePath as string, frontmatterOnlyWrite);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+    });
+
+    test("it stops flagging once the body changes", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, original);
+      feedbackAgo(DAY_MS, judged);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+
+      fs.writeFileSync(candidate.filePath as string, bodyEdit);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+    });
+
+    test("the hash decides, not the file's age: a body it did not judge is not flagged although the file is older than the feedback", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, bodyEdit);
+      feedbackAgo(DAY_MS, judged);
+
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+    });
+
+    test("an event without a hash keeps the mtime rule: any later write lifts the flag", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, original);
+      feedbackAgo(DAY_MS, negative);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+
+      fs.writeFileSync(candidate.filePath as string, frontmatterOnlyWrite);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+    });
   });
 });
