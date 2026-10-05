@@ -95,7 +95,8 @@ akm workflow create ship-release               # Create a workflow asset in the 
 akm lint --type workflows                      # Parse and compile every .md/.yml workflow source; list every error
 akm workflow run workflows/ship-release        # Start or resume and execute the workflow
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
-akm feedback agents/reviewer --negative --reason "wrong framework" # Flag it for review: improve proposes a fix from the reason
+akm feedback agents/reviewer --negative --reason "wrong framework" # Flag it: lowers its ranking; improve may repair its frontmatter
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Queue an exact fix
 akm feedback memories/deployment-notes --positive # Works for memories too
 akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
@@ -103,8 +104,11 @@ akm feedback env/prod --positive               # Records env feedback without su
 Use `akm feedback` whenever an asset's content materially helps, or proves wrong,
 stale or unhelpful, so future search ranking can learn from actual usage.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review: the next improve run proposes a fix based on your
-reason, so be specific. `--positive` records that an asset helped (it raises its
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. Improve does not
+rewrite an asset's text: to correct a wrong fact there, attach the exact fix
+with `--replace "<exact current text>" --with "<corrected text>" --source "<URL,
+command or file>"`, which akm checks and queues as a proposal. `--positive` records that an asset helped (it raises its
 ranking) and does not trigger a rewrite; improve no longer rewrites assets from
 positive signals or on a proactive cadence. An akm command that fails says
 nothing about the asset; don't record it as feedback.

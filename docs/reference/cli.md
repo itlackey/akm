@@ -1589,9 +1589,14 @@ preserves it byte-for-byte.
 
 Record positive or negative feedback for any indexed bundle asset.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review: the next improve run proposes a fix based on your
-reason, so be specific. `--positive` records that an asset helped (it raises
-its ranking) and does not trigger a rewrite. Both signals update the asset's
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. Improve does not
+rewrite an asset's text. To correct a wrong fact there, attach the exact fix
+with `--replace`, `--with` and `--source`: akm checks that each `--replace`
+text appears exactly once and that the frontmatter still parses, records nothing
+if either check fails, and queues the edit as a `feedback` proposal for review.
+`--positive` records that an asset helped (it raises its ranking) and does not
+trigger a rewrite. Both signals update the asset's
 utility score right away, so highly-rated assets rank higher in search results.
 
 ```sh
@@ -1602,13 +1607,17 @@ akm feedback env/prod --positive
 akm feedback skills/code-review --positive --reason "Worked perfectly for PR reviews"
 akm feedback skills/code-review --negative --failure-mode outdated --reason "references a removed flag"
 akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --tag team:platform
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--positive` | Record that an asset helped: it raises its ranking and does not trigger a rewrite |
-| `--negative` | Flag the asset for review: the next improve run proposes a fix based on `--reason`, so be specific |
-| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event and read by the next improve run's fix proposal (required for negative feedback by default) |
+| `--negative` | Flag the asset: it ranks lower right away, and the next improve run may repair its frontmatter from `--reason` |
+| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default, and always with `--replace`) |
+| `--replace <text>` | Exact text to correct, copied verbatim from the asset file; it must appear exactly once. Repeatable, each paired in order with a `--with`. Negative feedback only |
+| `--with <text>` | The corrected text for the matching `--replace`. Use `--with=<text>` for a value that starts with `-` |
+| `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`; shown to the reviewer with the proposal |
 | `--failure-mode` | Structured failure-mode taxonomy for negative feedback: `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant`. Stored alongside `--reason` in event metadata for the distill pipeline. |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |
@@ -3097,8 +3106,8 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 
 `akm feedback` accepts an optional `--reason <text>` flag whose value is
 forwarded into feedback metadata and consumed by improve/distill proposal
-prompts. Negative feedback requires a reason by default: the next improve run
-proposes a fix from it, so say what is wrong and what should change.
+prompts. Negative feedback requires a reason by default: say what is wrong and
+what should change.
 
 Write the reason about the asset's content. Reflect treats it as an unverified
 report to investigate, not a fact to insert, and is told to leave the section

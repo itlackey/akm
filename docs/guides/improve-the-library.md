@@ -21,15 +21,20 @@ assets rank higher and underperformers surface less often right away. See
 for how that score is computed.
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review: the next improve run proposes a fix based on your
-reason, so be specific. `--positive` records that an asset helped (it raises
-its ranking) and does not trigger a rewrite. Only negative feedback plans a
-rewrite: improve no longer rewrites assets from positive signals or on a
-proactive cadence.
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. Improve does not
+rewrite an asset's text. To correct a wrong fact there, attach the exact fix:
+`--replace "<exact current text>" --with "<corrected text>" --source "<URL,
+command or file that shows it>"` (repeat `--replace`/`--with` for several
+edits). akm checks that each `--replace` text appears exactly once, records
+nothing if one does not, and queues the edit as a `feedback` proposal for
+review. `--positive` records that an asset helped (it raises its ranking) and
+does not trigger a rewrite.
 
 ```sh
 akm feedback skills/code-review --positive
 akm feedback agents/reviewer --negative --reason "Gave outdated migration steps"
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
 akm feedback workflows/ship-release --positive --reason "Worked end-to-end on 0.8.0"
 
 # With a structured reason slug (consumed by improve/distill prompts):
@@ -37,8 +42,8 @@ akm feedback skills/planner --negative --reason "incomplete-edge-cases"
 ```
 
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
-the current local index. `--negative` additionally requires `--reason` — the
-next improve run proposes its fix from that reason, and omitting it exits 2.
+the current local index. `--negative` additionally requires `--reason`, and
+omitting it exits 2.
 `--failure-mode` adds a curated taxonomy label but does **not** substitute for
 `--reason`. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).

@@ -78,6 +78,12 @@ export interface ProposalPayload {
   frontmatter?: Record<string, unknown>;
 }
 
+/** Why a feedback fix was proposed: the feedback's reason and the source it cites for the correct fact. */
+export interface ProposalFeedbackFix {
+  reason: string;
+  source: string;
+}
+
 export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
@@ -255,6 +261,8 @@ export interface Proposal {
   /** Self-estimated confidence in [0, 1], for reviewers. */
   confidence?: number;
   gateDecision?: ProposalGateDecision;
+  /** The negative feedback that supplied this proposal's exact fix (`akm feedback --replace`), for the reviewer. */
+  feedback?: ProposalFeedbackFix;
   /** The target's content before promotion (absent for new assets), for revert. Never shown. */
   backupContent?: string;
   /** Exactly where the accepted content went; prevents cross-target revert. */

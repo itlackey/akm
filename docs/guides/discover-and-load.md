@@ -110,8 +110,11 @@ akm feedback skills/code-review --negative --failure-mode outdated --reason "ref
 ```
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review: the next `akm improve` run proposes a fix based on
-your reason, so be specific. That is how a one-off task turns into a durable
+flags the asset: it ranks lower right away, and the next `akm improve` run may
+repair its description, title or `when_to_use` from your reason. Improve does
+not rewrite an asset's text, so to correct a wrong fact there, attach the exact
+fix: `--replace "<exact current text>" --with "<corrected text>" --source "<URL,
+command or file that shows it>"`. That is how a one-off task turns into a durable
 improvement to the shared library rather than a result nobody else benefits
 from. `--positive` records that an asset helped (it raises its ranking) and does
 not trigger a rewrite.

@@ -207,6 +207,12 @@ function validatePresentMetadata(meta: Record<string, unknown>): void {
       }
     }
   }
+  if (Object.hasOwn(meta, "feedback")) {
+    const fix = meta.feedback;
+    if (!isRecord(fix) || typeof fix.reason !== "string" || typeof fix.source !== "string") {
+      invalidPresentField("feedback");
+    }
+  }
   if (Object.hasOwn(meta, "acceptedTarget")) {
     const target = meta.acceptedTarget as Record<string, unknown> | null;
     if (
@@ -359,6 +365,7 @@ export function proposalRowToProposal(row: ProposalRow): Proposal {
     ...(meta.reviewHistory !== undefined ? { reviewHistory: meta.reviewHistory as Proposal["reviewHistory"] } : {}),
     ...(typeof meta.confidence === "number" ? { confidence: meta.confidence } : {}),
     ...(meta.gateDecision !== undefined ? { gateDecision: meta.gateDecision as Proposal["gateDecision"] } : {}),
+    ...(meta.feedback !== undefined ? { feedback: meta.feedback as Proposal["feedback"] } : {}),
     ...(typeof meta.backupContent === "string" ? { backupContent: meta.backupContent } : {}),
     ...(meta.acceptedTarget !== undefined ? { acceptedTarget: meta.acceptedTarget as Proposal["acceptedTarget"] } : {}),
     ...(typeof meta.eligibilitySource === "string"
@@ -423,6 +430,7 @@ export function proposalToRowValues(proposal: Proposal, stashDir: string): Omit<
   if (proposal.reviewHistory !== undefined) metaObj.reviewHistory = proposal.reviewHistory;
   if (proposal.confidence !== undefined) metaObj.confidence = proposal.confidence;
   if (proposal.gateDecision !== undefined) metaObj.gateDecision = proposal.gateDecision;
+  if (proposal.feedback !== undefined) metaObj.feedback = proposal.feedback;
   if (proposal.backupContent !== undefined) metaObj.backupContent = proposal.backupContent;
   if (proposal.acceptedTarget !== undefined) metaObj.acceptedTarget = proposal.acceptedTarget;
   if (proposal.eligibilitySource !== undefined) metaObj.eligibilitySource = proposal.eligibilitySource;

@@ -58,7 +58,9 @@ everything else routes through `akm proposal accept`.
 
 1. An agent uses a capability and calls `akm feedback <ref> --positive|--negative`.
    `--negative --reason "<what is wrong and what should change>"` flags the
-   asset for review: the next improve run proposes a fix based on the reason.
+   asset: the next improve run may repair its frontmatter from the reason.
+   `--replace`/`--with`/`--source` attach an exact fix of its text, which akm
+   checks at once and queues as a `feedback` proposal.
    `--positive` records that the asset helped (it raises its ranking) and does
    not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility

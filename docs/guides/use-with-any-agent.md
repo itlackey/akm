@@ -54,8 +54,9 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 `akm curate` to discover refs — not guess them. The `ref` field in search
 results is the stable token to pass to `akm show`. Feedback closes the loop:
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review, and the next improve run proposes a fix based on
-your reason. `--positive` records that an asset helped (it raises its ranking)
+flags the asset, and the next improve run may repair its description, title or
+`when_to_use` from your reason. To correct a wrong fact in its text, attach the
+exact fix with `--replace`, `--with` and `--source`. `--positive` records that an asset helped (it raises its ranking)
 and does not trigger a rewrite. See [Improve the Library](improve-the-library.md)
 for what happens to feedback after it's recorded.
 

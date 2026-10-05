@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm feedback --negative` can carry an exact fix of the asset's text:**
+  `--replace "<exact current text>" --with "<corrected text>" --source "<URL,
+  command or file>"`, repeatable for several edits. akm checks at once that each
+  `--replace` text appears exactly once and that the frontmatter still parses,
+  records nothing if a check fails (so the caller can correct it and retry), and
+  queues the edit as a `feedback` proposal that shows the reason and source to
+  the reviewer. Improve has edited only an asset's frontmatter since 0.9.25, so
+  this is how a wrong fact in a note's text gets corrected: by the agent that
+  found it, with its evidence, instead of by a nightly rewrite.
+
+### Changed
+
+- **`akm feedback` help, the shipped hints and the docs no longer promise that
+  improve proposes a fix of the text from a negative reason;** they say it may
+  repair the frontmatter, and point to the exact-fix flags.
+
 ## [0.9.26-alpha.1] - 2026-10-05
 
 ### Changed

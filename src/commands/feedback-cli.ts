@@ -3,12 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import { parse as yamlParse } from "yaml";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../core/asset/resolve-ref";
-import { isWithin, writeFileAtomic } from "../core/common";
+import { isWithin, resolveStashDir, writeFileAtomic } from "../core/common";
 import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
@@ -29,6 +30,7 @@ import {
   getItemRefById,
 } from "../storage/repositories/index-entries-repository";
 import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
+import { createProposal } from "./proposal/repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -229,6 +231,76 @@ function recordFeedbackUsage(
   return { utilityResult, rankingUpdateApplied, rankingUpdateSkippedReason };
 }
 
+// ── Exact fixes ──────────────────────────────────────────────────────────────
+
+/** 1-based numbers of the lines on which `needle` starts. */
+function startLines(text: string, needle: string): number[] {
+  const lines: number[] = [];
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    lines.push(text.slice(0, at).split("\n").length);
+  }
+  return lines;
+}
+
+/**
+ * Apply `--replace`/`--with` pairs in order. Each `--replace` text must appear
+ * exactly once in the text as it stands at that point, so the edit can only
+ * land where the caller meant it.
+ */
+export function applyExactReplacements(
+  text: string,
+  pairs: ReadonlyArray<{ old: string; new: string }>,
+  file: string,
+): string {
+  let out = text;
+  pairs.forEach((pair, i) => {
+    const label = `--replace #${i + 1}`;
+    if (!pair.old) throw new UsageError(`${label} is empty.`, "INVALID_FLAG_VALUE");
+    const lines = startLines(out, pair.old);
+    if (lines.length === 0) {
+      throw new UsageError(
+        `${label} was not found in ${file}.`,
+        "INVALID_FLAG_VALUE",
+        "Copy the text verbatim from the file, including whitespace and punctuation.",
+      );
+    }
+    if (lines.length > 1) {
+      throw new UsageError(
+        `${label} appears ${lines.length} times in ${file} (lines ${lines.join(", ")}).`,
+        "INVALID_FLAG_VALUE",
+        "Include more of the surrounding text so it appears once.",
+      );
+    }
+    const at = out.indexOf(pair.old);
+    out = out.slice(0, at) + pair.new + out.slice(at + pair.old.length);
+  });
+  return out;
+}
+
+/** A fix may change the frontmatter's values, but it must still parse as YAML. */
+function assertFrontmatterStillParses(before: string, after: string, file: string): void {
+  if (!parseFrontmatterBlock(before)) return;
+  const block = parseFrontmatterBlock(after);
+  let problem: string | undefined;
+  if (!block) {
+    problem = "the frontmatter block is gone";
+  } else if (block.frontmatter.trim()) {
+    try {
+      const data = yamlParse(block.frontmatter) as unknown;
+      if (typeof data !== "object" || data === null || Array.isArray(data)) problem = "it is no longer a mapping";
+    } catch (err) {
+      problem = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    }
+  }
+  if (problem) {
+    throw new UsageError(
+      `The fix breaks the frontmatter of ${file}: ${problem}.`,
+      "INVALID_FLAG_VALUE",
+      'Quote a value that contains ": ", or leave the frontmatter alone.',
+    );
+  }
+}
+
 // ── Command definition ────────────────────────────────────────────────────────
 
 export const feedbackCommand = defineJsonCommand({
@@ -237,9 +309,13 @@ export const feedbackCommand = defineJsonCommand({
     description:
       "Record positive or negative feedback for any indexed bundle asset.\n\n" +
       '`akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags\n' +
-      "the asset for review: the next improve run proposes a fix based on your reason, so be\n" +
-      "specific. `--positive` records that an asset helped (it raises its ranking) and does not\n" +
-      "trigger a rewrite.\n\n" +
+      "the asset: the next improve run may repair its description, title or when_to_use from\n" +
+      "your reason, but it does not rewrite the text. To correct a wrong fact in the text, attach\n" +
+      'the exact fix: --replace "<exact current text>" --with "<corrected text>" --source "<URL,\n' +
+      'command or file that shows it>" (repeat --replace/--with for several edits; use --with=...\n' +
+      "for a value that starts with -). akm checks that each --replace text appears exactly once\n" +
+      "and queues the edit as a proposal for review. `--positive` records that an asset helped\n" +
+      "(it raises its ranking) and does not trigger a rewrite.\n\n" +
       "Both signals adjust the asset's usefulness score right away, in the same\n" +
       "process: positive feedback raises it, negative lowers it, and recent\n" +
       "feedback counts for more than old feedback. No reindex is needed — the new\n" +
@@ -258,13 +334,26 @@ export const feedbackCommand = defineJsonCommand({
     negative: {
       type: "boolean",
       description:
-        "Flag the asset for review: the next improve run proposes a fix from --reason (also lowers its ranking immediately, no reindex needed).",
+        "Flag the asset: lowers its ranking immediately (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text.",
       default: false,
     },
     reason: {
       type: "string",
       description:
-        "What is wrong with the asset's content and what should change; the next improve run proposes a fix from it, so be specific (required for negative feedback by default). Not for akm command errors.",
+        "What is wrong with the asset's content and what should change, specifically (required for negative feedback by default). Not for akm command errors.",
+    },
+    replace: {
+      type: "string",
+      description:
+        "Exact text to correct, copied verbatim from the asset file; it must appear exactly once (repeatable, each paired with a --with in order). Negative feedback only.",
+    },
+    with: {
+      type: "string",
+      description: "Corrected text for the matching --replace (repeatable, in the same order).",
+    },
+    source: {
+      type: "string",
+      description: "Where the correct fact comes from: a URL, command or file. Required with --replace.",
     },
     "failure-mode": {
       type: "string",
@@ -326,6 +415,32 @@ export const feedbackCommand = defineJsonCommand({
       }
     }
 
+    // An exact fix for the asset's text: each --replace pairs with a --with, in order.
+    const replaces = parseAllFlagValues("--replace");
+    const withs = parseAllFlagValues("--with");
+    const fixSource = (args.source as string | undefined)?.trim() || undefined;
+    const fixPairs = replaces.map((old, i) => ({ old, new: withs[i] ?? "" }));
+    if (replaces.length > 0 || withs.length > 0 || fixSource !== undefined) {
+      if (!args.negative) {
+        throw new UsageError("--replace, --with and --source are only for negative feedback.", "INVALID_FLAG_VALUE");
+      }
+      if (replaces.length === 0 || replaces.length !== withs.length) {
+        throw new UsageError(
+          `Each --replace needs one --with (got ${replaces.length} --replace and ${withs.length} --with).`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      if (!fixSource) {
+        throw new UsageError(
+          "A fix needs --source: the URL, command or file that shows the correct fact.",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      if (!reason?.trim()) {
+        throw new UsageError("A fix needs --reason: say what is wrong.", "MISSING_REQUIRED_ARGUMENT");
+      }
+    }
+
     if (args.negative === true && !reason?.trim()) {
       // F-3 / #384: Default requireReason is now true. Load config to allow
       // operators to opt out via feedback.requireReason: false in akm.json.
@@ -333,14 +448,14 @@ export const feedbackCommand = defineJsonCommand({
       const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
       if (requireReason) {
         throw new UsageError(
-          "Negative feedback requires --reason: the next improve run proposes a fix from it, so say what is wrong and what should change. " +
+          "Negative feedback requires --reason: say what is wrong and what should change. " +
             "Use --failure-mode for a curated taxonomy or --reason for free text. " +
             "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
           "MISSING_REQUIRED_ARGUMENT",
           `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>" [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
         );
       } else {
-        warn("Warning: negative feedback without --reason gives the next improve run nothing to base a fix on.");
+        warn("Warning: negative feedback without --reason says nothing about what is wrong.");
       }
     }
     const rawTags = parseAllFlagValues("--tag");
@@ -350,6 +465,7 @@ export const feedbackCommand = defineJsonCommand({
       ...(reason?.trim() ? { reason: reason.trim() } : {}),
       ...(failureMode ? { failureMode } : {}),
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
+      ...(fixPairs.length > 0 ? { fix: { source: fixSource, replacements: fixPairs.length } } : {}),
     };
     const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
@@ -382,6 +498,7 @@ export const feedbackCommand = defineJsonCommand({
     let rankingUpdateApplied = false;
     let rankingUpdateSkippedReason: string | undefined;
     let durableRef = ref;
+    let fix: { content: string; target: { source: string; root: string } } | undefined;
     const db = openExistingDatabase();
     try {
       const config = loadConfig();
@@ -413,6 +530,22 @@ export const feedbackCommand = defineJsonCommand({
       const itemRef = getItemRefById(db, entryId);
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
+      if (fixPairs.length > 0) {
+        // Checked before anything is recorded, so a fix that does not apply leaves no trace.
+        const filePath = getEntryFilePathById(db, entryId);
+        if (!filePath || !fs.existsSync(filePath)) {
+          throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
+        }
+        const resolved = resolveMutationTarget(config, parseRefInput(itemRef), undefined, { requireWritable: true });
+        if (!isWithin(filePath, resolved.target.source.path)) {
+          throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
+        }
+        const before = fs.readFileSync(filePath, "utf8");
+        const after = applyExactReplacements(before, fixPairs, filePath);
+        if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");
+        assertFrontmatterStillParses(before, after, filePath);
+        fix = { content: after, target: { source: resolved.target.source.name, root: resolved.target.source.path } };
+      }
       const recordResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
       utilityResult = recordResult.utilityResult;
       rankingUpdateApplied = recordResult.rankingUpdateApplied;
@@ -426,6 +559,18 @@ export const feedbackCommand = defineJsonCommand({
       ref: durableRef,
       metadata: metadataObj,
     });
+
+    const fixProposal =
+      fix && reason?.trim() && fixSource
+        ? createProposal(resolveStashDir(), {
+            ref: durableRef,
+            itemRef: durableRef,
+            target: fix.target,
+            source: "feedback",
+            payload: { content: fix.content },
+            feedback: { reason: reason.trim(), source: fixSource },
+          })
+        : undefined;
 
     // F-5 / #386: When a high-utility asset crosses below the review threshold,
     // auto-create a review-needed escalation proposal so a human can confirm
@@ -499,6 +644,7 @@ export const feedbackCommand = defineJsonCommand({
       rankingUpdate: rankingUpdateApplied
         ? { applied: true }
         : { applied: false, reason: rankingUpdateSkippedReason ?? "unknown" },
+      ...(fixProposal ? { fix: { proposalId: fixProposal.id, replacements: fixPairs.length, source: fixSource } } : {}),
       ...(appliedToResult
         ? { appliedTo: { ref: appliedToResult.lessonRef, lessonStrength: appliedToResult.strength } }
         : {}),

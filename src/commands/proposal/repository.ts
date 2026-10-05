@@ -77,6 +77,7 @@ import {
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
+  type ProposalFeedbackFix,
   type ProposalGateDecision,
   type ProposalPayload,
   type ProposalSource,
@@ -199,6 +200,8 @@ export interface CreateProposalInput {
   promotionSource?: string;
   /** Body content hash of `promotionSource` at mint time (alpha.9, B3) — see `Proposal.promotionSourceHash`. */
   promotionSourceHash?: string;
+  /** A feedback fix's reason and cited source — see `Proposal.feedback`. */
+  feedback?: ProposalFeedbackFix;
 }
 
 function nowIso(ctx?: ProposalsContext): string {
@@ -485,6 +488,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         ...(input.eligibilitySource !== undefined ? { eligibilitySource: input.eligibilitySource } : {}),
         ...(input.promotionSource !== undefined ? { promotionSource: input.promotionSource } : {}),
         ...(input.promotionSourceHash !== undefined ? { promotionSourceHash: input.promotionSourceHash } : {}),
+        ...(input.feedback !== undefined ? { feedback: input.feedback } : {}),
       };
       upsertProposal(db, proposal, stashDir);
       for (const ref of input.attemptedRefs ?? [normalizedRef]) {

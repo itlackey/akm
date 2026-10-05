@@ -80,9 +80,12 @@ akm search "<query>" --type skill
 # Mark an asset as helpful (raises its ranking; does not trigger a rewrite)
 akm feedback <ref> --positive
 
-# Flag an asset for review: the next improve run proposes a fix based on your
-# reason, so be specific about what is wrong and what should change
+# Flag an asset: it ranks lower, and the next improve run may repair its
+# description, title or when_to_use from your reason
 akm feedback <ref> --negative --reason "<what is wrong and what should change>"
+
+# Correct a wrong fact in an asset's text: the exact fix is checked and queued for review
+akm feedback <ref> --negative --reason "<what is wrong>" --replace "<exact current text>" --with "<corrected text>" --source "<URL, command or file>"
 
 # Capture a durable lesson or memory from the current session
 akm remember "<fact or lesson>"
