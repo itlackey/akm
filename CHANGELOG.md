@@ -94,6 +94,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reflect that changed nothing, so it waits for newer feedback. The knowledge
   prompt's earlier way out, an empty response, was recorded as `llm_failed` and
   asked again every run; it now says NONE too.
+- **Distill skips a memory whose only recent feedback is positive and says
+  nothing.** A bare `akm feedback --positive` records that a note helped, which
+  gives the writer nothing to distil, so it restated the memory: 10 of the 11
+  lessons made from a memory with only that kind of feedback were rejected (the
+  11th was good). When every feedback event in the last 30 days that counts as a
+  signal is positive with no reason and no note, the improve loop skips distill
+  for the memory: a `distill-skipped` action with the reason "only positive
+  feedback, without a reason" and an `improve_skipped` event
+  (`distill_positive_without_reason`). The attempt goes in the improve ledger as
+  `unchanged`, so the memory waits for newer feedback. A reason, a note or a
+  negative signal anywhere in the window lets it through, and an explicit
+  `akm improve <ref>` still distills it. Record `--reason` with a positive
+  signal to say what helped.
 
 ### Removed
 

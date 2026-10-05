@@ -75,8 +75,11 @@ everything else routes through `akm proposal accept`.
    a positive or note-only signal never plans one. Distill reads any feedback
    on a memory in that window, but skips a memory flagged wrong and not edited
    since: a negative feedback in the window judged the body it still has (or,
-   recorded without that body's hash, is newer than its file's last write).
-   Unless `--require-feedback-signal` is set, the
+   recorded without that body's hash, is newer than its file's last write). It
+   also skips a memory whose only feedback in the window is positive with no
+   reason or note, which gives the writer nothing to distil (10 of the 11
+   lessons made from such memories were rejected). Unless
+   `--require-feedback-signal` is set, the
    fallback lanes (high salience, and proactive maintenance where the strategy
    enables it) pick what the retrieval scope below admits, for scoring only:
    they plan nothing, so improve does not rewrite assets on a proactive

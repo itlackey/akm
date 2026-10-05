@@ -108,6 +108,9 @@ explicit ref; a positive or note-only signal never plans one. Distill reads any
 feedback on a memory in that window, but skips a memory flagged wrong and not
 edited since: a negative feedback in that window judged the body it still has
 (or, recorded without that body's hash, is newer than its file's last write).
+It also skips a memory whose only feedback in that window is a positive with no
+reason or note: say what helped (`--reason`), or the lesson has nothing to
+distil.
 Unless `--require-feedback-signal` is set,
 two fallback lanes pick assets with no such feedback: high-salience assets that
 were never reflected, and, in a strategy that enables proactive maintenance,

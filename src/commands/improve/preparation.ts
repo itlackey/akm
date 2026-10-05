@@ -740,6 +740,27 @@ export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?
   });
 }
 
+/**
+ * Whether the only feedback `candidate` has inside the signal window is positive and says nothing: no reason, no
+ * note. A bare `--positive` only records that a note helped, which gives the writer nothing to distil, so it restates
+ * the memory: 10 of the 11 lessons distilled from a memory with nothing more were rejected (the 2026-10-05 review).
+ * A candidate with no feedback in the window is not matched.
+ */
+export function hasOnlyBarePositiveFeedback(candidate: ImproveEligibleRef, eventsCtx?: EventsContext): boolean {
+  const since = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
+  const signals = readEvents({ type: "feedback", ref: keyOf(candidate), since }, eventsCtx).events.filter((e) =>
+    isSignalEvent(e.metadata),
+  );
+  const hasText = (value: unknown): boolean => typeof value === "string" && value.trim() !== "";
+  return (
+    signals.length > 0 &&
+    signals.every((e) => {
+      const meta = e.metadata as { signal?: unknown; reason?: unknown; note?: unknown };
+      return meta.signal === "positive" && !hasText(meta.reason) && !hasText(meta.note);
+    })
+  );
+}
+
 interface SignalDeltaSnapshot {
   feedbackSinceCutoff: string;
   nowIso: string;

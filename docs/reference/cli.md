@@ -2538,7 +2538,8 @@ trigger: a memory with feedback of any kind (a signal or a note) in that window,
 newer than distill's last attempt. It skips a memory flagged wrong and not
 edited since (a negative feedback in that window judged the body it still has,
 or, recorded without that body's hash, is newer than the file's last write),
-unless the ref is explicit. Two fallback lanes pick refs
+and a memory whose only feedback in that window is positive with no reason or
+note, unless the ref is explicit. Two fallback lanes pick refs
 with no such feedback: high salience (content-scored refs at or above
 `improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
 capped at 10% of the limit, at least one ref) and, in a strategy that enables
