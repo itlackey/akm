@@ -597,7 +597,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `remember` | `akm remember` | `path`, `force`; `tagCount`, `enriched`, `auto`, `scope`, `notices` on the full path |
 | `import` | `akm import` | `source`, `path`, `force` |
 | `sync` | `akm sync` | `name`, `message`, `ok` |
-| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `failureMode`, `tags` |
+| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `curate` | `akm curate` | `query`, `itemCount`, `itemRefs[]` |
 | `show` | `akm show` | `type`, `name` |
@@ -620,7 +620,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `improve_failed` | `akm improve`, a run that crashed | `strategy`, `error` (redacted), `durationMs` |
 | `improve_skipped` | `akm improve`: a ref, a lane, or a group of refs left out | `reason`: `no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`; with `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
 | `improve_lock_recovered` | `akm improve` reclaiming a stale run lock | `lockName`, `stalePid`, `lockedAt`, `recoveredAt`, `lockAgeMs`, `reason` |
-| `improve_review_needed` | `akm feedback`, when a high-utility asset's utility drops below the review threshold | `previousUtility`, `nextUtility`, `reason`, `failureMode` |
+| `improve_review_needed` | `akm feedback`, when a high-utility asset's utility drops below the review threshold | `previousUtility`, `nextUtility`, `reason` |
 | `improve_reflect_outcome` | the improve loop, after each reflect call | `ok`, `durationMs`, `engine`, `reason` |
 | `proactive_selected` | the proactive-maintenance selector, once per run | `count`, `dueTotal`, `neverReflected` |
 | `reflect_invoked` | the reflect pass | `task`, `engine`, `eligibilitySource` |

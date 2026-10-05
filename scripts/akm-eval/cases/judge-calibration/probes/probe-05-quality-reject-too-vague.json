@@ -18,14 +18,12 @@
       "ts": "2026-05-02T08:00:00.000Z",
       "signal": "negative",
       "reason": "Not actionable — does not say which tools, what to be careful of, or who to ask",
-      "failureMode": "incomplete",
       "note": "Reads like a placeholder; provides zero retrieval value."
     },
     {
       "ts": "2026-05-07T11:00:00.000Z",
       "signal": "negative",
-      "reason": "Pulled into a retrieval for `deploy tooling` and was useless",
-      "failureMode": "incorrect"
+      "reason": "Pulled into a retrieval for `deploy tooling` and was useless"
     }
   ],
   "humanGrade": {

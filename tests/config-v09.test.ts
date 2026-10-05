@@ -473,6 +473,23 @@ describe("0.9 config contract", () => {
     expect(afterMigrateApply.index.defaults).toEqual({ engine: "index" });
   });
 
+  test("feedback.allowedFailureModes is retired: a config that sets it still loads with one warning, and only akm migrate apply drops it", () => {
+    writeConfig({ configVersion: "0.9.0", feedback: { requireReason: false, allowedFailureModes: ["incorrect"] } });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().feedback?.requireReason).toBe(false);
+    });
+    const named = warnings.filter((w) => w.includes("feedback.allowedFailureModes"));
+    expect(named).toHaveLength(1);
+    expect(named[0]).toContain("dropped by `akm migrate apply`");
+
+    // An ordinary write keeps it; only `akm migrate apply` removes it.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback.allowedFailureModes).toEqual(["incorrect"]);
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback).toEqual({ requireReason: false });
+  });
+
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {
     // Illegal slug key (contains ':').
     expect(validateConfigShape({ configVersion: "0.9.0", bundles: { "github:owner/repo": { path: "/s" } } }).ok).toBe(

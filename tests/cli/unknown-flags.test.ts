@@ -55,6 +55,14 @@ describe("rejects undeclared flags", () => {
     expect(errorFor(["show", "knowledge/a", "--jsn"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["show", "knowledge/a", "--jsn=1"]).code).toBe("UNKNOWN_FLAG");
   });
+
+  test("`akm feedback --failure-mode` is gone: nothing read what it stored", () => {
+    for (const flag of [["--failure-mode", "outdated"], ["--failure-mode=outdated"]]) {
+      const err = errorFor(["feedback", "skills/a", "--negative", "--reason", "x", ...flag]);
+      expect(err.code).toBe("UNKNOWN_FLAG");
+      expect(err.message).toContain("--failure-mode");
+    }
+  });
 });
 
 describe("accepts every legitimate spelling", () => {

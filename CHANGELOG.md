@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **`akm feedback --failure-mode` and the `feedback.allowedFailureModes` config
+  key.** The flag labelled negative feedback `incorrect`, `outdated`,
+  `dangerous`, `incomplete` or `redundant`. None of the 195 negative feedback
+  events of the last 30 days set it, and nothing read it back. It now fails as an
+  unknown flag, and `akm feedback`'s output and the `improve_review_needed`
+  event no longer carry `failureMode`. A config that still sets
+  `feedback.allowedFailureModes` loads, names the key once as unknown, and
+  `akm migrate apply` drops it. Events recorded earlier keep their `failureMode`.
+
 ## [0.9.26-alpha.2] - 2026-10-05
 
 ### Added

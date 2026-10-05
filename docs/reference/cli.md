@@ -1605,7 +1605,7 @@ akm feedback agents/reviewer --negative
 akm feedback memories/deployment-notes --positive
 akm feedback env/prod --positive
 akm feedback skills/code-review --positive --reason "Worked perfectly for PR reviews"
-akm feedback skills/code-review --negative --failure-mode outdated --reason "references a removed flag"
+akm feedback skills/code-review --negative --reason "references a removed flag"
 akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --tag team:platform
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
 ```
@@ -1618,7 +1618,6 @@ akm feedback knowledge/opencode-server --negative --reason "the default port is 
 | `--replace <text>` | Exact text to correct, copied verbatim from the asset file; it must appear exactly once. Repeatable, each paired in order with a `--with`. Negative feedback only |
 | `--with <text>` | The corrected text for the matching `--replace`. Use `--with=<text>` for a value that starts with `-` |
 | `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`; shown to the reviewer with the proposal |
-| `--failure-mode` | Structured failure-mode taxonomy for negative feedback: `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant`. Stored alongside `--reason` in event metadata for the distill pipeline. |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |
 

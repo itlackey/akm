@@ -67,7 +67,6 @@ JSON
 
 src/cli.ts index --full
 src/cli.ts feedback improve-effectiveness//memories/database-restore --negative \
-  --failure-mode incomplete \
   --reason "Add the missing PostgreSQL point-in-time recovery, WAL archive, and checksum procedure."
 
 scripts/akm-eval/bin/akm-eval-run --suite improve-effectiveness \

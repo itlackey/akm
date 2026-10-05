@@ -10,7 +10,7 @@ import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, writeFileAtomic } from "../core/common";
-import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
@@ -355,13 +355,6 @@ export const feedbackCommand = defineJsonCommand({
       type: "string",
       description: "Where the correct fact comes from: a URL, command or file. Required with --replace.",
     },
-    "failure-mode": {
-      type: "string",
-      description:
-        "Structured failure-mode taxonomy for negative feedback. " +
-        `Accepted values: ${FEEDBACK_FAILURE_MODES.join(", ")}. ` +
-        "Stored alongside --reason in event metadata for aggregation by the distill pipeline.",
-    },
     tag: {
       type: "string",
       description: "Tag to attach to the feedback (repeatable, e.g. --tag slice:train --tag team:platform)",
@@ -393,27 +386,6 @@ export const feedbackCommand = defineJsonCommand({
     }
     const signal = args.positive ? "positive" : "negative";
     const reason = args.reason as string | undefined;
-
-    // F-3 / #384: Validate --failure-mode against the curated enum.
-    const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
-    if (failureMode) {
-      if (args.positive) {
-        throw new UsageError(
-          "--failure-mode is only valid for negative feedback.",
-          "INVALID_FLAG_VALUE",
-          "Remove --failure-mode or switch to --negative.",
-        );
-      }
-      const cfg = loadConfig();
-      const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
-      if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
-        throw new UsageError(
-          `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
-          "INVALID_FLAG_VALUE",
-          `Use one of: ${allowedModes.join(", ")}`,
-        );
-      }
-    }
 
     // An exact fix for the asset's text: each --replace pairs with a --with, in order.
     const replaces = parseAllFlagValues("--replace");
@@ -449,10 +421,9 @@ export const feedbackCommand = defineJsonCommand({
       if (requireReason) {
         throw new UsageError(
           "Negative feedback requires --reason: say what is wrong and what should change. " +
-            "Use --failure-mode for a curated taxonomy or --reason for free text. " +
             "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
           "MISSING_REQUIRED_ARGUMENT",
-          `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>" [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
+          `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>"`,
         );
       } else {
         warn("Warning: negative feedback without --reason says nothing about what is wrong.");
@@ -463,7 +434,6 @@ export const feedbackCommand = defineJsonCommand({
     const metadataObj = {
       signal,
       ...(reason?.trim() ? { reason: reason.trim() } : {}),
-      ...(failureMode ? { failureMode } : {}),
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
       ...(fixPairs.length > 0 ? { fix: { source: fixSource, replacements: fixPairs.length } } : {}),
     };
@@ -589,7 +559,6 @@ export const feedbackCommand = defineJsonCommand({
             previousUtility: utilityResult.previousUtility,
             nextUtility: utilityResult.nextUtility,
             reason: reason?.trim() ?? null,
-            failureMode: failureMode ?? null,
           },
         });
       } catch (escalationErr) {
@@ -639,7 +608,6 @@ export const feedbackCommand = defineJsonCommand({
       ref,
       signal,
       reason: reason?.trim() ?? null,
-      failureMode: failureMode ?? null,
       tags: validatedTags,
       rankingUpdate: rankingUpdateApplied
         ? { applied: true }

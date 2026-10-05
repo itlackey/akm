@@ -23,8 +23,7 @@
     {
       "ts": "2026-05-09T11:00:00.000Z",
       "signal": "negative",
-      "reason": "When distilled, the resulting lesson description and when_to_use cannot be made coherent because the observations have no shared trigger",
-      "failureMode": "incomplete"
+      "reason": "When distilled, the resulting lesson description and when_to_use cannot be made coherent because the observations have no shared trigger"
     }
   ],
   "humanGrade": {

@@ -106,7 +106,7 @@ improvement pipeline learns from the outcome:
 
 ```sh
 akm feedback scripts/deploy.sh --positive
-akm feedback skills/code-review --negative --failure-mode outdated --reason "references a removed flag"
+akm feedback skills/code-review --negative --reason "references a removed flag"
 ```
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`

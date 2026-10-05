@@ -43,9 +43,7 @@ akm feedback skills/planner --negative --reason "incomplete-edge-cases"
 
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
 the current local index. `--negative` additionally requires `--reason`, and
-omitting it exits 2.
-`--failure-mode` adds a curated taxonomy label but does **not** substitute for
-`--reason`. Full flag reference:
+omitting it exits 2. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).
 
 Record feedback about the asset's content: that it helped, or that it turned
@@ -58,8 +56,7 @@ asset's content.
 
 ```sh
 akm feedback skills/deploy --negative \
-  --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
-  --failure-mode dangerous
+  --reason "Skips the dry-run step; caused prod incident 2026-05-10"
 ```
 
 ## akm log
@@ -206,8 +203,7 @@ After the proposal is generated, review it with `akm proposal diff <id>` and app
 ```sh
 # 1. An agent hits a problem and records it
 akm feedback skills/deploy --negative \
-  --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
-  --failure-mode dangerous
+  --reason "Skips the dry-run step; caused prod incident 2026-05-10"
 
 # 2. The event lands in the log immediately
 akm log --ref skills/deploy --type feedback

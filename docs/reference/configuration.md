@@ -745,12 +745,11 @@ or malformed response keeps the fused order.
 
 ## Feedback
 
-`feedback` shapes the `akm feedback` taxonomy:
+`feedback` configures `akm feedback`:
 
 | Key | Purpose |
 | --- | --- |
-| `feedback.requireReason` | Whether `akm feedback --negative` without `--reason`/`--failure-mode` is a hard error. **Defaults to `true`** when unset — set `false` to downgrade the check to a warning instead |
-| `feedback.allowedFailureModes` | Restrict `--failure-mode` values accepted by `akm feedback`. Curated set (also the default when unset): `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant` |
+| `feedback.requireReason` | Whether `akm feedback --negative` without `--reason` is a hard error. **Defaults to `true`** when unset — set `false` to downgrade the check to a warning instead |
 
 ## Bundles and write target
 

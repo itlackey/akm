@@ -595,13 +595,6 @@
       "properties": {
         "requireReason": {
           "type": "boolean"
-        },
-        "allowedFailureModes": {
-          "type": "array",
-          "items": {
-            "type": "string",
-            "minLength": 1
-          }
         }
       },
       "additionalProperties": true
@@ -2274,13 +2267,6 @@
           "properties": {
             "requireReason": {
               "type": "boolean"
-            },
-            "allowedFailureModes": {
-              "type": "array",
-              "items": {
-                "type": "string",
-                "minLength": 1
-              }
             }
           },
           "additionalProperties": true

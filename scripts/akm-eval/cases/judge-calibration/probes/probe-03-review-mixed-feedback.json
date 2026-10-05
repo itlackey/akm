@@ -24,14 +24,12 @@
       "ts": "2026-05-06T10:00:00.000Z",
       "signal": "negative",
       "reason": "Restart did not fix the build-artifact cache miss on May 6",
-      "failureMode": "incomplete",
       "note": "Memory steered us toward a worker restart when the actual issue was in the artifact tier — guidance is too narrow."
     },
     {
       "ts": "2026-05-15T15:00:00.000Z",
       "signal": "negative",
-      "reason": "Ambiguous \"short-lived\" qualifier led to a wrong call during the May 15 incident",
-      "failureMode": "incorrect"
+      "reason": "Ambiguous \"short-lived\" qualifier led to a wrong call during the May 15 incident"
     }
   ],
   "humanGrade": {
