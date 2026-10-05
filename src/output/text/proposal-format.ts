@@ -188,6 +188,11 @@ export function formatProposalShowPlain(r: Record<string, unknown>): string {
     if (gate.gate) lines.push(`gate.by: ${String(gate.gate)}`);
     if (gate.decidedAt) lines.push(`gate.decidedAt: ${String(gate.decidedAt)}`);
   }
+  const fix = p.feedback as Record<string, unknown> | undefined;
+  if (fix) {
+    lines.push(`feedback.reason: ${String(fix.reason)}`);
+    lines.push(`feedback.source: ${String(fix.source)}`);
+  }
   const review = p.review as Record<string, unknown> | undefined;
   if (review) {
     lines.push(`review.outcome: ${String(review.outcome ?? "?")}`);

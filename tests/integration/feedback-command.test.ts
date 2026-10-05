@@ -1,11 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { renderReflectPromptPreview } from "../../src/commands/improve/reflect";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
+import { readEvents } from "../../src/core/events";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { runCliCapture } from "../_helpers/cli";
+import { withTestImproveLlm } from "../_helpers/improve-config";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 // Migrated from spawnSync("bun", [CLI, ...]) to the shared in-process harness
@@ -413,5 +417,95 @@ describe("akm feedback", () => {
     const rankingUpdate = parsed.rankingUpdate as { applied: boolean; reason: string };
     expect(rankingUpdate.reason).toMatch(/not "user"/);
     expect(rankingUpdate.reason).toMatch(/anti-self-reinforcement/);
+  });
+
+  // ── Which text each feedback judged ──────────────────────────────────────
+  const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+  /** `metadata.contentHash` of every feedback event, oldest first, from the usage row and from the event log. */
+  function recordedHashes(eventRef: string): { usageRows: unknown[]; events: unknown[] } {
+    const db = openStateDatabase();
+    try {
+      const rows = db
+        .prepare("SELECT metadata FROM usage_events WHERE event_type = 'feedback' AND entry_ref = ? ORDER BY id")
+        .all(eventRef) as Array<{ metadata: string | null }>;
+      return {
+        usageRows: rows.map((row) =>
+          row.metadata ? (JSON.parse(row.metadata) as { contentHash?: string }).contentHash : undefined,
+        ),
+        events: readEvents({ type: "feedback", ref: eventRef }).events.map((event) => event.metadata?.contentHash),
+      };
+    } finally {
+      db.close();
+    }
+  }
+
+  test("records the hash of the body it judged, for positive and negative feedback", async () => {
+    const file = path.join(stashDir, "memories", "deployment-notes.md");
+    writeFile(file, "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n");
+    await buildIndex();
+    const feedback = (...args: string[]) => runCli(["feedback", "memories/deployment-notes", ...args, "--format=json"]);
+
+    expect((await feedback("--positive")).status).toBe(0);
+    // The hash is of the body: the frontmatter is not the text judged.
+    writeFile(file, "---\ndescription: reworded\n---\nRemember the VPN before deploy.\n");
+    expect((await feedback("--negative", "--reason", "too short")).status).toBe(0);
+    writeFile(file, "---\ndescription: reworded\n---\nRemember the VPN, then the bastion, before deploy.\n");
+    expect((await feedback("--negative", "--reason", "still short")).status).toBe(0);
+
+    const before = sha256("Remember the VPN before deploy.");
+    const after = sha256("Remember the VPN, then the bastion, before deploy.");
+    expect(recordedHashes("stash//memories/deployment-notes")).toEqual({
+      usageRows: [before, before, after],
+      events: [before, before, after],
+    });
+  });
+
+  test("leaves the hash out when the file cannot be read, and for env and secret files", async () => {
+    const memory = path.join(stashDir, "memories", "deployment-notes.md");
+    writeFile(memory, "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n");
+    writeFile(path.join(stashDir, "env", "prod.env"), "API_KEY=super-secret-value\n");
+    writeFile(path.join(stashDir, "secrets", "api-token"), "super-secret-token");
+    await buildIndex();
+    fs.rmSync(memory);
+
+    for (const ref of ["memories/deployment-notes", "env/prod", "secrets/api-token"]) {
+      const result = await runCli(["feedback", ref, "--positive", "--format=json"]);
+      expect(result.status, ref).toBe(0);
+      expect(recordedHashes(`stash//${ref}`), ref).toEqual({ usageRows: [undefined], events: [undefined] });
+    }
+  });
+
+  test("reflect marks the feedback as given on an earlier version only once the body it judged has changed", async () => {
+    const file = path.join(stashDir, "lessons", "deploy-lesson.md");
+    const lesson = (description: string, body: string) =>
+      `---\ndescription: ${description}\nwhen_to_use: when deploying\n---\n${body}\n`;
+    writeFile(file, lesson("a deploy lesson", "Check the VPN first."));
+    await buildIndex();
+    const given = await runCli([
+      "feedback",
+      "lessons/deploy-lesson",
+      "--negative",
+      "--reason",
+      "misses the bastion",
+      "--format=json",
+    ]);
+    expect(given.status).toBe(0);
+
+    const feedbackLine = async (): Promise<string | undefined> => {
+      const { prompt } = await renderReflectPromptPreview({
+        ref: "lessons/deploy-lesson",
+        itemRef: "stash//lessons/deploy-lesson",
+        improveProfile: {},
+        config: withTestImproveLlm(loadConfig()),
+        stashDir,
+      });
+      return prompt.split("\n").find((line) => line.startsWith("- [negative]"));
+    };
+    expect(await feedbackLine()).toBe("- [negative] misses the bastion");
+    writeFile(file, lesson("a reworded deploy lesson", "Check the VPN first."));
+    expect(await feedbackLine()).toBe("- [negative] misses the bastion");
+    writeFile(file, lesson("a reworded deploy lesson", "Check the VPN, then the bastion."));
+    expect(await feedbackLine()).toBe("- [negative] misses the bastion (given on an earlier version of the text)");
   });
 });

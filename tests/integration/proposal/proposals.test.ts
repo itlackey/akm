@@ -28,7 +28,8 @@ import {
   resolveProposalId,
 } from "../../../src/commands/proposal/repository";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
-import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
+import { serializeFrontmatter } from "../../../src/core/asset/asset-serialize";
+import { parseFrontmatter, replaceFrontmatterBlocks } from "../../../src/core/asset/frontmatter";
 import { checkUnquotedDescriptionColon } from "../../../src/core/asset/frontmatter-lint";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
@@ -1737,6 +1738,158 @@ describe("D2 (#730): promoteProposal stamps OKF v0.2 provenance onto AKM-native 
     const provenance = entry?.provenance as { generatedBy?: string; verified?: unknown[] };
     expect(provenance.generatedBy).toBe(`akm/${pkgVersion}`);
     expect(provenance.verified).toHaveLength(1);
+  });
+
+  // The stamp used to write the whole frontmatter out again, so a line the proposal
+  // never touched came out rewrapped, requoted or without its comment: 3 of 16
+  // accepted edits in a staging run. It now replaces only the blocks of the keys it
+  // sets and leaves every other byte as written. These notes carry `type` and
+  // `updated`, so minting adds no line of its own: what accept writes is the note
+  // plus the stamp.
+  describe("source preservation", () => {
+    const STAMPED_AT = "2026-10-05T12:00:00.000Z";
+    const LONG_LINE =
+      "Rotate the staging database credentials every quarter, then restart the worker pool and confirm the nightly job still authenticates against the new password.";
+    const ALICE: [by: string, at: string] = ["human:alice", "2026-01-02T00:00:00.000Z"];
+    const NEW_ENTRY: [by: string, at: string] = ["human:test-human", STAMPED_AT];
+    const doc = (frontmatter: string[]) =>
+      ["---", ...frontmatter, "---", "", "Prefer rg over grep when scanning large code repos.", ""].join("\n");
+    const generated = (by: string, at: string) => ["generated:", `  by: ${by}`, `  at: ${at}`];
+    const verified = (...entries: Array<[by: string, at: string]>) => [
+      "verified:",
+      ...entries.flatMap(([by, at]) => [`  - by: ${by}`, `    at: ${at}`]),
+    ];
+    const STAMP = [...generated(`akm/${pkgVersion}`, STAMPED_AT), ...verified(NEW_ENTRY)];
+
+    async function acceptNote(frontmatter: string[]): Promise<string> {
+      const stash = makeStashDir();
+      const created = createProposal(stash, {
+        ref: "lessons/stamped-note",
+        source: "reflect",
+        payload: { content: doc(frontmatter) },
+      });
+      const accepted = await akmProposalAccept({
+        stashDir: stash,
+        id: created.id,
+        config: makeConfig(stash),
+        ctx: { actorId: () => "test-human", now: () => Date.parse(STAMPED_AT) },
+      });
+      return fs.readFileSync(accepted.assetPath, "utf8");
+    }
+
+    test("keeps a literal block, a long value, a quoted value and a comment as written", async () => {
+      // A line over ~80 columns makes the serializer write a literal block out as a
+      // folded one with blank lines between its lines.
+      const frontmatter = [
+        "# rotate quarterly, see runbook",
+        "description: |",
+        `  ${LONG_LINE}`,
+        "",
+        "  A second paragraph.",
+        `compatibility: ${LONG_LINE}`,
+        'version: "0.9.0"',
+        "when_to_use: Searching large repos for patterns",
+        "type: lesson",
+        "updated: 2026-01-15",
+      ];
+
+      const written = await acceptNote(frontmatter);
+
+      expect(written).toBe(doc([...frontmatter, ...STAMP]));
+    });
+
+    test("replaces an existing generated and verified block, with the new entry appended", async () => {
+      const before = ["# rotate quarterly, see runbook", "description: Use ripgrep before grep"];
+      // The old blocks sit mid-frontmatter, so removing them must stop at the next key.
+      const after = [
+        'version: "0.9.0"',
+        "when_to_use: Searching large repos for patterns",
+        "type: lesson",
+        "updated: 2026-01-15",
+      ];
+      // The `verified` items sit at the key's own indentation, as other YAML writers put them.
+      const old = [
+        ...generated("human:alice", "2026-01-01T00:00:00.000Z"),
+        "verified:",
+        "- by: human:alice",
+        "  at: 2026-01-02T00:00:00.000Z",
+      ];
+
+      const written = await acceptNote([...before, ...old, ...after]);
+
+      expect(written).toBe(
+        doc([...before, ...after, ...generated(`akm/${pkgVersion}`, STAMPED_AT), ...verified(ALICE, NEW_ENTRY)]),
+      );
+    });
+
+    test("absorbs the older nested provenance.verified spelling and drops the emptied provenance block", async () => {
+      const before = ["# written by an older akm"];
+      const after = [
+        "description: Use ripgrep before grep",
+        "when_to_use: Searching large repos for patterns",
+        "type: lesson",
+        "updated: 2026-01-15",
+      ];
+      const old = [
+        "provenance:",
+        "  generatedBy: akm/0.9.0",
+        "  generatedAt: 2026-01-01T00:00:00.000Z",
+        "  verified:",
+        "    - by: human:alice",
+        "      at: 2026-01-02T00:00:00.000Z",
+      ];
+
+      const written = await acceptNote([...before, ...old, ...after]);
+
+      expect(written).toBe(
+        doc([...before, ...after, ...generated(`akm/${pkgVersion}`, STAMPED_AT), ...verified(ALICE, NEW_ENTRY)]),
+      );
+    });
+
+    test("writes the frontmatter out again when the line edit does not give the intended mapping", async () => {
+      // An indented `---` inside a block scalar reads as the closing fence to a line
+      // edit, which then puts the stamp inside the scalar. The parse-back catches it.
+      const frontmatter = [
+        "# lost when the frontmatter is written out again",
+        "description: |",
+        "  Use ripgrep before grep.",
+        "  ---",
+        "  Then check the results.",
+        "when_to_use: Searching large repos for patterns",
+        "type: lesson",
+        "updated: 2026-01-15",
+      ];
+      const intended = {
+        description: "Use ripgrep before grep.\n---\nThen check the results.\n",
+        when_to_use: "Searching large repos for patterns",
+        type: "lesson",
+        updated: "2026-01-15",
+        generated: { by: `akm/${pkgVersion}`, at: STAMPED_AT },
+        verified: [{ by: "human:test-human", at: STAMPED_AT }],
+      };
+
+      const written = await acceptNote(frontmatter);
+
+      expect(parseFrontmatter(written).data).toEqual(intended);
+      expect(written).toBe(
+        `---\n${serializeFrontmatter(intended)}\n---\n\nPrefer rg over grep when scanning large code repos.\n`,
+      );
+    });
+
+    // Accept turns CRLF into LF before it stamps (repairProposalContent), so a CRLF note
+    // cannot reach the stamp that way; the helper itself keeps the block's own endings.
+    test("replaceFrontmatterBlocks keeps CRLF line endings, the body included", () => {
+      const crlf = (text: string) => text.replaceAll("\n", "\r\n");
+      const old = [...generated("human:alice", "2026-01-01T00:00:00.000Z"), ...verified(ALICE)];
+
+      const edited = replaceFrontmatterBlocks(
+        crlf(doc(["description: Note", ...old, "updated: 2026-01-15"])),
+        ["generated", "verified"],
+        STAMP,
+      );
+
+      expect(edited).toBe(crlf(doc(["description: Note", "updated: 2026-01-15", ...STAMP])));
+    });
   });
 });
 

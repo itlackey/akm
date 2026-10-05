@@ -73,12 +73,6 @@ export type {
 // Canonical harness-id source of truth (#565) — runtime value re-export.
 export { VALID_HARNESS_IDS } from "./config-types";
 
-// ── Feedback failure-mode constants (F-3 / #384) ────────────────────────────
-
-// Canonical taxonomy lives in the schema/validator layer; re-exported here so
-// existing `../core/config/config` import sites keep working.
-export { FEEDBACK_FAILURE_MODES, type FeedbackFailureMode } from "./config-schema";
-
 // ── Defaults ────────────────────────────────────────────────────────────────
 
 export const DEFAULT_CONFIG: AkmConfig = {

@@ -6,6 +6,214 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.26] - 2026-10-05
+
+The stable release of the 0.9.26 line: 0.9.26-alpha.1 and alpha.2, and the
+changes in this section. When upgrading from 0.9.25:
+
+- **Consolidate retires far fewer notes that hold something the kept note
+  lacks.** Its pair judge lists what each note alone holds and akm never
+  retires a note with anything listed; on 385 held-out pair proposals, 91% of
+  its retirements are safe, against 61% before. A duplicate that a second look
+  confirms is accepted by the triage drain (alpha.1).
+- **Negative feedback can carry the fix:** `akm feedback --negative --replace
+  "<exact text>" --with "<corrected>" --source "<evidence>"` (alpha.2), and
+  `--outdated` or `--superseded-by <ref>` to mark a note's history. Either
+  becomes one `feedback` proposal for review.
+- **Negative feedback is for wrong or stale content.** The hints and docs say
+  so; a note that did not fit the task records nothing. Each feedback event now
+  records the hash of the text it judged, and reflect marks feedback given on
+  an earlier version.
+- **Distill no longer accepts a lesson unattended.** A lesson that passes its
+  judge waits for review instead of the drain, and distill skips a memory
+  flagged wrong since its last edit, one whose only feedback is a positive
+  without a reason, and a lesson that already exists.
+- **Fixed:** a proposal no longer rewraps a note's frontmatter to add its
+  `type`, and accepting one stamps its provenance as lines of its own instead
+  of writing the frontmatter out again; a feedback fix for an asset outside the
+  bundle's layout is refused instead of queued at the wrong path.
+- **Removed:** `akm feedback --failure-mode` and `feedback.allowedFailureModes`
+  (an old config still loads, naming the key once).
+
+### Added
+
+- **`akm feedback --negative --superseded-by <ref>` and `--outdated` mark an
+  asset's history, in the same single `feedback` proposal as any `--replace`
+  edits.** `--superseded-by` (another asset replaces this one) sets
+  `beliefState: superseded` and adds the ref to `supersededBy`; akm resolves it
+  through the index first, and it must be indexed and not the asset itself, or
+  nothing is recorded. The rules are those of `akm remember --supersedes`: an
+  asset that already says so is left as it is, `contradicted` and `archived`
+  stay, and a scalar `supersededBy` becomes a list. `--outdated` (the asset
+  describes a past state and nothing replaces it) sets `beliefState:
+  deprecated`, unless the asset already says superseded, contradicted or
+  archived. Like every fix, both are for negative feedback and need `--reason`
+  and `--source`; they apply to markdown assets and are not used together. akm
+  edits only the `beliefState` and `supersededBy` lines of the text, so
+  comments, quoting, key order and line endings stay (it writes the frontmatter
+  out again only when a line edit cannot follow how a key is spelled), and `fix`
+  in the command's output and in the feedback event says what was set.
+
+### Changed
+
+- **Each feedback event records the text it judged, and reflect marks feedback
+  given on an earlier version of it.** `akm feedback` adds `contentHash`, the
+  sha256 of the asset's body without its frontmatter as it stood when the
+  feedback was given, to the event and its usage row, for positive and negative
+  feedback. It is left out for an env or secret file, whose bytes akm never
+  reads, and when the file cannot be read. When reflect gathers an asset's
+  recent feedback, a line whose `contentHash` differs from the asset's current
+  body ends with ` (given on an earlier version of the text)`, so the model
+  knows the text changed since. A line without a `contentHash` (all feedback
+  recorded before this change) or with a matching one reads as before, and the
+  rest of the prompt is unchanged.
+- **The shipped hints and docs say what negative feedback is for.** Record
+  `akm feedback --negative` only when an asset's content is wrong or stale, and
+  say what is wrong and what it should say. A note that simply did not fit the
+  task is not negative feedback: record nothing for it. Once the correct fact is
+  verified, attach the exact fix with `--replace`/`--with`/`--source`. Of the 195
+  negative reasons recorded in the last 30 days, 100 named no error in the note,
+  and 89 of those only said it did not fit the agent's task, which still lowered
+  the note's ranking and sent it to improve. The hints and the guides no longer
+  list "unhelpful" among the reasons to flag a note, and their example reasons
+  name a wrong fact instead of "wrong framework" or "incomplete-edge-cases". The
+  hints also say that an outdated note can be marked with `--outdated`, or
+  `--superseded-by <ref>` when another note replaces it.
+- **Distill skips a memory that was flagged wrong and not edited since.** A
+  memory with negative feedback in the last 30 days on the text it still has is
+  no source for a lesson, so the improve loop skips distill for it: a
+  `distill-skipped` action with the reason "flagged wrong since its last edit"
+  and an `improve_skipped` event (`distill_flagged_wrong`). The attempt goes in
+  the improve ledger as `unchanged`, so the memory waits for newer feedback, and
+  reflect still plans it. Feedback records the hash of the body it judged
+  (`contentHash`), so a write that leaves the body alone, such as an inference
+  stamp or an accepted frontmatter repair, does not lift the flag; changing the
+  body does. Feedback recorded without a hash keeps the earlier test: it flags
+  the memory while it is newer than the file's last write (its modification
+  time, as in the retrieval scope's new-material test), so any later write ends
+  it. An explicit `akm improve <ref>` still distills it.
+- **A distill proposal that passes the quality judge goes to review, not to the
+  drain.** The gate used to stamp a passing lesson (or knowledge promotion)
+  `staged`, and the triage drain accepted it on the next run with no one
+  looking. It is now minted `deferred` for a person: gate decision
+  `deferred`/`quality-gate` with the reason `distill-review`, carrying the
+  judge's per-criterion `scores` and `judgeReason`, so neither the drain nor its
+  judgment tier accepts it, and the improve ledger records `review_needed`. The
+  `distill_invoked` outcome is still `queued`. On 2026-10-05 the gate had
+  staged 12 lessons and 10 were bad (they restated the memory, claimed what it
+  does not say, or filed a dated status as a lesson); no judge score separated
+  them from the two good ones. A failed judgment behaves as before, and with
+  `processes.distill.qualityGate` off nothing is judged, so the proposal is
+  minted unstamped for the drain to decide.
+- **Distill skips a memory whose only recent feedback is positive and says
+  nothing.** A bare `akm feedback --positive` records that a note helped, which
+  gives the writer nothing to distil, so it restated the memory: 10 of the 11
+  lessons made from a memory with only that kind of feedback were rejected (the
+  11th was good). When every feedback event in the last 30 days that counts as a
+  signal is positive with no reason and no note, the improve loop skips distill
+  for the memory: a `distill-skipped` action with the reason "only positive
+  feedback, without a reason" and an `improve_skipped` event
+  (`distill_positive_without_reason`). The attempt goes in the improve ledger as
+  `unchanged`, so the memory waits for newer feedback. A reason, a note or a
+  negative signal anywhere in the window lets it through, and an explicit
+  `akm improve <ref>` still distills it. Record `--reason` with a positive
+  signal to say what helped.
+- **Distill no longer regenerates a lesson that already exists.** A lesson's ref
+  comes from its memory's name (`memories/deploy` gives
+  `lessons/memory-deploy-lesson`), so a second distill of the same memory
+  proposed the same ref, and accepting it replaced the lesson. All 5 such
+  overwrites recorded by the 2026-10-05 review were rejected. When the stash
+  the proposal is filed in already holds a file at the lesson ref, distill now
+  returns `skipped` with the reason `lesson_exists` (in the result and the
+  `distill_invoked` event) before any model call, mints no proposal and leaves
+  the memory untouched, and the improve loop records it in the ledger as
+  `unchanged`. A lesson of that name in another bundle does not count, since
+  the proposal would not replace it. To change a lesson, edit it.
+
+### Removed
+
+- **`akm feedback --failure-mode` and the `feedback.allowedFailureModes` config
+  key.** The flag labelled negative feedback `incorrect`, `outdated`,
+  `dangerous`, `incomplete` or `redundant`. None of the 195 negative feedback
+  events of the last 30 days set it, and nothing read it back. It now fails as an
+  unknown flag, and `akm feedback`'s output and the `improve_review_needed`
+  event no longer carry `failureMode`. A config that still sets
+  `feedback.allowedFailureModes` loads, names the key once as unknown, and
+  `akm migrate apply` drops it. Events recorded earlier keep their `failureMode`.
+
+### Fixed
+
+- **`akm feedback --replace` no longer queues a fix that accepting would turn
+  into a duplicate file.** A proposal writes the path computed from the ref's
+  type and name under the bundle's root, which is not where an asset indexed
+  outside that layout lives (a git bundle's `tasks/README.md` is
+  `knowledge/tasks/README`; a skill's `references/symptom-map.md` is
+  `knowledge/skills/<name>/references/symptom-map`). Accepting such a proposal
+  created a second file and left the real one unfixed. akm now refuses before
+  recording anything, naming the file and the path the proposal would write, and
+  says to edit the file directly. Plain negative feedback on these assets is
+  unaffected.
+- **A proposal no longer rewraps, reorders or strips a note's frontmatter to
+  add or correct its `type`.** When a proposal's content had no `type:` or a
+  different one, akm re-serialized the whole frontmatter block, so the reviewer
+  of a one-line correction also saw long values rewrapped, keys reordered and
+  YAML comments dropped. In practice 40 of 70 one-line correction proposals did
+  this. akm now adds a missing `type:` (and `updated:`) as a line before the
+  closing `---`, or replaces the existing `type:` line where it stands, and
+  leaves every other byte as written, line endings and body included. It
+  re-serializes only when it cannot do that safely, such as a `type` value that
+  spans several lines. The same write path serves `akm remember`, `akm import`
+  and `akm workflow create`, so a note akm writes without a `type` now carries
+  it, and `updated`, as its last frontmatter lines instead of its first.
+  Accepting a proposal also stamps its provenance (`generated`, `verified`,
+  `provenance`) as lines of its own, the last of the frontmatter, instead of
+  writing the whole frontmatter out again; a staging run found the old stamp
+  rewrapping 3 of 16 accepted edits. Accept still turns CRLF into LF, and still
+  writes the frontmatter out again when it carries bookkeeping keys such as
+  `inferenceProcessed` from the live note into a proposal that lacks them.
+- **`akm lint --fix` keeps a CRLF note's line endings** when it adds a missing
+  `updated:`. It used to rewrite the whole file to LF, so one added line showed
+  as every line changed.
+
+## [0.9.26-alpha.2] - 2026-10-05
+
+### Added
+
+- **`akm feedback --negative` can carry an exact fix of the asset's text:**
+  `--replace "<exact current text>" --with "<corrected text>" --source "<URL,
+  command or file>"`, repeatable for several edits. akm checks at once that each
+  `--replace` text appears exactly once and that the frontmatter still parses,
+  records nothing if a check fails (so the caller can correct it and retry), and
+  queues the edit as a `feedback` proposal that shows the reason and source to
+  the reviewer. Improve has edited only an asset's frontmatter since 0.9.25, so
+  this is how a wrong fact in a note's text gets corrected: by the agent that
+  found it, with its evidence, instead of by a nightly rewrite.
+
+### Changed
+
+- **`akm feedback` help, the shipped hints and the docs no longer promise that
+  improve proposes a fix of the text from a negative reason;** they say it may
+  repair the frontmatter, and point to the exact-fix flags.
+
+## [0.9.26-alpha.1] - 2026-10-05
+
+### Changed
+
+- **Consolidate's pair judge lists what each note alone holds before it
+  classifies the pair, and akm never retires a note the judge listed anything
+  for.** The judge also reads 12,000 characters of each note instead of 2,500.
+  On 650 reviewed pairs from the owner's library, 64% of the old judge's
+  retirements lost nothing; with the lists, 92% do, and it picks the wrong
+  note to keep far less often.
+- **A confirmed duplicate retires unattended.** When the judge finds nothing
+  unique on either side, one more call asks only what the retired note holds
+  that the kept one lacks; an empty answer stages the proposal, and `triage`
+  `applyMode: "promote"` accepts it like a judged revision (it counts against
+  `maxAcceptsPerRun`, and a continuity risk keeps it for review). 109 of the
+  111 duplicates that passed in the reviewed pairs were safe to retire, and an
+  accepted retirement can be undone with `akm proposal revert`. Every other
+  retirement still waits for `akm proposal accept`.
+
 ## [0.9.25] - 2026-10-04
 
 The stable release of the 0.9.25 line: 0.9.25-alpha.1 to alpha.4, unchanged. Their

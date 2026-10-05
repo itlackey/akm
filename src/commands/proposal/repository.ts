@@ -15,12 +15,17 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { ensureAkmMarkdownType } from "../../core/asset/akm-markdown";
 import { assetPathForName, placementTypes, stashDirFor } from "../../core/asset/asset-placement";
 import { isBundleSlug, parseBundleRef } from "../../core/asset/asset-ref";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
-import { carryForwardBookkeepingFrontmatter, parseFrontmatter } from "../../core/asset/frontmatter";
+import {
+  carryForwardBookkeepingFrontmatter,
+  parseFrontmatter,
+  replaceFrontmatterBlocks,
+} from "../../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
@@ -77,6 +82,7 @@ import {
   isValidProposalSource,
   PROPOSAL_SOURCES,
   type Proposal,
+  type ProposalFeedbackFix,
   type ProposalGateDecision,
   type ProposalPayload,
   type ProposalSource,
@@ -199,6 +205,8 @@ export interface CreateProposalInput {
   promotionSource?: string;
   /** Body content hash of `promotionSource` at mint time (alpha.9, B3) — see `Proposal.promotionSourceHash`. */
   promotionSourceHash?: string;
+  /** A feedback fix's reason and cited source — see `Proposal.feedback`. */
+  feedback?: ProposalFeedbackFix;
 }
 
 function nowIso(ctx?: ProposalsContext): string {
@@ -485,6 +493,7 @@ export function createProposal(stashDir: string, input: CreateProposalInput, ctx
         ...(input.eligibilitySource !== undefined ? { eligibilitySource: input.eligibilitySource } : {}),
         ...(input.promotionSource !== undefined ? { promotionSource: input.promotionSource } : {}),
         ...(input.promotionSourceHash !== undefined ? { promotionSourceHash: input.promotionSourceHash } : {}),
+        ...(input.feedback !== undefined ? { feedback: input.feedback } : {}),
       };
       upsertProposal(db, proposal, stashDir);
       for (const ref of input.attemptedRefs ?? [normalizedRef]) {
@@ -1218,8 +1227,17 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
  * Stamp provenance onto a promoted asset's frontmatter: bare top-level
  * `generated` and `verified` (as OKF v0.2 spells them; `verified` accumulates),
  * and `sources` under `provenance:`, since a bare `sources:` is the wiki
- * citation-string convention. An existing frontmatter block keeps its raw body
- * bytes.
+ * citation-string convention.
+ *
+ * Source preservation: an existing frontmatter block is edited as text and not
+ * written out again through the YAML serializer, which rewraps long values,
+ * requotes and drops comments in lines the stamp never touched. The blocks of
+ * the keys the stamp sets (`generated`, `verified`, `provenance`) are removed
+ * wherever they were and written again, serialized, as the last lines of the
+ * frontmatter; every other byte, the body included, stays as written. The
+ * edited text is parsed back to confirm it holds exactly the intended mapping;
+ * when it does not (an indented `---` inside a block scalar), the frontmatter is
+ * written out again instead, as it always used to be.
  */
 function stampProposalProvenance(
   content: string,
@@ -1255,9 +1273,16 @@ function stampProposalProvenance(
   }
   if (Object.keys(provenance).length > 0) fm.provenance = provenance;
   else delete fm.provenance;
-  return parsed.frontmatter !== null
-    ? `---\n${serializeFrontmatter(fm)}\n---\n${parsed.content}`
-    : assembleAsset(fm, parsed.content);
+  if (parsed.frontmatter === null) return assembleAsset(fm, parsed.content);
+  const stamped: Record<string, unknown> = { generated: fm.generated, verified: fm.verified };
+  if (fm.provenance !== undefined) stamped.provenance = fm.provenance;
+  const edited = replaceFrontmatterBlocks(
+    content,
+    ["generated", "verified", "provenance"],
+    serializeFrontmatter(stamped).split("\n"),
+  );
+  if (edited !== null && isDeepStrictEqual(parseFrontmatter(edited).data, fm)) return edited;
+  return `---\n${serializeFrontmatter(fm)}\n---\n${parsed.content}`;
 }
 
 /**

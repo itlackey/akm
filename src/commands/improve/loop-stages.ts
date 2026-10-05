@@ -61,7 +61,7 @@ import type {
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import { type ImproveLedgerOutcome, recordLedgerAttempt, stateKey, stripBundle } from "./ledger";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
-import { pushRecentError } from "./preparation";
+import { hasOnlyBarePositiveFeedback, isFlaggedSinceLastEdit, pushRecentError } from "./preparation";
 import type { AkmReflectOptions } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { attributeStage, errMessage } from "./stage";
@@ -272,6 +272,9 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
   recordPlasticity(env, planned, reason === "no_change" ? "noop" : result.ok ? "changed" : undefined);
 }
 
+const FLAGGED_WRONG_REASON = "flagged wrong since its last edit";
+const BARE_POSITIVE_REASON = "only positive feedback, without a reason";
+
 async function runLoopDistillPass(
   planned: ImproveEligibleRef,
   refType: string,
@@ -297,6 +300,19 @@ async function runLoopDistillPass(
   // The ledger holds cooled refs; an explicit `--scope` ref overrides it.
   if (!isDistillCandidateRef(planned.ref, options.stashDir)) return;
   if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
+  // A memory flagged wrong and not edited since is no source for a lesson. The attempt goes in the
+  // ledger so the ref waits for newer feedback; an explicit `--scope` ref still runs.
+  if (!explicitRefScope && isFlaggedSinceLastEdit(planned, env.eventsCtx)) {
+    recordLoopAttempt(planned, env, "distill", "unchanged", FLAGGED_WRONG_REASON);
+    return recordSkip(tally, planned.ref, FLAGGED_WRONG_REASON, { env, reason: "distill_flagged_wrong" });
+  }
+  // A memory whose only recent feedback is a positive with no reason or note gives the writer nothing to distil:
+  // 10 of the 11 lessons made from one were rejected. The ledger holds it until newer feedback; an explicit `--scope`
+  // ref still runs.
+  if (!explicitRefScope && hasOnlyBarePositiveFeedback(planned, env.eventsCtx)) {
+    recordLoopAttempt(planned, env, "distill", "unchanged", BARE_POSITIVE_REASON);
+    return recordSkip(tally, planned.ref, BARE_POSITIVE_REASON, { env, reason: "distill_positive_without_reason" });
+  }
 
   const result = await attributeStage(resolvedPlan, "distill", () =>
     env.distillFn({

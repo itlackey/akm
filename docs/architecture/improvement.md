@@ -57,8 +57,13 @@ everything else routes through `akm proposal accept`.
 ## Data flow
 
 1. An agent uses a capability and calls `akm feedback <ref> --positive|--negative`.
+   `--negative` is for content that is wrong or stale; a note that simply did
+   not fit the agent's task gets no feedback.
    `--negative --reason "<what is wrong and what should change>"` flags the
-   asset for review: the next improve run proposes a fix based on the reason.
+   asset: the next improve run may repair its frontmatter from the reason.
+   `--replace`/`--with`/`--source` attach an exact fix of its text once the
+   agent has verified the correct fact, which akm checks at once and queues as
+   a `feedback` proposal.
    `--positive` records that the asset helped (it raises its ranking) and does
    not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility
@@ -68,7 +73,13 @@ everything else routes through `akm proposal accept`.
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
    a positive or note-only signal never plans one. Distill reads any feedback
-   on a memory in that window. Unless `--require-feedback-signal` is set, the
+   on a memory in that window, but skips a memory flagged wrong and not edited
+   since: a negative feedback in the window judged the body it still has (or,
+   recorded without that body's hash, is newer than its file's last write). It
+   also skips a memory whose only feedback in the window is positive with no
+   reason or note, which gives the writer nothing to distil (10 of the 11
+   lessons made from such memories were rejected). Unless
+   `--require-feedback-signal` is set, the
    fallback lanes (high salience, and proactive maintenance where the strategy
    enables it) pick what the retrieval scope below admits, for scoring only:
    they plan nothing, so improve does not rewrite assets on a proactive
@@ -82,9 +93,12 @@ everything else routes through `akm proposal accept`.
    the memory, and it offers a memory whose promotion was accepted or
    rejected again only after the memory's body changes; the pair pass judges
    near-duplicate and superseding pairs in the memory tier and emits a
-   reviewed `retire` proposal for the `duplicate`/`subsumed`/`supersedes`
-   classes; `overlap`, `unrelated` and `contradicts` are recorded as
-   `judged_no_action` with no proposal.
+   `retire` proposal for the `duplicate`/`subsumed`/`supersedes` classes;
+   `overlap`, `unrelated` and `contradicts` are recorded as
+   `judged_no_action` with no proposal. The judge first lists the durable
+   claims each side alone holds, and a side with any listed claim is never
+   retired. A duplicate with nothing listed on either side is staged for the
+   triage drain to accept; every other retirement waits for a person.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
@@ -193,10 +207,16 @@ or more and a rejection below that. The rubric and the rule were chosen on 90
 labelled real rewrites, where judging on the mean let rewrites that only
 reworded a correct asset through.
 
-A pass is stamped on the proposal as a `staged` decision from the `quality-gate`
-with the per-criterion `scores` and the judge's `judgeReason`; both stay on the
-proposal when the drain accepts it, so a later audit can read why it passed
-(`akm proposal show --format json`). Reflect revises only an asset's
+A reflect pass is stamped on the proposal as a `staged` decision from the
+`quality-gate` with the per-criterion `scores` and the judge's `judgeReason`;
+both stay on the proposal when the drain accepts it, so a later audit can read
+why it passed (`akm proposal show --format json`). A distill pass is not staged:
+the lesson or promotion is minted `deferred` for a person (reason
+`distill-review`, same gate) with the same `scores` and `judgeReason`, and the
+triage drain and its judgment tier leave it alone. On 2026-10-05 the gate had
+staged 12 lessons and 10 were bad (they restated the memory, claimed what it
+does not say, or filed a dated status as a lesson), and no score separated them
+from the two good ones. Reflect revises only an asset's
 `description`, `when_to_use` and title, never its body. On 396 labelled edits,
 those that fixed a frontmatter defect and left the body alone were good 24
 times in 26, and those that also rewrote the body were bad 175 times in 224.
@@ -324,10 +344,10 @@ unless `experimental.improveAutonomy` is explicitly set to `true`:
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
 `akm health`'s improve skip-reason summary. Consolidation stays enabled with
-autonomy off: both its passes only ever emit a reviewable proposal, and a
-pair-pass `retire` proposal is never auto-accepted by `triage`
-`applyMode: "promote"` regardless of this gate — it always waits for
-`akm proposal accept`. An absent `experimental`
+autonomy off: both its passes only ever emit a reviewable proposal. The one
+pair-pass `retire` proposal `triage` `applyMode: "promote"` accepts is a
+duplicate the pair judge staged (nothing unique on either side, no
+continuity risk); every other one waits for `akm proposal accept`. An absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off —
 autonomy is never inferred. `akm proposal drain --promote` is a second,
 explicit promote surface independent of this gate.

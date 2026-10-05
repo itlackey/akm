@@ -78,6 +78,12 @@ export interface ProposalPayload {
   frontmatter?: Record<string, unknown>;
 }
 
+/** Why a feedback fix was proposed: the feedback's reason and the source it cites for the correct fact. */
+export interface ProposalFeedbackFix {
+  reason: string;
+  source: string;
+}
+
 export interface ProposalReview {
   outcome: "accepted" | "rejected";
   reason?: string;
@@ -117,7 +123,8 @@ export interface ProposalGateDecision {
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
    * `no-judge-configured`, `judgment-deferred`, `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
-   * `quality-review` for a human, `judge-error` for a human when reflect's
+   * `quality-review` for a human, `distill-review` for a human on a distill
+   * pass, `judge-error` for a human when reflect's
    * judge gave no verdict. Reflect (`reflect`), for a human:
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
@@ -130,7 +137,7 @@ export interface ProposalGateDecision {
   thresholds?: { maxDiffLines?: number; minContentLines?: number };
   /** SHA-256 of the content the gate evaluated, to tell an unchanged retry from an edit. */
   contentHash?: string;
-  /** The quality judge's per-criterion scores, on a `quality-gate` pass. */
+  /** The quality judge's per-criterion scores, on a `quality-gate` pass, staged or deferred for review. */
   scores?: Record<string, number>;
   /** The quality judge's one-sentence reason, on a `quality-gate` pass. */
   judgeReason?: string;
@@ -255,6 +262,8 @@ export interface Proposal {
   /** Self-estimated confidence in [0, 1], for reviewers. */
   confidence?: number;
   gateDecision?: ProposalGateDecision;
+  /** The negative feedback that supplied this proposal's exact fix (`akm feedback --replace`), for the reviewer. */
+  feedback?: ProposalFeedbackFix;
   /** The target's content before promotion (absent for new assets), for revert. Never shown. */
   backupContent?: string;
   /** Exactly where the accepted content went; prevents cross-target revert. */
@@ -310,6 +319,8 @@ export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
 
 /** A promote refused because the target changed after mint (STALE, R20) — not a merit judgement. */
 export const STALE_TARGET_GATE_REASON = "stale-target";
+/** The gate on a retire proposal the triage drain may accept unattended: a pair-judged duplicate. */
+export const PAIR_PASS_GATE = "consolidate-pair";
 export const EXPIRED_GATE_REASON = "expired";
 export const ASSET_MISSING_GATE_REASON = "asset-missing";
 

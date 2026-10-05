@@ -486,7 +486,7 @@ Keys of `metadata_json`, each written only when the proposal has it:
 | `review` | `{ outcome: accepted\|rejected, reason?, decidedAt }` |
 | `reviewHistory` | Since 0.9.19: the rejections `akm proposal reopen` undid, oldest first, each `{ review?, gateDecision?, reopenedAt, reopenReason? }`; the newest `reopenedAt` is where retention expiry and `--older-than` start counting |
 | `confidence` | Self-estimated confidence in [0, 1] |
-| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, scores?, judgeReason?, decidedAt }`; `scores` (per criterion) and `judgeReason` are the quality judge's evidence on its `staged` pass, and stay on the row when the drain accepts it; a reflect pass deferred as `body-edit` by an older release carries them too |
+| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, scores?, judgeReason?, decidedAt }`; `scores` (per criterion) and `judgeReason` are the quality judge's evidence on its `staged` pass (or on a distill pass it deferred for review as `distill-review`), and stay on the row when the drain accepts it; a reflect pass deferred as `body-edit` by an older release carries them too |
 | `backupContent` | The target's content before promotion, for `revert` |
 | `acceptedTarget` | `{ source, root, path, contentHash }`, where accepted content went |
 | `eligibilitySource` | The improve lane that planned the asset: `signal-delta` or `scope`; `proactive` and `high-salience` only on rows an older release wrote, since those lanes score assets and no longer plan them |
@@ -597,7 +597,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `remember` | `akm remember` | `path`, `force`; `tagCount`, `enriched`, `auto`, `scope`, `notices` on the full path |
 | `import` | `akm import` | `source`, `path`, `force` |
 | `sync` | `akm sync` | `name`, `message`, `ok` |
-| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `failureMode`, `tags` |
+| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags`, `contentHash` (sha256 of the asset's body when the feedback was given) |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `curate` | `akm curate` | `query`, `itemCount`, `itemRefs[]` |
 | `show` | `akm show` | `type`, `name` |
@@ -618,9 +618,9 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `improve_invoked` | `akm improve`, live runs | `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_completed` | `akm improve`, end of a run | `strategy`, `plannedRefs`, per-mode and per-class action counts, memory-cleanup counts |
 | `improve_failed` | `akm improve`, a run that crashed | `strategy`, `error` (redacted), `durationMs` |
-| `improve_skipped` | `akm improve`: a ref, a lane, or a group of refs left out | `reason`: `no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`; with `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
+| `improve_skipped` | `akm improve`: a ref, a lane, or a group of refs left out | `reason`: `no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`; with `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
 | `improve_lock_recovered` | `akm improve` reclaiming a stale run lock | `lockName`, `stalePid`, `lockedAt`, `recoveredAt`, `lockAgeMs`, `reason` |
-| `improve_review_needed` | `akm feedback`, when a high-utility asset's utility drops below the review threshold | `previousUtility`, `nextUtility`, `reason`, `failureMode` |
+| `improve_review_needed` | `akm feedback`, when a high-utility asset's utility drops below the review threshold | `previousUtility`, `nextUtility`, `reason` |
 | `improve_reflect_outcome` | the improve loop, after each reflect call | `ok`, `durationMs`, `engine`, `reason` |
 | `proactive_selected` | the proactive-maintenance selector, once per run | `count`, `dueTotal`, `neverReflected` |
 | `reflect_invoked` | the reflect pass | `task`, `engine`, `eligibilitySource` |

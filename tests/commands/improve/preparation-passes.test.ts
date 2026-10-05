@@ -15,8 +15,16 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
+import { contentHash } from "../../../src/commands/improve/content-hash";
 import { type ImproveLedgerOutcome, type ImproveLedgerRow, ledgerKey } from "../../../src/commands/improve/ledger";
-import { buildSnapshotManifest, partitionBySignalDelta } from "../../../src/commands/improve/preparation";
+import {
+  buildSnapshotManifest,
+  hasOnlyBarePositiveFeedback,
+  isFlaggedSinceLastEdit,
+  partitionBySignalDelta,
+} from "../../../src/commands/improve/preparation";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
@@ -370,5 +378,175 @@ describe("buildSnapshotManifest", () => {
     });
     expect(snap.latestFeedbackTs.size).toBe(0);
     expect(snap.latestNegativeTs.size).toBe(0);
+  });
+});
+
+describe("isFlaggedSinceLastEdit", () => {
+  const DAY_MS = 24 * 3_600_000;
+  const memory = "memories/port-note";
+
+  /** A memory file (holding `text`) last written `editedAgoMs` ago; a candidate naming it. */
+  function candidateEditedAgo(
+    editedAgoMs: number,
+    extra: Partial<ImproveEligibleRef> = {},
+    text = "The default port is 8000.\n",
+  ): ImproveEligibleRef {
+    const filePath = path.join(freshStash(), "memories", "port-note.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, text);
+    const editedAt = new Date(Date.now() - editedAgoMs);
+    fs.utimesSync(filePath, editedAt, editedAt);
+    return ref(memory, { filePath, ...extra });
+  }
+
+  function feedbackAgo(agoMs: number, metadata: Record<string, unknown>, eventRef = memory): void {
+    appendEvent({ eventType: "feedback", ref: eventRef, metadata }, { now: () => Date.now() - agoMs });
+  }
+
+  test("negative feedback newer than the file's last write flags it", () => {
+    const candidate = candidateEditedAgo(3 * DAY_MS);
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+  });
+
+  test("an edit after the feedback lifts the flag", () => {
+    const candidate = candidateEditedAgo(DAY_MS);
+    feedbackAgo(3 * DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+  });
+
+  test("a positive signal, a note, or a negative older than the 30-day window does not flag it", () => {
+    const candidate = candidateEditedAgo(60 * DAY_MS);
+    feedbackAgo(DAY_MS, { signal: "positive" });
+    feedbackAgo(DAY_MS, { note: "worked" });
+    feedbackAgo(40 * DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+  });
+
+  test("a candidate with no file path or no file on disk is not flagged", () => {
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(ref(memory))).toBe(false);
+    expect(isFlaggedSinceLastEdit(ref(memory, { filePath: path.join(freshStash(), "memories", "gone.md") }))).toBe(
+      false,
+    );
+  });
+
+  test("feedback is read under the candidate's durable item_ref", () => {
+    const candidate = candidateEditedAgo(3 * DAY_MS, { itemRef: `stash//${memory}` });
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" }, `stash//${memory}`);
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+  });
+
+  describe("a negative event is judged by the hash of the body it recorded, when it recorded one", () => {
+    const original = "---\ndescription: Server ports\n---\nThe default port is 8000.\n";
+    const frontmatterOnlyWrite =
+      "---\ndescription: Server ports\ninferredAt: 2026-10-05\n---\nThe default port is 8000.\n";
+    const bodyEdit = "---\ndescription: Server ports\n---\nThe default port is 4096.\n";
+    const negative = { signal: "negative", reason: "the default port is 4096" };
+    const judged = { ...negative, contentHash: contentHash(original, "body") };
+
+    test("it still flags after a write that leaves the body alone", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, original);
+      feedbackAgo(DAY_MS, judged);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+
+      // An inference stamp or a frontmatter repair: newer than the feedback, the text it judged unchanged.
+      fs.writeFileSync(candidate.filePath as string, frontmatterOnlyWrite);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+    });
+
+    test("it stops flagging once the body changes", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, original);
+      feedbackAgo(DAY_MS, judged);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+
+      fs.writeFileSync(candidate.filePath as string, bodyEdit);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+    });
+
+    test("the hash decides, not the file's age: a body it did not judge is not flagged although the file is older than the feedback", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, bodyEdit);
+      feedbackAgo(DAY_MS, judged);
+
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+    });
+
+    test("an event without a hash keeps the mtime rule: any later write lifts the flag", () => {
+      const candidate = candidateEditedAgo(3 * DAY_MS, {}, original);
+      feedbackAgo(DAY_MS, negative);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+
+      fs.writeFileSync(candidate.filePath as string, frontmatterOnlyWrite);
+      expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+    });
+  });
+});
+
+describe("hasOnlyBarePositiveFeedback", () => {
+  const DAY_MS = 24 * 3_600_000;
+  const memory = "memories/rollout-status";
+
+  function feedbackAgo(agoMs: number, metadata: Record<string, unknown>, eventRef = memory): void {
+    appendEvent({ eventType: "feedback", ref: eventRef, metadata }, { now: () => Date.now() - agoMs });
+  }
+
+  test("a memory whose every signal in the window is a positive with no reason or note is matched", () => {
+    freshStash();
+    feedbackAgo(2 * DAY_MS, { signal: "positive" });
+    feedbackAgo(DAY_MS, { signal: "positive", reason: "  " });
+
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(true);
+  });
+
+  test.each([
+    ["a reason", { signal: "positive", reason: "the runbook worked first try" }],
+    ["a note", { signal: "positive", note: "worked" }],
+    ["a negative signal", { signal: "negative" }],
+    ["a note and no signal", { note: "see the changelog" }],
+  ])("one event with %s means it is not bare", (_name, metadata) => {
+    freshStash();
+    feedbackAgo(2 * DAY_MS, { signal: "positive" });
+    feedbackAgo(DAY_MS, metadata);
+
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
+  });
+
+  test("no feedback in the window matches nothing, an event that is not a signal is ignored", () => {
+    freshStash();
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
+
+    feedbackAgo(40 * DAY_MS, { signal: "positive" });
+    feedbackAgo(DAY_MS, { tags: ["rollout"] });
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
+
+    feedbackAgo(DAY_MS, { signal: "positive" });
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(true);
+  });
+
+  test("only the 30-day window counts, in both directions", () => {
+    freshStash();
+    feedbackAgo(40 * DAY_MS, { signal: "positive", reason: "the runbook worked first try" });
+    feedbackAgo(DAY_MS, { signal: "positive" });
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(true);
+
+    feedbackAgo(2 * DAY_MS, { signal: "positive", reason: "the runbook worked first try" });
+    expect(hasOnlyBarePositiveFeedback(ref(memory))).toBe(false);
+  });
+
+  test("feedback is read under the candidate's durable item_ref", () => {
+    freshStash();
+    const candidate = ref(memory, { itemRef: `stash//${memory}` });
+    feedbackAgo(DAY_MS, { signal: "positive" });
+    expect(hasOnlyBarePositiveFeedback(candidate)).toBe(false);
+
+    feedbackAgo(DAY_MS, { signal: "positive" }, `stash//${memory}`);
+    expect(hasOnlyBarePositiveFeedback(candidate)).toBe(true);
   });
 });

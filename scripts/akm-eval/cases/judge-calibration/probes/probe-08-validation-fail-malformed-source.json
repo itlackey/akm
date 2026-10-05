@@ -18,14 +18,12 @@
       "ts": "2026-05-06T12:00:00.000Z",
       "signal": "negative",
       "reason": "Unfinished code snippets and a stray `## description` heading make this prone to producing malformed lesson output",
-      "failureMode": "incorrect",
       "note": "Last time it was distilled the description field was a heading reference rather than a sentence."
     },
     {
       "ts": "2026-05-13T08:30:00.000Z",
       "signal": "negative",
-      "reason": "Embedded `## description` heading is the exact antipattern the LESSON_SYSTEM_PROMPT calls out (BAD: 'Key pitfalls')",
-      "failureMode": "incorrect"
+      "reason": "Embedded `## description` heading is the exact antipattern the LESSON_SYSTEM_PROMPT calls out (BAD: 'Key pitfalls')"
     }
   ],
   "humanGrade": {

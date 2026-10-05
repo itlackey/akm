@@ -3,13 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
+import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
-import { assembleAsset } from "../core/asset/asset-serialize";
-import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../core/asset/resolve-ref";
-import { isWithin, writeFileAtomic } from "../core/common";
-import { FEEDBACK_FAILURE_MODES, loadConfig } from "../core/config/config";
+import { assembleAsset, serializeFrontmatter } from "../core/asset/asset-serialize";
+import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "../core/asset/frontmatter";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
+import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
+import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
@@ -29,6 +33,9 @@ import {
   getItemRefById,
 } from "../storage/repositories/index-entries-repository";
 import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
+import { contentHash } from "./improve/content-hash";
+import { readEdgeList } from "./improve/memory/memory-belief";
+import { createProposal } from "./proposal/repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -229,6 +236,253 @@ function recordFeedbackUsage(
   return { utilityResult, rankingUpdateApplied, rankingUpdateSkippedReason };
 }
 
+// ── Judged text ──────────────────────────────────────────────────────────────
+
+/**
+ * The body hash of the text a piece of feedback judges: the asset's file as it
+ * stands when the feedback is given. `undefined` when the file cannot be read.
+ * Reflect compares it with the asset's current body to tell feedback given on
+ * an earlier version of the text. An env or secret file is never read.
+ */
+function judgedTextHash(itemRef: string, filePath: string | undefined): string | undefined {
+  try {
+    const type = typeNameFromConceptId(parseBundleRef(itemRef).conceptId)?.type;
+    if (!filePath || type === "env" || type === "secret") return undefined;
+    return contentHash(fs.readFileSync(filePath, "utf8"), "body");
+  } catch {
+    return undefined;
+  }
+}
+
+// ── Exact fixes ──────────────────────────────────────────────────────────────
+
+/** 1-based numbers of the lines on which `needle` starts. */
+function startLines(text: string, needle: string): number[] {
+  const lines: number[] = [];
+  for (let at = text.indexOf(needle); at !== -1; at = text.indexOf(needle, at + 1)) {
+    lines.push(text.slice(0, at).split("\n").length);
+  }
+  return lines;
+}
+
+/**
+ * Apply `--replace`/`--with` pairs in order. Each `--replace` text must appear
+ * exactly once in the text as it stands at that point, so the edit can only
+ * land where the caller meant it.
+ */
+export function applyExactReplacements(
+  text: string,
+  pairs: ReadonlyArray<{ old: string; new: string }>,
+  file: string,
+): string {
+  let out = text;
+  pairs.forEach((pair, i) => {
+    const label = `--replace #${i + 1}`;
+    if (!pair.old) throw new UsageError(`${label} is empty.`, "INVALID_FLAG_VALUE");
+    const lines = startLines(out, pair.old);
+    if (lines.length === 0) {
+      throw new UsageError(
+        `${label} was not found in ${file}.`,
+        "INVALID_FLAG_VALUE",
+        "Copy the text verbatim from the file, including whitespace and punctuation.",
+      );
+    }
+    if (lines.length > 1) {
+      throw new UsageError(
+        `${label} appears ${lines.length} times in ${file} (lines ${lines.join(", ")}).`,
+        "INVALID_FLAG_VALUE",
+        "Include more of the surrounding text so it appears once.",
+      );
+    }
+    const at = out.indexOf(pair.old);
+    out = out.slice(0, at) + pair.new + out.slice(at + pair.old.length);
+  });
+  return out;
+}
+
+/** A fix may change the frontmatter's values, but it must still parse as YAML. */
+function assertFrontmatterStillParses(before: string, after: string, file: string): void {
+  if (!parseFrontmatterBlock(before)) return;
+  const block = parseFrontmatterBlock(after);
+  let problem: string | undefined;
+  if (!block) {
+    problem = "the frontmatter block is gone";
+  } else if (block.frontmatter.trim()) {
+    try {
+      const data = yamlParse(block.frontmatter) as unknown;
+      if (typeof data !== "object" || data === null || Array.isArray(data)) problem = "it is no longer a mapping";
+    } catch (err) {
+      problem = (err instanceof Error ? err.message : String(err)).split("\n")[0];
+    }
+  }
+  if (problem) {
+    throw new UsageError(
+      `The fix breaks the frontmatter of ${file}: ${problem}.`,
+      "INVALID_FLAG_VALUE",
+      'Quote a value that contains ": ", or leave the frontmatter alone.',
+    );
+  }
+}
+
+/**
+ * Refuse a fix that a proposal could not apply to the asset's file. A proposal
+ * writes the file `createProposal` computes from the ref's type and name under
+ * the bundle's root. For an asset indexed anywhere else (a git bundle's
+ * `tasks/README.md` is `knowledge/tasks/README`) nothing is there: accepting
+ * the proposal would create a second file and leave the real one unfixed.
+ */
+export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
+  const { type, name } = parseRefInput(itemRef);
+  const typeDir = stashDirFor(type);
+  const writes =
+    typeDir === undefined ? undefined : assetPathForName(type, path.join(path.resolve(root), typeDir), name);
+  if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
+  throw new UsageError(
+    `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,
+    "INVALID_PROPOSAL",
+  );
+}
+
+// ── History marks ────────────────────────────────────────────────────────────
+
+/** What `--superseded-by` or `--outdated` records: `supersededBy` is the successor's durable ref. */
+type HistoryMark = { supersededBy: string } | { outdated: true };
+
+/**
+ * The durable ref of the asset `--superseded-by` names. It must be indexed and
+ * must not be the asset itself, or nothing is recorded.
+ */
+function resolveSuccessorRef(db: Database, input: string, itemRef: string): string {
+  const parsed = parseBundleRef(input);
+  const id = findEntryIdByRef(db, makeBundleRef(parsed.bundle, parsed.conceptId), parsed.bundle);
+  const successor = id === undefined ? null : getItemRefById(db, id);
+  if (!successor) {
+    throw new UsageError(
+      `--superseded-by ${input} is not in the index.`,
+      "INVALID_FLAG_VALUE",
+      "Run 'akm search' to find the asset that replaces it, then 'akm index' if it was recently added.",
+    );
+  }
+  if (successor === itemRef) {
+    throw new UsageError(`--superseded-by ${input} is the asset itself.`, "INVALID_FLAG_VALUE");
+  }
+  return successor;
+}
+
+/** The frontmatter of `text` as a YAML mapping: `{}` when it has none (or only comments), `undefined` when it is not valid YAML or not a mapping. */
+function frontmatterMapping(text: string): Record<string, unknown> | undefined {
+  const block = parseFrontmatterBlock(text);
+  if (!block?.frontmatter.trim()) return {};
+  try {
+    const data = (yamlParse(block.frontmatter) ?? {}) as unknown;
+    return typeof data === "object" && data !== null && !Array.isArray(data)
+      ? (data as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What `mark` sets on frontmatter `data`, `{}` when it already says so. The rules
+ * of `writeSupersededEdge`: a ref already listed is not added again,
+ * `contradicted` and `archived` stay, and a scalar `supersededBy` joins the list.
+ * `--outdated` also leaves `superseded`, which says more than `deprecated`.
+ */
+function historyMarkChanges(
+  data: Record<string, unknown>,
+  mark: HistoryMark,
+): { beliefState?: string; supersededBy?: string[] } {
+  const state = data.beliefState;
+  if ("outdated" in mark) {
+    return state === "deprecated" || state === "superseded" || state === "contradicted" || state === "archived"
+      ? {}
+      : { beliefState: "deprecated" };
+  }
+  const existing = readEdgeList(data.supersededBy);
+  return {
+    ...(state === "superseded" || state === "contradicted" || state === "archived"
+      ? {}
+      : { beliefState: "superseded" }),
+    ...(existing.includes(mark.supersededBy) ? {} : { supersededBy: [...existing, mark.supersededBy] }),
+  };
+}
+
+/** Index of the top-level `key:` line inside the frontmatter block of `lines`, or -1. */
+function topLevelKeyLine(lines: string[], key: string): number {
+  const close = lines.findIndex((line, i) => i > 0 && line.trim() === "---");
+  if (lines[0]?.trim() !== "---" || close === -1) return -1;
+  return lines.findIndex((line, i) => i > 0 && i < close && line.startsWith(`${key}:`));
+}
+
+/** Put a one-line `beliefState` in the frontmatter of `text`: in place of its line, or just before the closing fence. */
+function setBeliefState(text: string, state: string): string {
+  const lines = text.split("\n");
+  const at = topLevelKeyLine(lines, "beliefState");
+  if (at === -1) return spliceFrontmatterLine(text, `beliefState: ${state}`) ?? text;
+  lines[at] = `beliefState: ${state}`;
+  return lines.join("\n");
+}
+
+/** Put the `supersededBy` list `list`, whose last item is `ref`, in the frontmatter of `text`. */
+function setSupersededBy(text: string, list: string[], ref: string): string {
+  const item = (value: string) => `- ${yamlStringify(value, { lineWidth: 0 }).trimEnd()}`;
+  const whole = ["supersededBy:", ...list.map((value) => `  ${item(value)}`)];
+  const lines = text.split("\n");
+  const at = topLevelKeyLine(lines, "supersededBy");
+  if (at === -1) return whole.reduce((out, line) => spliceFrontmatterLine(out, line) ?? out, text);
+  // The item lines of a block list, which may have blank lines and comments between them.
+  const items: number[] = [];
+  for (let i = at + 1; i < lines.length && /^\s*(-(\s|$)|#|$)/.test(lines[i] as string); i++) {
+    if (/^\s*-(\s|$)/.test(lines[i] as string)) items.push(i);
+  }
+  if (items.length > 0 && /^supersededBy:\s*(#.*)?$/.test(lines[at] as string)) {
+    // A block list: the new item follows the last one, indented like the first.
+    const indent = /^\s*/.exec(lines[items[0] as number] as string)?.[0] ?? "";
+    lines.splice((items[items.length - 1] as number) + 1, 0, `${indent}${item(ref)}`);
+  } else {
+    // A flow list, a scalar or no value: this one key is written out as a block list.
+    lines.splice(at, 1, ...whole);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Mark an asset's history in the frontmatter of its text, as a proposal's content:
+ * `{ supersededBy }` sets `beliefState: superseded` and adds the ref to the
+ * `supersededBy` list, `{ outdated }` sets `beliefState: deprecated`. Only those
+ * two keys change, by line edits that keep every other byte (comments, quoting,
+ * key order, line endings, the body). When a line edit does not give exactly the
+ * intended frontmatter (an unusual spelling of a key), the frontmatter is
+ * written out again instead. Returns `raw` when it already says what the mark sets.
+ */
+export function applyHistoryMark(raw: string, mark: HistoryMark, file: string): string {
+  const crlf = raw.includes("\r\n");
+  const text = crlf ? raw.replace(/\r\n/g, "\n") : raw;
+  const data = frontmatterMapping(text);
+  if (!data) {
+    throw new UsageError(
+      `The frontmatter of ${file} is not a valid YAML mapping, so akm cannot mark it.`,
+      "INVALID_FLAG_VALUE",
+      "Fix the frontmatter first.",
+    );
+  }
+  const changes = historyMarkChanges(data, mark);
+  if (Object.keys(changes).length === 0) return raw;
+
+  let out = text;
+  if (changes.beliefState !== undefined) out = setBeliefState(out, changes.beliefState);
+  if (changes.supersededBy !== undefined && "supersededBy" in mark) {
+    out = setSupersededBy(out, changes.supersededBy, mark.supersededBy);
+  }
+  const intended = { ...data, ...changes };
+  if (!isDeepStrictEqual(frontmatterMapping(out), intended)) {
+    const block = parseFrontmatterBlock(text);
+    out = `---\n${serializeFrontmatter(intended)}\n---\n${block ? block.content : text}`;
+  }
+  return crlf ? out.replace(/\n/g, "\r\n") : out;
+}
+
 // ── Command definition ────────────────────────────────────────────────────────
 
 export const feedbackCommand = defineJsonCommand({
@@ -237,9 +491,16 @@ export const feedbackCommand = defineJsonCommand({
     description:
       "Record positive or negative feedback for any indexed bundle asset.\n\n" +
       '`akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags\n' +
-      "the asset for review: the next improve run proposes a fix based on your reason, so be\n" +
-      "specific. `--positive` records that an asset helped (it raises its ranking) and does not\n" +
-      "trigger a rewrite.\n\n" +
+      "the asset: the next improve run may repair its description, title or when_to_use from\n" +
+      "your reason, but it does not rewrite the text. To correct a wrong fact in the text, attach\n" +
+      'the exact fix: --replace "<exact current text>" --with "<corrected text>" --source "<URL,\n' +
+      'command or file that shows it>" (repeat --replace/--with for several edits; use --with=...\n' +
+      "for a value that starts with -). akm checks that each --replace text appears exactly once\n" +
+      "and queues the edit as a proposal for review. To mark the asset's history instead, add\n" +
+      "--superseded-by <ref> (the asset that replaces it) or --outdated (it describes a past\n" +
+      "state and nothing replaces it), with --reason and --source: the same proposal sets its\n" +
+      "beliefState and, for --superseded-by, adds the ref to supersededBy. `--positive` records\n" +
+      "that an asset helped (it raises its ranking) and does not trigger a rewrite.\n\n" +
       "Both signals adjust the asset's usefulness score right away, in the same\n" +
       "process: positive feedback raises it, negative lowers it, and recent\n" +
       "feedback counts for more than old feedback. No reindex is needed — the new\n" +
@@ -258,20 +519,38 @@ export const feedbackCommand = defineJsonCommand({
     negative: {
       type: "boolean",
       description:
-        "Flag the asset for review: the next improve run proposes a fix from --reason (also lowers its ranking immediately, no reindex needed).",
+        "Flag the asset: lowers its ranking immediately (no reindex needed), and the next improve run may repair its frontmatter from --reason. Attach --replace/--with/--source to correct its text, or --superseded-by/--outdated to mark its history.",
       default: false,
     },
     reason: {
       type: "string",
       description:
-        "What is wrong with the asset's content and what should change; the next improve run proposes a fix from it, so be specific (required for negative feedback by default). Not for akm command errors.",
+        "What is wrong with the asset's content and what should change, specifically (required for negative feedback by default). Not for akm command errors.",
     },
-    "failure-mode": {
+    replace: {
       type: "string",
       description:
-        "Structured failure-mode taxonomy for negative feedback. " +
-        `Accepted values: ${FEEDBACK_FAILURE_MODES.join(", ")}. ` +
-        "Stored alongside --reason in event metadata for aggregation by the distill pipeline.",
+        "Exact text to correct, copied verbatim from the asset file; it must appear exactly once (repeatable, each paired with a --with in order). Negative feedback only.",
+    },
+    with: {
+      type: "string",
+      description: "Corrected text for the matching --replace (repeatable, in the same order).",
+    },
+    source: {
+      type: "string",
+      description:
+        "Where the correct fact comes from: a URL, command or file. Required with --replace, --superseded-by and --outdated.",
+    },
+    "superseded-by": {
+      type: "string",
+      description:
+        "Ref of the asset that replaces this one. The fix sets beliefState: superseded and adds the ref to supersededBy (contradicted and archived stay). The ref must be indexed and not this asset. Negative feedback on a markdown asset only; may be combined with --replace/--with.",
+    },
+    outdated: {
+      type: "boolean",
+      description:
+        "The asset describes a past state and no single asset replaces it. The fix sets beliefState: deprecated (superseded, contradicted and archived stay). Negative feedback on a markdown asset only; may be combined with --replace/--with, not with --superseded-by.",
+      default: false,
     },
     tag: {
       type: "string",
@@ -305,24 +584,51 @@ export const feedbackCommand = defineJsonCommand({
     const signal = args.positive ? "positive" : "negative";
     const reason = args.reason as string | undefined;
 
-    // F-3 / #384: Validate --failure-mode against the curated enum.
-    const failureMode = (args["failure-mode"] as string | undefined)?.trim() || undefined;
-    if (failureMode) {
-      if (args.positive) {
+    // A fix: an exact edit of the asset's text (each --replace pairs with a --with, in order),
+    // a mark of its history (--superseded-by or --outdated), or both.
+    const replaces = parseAllFlagValues("--replace");
+    const withs = parseAllFlagValues("--with");
+    const fixSource = (args.source as string | undefined)?.trim() || undefined;
+    const fixPairs = replaces.map((old, i) => ({ old, new: withs[i] ?? "" }));
+    const supersededBy = args["superseded-by"] as string | undefined;
+    const outdated = args.outdated === true;
+    const hasMark = supersededBy !== undefined || outdated;
+    if (replaces.length > 0 || withs.length > 0 || fixSource !== undefined || hasMark) {
+      if (!args.negative) {
         throw new UsageError(
-          "--failure-mode is only valid for negative feedback.",
+          "--replace, --with, --source, --superseded-by and --outdated are only for negative feedback.",
           "INVALID_FLAG_VALUE",
-          "Remove --failure-mode or switch to --negative.",
         );
       }
-      const cfg = loadConfig();
-      const allowedModes: readonly string[] = cfg.feedback?.allowedFailureModes ?? FEEDBACK_FAILURE_MODES;
-      if (allowedModes.length > 0 && !allowedModes.includes(failureMode)) {
+      if (supersededBy !== undefined && outdated) {
         throw new UsageError(
-          `Invalid --failure-mode "${failureMode}". Accepted values: ${allowedModes.join(", ")}.`,
+          "--superseded-by names the asset that replaces this one and --outdated says none does; use one.",
           "INVALID_FLAG_VALUE",
-          `Use one of: ${allowedModes.join(", ")}`,
         );
+      }
+      if (parseAllFlagValues("--superseded-by").length > 1) {
+        throw new UsageError("--superseded-by takes one ref.", "INVALID_FLAG_VALUE");
+      }
+      if (supersededBy !== undefined && !supersededBy.trim()) {
+        throw new UsageError(
+          "--superseded-by needs the ref of the asset that replaces this one.",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      if (replaces.length !== withs.length || (replaces.length === 0 && !hasMark)) {
+        throw new UsageError(
+          `Each --replace needs one --with (got ${replaces.length} --replace and ${withs.length} --with).`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      if (!fixSource) {
+        throw new UsageError(
+          "A fix needs --source: the URL, command or file that shows the correct fact.",
+          "MISSING_REQUIRED_ARGUMENT",
+        );
+      }
+      if (!reason?.trim()) {
+        throw new UsageError("A fix needs --reason: say what is wrong.", "MISSING_REQUIRED_ARGUMENT");
       }
     }
 
@@ -333,25 +639,22 @@ export const feedbackCommand = defineJsonCommand({
       const requireReason = cfg.feedback?.requireReason ?? true; // Default: true (F-3 / #384)
       if (requireReason) {
         throw new UsageError(
-          "Negative feedback requires --reason: the next improve run proposes a fix from it, so say what is wrong and what should change. " +
-            "Use --failure-mode for a curated taxonomy or --reason for free text. " +
+          "Negative feedback requires --reason: say what is wrong and what should change. " +
             "Set feedback.requireReason: false in akm.json to downgrade to a warning.",
           "MISSING_REQUIRED_ARGUMENT",
-          `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>" [--failure-mode incorrect|outdated|dangerous|incomplete|redundant]`,
+          `Hint: akm feedback ${ref} --negative --reason "<what is wrong and what should change>"`,
         );
       } else {
-        warn("Warning: negative feedback without --reason gives the next improve run nothing to base a fix on.");
+        warn("Warning: negative feedback without --reason says nothing about what is wrong.");
       }
     }
     const rawTags = parseAllFlagValues("--tag");
     const validatedTags = validateFeedbackTags(rawTags);
-    const metadataObj = {
+    const metadataObj: Record<string, unknown> = {
       signal,
       ...(reason?.trim() ? { reason: reason.trim() } : {}),
-      ...(failureMode ? { failureMode } : {}),
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
     };
-    const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
     // Feedback only needs the index to exist, not to be current. A stale index
     // is fine — the ref lookup works against any populated DB. We do NOT call
@@ -382,6 +685,13 @@ export const feedbackCommand = defineJsonCommand({
     let rankingUpdateApplied = false;
     let rankingUpdateSkippedReason: string | undefined;
     let durableRef = ref;
+    let fix:
+      | {
+          content: string;
+          target: { source: string; root: string };
+          marked?: { beliefState: string; supersededBy?: string };
+        }
+      | undefined;
     const db = openExistingDatabase();
     try {
       const config = loadConfig();
@@ -413,6 +723,51 @@ export const feedbackCommand = defineJsonCommand({
       const itemRef = getItemRefById(db, entryId);
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
+      const filePath = getEntryFilePathById(db, entryId);
+      const textHash = judgedTextHash(itemRef, filePath);
+      if (textHash) metadataObj.contentHash = textHash;
+      if (fixPairs.length > 0 || hasMark) {
+        // Checked before anything is recorded, so a fix that does not apply leaves no trace.
+        if (!filePath || !fs.existsSync(filePath)) {
+          throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
+        }
+        const assetRef = parseRefInput(itemRef);
+        const resolved = resolveMutationTarget(config, assetRef, undefined, { requireWritable: true });
+        if (!isWithin(filePath, resolved.target.source.path)) {
+          throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
+        }
+        assertProposalWritesFile(itemRef, resolved.target.source.path, filePath);
+        let mark: HistoryMark | undefined;
+        if (hasMark) {
+          if (assetRef.type === "env" || assetRef.type === "secret" || !filePath.toLowerCase().endsWith(".md")) {
+            throw new UsageError(
+              `--superseded-by and --outdated mark the frontmatter of a markdown asset, and ${itemRef} is not one.`,
+              "INVALID_FLAG_VALUE",
+            );
+          }
+          mark =
+            supersededBy !== undefined
+              ? { supersededBy: resolveSuccessorRef(db, supersededBy.trim(), itemRef) }
+              : { outdated: true };
+        }
+        const before = fs.readFileSync(filePath, "utf8");
+        let after = applyExactReplacements(before, fixPairs, filePath);
+        if (mark) after = applyHistoryMark(after, mark, filePath);
+        if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");
+        assertFrontmatterStillParses(before, after, filePath);
+        // What the proposal leaves the asset saying, for the output and the event.
+        const marked = mark && {
+          beliefState: String(parseFrontmatter(after).data.beliefState),
+          ...("supersededBy" in mark ? { supersededBy: mark.supersededBy } : {}),
+        };
+        fix = {
+          content: after,
+          target: { source: resolved.target.source.name, root: resolved.target.source.path },
+          ...(marked ? { marked } : {}),
+        };
+        metadataObj.fix = { source: fixSource, replacements: fixPairs.length, ...marked };
+      }
+      const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
       const recordResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
       utilityResult = recordResult.utilityResult;
       rankingUpdateApplied = recordResult.rankingUpdateApplied;
@@ -426,6 +781,18 @@ export const feedbackCommand = defineJsonCommand({
       ref: durableRef,
       metadata: metadataObj,
     });
+
+    const fixProposal =
+      fix && reason?.trim() && fixSource
+        ? createProposal(resolveStashDir(), {
+            ref: durableRef,
+            itemRef: durableRef,
+            target: fix.target,
+            source: "feedback",
+            payload: { content: fix.content },
+            feedback: { reason: reason.trim(), source: fixSource },
+          })
+        : undefined;
 
     // F-5 / #386: When a high-utility asset crosses below the review threshold,
     // auto-create a review-needed escalation proposal so a human can confirm
@@ -444,7 +811,6 @@ export const feedbackCommand = defineJsonCommand({
             previousUtility: utilityResult.previousUtility,
             nextUtility: utilityResult.nextUtility,
             reason: reason?.trim() ?? null,
-            failureMode: failureMode ?? null,
           },
         });
       } catch (escalationErr) {
@@ -494,11 +860,20 @@ export const feedbackCommand = defineJsonCommand({
       ref,
       signal,
       reason: reason?.trim() ?? null,
-      failureMode: failureMode ?? null,
       tags: validatedTags,
       rankingUpdate: rankingUpdateApplied
         ? { applied: true }
         : { applied: false, reason: rankingUpdateSkippedReason ?? "unknown" },
+      ...(fixProposal
+        ? {
+            fix: {
+              proposalId: fixProposal.id,
+              replacements: fixPairs.length,
+              source: fixSource,
+              ...fix?.marked,
+            },
+          }
+        : {}),
       ...(appliedToResult
         ? { appliedTo: { ref: appliedToResult.lessonRef, lessonStrength: appliedToResult.strength } }
         : {}),

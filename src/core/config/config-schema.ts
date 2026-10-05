@@ -62,7 +62,7 @@ import { WorkflowConfigSchema } from "./schema/workflow";
 export { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 export { EngineConfigSchema, EnginesSchema, LlmConnectionConfigSchema, LlmProfileConfigSchema } from "./schema/engines";
 export { ExperimentalConfigSchema } from "./schema/experimental";
-export { FEEDBACK_FAILURE_MODES, FeedbackConfigSchema, type FeedbackFailureMode } from "./schema/feedback";
+export { FeedbackConfigSchema } from "./schema/feedback";
 export { ImproveConfigSchema } from "./schema/improve";
 export {
   ConsolidateProcessConfigSchema,

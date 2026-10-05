@@ -53,6 +53,7 @@ import {
   makeConsolidateResult,
 } from "./consolidate";
 import { computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { contentHash } from "./content-hash";
 import {
   assetTypeOf,
   buildUtilityMap,
@@ -710,6 +711,54 @@ const FEEDBACK_SIGNAL_WINDOW_DAYS = 30;
 function isSignalEvent(metadata: unknown): boolean {
   const meta = metadata as { signal?: unknown; note?: unknown } | undefined;
   return meta !== undefined && (typeof meta.signal === "string" || typeof meta.note === "string");
+}
+
+/**
+ * Whether `candidate` was flagged wrong and not edited since. A negative
+ * feedback inside the signal window that recorded the hash of the body it
+ * judged flags it exactly when the body still has that hash, so a later write
+ * that leaves the text alone (an inference stamp, a frontmatter repair) does not
+ * lift the flag. One without a hash flags it when it is newer than the file's
+ * last write: its mtime, the one the retrieval scope reads for new material. A
+ * candidate with no readable file is not flagged.
+ */
+export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?: EventsContext): boolean {
+  if (!candidate.filePath) return false;
+  let editedAtMs: number;
+  let bodyHash: string;
+  try {
+    editedAtMs = fs.statSync(candidate.filePath).mtimeMs;
+    bodyHash = contentHash(fs.readFileSync(candidate.filePath, "utf8"), "body");
+  } catch {
+    return false;
+  }
+  const since = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
+  return readEvents({ type: "feedback", ref: keyOf(candidate), since }, eventsCtx).events.some((e) => {
+    const meta = e.metadata as { signal?: unknown; contentHash?: unknown } | undefined;
+    if (meta?.signal !== "negative") return false;
+    return typeof meta.contentHash === "string" ? meta.contentHash === bodyHash : Date.parse(e.ts) > editedAtMs;
+  });
+}
+
+/**
+ * Whether the only feedback `candidate` has inside the signal window is positive and says nothing: no reason, no
+ * note. A bare `--positive` only records that a note helped, which gives the writer nothing to distil, so it restates
+ * the memory: 10 of the 11 lessons distilled from a memory with nothing more were rejected (the 2026-10-05 review).
+ * A candidate with no feedback in the window is not matched.
+ */
+export function hasOnlyBarePositiveFeedback(candidate: ImproveEligibleRef, eventsCtx?: EventsContext): boolean {
+  const since = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
+  const signals = readEvents({ type: "feedback", ref: keyOf(candidate), since }, eventsCtx).events.filter((e) =>
+    isSignalEvent(e.metadata),
+  );
+  const hasText = (value: unknown): boolean => typeof value === "string" && value.trim() !== "";
+  return (
+    signals.length > 0 &&
+    signals.every((e) => {
+      const meta = e.metadata as { signal?: unknown; reason?: unknown; note?: unknown };
+      return meta.signal === "positive" && !hasText(meta.reason) && !hasText(meta.note);
+    })
+  );
 }
 
 interface SignalDeltaSnapshot {

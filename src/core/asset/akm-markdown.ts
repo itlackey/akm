@@ -2,11 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { localDateStamp } from "../common";
 import { UsageError } from "../errors";
 import { serializeFrontmatter } from "./asset-serialize";
-import { parseFrontmatterBlock, spliceFrontmatterLine } from "./frontmatter";
+import { parseFrontmatterBlock, replaceFrontmatterLine, spliceFrontmatterLine } from "./frontmatter";
 
 /**
  * Ensure an AKM-authored Markdown concept is also a conformant OKF concept.
@@ -22,12 +23,18 @@ import { parseFrontmatterBlock, spliceFrontmatterLine } from "./frontmatter";
  * re-stamp on every write (which would churn timestamps and manufacture
  * needless diffs in git-backed bundles).
  *
- * Source preservation: when the type already matches and the ONLY change is
- * adding `updated`, the line is spliced into the original block textually —
- * round-tripping through the YAML serializer would drop user-authored
- * comments and normalize formatting just to contribute one field. Only a
- * document whose `type` must actually be corrected takes the re-serialize
- * path (as it always has).
+ * Source preservation: whenever the frontmatter block parses, it is edited as
+ * text and never round-tripped through the YAML serializer, which rewraps long
+ * values, reorders keys and drops comments — changes nobody made, shown to the
+ * reviewer of what may be a one-line correction. A missing `type` and a
+ * missing `updated` are each added as one line before the closing `---`, in
+ * that order; a wrong `type` is replaced on its own line. Every other byte —
+ * comments, wrapping, quoting, key order, line endings, the body — is kept as
+ * written. The edited text is parsed back to confirm it holds exactly the
+ * intended mapping; when it does not (a `type` value that spans several lines,
+ * a flow-style `{…}` block), the document is re-serialized instead, as it
+ * always used to be. A document with no frontmatter block gets a new one;
+ * malformed YAML throws.
  */
 export function ensureAkmMarkdownType(content: string, type: string, now: Date = new Date()): string {
   const block = parseFrontmatterBlock(content);
@@ -46,16 +53,34 @@ export function ensureAkmMarkdownType(content: string, type: string, now: Date =
     throw new UsageError("AKM Markdown frontmatter must be a YAML mapping.", "INVALID_FLAG_VALUE");
   }
   const data = parsed as Record<string, unknown>;
+  const updated = localDateStamp(now);
   const needsUpdated = !("updated" in data);
-  if (data.type === type) {
-    if (!needsUpdated) return content;
-    const spliced = spliceFrontmatterLine(content, `updated: ${localDateStamp(now)}`);
-    if (spliced !== null) return spliced;
-    // Unreachable in practice (parseFrontmatterBlock succeeded above), but a
-    // re-serialized document beats a non-conformant one.
+  if (data.type === type && !needsUpdated) return content;
+
+  let edited: string | null = content;
+  if (data.type !== type) {
+    edited =
+      "type" in data
+        ? replaceFrontmatterLine(edited, "type", `type: ${type}`)
+        : spliceFrontmatterLine(edited, `type: ${type}`);
   }
+  if (edited !== null && needsUpdated) edited = spliceFrontmatterLine(edited, `updated: ${updated}`);
+  const intended = needsUpdated ? { ...data, type, updated } : { ...data, type };
+  if (edited !== null && parsesTo(edited, intended)) return edited;
+
+  // The text edit could not be done safely, but a re-serialized document
+  // beats a non-conformant one.
   const { type: _priorType, ...rest } = data;
   const next: Record<string, unknown> = { type, ...rest };
-  if (needsUpdated) next.updated = localDateStamp(now);
+  if (needsUpdated) next.updated = updated;
   return `---\n${serializeFrontmatter(next)}\n---\n${block.content}`;
+}
+
+/** True when the frontmatter of `text` parses to exactly `intended`. */
+function parsesTo(text: string, intended: Record<string, unknown>): boolean {
+  try {
+    return isDeepStrictEqual(parseYaml(parseFrontmatterBlock(text)?.frontmatter ?? ""), intended);
+  } catch {
+    return false;
+  }
 }

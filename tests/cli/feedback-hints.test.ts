@@ -35,7 +35,7 @@ describe("shipped hints on recording feedback (#999)", () => {
   }
 
   test("the brief task loop ties --negative to the asset's content and names the akm show example", () => {
-    expect(EMBEDDED_HINTS).toContain("when its content was wrong, stale or unhelpful");
+    expect(EMBEDDED_HINTS).toContain("Record negative feedback only when the asset's content is wrong or stale");
     expect(EMBEDDED_HINTS).toContain("A failed akm command (e.g. `akm show` erroring) is not feedback on the asset");
   });
 
@@ -43,26 +43,57 @@ describe("shipped hints on recording feedback (#999)", () => {
     ["brief", EMBEDDED_HINTS],
     ["full", EMBEDDED_HINTS_FULL],
   ] as const) {
-    test(`${name} hints say negative feedback with a specific reason gets the asset fixed, and positive triggers no rewrite`, () => {
+    test(`${name} hints keep --negative for wrong or stale content, record nothing for a note that did not fit the task, and attach a verified fix`, () => {
+      const prose = hints.replace(/\s+/g, " ");
+      expect(prose).toContain(
+        "Record negative feedback only when the asset's content is wrong or stale, and say what is wrong and what it should say.",
+      );
+      expect(prose).toContain(
+        "A note that simply did not fit your task is not negative feedback: record nothing for it.",
+      );
+      expect(prose).toMatch(/[Oo]nce you have verified the correct fact, (add|attach) the exact fix/);
+      // A search miss is not a reason to flag a note.
+      expect(prose).not.toMatch(/unhelpful|incomplete/i);
+    });
+  }
+
+  for (const [name, hints] of [
+    ["brief", EMBEDDED_HINTS],
+    ["full", EMBEDDED_HINTS_FULL],
+  ] as const) {
+    test(`${name} hints say improve repairs only the frontmatter, name the exact-fix flags and how to mark an outdated note, and positive triggers no rewrite`, () => {
       const prose = hints.replace(/\s+/g, " ");
       expect(prose).toContain('--negative --reason "<what is wrong and what should change>"');
-      expect(prose).toMatch(/flags (it|the asset) for review/);
-      expect(prose).toContain("the next improve run proposes a fix based on your reason, so be specific");
+      expect(prose).toMatch(/flags (it|the asset):/);
+      expect(prose).toContain(
+        "the next improve run may repair its description, title or `when_to_use` from your reason",
+      );
+      expect(prose).not.toContain("proposes a fix based on your reason");
+      expect(prose).toContain('--replace "<exact current text>" --with "<corrected text>"');
+      expect(prose).toContain(
+        "A note that is outdated can be marked with `--outdated`, or `--superseded-by <ref>` when another note replaces it.",
+      );
       expect(prose).toContain("does not trigger a rewrite");
     });
   }
 
-  test("`akm feedback` help says the same: negative flags the asset for review, positive triggers no rewrite", () => {
+  test("`akm feedback` help says the same: improve repairs only the frontmatter; --replace/--with/--source fix the text", () => {
     const meta = feedbackCommand.meta as { description?: string };
     const args = feedbackCommand.args as Record<string, { description?: string }>;
     const prose = (meta.description ?? "").replace(/\s+/g, " ");
 
     expect(prose).toContain(
-      '`akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags the asset for review: ' +
-        "the next improve run proposes a fix based on your reason, so be specific. " +
-        "`--positive` records that an asset helped (it raises its ranking) and does not trigger a rewrite.",
+      '`akm feedback <ref> --negative --reason "<what is wrong and what should change>"` flags the asset: ' +
+        "the next improve run may repair its description, title or when_to_use from your reason, " +
+        "but it does not rewrite the text.",
     );
-    expect(args.negative?.description).toContain("proposes a fix from --reason");
+    expect(prose).toContain("akm checks that each --replace text appears exactly once");
+    expect(prose).toContain(
+      "`--positive` records that an asset helped (it raises its ranking) and does not trigger a rewrite.",
+    );
+    expect(args.negative?.description).toContain("may repair its frontmatter from --reason");
+    expect(args.replace?.description).toContain("must appear exactly once");
+    expect(args.source?.description).toContain("Required with --replace");
     expect(args.positive?.description).toContain("does not trigger a rewrite");
     expect(args.reason?.description).toContain("what should change");
   });

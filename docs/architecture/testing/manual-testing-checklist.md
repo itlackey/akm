@@ -1538,13 +1538,12 @@ akm feedback skills/k8s-deploy --positive --tag slice:manual --tag team:qa
 expect_error 2 MISSING_REQUIRED_ARGUMENT \
   feedback skills/k8s-deploy --negative
 akm feedback skills/k8s-deploy --negative \
-  --reason "manual QA relevance check" --failure-mode incomplete
+  --reason "manual QA relevance check"
 ```
 
 - [ ] **CORE** Positive and reasoned negative feedback return stable signal/reason fields.
-- [ ] **CORE** Negative feedback without reason/failure mode fails by default with `MISSING_REQUIRED_ARGUMENT`, exit `2`.
-- [ ] **LOCAL** Both signals, missing/nonexistent ref, unknown/incompatible failure mode, malformed tag, and more than ten tags fail before durable mutation.
-- [ ] **LOCAL** Allowed failure modes are `incorrect`, `outdated`, `dangerous`, `incomplete`, and `redundant` unless config narrows them.
+- [ ] **CORE** Negative feedback without a reason fails by default with `MISSING_REQUIRED_ARGUMENT`, exit `2`.
+- [ ] **LOCAL** Both signals, missing/nonexistent ref, malformed tag, and more than ten tags fail before durable mutation.
 - [ ] **LOCAL** `feedback.requireReason:false` produces the documented warning rather than the default hard failure.
 - [ ] **LOCAL** User feedback updates ranking immediately and reports `rankingUpdate.applied`; machine-origin signals do not impersonate user demand.
 - [ ] **LOCAL** Feedback survives full reindex and contains no credential fixture value.

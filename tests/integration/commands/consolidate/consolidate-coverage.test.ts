@@ -352,7 +352,15 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
         const messages = (JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> }).messages;
         // The pair pass shares the endpoint; it has nothing to say about these fixtures.
         if (messages.some((m) => m.content.includes("You compare two assets"))) {
-          return reply({ relation: "unrelated", redundant: null, stale: null, confidence: 0.5, reason: "x" });
+          return reply({
+            onlyInA: [],
+            onlyInB: [],
+            relation: "unrelated",
+            redundant: null,
+            stale: null,
+            confidence: 0.5,
+            reason: "x",
+          });
         }
         return reply({
           operations: [

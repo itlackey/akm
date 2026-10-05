@@ -467,7 +467,11 @@ guidance. When enabled, engine selection is judgment → triage → strategy →
 
 `processes.reflect.qualityGate` and `processes.distill.qualityGate` control
 each process's LLM-as-judge quality gate. Each is on unless it sets
-`enabled: false`, and each follows only its own switch. The judge is the
+`enabled: false`, and each follows only its own switch. A reflect revision the
+judge passes is staged for the triage drain to accept; a distill lesson it
+passes is deferred for a person (reason `distill-review`), which the drain and
+its judgment tier leave alone. With the distill gate off nothing is judged, and
+the drain decides. The judge is the
 process's own engine when that is an LLM engine, or the `defaults.llmEngine`
 engine when an agent generates. `engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
 resolved over the process's settings the way `triage.judgment` resolves over
@@ -745,12 +749,11 @@ or malformed response keeps the fused order.
 
 ## Feedback
 
-`feedback` shapes the `akm feedback` taxonomy:
+`feedback` configures `akm feedback`:
 
 | Key | Purpose |
 | --- | --- |
-| `feedback.requireReason` | Whether `akm feedback --negative` without `--reason`/`--failure-mode` is a hard error. **Defaults to `true`** when unset — set `false` to downgrade the check to a warning instead |
-| `feedback.allowedFailureModes` | Restrict `--failure-mode` values accepted by `akm feedback`. Curated set (also the default when unset): `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant` |
+| `feedback.requireReason` | Whether `akm feedback --negative` without `--reason` is a hard error. **Defaults to `true`** when unset — set `false` to downgrade the check to a warning instead |
 
 ## Bundles and write target
 

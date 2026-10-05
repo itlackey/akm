@@ -31,6 +31,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import consolidatePairPrompt from "../../../assets/prompts/consolidate-pair.md" with { type: "text" };
+import consolidatePairCheckPrompt from "../../../assets/prompts/consolidate-pair-check.md" with { type: "text" };
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
@@ -52,8 +53,19 @@ import {
 } from "../../../storage/repositories/index-connection";
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
 import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
-import { isRetireProposal, type RetirementMetadata, type RetireReason } from "../../proposal/proposal-types";
-import { createRetireProposal, listProposalsReadOnly, type ProposalsContext } from "../../proposal/repository";
+import {
+  isRetireProposal,
+  PAIR_PASS_GATE,
+  type RetirementMetadata,
+  type RetireReason,
+} from "../../proposal/proposal-types";
+import {
+  createRetireProposal,
+  listProposalsReadOnly,
+  type ProposalsContext,
+  proposalContentHash,
+  recordGateDecision,
+} from "../../proposal/repository";
 import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
@@ -79,8 +91,8 @@ export const BACKFILL_FLOOR = 0.95;
 export const NEW_MATERIAL_DAYS = 7;
 /** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
-/** Body characters sent to the judge per side (plan §4.3: bodies were truncated at this length for calibration). */
-const PAIR_BODY_TRUNCATE_CHARS = 2500;
+/** Body characters sent to the judge per side: enough for nearly every note, so a retirement is judged on the whole text. */
+const PAIR_BODY_TRUNCATE_CHARS = 12_000;
 const MS_PER_DAY = 86_400_000;
 
 const RELATION_LABELS = ["duplicate", "subsumed", "supersedes", "contradicts", "overlap", "unrelated"] as const;
@@ -93,11 +105,14 @@ function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLa
   return RETIRE_LABELS.has(label);
 }
 
-const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
+/** Exported, with {@link buildPairUserPrompt}, so a replay can drive the exact judge call. */
+export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["relation", "redundant", "stale", "confidence", "reason"],
+  required: ["onlyInA", "onlyInB", "relation", "redundant", "stale", "confidence", "reason"],
   additionalProperties: false,
   properties: {
+    onlyInA: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
+    onlyInB: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
     relation: { type: "string", enum: [...RELATION_LABELS] },
     redundant: { type: ["string", "null"], enum: ["A", "B", null] },
     stale: { type: ["string", "null"], enum: ["A", null] },
@@ -106,7 +121,16 @@ const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
+const PAIR_CHECK_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["missing"],
+  additionalProperties: false,
+  properties: { missing: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 } },
+};
+
 interface RawPairJudgeResponse {
+  onlyInA?: unknown;
+  onlyInB?: unknown;
   relation?: unknown;
   redundant?: unknown;
   confidence?: unknown;
@@ -114,6 +138,10 @@ interface RawPairJudgeResponse {
 }
 
 export interface PairJudgeVerdict {
+  /** Durable claims of A that B neither states nor updates; [] when none. */
+  onlyInA: string[];
+  /** Durable claims of B that A neither states nor updates; [] when none. */
+  onlyInB: string[];
   relation: ConsolidatePairJudgeLabel;
   redundant: "A" | "B" | null;
   confidence: number;
@@ -132,7 +160,15 @@ export function parsePairJudgeResponse(raw: string): PairJudgeVerdict | undefine
   if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return undefined;
   const confidence = Math.max(0, Math.min(1, parsed.confidence));
   const reason = typeof parsed.reason === "string" ? parsed.reason : "";
-  return { relation: parsed.relation as ConsolidatePairJudgeLabel, redundant, confidence, reason };
+  const onlyInA = claimList(parsed.onlyInA);
+  const onlyInB = claimList(parsed.onlyInB);
+  if (!onlyInA || !onlyInB) return undefined;
+  return { onlyInA, onlyInB, relation: parsed.relation as ConsolidatePairJudgeLabel, redundant, confidence, reason };
+}
+
+function claimList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) return undefined;
+  return value.map((v) => v.trim()).filter(Boolean);
 }
 
 /** A pair-pass asset: any type `getAllEntries` returns, not just memories. @internal exported for unit tests. */
@@ -520,7 +556,7 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
 }
 
 /** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
-function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
+export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
   return [...sideSection("A (older)", older), ...sideSection("B (newer)", newer)].join("\n");
 }
 
@@ -538,21 +574,22 @@ export interface PairDecision {
  * The calibrated outcome table (owner grades, replacing plan §5.2's
  * "shorter body" rule): `duplicate`/`supersedes` keep the newer copy;
  * `subsumed` keeps the side the judge did NOT name `redundant` (no proposal
- * if that pointer is missing or invalid).
+ * if that pointer is missing or invalid). A side is retired only when the
+ * judge listed nothing that it alone holds.
  */
 export function decideRetirement(
   label: ConsolidatePairJudgeLabel,
   redundant: "A" | "B" | null,
   older: PairSide,
   newer: PairSide,
+  only: { onlyInA: string[]; onlyInB: string[] },
 ): PairDecision | undefined {
-  if (label === "duplicate" || label === "supersedes") return { retired: older, successor: newer };
-  if (label === "subsumed") {
-    if (redundant === "A") return { retired: older, successor: newer };
-    if (redundant === "B") return { retired: newer, successor: older };
-    return undefined; // the judge's pointer is missing or invalid — no proposal
-  }
-  return undefined;
+  let decision: PairDecision | undefined;
+  if (label === "duplicate" || label === "supersedes") decision = { retired: older, successor: newer };
+  else if (label === "subsumed" && redundant === "A") decision = { retired: older, successor: newer };
+  else if (label === "subsumed" && redundant === "B") decision = { retired: newer, successor: older };
+  if (!decision) return undefined;
+  return (decision.retired === older ? only.onlyInA : only.onlyInB).length === 0 ? decision : undefined;
 }
 
 /** Transport override for tests (matches `CallStructuredRequest["chat"]`); production callers leave it unset. */
@@ -599,6 +636,46 @@ interface PairPassContext {
    * so it is race-safe under `concurrentMap`.
    */
   retiredThisRun: Set<string>;
+}
+
+function checkSection(label: string, side: PairSide): string {
+  return [
+    `Note ${label}:`,
+    `Ref: ${side.asset.ref}`,
+    `Description: ${asNonEmptyString(side.frontmatter.description) ?? "(none)"}`,
+    "Content:",
+    "```",
+    stripFrontmatterBody(side.raw).slice(0, PAIR_BODY_TRUNCATE_CHARS),
+    "```",
+    "",
+  ].join("\n");
+}
+
+/**
+ * The second look a duplicate gets before it may retire unattended: one call
+ * that asks only what the retired note holds that the kept one lacks. True
+ * only on a clean, empty answer (it caught 2 of 4 duplicates the judge got
+ * wrong, and held back none of 109 right ones).
+ */
+async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, successor: PairSide): Promise<boolean> {
+  const outcome = await callStage({
+    feature: "memory_consolidation",
+    runner: ctx.llmRunner,
+    system: consolidatePairCheckPrompt,
+    prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}`,
+    gate: { config: ctx.config, enabled: true },
+    request: {
+      responseSchema: PAIR_CHECK_JSON_SCHEMA,
+      enableThinking: false,
+      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
+      signal: ctx.opts.signal,
+      ...(ctx.chat ? { chat: ctx.chat } : {}),
+    },
+    parse: (raw: string) => claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(raw)?.missing),
+    ...(ctx.opts.onNotices ? { onNotices: ctx.opts.onNotices } : {}),
+  });
+  if (!outcome.ok) return false;
+  return claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(outcome.raw)?.missing)?.length === 0;
 }
 
 /**
@@ -652,7 +729,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   if (verdict.relation === "contradicts") return { failed: false }; // counted; stays human — no proposal, no belief write
   if (!isRetireLabel(verdict.relation)) return { failed: false }; // overlap / unrelated: judged_no_action
 
-  const decision = decideRetirement(verdict.relation, verdict.redundant, older, newer);
+  const decision = decideRetirement(verdict.relation, verdict.redundant, older, newer, verdict);
   if (!decision) return { failed: false };
   const { retired, successor } = decision;
 
@@ -735,6 +812,28 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     ctx.retired.push(proposal.id);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
+    // A duplicate with nothing unique on either side, confirmed by a second
+    // look, is the one class that retires unattended (109 of 111 safe on the
+    // owner's reviewed pairs, 2026-10-04): the triage drain accepts it under
+    // its usual applyMode. Every other retirement waits for a person.
+    if (
+      verdict.relation === "duplicate" &&
+      verdict.onlyInA.length + verdict.onlyInB.length === 0 &&
+      !continuityRisk &&
+      (await confirmNothingLost(ctx, retired, successor))
+    ) {
+      recordGateDecision(
+        ctx.stashDir,
+        proposal.id,
+        {
+          outcome: "staged",
+          reason: "duplicate",
+          gate: PAIR_PASS_GATE,
+          contentHash: proposalContentHash(proposal),
+        },
+        ctx.opts.proposalsCtx,
+      );
+    }
     return { failed: false };
   } catch (error) {
     ctx.warnings.push(

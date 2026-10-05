@@ -159,7 +159,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `curate` | `akm curate <prompt>` | `query`, `itemCount`, `itemRefs` |
 | `show` | `akm show <ref>` | `ref`, `type`, `name` |
 | `select` | `akm show` after a search returning the same ref | `ref`, `query`, `searchTs`, `rankPosition` |
-| `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `failureMode`, `tags` |
+| `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `tags`, `fix` (`source`, the number of replacements and, for `--superseded-by` or `--outdated`, the `beliefState` the proposal leaves and the `supersededBy` ref, when a fix was attached), `contentHash` (sha256 of the asset's body, without its frontmatter, as it stood when the feedback was given: it lets reflect mark feedback given on an earlier version of the text, and the loop's distill pass tell that a memory flagged wrong still has it; left out for an env or secret file and when the file cannot be read) |
 | `sync` | `akm sync` | `name`, `message`, `ok` |
 | `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `stash_synced` | `akm improve`'s internal auto-sync pass (the `sync.push` feature), **distinct from** the `akm sync` command above | `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
@@ -188,14 +188,14 @@ the set of types the code actually emits at HEAD (verified against every
 | `improve_invoked` | Start of an `akm improve` run | `ref` (scope); `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_completed` | `akm improve` run finished | run stats |
 | `improve_failed` | `akm improve` run errored | error |
-| `improve_skipped` | `akm improve` left a ref, a lane, or a group of refs out | `reason` (`no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`); `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
+| `improve_skipped` | `akm improve` left a ref, a lane, or a group of refs out | `reason` (`no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`); `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
 | `improve_lock_recovered` | Stale improve lock cleared at startup | |
 | `improve_review_needed` | `akm feedback` pushed a high-utility asset's utility below the review threshold — a review-needed escalation is recorded (not a proposal, so it can't accidentally overwrite the asset) | `ref`, `previousUtility`, `nextUtility` |
 | `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, engine |
 | `reflect_completed` | Reflect phase produced a proposal | `ref` |
 | `improve_reflect_outcome` | Per-asset reflect result | `ref`, `ok`, `durationMs`, `reason` |
 | `propose_invoked` | `akm proposal new` | `ref` |
-| `distill_invoked` | Distill phase inside the `akm improve`/`akm proposal new` pipeline. **`akm distill` is not a CLI command** — there is no standalone verb by that name | `ref`, outcome |
+| `distill_invoked` | Distill phase inside the `akm improve`/`akm proposal new` pipeline. **`akm distill` is not a CLI command** — there is no standalone verb by that name | `ref`, outcome (`queued`, `skipped` with a `skipReason` such as `lesson_exists` or `conflict_noop`, `llm_failed`, `validation_failed`, `quality_rejected`, `review_needed`) |
 | `extract_invoked` | `akm proposal extract --type <harness>` / `--auto`, or improve-stage session extraction | `outcome`, `sessionId`, `harness` |
 | `extract_triaged` | The pre-LLM extract triage gate evaluated at least one session | `evaluated`, `passed`, `triagedOut`, `sourceRun` (aggregated) |
 | `schema_repair_invoked` | The schema-repair pass inside `akm improve` (`runSchemaRepairPass`) attempts to patch missing frontmatter on an asset that failed schema validation. **There is no `akm lint --repair` flag** — `lint` has `--fix`/`--auto-fix`, unrelated to this event | `ref`, outcome |

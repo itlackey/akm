@@ -24,7 +24,6 @@
       "ts": "2026-05-09T12:00:00.000Z",
       "signal": "negative",
       "reason": "The 90-minute cap was too tight for a deep-dive design session",
-      "failureMode": "incomplete",
       "note": "Probably want a separate carve-out for design vs implementation pairing."
     }
   ],

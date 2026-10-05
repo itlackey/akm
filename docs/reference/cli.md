@@ -1587,12 +1587,27 @@ preserves it byte-for-byte.
 
 ### feedback
 
-Record positive or negative feedback for any indexed bundle asset.
+Record positive or negative feedback for any indexed bundle asset. Record
+`--negative` only when the asset's content is wrong or stale, and say what is
+wrong and what it should say; a note that simply did not fit your task is not
+negative feedback, so record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review: the next improve run proposes a fix based on your
-reason, so be specific. `--positive` records that an asset helped (it raises
-its ranking) and does not trigger a rewrite. Both signals update the asset's
-utility score right away, so highly-rated assets rank higher in search results.
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. Improve does not
+rewrite an asset's text. Once you have verified the correct fact, attach the
+exact fix with `--replace`, `--with` and `--source`: akm checks that each
+`--replace` text appears exactly once and that the frontmatter still parses,
+records nothing if either check fails, and queues the edit as a `feedback`
+proposal for review.
+To mark the asset's history, with or without a text fix, add `--superseded-by
+<ref>` (another asset replaces it) or `--outdated` (it describes a past state
+and no single asset replaces it), with `--reason` and `--source`. The same single
+proposal sets the asset's `beliefState` (`superseded`, or `deprecated`) and, for
+`--superseded-by`, adds the successor's ref to its `supersededBy` list, by
+editing only those lines of the frontmatter. `--positive` records that an asset
+helped (it raises its ranking) and does not trigger a rewrite. Both signals
+update the asset's utility score right away, so highly-rated assets rank higher
+in search results.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
@@ -1600,16 +1615,23 @@ akm feedback agents/reviewer --negative
 akm feedback memories/deployment-notes --positive
 akm feedback env/prod --positive
 akm feedback skills/code-review --positive --reason "Worked perfectly for PR reviews"
-akm feedback skills/code-review --negative --failure-mode outdated --reason "references a removed flag"
+akm feedback skills/code-review --negative --reason "references a removed flag"
 akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --tag team:platform
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
+akm feedback knowledge/setup-v1 --negative --reason "the v2 guide replaces it" --superseded-by knowledge/setup-v2 --source "knowledge/setup-v2"
+akm feedback knowledge/api-v1 --negative --reason "describes the retired v1 API" --outdated --source "https://example.com/changelog"
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--positive` | Record that an asset helped: it raises its ranking and does not trigger a rewrite |
-| `--negative` | Flag the asset for review: the next improve run proposes a fix based on `--reason`, so be specific |
-| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event and read by the next improve run's fix proposal (required for negative feedback by default) |
-| `--failure-mode` | Structured failure-mode taxonomy for negative feedback: `incorrect`, `outdated`, `dangerous`, `incomplete`, `redundant`. Stored alongside `--reason` in event metadata for the distill pipeline. |
+| `--negative` | Flag the asset: it ranks lower right away, and the next improve run may repair its frontmatter from `--reason` |
+| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default, and always with a fix: `--replace`, `--superseded-by` or `--outdated`) |
+| `--replace <text>` | Exact text to correct, copied verbatim from the asset file; it must appear exactly once. Repeatable, each paired in order with a `--with`. Negative feedback only |
+| `--with <text>` | The corrected text for the matching `--replace`. Use `--with=<text>` for a value that starts with `-` |
+| `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`, `--superseded-by` and `--outdated`; shown to the reviewer with the proposal |
+| `--superseded-by <ref>` | The ref of the asset that replaces this one. The proposal sets `beliefState: superseded` and adds the ref, as its `bundle//conceptId`, to `supersededBy`; `contradicted` and `archived` stay, a ref already listed is not added again, and a scalar `supersededBy` becomes a list. The ref must be indexed and must not be the asset itself, or nothing is recorded; nor is anything when the asset already says all this (the fix changes nothing). Negative feedback only; may be combined with `--replace`/`--with`, not with `--outdated`; markdown assets only |
+| `--outdated` | The asset describes a past state and no single asset replaces it. The proposal sets `beliefState: deprecated`, unless the asset already says `superseded`, `contradicted` or `archived`. Negative feedback only; may be combined with `--replace`/`--with`, not with `--superseded-by`; markdown assets only |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |
 
@@ -2513,8 +2535,12 @@ feedback in the last 30 days newer than the stage's last ledger attempt, or for
 an explicit ref scope. A positive or note-only signal never plans one, so
 improve does not rewrite an asset from a positive signal. Distill keeps its own
 trigger: a memory with feedback of any kind (a signal or a note) in that window,
-newer than distill's last attempt. Two fallback lanes pick refs with no such
-feedback: high salience (content-scored refs at or above
+newer than distill's last attempt. It skips a memory flagged wrong and not
+edited since (a negative feedback in that window judged the body it still has,
+or, recorded without that body's hash, is newer than the file's last write),
+and a memory whose only feedback in that window is positive with no reason or
+note, unless the ref is explicit. Two fallback lanes pick refs
+with no such feedback: high salience (content-scored refs at or above
 `improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
 capped at 10% of the limit, at least one ref) and, in a strategy that enables
 `proactiveMaintenance`, refs due for a revisit. They only select and score refs
@@ -3072,9 +3098,10 @@ passed on its current content is accepted (unless its target changed since it
 was minted — that one is auto-rejected as `stale-target`); an empty diff is
 rejected; a proposal that reflect or distill deferred for review is left for a
 person; everything else goes to the judgment tier when one is enabled, and
-is otherwise left for review. A reflect revision that changes the body is
-deferred for review even when its judge passes it. Default mode stages
-decisions (queue mode); pass `--promote` to actually accept.
+is otherwise left for review. A reflect revision that changes the body, and
+every distill lesson or knowledge promotion, is deferred for review even when
+its judge passes it. Default mode stages decisions (queue mode); pass
+`--promote` to actually accept.
 
 ```sh
 akm proposal drain --dry-run                        # Preview without writing
@@ -3097,8 +3124,8 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 
 `akm feedback` accepts an optional `--reason <text>` flag whose value is
 forwarded into feedback metadata and consumed by improve/distill proposal
-prompts. Negative feedback requires a reason by default: the next improve run
-proposes a fix from it, so say what is wrong and what should change.
+prompts. Negative feedback requires a reason by default: say what is wrong and
+what should change.
 
 Write the reason about the asset's content. Reflect treats it as an unverified
 report to investigate, not a fact to insert, and is told to leave the section

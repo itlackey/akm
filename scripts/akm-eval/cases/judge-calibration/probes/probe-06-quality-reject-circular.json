@@ -18,14 +18,12 @@
       "ts": "2026-05-03T14:00:00.000Z",
       "signal": "negative",
       "reason": "Pure tautology — restates its title without conveying any guidance",
-      "failureMode": "incorrect",
       "note": "This is exactly the kind of `when_to_use: When working with <asset-name>` antipattern the LESSON_SYSTEM_PROMPT explicitly forbids."
     },
     {
       "ts": "2026-05-12T10:30:00.000Z",
       "signal": "negative",
-      "reason": "Wasted a retrieval slot during a real incident on May 12",
-      "failureMode": "incomplete"
+      "reason": "Wasted a retrieval slot during a real incident on May 12"
     }
   ],
   "humanGrade": {

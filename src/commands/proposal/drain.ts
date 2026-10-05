@@ -39,7 +39,7 @@ import {
 } from "../../integrations/agent/runner-dispatch";
 import { errMessage, noticeSet } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
-import { isRetireProposal, STALE_TARGET_GATE_REASON } from "./proposal-types";
+import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
   listProposals,
   listProposalsReadOnly,
@@ -425,12 +425,23 @@ export async function drainProposals(
   const accepts: Array<{ id: string; reason: string }> = [];
   const empties: string[] = [];
   for (const proposal of pending) {
-    // A consolidate pair-pass `retire` proposal is never auto-decided here,
-    // whatever `applyMode` says (alpha.9 brief §A "Review"; spec §25.6):
-    // untouched, still pending, waiting for a direct `akm proposal accept`.
-    // Checked before isEmptyDiff, which reads proposalContent() and has
-    // nothing meaningful to read on a delete-primary change anyway.
-    if (isRetireProposal(proposal)) continue;
+    // A consolidate pair-pass `retire` proposal is auto-accepted only when the
+    // pair judge staged it as a duplicate with nothing unique on either side
+    // (spec §25.9, equivalent content); every other one waits for a direct
+    // `akm proposal accept` (spec §25.6). Checked before isEmptyDiff, which
+    // has nothing meaningful to read on a delete-primary change.
+    if (isRetireProposal(proposal)) {
+      const staged = proposal.gateDecision;
+      if (
+        staged?.outcome === "staged" &&
+        staged.gate === PAIR_PASS_GATE &&
+        staged.contentHash === proposalContentHash(proposal) &&
+        !proposal.retirement?.continuityRisk
+      ) {
+        accepts.push({ id: proposal.id, reason: "duplicate" });
+      }
+      continue;
+    }
     const decision = proposal.gateDecision;
     // Another gate's rejection stands, and another gate's deferral is a
     // generating stage's hand-off to a person: it is left for that person.

@@ -16,45 +16,50 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 
 `akm feedback` records a positive or negative signal for any indexed asset.
 The signal updates the asset's utility score immediately, so highly-rated
-assets rank higher and underperformers surface less often right away. See
+assets rank higher and assets flagged wrong or stale surface less often right
+away. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
 for how that score is computed.
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review: the next improve run proposes a fix based on your
-reason, so be specific. `--positive` records that an asset helped (it raises
-its ranking) and does not trigger a rewrite. Only negative feedback plans a
-rewrite: improve no longer rewrites assets from positive signals or on a
-proactive cadence.
+flags the asset: it ranks lower right away, and the next improve run may repair
+its description, title or `when_to_use` from your reason. Improve does not
+rewrite an asset's text. Once you have verified the correct fact, attach the
+exact fix: `--replace "<exact current text>" --with "<corrected text>"
+--source "<URL, command or file that shows it>"` (repeat `--replace`/`--with`
+for several edits). akm checks that each `--replace` text appears exactly once,
+records nothing if one does not, and queues the edit as a `feedback` proposal
+for review. `--positive` records that an asset helped (it raises its ranking)
+and does not trigger a rewrite.
 
 ```sh
 akm feedback skills/code-review --positive
 akm feedback agents/reviewer --negative --reason "Gave outdated migration steps"
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
 akm feedback workflows/ship-release --positive --reason "Worked end-to-end on 0.8.0"
 
 # With a structured reason slug (consumed by improve/distill prompts):
-akm feedback skills/planner --negative --reason "incomplete-edge-cases"
+akm feedback skills/planner --negative --reason "wrong-default-timeout"
 ```
 
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
-the current local index. `--negative` additionally requires `--reason` — the
-next improve run proposes its fix from that reason, and omitting it exits 2.
-`--failure-mode` adds a curated taxonomy label but does **not** substitute for
-`--reason`. Full flag reference:
+the current local index. `--negative` additionally requires `--reason`, and
+omitting it exits 2. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).
 
 Record feedback about the asset's content: that it helped, or that it turned
-out wrong, stale or unhelpful. A failed `akm` command, such as an `akm show`
-that errors on the ref, says nothing about the asset, so don't record it as
-feedback on it: reflect and distill read each reason as a report about the
-asset's content.
+out wrong or stale. Record `--negative` only for content that is wrong or stale,
+and say what is wrong and what it should say. A note that simply did not fit
+your task is not negative feedback: record nothing for it. A failed `akm`
+command, such as an `akm show` that errors on the ref, says nothing about the
+asset, so don't record it as feedback on it: reflect and distill read each
+reason as a report about the asset's content.
 
 **Example: flag a skill that gave bad advice**
 
 ```sh
 akm feedback skills/deploy --negative \
-  --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
-  --failure-mode dangerous
+  --reason "Skips the dry-run step; caused prod incident 2026-05-10"
 ```
 
 ## akm log
@@ -100,7 +105,13 @@ one `akm improve --bundle <name>` run per other bundle you want improved.
 A rewrite (reflect) is planned only for assets with negative feedback in the
 last 30 days that is newer than the last time improve tried them, or for an
 explicit ref; a positive or note-only signal never plans one. Distill reads any
-feedback on a memory in that window. Unless `--require-feedback-signal` is set,
+feedback on a memory in that window, but skips a memory flagged wrong and not
+edited since: a negative feedback in that window judged the body it still has
+(or, recorded without that body's hash, is newer than its file's last write).
+It also skips a memory whose only feedback in that window is a positive with no
+reason or note: say what helped (`--reason`), or the lesson has nothing to
+distil.
+Unless `--require-feedback-signal` is set,
 two fallback lanes pick assets with no such feedback: high-salience assets that
 were never reflected, and, in a strategy that enables proactive maintenance,
 assets due for a revisit. They only select and score assets and plan nothing,
@@ -201,8 +212,7 @@ After the proposal is generated, review it with `akm proposal diff <id>` and app
 ```sh
 # 1. An agent hits a problem and records it
 akm feedback skills/deploy --negative \
-  --reason "Skips the dry-run step; caused prod incident 2026-05-10" \
-  --failure-mode dangerous
+  --reason "Skips the dry-run step; caused prod incident 2026-05-10"
 
 # 2. The event lands in the log immediately
 akm log --ref skills/deploy --type feedback

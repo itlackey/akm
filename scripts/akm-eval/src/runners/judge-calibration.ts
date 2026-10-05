@@ -94,7 +94,6 @@ interface ProbeFeedback {
   signal: "positive" | "negative";
   reason?: string;
   note?: string;
-  failureMode?: string;
 }
 
 interface ProbeFile {
@@ -460,7 +459,6 @@ async function runProbeOnce(
         signal: fb.signal,
         reason: fb.reason ?? (fb.signal === "negative" ? "calibration probe" : undefined),
         note: fb.note,
-        failureMode: fb.failureMode,
       });
       if (res.status !== 0) {
         errors.push(`feedback (${fb.signal}) failed (exit ${res.status}): ${res.stderr.trim().slice(0, 200)}`);

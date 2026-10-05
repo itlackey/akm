@@ -52,12 +52,16 @@ akm feedback workflows/deploy-to-prod --positive --reason "Completed without iss
 
 **Get refs from search.** Agents should call `akm search --shape agent` or
 `akm curate` to discover refs — not guess them. The `ref` field in search
-results is the stable token to pass to `akm show`. Feedback closes the loop:
+results is the stable token to pass to `akm show`. Feedback closes the loop.
+Record `--negative` only when the asset's content is wrong or stale; a note that
+simply did not fit the task is not negative feedback, so record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
-flags the asset for review, and the next improve run proposes a fix based on
-your reason. `--positive` records that an asset helped (it raises its ranking)
-and does not trigger a rewrite. See [Improve the Library](improve-the-library.md)
-for what happens to feedback after it's recorded.
+flags the asset, and the next improve run may repair its description, title or
+`when_to_use` from your reason. Once you have verified the correct fact, attach
+the exact fix with `--replace`, `--with` and `--source`. `--positive` records
+that an asset helped (it raises its ranking) and does not trigger a rewrite. See
+[Improve the Library](improve-the-library.md) for what happens to feedback after
+it's recorded.
 
 ## Compatibility matrix
 

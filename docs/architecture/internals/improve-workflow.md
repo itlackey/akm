@@ -77,30 +77,39 @@ flowchart TD
         T -- no --> NEXT_ASSET
         T -- yes + memory without recent feedback
         --> SKIP_WEAK[push distill-skipped action\nappendEvent improve_skipped\nreason: memory_distill_requires_feedback]
+        T -- yes + flagged wrong since its last edit
+        --> SKIP_FLAGGED[push distill-skipped action\nimprove_ledger row: unchanged\nappendEvent improve_skipped\nreason: distill_flagged_wrong]
+        T -- yes + only positive feedback without a reason
+        --> SKIP_BARE[push distill-skipped action\nimprove_ledger row: unchanged\nappendEvent improve_skipped\nreason: distill_positive_without_reason]
         T -- yes --> DISTILL
 
         subgraph DISTILL["distillFn subprocess"]
             DISTILL_A[lookup ref file path] --> DISTILL_B[readEvents: feedback for ref\napply excludeFeedbackFromRefs filter]
             DISTILL_B --> DISTILL_C{proposalKind == auto\nAND promotion heuristic passes?}
             DISTILL_C -- yes --> DISTILL_PROMOTE[createProposal knowledge/ref\nsource: distill\nappendEvent: distill_invoked outcome=queued]
-            DISTILL_C -- no --> DISTILL_D[callStage distill\nplan-resolved runner\n600 s default timeout]
+            DISTILL_C -- no --> DISTILL_X{lesson already at\nthe target ref?}
+            DISTILL_X -- yes --> DISTILL_EXISTS[appendEvent: distill_invoked outcome=skipped\nskipReason lesson_exists, no call, no proposal\nthe loop records unchanged in the ledger]
+            DISTILL_X -- no --> DISTILL_D[callStage distill\nplan-resolved runner\n600 s default timeout]
             DISTILL_D --> DISTILL_E{call failed or empty output?}
             DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=llm_failed\nreturn llm_failed result, no ledger row]
             DISTILL_E -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
             DISTILL_F --> DISTILL_G{findings?}
             DISTILL_G -- yes --> DISTILL_FAIL[appendEvent: outcome=validation_failed\nthrow UsageError]
             DISTILL_G -- no --> DISTILL_J{quality gate judge:\nnovelty, non-redundancy, grounding}
-            DISTILL_J -- pass --> DISTILL_H[createProposal lessons/slug-lesson\nor knowledge/slug\nsource: distill\nappendEvent: outcome=queued]
+            DISTILL_J -- pass --> DISTILL_H[createProposal lessons/slug-lesson\nor knowledge/slug\nsource: distill, gate decision deferred\nappendEvent: outcome=queued]
             DISTILL_J -- mean in the review band or grounding 2 with the mean not too low --> DISTILL_REVIEW[createProposal, gate decision deferred\nappendEvent: outcome=review_needed]
             DISTILL_J -- mean too low or grounding 1 --> DISTILL_REJECT[improve_ledger row, no proposal\nappendEvent: outcome=quality_rejected]
             DISTILL_PROMOTE --> DISTILL_RETURN
             DISTILL_SKIP --> DISTILL_RETURN
+            DISTILL_EXISTS --> DISTILL_RETURN
             DISTILL_H --> DISTILL_RETURN([return AkmDistillResult])
             DISTILL_REVIEW --> DISTILL_RETURN
             DISTILL_REJECT --> DISTILL_RETURN
         end
 
         SKIP_WEAK --> NEXT_ASSET
+        SKIP_FLAGGED --> NEXT_ASSET
+        SKIP_BARE --> NEXT_ASSET
         DISTILL_RETURN --> NEXT_ASSET([completedCount++\nlog progress])
     end
 
@@ -217,6 +226,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
 2. Best-effort load asset content via `lookupFn` (defaults to indexer `lookup`).
 3. Read feedback events via `readEvents({ ref, type: "feedback" })`. Apply `excludeFeedbackFromRefs` filtering before the LLM sees the events.
 4. Memory promotion fast path: when `proposalKind` is `"auto"` or `"knowledge"` and `assessMemoryKnowledgePromotionCandidate` returns `promote: true`, create a `knowledge:` proposal immediately without an LLM call.
+   - A lesson target that already exists is not regenerated: when the stash the proposal is filed in holds a file at the lesson ref (the path accepting it would write), distill returns `skipped` with `skipReason: "lesson_exists"` and a `distill_invoked` event carrying them, before any LLM call, and mints no proposal and stamps nothing on the input. The lesson ref derives from the memory's name, so a second distill of the same memory proposes the same ref, and accepting that proposal replaces the lesson; all 5 such overwrites recorded by the 2026-10-05 review were rejected. A lesson of that name in another bundle is not an overwrite. As for any `skipped` distill, the loop records the input in the improve ledger as `unchanged`.
 5. Resolve `improve.strategies.<selected>.processes.distill.engine` (falling
    back to `defaults.llmEngine`), then issue one bounded call.
    - Process gate: disabled if the selected strategy's `processes.distill.enabled` is `false`.
@@ -227,10 +237,10 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
 8. Quality gate (`processes.distill.qualityGate`, on unless disabled): one judge call, on distill's engine or the gate's own (`qualityGate.engine`), scores the lesson from 1 to 5 on **novelty**, **non-redundancy** and **grounding**, against the source body the lesson was generated from (frontmatter stripped, first 3000 characters). A lesson passes only when novelty and non-redundancy both score 4 or more; otherwise a mean of those two of 2.5 or more is `review_needed` and a lower mean is `quality_rejected`. Grounding asks whether the lesson is about what its source is about: 1–2 only for a different subject than the source, 3 for a lesson on the source's subject that goes beyond or corrects it (it may draw on feedback the judge is not shown), 4–5 when the source supports it. It is not part of the mean. A grounding score of 1 is `quality_rejected` whatever the mean is. This keeps a lesson about a tool error recorded as feedback — `akm show` failing on the ref — from being minted for a memory on an unrelated subject, which the other two criteria would pass or send to review (#999). A 2 is borderline, not a veto: a lesson on its source's subject that advises beyond the source can score 2, and scores move by about a point between runs even at temperature 0 (seen on a llama.cpp server). It goes to `review_needed` (reason `Borderline on grounding (2/5), routed to review: …`) even when the mean alone would pass it, but a mean that alone rejects it stays `quality_rejected`. A distill with no source to read (an unindexed ref distilled "from feedback signal alone") gives the judge an empty source, so its lesson is expected to be rejected as off-subject.
    - `quality_rejected` writes an `improve_ledger` row for the input (30-day distill rejection window) and a `distill_invoked` event carrying `score`, the per-criterion `criteria` and the `reason`. It mints no proposal.
    - `review_needed` mints a pending proposal stamped `deferred` / `quality-gate` for a human; the triage drain leaves it alone. It is the outcome for a non-passing mean of 2.5 or more (unless grounding is 1), a grounding score of 2 with a mean that does not reject, a judge that times out or returns something unparseable or incomplete, the optional fidelity check's contradiction (`processes.distill.fidelityCheck.enabled`, off by default; a lesson that contradicts its source reaches a human this way, not through grounding), and a heuristic lesson-quality finding (for example an invalid `description`), which is found before the judge is called.
-9. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })`.
+9. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })` through `mintProposal`. A pass is minted `deferred` (gate `quality-gate`, reason `distill-review`) with the judge's per-criterion `scores` and `judgeReason`, for a person: the triage drain and its judgment tier leave it alone, and the improve ledger records `review_needed`. It is never `staged`. On 2026-10-05 the gate had staged 12 lessons and 10 were bad (they restated the memory, claimed what it does not say, or filed a dated status as a lesson); no judge score separated them from the two good ones. A promotion to knowledge that passes is deferred the same way. With `processes.distill.qualityGate` off nothing was judged, so the proposal is minted unstamped for the drain to decide.
 10. Emit `distill_invoked` event with `outcome: "queued"`.
 
-**Lesson-ref derivation rule:** `lessons/<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skills/deploy` → `lessons/skill-deploy-lesson`.
+**Lesson-ref derivation rule:** `lessons/<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skills/deploy` → `lessons/skill-deploy-lesson`. A lesson already at that ref is never overwritten (see step 4).
 
 **What it writes:** one durable proposal row in `state.db`. Never writes asset files directly.
 
@@ -351,11 +361,12 @@ duplicate, subsumed and superseding retirement, review-gated.
    fits when a larger one ahead of it does not) — an initiator with a
    pending-blocked pair is skipped entirely rather than spending any of the
    budget on a pair that cannot be judged yet.
-3. **Judge:** one LLM call per pair (`src/assets/prompts/consolidate-pair.md`,
-   the calibrated relation prompt, unchanged) through the consolidate
-   process's own engine and concurrency, labelling the pair one of
-   `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap` or
-   `unrelated`.
+3. **Judge:** one LLM call per pair (`src/assets/prompts/consolidate-pair.md`)
+   through the consolidate process's own engine and concurrency. It first
+   lists the durable claims each side alone holds (`onlyInA`, `onlyInB`),
+   then labels the pair one of `duplicate`, `subsumed`, `supersedes`,
+   `contradicts`, `overlap` or `unrelated`. Each side is shown up to 12,000
+   body characters.
 4. **Outcome:** `duplicate`, `subsumed` and `supersedes` mint one `retire`
    proposal (source `consolidate-pair`, its own generator — see below) for
    the side that does not survive — never a `captureMode: hot` memory, never
@@ -363,10 +374,15 @@ duplicate, subsumed and superseding retirement, review-gated.
    never when either side already has a pending retire proposal (as the
    retired ref or its successor), and never retiring or reusing as a
    successor an asset already spent earlier in the SAME run (the durable
-   half of this last guard is at accept time — step below). `contradicts`,
+   half of this last guard is at accept time — step below), and never
+   retiring a side the judge listed a claim for. `contradicts`,
    `overlap` and `unrelated` are recorded `judged_no_action` with no
    proposal; `contradicts` is counted in the run report and stays a human
-   decision.
+   decision. A `duplicate` with both lists empty and no continuity risk gets
+   a second call (`consolidate-pair-check.md`: what does the retired note
+   hold that the kept one lacks?); an empty answer stages the proposal
+   (gate `consolidate-pair`), and the triage drain accepts it under its
+   usual `applyMode`. Every other retire proposal waits for a person.
 5. **Ledger:** a row is written for an initiator only once every one of its
    own candidates was admitted this run (whole-initiator admission in step 2
    makes this an all-or-nothing membership check) AND actually resolved to a
@@ -595,6 +611,8 @@ Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row pe
 - A ref that passes only distill, and is a distill candidate, is planned distill-only.
 - A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)). The lanes only select and score: a ref they pick is not planned for reflect or distill, so improve does not rewrite assets on a proactive cadence.
 - Every ref the loop does not take is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
+- A memory flagged wrong is not distilled: when a negative feedback in the 30-day window recorded the hash of the body it judged (`contentHash`, the `body` hash of `content-hash.ts`) and the file's body still has it, the loop skips distill for it (a `distill-skipped` action and an `improve_skipped` event with reason `distill_flagged_wrong`) and records the attempt in the ledger as `unchanged`, so the ref waits for newer feedback. Reflect still plans it. A write that leaves the body alone (an inference stamp, a frontmatter repair) does not lift the flag; changing the body does. Feedback recorded without a hash keeps the earlier test: it flags the memory while it is newer than the file's last write, whose modification time is the edit signal, as for the retrieval scope's new material.
+- A memory whose only feedback in the 30-day window is positive without a reason or note (`hasOnlyBarePositiveFeedback` in `preparation.ts`) is not distilled either: the loop skips distill for it (a `distill-skipped` action with the reason "only positive feedback, without a reason" and an `improve_skipped` event with reason `distill_positive_without_reason`) and records the attempt in the ledger as `unchanged`, so it waits for newer feedback. A bare `--positive` only records that a note helped, which gives the writer nothing to distil: 10 of the 11 lessons made from such a memory were rejected on 2026-10-05, and the 11th was good. A reason, a note or a negative signal among the feedback, or an explicit ref scope, lets it through.
 - The loop's refs are ranked by salience (`scoreSalience` in `preparation.ts`, which also scores the fallback lanes' picks and computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
 
 An explicit ref scope bypasses every gate. Consolidation, extract and schema repair read their own ledger sources in their own stages.

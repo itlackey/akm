@@ -15,8 +15,10 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
@@ -374,6 +376,38 @@ function emitDistill(run: Pick<DistillRun, "ledgerRef" | "eligMeta" | "options">
   );
 }
 
+/**
+ * End a distill with no proposal and no failure: reported as `skipped`, which the improve loop
+ * leaves in the ledger as unchanged, as it does a reflect that changed nothing.
+ */
+function skipDistill(
+  run: DistillRun,
+  proposalRef: string,
+  kind: DistillKind,
+  skipReason: string,
+  message: string,
+): AkmDistillResult {
+  emitDistill(run, {
+    outcome: "skipped",
+    proposalRef,
+    proposalKind: kind,
+    skipReason,
+    message,
+    ...exclusionMeta(run, false),
+  });
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "skipped",
+    inputRef: run.inputRef,
+    proposalRef,
+    proposalKind: kind,
+    skipReason,
+    message,
+    ...exclusionMeta(run, true),
+  };
+}
+
 /** The exclusion diagnostics for an event (count only) or a result (count + fully-filtered). */
 function exclusionMeta(run: DistillRun, forResult: boolean): Record<string, unknown> {
   if (!run.exclusion) return {};
@@ -461,6 +495,18 @@ async function distill(
     return promoted;
   }
 
+  // A lesson already at the target ref is left as it is: the proposal would overwrite it, and all 5 recorded
+  // overwrites were rejected. Checked before the call, which it would waste.
+  if (kind === "lesson" && lessonExists(run, outputRef)) {
+    return skipDistill(
+      run,
+      outputRef,
+      kind,
+      "lesson_exists",
+      `${outputRef} already exists; distill does not overwrite a lesson.`,
+    );
+  }
+
   const feedback = feedbackEvents.slice(-20).map((event) => ({
     ts: event.ts,
     eventType: event.eventType,
@@ -515,6 +561,18 @@ async function distill(
     source: run.asset.content,
     descriptionSwapped: assembled.descriptionSwapped,
   });
+}
+
+/** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
+function lessonExists(run: DistillRun, ref: string): boolean {
+  const { type, name } = parseRefInput(ref);
+  const typeDir = stashDirFor(type);
+  if (!typeDir) return false;
+  try {
+    return fs.statSync(assetPathForName(type, path.join(run.stash, typeDir), name)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Turn the response into validated content: structured JSON or markdown, then lesson repairs and lint. */
@@ -574,7 +632,7 @@ function qualityGateEnabled(run: DistillRun): boolean {
 }
 
 /**
- * Judge the distilled content, then queue it. A rejected, uncertain or
+ * Judge the distilled content, then queue it for review. A rejected, uncertain or
  * source-contradicting result is recorded instead (see {@link writeQualityRejection}).
  */
 async function judgeAndQueue(
@@ -661,7 +719,20 @@ async function judgeAndQueue(
       // The ledger keys the attempt by the input, not the output.
       attemptedRefs: [run.ledgerRef],
     },
-    { judged },
+    // A pass goes to a person, never to the triage drain or its judgment tier. Staged precision was 2 of 12 on
+    // 2026-10-05: ten of the staged lessons restated their memory, claimed what it does not say, or filed a dated
+    // status as a lesson, and no judge score separated them from the two good ones. The judge's evidence stays on
+    // the decision for the reviewer. With the gate off nothing was judged, and the drain decides as before.
+    judged
+      ? {
+          review: {
+            reason: "distill-review",
+            gate: "quality-gate",
+            ...(judged.criteria ? { scores: judged.criteria } : {}),
+            judgeReason: judged.reason,
+          },
+        }
+      : {},
   );
   persistOutputEncodingSalience(run, out.ref, content);
   const swapped = out.descriptionSwapped ? { descriptionSwapped: out.descriptionSwapped } : {};

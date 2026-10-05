@@ -104,12 +104,11 @@ export class AkmCli {
    */
   feedback(
     ref: string,
-    opts: { signal: "positive" | "negative"; reason?: string; note?: string; failureMode?: string },
+    opts: { signal: "positive" | "negative"; reason?: string; note?: string },
   ): { stdout: string; stderr: string; status: number | null } {
     const args = ["feedback", ref, opts.signal === "positive" ? "--positive" : "--negative"];
     if (opts.reason) args.push("--reason", opts.reason);
     if (opts.note) args.push("--note", opts.note);
-    if (opts.failureMode) args.push("--failure-mode", opts.failureMode);
     return this.run(args);
   }
 
