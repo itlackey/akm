@@ -31,6 +31,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import consolidatePairPrompt from "../../../assets/prompts/consolidate-pair.md" with { type: "text" };
+import consolidatePairCheckPrompt from "../../../assets/prompts/consolidate-pair-check.md" with { type: "text" };
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
@@ -117,6 +118,13 @@ export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
     confidence: { type: "number", minimum: 0, maximum: 1 },
     reason: { type: "string", maxLength: 400 },
   },
+};
+
+const PAIR_CHECK_JSON_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  required: ["missing"],
+  additionalProperties: false,
+  properties: { missing: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 } },
 };
 
 interface RawPairJudgeResponse {
@@ -634,6 +642,46 @@ interface PairPassContext {
  * the proposal. Never throws — a failure is counted in `failedJudgments` or
  * pushed to `warnings`, never lost silently and never aborting the run.
  */
+function checkSection(label: string, side: PairSide): string {
+  return [
+    `Note ${label}:`,
+    `Ref: ${side.asset.ref}`,
+    `Description: ${asNonEmptyString(side.frontmatter.description) ?? "(none)"}`,
+    "Content:",
+    "```",
+    stripFrontmatterBody(side.raw).slice(0, PAIR_BODY_TRUNCATE_CHARS),
+    "```",
+    "",
+  ].join("\n");
+}
+
+/**
+ * The second look a duplicate gets before it may retire unattended: one call
+ * that asks only what the retired note holds that the kept one lacks. True
+ * only on a clean, empty answer (it caught 2 of 4 duplicates the judge got
+ * wrong, and held back none of 109 right ones).
+ */
+async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, successor: PairSide): Promise<boolean> {
+  const outcome = await callStage({
+    feature: "memory_consolidation",
+    runner: ctx.llmRunner,
+    system: consolidatePairCheckPrompt,
+    prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}`,
+    gate: { config: ctx.config, enabled: true },
+    request: {
+      responseSchema: PAIR_CHECK_JSON_SCHEMA,
+      enableThinking: false,
+      ...(Object.hasOwn(ctx.llmRunner, "timeoutMs") ? { timeoutMs: ctx.llmRunner.timeoutMs } : {}),
+      signal: ctx.opts.signal,
+      ...(ctx.chat ? { chat: ctx.chat } : {}),
+    },
+    parse: (raw: string) => claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(raw)?.missing),
+    ...(ctx.opts.onNotices ? { onNotices: ctx.opts.onNotices } : {}),
+  });
+  if (!outcome.ok) return false;
+  return claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(outcome.raw)?.missing)?.length === 0;
+}
+
 async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise<{ failed: boolean }> {
   const initiatorSide = loadSide(candidate.initiator, ctx.gitFirstAdded, ctx.stashDir);
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
@@ -763,11 +811,16 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     ctx.retired.push(proposal.id);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
-    // A duplicate with nothing unique on either side is the one class that
-    // retires unattended (56 of 56 safe on the owner's reviewed pairs,
-    // 2026-10-04): the triage drain accepts it under its usual applyMode.
-    // Every other retirement waits for a person.
-    if (verdict.relation === "duplicate" && verdict.onlyInA.length + verdict.onlyInB.length === 0 && !continuityRisk) {
+    // A duplicate with nothing unique on either side, confirmed by a second
+    // look, is the one class that retires unattended (109 of 111 safe on the
+    // owner's reviewed pairs, 2026-10-04): the triage drain accepts it under
+    // its usual applyMode. Every other retirement waits for a person.
+    if (
+      verdict.relation === "duplicate" &&
+      verdict.onlyInA.length + verdict.onlyInB.length === 0 &&
+      !continuityRisk &&
+      (await confirmNothingLost(ctx, retired, successor))
+    ) {
       recordGateDecision(
         ctx.stashDir,
         proposal.id,

@@ -11,14 +11,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Consolidate's pair judge lists what each note alone holds before it
   classifies the pair, and akm never retires a note the judge listed anything
   for.** The judge also reads 12,000 characters of each note instead of 2,500.
-  On 650 reviewed pairs from the owner's library, 70% of the old judge's
-  retirements lost nothing; with the lists, 93% do.
-- **A duplicate with nothing unique on either side retires unattended.** The
-  pair pass stages it, and `triage` `applyMode: "promote"` accepts it like a
-  judged revision (it still counts against `maxAcceptsPerRun`, and a
-  continuity risk keeps it for review). All 56 such duplicates in the reviewed
-  pairs were safe to retire. Every other retirement still waits for
-  `akm proposal accept`.
+  On 650 reviewed pairs from the owner's library, 64% of the old judge's
+  retirements lost nothing; with the lists, 92% do, and it picks the wrong
+  note to keep far less often.
+- **A confirmed duplicate retires unattended.** When the judge finds nothing
+  unique on either side, one more call asks only what the retired note holds
+  that the kept one lacks; an empty answer stages the proposal, and `triage`
+  `applyMode: "promote"` accepts it like a judged revision (it counts against
+  `maxAcceptsPerRun`, and a continuity risk keeps it for review). 109 of the
+  111 duplicates that passed in the reviewed pairs were safe to retire, and an
+  accepted retirement can be undone with `akm proposal revert`. Every other
+  retirement still waits for `akm proposal accept`.
 
 ## [0.9.25] - 2026-10-04
 

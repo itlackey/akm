@@ -114,25 +114,34 @@ function baseOpts(): AkmConsolidateOptions {
   } as AkmConsolidateOptions;
 }
 
-/** A canned judge: returns a fixed verdict for every call, regardless of the prompt. */
+/** True for the pair judge's own call, false for the second look a duplicate gets before it is staged. */
+function isJudgeCall(messages: ReadonlyArray<{ content: string }>): boolean {
+  return messages[0]?.content.startsWith("You compare two assets") ?? false;
+}
+
+/** A canned judge: returns a fixed verdict for every call, regardless of the prompt, and an empty second look. */
 function fixedChat(verdict: {
   relation: string;
   redundant: "A" | "B" | null;
   onlyInA?: string[];
   onlyInB?: string[];
+  /** The second look's answer, for a duplicate about to be staged. */
+  missing?: string[];
   confidence?: number;
   reason?: string;
 }): PairJudgeChat {
-  return async () =>
-    JSON.stringify({
-      onlyInA: verdict.onlyInA ?? [],
-      onlyInB: verdict.onlyInB ?? [],
-      relation: verdict.relation,
-      redundant: verdict.redundant,
-      stale: null,
-      confidence: verdict.confidence ?? 0.9,
-      reason: verdict.reason ?? "test reason",
-    });
+  return async (_connection, messages) =>
+    messages[0]?.content.startsWith("You check whether deleting note X")
+      ? JSON.stringify({ missing: verdict.missing ?? [] })
+      : JSON.stringify({
+          onlyInA: verdict.onlyInA ?? [],
+          onlyInB: verdict.onlyInB ?? [],
+          relation: verdict.relation,
+          redundant: verdict.redundant,
+          stale: null,
+          confidence: verdict.confidence ?? 0.9,
+          reason: verdict.reason ?? "test reason",
+        });
 }
 
 describe("selectInitiators / selectCandidates — threshold math against a real index", () => {
@@ -534,7 +543,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     let chatCalls2 = 0;
     const result2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async (...args) => {
-        chatCalls2++;
+        if (isJudgeCall(args[1])) chatCalls2++;
         return fixedChat({ relation: "duplicate", redundant: null })(...args);
       },
     });
@@ -622,6 +631,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
       chat: fixedChat({ relation: "duplicate", redundant: "A", onlyInB: ["port 8080"] }),
+    });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
+  });
+
+  test("a duplicate the second look finds a missing claim in still mints, but is not staged", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "duplicate", redundant: "A", missing: ["example value `timeoutMs: 1800000`"] }),
     });
     expect(result.retired).toHaveLength(1);
     expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
@@ -1009,6 +1027,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     let chatCalls2 = 0;
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async (_connection, messages) => {
+        if (!isJudgeCall(messages)) return JSON.stringify({ missing: [] }); // the duplicate's second look
         chatCalls2++;
         const text = messages.map((m) => m.content).join("\n");
         if (text.includes("memories/y-note")) {
@@ -1133,6 +1152,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     let chatCalls2 = 0;
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async (_connection, messages) => {
+        if (!isJudgeCall(messages)) return JSON.stringify({ missing: [] }); // the duplicate's second look
         chatCalls2++;
         const text = messages.map((m) => m.content).join("\n");
         if (text.includes("memories/y-note")) {

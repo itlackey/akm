@@ -351,11 +351,12 @@ duplicate, subsumed and superseding retirement, review-gated.
    fits when a larger one ahead of it does not) — an initiator with a
    pending-blocked pair is skipped entirely rather than spending any of the
    budget on a pair that cannot be judged yet.
-3. **Judge:** one LLM call per pair (`src/assets/prompts/consolidate-pair.md`,
-   the calibrated relation prompt, unchanged) through the consolidate
-   process's own engine and concurrency, labelling the pair one of
-   `duplicate`, `subsumed`, `supersedes`, `contradicts`, `overlap` or
-   `unrelated`.
+3. **Judge:** one LLM call per pair (`src/assets/prompts/consolidate-pair.md`)
+   through the consolidate process's own engine and concurrency. It first
+   lists the durable claims each side alone holds (`onlyInA`, `onlyInB`),
+   then labels the pair one of `duplicate`, `subsumed`, `supersedes`,
+   `contradicts`, `overlap` or `unrelated`. Each side is shown up to 12,000
+   body characters.
 4. **Outcome:** `duplicate`, `subsumed` and `supersedes` mint one `retire`
    proposal (source `consolidate-pair`, its own generator — see below) for
    the side that does not survive — never a `captureMode: hot` memory, never
@@ -363,10 +364,15 @@ duplicate, subsumed and superseding retirement, review-gated.
    never when either side already has a pending retire proposal (as the
    retired ref or its successor), and never retiring or reusing as a
    successor an asset already spent earlier in the SAME run (the durable
-   half of this last guard is at accept time — step below). `contradicts`,
+   half of this last guard is at accept time — step below), and never
+   retiring a side the judge listed a claim for. `contradicts`,
    `overlap` and `unrelated` are recorded `judged_no_action` with no
    proposal; `contradicts` is counted in the run report and stays a human
-   decision.
+   decision. A `duplicate` with both lists empty and no continuity risk gets
+   a second call (`consolidate-pair-check.md`: what does the retired note
+   hold that the kept one lacks?); an empty answer stages the proposal
+   (gate `consolidate-pair`), and the triage drain accepts it under its
+   usual `applyMode`. Every other retire proposal waits for a person.
 5. **Ledger:** a row is written for an initiator only once every one of its
    own candidates was admitted this run (whole-initiator admission in step 2
    makes this an all-or-nothing membership check) AND actually resolved to a
