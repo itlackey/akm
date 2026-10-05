@@ -13,6 +13,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { improveCommand } from "../../../../src/commands/improve/improve-cli";
 import { akmReflect, renderReflectPromptPreview } from "../../../../src/commands/improve/reflect";
 import { archiveProposal, createProposal } from "../../../../src/commands/proposal/repository";
@@ -135,6 +136,43 @@ describe("renderReflectPromptPreview (#952)", () => {
     // buildReflectPromptInput helpers close.
     expect(preview.prompt).toContain("do not invent a changelog entry that was not requested");
     expect(preview.prompt).toBe(dispatchPrompt);
+  });
+
+  test("marks feedback given on an earlier version of the text; matching and hash-less lines stay as they are", async () => {
+    const stashDir = storage.stashDir;
+    writeLesson(stashDir, "test-lesson", "existing description", "existing usage");
+    const sha256 = (text: string) => createHash("sha256").update(text).digest("hex");
+    const give = (reason: string, contentHash?: string) =>
+      appendEvent({
+        eventType: "feedback",
+        ref: "lessons/test-lesson",
+        metadata: { signal: "negative", reason, ...(contentHash ? { contentHash } : {}) },
+      });
+    const config = withTestImproveLlm(makeConfig(stashDir));
+    const promptNow = async () =>
+      (
+        await withMockedFetch(
+          () => renderReflectPromptPreview({ ref: "lessons/test-lesson", improveProfile: {}, config, stashDir }),
+          () => {
+            throw new Error("renderReflectPromptPreview must never call fetch — it makes no engine call");
+          },
+        )
+      ).prompt;
+
+    // The lesson's body is its text after the frontmatter, trimmed.
+    give("recorded before hashes existed");
+    give("judged this text", sha256("# test-lesson\n\nBody text."));
+    const unmarked = await promptNow();
+    expect(unmarked).toContain("- [negative] recorded before hashes existed\n\n- [negative] judged this text\n\n");
+
+    // Only the line with a different hash changes; the rest of the prompt is byte for byte as it was.
+    give("judged an older text", sha256("# test-lesson\n\nOlder text."));
+    expect(await promptNow()).toBe(
+      unmarked.replace(
+        "- [negative] judged this text\n\n",
+        "- [negative] judged this text\n\n- [negative] judged an older text (given on an earlier version of the text)\n\n",
+      ),
+    );
   });
 
   test("rejects a missing ref", async () => {

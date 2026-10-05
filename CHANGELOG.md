@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Each feedback event records the text it judged, and reflect marks feedback
+  given on an earlier version of it.** `akm feedback` adds `contentHash`, the
+  sha256 of the asset's body without its frontmatter as it stood when the
+  feedback was given, to the event and its usage row, for positive and negative
+  feedback. It is left out for an env or secret file, whose bytes akm never
+  reads, and when the file cannot be read. When reflect gathers an asset's
+  recent feedback, a line whose `contentHash` differs from the asset's current
+  body ends with ` (given on an earlier version of the text)`, so the model
+  knows the text changed since. A line without a `contentHash` (all feedback
+  recorded before this change) or with a matching one reads as before, and the
+  rest of the prompt is unchanged.
+
 ### Removed
 
 - **`akm feedback --failure-mode` and the `feedback.allowedFailureModes` config

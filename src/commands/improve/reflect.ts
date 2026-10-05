@@ -60,6 +60,7 @@ import type { EligibilitySource } from "../proposal/proposal-types";
 import type { CreateProposalInput, ProposalsContext } from "../proposal/repository";
 import { isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { CHARS_PER_TOKEN, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
+import { contentHash } from "./content-hash";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
@@ -124,20 +125,31 @@ export interface AkmReflectOptions {
 const MAX_FEEDBACK_LINES = 10;
 const MAX_GLOBAL_FEEDBACK_LINES = 20;
 
+/** Ends a feedback line whose event judged text the asset no longer has. */
+const EARLIER_TEXT_MARK = " (given on an earlier version of the text)";
+
 function readOnlyEventsContext(ctx?: EventsContext): EventsContext {
   return ctx?.db ? ctx : { ...(ctx ?? {}), readOnly: true };
 }
 
-/** Recent `feedback` lines for `ref` (or across all assets without one). Best-effort. */
-function readRecentFeedback(ref?: string, eventsCtx?: EventsContext): string[] {
+/**
+ * Recent `feedback` lines for `ref` (or across all assets without one). Given the
+ * asset's current content, a line whose event recorded the hash of a different
+ * body is marked. Best-effort.
+ */
+function readRecentFeedback(ref?: string, eventsCtx?: EventsContext, assetContent?: string): string[] {
   try {
     const events = readEvents({ type: "feedback", ...(ref ? { ref } : {}) }, readOnlyEventsContext(eventsCtx)).events;
+    const bodyHash = assetContent === undefined ? undefined : contentHash(assetContent, "body");
     return events.slice(-(ref ? MAX_FEEDBACK_LINES : MAX_GLOBAL_FEEDBACK_LINES)).map((event) => {
       const md = event.metadata ?? {};
       const signal = typeof md.signal === "string" ? md.signal : "?";
       const note = typeof md.reason === "string" ? md.reason : typeof md.note === "string" ? md.note : "";
       const details = note ? `[${signal}] ${note}` : `[${signal}]`;
-      return !ref && event.ref ? `${event.ref} ${details}` : details;
+      const line = !ref && event.ref ? `${event.ref} ${details}` : details;
+      return bodyHash !== undefined && typeof md.contentHash === "string" && md.contentHash !== bodyHash
+        ? `${line}${EARLIER_TEXT_MARK}`
+        : line;
     });
   } catch {
     return [];
@@ -837,7 +849,11 @@ function gatherReflectPromptSources(
   assetContent: string | undefined,
 ): ReflectPromptSources {
   return {
-    feedback: readRecentFeedback(options.ref ? (options.itemRef ?? options.ref) : undefined, options.eventsCtx),
+    feedback: readRecentFeedback(
+      options.ref ? (options.itemRef ?? options.ref) : undefined,
+      options.eventsCtx,
+      assetContent,
+    ),
     schemaHints: buildSchemaHints(parsedRef?.type ?? "", assetContent),
     rejectedProposals: rejectedProposalContext(stash, options.ref, options.ctx, options.eventsCtx),
     standardsContext: resolveStandardsContext(options.ref, stash),

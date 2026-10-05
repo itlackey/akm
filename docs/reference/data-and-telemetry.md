@@ -159,7 +159,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `curate` | `akm curate <prompt>` | `query`, `itemCount`, `itemRefs` |
 | `show` | `akm show <ref>` | `ref`, `type`, `name` |
 | `select` | `akm show` after a search returning the same ref | `ref`, `query`, `searchTs`, `rankPosition` |
-| `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `tags`, `fix` (`source` and the number of replacements, when an exact fix was attached) |
+| `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `tags`, `fix` (`source` and the number of replacements, when an exact fix was attached), `contentHash` (sha256 of the asset's body, without its frontmatter, as it stood when the feedback was given: it lets reflect mark feedback given on an earlier version of the text; left out for an env or secret file and when the file cannot be read) |
 | `sync` | `akm sync` | `name`, `message`, `ok` |
 | `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `stash_synced` | `akm improve`'s internal auto-sync pass (the `sync.push` feature), **distinct from** the `akm sync` command above | `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |

@@ -8,7 +8,7 @@ import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
-import { type AssetRef, conceptIdFromTypeName, parseRefInput } from "../core/asset/resolve-ref";
+import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
@@ -30,6 +30,7 @@ import {
   getItemRefById,
 } from "../storage/repositories/index-entries-repository";
 import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
+import { contentHash } from "./improve/content-hash";
 import { createProposal } from "./proposal/repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
@@ -229,6 +230,24 @@ function recordFeedbackUsage(
     }
   });
   return { utilityResult, rankingUpdateApplied, rankingUpdateSkippedReason };
+}
+
+// ── Judged text ──────────────────────────────────────────────────────────────
+
+/**
+ * The body hash of the text a piece of feedback judges: the asset's file as it
+ * stands when the feedback is given. `undefined` when the file cannot be read.
+ * Reflect compares it with the asset's current body to tell feedback given on
+ * an earlier version of the text. An env or secret file is never read.
+ */
+function judgedTextHash(itemRef: string, filePath: string | undefined): string | undefined {
+  try {
+    const type = typeNameFromConceptId(parseBundleRef(itemRef).conceptId)?.type;
+    if (!filePath || type === "env" || type === "secret") return undefined;
+    return contentHash(fs.readFileSync(filePath, "utf8"), "body");
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Exact fixes ──────────────────────────────────────────────────────────────
@@ -431,13 +450,12 @@ export const feedbackCommand = defineJsonCommand({
     }
     const rawTags = parseAllFlagValues("--tag");
     const validatedTags = validateFeedbackTags(rawTags);
-    const metadataObj = {
+    const metadataObj: Record<string, unknown> = {
       signal,
       ...(reason?.trim() ? { reason: reason.trim() } : {}),
       ...(validatedTags.length > 0 ? { tags: validatedTags } : {}),
       ...(fixPairs.length > 0 ? { fix: { source: fixSource, replacements: fixPairs.length } } : {}),
     };
-    const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
 
     // Feedback only needs the index to exist, not to be current. A stale index
     // is fine — the ref lookup works against any populated DB. We do NOT call
@@ -500,9 +518,11 @@ export const feedbackCommand = defineJsonCommand({
       const itemRef = getItemRefById(db, entryId);
       if (!itemRef) throw new UsageError(`Indexed ref "${ref}" has no durable item ref.`, "INVALID_PROPOSAL");
       durableRef = itemRef;
+      const filePath = getEntryFilePathById(db, entryId);
+      const textHash = judgedTextHash(itemRef, filePath);
+      if (textHash) metadataObj.contentHash = textHash;
       if (fixPairs.length > 0) {
         // Checked before anything is recorded, so a fix that does not apply leaves no trace.
-        const filePath = getEntryFilePathById(db, entryId);
         if (!filePath || !fs.existsSync(filePath)) {
           throw new NotFoundError(`The file for ${itemRef} is missing on disk.`, "ASSET_NOT_FOUND");
         }
@@ -516,6 +536,7 @@ export const feedbackCommand = defineJsonCommand({
         assertFrontmatterStillParses(before, after, filePath);
         fix = { content: after, target: { source: resolved.target.source.name, root: resolved.target.source.path } };
       }
+      const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
       const recordResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
       utilityResult = recordResult.utilityResult;
       rankingUpdateApplied = recordResult.rankingUpdateApplied;

@@ -597,7 +597,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `remember` | `akm remember` | `path`, `force`; `tagCount`, `enriched`, `auto`, `scope`, `notices` on the full path |
 | `import` | `akm import` | `source`, `path`, `force` |
 | `sync` | `akm sync` | `name`, `message`, `ok` |
-| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags` |
+| `feedback` | `akm feedback` | `signal` (positive\|negative), `reason`, `tags`, `contentHash` (sha256 of the asset's body when the feedback was given) |
 | `search` | `akm search` | `query`, `hitCount`, `resultRefs[]`, `mode` (semantic\|keyword) |
 | `curate` | `akm curate` | `query`, `itemCount`, `itemRefs[]` |
 | `show` | `akm show` | `type`, `name` |
