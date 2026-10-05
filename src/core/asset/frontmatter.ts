@@ -259,6 +259,42 @@ export function replaceFrontmatterLine(raw: string, key: string, line: string): 
 }
 
 /**
+ * Replace the top-level blocks of `keys` in an existing frontmatter block with
+ * `lines`, leaving every other byte untouched — the counterpart to
+ * {@link spliceFrontmatterLine} for a write that owns whole keys, such as the
+ * provenance stamp's `generated`, `verified` and `provenance`.
+ *
+ * A key's block is its `key:` line and the lines directly under it that
+ * continue it: indented lines and `- ` items. Every such block is removed
+ * wherever it sits, and `lines` are added just before the closing `---`, in the
+ * block's own line ending. A block with a blank line or a comment inside it is
+ * not removed whole, so the caller must check that the result still parses to
+ * what it meant. Returns null when `raw` has no well-formed block.
+ */
+export function replaceFrontmatterBlocks(
+  raw: string,
+  keys: readonly string[],
+  lines: readonly string[],
+): string | null {
+  const parts = raw.split(/(\r?\n)/);
+  if (parts[0]?.trim() !== "---") return null;
+  const closeAt = parts.findIndex((part, i) => i > 0 && part.trim() === "---");
+  if (closeAt === -1) return null;
+  const kept: string[] = [];
+  for (let i = 2; i < closeAt; i += 2) {
+    const key = parts[i]!.match(/^(\w[\w-]*):(?:[ \t]|$)/)?.[1];
+    if (key === undefined || !keys.includes(key)) {
+      kept.push(parts[i]!, parts[i + 1]!);
+      continue;
+    }
+    // One of the keys: drop its line and the lines that continue it.
+    while (i + 2 < closeAt && /^(?:[ \t]|-(?:[ \t]|$))/.test(parts[i + 2]!)) i += 2;
+  }
+  const added = lines.flatMap((line) => [line, parts[1]!]);
+  return [parts[0]!, parts[1]!, ...kept, ...added, ...parts.slice(closeAt)].join("");
+}
+
+/**
  * Strip one layer of matching quotes — frontmatter list items are often quoted
  * refs. Written as an explicit char compare rather than a backreference regex
  * on purpose: `scripts/lint-repository-sql.ts`'s comment/string stripper has no

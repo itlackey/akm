@@ -136,6 +136,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   spans several lines. The same write path serves `akm remember`, `akm import`
   and `akm workflow create`, so a note akm writes without a `type` now carries
   it, and `updated`, as its last frontmatter lines instead of its first.
+  Accepting a proposal also stamps its provenance (`generated`, `verified`,
+  `provenance`) as lines of its own, the last of the frontmatter, instead of
+  writing the whole frontmatter out again; a staging run found the old stamp
+  rewrapping 3 of 16 accepted edits. Accept still turns CRLF into LF, and still
+  writes the frontmatter out again when it carries bookkeeping keys such as
+  `inferenceProcessed` from the live note into a proposal that lacks them.
 - **`akm lint --fix` keeps a CRLF note's line endings** when it adds a missing
   `updated:`. It used to rewrite the whole file to LF, so one added line showed
   as every line changed.
