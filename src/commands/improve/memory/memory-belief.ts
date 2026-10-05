@@ -23,7 +23,7 @@ export type { MemoryBeliefTransitionLogRecord } from "./memory-improve";
  * An edge value as a list. A scalar string is live data (the indexer accepts
  * it), so it is promoted rather than dropped on the next write.
  */
-function readEdgeList(value: unknown): string[] {
+export function readEdgeList(value: unknown): string[] {
   if (Array.isArray(value)) return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
   if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];

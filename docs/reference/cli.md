@@ -1595,9 +1595,15 @@ rewrite an asset's text. To correct a wrong fact there, attach the exact fix
 with `--replace`, `--with` and `--source`: akm checks that each `--replace`
 text appears exactly once and that the frontmatter still parses, records nothing
 if either check fails, and queues the edit as a `feedback` proposal for review.
-`--positive` records that an asset helped (it raises its ranking) and does not
-trigger a rewrite. Both signals update the asset's
-utility score right away, so highly-rated assets rank higher in search results.
+To mark the asset's history, with or without a text fix, add `--superseded-by
+<ref>` (another asset replaces it) or `--outdated` (it describes a past state
+and no single asset replaces it), with `--reason` and `--source`. The same single
+proposal sets the asset's `beliefState` (`superseded`, or `deprecated`) and, for
+`--superseded-by`, adds the successor's ref to its `supersededBy` list, by
+editing only those lines of the frontmatter. `--positive` records that an asset
+helped (it raises its ranking) and does not trigger a rewrite. Both signals
+update the asset's utility score right away, so highly-rated assets rank higher
+in search results.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
@@ -1608,16 +1614,20 @@ akm feedback skills/code-review --positive --reason "Worked perfectly for PR rev
 akm feedback skills/code-review --negative --reason "references a removed flag"
 akm feedback skills/code-review --negative --reason "flaky" --tag slice:train --tag team:platform
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/"
+akm feedback knowledge/setup-v1 --negative --reason "the v2 guide replaces it" --superseded-by knowledge/setup-v2 --source "knowledge/setup-v2"
+akm feedback knowledge/api-v1 --negative --reason "describes the retired v1 API" --outdated --source "https://example.com/changelog"
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--positive` | Record that an asset helped: it raises its ranking and does not trigger a rewrite |
 | `--negative` | Flag the asset: it ranks lower right away, and the next improve run may repair its frontmatter from `--reason` |
-| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default, and always with `--replace`) |
+| `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default, and always with a fix: `--replace`, `--superseded-by` or `--outdated`) |
 | `--replace <text>` | Exact text to correct, copied verbatim from the asset file; it must appear exactly once. Repeatable, each paired in order with a `--with`. Negative feedback only |
 | `--with <text>` | The corrected text for the matching `--replace`. Use `--with=<text>` for a value that starts with `-` |
-| `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`; shown to the reviewer with the proposal |
+| `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`, `--superseded-by` and `--outdated`; shown to the reviewer with the proposal |
+| `--superseded-by <ref>` | The ref of the asset that replaces this one. The proposal sets `beliefState: superseded` and adds the ref, as its `bundle//conceptId`, to `supersededBy`; `contradicted` and `archived` stay, a ref already listed is not added again, and a scalar `supersededBy` becomes a list. The ref must be indexed and must not be the asset itself, or nothing is recorded; nor is anything when the asset already says all this (the fix changes nothing). Negative feedback only; may be combined with `--replace`/`--with`, not with `--outdated`; markdown assets only |
+| `--outdated` | The asset describes a past state and no single asset replaces it. The proposal sets `beliefState: deprecated`, unless the asset already says `superseded`, `contradicted` or `archived`. Negative feedback only; may be combined with `--replace`/`--with`, not with `--superseded-by`; markdown assets only |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |
 

@@ -6,6 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm feedback --negative --superseded-by <ref>` and `--outdated` mark an
+  asset's history, in the same single `feedback` proposal as any `--replace`
+  edits.** `--superseded-by` (another asset replaces this one) sets
+  `beliefState: superseded` and adds the ref to `supersededBy`; akm resolves it
+  through the index first, and it must be indexed and not the asset itself, or
+  nothing is recorded. The rules are those of `akm remember --supersedes`: an
+  asset that already says so is left as it is, `contradicted` and `archived`
+  stay, and a scalar `supersededBy` becomes a list. `--outdated` (the asset
+  describes a past state and nothing replaces it) sets `beliefState:
+  deprecated`, unless the asset already says superseded, contradicted or
+  archived. Like every fix, both are for negative feedback and need `--reason`
+  and `--source`; they apply to markdown assets and are not used together. akm
+  edits only the `beliefState` and `supersededBy` lines of the text, so
+  comments, quoting, key order and line endings stay (it writes the frontmatter
+  out again only when a line edit cannot follow how a key is spelled), and `fix`
+  in the command's output and in the feedback event says what was set.
+
 ### Changed
 
 - **Each feedback event records the text it judged, and reflect marks feedback
