@@ -37,7 +37,6 @@ import {
   makeStashDir as sandboxMakeStashDir,
   withEnv,
   withIsolatedAkmStorage,
-  withMockedFetch,
 } from "../_helpers/sandbox";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -349,24 +348,6 @@ describe("buildDistillPrompt", () => {
     });
     expect(prompt).toContain("Produce the knowledge markdown file now.");
     expect(prompt).not.toContain("Produce the lesson markdown file now.");
-  });
-
-  test("tells the writer to answer NONE when the source only records what was done", () => {
-    const lesson = buildDistillPrompt({
-      inputRef: "memories/rollout",
-      assetContent: "Rolled out on 10-02.",
-      feedback: [],
-    });
-    expect(lesson).toContain("answer NONE instead");
-    expect(lesson).toContain("only records what was done");
-    const knowledge = buildDistillPrompt({
-      inputRef: "memories/rollout",
-      assetContent: "Rolled out on 10-02.",
-      feedback: [],
-      proposalKind: "knowledge",
-    });
-    expect(knowledge).toContain("answer NONE instead");
-    expect(knowledge).not.toContain("empty response");
   });
 
   test("injects rejected proposals as Reflexion verbal-RL context when present", () => {
@@ -2574,139 +2555,6 @@ Always restart the gateway once the deploy finishes. A running gateway keeps ser
       const { events } = readEvents({ type: "distill_invoked" });
       expect(events.at(-1)?.metadata).toMatchObject({ outcome: "review_needed", fidelityContradiction: true });
     });
-  });
-});
-
-// ── The writer may abstain ──────────────────────────────────────────────────
-//
-// 18 of the 19 memories distilled in the 2026-10-05 production check only recorded what was done (a dated status or a
-// design record), and the writer had to produce a lesson for every one. NONE is its way out: no proposal, a reported
-// reason, and a no-change answer for the improve ledger (the loop records any `skipped` distill as unchanged).
-
-describe("akmDistill — the writer may answer NONE", () => {
-  async function distillAnswering(reply: string, proposalKind?: "knowledge") {
-    const stash = makeStashDir();
-    const calls: string[] = [];
-    const result = await akmDistill({
-      ref: "skills/deploy",
-      ...(proposalKind ? { proposalKind } : {}),
-      // The gate is on: a NONE must never reach the judge.
-      config: configJudgeEnabled(stash),
-      stashDir: stash,
-      chat: async (_cfg, messages) => {
-        calls.push(messages.map((m) => m.content).join("\n"));
-        return reply;
-      },
-      lookupFn: noopLookup,
-      readEventsFn: emptyEvents,
-    });
-    return { stash, result, calls };
-  }
-
-  test.each([
-    ["the word", "NONE"],
-    ["in any case, with a full stop", "None."],
-    ["marked up", "**NONE**"],
-    ["in a fence", "```\nNONE\n```"],
-    ["after thinking", "<think>It only records a status.</think>\nNONE"],
-    ["with a reason", "NONE: the memory only records a rollout status."],
-  ])("a lesson answered NONE (%s) is skipped, with a reason and no proposal", async (_name, reply) => {
-    const { stash, result, calls } = await distillAnswering(reply);
-
-    expect(result).toMatchObject({
-      ok: true,
-      outcome: "skipped",
-      skipReason: "nothing_reusable",
-      proposalKind: "lesson",
-      proposalRef: "lessons/skill-deploy-lesson",
-    });
-    expect(result.message).toContain("NONE");
-    expect(result.proposalId).toBeUndefined();
-    expect(calls).toHaveLength(1);
-    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
-    const { events } = readEvents({ type: "distill_invoked" });
-    expect(events.at(-1)).toMatchObject({
-      ref: "skills/deploy",
-      metadata: { outcome: "skipped", skipReason: "nothing_reusable", proposalKind: "lesson" },
-    });
-  });
-
-  test("a knowledge answered NONE is skipped the same way", async () => {
-    const { stash, result } = await distillAnswering("NONE", "knowledge");
-
-    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable", proposalKind: "knowledge" });
-    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
-  });
-
-  test("a lesson is still queued: the word NONE inside it does not abstain", async () => {
-    const stash = makeStashDir();
-
-    const result = await akmDistill({
-      ref: "skills/deploy",
-      config: configEnabled(stash),
-      stashDir: stash,
-      chat: async () =>
-        "---\ndescription: Prefer ripgrep over grep on large repos\nwhen_to_use: Searching a multi-thousand-file repo\n---\n\nNone of the ignore files need editing: rg reads .gitignore.\n",
-      lookupFn: noopLookup,
-      readEventsFn: emptyEvents,
-    });
-
-    expect(result.outcome).toBe("queued");
-    expect(listProposals(stash)).toHaveLength(1);
-  });
-
-  test("the writer is told it may answer NONE, and to state only what its source says", async () => {
-    for (const [kind, subject] of [
-      [undefined, "memory"],
-      ["knowledge", "asset"],
-    ] as const) {
-      const stash = makeStashDir();
-      let system = "";
-      let user = "";
-      await akmDistill({
-        ref: "skills/deploy",
-        ...(kind ? { proposalKind: kind } : {}),
-        config: configEnabled(stash),
-        stashDir: stash,
-        chat: async (_cfg, messages) => {
-          system = messages[0]?.content ?? "";
-          user = messages.at(-1)?.content ?? "";
-          return "NONE";
-        },
-        lookupFn: noopLookup,
-        readEventsFn: emptyEvents,
-      });
-
-      expect(system).toContain("ANSWER NONE");
-      expect(system).toContain("a status, a dated event, a design record");
-      expect(system).toContain(`State only what the ${subject} or its feedback says. Add no cause and no rule`);
-      expect(user).toContain("answer NONE instead");
-    }
-  });
-
-  // callStage retries once a reply its parser rejects; NONE is an answer, so asking again would invite a lesson.
-  test("on a real transport the reply is accepted at once: one request that carries the schema, no retry", async () => {
-    const stash = makeStashDir();
-    const requests: Array<{ response_format?: unknown }> = [];
-
-    const result = await withMockedFetch(
-      () =>
-        akmDistill({
-          ref: "skills/deploy",
-          config: configEnabled(stash),
-          stashDir: stash,
-          lookupFn: noopLookup,
-          readEventsFn: emptyEvents,
-        }),
-      async (_url, init) => {
-        requests.push(JSON.parse(String(init?.body)));
-        return Response.json({ choices: [{ message: { content: "NONE" } }] });
-      },
-    );
-
-    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
-    expect(requests).toHaveLength(1);
-    expect(requests[0]?.response_format).toBeDefined();
   });
 });
 

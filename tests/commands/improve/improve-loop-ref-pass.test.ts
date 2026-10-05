@@ -339,33 +339,6 @@ describe("processImproveLoopRef — distill half", () => {
     expect(ledgerRow(stashDir, failedRef, "distill")).toBeUndefined();
   });
 
-  // The writer's NONE comes back from akmDistill as a skipped result, which the loop records as it does a reflect
-  // that changed nothing: a revisit window that newer feedback lifts, not a rejection and not a failure.
-  test("a writer's NONE is a no-change answer: the memory is left in the ledger as unchanged", async () => {
-    const { stashDir } = freshSandbox();
-    const runner: RunnerSpec = {
-      kind: "llm",
-      engine: "default",
-      connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "test-model" },
-    };
-    const env = distillOnlyEnv({
-      stashDir,
-      improveProfile: { processes: { distill: { enabled: true } } } as ImproveLoopEnv["improveProfile"],
-      resolvedPlan: {
-        processes: { reflect: { runner: null }, distill: { runner } },
-      } as unknown as ImproveLoopEnv["resolvedPlan"],
-      distillFn: (args) => akmDistill({ ...args, stashDir, chat: async () => "NONE", lookupFn: async () => null }),
-    });
-
-    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
-
-    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
-    expect(tally.actions[0]!.result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
-    const row = ledgerRow(stashDir, memoryRef, "distill");
-    expect(row).toMatchObject({ outcome: "unchanged", detail: "nothing_reusable", proposalId: null });
-    expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(7 * 24 * 3_600_000);
-  });
-
   // The lesson derived from the memory already exists: distill skips it, which the loop records the same way.
   test("a lesson that already exists is left in the ledger as unchanged, with its reason", async () => {
     const { stashDir } = freshSandbox();

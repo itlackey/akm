@@ -76,24 +76,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   them from the two good ones. A failed judgment behaves as before, and with
   `processes.distill.qualityGate` off nothing is judged, so the proposal is
   minted unstamped for the drain to decide.
-- **Distill's writer can answer NONE, and is told to state only what its source
-  says.** The lesson and knowledge prompts now allow, and encourage, the single
-  word NONE when the memory only records what was done (a status, a dated
-  event, a design record) and teaches nothing reusable, and tell the writer to
-  state only what the memory or its feedback says and to add no cause or rule
-  it does not state. 18 of the 19 memories distilled in the 2026-10-05
-  production check were dated status or design records, and the writer had no
-  way to say there was nothing to teach. NONE is accepted as the word, or, from
-  a reply bound to the JSON schema, as every content field null (the lesson
-  schema's `description`, `when_to_use` and `body`, the knowledge schema's
-  `description` and `body`, are now nullable), and it is not met with the
-  corrective retry a reply the parser rejects gets. It is reported as a
-  `skipped` distill with the reason `nothing_reusable` (in the result and the
-  `distill_invoked` event), mints no proposal and makes no judge call, and the
-  improve loop leaves the memory in the ledger as `unchanged`, as it does a
-  reflect that changed nothing, so it waits for newer feedback. The knowledge
-  prompt's earlier way out, an empty response, was recorded as `llm_failed` and
-  asked again every run; it now says NONE too.
 - **Distill skips a memory whose only recent feedback is positive and says
   nothing.** A bare `akm feedback --positive` records that a note helped, which
   gives the writer nothing to distil, so it restated the memory: 10 of the 11
