@@ -80,7 +80,7 @@ export const NEW_MATERIAL_DAYS = 7;
 /** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
 /** Body characters sent to the judge per side (plan §4.3: bodies were truncated at this length for calibration). */
-const PAIR_BODY_TRUNCATE_CHARS = 2500;
+const PAIR_BODY_TRUNCATE_CHARS = 12_000;
 const MS_PER_DAY = 86_400_000;
 
 const RELATION_LABELS = ["duplicate", "subsumed", "supersedes", "contradicts", "overlap", "unrelated"] as const;
@@ -93,11 +93,13 @@ function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLa
   return RETIRE_LABELS.has(label);
 }
 
-const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
+export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["relation", "redundant", "stale", "confidence", "reason"],
+  required: ["onlyInA", "onlyInB", "relation", "redundant", "stale", "confidence", "reason"],
   additionalProperties: false,
   properties: {
+    onlyInA: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
+    onlyInB: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
     relation: { type: "string", enum: [...RELATION_LABELS] },
     redundant: { type: ["string", "null"], enum: ["A", "B", null] },
     stale: { type: ["string", "null"], enum: ["A", null] },
@@ -107,6 +109,8 @@ const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 interface RawPairJudgeResponse {
+  onlyInA?: unknown;
+  onlyInB?: unknown;
   relation?: unknown;
   redundant?: unknown;
   confidence?: unknown;
@@ -114,6 +118,10 @@ interface RawPairJudgeResponse {
 }
 
 export interface PairJudgeVerdict {
+  /** Durable claims of A that B neither states nor updates; [] when none. */
+  onlyInA: string[];
+  /** Durable claims of B that A neither states nor updates; [] when none. */
+  onlyInB: string[];
   relation: ConsolidatePairJudgeLabel;
   redundant: "A" | "B" | null;
   confidence: number;
@@ -132,7 +140,15 @@ export function parsePairJudgeResponse(raw: string): PairJudgeVerdict | undefine
   if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return undefined;
   const confidence = Math.max(0, Math.min(1, parsed.confidence));
   const reason = typeof parsed.reason === "string" ? parsed.reason : "";
-  return { relation: parsed.relation as ConsolidatePairJudgeLabel, redundant, confidence, reason };
+  const onlyInA = claimList(parsed.onlyInA);
+  const onlyInB = claimList(parsed.onlyInB);
+  if (!onlyInA || !onlyInB) return undefined;
+  return { onlyInA, onlyInB, relation: parsed.relation as ConsolidatePairJudgeLabel, redundant, confidence, reason };
+}
+
+function claimList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value) || !value.every((v) => typeof v === "string")) return undefined;
+  return value.map((v) => v.trim()).filter(Boolean);
 }
 
 /** A pair-pass asset: any type `getAllEntries` returns, not just memories. @internal exported for unit tests. */
@@ -520,7 +536,7 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
 }
 
 /** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
-function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
+export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
   return [...sideSection("A (older)", older), ...sideSection("B (newer)", newer)].join("\n");
 }
 
@@ -538,21 +554,22 @@ export interface PairDecision {
  * The calibrated outcome table (owner grades, replacing plan §5.2's
  * "shorter body" rule): `duplicate`/`supersedes` keep the newer copy;
  * `subsumed` keeps the side the judge did NOT name `redundant` (no proposal
- * if that pointer is missing or invalid).
+ * if that pointer is missing or invalid). A side is retired only when the
+ * judge listed nothing that it alone holds.
  */
 export function decideRetirement(
   label: ConsolidatePairJudgeLabel,
   redundant: "A" | "B" | null,
   older: PairSide,
   newer: PairSide,
+  only: { onlyInA: string[]; onlyInB: string[] },
 ): PairDecision | undefined {
-  if (label === "duplicate" || label === "supersedes") return { retired: older, successor: newer };
-  if (label === "subsumed") {
-    if (redundant === "A") return { retired: older, successor: newer };
-    if (redundant === "B") return { retired: newer, successor: older };
-    return undefined; // the judge's pointer is missing or invalid — no proposal
-  }
-  return undefined;
+  let decision: PairDecision | undefined;
+  if (label === "duplicate" || label === "supersedes") decision = { retired: older, successor: newer };
+  else if (label === "subsumed" && redundant === "A") decision = { retired: older, successor: newer };
+  else if (label === "subsumed" && redundant === "B") decision = { retired: newer, successor: older };
+  if (!decision) return undefined;
+  return (decision.retired === older ? only.onlyInA : only.onlyInB).length === 0 ? decision : undefined;
 }
 
 /** Transport override for tests (matches `CallStructuredRequest["chat"]`); production callers leave it unset. */
@@ -652,7 +669,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   if (verdict.relation === "contradicts") return { failed: false }; // counted; stays human — no proposal, no belief write
   if (!isRetireLabel(verdict.relation)) return { failed: false }; // overlap / unrelated: judged_no_action
 
-  const decision = decideRetirement(verdict.relation, verdict.redundant, older, newer);
+  const decision = decideRetirement(verdict.relation, verdict.redundant, older, newer, verdict);
   if (!decision) return { failed: false };
   const { retired, successor } = decision;
 
