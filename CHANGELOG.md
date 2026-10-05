@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.25] - 2026-10-04
+
+The stable release of the 0.9.25 line: 0.9.25-alpha.1 to alpha.4, unchanged. Their
+sections below list every change. When upgrading from 0.9.24:
+
+- **Reflect edits only an asset's `description`, `when_to_use` and title, and
+  keeps the body byte for byte;** it may answer "nothing to change" (alpha.3).
+  Its quality judge has a rubric for these revisions and tells one answering
+  negative feedback from maintenance (alpha.4). A proposal deferred as
+  `body-edit` by 0.9.24 stays deferred.
+- **Reflect refuses defective revisions before the judge runs** (placeholder
+  text, talk about its own edit, frontmatter copied into the body), with the
+  wording lists under `processes.reflect.defectFilter` (alpha.2).
+- **`akm improve judge`** runs reflect's quality judge on one revision, for
+  testing a judge engine (alpha.2).
+- **akm learns from Codex sessions:** `akm proposal extract --type codex`,
+  `--auto` and `akm improve` read `$CODEX_HOME/sessions` (alpha.3).
+- **Engines are interchangeable for model work:** one tool policy, one config
+  rule for which engines model work may use, a 600-second bound on every engine
+  kind, and `reasoningEffort` as the one effort word (alpha.1 and alpha.2).
+- **Removed:** the `--track-usage` / `--no-track-usage` flag on `akm search`,
+  `akm curate` and `akm show` (either spelling now fails as an unknown flag),
+  and opencode model work's step limit (alpha.2).
+
 ## [0.9.25-alpha.4] - 2026-10-04
 
 ### Changed
