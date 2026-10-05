@@ -136,26 +136,28 @@ export function deriveLessonRef(inputRef: string): string {
 
 // ── Output contract ──────────────────────────────────────────────────────────
 
+// The writer abstains by setting every content field to null (NONE): a reply bound to the schema cannot be a bare word.
 export const DISTILL_LESSON_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["description", "when_to_use", "body"],
   additionalProperties: false,
   properties: {
     description: {
-      type: "string",
+      type: ["string", "null"],
       minLength: 10,
       description:
-        "Single complete sentence (80-200 chars) summarising what the lesson teaches. No markdown, no leading 'When'/'If'.",
+        "Single complete sentence (80-200 chars) summarising what the lesson teaches. No markdown, no leading 'When'/'If'. null, with when_to_use and body, answers NONE: the memory teaches nothing reusable.",
     },
     when_to_use: {
-      type: "string",
+      type: ["string", "null"],
       minLength: 10,
-      description: "Single complete sentence describing the concrete trigger condition for the lesson.",
+      description:
+        "Single complete sentence describing the concrete trigger condition for the lesson. null answers NONE.",
     },
     body: {
-      type: "string",
+      type: ["string", "null"],
       minLength: 1,
-      description: "Lesson body — plain markdown, 1-3 short paragraphs of practical guidance.",
+      description: "Lesson body — plain markdown, 1-3 short paragraphs of practical guidance. null answers NONE.",
     },
     tags: {
       type: "array",
@@ -170,11 +172,16 @@ export const DISTILL_KNOWLEDGE_JSON_SCHEMA: Record<string, unknown> = {
   required: ["description", "body"],
   additionalProperties: false,
   properties: {
-    description: { type: "string", minLength: 1, description: "One-line summary of the knowledge asset." },
-    body: {
-      type: "string",
+    description: {
+      type: ["string", "null"],
       minLength: 1,
-      description: "Knowledge body — structured markdown with a `# Title` heading and durable facts only.",
+      description: "One-line summary of the knowledge asset. null, with body, answers NONE.",
+    },
+    body: {
+      type: ["string", "null"],
+      minLength: 1,
+      description:
+        "Knowledge body — structured markdown with a `# Title` heading and durable facts only. null answers NONE.",
     },
     tags: {
       type: "array",
@@ -223,6 +230,19 @@ export function assembleStructuredDistillMarkdown(
   const sources = kind === "knowledge" ? list(payload.sources) : [];
   if (sources.length > 0) fm.xrefs = sources;
   return assembleAssetFromString(serializeFrontmatterQuoted(fm), body);
+}
+
+/**
+ * Whether the writer abstained: the word NONE, as the prompts ask, or, in a reply bound to the JSON schema (which
+ * cannot be a bare word), every content field the kind requires set to null.
+ */
+function answeredNone(raw: string, kind: DistillKind): boolean {
+  if (/^[\s"'`*_]*none\b/i.test(stripMarkdownFences(raw))) return true;
+  const payload = parseEmbeddedJsonResponse<StructuredDistillPayload>(raw);
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const fields =
+    kind === "lesson" ? [payload.description, payload.when_to_use, payload.body] : [payload.description, payload.body];
+  return fields.every((field) => field === null);
 }
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
@@ -332,8 +352,8 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   }
   lines.push(
     input.proposalKind === "knowledge"
-      ? "Produce the knowledge markdown file now. Start your response with `---` on the first line, followed by a `description:` field whose value is a 1-sentence summary (20–400 chars). Never use placeholder values like `---`, `tbd`, `n/a`, or a single dash. If the source has nothing meaningful to summarize, do NOT produce a proposal — return an empty response instead. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body."
-      : "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields. Both must be real one-sentence summaries (20–400 chars) — never placeholder values like `---`, `tbd`, or `n/a`. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body.",
+      ? "Produce the knowledge markdown file now. Start your response with `---` on the first line, followed by a `description:` field whose value is a 1-sentence summary (20–400 chars). Never use placeholder values like `---`, `tbd`, `n/a`, or a single dash. If the source has nothing meaningful to summarize, do NOT produce a proposal — answer NONE instead. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body."
+      : "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields. Both must be real one-sentence summaries (20–400 chars) — never placeholder values like `---`, `tbd`, or `n/a`. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body. If the memory only records what was done (a status, a dated event, a design record) and teaches nothing reusable, answer NONE instead.",
   );
   return lines.join("\n");
 }
@@ -372,6 +392,38 @@ function emitDistill(run: Pick<DistillRun, "ledgerRef" | "eligMeta" | "options">
     { eventType: "distill_invoked", ref: run.ledgerRef, metadata: { ...meta, ...run.eligMeta } },
     run.options.eventsCtx,
   );
+}
+
+/**
+ * End a distill with no proposal and no failure: reported as `skipped`, which the improve loop
+ * leaves in the ledger as unchanged, as it does a reflect that changed nothing.
+ */
+function skipDistill(
+  run: DistillRun,
+  proposalRef: string,
+  kind: DistillKind,
+  skipReason: string,
+  message: string,
+): AkmDistillResult {
+  emitDistill(run, {
+    outcome: "skipped",
+    proposalRef,
+    proposalKind: kind,
+    skipReason,
+    message,
+    ...exclusionMeta(run, false),
+  });
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "skipped",
+    inputRef: run.inputRef,
+    proposalRef,
+    proposalKind: kind,
+    skipReason,
+    message,
+    ...exclusionMeta(run, true),
+  };
 }
 
 /** The exclusion diagnostics for an event (count only) or a result (count + fully-filtered). */
@@ -474,6 +526,8 @@ async function distill(
         system,
         prompt,
         gate: { config: run.config, enabled: true },
+        // NONE is an answer: a parser that rejected it would ask for a lesson again.
+        parse: (raw) => (answeredNone(raw, kind) ? raw : parseEmbeddedJsonResponse(raw)),
         // The injected test transport never sees the schema.
         request: {
           ...(run.options.chat === undefined
@@ -504,6 +558,16 @@ async function distill(
       message: "LLM call returned no usable output (timeout, empty, or error).",
       ...exclusionMeta(run, true),
     };
+  }
+
+  if (answeredNone(call.raw, kind)) {
+    return skipDistill(
+      run,
+      outputRef,
+      kind,
+      "nothing_reusable",
+      `The writer answered NONE: ${run.inputRef} only records what was done and teaches nothing reusable.`,
+    );
   }
 
   const assembled = assembleDistilledContent(run, call.raw, kind, outputRef);

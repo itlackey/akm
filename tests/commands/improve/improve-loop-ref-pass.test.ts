@@ -15,7 +15,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { deriveLessonRef } from "../../../src/commands/improve/distill";
+import { akmDistill, deriveLessonRef } from "../../../src/commands/improve/distill";
 import type { AkmImproveOptions, ImproveLoopState } from "../../../src/commands/improve/improve-run-types";
 import {
   type ImproveLoopEnv,
@@ -28,6 +28,7 @@ import { UsageError } from "../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmReflectResult, ImproveEligibleRef } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
+import type { RunnerSpec } from "../../../src/integrations/agent/runner";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
 import { makeStashDir, type SandboxedDir, sandboxXdgDataHome } from "../../_helpers/sandbox";
 
@@ -336,6 +337,33 @@ describe("processImproveLoopRef — distill half", () => {
     });
     await processImproveLoopRef(eligibleRef(failedRef), transport);
     expect(ledgerRow(stashDir, failedRef, "distill")).toBeUndefined();
+  });
+
+  // The writer's NONE comes back from akmDistill as a skipped result, which the loop records as it does a reflect
+  // that changed nothing: a revisit window that newer feedback lifts, not a rejection and not a failure.
+  test("a writer's NONE is a no-change answer: the memory is left in the ledger as unchanged", async () => {
+    const { stashDir } = freshSandbox();
+    const runner: RunnerSpec = {
+      kind: "llm",
+      engine: "default",
+      connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "test-model" },
+    };
+    const env = distillOnlyEnv({
+      stashDir,
+      improveProfile: { processes: { distill: { enabled: true } } } as ImproveLoopEnv["improveProfile"],
+      resolvedPlan: {
+        processes: { reflect: { runner: null }, distill: { runner } },
+      } as unknown as ImproveLoopEnv["resolvedPlan"],
+      distillFn: (args) => akmDistill({ ...args, stashDir, chat: async () => "NONE", lookupFn: async () => null }),
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.actions[0]!.result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    const row = ledgerRow(stashDir, memoryRef, "distill");
+    expect(row).toMatchObject({ outcome: "unchanged", detail: "nothing_reusable", proposalId: null });
+    expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(7 * 24 * 3_600_000);
   });
 
   test("requirePlannedRefs guard skips distill-only refs", async () => {

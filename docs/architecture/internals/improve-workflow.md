@@ -88,7 +88,9 @@ flowchart TD
             DISTILL_C -- no --> DISTILL_D[callStage distill\nplan-resolved runner\n600 s default timeout]
             DISTILL_D --> DISTILL_E{call failed or empty output?}
             DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=llm_failed\nreturn llm_failed result, no ledger row]
-            DISTILL_E -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
+            DISTILL_E -- no --> DISTILL_NONE{reply is NONE?\nthe writer's abstention}
+            DISTILL_NONE -- yes --> DISTILL_ABSTAIN[appendEvent: distill_invoked outcome=skipped\nskipReason nothing_reusable, no proposal\nthe loop records unchanged in the ledger]
+            DISTILL_NONE -- no --> DISTILL_F[stripMarkdownFences\nlintLessonContent or validateKnowledgeContent]
             DISTILL_F --> DISTILL_G{findings?}
             DISTILL_G -- yes --> DISTILL_FAIL[appendEvent: outcome=validation_failed\nthrow UsageError]
             DISTILL_G -- no --> DISTILL_J{quality gate judge:\nnovelty, non-redundancy, grounding}
@@ -97,6 +99,7 @@ flowchart TD
             DISTILL_J -- mean too low or grounding 1 --> DISTILL_REJECT[improve_ledger row, no proposal\nappendEvent: outcome=quality_rejected]
             DISTILL_PROMOTE --> DISTILL_RETURN
             DISTILL_SKIP --> DISTILL_RETURN
+            DISTILL_ABSTAIN --> DISTILL_RETURN
             DISTILL_H --> DISTILL_RETURN([return AkmDistillResult])
             DISTILL_REVIEW --> DISTILL_RETURN
             DISTILL_REJECT --> DISTILL_RETURN
@@ -225,7 +228,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
    - Process gate: disabled if the selected strategy's `processes.distill.enabled` is `false`.
    - Hard timeout: 600 seconds by default, overridden by the resolved invocation timeout.
    - A timeout, an error or empty output returns an `llm_failed` result: a `distill_invoked` event with that outcome, no proposal and exit 0. It is not a ledger attempt, so the ref stays eligible. A disabled process returns `config_disabled` before any event.
-6. Strip markdown fences and `<think>` blocks from the raw LLM output.
+6. Strip markdown fences and `<think>` blocks from the raw LLM output. A reply of `NONE` is the writer's abstention: the memory only records what was done (a status, a dated event, a design record) and teaches nothing reusable. The system prompts allow and encourage it, and tell the writer to state only what the memory or its feedback says and to add no cause or rule it does not state. A reply bound to the JSON schema cannot be a bare word, so it answers NONE with every content field null (`description`, `when_to_use` and `body`; `description` and `body` for knowledge), and the call's parser accepts either form (a reply it rejected would get the one corrective retry, which asks again for a lesson). NONE returns `skipped` with `skipReason: "nothing_reusable"` and a `distill_invoked` event carrying the same outcome and reason, makes no judge call and mints no proposal. As for any `skipped` distill, the loop records the input in the improve ledger as `unchanged` (the 7-day revisit window that newer feedback lifts, the record a reflect that changed nothing gets) and counts it a no-op for the ref's plasticity. 18 of the 19 memories in the 2026-10-05 production check only recorded what was done, and the writer had no way to say so.
 7. Validate: `lintLessonContent` for lesson proposals; `validateKnowledgeContent` for knowledge proposals. Failure emits `distill_invoked` with `outcome: "validation_failed"` and throws `UsageError`.
 8. Quality gate (`processes.distill.qualityGate`, on unless disabled): one judge call, on distill's engine or the gate's own (`qualityGate.engine`), scores the lesson from 1 to 5 on **novelty**, **non-redundancy** and **grounding**, against the source body the lesson was generated from (frontmatter stripped, first 3000 characters). A lesson passes only when novelty and non-redundancy both score 4 or more; otherwise a mean of those two of 2.5 or more is `review_needed` and a lower mean is `quality_rejected`. Grounding asks whether the lesson is about what its source is about: 1–2 only for a different subject than the source, 3 for a lesson on the source's subject that goes beyond or corrects it (it may draw on feedback the judge is not shown), 4–5 when the source supports it. It is not part of the mean. A grounding score of 1 is `quality_rejected` whatever the mean is. This keeps a lesson about a tool error recorded as feedback — `akm show` failing on the ref — from being minted for a memory on an unrelated subject, which the other two criteria would pass or send to review (#999). A 2 is borderline, not a veto: a lesson on its source's subject that advises beyond the source can score 2, and scores move by about a point between runs even at temperature 0 (seen on a llama.cpp server). It goes to `review_needed` (reason `Borderline on grounding (2/5), routed to review: …`) even when the mean alone would pass it, but a mean that alone rejects it stays `quality_rejected`. A distill with no source to read (an unindexed ref distilled "from feedback signal alone") gives the judge an empty source, so its lesson is expected to be rejected as off-subject.
    - `quality_rejected` writes an `improve_ledger` row for the input (30-day distill rejection window) and a `distill_invoked` event carrying `score`, the per-criterion `criteria` and the `reason`. It mints no proposal.

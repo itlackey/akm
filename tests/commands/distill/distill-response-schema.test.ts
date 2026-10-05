@@ -100,6 +100,13 @@ describe("DISTILL_LESSON_JSON_SCHEMA", () => {
     expect(schema.properties.tags?.type).toBe("array");
     expect(schema.properties.tags?.items?.type).toBe("string");
   });
+
+  test("the three content fields may be null: that is how a reply bound to the schema answers NONE", () => {
+    const schema = DISTILL_LESSON_JSON_SCHEMA as { properties: Record<string, { type?: unknown }> };
+    for (const field of ["description", "when_to_use", "body"]) {
+      expect(schema.properties[field]?.type).toEqual(["string", "null"]);
+    }
+  });
 });
 
 describe("DISTILL_KNOWLEDGE_JSON_SCHEMA", () => {
@@ -108,6 +115,13 @@ describe("DISTILL_KNOWLEDGE_JSON_SCHEMA", () => {
     expect(schema.required).toContain("description");
     expect(schema.required).toContain("body");
     expect(schema.required).not.toContain("when_to_use");
+  });
+
+  test("description and body may be null (NONE), the other fields stay as they were", () => {
+    const schema = DISTILL_KNOWLEDGE_JSON_SCHEMA as { properties: Record<string, { type?: unknown }> };
+    expect(schema.properties.description?.type).toEqual(["string", "null"]);
+    expect(schema.properties.body?.type).toEqual(["string", "null"]);
+    expect(schema.properties.tags?.type).toBe("array");
   });
 
   test("exposes optional sources array for provenance tracking", () => {
@@ -278,6 +292,45 @@ describe("akmDistill — structured-output chat seam round-trip", () => {
     }
     expect(threw).toBeInstanceOf(Error);
     expect(listProposals(stash)).toEqual([]);
+  });
+
+  test.each([
+    ["lesson", { description: null, when_to_use: null, body: null }, undefined],
+    ["knowledge", { description: null, body: null }, "knowledge" as const],
+  ])("a %s payload with every content field null is NONE: skipped, no proposal", async (_kind, fields, proposalKind) => {
+    const stash = makeStashDir();
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      ...(proposalKind ? { proposalKind } : {}),
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => JSON.stringify(fields),
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result).toMatchObject({ ok: true, outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("a payload with only some fields null is not NONE: it is validated as a lesson and fails", async () => {
+    const stash = makeStashDir();
+    let threw: Error | undefined;
+    try {
+      await akmDistill({
+        ref: "skills/deploy",
+        config: configEnabled(stash),
+        stashDir: stash,
+        chat: async () =>
+          JSON.stringify({ description: "Has a description but nothing else to say.", when_to_use: null, body: null }),
+        lookupFn: noopLookup,
+        readEventsFn: emptyEvents,
+      });
+    } catch (err) {
+      threw = err as Error;
+    }
+    expect(threw).toBeInstanceOf(Error);
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
   });
 
   test("structured payload assembled into markdown round-trips through the proposal pipeline", async () => {
