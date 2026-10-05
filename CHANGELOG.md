@@ -107,6 +107,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   negative signal anywhere in the window lets it through, and an explicit
   `akm improve <ref>` still distills it. Record `--reason` with a positive
   signal to say what helped.
+- **Distill no longer regenerates a lesson that already exists.** A lesson's ref
+  comes from its memory's name (`memories/deploy` gives
+  `lessons/memory-deploy-lesson`), so a second distill of the same memory
+  proposed the same ref, and accepting it replaced the lesson. All 5 such
+  overwrites recorded by the 2026-10-05 review were rejected. When the stash
+  the proposal is filed in already holds a file at the lesson ref, distill now
+  returns `skipped` with the reason `lesson_exists` (in the result and the
+  `distill_invoked` event) before any model call, mints no proposal and leaves
+  the memory untouched, and the improve loop records it in the ledger as
+  `unchanged`. A lesson of that name in another bundle does not count, since
+  the proposal would not replace it. To change a lesson, edit it.
 
 ### Removed
 

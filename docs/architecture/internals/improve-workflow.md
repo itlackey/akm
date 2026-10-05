@@ -87,7 +87,9 @@ flowchart TD
             DISTILL_A[lookup ref file path] --> DISTILL_B[readEvents: feedback for ref\napply excludeFeedbackFromRefs filter]
             DISTILL_B --> DISTILL_C{proposalKind == auto\nAND promotion heuristic passes?}
             DISTILL_C -- yes --> DISTILL_PROMOTE[createProposal knowledge/ref\nsource: distill\nappendEvent: distill_invoked outcome=queued]
-            DISTILL_C -- no --> DISTILL_D[callStage distill\nplan-resolved runner\n600 s default timeout]
+            DISTILL_C -- no --> DISTILL_X{lesson already at\nthe target ref?}
+            DISTILL_X -- yes --> DISTILL_EXISTS[appendEvent: distill_invoked outcome=skipped\nskipReason lesson_exists, no call, no proposal\nthe loop records unchanged in the ledger]
+            DISTILL_X -- no --> DISTILL_D[callStage distill\nplan-resolved runner\n600 s default timeout]
             DISTILL_D --> DISTILL_E{call failed or empty output?}
             DISTILL_E -- yes --> DISTILL_SKIP[appendEvent: distill_invoked outcome=llm_failed\nreturn llm_failed result, no ledger row]
             DISTILL_E -- no --> DISTILL_NONE{reply is NONE?\nthe writer's abstention}
@@ -102,6 +104,7 @@ flowchart TD
             DISTILL_PROMOTE --> DISTILL_RETURN
             DISTILL_SKIP --> DISTILL_RETURN
             DISTILL_ABSTAIN --> DISTILL_RETURN
+            DISTILL_EXISTS --> DISTILL_RETURN
             DISTILL_H --> DISTILL_RETURN([return AkmDistillResult])
             DISTILL_REVIEW --> DISTILL_RETURN
             DISTILL_REJECT --> DISTILL_RETURN
@@ -226,6 +229,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
 2. Best-effort load asset content via `lookupFn` (defaults to indexer `lookup`).
 3. Read feedback events via `readEvents({ ref, type: "feedback" })`. Apply `excludeFeedbackFromRefs` filtering before the LLM sees the events.
 4. Memory promotion fast path: when `proposalKind` is `"auto"` or `"knowledge"` and `assessMemoryKnowledgePromotionCandidate` returns `promote: true`, create a `knowledge:` proposal immediately without an LLM call.
+   - A lesson target that already exists is not regenerated: when the stash the proposal is filed in holds a file at the lesson ref (the path accepting it would write), distill returns `skipped` with `skipReason: "lesson_exists"` and a `distill_invoked` event carrying them, before any LLM call, and mints no proposal and stamps nothing on the input. The lesson ref derives from the memory's name, so a second distill of the same memory proposes the same ref, and accepting that proposal replaces the lesson; all 5 such overwrites recorded by the 2026-10-05 review were rejected. A lesson of that name in another bundle is not an overwrite. As for any `skipped` distill, the loop records the input in the improve ledger as `unchanged`.
 5. Resolve `improve.strategies.<selected>.processes.distill.engine` (falling
    back to `defaults.llmEngine`), then issue one bounded call.
    - Process gate: disabled if the selected strategy's `processes.distill.enabled` is `false`.
@@ -239,7 +243,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
 9. Create proposal: `createProposal(stash, { ref: lessonRef, source: "distill", payload })` through `mintProposal`. A pass is minted `deferred` (gate `quality-gate`, reason `distill-review`) with the judge's per-criterion `scores` and `judgeReason`, for a person: the triage drain and its judgment tier leave it alone, and the improve ledger records `review_needed`. It is never `staged`. On 2026-10-05 the gate had staged 12 lessons and 10 were bad (they restated the memory, claimed what it does not say, or filed a dated status as a lesson); no judge score separated them from the two good ones. A promotion to knowledge that passes is deferred the same way. With `processes.distill.qualityGate` off nothing was judged, so the proposal is minted unstamped for the drain to decide.
 10. Emit `distill_invoked` event with `outcome: "queued"`.
 
-**Lesson-ref derivation rule:** `lessons/<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skills/deploy` → `lessons/skill-deploy-lesson`.
+**Lesson-ref derivation rule:** `lessons/<type>-<name>-lesson` where `<type>-<name>` is derived from the input ref with origin stripped and non-alphanumeric characters replaced by `-`. Example: `skills/deploy` → `lessons/skill-deploy-lesson`. A lesson already at that ref is never overwritten (see step 4).
 
 **What it writes:** one durable proposal row in `state.db`. Never writes asset files directly.
 

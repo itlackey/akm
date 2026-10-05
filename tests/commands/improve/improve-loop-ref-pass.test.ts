@@ -366,6 +366,43 @@ describe("processImproveLoopRef — distill half", () => {
     expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(7 * 24 * 3_600_000);
   });
 
+  // The lesson derived from the memory already exists: distill skips it, which the loop records the same way.
+  test("a lesson that already exists is left in the ledger as unchanged, with its reason", async () => {
+    const { stashDir } = freshSandbox();
+    fs.mkdirSync(path.join(stashDir, "lessons"), { recursive: true });
+    fs.writeFileSync(
+      path.join(stashDir, "lessons", "memory-finding-1-lesson.md"),
+      "---\ndescription: Prefer ripgrep over grep on large repos\nwhen_to_use: Searching a large repo\n---\n\nUse rg.\n",
+    );
+    const runner: RunnerSpec = {
+      kind: "llm",
+      engine: "default",
+      connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "test-model" },
+    };
+    const env = distillOnlyEnv({
+      stashDir,
+      improveProfile: { processes: { distill: { enabled: true } } } as ImproveLoopEnv["improveProfile"],
+      resolvedPlan: {
+        processes: { reflect: { runner: null }, distill: { runner } },
+      } as unknown as ImproveLoopEnv["resolvedPlan"],
+      distillFn: (args) =>
+        akmDistill({
+          ...args,
+          stashDir,
+          chat: async () => {
+            throw new Error("the writer must not be called for a lesson that exists");
+          },
+          lookupFn: async () => null,
+        }),
+    });
+
+    const tally = await processImproveLoopRef(eligibleRef(memoryRef), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(tally.actions[0]!.result).toMatchObject({ outcome: "skipped", skipReason: "lesson_exists" });
+    expect(ledgerRow(stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: "lesson_exists" });
+  });
+
   test("requirePlannedRefs guard skips distill-only refs", async () => {
     const { stashDir } = freshSandbox();
     const env = distillOnlyEnv({ stashDir, skipDistillDueToRequirePlannedRefs: true });

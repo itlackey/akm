@@ -2709,3 +2709,113 @@ describe("akmDistill — the writer may answer NONE", () => {
     expect(requests[0]?.response_format).toBeDefined();
   });
 });
+
+// ── A lesson that already exists is not overwritten ─────────────────────────
+//
+// The lesson ref derives from the memory's name, so a second distill of the same memory proposes the same ref, and
+// accepting it replaces the lesson. All 5 such overwrites recorded by the 2026-10-05 review were rejected.
+
+describe("akmDistill — a lesson already at the target ref", () => {
+  function writeLesson(stash: string, name: string): { filePath: string; content: string } {
+    const filePath = path.join(stash, "lessons", `${name}.md`);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, VALID_LESSON);
+    return { filePath, content: VALID_LESSON };
+  }
+
+  test("is left as it is: skipped with a reason before the call, no proposal, nothing written", async () => {
+    const stash = makeStashDir();
+    const existing = writeLesson(stash, "skill-deploy-lesson");
+    const source = path.join(stash, "skills", "deploy.md");
+    const sourceContent = "---\ndescription: Deploy safely\n---\n\nCheck deployment prerequisites.\n";
+    fs.writeFileSync(source, sourceContent);
+    let called = false;
+
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        called = true;
+        return VALID_LESSON;
+      },
+      lookupFn: async () => source,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      outcome: "skipped",
+      skipReason: "lesson_exists",
+      proposalKind: "lesson",
+      proposalRef: "lessons/skill-deploy-lesson",
+    });
+    expect(result.message).toContain("lessons/skill-deploy-lesson");
+    expect(called).toBe(false);
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
+    expect(fs.readFileSync(existing.filePath, "utf8")).toBe(existing.content);
+    // Nothing was generated, so the input is not stamped either.
+    expect(fs.readFileSync(source, "utf8")).toBe(sourceContent);
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)).toMatchObject({
+      ref: "skills/deploy",
+      metadata: { outcome: "skipped", skipReason: "lesson_exists", proposalRef: "lessons/skill-deploy-lesson" },
+    });
+  });
+
+  test("follows the scope segment of a nested ref", async () => {
+    const stash = makeStashDir();
+    writeLesson(stash, "project-a/memory-deploy-lesson");
+
+    const result = await akmDistill({
+      ref: "memories/project-a/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        throw new Error("a lesson that exists must not be regenerated");
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result).toMatchObject({
+      outcome: "skipped",
+      skipReason: "lesson_exists",
+      proposalRef: "lessons/project-a/memory-deploy-lesson",
+    });
+  });
+
+  test("a lesson of that name in another bundle is not an overwrite", async () => {
+    const stash = makeStashDir();
+    const other = makeStashDir();
+    writeLesson(other, "skill-deploy-lesson");
+
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    expect(listProposals(stash)).toHaveLength(1);
+  });
+
+  test("another lesson in the stash does not stand in the way", async () => {
+    const stash = makeStashDir();
+    writeLesson(stash, "skill-other-lesson");
+
+    const result = await akmDistill({
+      ref: "skills/deploy",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+  });
+});

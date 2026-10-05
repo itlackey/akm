@@ -15,8 +15,10 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import distillKnowledgeSystemPrompt from "../../assets/prompts/distill-knowledge-system.md" with { type: "text" };
 import distillLessonSystemPrompt from "../../assets/prompts/distill-lesson-system.md" with { type: "text" };
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset, assembleAssetFromString, serializeFrontmatterQuoted } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, writeSalienceToFrontmatter } from "../../core/asset/frontmatter";
 import { stripMarkdownFences } from "../../core/asset/markdown";
@@ -513,6 +515,18 @@ async function distill(
     return promoted;
   }
 
+  // A lesson already at the target ref is left as it is: the proposal would overwrite it, and all 5 recorded
+  // overwrites were rejected. Checked before the call, which it would waste.
+  if (kind === "lesson" && lessonExists(run, outputRef)) {
+    return skipDistill(
+      run,
+      outputRef,
+      kind,
+      "lesson_exists",
+      `${outputRef} already exists; distill does not overwrite a lesson.`,
+    );
+  }
+
   const feedback = feedbackEvents.slice(-20).map((event) => ({
     ts: event.ts,
     eventType: event.eventType,
@@ -579,6 +593,18 @@ async function distill(
     source: run.asset.content,
     descriptionSwapped: assembled.descriptionSwapped,
   });
+}
+
+/** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
+function lessonExists(run: DistillRun, ref: string): boolean {
+  const { type, name } = parseRefInput(ref);
+  const typeDir = stashDirFor(type);
+  if (!typeDir) return false;
+  try {
+    return fs.statSync(assetPathForName(type, path.join(run.stash, typeDir), name)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 /** Turn the response into validated content: structured JSON or markdown, then lesson repairs and lint. */
