@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.26] - 2026-10-05
+
+The stable release of the 0.9.26 line: 0.9.26-alpha.1 and alpha.2, and the
+changes in this section. When upgrading from 0.9.25:
+
+- **Consolidate retires far fewer notes that hold something the kept note
+  lacks.** Its pair judge lists what each note alone holds and akm never
+  retires a note with anything listed; on 385 held-out pair proposals, 91% of
+  its retirements are safe, against 61% before. A duplicate that a second look
+  confirms is accepted by the triage drain (alpha.1).
+- **Negative feedback can carry the fix:** `akm feedback --negative --replace
+  "<exact text>" --with "<corrected>" --source "<evidence>"` (alpha.2), and
+  `--outdated` or `--superseded-by <ref>` to mark a note's history. Either
+  becomes one `feedback` proposal for review.
+- **Negative feedback is for wrong or stale content.** The hints and docs say
+  so; a note that did not fit the task records nothing. Each feedback event now
+  records the hash of the text it judged, and reflect marks feedback given on
+  an earlier version.
+- **Distill no longer accepts a lesson unattended.** A lesson that passes its
+  judge waits for review instead of the drain, and distill skips a memory
+  flagged wrong since its last edit, one whose only feedback is a positive
+  without a reason, and a lesson that already exists.
+- **Fixed:** a proposal no longer rewraps a note's frontmatter to add its
+  `type`, and accepting one stamps its provenance as lines of its own instead
+  of writing the frontmatter out again; a feedback fix for an asset outside the
+  bundle's layout is refused instead of queued at the wrong path.
+- **Removed:** `akm feedback --failure-mode` and `feedback.allowedFailureModes`
+  (an old config still loads, naming the key once).
+
 ### Added
 
 - **`akm feedback --negative --superseded-by <ref>` and `--outdated` mark an
