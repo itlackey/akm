@@ -23,7 +23,7 @@ import type { AkmConfig, EngineConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
-import type { ExecutionJsonObject } from "../../execution/json";
+import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
 import { EXECUTION_MAX_TIMEOUT_MS } from "../../execution/limits";
 import {
   createInlineResolvedCommand,
@@ -40,12 +40,13 @@ import {
 import {
   cloneToolSelection,
   isPortableExecutionAgentSelector,
+  MODEL_WORK_POLICY_ID,
   type ToolSelection,
   type UnresolvedExecutionDefaults,
 } from "../../execution/source";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { getHarness } from "../harnesses";
-import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import {
   FALLBACK_ENGINE_NAME,
   fallbackEngineConfig,
@@ -90,6 +91,8 @@ export interface ResolveExecutionInput {
   readonly invocationDefaults?: UnresolvedExecutionDefaults;
   readonly current?: UnresolvedExecutionDefaults;
   readonly modelMap?: ResolvedModelMapV1;
+  /** Run under the model-work tool policy: akm's own, so no `execution.allowedTools`, and it replaces any `tools`. */
+  readonly modelWork?: boolean;
 }
 
 export interface ResolvedExecution {
@@ -181,22 +184,15 @@ function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): 
   if (engine.platform !== "opencode-sdk") {
     return { kind: "agent", platform: engine.platform, modelMapKey: engine.platform, values };
   }
-  // An SDK engine runs its LLM fallback's model/inference/timeout unless it sets its own.
-  const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
+  // An SDK engine runs its own `llmEngine`'s model/inference/timeout unless it sets its own. With no
+  // `llmEngine` it has no fallback, and opencode picks the model: `defaults.llmEngine` is not borrowed.
+  const fallbackName = engine.llmEngine;
   const fallback =
     fallbackName && config.engines && Object.hasOwn(config.engines, fallbackName)
       ? config.engines[fallbackName]
       : undefined;
   if (fallback?.kind !== "llm" || !fallbackName) {
-    return {
-      kind: "sdk",
-      platform: "opencode-sdk",
-      modelMapKey: "opencode-sdk",
-      values: {
-        ...values,
-        timeout: has(values, "timeout") ? (values.timeout as number | null) : DEFAULT_AGENT_TIMEOUT_MS,
-      },
-    };
+    return { kind: "sdk", platform: "opencode-sdk", modelMapKey: "opencode-sdk", values };
   }
   const inherited = engineModelAndInference(fallback);
   return {
@@ -235,7 +231,11 @@ function runnerDefaults(runner: RunnerSpec): EngineDefaults {
   const platform = runner.profile.platform ?? runner.profile.name;
   const fallback = runner.kind === "sdk" ? runner.fallbackConnection : undefined;
   const model = runner.profile.model ?? fallback?.model;
-  const inference = fallback ? inferenceOf(fallback as Record<string, unknown>) : undefined;
+  const fallbackInference = fallback ? inferenceOf(fallback as Record<string, unknown>) : undefined;
+  const inference =
+    fallbackInference !== undefined || runner.profile.inference !== undefined
+      ? { ...fallbackInference, ...runner.profile.inference }
+      : undefined;
   return {
     kind: runner.kind,
     platform,
@@ -317,8 +317,23 @@ function requestedToolNames(tools: Exclude<ToolSelection, null>): readonly strin
   return Object.keys(policy).filter((tool) => policy[tool] === true);
 }
 
-/** Assets may only narrow the host's `execution.allowedTools`; without a config nothing is allowed. */
-function authorizeTools(tools: ToolSelection | undefined, config: AkmConfig | undefined): ToolAuthorizationResult {
+/**
+ * Assets may only narrow the host's `execution.allowedTools`; without a config
+ * nothing is allowed. The model-work policy is akm's own and always allowed:
+ * it confines an engine more tightly than leaving tools unset does.
+ */
+function authorizeTools(
+  tools: ToolSelection | undefined,
+  config: AkmConfig | undefined,
+  modelWork: boolean,
+): ToolAuthorizationResult {
+  if (modelWork) {
+    return {
+      status: "allowed",
+      reason: "The model-work tool policy is akm's own.",
+      policy: { id: MODEL_WORK_POLICY_ID },
+    };
+  }
   if (!hasToolSelection(tools)) return { status: "not-required" };
   if (!config) {
     return {
@@ -369,14 +384,16 @@ function applyRequest(base: RunnerSpec, request: ResolvedExecutionRequestV1): Ru
       ...timeout,
     };
   }
-  const { model: _model, workspace: _workspace, ...profile } = base.profile;
+  const { model: _model, workspace: _workspace, inference: ownInference, ...profile } = base.profile;
   const workspace = request.runtime.workspace;
+  const inference = Object.hasOwn(request, "inference") ? request.inference : ownInference;
   const next = {
     ...base,
     profile: {
       ...profile,
       ...(model !== undefined ? { model } : {}),
       ...(typeof workspace === "string" ? { workspace } : {}),
+      ...(inference ? { inference } : {}),
     },
     ...timeout,
   };
@@ -389,17 +406,32 @@ function applyRequest(base: RunnerSpec, request: ResolvedExecutionRequestV1): Ru
   return next as RunnerSpec;
 }
 
+/**
+ * Reasoning effort has one word in a request: `reasoningEffort`, which is what
+ * engines, opencode and the LLM request body call it. `effort` is the same
+ * setting as a `models.json` alias or an asset's `effort:` frontmatter spells
+ * it, and becomes `reasoningEffort` here, in the one place every layer's
+ * inference is merged, so the nearest layer wins whichever word it used. When
+ * one inference object has both, `reasoningEffort` wins.
+ */
+function withReasoningEffort(inference: ExecutionJsonObject): ExecutionJsonObject {
+  if (!Object.hasOwn(inference, "effort")) return inference;
+  const { effort, ...rest } = inference;
+  return Object.hasOwn(rest, "reasoningEffort") ? rest : { ...rest, reasoningEffort: effort as ExecutionJsonValue };
+}
+
 function mergeInference(
   current: ExecutionJsonObject | null | undefined,
-  next: ExecutionJsonObject | null,
+  layerInference: ExecutionJsonObject | null,
   source: ExecutionFieldProvenance,
   provenance: Record<string, ExecutionFieldProvenance>,
 ): ExecutionJsonObject | null {
   provenance["/inference"] = source;
-  if (next === null) {
+  if (layerInference === null) {
     for (const key of Object.keys(provenance)) if (key.startsWith("/inference/")) delete provenance[key];
     return null;
   }
+  const next = withReasoningEffort(layerInference);
   for (const key of Object.keys(next)) {
     provenance[`/inference/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`] = source;
   }
@@ -500,13 +532,14 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
     return layer;
   };
   const schemaLayer = select("outputSchema", "outputSchema");
-  const toolsLayer = select("tools", "tools");
+  const modelWork = input.modelWork === true;
+  const toolsLayer = modelWork ? undefined : select("tools", "tools");
   const timeoutLayer = select("timeout", "runtime.timeoutMs");
   const workspaceLayer = select("workspace", "runtime.workspace");
   const environmentLayer = select("environment", "runtime.environment");
   const settingsLayer = select("runtime", "runtime.settings");
   const tools = toolsLayer ? cloneToolSelection(toolsLayer.values.tools ?? null, "tools") : undefined;
-  const authorization = authorizeTools(tools, input.runner ? undefined : input.config);
+  const authorization = authorizeTools(tools, input.runner ? undefined : input.config, modelWork);
   provenance.authorization = {
     layer: typeof authorization.policy?.id === "string" ? authorization.policy.id : "not-required",
     kind: "authorization",
@@ -567,8 +600,9 @@ function buildLlm(
     if (!(LLM_INFERENCE_FIELDS as readonly string[]).includes(key)) skip(`inference.${key}`);
   }
   const chatOptions: ChatCompletionOptions = {};
+  // Sent unless the engine opts out; chatCompletion drops it once if the provider rejects it.
   if (request.outputSchema) {
-    if (runner.connection.supportsJsonSchema === true) chatOptions.responseSchema = request.outputSchema;
+    if (runner.connection.supportsJsonSchema !== false) chatOptions.responseSchema = request.outputSchema;
     else skip("outputSchema");
   }
   if (request.runtime.workspace) skip("runtime.workspace");

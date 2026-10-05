@@ -638,7 +638,7 @@ describe("runMemoryInferencePass — enabled", () => {
       ...configWithLlm(),
       index: {
         defaults: { engine: "index" },
-        memory: { enabled: true, llm: { effort: "high" } },
+        memory: { enabled: true, llm: { topP: 0.9 } },
       },
     };
 
@@ -657,7 +657,7 @@ describe("runMemoryInferencePass — enabled", () => {
       expect.objectContaining({
         code: "untranslated-field",
         adapter: "llm",
-        field: "inference.effort",
+        field: "inference.topP",
       }),
       perCallNotice,
     ]);

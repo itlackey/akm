@@ -6,7 +6,7 @@ import { afterEach, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { runReflectViaLlm } from "../../src/commands/improve/reflect";
+import { runReflectIteration } from "../../src/commands/improve/reflect";
 import { akmPropose } from "../../src/commands/proposal/propose";
 import type { AkmConfig } from "../../src/core/config/config";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
@@ -71,7 +71,7 @@ function directRunner(
 
 test("reflect forwards a 1ms normalized timeout to the direct HTTP transport", async () => {
   const server = hungServer();
-  const result = await runReflectViaLlm({
+  const result = await runReflectIteration({
     prompt: "reflect",
     runner: directRunner({ endpoint: `http://localhost:${server.port}`, model: "test-model" }),
     timeoutMs: 1,
@@ -87,13 +87,12 @@ test("reflect explicit null disables the direct HTTP timer", async () => {
   const server = delayedServer(
     JSON.stringify({
       ref: "lessons/delayed-reflect",
-      content: "Delayed reflect content.",
       confidence: 0.9,
-      frontmatterPatch: { description: null, when_to_use: null },
+      frontmatterPatch: { description: null, when_to_use: null, title: null },
     }),
     20,
   );
-  const result = await runReflectViaLlm({
+  const result = await runReflectIteration({
     prompt: "reflect",
     runner: directRunner({ endpoint: `http://localhost:${server.port}`, model: "test-model" }, 1),
     timeoutMs: null,

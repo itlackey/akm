@@ -517,7 +517,6 @@ kept.
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
 | `--belief` | `all`, `current`, `historical` | `all` | Memory belief filter. `current` keeps active memory beliefs; `historical` keeps contradicted/superseded/archived ones. |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level |
@@ -593,7 +592,6 @@ akm curate "learn the release workflow" --from all --format text
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
 | `--from` | `local`, `registry`, `all` | `local` | Where to search before curating |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
 enriches each with a preview, run details and up to two support refs: the
@@ -623,16 +621,12 @@ curated like any other.
 every prompt: it only ever reads the index as it currently stands (the same
 non-blocking `ensureIndex()` path `search` uses) and never waits on or
 contends with a full `akm index` rebuild in progress.
-Use `--no-track-usage` when this inspection must not record usage events.
 
 ### show
 
 Display an asset by ref. On a markdown document `#fragment` selects one
 section by heading slug (falling back to case-insensitive heading text); an
 unmatched fragment lists the available slugs.
-
-Successful reads record local usage events by default; pass
-`--no-track-usage` to suppress them.
 
 ```sh
 akm show scripts/deploy.sh
@@ -662,7 +656,6 @@ akm show memories/retro --filter user=alice --filter agent=claude
 | `--max-chars` | positive integer | `3200` for `lead` | Hard contextual content budget in characters; requires `--context lead` and is mutually exclusive with `--max-tokens`. |
 | `--max-tokens` | positive integer | _(none)_ | Approximate contextual budget using four characters per token; requires `--context lead` and is mutually exclusive with `--max-chars`. |
 | `--filter` | `<key>=<value>` | _(none)_ | Repeatable scope filter (`user`, `agent`, `run`, `channel`). |
-| `--track-usage`, `--no-track-usage` | flag | `true` | Record or suppress local usage events for this successful read. |
 
 `meta` is not an asset type — `[<origin>//]meta[:<name>]` direct-reads a
 human-authored orientation doc from a bundle's optional `.meta/` directory
@@ -2326,7 +2319,8 @@ or inference payload was selected.
 
 **Platform-specific dispatch:** akm uses a platform builder to construct the
 CLI argv for each engine's harness platform. `platform: "opencode"` engines emit:
-`opencode run [--system-prompt "..."] [--model opencode/claude-opus-4-7] "<prompt>"`.
+`opencode run [--model opencode/claude-opus-4-7] "<prompt>"`. `opencode run` has
+no system-prompt option, so akm composes a persona into the prompt.
 `platform: "claude"` engines emit:
 `claude [--system-prompt "..."] [--model claude-opus-4-7] --print -- "<prompt>"`.
 Agent engines may set `bin`, `args`, `workspace`, `model`, and `timeoutMs` in
@@ -2430,6 +2424,7 @@ akm improve lessons/my-lesson --show-prompt --format text # print the composed r
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
 akm improve report --since 7d          # ...aggregated over every real run started in the last 7 days
+akm improve judge < revision.json      # reflect's quality judge on one revision; writes nothing
 ```
 
 | Flag | Description |
@@ -2446,7 +2441,7 @@ akm improve report --since 7d          # ...aggregated over every real run start
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
-| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
+| `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH, and an `opencode-sdk` engine's is both its binary and, when it sets `llmEngine`, that LLM fallback's endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
 | `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
 | `--sync` / `--no-sync` | Commit (and optionally push) the git-backed primary bundle when the run finishes. Default: on for git-backed bundles (per profile config). |
 | `--push` / `--no-push` | Push after the end-of-run sync commit when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
@@ -2582,7 +2577,7 @@ table: one row per improve process (`reflect`, `distill`, `consolidate`,
 `memoryInference`, `extract`, `validation`, `triage`,
 `proactiveMaintenance`), plus a `triage.judgment` row when the strategy
 configures a judgment engine. Each row carries `enabled`, the resolved
-`engine`/`model` (llm-backed processes only) and `engineKind`, this process's
+`engine`, its `model` (when the engine has an LLM connection) and `engineKind`, this process's
 own lowering `notices`, and — for reflect/distill/consolidate only —
 `eligibleRefs`, the count of this run's `effectiveRefs` the process would act
 on (`shouldSkipRef`'s allowedTypes/excludeRefPrefixes (reflect only)/
@@ -2605,21 +2600,23 @@ default probe-on behavior) to check whether a named engine actually answers.
 
 `--show-prompt` (#952) is the cheapest way to exercise reflect alone: it
 builds the exact prompt reflect would send for one asset — the same source
-resolution, runner selection, feedback/schema-hint/related-lesson/rejected-
-proposal gathering `akm improve`'s live reflect step uses — and prints it
-without reading a credential, so it never calls an engine. Add
+resolution, runner selection, feedback/schema-hint/rejected-proposal
+gathering `akm improve`'s live reflect step uses — and prints it
+without reading a credential, so it never calls an engine. An LLM engine
+receives the reply's JSON Schema as `response_format`, and an agent engine as
+an instruction that dispatch appends to this prompt. Add
 `--format text` (the default JSON/yaml envelope escapes the prompt into one
 line, which defeats a by-eye read) to confirm by eye that recent feedback is
-framed as an unverified report to investigate (never a fact to insert
-verbatim) and that the response contract tells the model never to emit the
-truncation marker or any content from outside the shown asset.
+framed as a signal (never a fact to insert) and that the response contract asks
+only for `confidence` and a `frontmatterPatch` of `description`,
+`when_to_use` and `title`: akm keeps the body.
 
 When reinforced facts need promotion, `knowledge` is the higher-authority
 destination than `memory`.
 
 #### improve report
 
-`akm improve report` (#944) answers "which engine did each LLM-backed process
+`akm improve report` (#944) answers "which engine did each model-calling process
 use this run, how much did it cost, and which enabled processes made zero
 calls (and why)" without hand-written SQLite against `state.db`. It is a
 `scope` value, not a subcommand — `report` is not, and will never be, a real
@@ -2632,7 +2629,7 @@ field on the result (`result_json` in `improve_runs`, and in the
 `byProcessEngineModel` is a cross-tab of this run's own `llm_usage` events
 (#576) — one row per distinct `(process, engine, model)` triple, each with
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
-`reasoningTokens`, and `totalDurationMs`. `noCalls` lists every LLM-backed
+`reasoningTokens`, and `totalDurationMs`. `noCalls` lists every model-calling
 process (`reflect`, `distill`, `consolidate`, `memoryInference`,
 `extract`, `validation` — not `triage`/`proactiveMaintenance`,
 which never make an attributable LLM call themselves) the active strategy
@@ -2656,6 +2653,17 @@ that run's own `llm_usage` events instead of erroring, sets `noCalls` to `[]`
 (eligibility reasons are not reconstructable after the fact), and adds a
 `notes` entry saying so rather than fabricating precision the old row can't
 support.
+
+#### improve judge
+
+`akm improve judge` runs reflect's quality judge on one revision and prints its
+verdict, for testing a judge engine on revisions whose right answer you know. It
+reads `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON
+from stdin (`feedback` and `ref` are optional; `ref` names the revised asset,
+which a judge on an agent engine may read), judges with the engine the strategy's
+`processes.reflect.qualityGate.engine` names (`--strategy` picks the strategy),
+and prints `{ engine, pass, score, reason, criteria }` with the gate's prompt and
+pass rule. A `score` of `-1` means the judge gave no verdict. It writes nothing.
 
 ### proposal
 
@@ -2684,21 +2692,23 @@ authenticates its root; it never falls back to an ambient write target.
 #### proposal extract
 
 Extract durable insights from native coding-agent session files (claude-code,
-opencode) and queue them as proposals. This is the standalone entrypoint for
-session extraction — it replaces the legacy session-checkpoint hook and runs
-independently of the improve-stage extract toggle (see `improve` above).
+codex, opencode) and queue them as proposals. This is the standalone
+entrypoint for session extraction — it replaces the legacy session-checkpoint
+hook and runs independently of the improve-stage extract toggle (see `improve`
+above).
 
 ```sh
 akm proposal extract --type claude --session-id <id>
 akm proposal extract --type claude --since 24h
 akm proposal extract --type opencode --since 7d --dry-run
+akm proposal extract --type codex --since 24h
 akm proposal extract --auto                 # iterate every available harness
 akm proposal extract --type claude --location /custom/path --session-id <id>
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--type <harness>` | Harness name (`claude`, `opencode`). Required unless `--auto`. |
+| `--type <harness>` | Harness name (`claude`, `codex`, `opencode`). Required unless `--auto`. |
 | `--session-id <id>` | Process only this session ID. When absent, discover sessions via `--since`. |
 | `--location <path>` | Override the harness's default session-discovery location. |
 | `--since <cutoff>` | Discovery cutoff. ISO timestamp or duration (`24h`, `7d`, `30m`). Default `24h`. |
@@ -2706,7 +2716,7 @@ akm proposal extract --type claude --location /custom/path --session-id <id>
 | `--dry-run` | Show candidates without queuing proposals. |
 | `--force` | Re-process sessions even if they were already extracted and have no new events. Default: skip already-seen sessions. |
 | `--timeout-ms <ms>` | Per-session LLM timeout in ms (default `600000`). |
-| `--engine <name>` | Named LLM engine for this invocation. Mutually exclusive with `--strategy`. |
+| `--engine <name>` | Named engine for this invocation: an LLM engine, or a `claude`, `opencode` or `opencode-sdk` agent engine. Mutually exclusive with `--strategy`. |
 | `--strategy <name>` | Improve strategy supplying extract behavior and engine. Mutually exclusive with `--engine`. |
 
 `--type` and `--auto` are mutually exclusive; one of them is required.
@@ -2716,13 +2726,21 @@ session-log location on the current machine — and returns an aggregated
 per-harness `results`); the run exits non-zero only when every harness
 failed.
 
+The `codex` harness reads Codex's rollout files under `$CODEX_HOME/sessions`
+(`~/.codex/sessions` by default; `--location` points at another rollout
+directory). It lists a person's sessions, `codex exec` runs included, and
+leaves out the rollouts Codex writes for subagents and its other internal agents:
+those are not sessions of their own.
+
 There is no `akm proposal extract --watch`/`--debounce-ms` either (0.9.0:
 dropped — a foreground polling daemon in a one-shot CLI); the shipped
 `core/extract.yml` cron template (`akm proposal extract --auto` on a
 schedule) is the answer.
 
-Requires an LLM engine: pass `--engine`, select a `--strategy` whose
-`processes.extract.engine` is set, or configure `defaults.llmEngine`.
+Requires an engine that can run unattended model work (an LLM engine, or a
+`claude`, `opencode` or `opencode-sdk` agent): pass `--engine`, select a
+`--strategy` whose `processes.extract.engine` is set, or configure
+`defaults.llmEngine`.
 
 **Output.** `ok` means the command ran to completion — it is `true` even when
 every session was skipped (an unreachable LLM engine included); it does not
@@ -2732,7 +2750,7 @@ harvest" branch on `skipReasons`, `warnings`, or `sessionsProcessed` /
 
 | Field | Description |
 | --- | --- |
-| `engine` | Resolved LLM engine name for this run. Absent only when extract is disabled by the selected improve strategy (the run returns before an engine is resolved). |
+| `engine` | Resolved engine name for this run. Absent only when extract is disabled by the selected improve strategy (the run returns before an engine is resolved). |
 | `engineKind` | `"llm"`, `"sdk"`, or `"agent"` — the kind of runner `engine` resolved to. Same absence condition as `engine`. |
 | `skipReasons` | Per-`skipReason` count across `sessions[]` (e.g. `{ "llm_unavailable": 25 }`). Present only when `sessionsSkipped > 0`. |
 | `warnings` | Includes one aggregate line per infrastructure skip reason that fired (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`) — e.g. `25 of 25 sessions skipped: llm_unavailable (engine "default")` — so an engine outage is visible without inspecting `sessions[]`. Session-content skips (`already_extracted`, `too_short`, `triaged_out`) are counted in `skipReasons` but never produce a warning line. |
@@ -2755,10 +2773,23 @@ akm proposal new skill code-review --path team --task "PR-style review skill"  #
 | `--path` | Relative subdirectory under the type dir to place the proposed asset in (e.g. `release`). The filename comes from `<name>`. |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
-| `--engine` | Override the default execution engine |
+| `--engine` | Override the default execution engine. Any kind works: an LLM engine, an agent CLI or `opencode-sdk` |
 | `--timeout-ms` | Override the selected engine timeout for this call |
 
 Exactly one of `--task` or `--file` is required. Emits `propose_invoked`.
+
+Every engine kind returns the proposal the same way: as one JSON object on
+stdout with the asset's `ref`, its full `content` and a self-rated
+`confidence`. akm sends the object's JSON Schema with the request, as
+`response_format` to an LLM engine and as an instruction at the end of the
+prompt to an agent engine (codex also gets it as `--output-schema`). akm
+captures the reply; an agent CLI runs headless, with no live terminal session.
+A harness's own JSON envelope, such as claude's
+`--output-format json` result, is unwrapped first.
+A reply that is not a valid proposal gets one corrective retry that says what
+was wrong. If that reply is not valid either, the command exits 1 with
+`reason: "parse_error"` and an error that names the engine, for example
+`Engine "local" reply was not valid proposal JSON after 2 attempts: …`.
 
 **Prompt-task `timeoutMs`:** a version-2 prompt task may set `timeoutMs` to
 override its selected engine timeout. Set it to `null` to disable the timer, or

@@ -25,8 +25,9 @@ import type { AkmConfig } from "../core/config/config";
 import { parseEmbeddedJsonResponse } from "../core/parse";
 import { warn } from "../core/warn";
 import type { LoweringNotice } from "../execution/resolved-request";
+import { type RunnerSpec, runnerLlmConnection } from "../integrations/agent/runner";
 import type { TryLlmFeatureFallbackEvent } from "./feature-gate";
-import { callStructured, type StructuredLlmRunner } from "./structured-call";
+import { callStructured } from "./structured-call";
 
 const SYSTEM_PROMPT = memoryInferSystemPrompt;
 
@@ -62,9 +63,9 @@ export interface MemoryInferTelemetry {
 }
 
 /**
- * Strict JSON Schema for the derived-memory payload. Sent to providers that
- * opt in via `runner.connection.supportsJsonSchema = true`; the client
- * silently drops the schema for providers that don't.
+ * Strict JSON Schema for the derived-memory payload. Sent as `response_format`
+ * unless the engine sets `supportsJsonSchema: false`; the client drops it once
+ * for a provider that rejects it.
  *
  * Extends the responseSchema lift (PR 1, asset-writers-investigation §5) to
  * the memory-inference path. Mirrors the validation gate below
@@ -98,7 +99,7 @@ const DERIVED_MEMORY_JSON_SCHEMA = {
  * (Fix C5).
  */
 export async function compressMemoryToDerivedMemory(
-  llmRunner: StructuredLlmRunner,
+  llmRunner: RunnerSpec,
   body: string,
   signal?: AbortSignal,
   akmConfig?: AkmConfig,
@@ -129,8 +130,8 @@ export async function compressMemoryToDerivedMemory(
     ],
     request: {
       // The engine's or the process's configured temperature; 0.1 only when neither sets one.
-      temperature: llmRunner.connection.temperature ?? 0.1,
-      timeoutMs: llmRunner.timeoutMs,
+      temperature: runnerLlmConnection(llmRunner)?.temperature ?? 0.1,
+      ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
       signal,
       responseSchema: DERIVED_MEMORY_JSON_SCHEMA as unknown as Record<string, unknown>,
       onRetryAttempt,

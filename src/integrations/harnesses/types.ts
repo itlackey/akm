@@ -33,30 +33,6 @@ import type { HarnessCapabilities } from "./shared";
 export type { HarnessCapabilities } from "./shared";
 
 /**
- * Which of the three workflow-engine execution patterns this harness uses
- * (plan §"Reconciliation with existing akm seams"):
- *   - `in-harness`:     the orchestrating agent session itself executes units
- *                       (Claude Code driving `akm workflow` tools).
- *   - `local-runner`:   akm spawns the harness locally per unit (CLI argv or
- *                       embedded SDK) and ingests its output.
- *   - `cloud-delegate`: akm submits the task to a provider API and later
- *                       ingests the produced artifact (e.g. a PR).
- */
-export type HarnessExecutionPattern = "in-harness" | "local-runner" | "cloud-delegate";
-
-/**
- * Structured-output tier (plan §"Structured-output normalization"):
- *   - `native-schema`: the harness enforces a caller-supplied JSON schema
- *                      itself (tool input schema, `--output-schema`).
- *   - `native-json`:   the harness emits a documented JSON/JSONL stream; akm
- *                      parses it, extracts the final message, then validates.
- *   - `none`:          plain text only; akm injects the schema into the
- *                      prompt and extracts embedded JSON from stdout.
- * All three tiers funnel through the engine's one retry-until-valid loop.
- */
-export type HarnessStructuredOutput = "native-schema" | "native-json" | "none";
-
-/**
  * Fields every harness descriptor carries regardless of its `sessionLogs`
  * capability. Split out of `AkmHarness` so the capability-discriminated
  * `sessionLogProvider` field (see {@link AkmHarness}) can be added per-branch
@@ -98,15 +74,6 @@ interface AkmHarnessCommon {
 
   /** Resolved-request lowering for non-argv transports such as OpenCode SDK. */
   readonly executionLowerer?: AgentRequestLowerer;
-
-  /** Workflow-engine execution pattern (plan §"Capability matrix"). */
-  readonly pattern: HarnessExecutionPattern;
-
-  /**
-   * Structured-output tier for workflow-unit result normalization (plan
-   * §"Structured-output normalization").
-   */
-  readonly structuredOutput: HarnessStructuredOutput;
 
   /**
    * Env vars that carry this harness's *session id* when a process runs under
@@ -216,14 +183,14 @@ export function isSessionLogHarness<H extends AkmHarness>(h: H): h is H & Sessio
  * `HarnessCapabilities` union type here, and each subclass narrows it to a
  * literal `sessionLogs: true`/`false` variant via `caps({...})`.
  * `sessionLogProvider` is intentionally NOT declared here at all (not even
- * optional): the 8 non-session-log subclasses simply never declare it, which
+ * optional): the 7 non-session-log subclasses simply never declare it, which
  * satisfies `NonSessionLogHarness`'s `sessionLogProvider?: undefined` (an
  * absent optional property satisfies an `undefined`-typed optional); had this
  * class declared it as `sessionLogProvider?: () => SessionLogHarness`
  * instead, every non-session-log subclass would inherit that (function |
  * undefined) type and fail to satisfy `NonSessionLogHarness` at the
- * `HARNESS_REGISTRY` `satisfies` check. The two session-log subclasses
- * (Claude, OpenCode) declare their own required `sessionLogProvider`.
+ * `HARNESS_REGISTRY` `satisfies` check. The three session-log subclasses
+ * (Claude, Codex, OpenCode) declare their own required `sessionLogProvider`.
  */
 export abstract class BaseHarness implements AkmHarnessCommon {
   abstract readonly id: string;
@@ -232,8 +199,6 @@ export abstract class BaseHarness implements AkmHarnessCommon {
   readonly setupDetectionDir?: string;
   readonly agentBuilder?: AgentCommandBuilder;
   readonly executionLowerer?: AgentRequestLowerer;
-  abstract readonly pattern: HarnessExecutionPattern;
-  abstract readonly structuredOutput: HarnessStructuredOutput;
   readonly identityEnv?: readonly string[];
   readonly presenceEnv?: readonly string[];
   readonly resultExtractor?: AgentResultExtractor;

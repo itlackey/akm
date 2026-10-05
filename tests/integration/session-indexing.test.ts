@@ -177,6 +177,13 @@ describe("session source access instructions", () => {
     expect(access).not.toContain("jq");
     expect(access).not.toContain("JSON");
   });
+
+  test("describes how to read a Codex rollout and its messages", () => {
+    const access = buildSessionAccessInstructions("codex", "/tmp/rollout.jsonl", "ses_1");
+    expect(access).toContain("cat /tmp/rollout.jsonl");
+    expect(access).toContain('jq -r \'select(.type=="response_item" and .payload.type=="message")');
+    expect(access).toContain(".payload.content[]?");
+  });
 });
 
 describe("#561 session indexing — round-trip", () => {

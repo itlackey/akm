@@ -9,7 +9,8 @@
  * coding-agent CLI. Named engines lower canonical harness metadata into this
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
-import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
+import { COMMON_SPAWN_ENV_PASSTHROUGH, XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../core/spawn-env";
+import type { ExecutionJsonObject } from "../../execution/json";
 
 export type AgentStdioMode = "captured" | "interactive";
 export type AgentParseMode = "text" | "json";
@@ -46,6 +47,11 @@ export interface AgentProfile {
   readonly parseOutput: AgentParseMode;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
+  /**
+   * The inference a dispatch resolved (an improve process's `llm` overlay, say),
+   * kept so a frozen runner resolves to it again. A harness reads the request's own.
+   */
+  readonly inference?: ExecutionJsonObject;
 }
 
 // AKM_EVENT_SOURCE carries usage-event provenance (improve/task) so that akm
@@ -70,7 +76,7 @@ const BUILTINS: Record<string, AgentProfile> = {
     bin: "opencode",
     args: ["run"],
     stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "OPENCODE_API_KEY", "OPENCODE_CONFIG"],
+    envPassthrough: [...COMMON_PASSTHROUGH, "OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_BASE_DIR_ENV_PASSTHROUGH],
     parseOutput: "text",
   },
   claude: {

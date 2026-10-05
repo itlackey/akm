@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmReflect } from "../../../../src/commands/improve/reflect";
+import { akmReflect, REFLECT_JSON_SCHEMA } from "../../../../src/commands/improve/reflect";
 import { akmPropose } from "../../../../src/commands/proposal/propose";
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
@@ -30,7 +30,7 @@ import {
 } from "../../../../src/integrations/agent/conversation-fallback";
 import { FALLBACK_ANNOUNCEMENT } from "../../../../src/integrations/agent/engine-fallback";
 import { durableItemRef } from "../../../_helpers/durable-ref";
-import { quietQualityGateConfig } from "../../../_helpers/factories";
+import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
   type Cleanup,
   sandboxXdgCacheHome,
@@ -49,14 +49,6 @@ function makeTempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   fixtureDirs.push(dir);
   return dir;
-}
-
-function extractProposalDraftPath(prompt: string): string | undefined {
-  const prefix = path.join(os.tmpdir(), "akm-propose-");
-  const prefixIndex = prompt.indexOf(prefix);
-  if (prefixIndex < 0) return undefined;
-  const filenameTail = prompt.slice(prefixIndex + prefix.length).match(/^[^\s`"']+\.md/)?.[0];
-  return filenameTail ? `${prefix}${filenameTail}` : undefined;
 }
 
 function makeStashDir(): string {
@@ -129,12 +121,14 @@ function hangingSpawn(): SpawnFn {
   };
 }
 
-const VALID_LESSON_PAYLOAD = JSON.stringify({
-  ref: "lessons/rg-over-grep",
-  content:
-    "---\ndescription: Use ripgrep before grep\nwhen_to_use: Searching large repos for patterns\n---\n\nPrefer rg.\n",
-  frontmatter: { description: "Use ripgrep before grep", when_to_use: "Searching large repos for patterns" },
-});
+/** What an engine of any kind replies to a reflect run on `lessons/rg-over-grep`. */
+const LESSON_PATCH = {
+  description: "Use ripgrep before grep",
+  when_to_use: "Searching large repos for patterns",
+};
+const VALID_LESSON_PAYLOAD = reflectReply(LESSON_PATCH);
+/** The asset that reply patches. */
+const LESSON_SOURCE = "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n";
 
 const VALID_SKILL_PAYLOAD = JSON.stringify({
   ref: "skills/hello",
@@ -246,12 +240,12 @@ describe("akm reflect", () => {
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
       itemRef,
-      assetContent: "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n",
+      assetContent: LESSON_SOURCE,
       stashDir: stash,
       config: quietQualityGateConfig(),
       runAgentOptions: {
         spawn: fakeSpawnWithCapture("not json", "", 0, (cmd) => {
-          prompt = cmd.at(-1) ?? "";
+          prompt ||= cmd.at(-1) ?? "";
         }),
       },
     });
@@ -263,7 +257,7 @@ describe("akm reflect", () => {
   test("rejects an echoed engine environment credential instead of persisting redacted proposal text", async () => {
     const sentinel = "REFLECT-ECHO-SENTINEL";
     const stash = makeStashDir();
-    const echoed = VALID_LESSON_PAYLOAD.replace("Prefer rg.", `Prefer rg. ${sentinel}`);
+    const echoed = reflectReply({ description: `Use ripgrep before grep ${sentinel}` });
     const result = await withEnv({ OPENCODE_API_KEY: sentinel }, () =>
       akmReflect({
         ref: "lessons/rg-over-grep",
@@ -286,13 +280,15 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
     expect(result.proposal.source).toBe("reflect");
     expect(result.proposal.ref).toBe(durableItemRef(stash, "lesson", "rg-over-grep"));
-    expect(result.proposal.payload.content).toContain("Prefer rg");
+    expect(result.proposal.payload.content).toContain("description: Use ripgrep before grep");
+    expect(result.proposal.payload.content).toEndWith("\n\nUse grep.\n");
 
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
@@ -309,6 +305,7 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
       eligibilitySource: "proactive",
     });
@@ -332,6 +329,7 @@ describe("akm reflect", () => {
       ref: "lessons/rg-over-grep",
       stashDir: stash,
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },
     });
     expect(result.ok).toBe(true);
@@ -461,12 +459,15 @@ describe("akm reflect", () => {
       metadata: { signal: "positive", note: "nice greeting" },
     });
     let prompt = "";
+    const unscoped = reflectReply(LESSON_PATCH, { ref: "lessons/rg-over-grep" });
     const result = await akmReflect({
       stashDir: stash,
       task: "Focus on the highest-value recent signal",
       config: quietQualityGateConfig(),
+      // The asset the reply names, read once it has named it.
+      assetContent: LESSON_SOURCE,
       runAgentOptions: {
-        spawn: fakeSpawnWithCapture(VALID_LESSON_PAYLOAD, "", 0, (cmd) => {
+        spawn: fakeSpawnWithCapture(unscoped, "", 0, (cmd) => {
           prompt = cmd.at(-1) ?? "";
         }),
       },
@@ -486,7 +487,7 @@ describe("akm reflect", () => {
     expect(events.events[0]?.metadata?.task).toBe("Focus on the highest-value recent signal");
   });
 
-  test("uses captured JSON contract for reflect prompts", async () => {
+  test("asks an agent for the same JSON reply as an LLM: its schema is the output schema", async () => {
     const stash = makeStashDir();
     let capturedCmd: string[] = [];
     let capturedStdoutMode: string | undefined;
@@ -496,6 +497,7 @@ describe("akm reflect", () => {
       stashDir: stash,
       task: "Tighten the guidance",
       config: quietQualityGateConfig(),
+      assetContent: LESSON_SOURCE,
       runAgentOptions: {
         spawn: (cmd, opts) => {
           capturedCmd = cmd;
@@ -509,8 +511,16 @@ describe("akm reflect", () => {
     expect(result.ok).toBe(true);
     expect(capturedStdoutMode).toBe("pipe");
     expect(capturedStderrMode).toBe("pipe");
-    expect(capturedCmd.at(-1)).toContain("DRAFT_WRITTEN");
-    expect(capturedCmd.at(-1)).toContain("Task / focus: Tighten the guidance");
+    // Under the model-work tool policy an agent edits only its own scratch directory, so the
+    // proposal comes back on stdout, as the JSON object an LLM engine gets natively.
+    const prompt = capturedCmd.at(-1) ?? "";
+    expect(prompt).toContain("Task / focus: Tighten the guidance");
+    expect(prompt).toContain("Respond only through the provider's native JSON schema.");
+    expect(
+      prompt.endsWith(
+        `\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(REFLECT_JSON_SCHEMA)}`,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -606,34 +616,30 @@ describe("akm propose", () => {
     expect(events.events[0]?.ref).toBe(durableItemRef(stash, "skill", "hello"));
   });
 
-  test("file-written drafts use the resolved bundle name rather than the source root", async () => {
+  test("proposals use the resolved bundle name rather than the source root", async () => {
     const stash = makeStashDir();
     const config = {
       ...quietQualityGateConfig(),
       bundles: { team: { path: stash, writable: true } },
       defaultBundle: "team",
     } as ReturnType<typeof quietQualityGateConfig>;
-    const spawn: SpawnFn = (cmd) => {
-      const prompt = cmd.join(" ");
-      expect(prompt).toContain(path.join(os.tmpdir(), "akm-propose-"));
-      const draftPath = extractProposalDraftPath(prompt);
-      if (!draftPath) throw new Error("draft path missing from propose prompt");
-      fs.writeFileSync(draftPath, "---\ndescription: A file-written skill draft\n---\n\nDraft body.\n", "utf8");
-      return fakeSpawn("", "", 0)(cmd, {});
-    };
+    const payload = JSON.stringify({
+      ref: "skills/bundle-named",
+      content: "---\ndescription: A skill proposed into a named bundle\n---\n\nBundle body.\n",
+    });
 
     const result = await akmPropose({
       type: "skill",
-      name: "file-draft",
-      task: "Write through the draft file",
+      name: "bundle-named",
+      task: "Propose into the named bundle",
       stashDir: stash,
       agentConfig: config,
-      runAgentOptions: { spawn },
+      runAgentOptions: { spawn: fakeSpawn(payload, "", 0) },
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("expected ok");
-    expect(result.proposal.ref).toBe("team//skills/file-draft");
+    expect(result.proposal.ref).toBe("team//skills/bundle-named");
   });
 
   test("rejects unknown type with UsageError", async () => {
@@ -814,7 +820,8 @@ function fallbackEligibleConfig(): AkmConfig {
     configVersion: "0.9.0",
     semanticSearchMode: "auto",
     engines: {
-      "opencode-sdk": { kind: "agent", platform: "aider", bin: "/bin/true" },
+      // Reflect is model work, so the fallback engine must confine the model-work tool policy.
+      "opencode-sdk": { kind: "agent", platform: "opencode", bin: "/bin/true" },
     },
     improve: {
       strategies: { default: { processes: { reflect: { qualityGate: { enabled: false } } } } },
@@ -865,7 +872,7 @@ describe("engine fallback announcement on propose/reflect", () => {
     const warned = captureWarnings();
     const result = await akmReflect({
       ref: "lessons/rg-over-grep",
-      assetContent: "---\ndescription: Search guidance\nwhen_to_use: Searching repositories\n---\n\nUse grep.\n",
+      assetContent: LESSON_SOURCE,
       stashDir: stash,
       config: fallbackEligibleConfig(),
       runAgentOptions: { spawn: fakeSpawn(VALID_LESSON_PAYLOAD, "", 0) },

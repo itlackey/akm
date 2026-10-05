@@ -61,7 +61,10 @@ describe("detectAgentPlatforms", () => {
   // Codex CLI). Selecting them added a stash source that was never indexed — a
   // silent no-op. detectAgentPlatforms now derives only from
   // SESSION_LOG_HARNESSES, so those config dirs are NOT offered even when present.
-  test("does NOT offer harnesses with no session-log provider (Continue/Codeium/Cursor/Codex)", async () => {
+  // Codex has since gained a session-log provider but declares no
+  // `setupDetectionDir` (`~/.codex` holds credentials and rollouts, not assets),
+  // so it stays unoffered.
+  test("does NOT offer harnesses with no setup detection dir (Continue/Codeium/Cursor/Codex)", async () => {
     fs.mkdirSync(path.join(testHome, ".continue"), { recursive: true });
     fs.mkdirSync(path.join(testHome, ".codeium"), { recursive: true });
     fs.mkdirSync(path.join(testHome, ".cursor"), { recursive: true });

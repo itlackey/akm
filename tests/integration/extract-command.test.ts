@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   akmExtract,
+  countNewExtractCandidates,
   deriveExtractCandidateRef,
   parseSinceArg,
   resolveStandaloneExtractPlan,
@@ -25,6 +26,8 @@ import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { detectTruncatedDescription } from "../../src/core/text-truncation";
 import { ClaudeCodeProvider } from "../../src/integrations/harnesses/claude/session-log";
+import { CodexProvider } from "../../src/integrations/harnesses/codex/session-log";
+import { getAvailableHarnesses } from "../../src/integrations/session-logs";
 import type {
   SessionData,
   SessionLogHarness,
@@ -35,7 +38,9 @@ import {
   getExtractedSessionsMap,
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
+import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
+import { asLlmRunner } from "../_helpers/llm-runner";
 import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 import { snapshotTree } from "../_helpers/snapshot-tree";
 
@@ -588,6 +593,126 @@ describe("akmExtract — subagent transcripts are never extracted as their own s
   });
 });
 
+describe("akmExtract — Codex sessions", () => {
+  // Real CodexProvider against `withIsolatedAkmStorage()`'s isolated `CODEX_HOME`
+  // (its `sessions/` is the rollout root), so discovery, the subagent exclusion
+  // and the reader all run for real. `chat` is still injected.
+  const PERSON = "00000000-0000-7000-8000-000000000001";
+  const GUARDIAN = "00000000-0000-7000-8000-000000000002";
+
+  function seedRollouts(): void {
+    const sessions = path.join(storage.codexHomeDir, "sessions");
+    writeCodexRollout(sessions, { id: PERSON, source: "vscode", cwd: "/home/user/project-a" }, [
+      codexMessage("developer", "DEVELOPER_MARKER: sandbox mode instructions"),
+      codexMessage(
+        "user",
+        "# AGENTS.md instructions for /home/user/project-a\n\n<INSTRUCTIONS>\nAGENTS_MARKER\n</INSTRUCTIONS>",
+      ),
+      codexMessage("user", "Why does deploy.sh hang when I am off the VPN?"),
+      {
+        type: "response_item",
+        payload: {
+          type: "function_call",
+          name: "shell",
+          call_id: "c1",
+          arguments: JSON.stringify({ command: ["bash", "-lc", "./deploy.sh"] }),
+        },
+      },
+      {
+        type: "response_item",
+        payload: { type: "function_call_output", call_id: "c1", output: "stuck at: pushing to stage" },
+      },
+      codexMessage("assistant", "deploy.sh needs the corporate VPN; without it the push to stage stalls silently."),
+    ]);
+    writeCodexRollout(sessions, { id: GUARDIAN, source: { subagent: { other: "guardian" } } }, [
+      codexMessage("user", "GUARDIAN_MARKER: review this command for risk"),
+    ]);
+  }
+
+  test("extracts a person's rollout, never a subagent's, and only once", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    seedRollouts();
+    const db = openStateDatabase(":memory:");
+    let chatCalls = 0;
+    let capturedPrompt = "";
+    const run = () =>
+      akmExtract({
+        type: "codex",
+        stashDir: stash,
+        config,
+        harnesses: [new CodexProvider()],
+        since: "24h",
+        stateDb: db,
+        chat: async (_cfg, msgs) => {
+          chatCalls += 1;
+          capturedPrompt = msgs[0]?.content ?? "";
+          return JSON.stringify({ candidates: [] });
+        },
+      });
+    const newSessions = () =>
+      countNewExtractCandidates(config, { harnesses: [new CodexProvider()], since: "24h", stateDb: db });
+
+    // Improve's session count sees one candidate: the guardian rollout is not a session.
+    expect(newSessions()).toBe(1);
+
+    const first = await run();
+    expect(first.ok).toBe(true);
+    expect(first.sessionsProcessed).toBe(1);
+    expect(first.sessions.map((s) => [s.harness, s.sessionId])).toEqual([["codex", PERSON]]);
+    expect(chatCalls).toBe(1);
+    // The prompt carries the conversation and the tool work, not Codex's own
+    // instructions and injected context, and not the guardian's transcript.
+    expect(capturedPrompt).toContain("Why does deploy.sh hang when I am off the VPN?");
+    expect(capturedPrompt).toContain("deploy.sh needs the corporate VPN");
+    expect(capturedPrompt).toContain("[tool:shell] bash -lc ./deploy.sh");
+    expect(capturedPrompt).toContain("[tool_result] stuck at: pushing to stage");
+    for (const marker of ["DEVELOPER_MARKER", "AGENTS_MARKER", "GUARDIAN_MARKER"]) {
+      expect(capturedPrompt).not.toContain(marker);
+    }
+
+    // Seen once: recorded under `codex`, no longer new to improve, skipped by the next run.
+    expect(getExtractedSessionsMap(db, "codex", [PERSON]).get(PERSON)?.content_hash).toBe(
+      first.sessions[0]?.contentHash,
+    );
+    expect(newSessions()).toBe(0);
+    const second = await run();
+    expect(second.sessionsSkipped).toBe(1);
+    expect(second.sessions[0]?.skipReason).toBe("already_extracted");
+    expect(chatCalls).toBe(1);
+    db.close();
+  });
+
+  test("--session-id of a guardian rollout returns the not-found result, not an extraction", async () => {
+    const stash = makeStashDir();
+    seedRollouts();
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "codex",
+      sessionId: GUARDIAN,
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [new CodexProvider()],
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.sessionsProcessed).toBe(0);
+    expect(result.warnings.join(" ")).toMatch(/not found/);
+    expect(chatCalls).toBe(0);
+  });
+
+  test("the harness registry offers codex to --auto and improve once Codex has sessions", () => {
+    const available = () => getAvailableHarnesses().map((h) => h.name);
+    expect(available()).not.toContain("codex");
+    seedRollouts();
+    expect(available()).toContain("codex");
+  });
+});
+
 describe("akmExtract — candidate → proposal routing", () => {
   test("creates one proposal per valid candidate, with merged body frontmatter", async () => {
     const stash = makeStashDir();
@@ -822,13 +947,14 @@ describe("akmExtract — candidate → proposal routing", () => {
 });
 
 describe("akmExtract — LLM call wiring", () => {
-  test("repairs malformed output once when the engine lacks JSON Schema support", async () => {
+  // The one corrective retry no longer depends on the engine's JSON Schema support.
+  test.each([false, true])("repairs malformed output once (supportsJsonSchema: %p)", async (supportsJsonSchema) => {
     const stash = makeStashDir();
     const session = fakeSession("ses_repair", Date.now() - 60_000);
     const config = configEnabled(stash);
     const engine = config.engines?.default;
     if (!engine || engine.kind !== "llm") throw new Error("test fixture requires the default LLM engine");
-    engine.supportsJsonSchema = false;
+    engine.supportsJsonSchema = supportsJsonSchema;
     const responses = [
       "I found nothing worth keeping.",
       JSON.stringify({ candidates: [], rationale_if_empty: "No durable candidates were identified." }),
@@ -1590,8 +1716,8 @@ describe("akmExtract — engine + strategy config resolution", () => {
 
     await withEnv({ EXTRACT_REQUIRED_API_KEY: undefined }, async () => {
       const plan = resolveStandaloneExtractPlan(config, { engine: "extract-special" });
-      expect(plan.runner?.credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
-      expect(plan.runner?.connection.apiKey).toBeUndefined();
+      expect(asLlmRunner(plan.runner).credential).toEqual({ names: ["EXTRACT_REQUIRED_API_KEY"], required: true });
+      expect(asLlmRunner(plan.runner).connection.apiKey).toBeUndefined();
 
       const result = await akmExtract({
         type: "claude",
@@ -1642,7 +1768,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(Object.isFrozen(plan.process)).toBe(true);
     expect(Object.isFrozen(plan.process.triage)).toBe(true);
     expect(plan).toMatchObject({ strategy: "extract", engine: "extract-special", timeoutMs: 55_000 });
-    expect(plan.runner?.connection).toMatchObject({
+    expect(asLlmRunner(plan.runner).connection).toMatchObject({
       endpoint: "http://192.168.0.205:1234/v1/chat/completions",
       model: "process-model",
       temperature: 0.2,
@@ -1657,7 +1783,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
     });
     expect(timeoutOverridePlan.timeoutMs).toBe(45_000);
     expect(timeoutOverridePlan.runner?.timeoutMs).toBe(45_000);
-    expect(timeoutOverridePlan.runner?.connection.model).toBe("process-model");
+    expect(asLlmRunner(timeoutOverridePlan.runner).connection.model).toBe("process-model");
 
     const engine = config.engines?.["extract-special"];
     if (engine?.kind === "llm") engine.model = "changed-after-watch-start";
@@ -1719,7 +1845,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
         }),
         harnesses: [makeFakeHarness([fakeSession("no-fallback", Date.now())])],
       }),
-    ).rejects.toThrow("No LLM engine configured for extract");
+    ).rejects.toThrow("No engine configured for extract");
   });
 
   test("honors processes.extract.engine to pick a non-default LLM", async () => {
@@ -1758,16 +1884,13 @@ describe("akmExtract — engine + strategy config resolution", () => {
     expect(receivedModel).toBe("default-model");
   });
 
-  test("rejects an explicit non-LLM process engine without fallback", async () => {
+  test("refuses a process engine that cannot confine the model-work tool policy, before any dispatch", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_bad_mode", Date.now() - 60_000);
-    // Build a config where the agent profile EXISTS so the runner resolver
-    // succeeds and akmExtract's own kind-check fires (not the resolver's
-    // missing-profile guard).
     const config = configWithStrategy(stash, { engine: "fake-agent" });
     config.engines = {
       ...config.engines,
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "opencode", args: ["run"] },
+      "fake-agent": { kind: "agent", platform: "pi", bin: "pi-must-not-run" },
     };
     await expect(
       akmExtract({
@@ -1778,7 +1901,7 @@ describe("akmExtract — engine + strategy config resolution", () => {
         harnesses: [makeFakeHarness([session])],
         chat: async () => JSON.stringify({ candidates: [] }),
       }),
-    ).rejects.toThrow(/no llm engine configured for extract/i);
+    ).rejects.toThrow(/cannot enforce the model-work tool policy/);
   });
 
   test("honors process timeoutMs override", async () => {

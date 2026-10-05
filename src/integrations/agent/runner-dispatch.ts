@@ -10,6 +10,9 @@
  * from the result.
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { assertNever } from "../../core/assert";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -19,8 +22,12 @@ import {
   redactSensitiveText,
   redactSensitiveValue,
 } from "../../core/redaction";
+import { MODEL_WORK_POLICY_ID } from "../../execution/source";
 import { chatCompletion, LlmCallError } from "../../llm/client";
+import { emitLlmUsage, type LlmUsageErrorCode } from "../../llm/usage-telemetry";
+import { getHarness } from "../harnesses";
 import { closeServer as disposeOpencodeSdkServers, runOpencodeSdk } from "../harnesses/opencode-sdk/sdk-runner";
+import { type AgentResultExtraction, modelFromArgs } from "./builder-shared";
 import {
   lookupApiKeyFileValue,
   lookupApiKeySecretRefValue,
@@ -129,6 +136,45 @@ function llmFailureReason(error: unknown): AgentFailureReason {
 
 type LlmCall = (connection: LlmConnectionConfig, opts: RunAgentOptions) => Promise<AgentRunResult>;
 
+const USAGE_ERROR_CODES: Partial<Record<AgentFailureReason, LlmUsageErrorCode>> = {
+  timeout: "timeout",
+  aborted: "aborted",
+  parse_error: "parse_error",
+  llm_rate_limit: "rate_limited",
+};
+
+/**
+ * The model an agent or SDK dispatch ran: the request's, else the one an agent
+ * CLI's own `args` select, which its command carries when the request names
+ * none. An SDK server never sees `args`, so an SDK engine with no model named
+ * has none to report: opencode picks it.
+ */
+function dispatchedModel({ request, runner }: BuiltExecution): string | undefined {
+  return request.model?.resolved ?? (runner.kind === "agent" ? modelFromArgs(runner.profile.args) : undefined);
+}
+
+/**
+ * One usage record for an agent or SDK dispatch, through the same sink and
+ * ambient `withLlmStage` attribution as the LLM transport's per-HTTP-attempt
+ * records: the model it ran, and tokens when the runner reported them.
+ */
+function recordDispatchUsage(execution: BuiltExecution, result: AgentRunResult): void {
+  const { inputTokens, outputTokens, reasoningTokens } = result.usage ?? {};
+  const reported = [inputTokens, outputTokens, reasoningTokens].filter((count) => count !== undefined);
+  const model = dispatchedModel(execution);
+  emitLlmUsage({
+    outcome: result.ok ? "success" : "error",
+    modelSource: "configured",
+    ...(model ? { model } : {}),
+    durationMs: result.durationMs,
+    ...(inputTokens !== undefined ? { promptTokens: inputTokens } : {}),
+    ...(outputTokens !== undefined ? { completionTokens: outputTokens } : {}),
+    ...(reasoningTokens !== undefined ? { reasoningTokens } : {}),
+    ...(reported.length > 0 ? { totalTokens: reported.reduce((sum, count) => sum + count, 0) } : {}),
+    ...(result.ok ? {} : { errorCode: (result.reason && USAGE_ERROR_CODES[result.reason]) ?? "unknown_error" }),
+  });
+}
+
 async function dispatchRunner(
   runner: RunnerSpec,
   prompt: string,
@@ -162,12 +208,63 @@ async function dispatchRunner(
   return redactResult(result, collectSensitiveValues(secrets));
 }
 
-/** Run a built execution. Credentials are read here, once per call, and never returned. */
+/**
+ * The scratch working directory for one model-work dispatch on an agent or SDK
+ * engine, so the edit the model-work tool policy grants never reaches the
+ * stash.
+ */
+function createModelWorkDirectory(): string {
+  return fs.mkdtempSync(path.join(os.tmpdir(), "akm-model-work-"));
+}
+
+/**
+ * Run a built execution. Credentials are read here, once per call, and never
+ * returned. Model work on an agent or SDK engine runs in a scratch working
+ * directory that akm creates for the dispatch and removes after it, and must
+ * end with an answer: an agent that stops with none (opencode at its step
+ * limit, for one) has failed with `parse_error`.
+ */
 export async function runExecution(
   execution: BuiltExecution,
   options: RunExecutionOptions = {},
 ): Promise<AgentRunResult> {
-  const opts: RunAgentOptions = { ...execution.options };
+  const scratch =
+    execution.runner.kind !== "llm" && execution.request.authorization.policy?.id === MODEL_WORK_POLICY_ID
+      ? createModelWorkDirectory()
+      : undefined;
+  try {
+    return await runBuiltExecution(execution, options, scratch);
+  } finally {
+    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/** A successful reply's text, unwrapped from its harness's framing (claude's `--output-format json` result envelope, for one). */
+export function unwrapHarnessReply(runner: RunnerSpec, result: AgentRunResult): AgentResultExtraction {
+  const extractor =
+    runner.kind === "agent" ? getHarness(runner.profile.platform ?? runner.profile.name)?.resultExtractor : undefined;
+  return extractor ? extractor(result) : { text: result.stdout };
+}
+
+/** A model-work reply's answer: its harness's framing stripped, and no answer is a `parse_error`. */
+function modelWorkAnswer(runner: RunnerSpec, result: AgentRunResult): AgentRunResult {
+  const extracted = unwrapHarnessReply(runner, result);
+  const answer = {
+    ...result,
+    stdout: extracted.text,
+    ...(extracted.sessionId ? { sessionId: extracted.sessionId } : {}),
+  };
+  if (extracted.text.trim() !== "") return answer;
+  return { ...answer, ok: false, reason: "parse_error", error: `Engine "${runner.engine}" returned no answer.` };
+}
+
+/** `scratch` is the model-work working directory, set only for model work on an agent or SDK engine. */
+async function runBuiltExecution(
+  execution: BuiltExecution,
+  options: RunExecutionOptions,
+  scratch: string | undefined,
+): Promise<AgentRunResult> {
+  const opts: RunAgentOptions = { ...execution.options, ...(scratch ? { cwd: scratch } : {}) };
   const operational = options.runOptions ?? {};
   for (const key of OPERATIONAL_OPTIONS) {
     if (operational[key] !== undefined) (opts as Record<string, unknown>)[key] = operational[key];
@@ -200,7 +297,11 @@ export async function runExecution(
       };
     }
   };
-  return dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  let result = await dispatchRunner(execution.runner, execution.prompt, opts, options, llm);
+  if (scratch !== undefined && result.ok) result = modelWorkAnswer(execution.runner, result);
+  // The LLM transport records each HTTP attempt itself.
+  if (execution.runner.kind !== "llm") recordDispatchUsage(execution, result);
+  return result;
 }
 
 export interface InteractiveAgentInvocationOptions {

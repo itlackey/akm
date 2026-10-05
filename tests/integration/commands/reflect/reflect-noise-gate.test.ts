@@ -8,11 +8,10 @@
  *      description re-folding, code-fence language hints, whitespace reflow,
  *      hard-wrap unwrapping) plus conservative must-stay-substantive cases.
  *
- *   2. The gate wired into `akmReflect` — an identical or cosmetic-only
- *      candidate must NEVER reach `createProposal()`; it returns a
- *      `no_change` failure and emits `reflect_completed` with the
- *      `reflect_skipped_noop` / `reflect_skipped_cosmetic` subreason. A
- *      genuine (even small) content change still creates a proposal.
+ *   2. The gate wired into `akmReflect` — a patch that changes nothing must
+ *      NEVER reach `createProposal()`; it returns a `no_change` failure and
+ *      emits `reflect_completed` with the `reflect_skipped_noop` subreason.
+ *      A genuine (even small) change still creates a proposal.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -27,7 +26,7 @@ import {
 import { listProposals } from "../../../../src/commands/proposal/repository";
 import { readEvents } from "../../../../src/core/events";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
-import { quietQualityGateConfig } from "../../../_helpers/factories";
+import { quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
 import {
   makeStashDir,
   sandboxXdgCacheHome,
@@ -234,73 +233,63 @@ const SOURCE_ASSET = [
   "",
 ].join("\n");
 
-function agentJson(content: string): string {
-  return JSON.stringify({ ref: "knowledge/sample", content });
-}
-
-async function runReflect(stash: string, agentStdout: string) {
+async function runReflect(stash: string, agentStdout: string, assetContent: string | null = SOURCE_ASSET) {
   return akmReflect({
     ref: "knowledge/sample",
     stashDir: stash,
     target: { source: "local", root: stash },
-    assetContent: SOURCE_ASSET,
+    ...(assetContent !== null ? { assetContent } : {}),
     config: quietQualityGateConfig(),
     runAgentOptions: { spawn: fakeSpawn(agentStdout) },
   });
 }
 
+/** The run ended in `no_change` with the `reflect_skipped_noop` event, and queued nothing. */
+function expectNoChange(result: Awaited<ReturnType<typeof runReflect>>, stash: string) {
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("expected suppression");
+  expect(result.reason).toBe("no_change");
+  expect(result.error).toContain("identical");
+  expect(listProposals(stash).length).toBe(0);
+
+  const events = readEvents({ type: "reflect_completed" }).events;
+  expect(events.length).toBe(1);
+  const meta = events[0]?.metadata as Record<string, unknown>;
+  expect(meta.ok).toBe(false);
+  expect(meta.reason).toBe("no_change");
+  expect(meta.subreason).toBe("reflect_skipped_noop");
+  expect(meta.changeKind).toBe("noop");
+  expect(events[0]?.ref).toBe("knowledge/sample");
+}
+
 describe("akm reflect — noise gate (#580)", () => {
-  test("empty diff (identical candidate) → no proposal + reflect_skipped_noop event", async () => {
+  test("a patch with every field null → no proposal + reflect_skipped_noop event", async () => {
     const stash = makeSandboxedStash();
-    const result = await runReflect(stash, agentJson(SOURCE_ASSET));
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected suppression");
-    expect(result.reason).toBe("no_change");
-    expect(result.error).toContain("identical");
-    expect(listProposals(stash).length).toBe(0);
-
-    const events = readEvents({ type: "reflect_completed" }).events;
-    expect(events.length).toBe(1);
-    const meta = events[0]?.metadata as Record<string, unknown>;
-    expect(meta.ok).toBe(false);
-    expect(meta.reason).toBe("no_change");
-    expect(meta.subreason).toBe("reflect_skipped_noop");
-    expect(meta.changeKind).toBe("noop");
-    expect(events[0]?.ref).toBe("knowledge/sample");
+    expectNoChange(await runReflect(stash, reflectReply()), stash);
   });
 
-  test("whitespace-reflow-only candidate → suppressed as reflect_skipped_cosmetic", async () => {
+  test("a patch equal to the source's own fields → the same empty diff", async () => {
     const stash = makeSandboxedStash();
-    const reflowed = SOURCE_ASSET.replace(
-      "A paragraph that explains the topic in enough detail to be useful.",
-      "A paragraph that explains the topic\nin enough detail to be useful.",
-    );
-    const result = await runReflect(stash, agentJson(reflowed));
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected suppression");
-    expect(result.reason).toBe("no_change");
-    expect(result.error).toContain("cosmetic");
-    expect(listProposals(stash).length).toBe(0);
-
-    const events = readEvents({ type: "reflect_completed" }).events;
-    expect(events.length).toBe(1);
-    const meta = events[0]?.metadata as Record<string, unknown>;
-    expect(meta.subreason).toBe("reflect_skipped_cosmetic");
-    expect(meta.changeKind).toBe("cosmetic");
+    const source = "---\ndescription: Diagnose the stack\nwhen_to_use: When the stack degrades\n---\n\nBody prose.\n";
+    const patch = { description: "Diagnose the stack", when_to_use: "When the stack degrades" };
+    expectNoChange(await runReflect(stash, reflectReply(patch), source), stash);
   });
 
-  test("genuine small content change → proposal created", async () => {
+  test("a title for a body that already has a level-1 heading is ignored → the same empty diff", async () => {
     const stash = makeSandboxedStash();
-    const edited = SOURCE_ASSET.replace("- second point", "- second point, now with a concrete example");
-    const result = await runReflect(stash, agentJson(edited));
+    expectNoChange(await runReflect(stash, reflectReply({ title: "Another title" })), stash);
+  });
+
+  test("genuine small change → proposal created", async () => {
+    const stash = makeSandboxedStash();
+    const source = "---\ndescription: Diagnose the stack\n---\n\nBody prose for the skill.\n";
+    const result = await runReflect(stash, reflectReply({ description: "Diagnose the stack and its proxies" }), source);
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`expected proposal, got ${result.reason}: ${result.error}`);
     const proposals = listProposals(stash);
     expect(proposals.length).toBe(1);
-    expect(proposals[0]?.payload.content).toContain("now with a concrete example");
+    expect(proposals[0]?.payload.content).toContain("description: Diagnose the stack and its proxies");
 
     const events = readEvents({ type: "reflect_completed" }).events;
     expect(events.length).toBe(1);
@@ -308,35 +297,26 @@ describe("akm reflect — noise gate (#580)", () => {
     expect(meta.proposalId).toBe(result.proposal.id);
   });
 
-  test("candidate whose only change is a protected-field rename → suppressed (identity guard leaves no diff)", async () => {
+  test("a title for a body with no level-1 heading is added: the proposal is the source with the heading", async () => {
     const stash = makeSandboxedStash();
-    const source = "---\nname: stack-diagnostics\ndescription: Diagnose the stack\n---\n\nBody prose for the skill.\n";
-    const renamedOnly = source.replace("name: stack-diagnostics", "name: renamed-by-llm");
-    const result = await akmReflect({
-      ref: "skills/stack-diagnostics",
-      stashDir: stash,
-      target: { source: "local", root: stash },
-      assetContent: source,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(JSON.stringify({ ref: "skills/stack-diagnostics", content: renamedOnly })) },
-    });
+    const source = "---\ndescription: Diagnose the stack\n---\n\nBody prose for the skill.\n";
+    const result = await runReflect(stash, reflectReply({ title: "Stack diagnostics" }), source);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`expected proposal, got ${result.reason}: ${result.error}`);
+    expect(listProposals(stash)[0]?.payload.content).toEndWith(
+      "\n\n# Stack diagnostics\n\nBody prose for the skill.\n",
+    );
+  });
+
+  test("no source asset: there is nothing to patch → no proposal", async () => {
+    const stash = makeSandboxedStash();
+    // No assetContent seam and no indexed asset.
+    const result = await runReflect(stash, reflectReply({ description: "Diagnose the stack" }), null);
+
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected suppression");
     expect(result.reason).toBe("no_change");
     expect(listProposals(stash).length).toBe(0);
-  });
-
-  test("no source asset (new-asset proposal) bypasses the gate", async () => {
-    const stash = makeSandboxedStash();
-    // No assetContent seam and no indexed asset → nothing to diff against.
-    const result = await akmReflect({
-      ref: "knowledge/sample",
-      stashDir: stash,
-      target: { source: "local", root: stash },
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(agentJson(SOURCE_ASSET)) },
-    });
-    expect(result.ok).toBe(true);
-    expect(listProposals(stash).length).toBe(1);
   });
 });

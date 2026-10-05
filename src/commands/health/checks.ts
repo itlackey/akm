@@ -4,7 +4,6 @@
 
 import { spawnSync } from "node:child_process";
 import { type AkmConfig, type LlmConnectionConfig, loadConfig } from "../../core/config/config";
-import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "../../core/config/engine-semantics";
 import { listEnvsRecursive } from "../../core/env-secret-ref";
 import { ConfigError } from "../../core/errors";
 import { EXTRACT_INFRASTRUCTURE_SKIP_REASONS } from "../../core/improve-types";
@@ -36,7 +35,7 @@ import {
   type StateDbIntegrityResult,
 } from "../../storage/state-db-integrity";
 import { listKeys } from "../env/env";
-import { type ImproveProcessName, resolveImprovePlan } from "../improve/improve-strategies";
+import { MODEL_CALLING_PROCESSES, resolveImprovePlan } from "../improve/improve-strategies";
 import type { EngineLastUsed } from "./engine-usage";
 import { ENGINE_LAST_USED_LOOKBACK_DAYS } from "./engine-usage";
 import {
@@ -367,7 +366,7 @@ async function runConfiguredEngineProbe(
         evidence: { engine: engineName, runtimeKind: "sdk", binaryAvailable: false },
       };
     }
-    const fallbackEngine = configuredEngine.llmEngine ?? config.defaults?.llmEngine;
+    const fallbackEngine = configuredEngine.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
     let fallbackCredential: Extract<RunnerSpec, { kind: "llm" }>["credential"];
     let fallbackApiKeyFile: string | undefined;
@@ -830,21 +829,19 @@ export function probeActiveImproveStrategy(
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([process, engine]) => `${process}: "${engine}"`)
       .join(", ");
-    // #957: fail only when the strategy's LLM-backed work would be a total
-    // no-op — every process the strategy actually enabled among the
-    // `capability: "llm"` set (see IMPROVE_PROCESS_ENGINE_CAPABILITIES) ended
-    // up unavailable. A partial failure (some processes still have a working
+    // #957: fail only when the strategy's model work would be a total no-op —
+    // every process the strategy actually enabled among the ones that call a
+    // model themselves (MODEL_CALLING_PROCESSES, any engine kind) ended up
+    // unavailable. A partial failure (some processes still have a working
     // engine) stays a `warn`, matching #914's "a credential warn stays a warn"
     // policy for the general per-engine probes; this is the strategy-scoped
     // "is the whole run a no-op" question instead.
-    const llmProcessNames = (Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]).filter(
-      (name) => IMPROVE_PROCESS_ENGINE_CAPABILITIES[name] === "llm",
-    );
-    const requiredLlmProcessNames = llmProcessNames.filter(
+    const modelProcessNames = [...MODEL_CALLING_PROCESSES];
+    const requiredModelProcessNames = modelProcessNames.filter(
       (name) => plan.processes[name].enabled || plan.engineUnavailable.some((item) => item.process === name),
     );
-    const availableLlmProcessNames = llmProcessNames.filter((name) => plan.processes[name].enabled);
-    const allRequiredUnavailable = requiredLlmProcessNames.length > 0 && availableLlmProcessNames.length === 0;
+    const availableModelProcessNames = modelProcessNames.filter((name) => plan.processes[name].enabled);
+    const allRequiredUnavailable = requiredModelProcessNames.length > 0 && availableModelProcessNames.length === 0;
     const status = unavailableProcesses.length === 0 ? "pass" : allRequiredUnavailable ? "fail" : "warn";
     return {
       check: {

@@ -297,13 +297,14 @@ families) plus the orchestration keys:
 - `params` — name → `{ type, description }` (JSON-Schema-typed, unlike a bare
   description string).
 - `defaults` — run-level dispatch defaults (`engine`, `model`, `llm`,
-  `timeout`, `on_error`), overridable per unit. `defaults.llm` is the
-  exception: `llm:` tuning applies only to engines of kind `llm`, and a
-  document-level `llm:` reaches EVERY step, so a document that also has a step
-  on an agent engine fails to freeze — naming the step and the engine — rather
-  than dropping the settings for that step. There is no per-step opt-out (`llm:
-  {}` is a no-op and `llm: null` is a parse error), so in a mixed document put
-  `llm:` on the `unit:` of each LLM step instead of in `defaults:`.
+  `timeout`, `on_error`), overridable per unit. `llm:` tuning reaches an engine
+  of any kind, and a document-level `llm:` reaches EVERY step. An LLM engine
+  sends it; an agent engine reports it as an `untranslated-field` notice on that
+  step (see
+  [Inference on an agent engine](configuration.md#inference-on-an-agent-engine)).
+  There is no per-step opt-out (`llm: {}` is a no-op and `llm: null` is a parse
+  error), so in a mixed document put `llm:` on the `unit:` of each step it is
+  meant for instead of in `defaults:`.
 - `outputs` — name → `{ from, schema? }`, a run-level export projected from
   a step's own artifact (Markdown-only; see [Workflow
   outputs](#workflow-outputs) below).
@@ -1179,8 +1180,8 @@ and return HTTP 500 — a hard failure, so loopback endpoints stay at 1 and a
 `engines.<name>.concurrency` yourself. Remote providers fail softly (a
 retryable 429), and four concurrent completions is well inside any hosted
 provider's entry tier. Agent engines carry no concurrency limit of their own —
-except an `opencode-sdk` engine with an `llmEngine` fallback, which inherits
-that fallback engine's limit.
+except an `opencode-sdk` engine that sets `llmEngine`, which inherits that
+fallback engine's limit.
 
 #### What counts as a loopback endpoint
 

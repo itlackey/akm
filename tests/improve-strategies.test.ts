@@ -12,6 +12,7 @@ import {
 } from "../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../src/core/config/config";
 import { ConfigError } from "../src/core/errors";
+import { asLlmRunner } from "./_helpers/llm-runner";
 import { withEnvSync } from "./_helpers/sandbox";
 
 describe("resolveImproveStrategy", () => {
@@ -202,7 +203,7 @@ describe("resolveImprovePlan", () => {
     expect(plan.strategy.name).toBe("quick");
     expect(plan.processes.reflect.runner?.engine).toBe("default");
     expect(plan.processes.validation.runner?.engine).toBe("validation");
-    expect(plan.processes.validation.runner?.connection.model).toBe("repair");
+    expect(asLlmRunner(plan.processes.validation.runner).connection.model).toBe("repair");
     expect(plan.processes.distill).toMatchObject({ enabled: false, runner: null });
     expect(Object.keys(plan.processes).sort()).toEqual([
       "consolidate",
@@ -267,11 +268,11 @@ describe("resolveImprovePlan", () => {
         defaults: { llmEngine: "default" },
       });
 
-      expect(plan.processes.reflect.runner?.credential).toEqual({
+      expect(asLlmRunner(plan.processes.reflect.runner).credential).toEqual({
         names: ["IMPROVE_PLAN_API_KEY"],
         required: true,
       });
-      expect(plan.processes.reflect.runner?.connection.apiKey).toBeUndefined();
+      expect(asLlmRunner(plan.processes.reflect.runner).connection.apiKey).toBeUndefined();
       expect(JSON.stringify(plan)).not.toContain("plan-secret-sentinel");
     });
   });
@@ -282,7 +283,7 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       engines: {
         default: llm,
-        reviewer: { kind: "agent", platform: "pi", model: "review" },
+        reviewer: { kind: "agent", platform: "claude", model: "review" },
       },
       defaults: { llmEngine: "default" },
       improve: {
@@ -315,7 +316,7 @@ describe("resolveImprovePlan", () => {
       default: { ...llm, model: "default" },
       strategy: { ...llm, model: "strategy" },
       judgment: { ...llm, model: "judgment" },
-      reviewer: { kind: "agent" as const, platform: "pi", model: "agent-base" },
+      reviewer: { kind: "agent" as const, platform: "claude", model: "agent-base" },
     };
     const base = {
       configVersion: "0.9.0" as const,
@@ -385,14 +386,14 @@ describe("resolveImprovePlan", () => {
     expect(fallback.triageJudgment).toMatchObject({ kind: "llm", engine: "default" });
   });
 
-  test("rejects model-only and incompatible fallbacks before dispatch", () => {
+  test("rejects a model-only selection, and an engine that cannot confine the model-work tool policy, before dispatch", () => {
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
         improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
       }),
-    ).toThrow('"reflect" requires an LLM engine that is not configured');
+    ).toThrow('"reflect" requires an engine that is not configured');
     expect(() =>
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
@@ -400,7 +401,18 @@ describe("resolveImprovePlan", () => {
         engines: { wrong: { kind: "agent", platform: "pi" } },
         defaults: { llmEngine: "wrong" },
       }),
-    ).toThrow('"reflect" requires an LLM engine that is not configured');
+    ).toThrow("The pi transport cannot enforce the model-work tool policy.");
+  });
+
+  test("an agent engine that confines the policy runs model work", () => {
+    const plan = resolveImprovePlan("quick", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: { agent: { kind: "agent", platform: "claude" } },
+      defaults: { llmEngine: "agent" },
+    });
+    expect(plan.processes.reflect.runner).toMatchObject({ kind: "agent", engine: "agent" });
+    expect(plan.engineUnavailable).toEqual([]);
   });
 
   test("rejects an enabled model-backed process with no runner even when no model fields express intent", () => {
@@ -409,7 +421,7 @@ describe("resolveImprovePlan", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
       }),
-    ).toThrow('"reflect" requires an LLM engine that is not configured');
+    ).toThrow('"reflect" requires an engine that is not configured');
   });
 
   test("disables just the processes with no usable LLM engine, instead of aborting the whole plan", () => {
@@ -549,32 +561,34 @@ describe("resolveImprovePlan", () => {
     expect(plan.processes.validation).toMatchObject({ enabled: true, runner: null });
   });
 
-  test("rejects LLM-only overrides on an agent triage judgment", () => {
-    expect(() =>
-      resolveImprovePlan("reflect-distill", {
-        configVersion: "0.9.0",
-        semanticSearchMode: "auto",
-        engines: {
-          llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "base" },
-          reviewer: { kind: "agent", platform: "pi" },
-        },
-        defaults: { llmEngine: "llm" },
-        improve: {
-          strategies: {
-            "reflect-distill": {
-              processes: { triage: { judgment: { engine: "reviewer", llm: { temperature: 0 } } } },
-            },
+  test("an agent triage judgment takes llm overrides as inference it reports untranslated", () => {
+    const plan = resolveImprovePlan("reflect-distill", {
+      configVersion: "0.9.0",
+      semanticSearchMode: "auto",
+      engines: {
+        llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "base" },
+        reviewer: { kind: "agent", platform: "claude" },
+      },
+      defaults: { llmEngine: "llm" },
+      improve: {
+        strategies: {
+          "reflect-distill": {
+            processes: { triage: { judgment: { engine: "reviewer", llm: { temperature: 0 } } } },
           },
         },
-      }),
-    ).toThrow("cannot receive llm overrides");
+      },
+    });
+    expect(plan.triageJudgment).toMatchObject({ kind: "agent", engine: "reviewer" });
+    expect(plan.triageJudgmentNotices).toContainEqual(
+      expect.objectContaining({ code: "untranslated-field", adapter: "claude", field: "inference.temperature" }),
+    );
   });
 });
 
 describe("projectResolvedProcessRouting (#947)", () => {
   const llm = { kind: "llm" as const, endpoint: "https://example.test/v1/chat/completions", model: "base" };
 
-  test("one row per IMPROVE_PROCESS_ENGINE_CAPABILITIES name, engine/model only for resolved llm processes", () => {
+  test("one row per IMPROVE_PROCESS_NAMES name, engine/model only for resolved llm processes", () => {
     const plan = resolveImprovePlan("quick", {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
@@ -652,7 +666,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
         semanticSearchMode: "auto",
         engines: {
           default: llm,
-          reviewer: { kind: "agent", platform: "pi", model: "review" },
+          reviewer: { kind: "agent", platform: "claude", model: "review" },
         },
         defaults: { llmEngine: "default" },
         improve: {

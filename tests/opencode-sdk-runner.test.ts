@@ -51,7 +51,10 @@ interface PromptCapture {
  */
 function makeFakeServer(
   capture: PromptCapture,
-  promptImpl?: () => Promise<{ data?: { parts?: { type: string; text?: string }[] } }>,
+  promptImpl?: () => Promise<{
+    error?: unknown;
+    data?: { info?: { tokens?: Record<string, number>; error?: unknown }; parts?: { type: string; text?: string }[] };
+  }>,
   overrides: {
     createImpl?: () => Promise<{ data?: { id?: string } }>;
     deleteImpl?: () => Promise<unknown>;
@@ -341,6 +344,88 @@ describe("runOpencodeSdk — one end-to-end deadline", () => {
   });
 });
 
+// ── #1015: an SDK error is a failed dispatch, never ok with empty output ─────
+//
+// Without `throwOnError`, @opencode-ai/sdk 1.2.20 resolves an HTTP error to
+// `{ error }` instead of throwing, and opencode answers a provider rejection
+// with HTTP 200 and `info.error` on the assistant message. Both carry an
+// opencode NamedError: `{ name, data: { message } }`.
+
+describe("runOpencodeSdk — SDK errors are failures (#1015)", () => {
+  test("an `{ error }` result is ok:false with opencode's error name and message", async () => {
+    const fake = makeFakeServer({}, async () => ({
+      error: { name: "UnknownError", data: { message: "Unexpected server error. Check server logs for details." } },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.stdout).toBe("");
+    expect(result.error).toBe("UnknownError: Unexpected server error. Check server logs for details.");
+    expect(result.stderr).toContain("UnknownError: Unexpected server error.");
+    expect(fake.deletedRef()).toBe(true);
+  });
+
+  test("a reply carrying `info.error` is ok:false with the provider's message", async () => {
+    const fake = makeFakeServer({}, async () => ({
+      data: {
+        info: { error: { name: "APIError", data: { message: "model 'stub-model' not found", isRetryable: false } } },
+        parts: [],
+      },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe("non_zero_exit");
+    expect(result.error).toBe("APIError: model 'stub-model' not found");
+    expect(result.stderr).toContain("model 'stub-model' not found");
+  });
+
+  test.each([
+    ["ProviderAuthError", "non_zero_exit", { providerID: "akm-custom", message: "invalid api key" }],
+    ["APIError", "non_zero_exit", { message: "upstream 400", isRetryable: false }],
+    ["UnknownError", "non_zero_exit", { message: "boom" }],
+    ["MessageAbortedError", "aborted", { message: "aborted" }],
+    ["MessageOutputLengthError", "parse_error", {}],
+  ])("info.error %s maps to reason %s", async (name, reason, data) => {
+    const fake = makeFakeServer({}, async () => ({
+      data: { info: { error: { name, data } }, parts: [{ type: "text", text: "partial" }] },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(false);
+    expect(result.reason).toBe(reason as NonNullable<typeof result.reason>);
+    expect(result.error).toStartWith(name);
+  });
+
+  // B13: a multi-step reply narrates before it answers; the answer is last.
+  test("the last text part of a reply is its output, not the first", async () => {
+    const fake = makeFakeServer({}, async () => ({
+      data: {
+        parts: [
+          { type: "step-start" },
+          { type: "text", text: "Let me read the file first." },
+          { type: "tool" },
+          { type: "text", text: "final answer" },
+          { type: "step-finish" },
+        ],
+      },
+    }));
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "p", { timeoutMs: null });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("final answer");
+  });
+});
+
 // ── buildSdkConfig — exact model selection on the SDK path ──────────────────
 
 describe("buildSdkConfig — exact model selection", () => {
@@ -392,6 +477,199 @@ describe("buildSdkConfig — exact model selection", () => {
       model: "fallback/provider/model",
     });
     expect(cfg.model).toBe("akm-custom/fallback/provider/model");
+  });
+
+  // #1015: opencode registers only the models a custom provider lists, so an
+  // undeclared model failed every dispatch with ProviderModelNotFoundError.
+  test("declares the routed model under the akm-custom provider's models map (#1015)", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const endpoint = "http://127.0.0.1:18080/v1/chat/completions";
+    const inherited = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" });
+    expect(inherited).toEqual({
+      model: "akm-custom/stub-model",
+      provider: {
+        "akm-custom": {
+          npm: "@ai-sdk/openai-compatible",
+          options: { baseURL: "http://127.0.0.1:18080/v1" },
+          models: { "stub-model": {} },
+        },
+      },
+    });
+
+    const own = buildSdkConfig({ ...baseProfile, model: "akm-custom/own/model" }, { endpoint, model: "stub-model" });
+    expect(own.model).toBe("akm-custom/own/model");
+    expect((own.provider as Record<string, { models?: unknown }>)["akm-custom"]?.models).toEqual({ "own/model": {} });
+  });
+});
+
+// ── buildSdkConfig — inference ───────────────────────────────────────────────
+//
+// The routed model carries the dispatch's inference as opencode config
+// (`harnesses/opencode/model-config.ts`): the fallback LLM engine's, under the
+// request's own. The entry shapes were checked against opencode 1.18.25 and a
+// local stub.
+
+describe("buildSdkConfig — inference", () => {
+  const baseProfile: AgentProfile = {
+    name: "opencode-sdk",
+    bin: "",
+    args: [],
+    stdio: "captured",
+    envPassthrough: [],
+    parseOutput: "text",
+  };
+  const endpoint = "http://127.0.0.1:18080/v1/chat/completions";
+  const models = (config: Record<string, unknown>) =>
+    (config.provider as Record<string, { models: Record<string, unknown> }>)["akm-custom"]?.models;
+
+  test("the fallback LLM engine's inference reaches the model, and the request's own wins field by field", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const fallback = {
+      endpoint,
+      model: "stub-model",
+      temperature: 0,
+      reasoningEffort: "none",
+      maxTokens: 3000,
+      contextLength: 100000,
+    };
+
+    expect(models(buildSdkConfig(baseProfile, fallback))).toEqual({
+      "stub-model": {
+        options: { temperature: 0, reasoningEffort: "none" },
+        limit: { context: 100000, output: 3000 },
+      },
+    });
+    expect(models(buildSdkConfig(baseProfile, fallback, false, { reasoningEffort: "high", maxTokens: 2048 }))).toEqual({
+      "stub-model": {
+        options: { temperature: 0, reasoningEffort: "high" },
+        limit: { context: 100000, output: 2048 },
+      },
+    });
+  });
+
+  test("an explicit null request inference clears the fallback's", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model", temperature: 0 }, false, null);
+
+    expect(models(config)).toEqual({ "stub-model": {} });
+  });
+
+  // opencode refuses half a limit, and a half would overwrite the other half
+  // of a limit the user declared for the model.
+  test.each([
+    ["maxTokens", { maxTokens: 4096 }],
+    ["contextLength", { contextLength: 120000 }],
+  ])("%s alone declares no limit", async (_key, inference) => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+
+    expect(models(buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, false, inference))).toEqual({
+      "stub-model": {},
+    });
+  });
+
+  test("no inference declares the bare model, as before (#1015)", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+
+    expect(models(buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, false, {}))).toEqual({
+      "stub-model": {},
+    });
+  });
+
+  // A model the user's own opencode config provides is the user's to configure: no provider is written for it.
+  test.each([
+    undefined,
+    "unqualified",
+    "krang/chat/qwen3.8-27b",
+  ])("with no fallback, a model named %j carries nothing", async (model) => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig({ ...baseProfile, ...(model ? { model } : {}) }, undefined, false, {
+      reasoningEffort: "low",
+    });
+
+    expect(config).toEqual(model ? { model } : {});
+  });
+
+  // opencode makes a title call of its own on the model and applies the
+  // model's options to it; the model-work agent is akm's, so its options reach
+  // only the work.
+  test("model work: the confined agent carries the options and the model only the limit", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const inference = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true, inference);
+
+    const agent = (config.agent as Record<string, { options?: unknown; permission: unknown }>)["akm-model-work"];
+    expect(agent?.options).toEqual({ temperature: 0.2, reasoningEffort: "low" });
+    expect(agent?.permission).toMatchObject({ "*": "deny", bash: "deny" });
+    expect(models(config)).toEqual({ "stub-model": { limit: { context: 120000, output: 4096 } } });
+  });
+
+  // The model-work agent runs whichever model opencode picks, so it carries the
+  // options with no model named: the zero-config `opencode-sdk` engine has none.
+  test("model work with no model named: the agent still carries the options, and no limit is declared", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, undefined, true, {
+      reasoningEffort: "low",
+      maxTokens: 4096,
+      contextLength: 120000,
+    });
+
+    expect(config).not.toHaveProperty("provider");
+    expect(config).not.toHaveProperty("model");
+    expect((config.agent as Record<string, { options?: unknown }>)["akm-model-work"]?.options).toEqual({
+      reasoningEffort: "low",
+    });
+  });
+
+  test("model work with no inference defines the agent without options", async () => {
+    const { buildSdkConfig } = await import("../src/integrations/harnesses/opencode-sdk/sdk-runner");
+    const config = buildSdkConfig(baseProfile, { endpoint, model: "stub-model" }, true);
+
+    expect((config.agent as Record<string, object>)["akm-model-work"]).not.toHaveProperty("options");
+  });
+});
+
+describe("runOpencodeSdk — the dispatch's inference reaches the server config", () => {
+  afterEach(() => {
+    __setServerFactory(null);
+    closeServer();
+  });
+
+  test("the request's inference is declared on the model the server routes to", async () => {
+    let started: Record<string, unknown> | undefined;
+    __setServerFactory((async (options: { config?: Record<string, unknown> }) => {
+      started = options.config;
+      return makeFakeServer({}).server as never;
+    }) as never);
+
+    const result = await runOpencodeSdk(
+      baseProfile,
+      "p",
+      { timeoutMs: null, dispatch: { prompt: "p", inference: { reasoningEffort: "low", temperature: 0.2 } } },
+      { endpoint: "http://127.0.0.1:18080/v1/chat/completions", model: "stub-model", temperature: 0 },
+    );
+
+    expect(result.ok).toBe(true);
+    const provider = started?.provider as Record<string, { models: Record<string, unknown> }>;
+    expect(provider["akm-custom"]?.models).toEqual({
+      "stub-model": { options: { temperature: 0.2, reasoningEffort: "low" } },
+    });
+  });
+
+  test("a different inference starts its own server, as a different model or key does", async () => {
+    const configs: Record<string, unknown>[] = [];
+    __setServerFactory((async (options: { config?: Record<string, unknown> }) => {
+      configs.push(options.config ?? {});
+      return makeFakeServer({}).server as never;
+    }) as never);
+    const fallback = { endpoint: "http://127.0.0.1:18080/v1/chat/completions", model: "stub-model" };
+    const run = (inference: Record<string, string>) =>
+      runOpencodeSdk(baseProfile, "p", { timeoutMs: null, dispatch: { prompt: "p", inference } }, fallback);
+
+    await run({ reasoningEffort: "low" });
+    await run({ reasoningEffort: "low" });
+    expect(configs).toHaveLength(1);
+    await run({ reasoningEffort: "high" });
+    expect(configs).toHaveLength(2);
   });
 });
 
@@ -858,6 +1136,43 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     });
   });
 
+  // opencode serve resolves its provider config, auth, package cache and state through the XDG
+  // base-directory variables; without them it reads $HOME's defaults and misses the config akm's
+  // own environment points at (the 2026-10-02 "Unexpected server error"). The names belong to the
+  // runner's allowlist, not to the profile's list, which workflow plans freeze.
+  test("the XDG base-directory variables reach the server, and a different location starts another one", async () => {
+    const environments: Record<string, string>[] = [];
+    __setServerFactory(((options: { env: Record<string, string> }) => {
+      environments.push(options.env);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+    const source = (configHome: string) => ({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      XDG_CONFIG_HOME: configHome,
+      XDG_DATA_HOME: "/sandbox/data",
+      XDG_CACHE_HOME: "/sandbox/cache",
+      XDG_STATE_HOME: "/sandbox/state",
+      AMBIENT_CLOUD_TOKEN: "must-not-leak",
+    });
+
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("/sandbox/config-a"), timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("/sandbox/config-a"), timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("/sandbox/config-b"), timeoutMs: null });
+
+    expect(environments).toHaveLength(2);
+    expect(environments[0]).toEqual({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      XDG_CONFIG_HOME: "/sandbox/config-a",
+      XDG_DATA_HOME: "/sandbox/data",
+      XDG_CACHE_HOME: "/sandbox/cache",
+      XDG_STATE_HOME: "/sandbox/state",
+      OPENCODE_CONFIG_CONTENT: "{}",
+    });
+    expect(environments[1]?.XDG_CONFIG_HOME).toBe("/sandbox/config-b");
+  });
+
   test("only explicit passthrough values participate in child materialization and registry identity", async () => {
     const values: Array<string | undefined> = [];
     __setServerFactory(((options: { env: Record<string, string> }) => {
@@ -871,5 +1186,34 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     await runOpencodeSdk(profile, "p", { envSource: { SOURCE_ONLY: "two" }, timeoutMs: null });
 
     expect(values).toEqual(["one", "two"]);
+  });
+});
+
+describe("runOpencodeSdk — a session the dispatch gives up on is aborted on the server", () => {
+  afterEach(() => {
+    __setTestServer(null);
+  });
+
+  test("a dispatch that times out aborts its session, so the server stops calling the model", async () => {
+    const aborted: string[] = [];
+    __setTestServer({
+      client: {
+        session: {
+          create: async () => ({ data: { id: "sess-1" } }),
+          prompt: () => new Promise<never>(() => {}),
+          delete: async () => ({}),
+          abort: async (args: { path: { id: string } }) => {
+            aborted.push(args.path.id);
+            return {};
+          },
+        },
+      },
+      server: { close() {} },
+    });
+
+    const result = await runOpencodeSdk(baseProfile, "judge this", { timeoutMs: 50 });
+
+    expect(result).toMatchObject({ ok: false, reason: "timeout" });
+    expect(aborted).toEqual(["sess-1"]);
   });
 });

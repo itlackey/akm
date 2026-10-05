@@ -70,8 +70,8 @@ describe("HARNESS_REGISTRY membership", () => {
 });
 
 describe("capability-derived sublists", () => {
-  it("SESSION_LOG_HARNESSES = harnesses with native session logs (claude, opencode)", () => {
-    expect(SESSION_LOG_HARNESSES.map((h) => h.id)).toEqual(["opencode", "claude"]);
+  it("SESSION_LOG_HARNESSES = harnesses with native session logs (claude, codex, opencode)", () => {
+    expect(SESSION_LOG_HARNESSES.map((h) => h.id)).toEqual(["opencode", "claude", "codex"]);
   });
 
   it("AGENT_DISPATCH_HARNESSES = every harness", () => {
@@ -98,40 +98,24 @@ describe("capability-derived sublists", () => {
 });
 
 describe("workflow-engine descriptor fields (P2, plan §'Capability matrix')", () => {
-  it("every registry entry declares pattern + structuredOutput", () => {
-    // Optional on the AkmHarness interface (additive seam change), but
-    // REQUIRED on every registry entry — this test is the enforcement.
-    for (const h of HARNESS_REGISTRY) {
-      expect(h.pattern).toBeDefined();
-      expect(h.structuredOutput).toBeDefined();
-    }
-  });
-
-  it("claude: in-harness, native-json (`claude -p --output-format json` envelope), CLAUDE_SESSION_ID", () => {
+  it("claude: result extractor for the `claude -p --output-format json` envelope, CLAUDE_SESSION_ID", () => {
     const claude = getHarness("claude");
     if (!claude) throw new Error("claude harness not registered");
-    expect(claude.pattern).toBe("in-harness");
-    // The headless `claude -p` dispatch path is native-JSON (result envelope +
-    // validate), NOT native-schema — the CLI has no output-schema flag (Codex
-    // round-3 finding A). It carries a result extractor to unwrap that envelope.
-    expect(claude.structuredOutput).toBe("native-json");
+    // The headless `claude -p` dispatch path returns a result envelope; the
+    // harness carries a result extractor to unwrap it.
     expect(claude.resultExtractor).toBeDefined();
     expect([...(claude.identityEnv ?? [])]).toEqual(["CLAUDE_SESSION_ID"]);
   });
 
-  it("opencode (CLI path): local-runner, prompt+validate tier, OPENCODE_SESSION_ID", () => {
+  it("opencode (CLI path): OPENCODE_SESSION_ID", () => {
     const opencode = getHarness("opencode");
     if (!opencode) throw new Error("opencode harness not registered");
-    expect(opencode.pattern).toBe("local-runner");
-    expect(opencode.structuredOutput).toBe("none");
     expect([...(opencode.identityEnv ?? [])]).toEqual(["OPENCODE_SESSION_ID"]);
   });
 
-  it("opencode-sdk: local-runner, native-json, no env marker", () => {
+  it("opencode-sdk: no env marker", () => {
     const sdk = getHarness("opencode-sdk");
     if (!sdk) throw new Error("opencode-sdk harness not registered");
-    expect(sdk.pattern).toBe("local-runner");
-    expect(sdk.structuredOutput).toBe("native-json");
     expect(sdk.identityEnv).toBeUndefined();
   });
 

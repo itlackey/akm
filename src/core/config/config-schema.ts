@@ -40,7 +40,8 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "./engine-semantics";
+import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses/ids";
+import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_ENGINE_PROCESSES } from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
 import { ExecutionPolicyConfigSchema } from "./schema/execution";
@@ -247,13 +248,29 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       message: "engine does not name a configured engine",
     });
   }
-  const defaultLlm = config.defaults?.llmEngine;
-  if (defaultLlm && config.engines?.[defaultLlm]?.kind !== "llm") {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["defaults", "llmEngine"],
-      message: "llmEngine must name an LLM engine",
-    });
+  // One rule for every key unattended model work reads its engine from: the
+  // engine must confine the model-work tool policy (an LLM, or an agent whose
+  // harness does), because that work runs over generated content with no one
+  // watching.
+  const confining = [...HARNESS_MODEL_WORK_IDS];
+  const confiningPlatforms = `${confining.slice(0, -1).join(", ")} or ${confining.at(-1)}`;
+  const modelWorkEngine = (name: string | undefined, path: (string | number)[]): void => {
+    if (!name) return;
+    const engine = config.engines?.[name];
+    if (!engine) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path, message: "engine does not name a configured engine" });
+    } else if (engine.kind !== "llm" && !HARNESS_MODEL_WORK_IDS.has(engine.platform)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path,
+        message: `engine "${name}" (platform ${engine.platform}) cannot confine the model-work tool policy, which unattended model work requires. Use an LLM engine, or an agent engine on ${confiningPlatforms}.`,
+      });
+    }
+  };
+  modelWorkEngine(config.defaults?.llmEngine, ["defaults", "llmEngine"]);
+  for (const [passName, pass] of Object.entries(config.index ?? {})) {
+    const engine = (pass as { engine?: unknown } | undefined)?.engine;
+    if (typeof engine === "string") modelWorkEngine(engine, ["index", passName, "engine"]);
   }
   const workflowJudge = config.workflow?.judgeEngine;
   if (workflowJudge && !config.engines?.[workflowJudge]) {
@@ -283,71 +300,28 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
     });
   }
   for (const [strategyName, strategy] of Object.entries(config.improve?.strategies ?? {})) {
-    const strategyEngine = strategy.engine;
-    if (strategyEngine) {
-      const engine = config.engines?.[strategyEngine];
-      if (!engine || engine.kind !== "llm") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["improve", "strategies", strategyName, "engine"],
-          message: engine ? "strategy engine must be an LLM engine" : "engine does not name a configured engine",
-        });
-      }
-    }
+    const strategyPath = ["improve", "strategies", strategyName];
+    modelWorkEngine(strategy.engine, [...strategyPath, "engine"]);
     for (const [processName, process] of Object.entries(strategy.processes ?? {})) {
       const processConfig = process as {
         engine?: string;
         judgment?: { enabled?: boolean; engine?: string };
         qualityGate?: { engine?: string };
       };
-      const capability =
-        IMPROVE_PROCESS_ENGINE_CAPABILITIES[processName as keyof typeof IMPROVE_PROCESS_ENGINE_CAPABILITIES];
-      if (processConfig.engine && capability === null) {
+      const processPath = [...strategyPath, "processes", processName];
+      if (processConfig.engine && !(IMPROVE_ENGINE_PROCESSES as readonly string[]).includes(processName)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
+          path: [...processPath, "engine"],
           message: `${processName} does not dispatch an engine`,
         });
       } else {
-        const processEngine = processConfig.engine ?? strategyEngine;
-        if (processEngine && capability === "llm") {
-          const engine = config.engines?.[processEngine];
-          if (!engine || engine.kind !== "llm") {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
-              message: engine ? `${processName} requires an LLM engine` : "engine does not name a configured engine",
-            });
-          }
-        } else if (processConfig.engine && capability === "runner" && !config.engines?.[processConfig.engine]) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["improve", "strategies", strategyName, "processes", processName, "engine"],
-            message: "engine does not name a configured engine",
-          });
-        }
+        modelWorkEngine(processConfig.engine, [...processPath, "engine"]);
       }
-      const judgmentEngine = processConfig.judgment?.engine;
-      if (processConfig.judgment?.enabled === true && judgmentEngine) {
-        const engine = config.engines?.[judgmentEngine];
-        if (!engine) {
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            path: ["improve", "strategies", strategyName, "processes", processName, "judgment", "engine"],
-            message: "engine does not name a configured engine",
-          });
-        }
+      if (processConfig.judgment?.enabled === true) {
+        modelWorkEngine(processConfig.judgment.engine, [...processPath, "judgment", "engine"]);
       }
-      const gateEngine = processConfig.qualityGate?.engine;
-      if (gateEngine && config.engines?.[gateEngine]?.kind !== "llm") {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["improve", "strategies", strategyName, "processes", processName, "qualityGate", "engine"],
-          message: config.engines?.[gateEngine]
-            ? "a quality-gate judge must be an LLM engine"
-            : "engine does not name a configured engine",
-        });
-      }
+      modelWorkEngine(processConfig.qualityGate?.engine, [...processPath, "qualityGate", "engine"]);
     }
   }
   // #464.a: defaultWriteTarget must name a configured source. 0.9.0 (spec

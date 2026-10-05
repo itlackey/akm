@@ -350,6 +350,55 @@ describe("runAgent — argument and env construction", () => {
     });
     expect(capturedEnv?.AKM_EVENT_SOURCE).toBe("task");
   });
+
+  // opencode finds its provider config, auth, package cache and state through the XDG base-directory
+  // variables, so an akm that runs under a custom XDG_CONFIG_HOME must hand it to the child, or the
+  // child reads $HOME's defaults instead (the 2026-10-02 "Unexpected server error").
+  describe("the XDG base-directory variables", () => {
+    async function spawnedEnv(
+      profile: AgentProfile,
+      envSource: Record<string, string>,
+      options: Parameters<typeof runAgent>[2] = {},
+    ): Promise<Record<string, string> | undefined> {
+      let capturedEnv: Record<string, string> | undefined;
+      const spawn: SpawnFn = (_cmd, opts) => {
+        capturedEnv = opts.env;
+        return {
+          exitCode: 0,
+          exited: Promise.resolve(0),
+          stdout: asReadableStream(""),
+          stderr: asReadableStream(""),
+          stdin: null,
+          kill() {},
+        };
+      };
+      await runAgent(profile, undefined, { ...options, spawn, envSource: envSource as NodeJS.ProcessEnv });
+      return capturedEnv;
+    }
+
+    const ambient = {
+      PATH: "/usr/bin",
+      XDG_CONFIG_HOME: "/sandbox/config",
+      XDG_DATA_HOME: "/sandbox/data",
+      XDG_CACHE_HOME: "/sandbox/cache",
+      XDG_STATE_HOME: "/sandbox/state",
+      AMBIENT_CLOUD_TOKEN: "must-not-leak",
+    };
+
+    test("reach an opencode child with the values akm was given", async () => {
+      const opencode = getBuiltinAgentProfile("opencode") as AgentProfile;
+
+      const env = await spawnedEnv(opencode, ambient);
+
+      expect(env).toMatchObject({
+        XDG_CONFIG_HOME: "/sandbox/config",
+        XDG_DATA_HOME: "/sandbox/data",
+        XDG_CACHE_HOME: "/sandbox/cache",
+        XDG_STATE_HOME: "/sandbox/state",
+      });
+      expect(env).not.toHaveProperty("AMBIENT_CLOUD_TOKEN");
+    });
+  });
 });
 
 describe("runAgent — cooperative abort (RunAgentOptions.signal, P0.5)", () => {

@@ -33,11 +33,6 @@ export class AiderHarness extends BaseHarness {
   readonly agentBuilder = aiderBuilder;
   readonly resultExtractor = aiderResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns the `aider` CLI locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // No structured-output mode at all (the matrix's "none — parse output"):
-  // akm injects the schema into the prompt and extracts embedded JSON.
-  readonly structuredOutput = "none" as const;
   // No flag-shaped resume: Aider persists context in chat-history files
   // (`.aider.chat.history.md`), not session ids — the plan's named example of
   // a harness with no session model. akm's `workflow_run_units` remains the

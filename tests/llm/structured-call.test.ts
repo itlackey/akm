@@ -23,12 +23,19 @@
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import type { SpawnedSubprocess } from "../../src/core/subprocess";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
+import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { assertRunnerCredentials } from "../../src/integrations/agent/runner-dispatch";
 import type { ChatCompletionConfig, ChatMessage } from "../../src/llm/client";
 import { LlmCallError } from "../../src/llm/client";
-import { callStructured, type LlmErrorClass, resolveStructuredCurrent } from "../../src/llm/structured-call";
+import {
+  callStructured,
+  dispatchFailureResult,
+  type LlmErrorClass,
+  resolveStructuredCurrent,
+} from "../../src/llm/structured-call";
 import { mutateScopedEnv, withEnv } from "../_helpers/sandbox";
 
 // Minimal LLM profile config. `chatCompletion` is replaced by the injected
@@ -320,10 +327,10 @@ describe("callStructured contract", () => {
     expect(seenEnableThinking).toBe(false);
   });
 
-  test("(11) timeoutMs key-presence is preserved: absent stays absent, explicit undefined stays present", async () => {
-    // Tri-state contract (see CallStructuredRequest doc): absent key = default
-    // timeout downstream; present-but-undefined = explicitly disabled. The
-    // seam must not materialize keys the caller never set.
+  test("(11) timeoutMs key-presence is preserved: absent takes the default, explicit undefined stays disabled", async () => {
+    // Tri-state contract (see CallStructuredRequest doc): absent key = the
+    // runner's own timeout, else the 600 s model-work default;
+    // present-but-undefined = explicitly disabled.
     let absentCaseOptions: Record<string, unknown> | undefined;
     await callStructured<string>({
       feature: "memory_inference",
@@ -340,7 +347,7 @@ describe("callStructured contract", () => {
       onError: () => "ERR",
       fallback: "FB",
     });
-    expect(absentCaseOptions !== undefined && Object.hasOwn(absentCaseOptions, "timeoutMs")).toBe(false);
+    expect(absentCaseOptions?.timeoutMs).toBe(600_000);
 
     let presentCaseOptions: Record<string, unknown> | undefined;
     await callStructured<string>({
@@ -363,6 +370,72 @@ describe("callStructured contract", () => {
     // The canonical request normalizes present-but-undefined to explicit null;
     // both spellings retain the historical "disable timeout" semantics.
     expect(presentCaseOptions?.timeoutMs).toBeNull();
+  });
+
+  test("(11b) model work is bounded: a runner with no timeout of its own gets 600 s, whatever its kind", () => {
+    const agent: RunnerSpec = {
+      kind: "agent",
+      engine: "structured-agent",
+      profile: {
+        name: "structured-agent",
+        platform: "opencode",
+        bin: "opencode",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    expect(resolveStructuredCurrent(undefined, undefined, agent)).toEqual({ timeout: 600_000 });
+    expect(resolveStructuredCurrent(undefined, undefined, runner())).toEqual({ timeout: 600_000 });
+    expect(resolveStructuredCurrent(undefined, undefined, { ...agent, timeoutMs: 1_234 })).toBeUndefined();
+    expect(resolveStructuredCurrent(undefined, undefined, { ...agent, timeoutMs: null })).toBeUndefined();
+    expect(resolveStructuredCurrent(undefined, { timeoutMs: 5 }, agent)).toEqual({ timeout: 5 });
+    expect(resolveStructuredCurrent({ timeout: 9 }, undefined, agent)).toEqual({ timeout: 9 });
+  });
+
+  test("(11b') a configured agent or SDK engine that sets no timeoutMs gets the 600 s bound too", () => {
+    const config = {
+      configVersion: "0.9.0",
+      engines: {
+        cc: { kind: "agent", platform: "claude" },
+        sdk: { kind: "agent", platform: "opencode-sdk" },
+        unbounded: { kind: "agent", platform: "claude", timeoutMs: null },
+      },
+    } as unknown as AkmConfig;
+    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("cc", config))).toEqual({ timeout: 600_000 });
+    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("sdk", config))).toEqual({ timeout: 600_000 });
+    // An engine's own timeoutMs, null included, still applies.
+    expect(resolveStructuredCurrent(undefined, undefined, resolveEngine("unbounded", config))).toBeUndefined();
+  });
+
+  test("(11c) the feature gate's timeout aborts the dispatch it bounds", async () => {
+    let seen: AbortSignal | undefined;
+    const result = await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      runner: runner(),
+      messages: MESSAGES,
+      request: {
+        timeoutMs: 50,
+        // Settles only when aborted (or long after the gate gave up).
+        chat: (_config, _messages, options) =>
+          new Promise<string>((resolve) => {
+            seen = options?.signal;
+            const late = setTimeout(() => resolve("late"), 2_000);
+            options?.signal?.addEventListener("abort", () => {
+              clearTimeout(late);
+              resolve("aborted");
+            });
+          }),
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "error",
+      fallback: "fallback",
+    });
+
+    expect(result).toBe("fallback");
+    expect(seen?.aborted).toBe(true);
   });
 
   test("(12) unsupported schema lowers optimistically, emits a structured notice, and preserves messages", async () => {
@@ -402,30 +475,144 @@ describe("callStructured contract", () => {
     ]);
   });
 
-  test("(13) tool denial stops before credential materialization and provider dispatch", async () => {
+  test("(13) a structured call runs under the model-work tool policy, whatever tools the caller selects", async () => {
+    // The caller's own selection would be denied (no execution.allowedTools on a
+    // runner-only resolution); it is replaced, so the LLM call goes ahead.
     let chatRan = false;
-    await withEnv({ AKM_STRUCTURED_DENIED_SECRET: undefined }, async () => {
-      const attempt = callStructured<string>({
-        feature: "memory_inference",
-        akmConfig: GATED,
-        runner: runner(PROFILE, {
-          credential: { names: ["AKM_STRUCTURED_DENIED_SECRET"], required: true },
-        }),
-        current: { tools: ["shell"] },
-        messages: [{ role: "user", content: "must not dispatch" }],
-        request: {
-          chat: async () => {
-            chatRan = true;
-            return "wrong";
-          },
+    const value = await callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      runner: runner(),
+      current: { tools: ["shell"] },
+      messages: [{ role: "user", content: "judge this" }],
+      request: {
+        chat: async () => {
+          chatRan = true;
+          return "answer";
         },
-        parse: (raw) => raw ?? "",
-        onError: () => "ERR",
-        fallback: "FB",
-      });
-      await expect(attempt).rejects.toThrow(/authorization policy/i);
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
     });
-    expect(chatRan).toBe(false);
+    expect({ value, chatRan }).toEqual({ value: "answer", chatRan: true });
+
+    // An agent engine that cannot confine the policy is refused before anything runs.
+    const codex: RunnerSpec = {
+      kind: "agent",
+      engine: "structured-codex",
+      profile: {
+        name: "structured-codex",
+        platform: "codex",
+        bin: "codex-must-not-run",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    const refused = callStructured<string>({
+      feature: "memory_inference",
+      akmConfig: GATED,
+      runner: codex,
+      messages: [{ role: "user", content: "judge this" }],
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+    await expect(refused).rejects.toThrow(/cannot enforce the model-work tool policy/);
+  });
+
+  test("(13b) an agent dispatch gets the caller's environment and spawn seam, and its failure keeps the dispatch's own result", async () => {
+    const opencode: RunnerSpec = {
+      kind: "agent",
+      engine: "structured-opencode",
+      profile: {
+        name: "structured-opencode",
+        platform: "opencode",
+        // Never run: the spawn seam stands in for it.
+        bin: "/nonexistent/structured-opencode",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    const text = (value: string) =>
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(value));
+          controller.close();
+        },
+      });
+    const spawned: Array<Record<string, string> | undefined> = [];
+    const spawn = (_cmd: string[], opts: { env?: Record<string, string> }): SpawnedSubprocess => {
+      spawned.push(opts.env);
+      return {
+        exitCode: 7,
+        exited: Promise.resolve(7),
+        stdout: text(""),
+        stderr: text("boom"),
+        stdin: null,
+        kill: () => {},
+      };
+    };
+
+    const thrown = await callStructured<string>({
+      feature: "memory_inference",
+      runner: opencode,
+      current: { environment: { AKM_EVENT_SOURCE: "improve" } },
+      messages: [{ role: "user", content: "judge this" }],
+      request: { runOptions: { spawn } },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    }).catch((error: unknown) => error);
+
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toMatchObject({ AKM_EVENT_SOURCE: "improve" });
+    // The error carries the dispatch's own result: the exit code and stderr a caller reports.
+    expect(dispatchFailureResult(thrown)).toMatchObject({
+      ok: false,
+      reason: "non_zero_exit",
+      exitCode: 7,
+      stderr: "boom",
+    });
+  });
+
+  test("(13c) an SDK dispatch runs through the runSdk seam", async () => {
+    const sdk: RunnerSpec = {
+      kind: "sdk",
+      engine: "structured-sdk",
+      profile: {
+        name: "structured-sdk",
+        platform: "opencode-sdk",
+        // Never run: the runSdk seam stands in for it.
+        bin: "/nonexistent/structured-sdk",
+        args: [],
+        stdio: "captured",
+        envPassthrough: [],
+        parseOutput: "text",
+      },
+    };
+    const prompts: string[] = [];
+    const value = await callStructured<string>({
+      feature: "memory_inference",
+      runner: sdk,
+      messages: [{ role: "user", content: "judge this" }],
+      request: {
+        runSdk: async (_profile, prompt) => {
+          prompts.push(prompt);
+          return { ok: true, exitCode: 0, stdout: "answer", stderr: "", durationMs: 1 };
+        },
+      },
+      parse: (raw) => raw ?? "",
+      onError: () => "ERR",
+      fallback: "FB",
+    });
+
+    expect(value).toBe("answer");
+    expect(prompts).toEqual(["judge this"]);
   });
 
   test("(14) a provider failure is credential-redacted before ungated propagation", async () => {

@@ -17,10 +17,12 @@ import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
+import { defaultWhich } from "../../integrations/agent/detect";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
+import { readStdin } from "../../runtime";
 import { akmImprove, IMPROVE_TARGET_FLAG, resolveImproveReadSource } from "./improve";
 import { runImproveReportQuery } from "./improve-report";
 import {
@@ -36,9 +38,11 @@ import {
   type ResolvedImprovePlan,
   type ResolvedImproveProcess,
   resolveImprovePlan,
+  resolveImproveStrategy,
 } from "./improve-strategies";
 import { formatUsageReportTable } from "./improve-usage-report";
 import { renderReflectPromptPreview } from "./reflect";
+import { resolveQualityGateJudge, runReflectQualityJudge } from "./stage";
 
 let akmImproveForRun: typeof akmImprove = akmImprove;
 
@@ -100,36 +104,32 @@ function assertRequiredEnginesAvailable(plan: ResolvedImprovePlan): void {
   );
 }
 
-/** One resolved LLM connection `--require-engines` needs to prove reachable. */
+/**
+ * One engine `--require-engines` must prove usable, in the way its kind
+ * allows: an LLM connection gets one short completion, and an agent harness
+ * must resolve on PATH. An `opencode-sdk` engine needs both, its binary and
+ * its LLM fallback, when it has one.
+ */
 interface RequiredEngineTarget {
   process: EngineUnavailableProcessName;
   engine: string;
-  connection: LlmConnectionConfig;
+  connection?: LlmConnectionConfig;
+  bin?: string;
 }
 
-/** Every LLM connection the plan would dispatch to, triage's judgment engine included. */
+/** Every engine the plan would dispatch to, triage's judgment engine included. */
 function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngineTarget[] {
-  const targets: RequiredEngineTarget[] = [];
-  for (const [processName, process] of Object.entries(plan.processes) as [
-    EngineUnavailableProcessName,
-    ResolvedImproveProcess,
-  ][]) {
-    if (process.runner) {
-      targets.push({
-        process: processName,
-        engine: process.runner.engine,
-        connection: probeConnection(process.runner),
-      });
-    }
-  }
-  if (plan.triageJudgment?.kind === "llm") {
-    targets.push({
-      process: "triage.judgment",
-      engine: plan.triageJudgment.engine,
-      connection: probeConnection(plan.triageJudgment),
-    });
-  }
-  return targets;
+  const runners = (Object.entries(plan.processes) as [EngineUnavailableProcessName, ResolvedImproveProcess][])
+    .flatMap(([processName, process]) => (process.runner ? [[processName, process.runner] as const] : []))
+    .concat(plan.triageJudgment ? [["triage.judgment", plan.triageJudgment] as const] : []);
+  return runners.map(([processName, runner]) => ({
+    process: processName,
+    engine: runner.engine,
+    ...(runner.kind === "llm" ? { connection: probeConnection(runner) } : { bin: runner.profile.bin }),
+    ...(runner.kind === "sdk" && runner.fallbackConnection
+      ? { connection: probeConnection({ connection: runner.fallbackConnection, timeoutMs: runner.fallbackTimeoutMs }) }
+      : {}),
+  }));
 }
 
 /** The resolved engine keeps its request timeout beside the connection (the runtime merges it in); the probe needs it on the connection. */
@@ -153,13 +153,15 @@ const REQUIRED_ENGINE_PROBE_MAX_MS = 120_000;
 /**
  * `--require-engines`, live: probe each connection's real completion path
  * (a gateway can list a model whose completion route is dead, #980), once per
- * endpoint + model, within {@link requiredEngineProbeTimeoutMs}. Returns each
- * target's latency for the run result (R17); an unreachable one fails the run.
+ * endpoint + model, within {@link requiredEngineProbeTimeoutMs}, and look each
+ * agent harness's binary up on PATH. Returns each target's latency for the run
+ * result (R17); an unreachable one fails the run.
  */
 export async function assertRequiredEnginesReachable(
   plan: ResolvedImprovePlan,
   probeReachable: (connection: LlmConnectionConfig) => Promise<{ reachable: boolean; error?: string }> = (connection) =>
     probeLlmReachable(connection, requiredEngineProbeTimeoutMs(connection)),
+  which: (bin: string) => string | undefined = defaultWhich,
 ): Promise<EngineProbeOutcome[]> {
   const targets = collectRequiredEngineTargets(plan);
   if (targets.length === 0) return [];
@@ -167,38 +169,41 @@ export async function assertRequiredEnginesReachable(
     string,
     Promise<{ reach: { reachable: boolean; error?: string }; latencyMs: number }>
   >();
+  const probeConnectionOnce = (connection: LlmConnectionConfig) => {
+    const key = `${connection.endpoint.replace(/\/+$/, "")}|${connection.model}`;
+    let pending = probesByConnection.get(key);
+    if (!pending) {
+      const probeStartedAt = Date.now();
+      pending = probeReachable(connection).then((reach) => ({ reach, latencyMs: Date.now() - probeStartedAt }));
+      probesByConnection.set(key, pending);
+    }
+    return pending;
+  };
   const probed = await Promise.all(
     targets.map(async (target) => {
-      const key = `${target.connection.endpoint.replace(/\/+$/, "")}|${target.connection.model}`;
-      let pending = probesByConnection.get(key);
-      if (!pending) {
-        const probeStartedAt = Date.now();
-        pending = probeReachable(target.connection).then((reach) => ({
-          reach,
-          latencyMs: Date.now() - probeStartedAt,
-        }));
-        probesByConnection.set(key, pending);
+      if (target.bin !== undefined && which(target.bin) === undefined) {
+        return { ...target, reach: { reachable: false, error: `${target.bin} is not on PATH` }, latencyMs: 0 };
       }
-      const { reach, latencyMs } = await pending;
-      return { ...target, reach, latencyMs };
+      if (!target.connection) return { ...target, reach: { reachable: true }, latencyMs: 0 };
+      return { ...target, ...(await probeConnectionOnce(target.connection)) };
     }),
   );
   const unreachable = probed.filter((item) => !item.reach.reachable);
   if (unreachable.length > 0) {
     const lines = unreachable.map(
       (item) =>
-        `  - ${item.process} (engine "${item.engine}", ${item.connection.endpoint}): ${item.reach.error ?? "did not respond"}`,
+        `  - ${item.process} (engine "${item.engine}", ${item.connection?.endpoint ?? item.bin}): ${item.reach.error ?? "did not respond"}`,
     );
     throw new ConfigError(
       `--require-engines: ${unreachable.length} improve process${unreachable.length === 1 ? "" : "es"} cannot run because ${unreachable.length === 1 ? "its" : "their"} engine completion path is not reachable:\n${lines.join("\n")}`,
       "LLM_NOT_CONFIGURED",
-      "Check that each listed endpoint is up and serves its model. The probe is one short completion, bounded by the engine's timeoutMs (at most two minutes).",
+      "Check that each listed endpoint is up and serves its model, and that each listed agent binary is installed. The endpoint probe is one short completion, bounded by the engine's timeoutMs (at most two minutes).",
     );
   }
   return probed.map((item) => ({
     process: item.process,
     engine: item.engine,
-    endpoint: item.connection.endpoint,
+    endpoint: item.connection?.endpoint ?? (item.bin as string),
     reachable: item.reach.reachable,
     latencyMs: item.latencyMs,
   }));
@@ -256,6 +261,39 @@ function rejectReportOnlyFlags(args: { run?: string; since?: string }): void {
     `\`${flag}\` only applies to \`akm improve report\`. Use \`akm improve report ${flag} <value>\` instead.`,
     "INVALID_FLAG_VALUE",
   );
+}
+
+/**
+ * `akm improve judge`: reflect's quality judge on one revision, read as
+ * `{"source", "candidate", "feedback"}` JSON from stdin, with the engine the
+ * strategy's reflect quality gate names. It writes nothing.
+ */
+async function runImproveJudgeCli(strategyName: string | undefined): Promise<void> {
+  const input = process.stdin.isTTY
+    ? {}
+    : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
+  const { source, candidate, feedback, ref } = input;
+  if (typeof source !== "string" || typeof candidate !== "string") {
+    throw new UsageError(
+      '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "...", "ref": "..."} JSON from stdin.',
+      "MISSING_REQUIRED_ARGUMENT",
+    );
+  }
+  const config = loadConfig();
+  const judge = resolveQualityGateJudge(config, resolveImproveStrategy(strategyName, config).config, "reflect");
+  if (!judge) {
+    throw new ConfigError(
+      "`akm improve judge` judges with the reflect quality gate's engine. Set processes.reflect.qualityGate.engine.",
+      "INVALID_CONFIG_FILE",
+    );
+  }
+  const notes = typeof feedback === "string" && feedback.trim() !== "" ? [feedback.trim()] : [];
+  const verdict = await runReflectQualityJudge(config, candidate, source, notes, undefined, {
+    runnerSelectionFrozen: true,
+    llmRunner: judge,
+    ...(typeof ref === "string" && ref ? { ref } : {}),
+  });
+  output("improve-judge", { engine: judge.engine, ...verdict });
 }
 
 export const improveCommand = defineCommand({
@@ -352,6 +390,10 @@ export const improveCommand = defineCommand({
         return;
       }
       rejectReportOnlyFlags(args);
+      if (getStringArg(args, "scope") === "judge") {
+        await runImproveJudgeCli(getStringArg(args, "strategy"));
+        return;
+      }
       rejectRetiredImproveTargetFlag();
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");

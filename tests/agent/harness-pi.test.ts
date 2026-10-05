@@ -120,14 +120,12 @@ describe("piBuilder — schema passthrough (prompt+validate tier)", () => {
     expect(argv[idx + 1]).toBe("json");
   });
 
-  test("schema directive is injected into the prompt payload (no native schema flag)", () => {
+  test("the prompt payload is the lowered prompt (no native schema flag)", () => {
     const cmd = piBuilder.build(makePiProfile(), { prompt: "judge it", schema });
     const argv = cmd.argv as string[];
-    const payload = argv[argv.length - 1] as string;
     expect(argv[argv.length - 2]).toBe("--");
-    expect(payload).toStartWith("judge it");
-    expect(payload).toContain("Respond with ONLY a JSON value matching this JSON Schema");
-    expect(payload).toContain(JSON.stringify(schema));
+    // The shared lowering appended the schema instruction; the builder adds no second copy.
+    expect(argv[argv.length - 1]).toBe("judge it");
     // No codex-style schema flag leaks into pi argv.
     expect(argv.includes("--output-schema")).toBe(false);
   });

@@ -1,12 +1,12 @@
 /**
  * Tests for the structured-output (`responseSchema`) lift in
- * `runReflectViaLlm` (Issue B1, reflect-pipeline investigation 2026-05-21).
+ * `runReflectIteration` (Issue B1, reflect-pipeline investigation 2026-05-21).
  *
  * Mirrors the distill / consolidate lift in commit d2dee43. Providers that
  * honour `response_format: json_schema` enforce the
- * target-scoped `{content, confidence}` shape upstream. AKM derives the known
- * target ref and preserves source frontmatter rather than asking the model to
- * echo either value.
+ * target-scoped `{confidence, frontmatterPatch}` shape upstream. AKM derives
+ * the known target ref and applies the patch to the source asset it read,
+ * keeping the body, rather than asking the model to echo either value.
  *
  * Coverage:
  *   1. Strict-provider-compatible schema shape and target identity derivation.
@@ -22,9 +22,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { akmReflect, REFLECT_JSON_SCHEMA, runReflectViaLlm } from "../../../src/commands/improve/reflect";
-import { listProposals } from "../../../src/commands/proposal/repository";
+import { akmReflect, REFLECT_JSON_SCHEMA, runReflectIteration } from "../../../src/commands/improve/reflect";
+import { splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
 import { validateProposal } from "../../../src/commands/proposal/validators/proposals";
+import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import type { AkmConfig, LlmProfileConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { readEvents } from "../../../src/core/events";
@@ -98,7 +99,11 @@ function reflectLlmConfig(connection: LlmProfileConfig = fakeLlmConnection(), ap
   };
 }
 
-const EMPTY_FRAMED_PATCH_LINE = 'AKM_REFLECT_FRONTMATTER_PATCH: {"description":null,"when_to_use":null}';
+const NULL_PATCH = { description: null, when_to_use: null, title: null };
+const EMPTY_FRAMED_PATCH_LINE = `AKM_REFLECT_FRONTMATTER_PATCH: ${JSON.stringify(NULL_PATCH)}`;
+/** A framed reply, which is header lines only, with `patch` over the null patch. */
+const framedReply = (patch: Record<string, string | null> = {}, confidence = 0.8) =>
+  `AKM_REFLECT_CONFIDENCE: ${confidence}\nAKM_REFLECT_FRONTMATTER_PATCH: ${JSON.stringify({ ...NULL_PATCH, ...patch })}`;
 
 beforeEach(() => {
   overrideSeam(_setChatCompletionForTests, async (config, messages, options) => {
@@ -132,7 +137,7 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
     expect(cloned).toEqual(REFLECT_JSON_SCHEMA as Record<string, unknown>);
   });
 
-  test("requires content, confidence, and a narrow nullable frontmatter patch", () => {
+  test("requires confidence and a narrow nullable frontmatter patch, and no body", () => {
     const s = REFLECT_JSON_SCHEMA as {
       type: string;
       required: string[];
@@ -147,14 +152,15 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
       >;
     };
     expect(s.type).toBe("object");
-    expect(s.required).toEqual(["content", "confidence", "frontmatterPatch"]);
-    expect(Object.keys(s.properties)).toEqual(["content", "confidence", "frontmatterPatch"]);
-    expect(s.properties.content?.type).toBe("string");
+    expect(s.required).toEqual(["confidence", "frontmatterPatch"]);
+    expect(Object.keys(s.properties)).toEqual(["confidence", "frontmatterPatch"]);
+    expect(s.properties.content).toBeUndefined();
     expect(s.properties.confidence?.type).toBe("number");
-    expect(s.properties.frontmatterPatch?.required).toEqual(["description", "when_to_use"]);
+    expect(s.properties.frontmatterPatch?.required).toEqual(["description", "when_to_use", "title"]);
     expect(s.properties.frontmatterPatch?.additionalProperties).toBe(false);
-    expect(s.properties.frontmatterPatch?.properties?.description?.type).toEqual(["string", "null"]);
-    expect(s.properties.frontmatterPatch?.properties?.when_to_use?.type).toEqual(["string", "null"]);
+    for (const field of ["description", "when_to_use", "title"]) {
+      expect(s.properties.frontmatterPatch?.properties?.[field]?.type).toEqual(["string", "null"]);
+    }
   });
 
   test("forbids additionalProperties at the top level so hallucinated keys are dropped", () => {
@@ -188,7 +194,7 @@ describe("REFLECT_JSON_SCHEMA — top-level shape", () => {
 
 // ── 2. Wiring ───────────────────────────────────────────────────────────────
 
-describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () => {
+describe("runReflectIteration — responseSchema is plumbed to chatCompletion", () => {
   test("missing required symbolic credential remains a hard config failure", async () => {
     const runner: Extract<RunnerSpec, { kind: "llm" }> = {
       kind: "llm",
@@ -198,7 +204,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     };
 
     const failure = withEnv({ AKM_REFLECT_REQUIRED_KEY: undefined }, () =>
-      runReflectViaLlm({
+      runReflectIteration({
         prompt: "test prompt",
         runner,
         iteration: 0,
@@ -253,9 +259,8 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
           observed.push(connection.apiKey);
           if (observed.length === 1) mutateScopedEnv("AKM_REFLECT_DIRECT_ROTATING_KEY", rotated);
           return JSON.stringify({
-            content: "# Existing\n\nPick up a rotated credential on every refinement call.\n",
             confidence: 0.9,
-            frontmatterPatch: { description: null, when_to_use: null },
+            frontmatterPatch: { ...NULL_PATCH, description: "Pick up a rotated credential on every refinement call" },
           });
         },
       }),
@@ -266,14 +271,9 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
   });
 
   test("when responseSchema is provided and no test-seam `chat` is set, chatCompletion receives the schema", async () => {
-    stubReturn = JSON.stringify({
-      ref: "lessons/wired",
-      content: "---\ndescription: ok\nwhen_to_use: when wired\n---\n\nbody.\n",
-      confidence: 0.9,
-      frontmatterPatch: { description: null, when_to_use: null },
-    });
+    stubReturn = JSON.stringify({ ref: "lessons/wired", confidence: 0.9, frontmatterPatch: NULL_PATCH });
 
-    const result = await runReflectViaLlm({
+    const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
       iteration: 0,
@@ -292,7 +292,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
     // seams that don't pass responseSchema continue to short-circuit around
     // the production chatCompletion path.
     let chatCalls = 0;
-    const result = await runReflectViaLlm({
+    const result = await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
       iteration: 0,
@@ -300,12 +300,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
       responseSchema: REFLECT_JSON_SCHEMA,
       chat: async () => {
         chatCalls += 1;
-        return JSON.stringify({
-          ref: "lessons/test",
-          content: "body",
-          confidence: 0.9,
-          frontmatterPatch: { description: null, when_to_use: null },
-        });
+        return JSON.stringify({ ref: "lessons/test", confidence: 0.9, frontmatterPatch: NULL_PATCH });
       },
     });
 
@@ -315,13 +310,8 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
   });
 
   test("when responseSchema is omitted, chatCompletion receives undefined responseSchema", async () => {
-    stubReturn = JSON.stringify({
-      ref: "lessons/test",
-      content: "body",
-      confidence: 0.9,
-      frontmatterPatch: { description: null, when_to_use: null },
-    });
-    await runReflectViaLlm({
+    stubReturn = JSON.stringify({ ref: "lessons/test", confidence: 0.9, frontmatterPatch: NULL_PATCH });
+    await runReflectIteration({
       prompt: "test prompt",
       runner: fakeLlmRunner(),
       iteration: 0,
@@ -334,7 +324,7 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
   for (const timeoutMs of [1, null] as const) {
     test(`forwards normalized timeoutMs=${String(timeoutMs)} to an injected chat transport`, async () => {
       let received: number | null | undefined;
-      await runReflectViaLlm({
+      await runReflectIteration({
         prompt: "test prompt",
         runner: fakeLlmRunner(),
         iteration: 0,
@@ -342,17 +332,84 @@ describe("runReflectViaLlm — responseSchema is plumbed to chatCompletion", () 
         timeoutMs,
         chat: async (_config, _messages, options) => {
           received = options?.timeoutMs;
-          return JSON.stringify({
-            ref: "lessons/test",
-            content: "body",
-            confidence: 0.9,
-            frontmatterPatch: { description: null, when_to_use: null },
-          });
+          return JSON.stringify({ ref: "lessons/test", confidence: 0.9, frontmatterPatch: NULL_PATCH });
         },
       });
       expect(received).toBe(timeoutMs);
     });
   }
+});
+
+describe("runReflectIteration — the reply is a patch, and a body or a malformed field is refused", () => {
+  /** What the parser says about `reply`, with no repair turn. */
+  async function errorFor(
+    reply: Record<string, unknown>,
+    outputMode: "json_schema" | "framed_markdown" = "json_schema",
+  ) {
+    const result = await runReflectIteration({
+      prompt: "test prompt",
+      runner: fakeLlmRunner(),
+      iteration: 0,
+      outputMode,
+      targetRef: "lessons/test",
+      allowRepair: false,
+      chat: async () =>
+        outputMode === "json_schema"
+          ? JSON.stringify(reply)
+          : `AKM_REFLECT_CONFIDENCE: 0.9\nAKM_REFLECT_FRONTMATTER_PATCH: ${JSON.stringify(reply.frontmatterPatch)}`,
+    });
+    expect(result.ok).toBe(false);
+    return result.error;
+  }
+
+  test("a reply that carries a `content` body is refused: the model no longer writes one", async () => {
+    expect(await errorFor({ content: "# Body", confidence: 0.9, frontmatterPatch: NULL_PATCH })).toBe(
+      "direct reflect response fields must be exactly: confidence, frontmatterPatch",
+    );
+  });
+
+  test.each([
+    "json_schema",
+    "framed_markdown",
+  ] as const)("%s: a patch must name exactly description, when_to_use and title", async (mode) => {
+    const message = "direct reflect frontmatterPatch fields must be exactly: description, when_to_use, title";
+    expect(await errorFor({ confidence: 0.9, frontmatterPatch: { description: null, when_to_use: null } }, mode)).toBe(
+      message,
+    );
+    expect(await errorFor({ confidence: 0.9, frontmatterPatch: { ...NULL_PATCH, tags: null } }, mode)).toBe(message);
+  });
+
+  test.each([
+    ["description", "two\nlines"],
+    ["when_to_use", "  "],
+    ["title", 3],
+  ])("a %s that is not a non-empty single-line string or null is refused", async (field, value) => {
+    expect(await errorFor({ confidence: 0.9, frontmatterPatch: { ...NULL_PATCH, [field]: value } })).toBe(
+      `direct reflect frontmatterPatch.${field} must be a non-empty single-line string or null`,
+    );
+  });
+
+  test("the fields of a valid patch come back trimmed, and a null one is left out", async () => {
+    const result = await runReflectIteration({
+      prompt: "test prompt",
+      runner: fakeLlmRunner(),
+      iteration: 0,
+      outputMode: "json_schema",
+      targetRef: "lessons/test",
+      chat: async () =>
+        JSON.stringify({
+          confidence: 0.4,
+          frontmatterPatch: { ...NULL_PATCH, title: "  A title ", description: "Ok." },
+        }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(result.stdout)).toEqual({
+      ref: "lessons/test",
+      confidence: 0.4,
+      patch: { description: "Ok.", title: "A title" },
+    });
+  });
 });
 
 describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine", () => {
@@ -369,9 +426,8 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
       chat: async (connection) => {
         observedMaxTokens.push(connection.maxTokens);
         return JSON.stringify({
-          content: `# Completed response\n\n${"y".repeat(600)}`,
           confidence: 0.9,
-          frontmatterPatch: { description: null, when_to_use: null },
+          frontmatterPatch: { ...NULL_PATCH, description: "Reserve response capacity for a thinking model" },
         });
       },
     });
@@ -382,12 +438,10 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
 
   test("selected LLM engine wires REFLECT_JSON_SCHEMA into the underlying chatCompletion call", async () => {
     const stash = makeStashDir();
-    stubReturn = JSON.stringify({
-      content:
-        '# Schema output\n\nKeep "quotes", fenced code, and a C:\\\\tmp\\\\asset.md path intact.\n\n```ts\nconst ok = true;\n```\n',
-      confidence: 0.91,
-      frontmatterPatch: { description: null, when_to_use: null },
-    });
+    // Quotes, a colon and a backslash must survive the JSON reply and the YAML frontmatter.
+    const description =
+      'Confirm native schema output: "quoted" values and a C:\\tmp\\asset.md path survive reflect calls';
+    stubReturn = JSON.stringify({ confidence: 0.91, frontmatterPatch: { ...NULL_PATCH, description } });
 
     const result = await akmReflect({
       ref: "lessons/akm-reflect-wires-schema",
@@ -401,7 +455,7 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
     expect(result.proposal.ref).toEndWith("//lessons/akm-reflect-wires-schema");
-    expect(result.proposal.payload.content).toContain('Keep "quotes", fenced code');
+    expect(parseFrontmatter(result.proposal.payload.content).data.description).toBe(description);
     // At least one chatCompletion call must have happened, and the FIRST one
     // (the reflect iteration) must carry REFLECT_JSON_SCHEMA. Downstream
     // quality-judge LLM calls may or may not pass a schema — we pin only the
@@ -419,9 +473,9 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
     const stash = makeStashDir();
     stubReturn = JSON.stringify({
       ref: "lessons/model-selected",
-      content: "# Selected target\n\nUse the model-selected target only when no ref was supplied.\n",
       confidence: 0.75,
       frontmatterPatch: {
+        ...NULL_PATCH,
         description: "Choose the target returned by unscoped reflection",
         when_to_use: "Running unscoped reflection with structured output",
       },
@@ -430,6 +484,9 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
     const result = await akmReflect({
       stashDir: stash,
       config: reflectLlmConfig(),
+      // The asset the reply names, read once it has named it.
+      assetContent:
+        "---\ndescription: Selected target\n---\n\nUse the model-selected target only when no ref was supplied.\n",
     });
 
     expect(result.ok).toBe(true);
@@ -448,9 +505,8 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
     const description = "Explains how direct reflection repairs required lesson metadata.";
     const whenToUse = "Use when a reflected lesson is missing required frontmatter fields.";
     const response = JSON.stringify({
-      content: "# Patched lesson\n\nApply a narrow metadata patch before proposal validation.\n",
       confidence: 0.9,
-      frontmatterPatch: { description, when_to_use: whenToUse },
+      frontmatterPatch: { ...NULL_PATCH, description, when_to_use: whenToUse },
     });
 
     const result = await akmReflect({
@@ -475,14 +531,15 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
     const whenToUse = "Use when direct reflection selects a lesson without source metadata.";
     const response = JSON.stringify({
       ref: "lessons/unscoped-frontmatter-patch",
-      content: "# Unscoped patch\n\nSupply required metadata for the selected lesson.\n",
       confidence: 0.87,
-      frontmatterPatch: { description, when_to_use: whenToUse },
+      frontmatterPatch: { ...NULL_PATCH, description, when_to_use: whenToUse },
     });
 
     const result = await akmReflect({
       stashDir: stash,
       config: reflectLlmConfig(),
+      assetContent:
+        "---\ntitle: Unscoped patch\n---\n\n# Unscoped patch\n\nSupply required metadata for the selected lesson.\n",
       chat: async () => response,
     });
 
@@ -495,38 +552,33 @@ describe("akmReflect — passes REFLECT_JSON_SCHEMA for the selected LLM engine"
 });
 
 describe("akmReflect — direct LLM output recovery", () => {
-  test("non-schema mode accepts framed markdown without JSON-escaping quotes, fences, or backslashes", async () => {
+  test("non-schema mode accepts a frame of header lines, with quotes and a backslash in the patch", async () => {
     const stash = makeStashDir();
     const prompts: string[] = [];
-    const body = [
-      "# Reliable parsing",
-      "",
-      'Keep the quoted value "exactly as written".',
-      "",
-      "```ts",
-      'const windowsPath = "C:\\\\tmp\\\\asset.md";',
-      "```",
-    ].join("\n");
+    const source =
+      "---\ndescription: Use a deterministic frame for direct reflect output\nwhen_to_use: When markdown must survive model transport intact\n---\n\n# Old guidance\n\nUse JSON strings.\n";
+    const description = 'Frame reflect output: the patch line keeps "quotes" and a C:\\tmp\\asset.md path intact';
 
     const result = await akmReflect({
       ref: "lessons/framed-output",
       stashDir: stash,
       config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
-      assetContent:
-        "---\ndescription: Use a deterministic frame for direct reflect output\nwhen_to_use: When markdown must survive model transport intact\n---\n\n# Old guidance\n\nUse JSON strings.\n",
+      assetContent: source,
       chat: async (_config, messages, options) => {
         prompts.push(messages.at(-1)?.content ?? "");
         expect(options?.responseSchema).toBeUndefined();
-        return `AKM_REFLECT_CONFIDENCE: 0.82\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n${body}\nAKM_REFLECT_CONTENT_END`;
+        return framedReply({ description }, 0.82);
       },
     });
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
-    expect(result.proposal.payload.content).toContain(body);
+    expect(parseFrontmatter(result.proposal.payload.content).data.description).toBe(description);
+    expect(splitFrontmatter(result.proposal.payload.content).body).toBe(splitFrontmatter(source).body);
     expect(result.proposal.ref).toEndWith("//lessons/framed-output");
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("AKM_REFLECT_CONTENT_BEGIN");
+    expect(prompts[0]).toContain("AKM_REFLECT_FRONTMATTER_PATCH");
+    expect(prompts[0]).not.toContain("AKM_REFLECT_CONTENT");
   });
 
   test("non-schema mode repairs one malformed response and accepts the second framed response", async () => {
@@ -534,7 +586,7 @@ describe("akmReflect — direct LLM output recovery", () => {
     const calls: Array<{ messageCount: number; lastMessage: string }> = [];
     const responses = [
       "Here is the improved markdown:\n```markdown\n# Missing frame\n\nThis response cannot be extracted deterministically.\n```",
-      `AKM_REFLECT_CONFIDENCE: 0.88\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# Repaired output\n\nUse one bounded formatting repair.\nAKM_REFLECT_CONTENT_END`,
+      framedReply({ description: "Repair malformed direct reflect output with one retry" }, 0.88),
     ];
 
     const result = await akmReflect({
@@ -551,10 +603,12 @@ describe("akmReflect — direct LLM output recovery", () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error);
-    expect(result.proposal.payload.content).toContain("# Repaired output");
+    expect(result.proposal.payload.content).toContain(
+      "description: Repair malformed direct reflect output with one retry",
+    );
     expect(calls).toHaveLength(2);
     expect(calls[1]?.messageCount).toBe(3);
-    expect(calls[1]?.lastMessage).toContain("AKM_REFLECT_CONTENT_BEGIN");
+    expect(calls[1]?.lastMessage).toContain("AKM_REFLECT_FRONTMATTER_PATCH");
     const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
     expect(completed?.metadata?.outputMode).toBe("framed_markdown");
     expect(completed?.metadata?.repairAttempts).toBe(1);
@@ -564,15 +618,13 @@ describe("akmReflect — direct LLM output recovery", () => {
     const stash = makeStashDir();
     const description = "Explains how framed reflection repairs required lesson metadata.";
     const whenToUse = "Use when a non-schema reflect engine must supply missing lesson metadata.";
-    const patch = JSON.stringify({ description, when_to_use: whenToUse });
 
     const result = await akmReflect({
       ref: "lessons/framed-frontmatter-patch",
       stashDir: stash,
       config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
       assetContent: "---\ntitle: Framed metadata patch\n---\n\n# Existing lesson\n\nMetadata is missing.\n",
-      chat: async () =>
-        `AKM_REFLECT_CONFIDENCE: 0.85\nAKM_REFLECT_FRONTMATTER_PATCH: ${patch}\nAKM_REFLECT_CONTENT_BEGIN\n# Framed patch\n\nApply a narrow metadata patch before validation.\nAKM_REFLECT_CONTENT_END`,
+      chat: async () => framedReply({ description, when_to_use: whenToUse }, 0.85),
     });
 
     expect(result.ok).toBe(true);
@@ -586,11 +638,8 @@ describe("akmReflect — direct LLM output recovery", () => {
     const stash = makeStashDir();
     const description = "Explains why framed reflect metadata headers are mandatory.";
     const whenToUse = "Use when repairing a non-schema lesson response that omitted metadata.";
-    const patch = JSON.stringify({ description, when_to_use: whenToUse });
-    const responses = [
-      "AKM_REFLECT_CONFIDENCE: 0.8\nAKM_REFLECT_CONTENT_BEGIN\n# Missing patch\n\nThis frame omitted required metadata.\nAKM_REFLECT_CONTENT_END",
-      `AKM_REFLECT_CONFIDENCE: 0.8\nAKM_REFLECT_FRONTMATTER_PATCH: ${patch}\nAKM_REFLECT_CONTENT_BEGIN\n# Repaired patch\n\nThis frame includes required metadata.\nAKM_REFLECT_CONTENT_END`,
-    ];
+    const omitted = "AKM_REFLECT_CONFIDENCE: 0.8";
+    const responses = [omitted, framedReply({ description, when_to_use: whenToUse })];
     let calls = 0;
     const repairMessages: Array<Array<{ role: string; content: string }>> = [];
 
@@ -613,7 +662,7 @@ describe("akmReflect — direct LLM output recovery", () => {
       ["user"],
       ["user", "assistant", "user"],
     ]);
-    expect(repairMessages[1]?.[1]?.content).toContain("AKM_REFLECT_CONTENT_BEGIN");
+    expect(repairMessages[1]?.[1]?.content).toBe(omitted);
     expect(result.proposal.payload.frontmatter?.description).toBe(description);
     expect(result.proposal.payload.frontmatter?.when_to_use).toBe(whenToUse);
     expect(validateProposal(result.proposal)).toEqual({ ok: true, findings: [] });
@@ -623,10 +672,8 @@ describe("akmReflect — direct LLM output recovery", () => {
 
   test("preserves the first framed response as the self-refine prior draft", async () => {
     const stash = makeStashDir();
-    const first =
-      'AKM_REFLECT_CONFIDENCE: 0.8\nAKM_REFLECT_FRONTMATTER_PATCH: {"description":null,"when_to_use":null}\nAKM_REFLECT_CONTENT_BEGIN\n# First framed draft\n\nKeep this frame intact for refinement.\nAKM_REFLECT_CONTENT_END';
-    const second =
-      'AKM_REFLECT_CONFIDENCE: 0.9\nAKM_REFLECT_FRONTMATTER_PATCH: {"description":null,"when_to_use":null}\nAKM_REFLECT_CONTENT_BEGIN\n# Second framed draft\n\nRefine the original framed draft.\nAKM_REFLECT_CONTENT_END';
+    const first = framedReply({ description: "First framed draft: keep this frame intact for refinement" });
+    const second = framedReply({ description: "Second framed draft: refine the original framed draft" }, 0.9);
     const responses = [first, second];
     const calls: Array<Array<{ role: string; content: string }>> = [];
 
@@ -656,43 +703,12 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(calls[1]?.[0]?.content).not.toContain('{"ref":"lessons/framed-self-refine"');
   });
 
-  test("uses the final end marker so marker lines inside framed markdown remain content", async () => {
-    const stash = makeStashDir();
-    const body = [
-      "# Marker examples",
-      "",
-      "The following literal marker lines are documentation:",
-      "AKM_REFLECT_CONTENT_BEGIN",
-      "embedded content",
-      "AKM_REFLECT_CONTENT_END",
-      "The asset continues after the embedded marker.",
-    ].join("\n");
-    let calls = 0;
-
-    const result = await akmReflect({
-      ref: "knowledge/embedded-frame-markers",
-      stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
-      assetContent:
-        "---\ndescription: Document framed reflect marker handling safely\n---\n\n# Existing marker notes\n\nMarker examples belong in content.\n",
-      chat: async () => {
-        calls += 1;
-        return `AKM_REFLECT_CONFIDENCE: 0.8\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n${body}\nAKM_REFLECT_CONTENT_END`;
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error(result.error);
-    expect(calls).toBe(1);
-    expect(result.proposal.payload.content).toContain(body);
-  });
-
   for (const invalidConfidence of ["", "   ", "0x0", "Infinity", "NaN", "-0.1", "1.1"]) {
     test(`repairs framed output with invalid confidence ${JSON.stringify(invalidConfidence)}`, async () => {
       const stash = makeStashDir();
       const responses = [
-        `AKM_REFLECT_CONFIDENCE: ${invalidConfidence}\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# Invalid confidence\n\nReject coercive confidence parsing.\nAKM_REFLECT_CONTENT_END`,
-        `AKM_REFLECT_CONFIDENCE: 0.7\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# Repaired confidence\n\nAccept only canonical decimal confidence.\nAKM_REFLECT_CONTENT_END`,
+        `AKM_REFLECT_CONFIDENCE: ${invalidConfidence}\n${EMPTY_FRAMED_PATCH_LINE}`,
+        framedReply({ description: "Reject invalid direct reflect confidence values strictly" }, 0.7),
       ];
       let calls = 0;
 
@@ -722,9 +738,8 @@ describe("akmReflect — direct LLM output recovery", () => {
     const responses = [
       '{"ref":"lessons/wrong-target","content":"unterminated',
       JSON.stringify({
-        content: "# Native repair\n\nRepair only the response envelope, not the target identity.\n",
         confidence: 0.86,
-        frontmatterPatch: { description: null, when_to_use: null },
+        frontmatterPatch: { ...NULL_PATCH, description: "Repair malformed native schema output once, strictly" },
       }),
     ];
     const calls: Array<{ messageCount: number; schema?: Record<string, unknown> }> = [];
@@ -778,9 +793,9 @@ describe("akmReflect — direct LLM output recovery", () => {
     const stash = makeStashDir();
     const responses = [
       "malformed first iteration",
-      `AKM_REFLECT_CONFIDENCE: 0.8\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# First repaired iteration\n\nUse the only repair here.\nAKM_REFLECT_CONTENT_END`,
+      framedReply({ description: "Share one output repair across refinement passes" }),
       "malformed second iteration",
-      `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# Repair that must not run\n\nA second repair exceeds the invocation budget.\nAKM_REFLECT_CONTENT_END`,
+      framedReply({ description: "A second repair would exceed the invocation budget" }, 0.9),
     ];
     let calls = 0;
 
@@ -849,58 +864,6 @@ describe("akmReflect — direct LLM output recovery", () => {
     expect(calls).toBe(1);
   });
 
-  test("does not repair a valid response flagged by the size guard", async () => {
-    const stash = makeStashDir();
-    let calls = 0;
-    const sourceBody = "Preserve this concrete sentence. ".repeat(20);
-    const result = await akmReflect({
-      ref: "knowledge/policy-reject",
-      stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
-      assetContent: `---\ndescription: Preserve content policy failures without repair\n---\n\n${sourceBody}`,
-      chat: async () => {
-        calls += 1;
-        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nToo short.\nAKM_REFLECT_CONTENT_END`;
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected success");
-    expect(calls).toBe(1);
-    expect(listProposals(stash)[0]?.gateDecision).toMatchObject({ outcome: "deferred", reason: "reflect-size-ratio" });
-    const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
-    expect(completed?.metadata?.repairAttempts).toBe(0);
-  });
-
-  test("does not repair a valid response that leaks the truncation marker (#952)", async () => {
-    const stash = makeStashDir();
-    let calls = 0;
-    const result = await akmReflect({
-      ref: "knowledge/leak-marker",
-      stashDir: stash,
-      config: reflectLlmConfig({ ...fakeLlmConnection(), supportsJsonSchema: false }),
-      // Deliberately tiny so the body-size ratio guard cannot fire (source
-      // body stays under REFLECT_SIZE_GUARD_MIN_BYTES) — isolates the
-      // truncation-marker rail from the size-ratio rail.
-      assetContent: "---\ndescription: Short doc under the size-guard floor\n---\n\nShort body.\n",
-      chat: async () => {
-        calls += 1;
-        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRewritten body.\n${REFLECT_TRUNCATION_MARKER}\nAKM_REFLECT_CONTENT_END`;
-      },
-    });
-
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("expected success");
-    expect(calls).toBe(1);
-    expect(listProposals(stash)[0]?.gateDecision).toMatchObject({
-      outcome: "deferred",
-      reason: "reflect-truncation-leak",
-    });
-    const completed = readEvents({ type: "reflect_completed" }).events.at(-1);
-    expect(completed?.metadata?.repairAttempts).toBe(0);
-    expect(completed?.metadata?.truncationMarkerLeaked).toBe(true);
-  });
-
   test("does not repair a valid response rejected by the quality gate", async () => {
     const stash = makeStashDir();
     let reflectCalls = 0;
@@ -918,10 +881,13 @@ describe("akmReflect — direct LLM output recovery", () => {
       chat: async (_config, messages) => {
         if (messages[0]?.role === "system") {
           judgeCalls += 1;
-          return JSON.stringify({ score: 1, reason: "The revision is not useful." });
+          return JSON.stringify({
+            scores: { need: 1, preservation: 1, quality: 1 },
+            reason: "The revision is not useful.",
+          });
         }
         reflectCalls += 1;
-        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\n# Weak revision\n\nReplace useful guidance with vague prose.\nAKM_REFLECT_CONTENT_END`;
+        return framedReply({ description: "Replace useful guidance with vague prose" }, 0.9);
       },
     });
 
@@ -963,11 +929,7 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
   const TAIL_SENTINEL = "SENTINEL-TAIL-END-OF-DOCUMENT-952";
   const bigBody = `${"Long detailed reference paragraph about the system under test. ".repeat(400)}\n\n${TAIL_SENTINEL}`; // > 12k chars
   // The truncated-content fence: REFLECT_TRUNCATION_MARKER immediately closing
-  // the fenced content block. Distinguishes an ACTUALLY truncated content
-  // section from the output contract's own prose, which also quotes
-  // REFLECT_TRUNCATION_MARKER verbatim (to forbid echoing it) and would
-  // otherwise make a plain `.toContain(REFLECT_TRUNCATION_MARKER)` check
-  // vacuously true regardless of whether the asset content was capped.
+  // the fenced content block.
   const TRUNCATED_CONTENT_FENCE = `${REFLECT_TRUNCATION_MARKER}\n\n\`\`\``;
 
   test("a large configured engines.<name>.contextLength sends the full asset instead of truncating at the flat 12k cap", async () => {
@@ -988,8 +950,8 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
       assetContent: `---\ndescription: Large reference doc\n---\n\n${bigBody}`,
       chat: async (_config, messages) => {
         capturedPrompt = messages[0]?.content ?? "";
-        // A trivial edit so this isn't a no-op/cosmetic echo of the source.
-        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRevised opening line.\n\n${bigBody}\nAKM_REFLECT_CONTENT_END`;
+        // A small change so this isn't a no-op echo of the source.
+        return framedReply({ description: "A large reference doc, described" }, 0.9);
       },
     });
 
@@ -1021,7 +983,7 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
       assetContent: `---\ndescription: Large reference doc\n---\n\n${bigBody}`,
       chat: async (_config, messages) => {
         capturedPrompt = messages[0]?.content ?? "";
-        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRewritten.\nAKM_REFLECT_CONTENT_END`;
+        return framedReply({ description: "A large reference doc, described" }, 0.9);
       },
     });
 
@@ -1043,7 +1005,7 @@ describe("akmReflect — content budget is context-aware on the direct-LLM path"
       assetContent: `---\ndescription: Large reference doc\n---\n\n${bigBody}`,
       chat: async (_config, messages) => {
         capturedPrompt = messages[0]?.content ?? "";
-        return `AKM_REFLECT_CONFIDENCE: 0.9\n${EMPTY_FRAMED_PATCH_LINE}\nAKM_REFLECT_CONTENT_BEGIN\nRewritten.\nAKM_REFLECT_CONTENT_END`;
+        return framedReply({ description: "A large reference doc, described" }, 0.9);
       },
     });
 

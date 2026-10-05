@@ -11,8 +11,8 @@
  *
  * It also defines {@link CopilotHarness}, the {@link AkmHarness} descriptor
  * that `HARNESS_REGISTRY` registers. This is the LOCAL Copilot CLI
- * (`copilot -p …`); the cloud "Copilot coding agent" is the plan's
- * cloud-delegate pattern and is a separate, future descriptor.
+ * (`copilot -p …`); the cloud "Copilot coding agent" is a separate, future
+ * descriptor.
  */
 
 import { caps } from "../shared";
@@ -34,11 +34,6 @@ export class CopilotHarness extends BaseHarness {
   readonly agentBuilder = copilotBuilder;
   readonly resultExtractor = copilotResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns the `copilot` CLI locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // `--output-format json` emits a documented JSON envelope akm parses, then
-  // validates against the node schema ⇒ native-json tier.
-  readonly structuredOutput = "native-json" as const;
   // Session-id env marker only. The matrix's other candidates (GH_TOKEN,
   // bare COPILOT_* presence vars) are credential/presence flags that would
   // stamp identity onto manual runs, so they are deliberately NOT registered

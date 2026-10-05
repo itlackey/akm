@@ -118,7 +118,7 @@ describe("akm proposal drain strategy selector", () => {
       bundles: { stash: { path: stashDir, writable: true } },
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
-      engines: { reviewer: { kind: "agent", platform: "pi" } },
+      engines: { reviewer: { kind: "agent", platform: "claude" } },
       defaults: { improveStrategy: "explicit-judgment" },
       improve: {
         strategies: {

@@ -7,7 +7,7 @@
  * surface this flip removes.
  */
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 
 import {
   buildJudgePrompt,
@@ -135,15 +135,12 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     "5.1",
     "1e999",
   ])("an out-of-range or non-finite score routes to review instead of being rejected: %s", async (score) => {
-    const result = await runLessonQualityJudge(
-      configWithLlm(),
-      "some lesson body",
-      "some source body",
-      async () => `{"score":${score},"reason":"invalid"}`,
-    );
+    const chat = mock(async () => `{"score":${score},"reason":"invalid"}`);
+    const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", chat);
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
     expect(result.reviewNeeded).toBe(true);
+    expect(chat).toHaveBeenCalledTimes(2); // the judge's own parser rejected it: one corrective retry
   });
 
   test("forwards the shared signal and remaining timeout", async () => {
@@ -169,18 +166,31 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
 });
 
 describe("buildReflectJudgePrompt", () => {
-  test("asks whether the revision fixes a concrete problem, not whether it overlaps the source", () => {
-    const prompt = buildReflectJudgePrompt("candidate", "source", ["the port is wrong"]);
+  test("judges a frontmatter-only revision field by field, not by its overlap with the source", () => {
+    const prompt = buildReflectJudgePrompt("candidate", "source", ["[negative] the port is wrong"]);
 
-    expect(prompt).toContain("1. NEED: Does the revision fix a concrete problem in the source?");
-    expect(prompt).toContain("Score 1-2 when the source was already correct and the revision only rewords");
-    expect(prompt).toContain("2. PRESERVATION: Does it keep every concrete fact, identifier, command, path");
-    expect(prompt).toContain("3. QUALITY: Is it coherent and accurate");
+    expect(prompt).toContain("The revision may change only the `description`, the `when_to_use` and the title");
+    expect(prompt).toContain("1. NEED: Does every changed field fix a real problem?");
+    expect(prompt).toContain("2. PRESERVATION: Does the new description keep every fact the old one carried");
+    expect(prompt).toContain("3. QUALITY: Is every new value supported by the body");
     expect(prompt).toContain(
       '{"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}',
     );
     expect(prompt).not.toContain("FEEDBACK ALIGNMENT");
     expect(prompt).not.toContain("Overlap with the source is expected");
+  });
+
+  test("says whether the revision answers negative feedback or is maintenance", () => {
+    const negative = buildReflectJudgePrompt("candidate", "source", ["[positive] helped", "[negative] did not help"]);
+    const maintenance = buildReflectJudgePrompt("candidate", "source", [
+      "[positive] claude-code auto: source=tool_success",
+    ]);
+
+    expect(negative).toContain("This revision answers negative feedback. It cannot change the body");
+    expect(negative).not.toContain("This revision is maintenance");
+    expect(maintenance).toContain("This revision is maintenance: there is no negative feedback.");
+    expect(maintenance).not.toContain("This revision answers negative feedback");
+    expect(buildReflectJudgePrompt("candidate", "source", [])).toContain("This revision is maintenance");
   });
 
   test("keeps late changed content in bounded diff context", () => {

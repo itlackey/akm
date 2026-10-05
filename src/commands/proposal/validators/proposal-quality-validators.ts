@@ -10,7 +10,8 @@
  * growing past min(max(250% of the source, 2500 bytes), 25000 bytes) suggests
  * speculation. The absolute bounds keep small assets (a p25 source is ~780
  * bytes) from tripping on one good paragraph, and 25000 (below p99) still
- * catches runaway expansion. Sources under 200 bytes are too noisy to judge.
+ * catches runaway expansion. Sources under 200 bytes are too noisy to judge. A
+ * body that does not grow is never expansion, however long its source.
  */
 
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
@@ -194,7 +195,8 @@ export function checkReflectSize(sourceBody: string | undefined, proposedBody: s
     Math.max(REFLECT_EXPAND_RATIO_MAX * sourceLen, REFLECT_ABSOLUTE_CEILING_BYTES),
     REFLECT_ABSOLUTE_MAX_BYTES,
   );
-  if (proposedLen > expandCeiling) return { ok: false, code: "EXCESSIVE_EXPANSION", ratio };
+  // A body that does not grow is never expansion, even where the cap sits below the source's own length.
+  if (proposedLen > sourceLen && proposedLen > expandCeiling) return { ok: false, code: "EXCESSIVE_EXPANSION", ratio };
   return { ok: true };
 }
 
@@ -372,7 +374,11 @@ const redactedContentValidator: ProposalValidator = {
   },
 };
 
-/** Defense in depth when a reflect proposal bypasses creation-time sanitization (#963). */
+/**
+ * The run-only "Avoid These Patterns" section (#963) in a reflect proposal: one
+ * made before reflect kept the body, or a body that already had it. Reflect
+ * keeps a body as it is, so a person accepting has no way to remove it.
+ */
 const reflectPromptScaffoldingValidator: ProposalValidator = {
   name: "reflect-prompt-scaffolding",
   appliesTo(proposal) {
@@ -402,15 +408,15 @@ function advisory(validator: ProposalValidator): ProposalValidator {
   };
 }
 
-/** The quality validators `validateProposal` runs; the last three protect durable content and block. */
+/** The quality validators `validateProposal` runs; the last two protect durable content and block. */
 export const defaultProposalQualityValidators: ProposalValidator[] = [
   ...[
     descriptionQualityValidator,
     lessonContentQualityValidator,
     sourceNotSupersededValidator,
     reflectSizeGuardValidator,
+    reflectPromptScaffoldingValidator,
   ].map(advisory),
   reflectTruncationMarkerValidator,
   redactedContentValidator,
-  reflectPromptScaffoldingValidator,
 ];

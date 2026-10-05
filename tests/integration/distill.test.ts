@@ -1053,7 +1053,7 @@ describe("akmDistill — queued proposal", () => {
           stashDir: stash,
           chat: async (connection) => {
             models.push(connection.model);
-            return JSON.stringify({ score: 4.5, reason: "adds new info" });
+            return JSON.stringify({ scores: { novelty: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
           },
           lookupFn: async (ref) => (ref === "memories/judged-promotion" ? memoryFile : null),
           readEventsFn: eventsFor("memories/judged-promotion", ["positive", "positive"]),
@@ -2047,7 +2047,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
           if (observed.length === 1) mutateScopedEnv("AKM_DISTILL_ROTATING_KEY", rotated);
           const joined = messages.map((message) => message.content).join("\n");
           if (joined.includes("Score this lesson")) {
-            return JSON.stringify({ score: 4.5, reason: "adds new info" });
+            return JSON.stringify({ scores: { novelty: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
           }
           return VALID_LESSON;
         },
@@ -2078,7 +2078,9 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
       chat: async (connection, messages) => {
         const judging = messages.some((m) => m.content.includes("Score this lesson"));
         calls.push(`${judging ? "judge" : "generate"}:${connection.model}`);
-        return judging ? JSON.stringify({ score: 4.5, reason: "adds new info" }) : VALID_LESSON;
+        return judging
+          ? JSON.stringify({ scores: { novelty: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" })
+          : VALID_LESSON;
       },
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,

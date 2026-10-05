@@ -51,7 +51,7 @@ beforeEach(() => {
   writeSandboxConfig({
     configVersion: "0.9.0",
     engines: {
-      "test-agent": { kind: "agent", platform: "opencode-sdk" },
+      "test-agent": { kind: "agent", platform: "opencode-sdk", llmEngine: "test-llm" },
       "test-llm": {
         kind: "llm",
         endpoint: "http://127.0.0.1:1/v1/chat/completions",

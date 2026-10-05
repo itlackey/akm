@@ -138,10 +138,7 @@ function fastReflectServer() {
       requestCount++;
       const raw = [
         "AKM_REFLECT_CONFIDENCE: 0.9",
-        'AKM_REFLECT_FRONTMATTER_PATCH: {"description":null,"when_to_use":null}',
-        "AKM_REFLECT_CONTENT_BEGIN",
-        "Updated content for note-c, still substantial enough to be a plausible reflect candidate on its own.",
-        "AKM_REFLECT_CONTENT_END",
+        'AKM_REFLECT_FRONTMATTER_PATCH: {"description":"Note C, with a description that says what it holds","when_to_use":null,"title":null}',
       ].join("\n");
       return new Response(
         JSON.stringify({

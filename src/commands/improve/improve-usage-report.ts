@@ -8,30 +8,19 @@
  * for the end-of-run stderr summary and `akm improve report`.
  */
 
-import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "../../core/config/engine-semantics";
 import type { DistillSkippedAggregate, ImproveActionResult, ImproveEligibleRef } from "../../core/improve-types";
 import type { LlmUsageCrossTabRow } from "../health/types";
 import type { AutonomyLane, GatedLane } from "./autonomy-gate";
 import {
   eligibleRefCount,
   type ImproveProcessName,
+  MODEL_CALLING_PROCESSES,
   type ProcessRoutingRow,
   projectResolvedProcessRouting,
   type ResolvedImprovePlan,
 } from "./improve-strategies";
 
-/**
- * Only processes that call an LLM themselves: triage (a runner, attributed to
- * its judgment engine) and proactive maintenance (no engine) would always read
- * as "zero calls".
- */
-const LLM_BACKED_PROCESSES = new Set<ImproveProcessName>(
-  (Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[]).filter(
-    (name) => IMPROVE_PROCESS_ENGINE_CAPABILITIES[name] === "llm",
-  ),
-);
-
-/** The autonomy lane gating each LLM-backed process, if any. */
+/** The autonomy lane gating each model-calling process, if any. */
 const AUTONOMY_LANE_BY_PROCESS: Partial<Record<ImproveProcessName, AutonomyLane>> = {
   memoryInference: "memoryInference",
 };
@@ -60,7 +49,7 @@ function dominantReason(counts: Record<string, number>): string | undefined {
 }
 
 /**
- * Why an LLM-backed process made no call, in priority order: its engine is
+ * Why a model-calling process made no call, in priority order: its engine is
  * unavailable; disabled — `autonomy_gated` when its lane was gated, else
  * nothing to report; every ref strategy-filtered; its dominant skip reason;
  * else `no_signal`. The reasons are the ones the events and results already
@@ -107,10 +96,13 @@ export function buildImproveUsageReport(args: {
   persistedActions: readonly ImproveActionResult[];
   distillSkippedAggregate?: DistillSkippedAggregate;
 }): ImproveUsageReport | undefined {
-  // The "triage.judgment" row is dropped too: its calls are never attributed to it (#947).
+  // Only the processes that call a model themselves, on any engine kind: triage
+  // (attributed to its judgment) and proactive maintenance (no engine) would
+  // always read as "zero calls". The "triage.judgment" row is dropped too: its
+  // calls are never attributed to it (#947).
   const routing = projectResolvedProcessRouting(args.resolvedPlan).filter(
     (row): row is typeof row & { process: ImproveProcessName } =>
-      row.process !== "triage.judgment" && LLM_BACKED_PROCESSES.has(row.process as ImproveProcessName),
+      row.process !== "triage.judgment" && MODEL_CALLING_PROCESSES.has(row.process as ImproveProcessName),
   );
   const calledProcesses = new Set(args.byProcessEngineModel.filter((row) => row.calls > 0).map((row) => row.process));
   const reflectSkipCounts = countReflectSkipReasons(args.persistedActions);

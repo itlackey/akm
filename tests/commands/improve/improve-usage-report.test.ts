@@ -17,10 +17,10 @@ import {
   deriveNoCallReason,
   formatUsageReportTable,
 } from "../../../src/commands/improve/improve-usage-report";
-import { IMPROVE_PROCESS_ENGINE_CAPABILITIES } from "../../../src/core/config/engine-semantics";
+import { IMPROVE_PROCESS_NAMES } from "../../../src/core/config/engine-semantics";
 import type { ImproveActionResult, ImproveEligibleRef } from "../../../src/core/improve-types";
 
-const ALL_PROCESS_NAMES = Object.keys(IMPROVE_PROCESS_ENGINE_CAPABILITIES) as ImproveProcessName[];
+const ALL_PROCESS_NAMES: readonly ImproveProcessName[] = IMPROVE_PROCESS_NAMES;
 
 function llmRunner(engine: string, model: string) {
   return { kind: "llm" as const, engine, connection: { endpoint: "https://x.test", model } };

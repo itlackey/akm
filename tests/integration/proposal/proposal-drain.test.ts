@@ -849,12 +849,31 @@ describe("drainProposals — judgment tier (agent mode)", () => {
         }),
       }),
     );
-    expect(capturedDispatch).not.toHaveProperty("tools");
+    // A triage judgment is unattended model work: it runs under the model-work tool policy.
+    expect(capturedDispatch?.modelWork).toBe(true);
     expect(capturedDispatch).not.toHaveProperty("schema");
     expect(result.notices).toBeUndefined();
     expect(result.promoted).toEqual([deferred.id]);
     expect(result.deferred).toEqual([]);
     expect(promoteFn).toHaveBeenCalledTimes(1);
+  });
+
+  test("an agent judgment runner with no timeout of its own is bounded at 600 s", async () => {
+    const stash = makeStashDir();
+    seed(stash, "lessons/big", "consolidate", BIG_LESSON);
+    const { timeoutMs: _own, ...unbounded } = FAKE_AGENT_RUNNER;
+    let seenTimeoutMs: number | null | undefined;
+    const runAgentFn: NonNullable<JudgmentSeams["runAgentFn"]> = mock(async (_profile, _prompt, options) => {
+      seenTimeoutMs = options.timeoutMs;
+      return agentResult(JSON.stringify({ decision: "defer", reason: "needs a person" }));
+    });
+
+    await drainProposals(baseOpts(stash, { judgment: unbounded as RunnerSpec }), fakeAccept(), fakeReject(), {
+      runAgentFn,
+    });
+
+    expect(runAgentFn).toHaveBeenCalledTimes(1);
+    expect(seenTimeoutMs).toBe(600_000);
   });
 
   test("a failed agent run leaves the item unresolved", async () => {

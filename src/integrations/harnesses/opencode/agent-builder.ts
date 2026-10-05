@@ -16,27 +16,62 @@
  * (the canonical harness id).
  */
 
-import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
+import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
+import { MODEL_WORK_AGENT_INFERENCE, opencodeInferenceConfig } from "./model-config";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "./model-work-agent";
 
 /**
  * OpenCode builder.
- * Command shape: opencode run [--system-prompt "..."] [--agent <name>] [--model <m>] "<prompt>"
+ * Command shape: opencode run [--agent <name>] [--model <m>] -- "<prompt>"
+ *
+ * `opencode run` has no system-prompt option (1.18.25 prints its usage and
+ * exits 1 on `--system-prompt`), so the shared lowerer composes a persona
+ * into the prompt.
  *
  * Tool policy is omitted — opencode manages tool access through its own agent
- * config files, not via CLI flags.
+ * config files, not via CLI flags. The one exception is the model-work tool
+ * policy: the builder injects its confined agent through
+ * `OPENCODE_CONFIG_CONTENT` and selects it with `--agent`. That command is
+ * akm's own (`opencode run --agent akm-model-work`): the engine's `args` are
+ * left out, because one such as `--attach` or `--dir` would move the run out
+ * of the injected config or the scratch working directory. Only the model they
+ * name is kept.
+ *
+ * Model work's agent carries the request's inference options
+ * (`./model-config.ts`). Any other dispatch injects nothing and carries none, so
+ * the model's own opencode config applies: set inference there.
  */
 export const opencodeBuilder: AgentCommandBuilder = {
   platform: "opencode",
-  personaChannel: "native",
+  personaChannel: "prompt",
   lower: createAgentRequestLowerer({
     adapter: "opencode",
-    personaChannel: "native",
+    personaChannel: "prompt",
     nativeAgentSelector: true,
     tools: "none",
-    outputSchema: false,
+    inference: MODEL_WORK_AGENT_INFERENCE,
   }),
   build(profile, req) {
+    if (req.modelWork) {
+      const model = req.model ?? modelFromArgs(profile.args);
+      const { agentOptions } = opencodeInferenceConfig(req.inference, true);
+      return {
+        argv: [
+          profile.bin,
+          "run",
+          "--agent",
+          MODEL_WORK_OPENCODE_AGENT,
+          ...(model ? ["--model", model] : []),
+          "--",
+          req.prompt,
+        ],
+        env: {
+          ...modelWorkPluginEnv(),
+          OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)),
+        },
+      };
+    }
     const args: string[] = req.model ? [] : [...profile.args];
     if (req.model) {
       for (let index = 0; index < profile.args.length; index += 1) {
@@ -48,9 +83,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
           args.push(arg);
         }
       }
-    }
-    if (req.systemPrompt) {
-      args.push("--system-prompt", req.systemPrompt);
     }
     if (req.agent) {
       args.push("--agent", req.agent);

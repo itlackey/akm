@@ -89,10 +89,10 @@ describe("triage improve-process config schema", () => {
     });
   });
 
-  test("triage may select an agent engine while missing engines are rejected", () => {
+  test("triage may select an agent engine that confines the model-work tool policy; missing engines are rejected", () => {
     const base = {
       configVersion: "0.9.0",
-      engines: { reviewer: { kind: "agent", platform: "pi" } },
+      engines: { reviewer: { kind: "agent", platform: "claude" } },
     } as const;
     expect(
       validateConfigShape({

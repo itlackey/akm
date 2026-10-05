@@ -231,7 +231,7 @@ describe("common command invocation preparation", () => {
       interpretation: "alias",
       resolved: "claude-reasoning-exact",
     });
-    expect(prepared.request.inference).toEqual({ effort: "high" });
+    expect(prepared.request.inference).toEqual({ reasoningEffort: "high" });
     expect(prepared.request.authorization).toMatchObject({
       status: "allowed",
       policy: { id: "config-execution-allowed-tools" },
@@ -307,7 +307,7 @@ describe("common command invocation preparation", () => {
     expect(await wire({ inference: {} })).toMatchObject({ inference: {} });
     expect(await wire({ model: "reasoning", tools: ["read"] })).toMatchObject({
       model: { input: "reasoning", interpretation: "alias", resolved: "claude-reasoning-exact" },
-      inference: { effort: "high" },
+      inference: { reasoningEffort: "high" },
       tools: ["read"],
       authorization: { status: "allowed" },
     });

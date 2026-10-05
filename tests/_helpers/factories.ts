@@ -46,6 +46,23 @@ export function quietQualityGateConfig(): AkmConfig {
 }
 
 /**
+ * The reply a model gives reflect on any engine kind: the JSON object of
+ * `REFLECT_JSON_SCHEMA`, a patch of the fields to change (each one left out is
+ * `null`: no change). A reflect run with no target asks for the unscoped
+ * object, which names the asset in `ref`.
+ */
+export function reflectReply(
+  patch: { description?: string; when_to_use?: string; title?: string } = {},
+  options: { ref?: string; confidence?: number } = {},
+): string {
+  return JSON.stringify({
+    ...(options.ref !== undefined ? { ref: options.ref } : {}),
+    confidence: options.confidence ?? 0.8,
+    frontmatterPatch: { description: null, when_to_use: null, title: null, ...patch },
+  });
+}
+
+/**
  * The single-entry `FileChange[]` a payload-shaped proposal fixture carries
  * (WI-6.2 envelope): one `update` whose `after` IS the payload content.
  */

@@ -264,6 +264,36 @@ describe("health engine probes", () => {
     });
   });
 
+  test("an SDK engine with no llmEngine of its own has no fallback to probe, whatever defaults.llmEngine names", async () => {
+    const config: AkmConfig = {
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      engines: { sdk: { kind: "agent", platform: "opencode-sdk" }, fallback: llm },
+      defaults: { engine: "sdk", llmEngine: "fallback" },
+    };
+    let probed = 0;
+    const result = await runDefaultEngineProbe({
+      loadConfig: () => config,
+      resolvePackage: () => "/sdk/package.json",
+      spawnSync: (() => ({ status: 0 })) as never,
+      probeReachable: async () => {
+        probed += 1;
+        return { reachable: false, error: "ECONNREFUSED" };
+      },
+    });
+    // Dispatch gives this engine no LLM connection, so the probe reports none and checks no endpoint.
+    expect(probed).toBe(0);
+    expect(result.status).toBe("pass");
+    expect(result.message).toBe('SDK engine "sdk" is available.');
+    expect(result.evidence).toMatchObject({
+      fallbackEngine: null,
+      fallbackEndpoint: null,
+      fallbackModel: null,
+      model: null,
+      modelSource: null,
+    });
+  });
+
   test("warns when an explicitly configured SDK fallback cannot be resolved", async () => {
     const config: AkmConfig = {
       configVersion: "0.9.0",

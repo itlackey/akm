@@ -43,9 +43,9 @@
  *     not expressible through `AgentDispatchRequest` (which has no session
  *     field yet); {@link codexResumeArgs} exposes the argv prefix for the
  *     integration task that wires session-id reuse from `workflow_run_units`.
- *   - `req.effort` stays unconsumed (reserved; codex would take it as
- *     `-c model_reasoning_effort=<v>` — left to the integration task so the
- *     shared request contract's "no builder consumes it yet" note stays true).
+ *   - The request's inference is not translated: the shared lowering reports
+ *     each field as untranslated. codex would take `reasoningEffort` as
+ *     `-c model_reasoning_effort=<v>`, which is left to the integration task.
  *
  * Registered: `codexBuilder` is `CodexHarness.agentBuilder` (`./index.ts`),
  * one of the ten harnesses `HARNESS_REGISTRY` constructs
@@ -116,7 +116,6 @@ export const codexBuilder: AgentCommandBuilder = {
     adapter: "codex",
     personaChannel: "prompt",
     tools: "none",
-    outputSchema: true,
   }),
   build(profile, req) {
     // Built-in codex profiles ship `args: []`; headless dispatch is the `exec`

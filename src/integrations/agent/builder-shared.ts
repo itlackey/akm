@@ -36,18 +36,15 @@ export interface AgentDispatchRequest {
   model?: string;
   /** Tool policy — from agent asset frontmatter `tools:`. */
   tools?: ShowResponse["toolPolicy"];
-  /**
-   * Reasoning-effort hint for harnesses that accept one (reserved for the
-   * workflow engine's IR `effort` field; no builder consumes it yet).
-   */
-  effort?: string;
+  /** Run under the model-work tool policy: the builder confines the run itself and `tools` is unset. */
+  modelWork?: boolean;
   /** Exact resolved inference object. Builders consume only fields their lowerer records as translated. */
   inference?: ExecutionJsonObject | null;
   /**
-   * JSON Schema the unit's output must validate against. Reserved for the
-   * workflow engine's structured-output normalization: harnesses with native
-   * schema flags (e.g. Codex `--output-schema`) will pass it through; others
-   * get it injected into the prompt. No builder consumes it yet.
+   * JSON Schema the output must validate against. The shared request lowering
+   * has already appended the schema instruction to `prompt`; a builder reads
+   * this only for a native channel (codex `--output-schema`, a JSON output
+   * mode).
    */
   schema?: Record<string, unknown>;
 }
@@ -145,6 +142,20 @@ export interface AgentCommandBuilder {
    * the abstract dispatch request. Returns argv + optional env/stdin overrides.
    */
   build(profile: AgentProfile, request: AgentDispatchRequest): BuiltCommand;
+}
+
+/**
+ * The model an engine's own `args` select, as `--model X` or `--model=X` (the
+ * last one wins), for a builder that writes its own argv in place of those args.
+ */
+export function modelFromArgs(args: readonly string[]): string | undefined {
+  let model: string | undefined;
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--model") model = args[index + 1];
+    else if (arg?.startsWith("--model=")) model = arg.slice("--model=".length);
+  }
+  return model;
 }
 
 /**

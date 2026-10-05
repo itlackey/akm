@@ -65,7 +65,18 @@ export type RunStructuredResult<T> =
       raw: string;
     };
 
-function defaultFeedback(failure: { reason: "parse_error" | "validation_error"; errors: string[] }): string {
+/**
+ * Append the one structured-output instruction to a prompt. Agent lowering
+ * appends it to every schema-bearing request, alongside a harness's native
+ * channel where one exists (codex `--output-schema`); the workflow engine
+ * appends it for a direct-LLM unit. Resumed workflow runs depend on these
+ * exact bytes, so do not reword it.
+ */
+export function withSchemaInstruction(prompt: string, schema: unknown): string {
+  return `${prompt}\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(schema)}`;
+}
+
+export function defaultFeedback(failure: { reason: "parse_error" | "validation_error"; errors: string[] }): string {
   if (failure.reason === "parse_error") {
     return "Your previous response contained no parseable JSON. Respond with ONLY a JSON value that matches the requested schema — no prose, no code fences.";
   }

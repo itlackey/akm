@@ -28,10 +28,9 @@
  * - **systemPrompt** — passed via `--system-prompt` (Pi follows the Claude
  *   Code flag conventions).
  * - **schema** — the matrix places Pi in the "via prompt+validate" tier (no
- *   native `--output-schema` equivalent, unlike Codex), so the JSON Schema is
- *   passed through the prompt: a directive matching the engine's wording
- *   (`step-work.ts` `buildUnitPrompt`) is appended to the prompt
- *   payload, and `--mode json` is emitted so stdout is the documented JSONL
+ *   native `--output-schema` equivalent, unlike Codex), so the JSON Schema
+ *   reaches it as the instruction the shared request lowering appends to the
+ *   prompt, and `--mode json` is emitted so stdout is the documented JSONL
  *   event stream that `./result-extractor.ts` normalizes. The engine's shared
  *   retry-until-valid loop performs the actual validation. Without a schema
  *   the argv matches the matrix's bare headless shape (`pi -p "<p>"`) and the
@@ -41,8 +40,8 @@
  *   there is no documented per-tool allowlist flag, and inventing one would
  *   produce a silently broken command. A restrictive policy is therefore
  *   dropped rather than approximated — never silently widened.
- * - **effort** — stays unconsumed (reserved; the shared request contract's
- *   "no builder consumes it yet" note stays true).
+ * - **inference** — not translated: the shared lowering reports each field of
+ *   the request's inference as untranslated.
  *
  * Registered: `piBuilder` is `PiHarness.agentBuilder` (`./index.ts`), one of
  * the ten harnesses `HARNESS_REGISTRY` constructs (`harnesses/index.ts`);
@@ -52,31 +51,16 @@
  * (`./index.ts`).
  */
 
-import { type AgentCommandBuilder, type AgentDispatchRequest, resolveDispatchModel } from "../../agent/builder-shared";
+import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /** Canonical harness/platform id used for model-alias resolution. */
 export const PI_PLATFORM = "pi";
 
 /**
- * Assemble the positional prompt payload: the task prompt and — when a schema
- * is requested — the same schema directive the workflow engine's prompt
- * assembly uses, so both dispatch paths speak one dialect.
- */
-function buildPromptPayload(req: AgentDispatchRequest): string {
-  const sections: string[] = [req.prompt];
-  if (req.schema) {
-    sections.push(
-      `Respond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`,
-    );
-  }
-  return sections.join("\n\n");
-}
-
-/**
  * Pi builder.
  * Command shape:
- *   pi [--system-prompt "..."] [--model <m>] [--mode json] -p -- "<prompt[\n\nschema directive]>"
+ *   pi [--system-prompt "..."] [--model <m>] [--mode json] -p -- "<prompt>"
  */
 export const piBuilder: AgentCommandBuilder = {
   platform: PI_PLATFORM,
@@ -85,7 +69,6 @@ export const piBuilder: AgentCommandBuilder = {
     adapter: PI_PLATFORM,
     personaChannel: "native",
     tools: "none",
-    outputSchema: true,
   }),
   build(profile, req) {
     const args: string[] = [...profile.args];
@@ -104,7 +87,7 @@ export const piBuilder: AgentCommandBuilder = {
     // -p = non-interactive print mode; prompt is the trailing positional.
     args.push("-p");
     args.push("--");
-    args.push(buildPromptPayload(req));
+    args.push(req.prompt);
     return { argv: [profile.bin, ...args] };
   },
 };

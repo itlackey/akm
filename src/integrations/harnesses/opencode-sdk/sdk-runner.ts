@@ -94,12 +94,16 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
-import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
+import { COMMON_SPAWN_ENV_PASSTHROUGH, spawnEnvNamesFor, XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../../core/spawn-env";
+import type { ExecutionJsonObject } from "../../../execution/json";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
 import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
+import { opencodeInferenceConfig } from "../opencode/model-config";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "../opencode/model-work-agent";
 
 /** Per-call working-directory scope (see module doc — SDK `query.directory`). */
 interface SdkDirectoryQuery {
@@ -123,15 +127,21 @@ interface SdkClient {
       };
       query?: SdkDirectoryQuery;
     }): Promise<{
+      // The client is created without `throwOnError`, so an HTTP error
+      // resolves to `{ error }` (the parsed response body) instead of throwing.
+      error?: unknown;
       data?: {
         // AssistantMessage projection (SDK 1.2.20 types.gen.d.ts): token
-        // accounting lives on info.tokens. Fields optional here so a fake or
-        // an older server that omits them cannot crash extraction.
-        info?: { tokens?: { input?: number; output?: number; reasoning?: number } };
+        // accounting lives on info.tokens, and a provider failure on
+        // info.error. Fields optional here so a fake or an older server that
+        // omits them cannot crash extraction.
+        info?: { tokens?: { input?: number; output?: number; reasoning?: number }; error?: unknown };
         parts?: { type: string; text?: string }[];
       };
     }>;
     delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
+    // Optional so a fake that omits them cannot crash a dispatch; the real client has both.
+    abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
   };
 }
 
@@ -299,21 +309,50 @@ function toolsToSdkAllowlist(tools: ShowResponse["toolPolicy"]): Record<string, 
   return out;
 }
 
+/** The inference a fallback LLM connection carries, which opencode can take. */
+function fallbackInference(llmConfig: LlmConnectionConfig | undefined): ExecutionJsonObject {
+  const out: Record<string, unknown> = {};
+  for (const key of ["temperature", "maxTokens", "contextLength", "enableThinking", "reasoningEffort"] as const) {
+    if (llmConfig?.[key] !== undefined) out[key] = llmConfig[key];
+  }
+  return out as ExecutionJsonObject;
+}
+
 /**
  * Assemble the OpenCode SDK server config from the profile + LLM fallback.
  * Pure and exported for tests. `profile.model` is already exact because model
- * aliases resolve once before harness lowering.
+ * aliases resolve once before harness lowering. A server for model work also
+ * defines the confined model-work agent (`../opencode/model-work-agent`).
+ *
+ * The model the config routes through `akm-custom` is declared in full, with
+ * the dispatch's inference (`../opencode/model-config`): the fallback LLM
+ * engine's, under `requestInference`, the request's own. For model work the
+ * options go on the confined agent instead of the model, which needs no model
+ * named: it runs whichever model opencode picks. A model the user's own opencode
+ * config provides carries none: set inference there.
  */
-export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionConfig): Record<string, unknown> {
+export function buildSdkConfig(
+  profile: AgentProfile,
+  llmConfig?: LlmConnectionConfig,
+  modelWork = false,
+  requestInference?: ExecutionJsonObject | null,
+): Record<string, unknown> {
   const endpoint = llmConfig?.endpoint;
   const apiKey = llmConfig?.apiKey;
   const profileModel = profile.model;
   const model = profileModel ?? llmConfig?.model;
+  const inference = requestInference === null ? undefined : { ...fallbackInference(llmConfig), ...requestInference };
+  const { entry, agentOptions } = opencodeInferenceConfig(inference, modelWork);
 
   const sdkConfig: Record<string, unknown> = {};
   if (model) sdkConfig.model = model;
   if (endpoint || apiKey) {
-    // Configure a custom OpenAI-compatible provider
+    // The first path segment selects the OpenCode provider. Model IDs may
+    // themselves contain slashes, but still belong to this custom endpoint.
+    const modelId = model?.startsWith("akm-custom/") ? model.slice("akm-custom/".length) : model;
+    // Configure a custom OpenAI-compatible provider. OpenCode registers only
+    // the models a custom provider lists, so the routed model is declared
+    // (#1015: without it every dispatch failed with ProviderModelNotFoundError).
     sdkConfig.provider = {
       "akm-custom": {
         npm: "@ai-sdk/openai-compatible",
@@ -321,13 +360,12 @@ export function buildSdkConfig(profile: AgentProfile, llmConfig?: LlmConnectionC
           baseURL: canonicalProviderBase(endpoint) ?? undefined,
           ...(apiKey ? { apiKey } : {}),
         },
+        ...(modelId ? { models: { [modelId]: entry } } : {}),
       },
     };
-    // The first path segment selects the OpenCode provider. Model IDs may
-    // themselves contain slashes, but still belong to this custom endpoint.
-    if (model) sdkConfig.model = model.startsWith("akm-custom/") ? model : `akm-custom/${model}`;
+    if (modelId) sdkConfig.model = `akm-custom/${modelId}`;
   }
-  return sdkConfig;
+  return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig(agentOptions) } : sdkConfig;
 }
 
 /** Digest the executable and exact environment received by the child. */
@@ -338,9 +376,21 @@ function serverRegistryKey(profile: AgentProfile, env: Record<string, string>): 
     .digest("hex");
 }
 
-/** @internal Exact environment allowlist used to start the OpenCode SDK server. */
+/**
+ * @internal Exact environment allowlist used to start the OpenCode SDK server:
+ * the common baseline, the XDG base-directory variables opencode resolves its
+ * config, data, cache and state from, and the profile's own names. The XDG names
+ * are the server's, not the profile's: profile `envPassthrough` is frozen into
+ * workflow plans, and an SDK profile's list has always been empty.
+ */
 export function opencodeSdkServerEnvironmentNames(profile: AgentProfile): string[] {
-  return [...new Set([...spawnEnvNamesFor(COMMON_SPAWN_ENV_PASSTHROUGH), ...(profile.envPassthrough ?? [])])];
+  return [
+    ...new Set([
+      ...spawnEnvNamesFor(COMMON_SPAWN_ENV_PASSTHROUGH),
+      ...XDG_BASE_DIR_ENV_PASSTHROUGH,
+      ...(profile.envPassthrough ?? []),
+    ]),
+  ];
 }
 
 function buildServerEnv(
@@ -348,6 +398,7 @@ function buildServerEnv(
   config: Record<string, unknown>,
   bindings: Record<string, string> | undefined,
   envSource: NodeJS.ProcessEnv,
+  modelWork: boolean,
 ): Record<string, string> {
   const env: Record<string, string> = {};
   for (const key of opencodeSdkServerEnvironmentNames(profile)) {
@@ -355,6 +406,7 @@ function buildServerEnv(
     if (value !== undefined) env[key] = value;
   }
   for (const [key, value] of Object.entries(bindings ?? {})) env[key] = value;
+  if (modelWork) Object.assign(env, modelWorkPluginEnv());
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);
   return env;
 }
@@ -648,10 +700,12 @@ function getOrStartServer(
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
   envSource: NodeJS.ProcessEnv = process.env,
+  modelWork = false,
+  inference?: ExecutionJsonObject | null,
 ): { promise: Promise<SdkServer>; release(): void } {
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
-  const sdkConfig = buildSdkConfig(profile, llmConfig);
-  const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource);
+  const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork, inference);
+  const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource, modelWork);
   const key = serverRegistryKey(profile, serverEnv);
   let entry = _servers.get(key);
   if (!entry) {
@@ -781,6 +835,24 @@ function appendStderr(stderr: string, message: string): string {
   return stderr ? `${stderr}\n${message}` : message;
 }
 
+/**
+ * Map an SDK `{ error }` result or a reply's `info.error` onto a failure
+ * (#1015). Both are opencode NamedErrors, `{ name, data: { message } }`. An
+ * aborted message is `aborted`, a reply cut off at the output limit is
+ * `parse_error`, and every other error (auth, API, unknown, an HTTP error
+ * body) is `non_zero_exit`.
+ */
+function sdkErrorFailure(error: unknown): { reason: AgentFailureReason; message: string } {
+  if (!isRecord(error) || typeof error.name !== "string") {
+    return { reason: "non_zero_exit", message: typeof error === "string" ? error : JSON.stringify(error) };
+  }
+  const detail = isRecord(error.data) ? error.data.message : undefined;
+  const message = typeof detail === "string" ? `${error.name}: ${detail}` : error.name;
+  if (error.name === "MessageAbortedError") return { reason: "aborted", message };
+  if (error.name === "MessageOutputLengthError") return { reason: "parse_error", message };
+  return { reason: "non_zero_exit", message };
+}
+
 async function deleteSessionBestEffort(
   client: SdkClient,
   sessionId: string,
@@ -804,6 +876,11 @@ async function deleteSessionBestEffort(
   } catch (err) {
     return `OpenCode session cleanup failed: ${errorText(err)}`;
   }
+}
+
+/** Stop a server-side session that the dispatch has given up on, so it stops calling the model. */
+function abortSessionBestEffort(client: SdkClient, sessionId: string, query: SdkDirectoryQuery | undefined): void {
+  void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
 }
 
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
@@ -832,12 +909,20 @@ export async function runOpencodeSdk(
   const clearTimeoutImpl = opts.clearTimeoutFn ?? clearTimeout;
 
   if (opts.signal?.aborted) return abortedBeforeSdkStart(profile);
+  const modelWork = opts.dispatch?.modelWork === true;
 
   let client: SdkClient;
   if (_testServer) {
     client = _testServer.client;
   } else {
-    const startupHandle = getOrStartServer(profile, llmConfig, opts.env, opts.envSource);
+    const startupHandle = getOrStartServer(
+      profile,
+      llmConfig,
+      opts.env,
+      opts.envSource,
+      modelWork,
+      opts.dispatch?.inference,
+    );
     try {
       const startup = await raceSdkOperation(startupHandle.promise, {
         timeoutMs: remainingTimeoutMs(),
@@ -966,8 +1051,9 @@ export async function runOpencodeSdk(
   // dispatch request. Both were previously accepted on AgentDispatchRequest but
   // silently dropped on the SDK path, so SDK-mode dispatch ignored agent-asset
   // system prompts and tool policies entirely (the CLI path honours both).
+  // Model work runs the confined agent its server config defines; its tools are that agent's.
   const dispatch = opts.dispatch;
-  const agent = dispatch?.agent;
+  const agent = modelWork ? MODEL_WORK_OPENCODE_AGENT : dispatch?.agent;
   const system = dispatch?.systemPrompt;
   const tools = toolsToSdkAllowlist(dispatch?.tools);
   const body: {
@@ -996,6 +1082,10 @@ export async function runOpencodeSdk(
       },
     );
 
+    // A session the dispatch stops early is aborted on the server too.
+    if (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT) {
+      abortSessionBestEffort(client, sessionId, query);
+    }
     if (prompted === SDK_OPERATION_ABORTED) {
       result = {
         ok: false,
@@ -1020,22 +1110,38 @@ export async function runOpencodeSdk(
       };
     } else {
       const parts = prompted.data?.parts ?? [];
-      const textPart = parts.find((p) => p.type === "text");
-      const stdout = textPart?.text ?? "";
+      // The last text part is the answer; earlier ones narrate the steps before it.
+      const stdout = parts.filter((p) => p.type === "text").at(-1)?.text ?? "";
       // Token accounting from the AssistantMessage (previously discarded) —
       // the seam that makes workflow budget.maxTokens meterable on the
       // default sdk runner.
       const usage = extractUsage(prompted.data?.info);
+      const sdkError = prompted.error ?? prompted.data?.info?.error;
 
-      result = {
-        ok: true,
-        stdout,
-        stderr: "",
-        durationMs: Date.now() - start,
-        exitCode: 0,
-        sessionId,
-        ...(usage ? { usage } : {}),
-      };
+      if (sdkError) {
+        const failure = sdkErrorFailure(sdkError);
+        result = {
+          ok: false,
+          stdout,
+          stderr: failure.message,
+          durationMs: Date.now() - start,
+          exitCode: failure.reason === "aborted" ? null : 1,
+          reason: failure.reason,
+          error: failure.message,
+          sessionId,
+          ...(usage ? { usage } : {}),
+        };
+      } else {
+        result = {
+          ok: true,
+          stdout,
+          stderr: "",
+          durationMs: Date.now() - start,
+          exitCode: 0,
+          sessionId,
+          ...(usage ? { usage } : {}),
+        };
+      }
     }
   } catch (err) {
     result = {

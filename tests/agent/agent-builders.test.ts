@@ -80,18 +80,14 @@ describe("opencodeBuilder — basic dispatch", () => {
     ]);
   });
 
-  test("with systemPrompt: --system-prompt flag present before prompt", async () => {
+  // `opencode run` 1.18.25 has no --system-prompt: it prints its usage and
+  // exits 1. A persona reaches opencode through the prompt instead.
+  test("never emits --system-prompt; the persona channel is the prompt", async () => {
     const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
     const builder = getCommandBuilder("opencode");
-    const profile = makeOpencodeProfile();
     const req: AgentDispatchRequest = { prompt: "do work", systemPrompt: "You are helpful." };
-    const cmd = builder.build(profile, req);
-    const argv = cmd.argv as string[];
-    const idx = argv.indexOf("--system-prompt");
-    expect(idx).toBeGreaterThan(-1);
-    expect(argv[idx + 1]).toBe("You are helpful.");
-    // Prompt is last
-    expect(argv[argv.length - 1]).toBe("do work");
+    expect(builder.personaChannel).toBe("prompt");
+    expect(builder.build(makeOpencodeProfile(), req).argv).toEqual(["opencode", "run", "--", "do work"]);
   });
 
   test("with pre-resolved model: --model flag present", async () => {
@@ -151,6 +147,40 @@ describe("opencodeBuilder — basic dispatch", () => {
     const argv = cmd.argv as string[];
     expect(argv.includes("--allowedTools")).toBe(false);
     expect(argv.join(" ")).not.toContain("read,write");
+  });
+});
+
+// ── builders.ts — opencodeBuilder: inference ──────────────────────────────────
+//
+// Inference reaches opencode only in the config akm injects for model work
+// (`OPENCODE_CONFIG_CONTENT`; see `harnesses/opencode/model-config.ts`).
+
+describe("opencodeBuilder — inference", () => {
+  const INFERENCE = { temperature: 0.2, reasoningEffort: "low", maxTokens: 4096, contextLength: 120000 };
+
+  // Inference for an ordinary dispatch is the user's opencode config's to set, so akm injects nothing, whatever the request carries.
+  test("an ordinary dispatch injects nothing: argv and env are the engine's", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const profile = makeOpencodeProfile({ args: ["run", "--model", "krang/chat/qwen3.8-27b"] });
+    for (const inference of [{}, INFERENCE]) {
+      const cmd = getCommandBuilder("opencode").build(profile, { prompt: "do work", inference });
+
+      expect(cmd.argv).toEqual(["opencode", "run", "--model", "krang/chat/qwen3.8-27b", "--", "do work"]);
+      expect(cmd.env).toBeUndefined();
+    }
+  });
+
+  test("model work with no inference defines the agent and nothing else, as before", async () => {
+    const { getCommandBuilder } = await import("../../src/integrations/agent/builders");
+    const cmd = getCommandBuilder("opencode").build(makeOpencodeProfile(), {
+      prompt: "judge it",
+      model: "krang/m",
+      modelWork: true,
+    });
+    const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");
+
+    expect(Object.keys(config).sort()).toEqual(["agent", "compaction", "permission"]);
+    expect(config.agent["akm-model-work"]).not.toHaveProperty("options");
   });
 });
 

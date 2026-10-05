@@ -27,6 +27,17 @@ export type AdapterOwnedExtensions = Readonly<Record<string, ExecutionJsonObject
 /** Portable selected-tool spellings; policy objects may contain nested JSON values. */
 export type ToolSelection = string | readonly string[] | ExecutionJsonObject | null;
 
+/**
+ * The model-work tool policy: unattended model work (improve, the judges, index
+ * passes, remember) may read, edit only inside the dispatch's own scratch
+ * working directory, and run `akm search` and `akm show`; the stash stays
+ * read-only to it. A transport grants what it can confine and refuses the policy
+ * at build when it can confine nothing; an LLM has no tools. A request carries it
+ * as `authorization.policy.id`, set only when its caller asks (`modelWork`): no
+ * `tools` value names it, so an asset's own `tools:` cannot.
+ */
+export const MODEL_WORK_POLICY_ID = "model-work";
+
 /** Ordinary defaults contributed by one command or persona source layer. */
 export interface UnresolvedExecutionDefaults {
   readonly agent?: string | null;

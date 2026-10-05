@@ -14,13 +14,21 @@ import { getImproveProcessConfig } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
 import type { EventsContext } from "../../core/events";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
+import { defaultFeedback } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import type { UnresolvedExecutionDefaults } from "../../execution/source";
 import type { RejectedProposalContext } from "../../integrations/agent/prompts";
-import type { RunnerSpec } from "../../integrations/agent/runner";
-import { type ChatCompletionOptions, type ChatMessage, LlmCallError } from "../../llm/client";
+import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
+import type { AgentRunResult } from "../../integrations/agent/spawn";
+import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import type { LlmFeatureKey } from "../../llm/feature-gate";
-import { type CallStructuredRequest, callStructured } from "../../llm/structured-call";
+import {
+  type CallStructuredRequest,
+  callStructured,
+  dispatchFailureReason,
+  dispatchFailureResult,
+} from "../../llm/structured-call";
 import { currentLlmStage, withLlmStage } from "../../llm/usage-telemetry";
 import { isProceduralRejection } from "../proposal/proposal-types";
 import {
@@ -33,10 +41,9 @@ import {
   proposalContentHash,
   recordGateDecision,
 } from "../proposal/repository";
-import { resolveImproveLlmExecution } from "./execution";
+import { resolveImproveExecution } from "./execution";
 import type { ImproveProcessName, ResolvedImprovePlan } from "./improve-strategies";
 
-export type LlmRunner = Extract<RunnerSpec, { kind: "llm" }>;
 export type Notice = Readonly<LoweringNotice>;
 export type NoticeSink = (notices: readonly Notice[]) => void;
 
@@ -58,18 +65,18 @@ export function noticeSet(forward?: NoticeSink) {
 export type NoticeSet = ReturnType<typeof noticeSet>;
 
 /**
- * A stage's LLM runner: the one the improve plan froze for it (an own
+ * A stage's runner: the one the improve plan froze for it (an own
  * `llmRunner` key, `null` meaning "none"), else the process engine cascade.
  */
 export function stageRunner(
-  frozen: { llmRunner?: LlmRunner | null },
+  frozen: { llmRunner?: RunnerSpec | null },
   config: AkmConfig,
   profile: ImproveProfileConfig | undefined,
   processName: ImproveProcessName,
   onNotices?: NoticeSink,
-): LlmRunner | undefined {
+): RunnerSpec | undefined {
   if (Object.hasOwn(frozen, "llmRunner")) return frozen.llmRunner ?? undefined;
-  const resolved = resolveImproveLlmExecution({
+  const resolved = resolveImproveExecution({
     config,
     profile,
     process: getImproveProcessConfig(processName, profile),
@@ -81,26 +88,65 @@ export function stageRunner(
 
 export type StageLlmOutcome =
   | { ok: true; raw: string }
-  | { ok: false; reason: "disabled" | "timeout" | "error"; error?: string };
+  | {
+      ok: false;
+      reason: "disabled" | "timeout" | "aborted" | "error";
+      error?: string;
+      /** The failed dispatch's own result (an agent's exit code and stderr, say), when the call reached a transport. */
+      result?: AgentRunResult;
+    };
 
 export interface StageLlmCall {
   feature: LlmFeatureKey;
-  runner: LlmRunner;
+  runner: RunnerSpec;
   prompt: string;
   system?: string;
   /** Earlier turns, sent before the terminal user prompt. */
   history?: ChatMessage[];
   request?: CallStructuredRequest;
+  /** The stage's own parser of the reply, `undefined` for one it rejects. Default: any JSON in it is accepted. */
+  parse?: (raw: string) => unknown;
+  /** Additional exact invocation fields for this call (the child environment of an agent, say). */
+  current?: UnresolvedExecutionDefaults;
   onNotices?: NoticeSink;
   /** Gate the call on the feature flag, with the stage's resolved enablement. */
   gate?: { config: AkmConfig; enabled?: boolean };
 }
 
 /**
- * One model call. Provider trouble (transport error, timeout, a disabled
- * feature) comes back as `{ ok: false }`; only a configuration failure throws.
+ * One model call. Provider trouble (transport error, timeout, abort, a
+ * disabled feature) comes back as `{ ok: false }`; only a configuration
+ * failure throws. A reply to a call with `request.responseSchema` that the
+ * stage's own `parse` rejects gets one corrective retry; the last reply comes
+ * back either way, and the caller parses it again.
  */
 export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
+  const reply = await callStageOnce(call);
+  if (!reply.ok || !call.request?.responseSchema) return reply;
+  if ((call.parse ?? parseEmbeddedJsonResponse)(reply.raw) !== undefined) return reply;
+  const feedback = defaultFeedback({ reason: "parse_error", errors: [] });
+  const retry = await callStageOnce({ ...call, prompt: `${call.prompt}\n\n${feedback}` });
+  // A retry that fails in transport keeps the first reply, which the caller may still accept.
+  return retry.ok ? retry : reply;
+}
+
+/** Timeout and abort come from the dispatch's own reason, whatever the runner's kind. */
+function failureReason(err: unknown): "timeout" | "aborted" | "error" {
+  const reason = dispatchFailureReason(err);
+  return reason === "timeout" || reason === "aborted" ? reason : "error";
+}
+
+/** A failed call: its reason and message, and the dispatch's own result when it reached a transport. */
+function failedCall(err: unknown): Extract<StageLlmOutcome, { ok: false }> {
+  const result = dispatchFailureResult(err);
+  return { ok: false, reason: failureReason(err), error: errMessage(err), ...(result ? { result } : {}) };
+}
+
+/**
+ * One dispatch with no validation, for a caller that parses and repairs the
+ * reply itself (reflect's repair turn, extract's own structured loop).
+ */
+export async function callStageOnce(call: StageLlmCall): Promise<StageLlmOutcome> {
   const messages: ChatMessage[] = [
     ...(call.system ? [{ role: "system" as const, content: call.system }] : []),
     ...(call.history ?? []),
@@ -117,10 +163,11 @@ export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
         runner: call.runner,
         messages,
         ...(call.request ? { request: call.request } : {}),
+        ...(call.current ? { current: call.current } : {}),
         ...(call.onNotices ? { onNotices: call.onNotices } : {}),
         parse: (r) => r ?? "",
         onError: (_cls, err) => {
-          failure = { ok: false, reason: "error", error: errMessage(err) };
+          failure = failedCall(err);
           return undefined;
         },
         fallback: undefined,
@@ -137,8 +184,7 @@ export async function callStage(call: StageLlmCall): Promise<StageLlmOutcome> {
     return raw === undefined ? (failure ?? { ok: false, reason: "error" }) : { ok: true, raw };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
-    const timedOut = err instanceof LlmCallError && err.code === "timeout";
-    return { ok: false, reason: timedOut ? "timeout" : "error", error: errMessage(err) };
+    return failedCall(err);
   }
 }
 
@@ -266,21 +312,22 @@ type QualityJudgeChat = (
  * The judge a quality gate names for itself (#1011): the gate's `engine`,
  * `model`, `timeoutMs` and `llm` over the process's own settings, as
  * `processes.triage.judgment` resolves over triage. `undefined` when the gate
- * is off or sets none of them, so the caller keeps its own judge. Throws when
- * they resolve to no LLM engine, before anything is generated: a judge must be
- * one, and the gate never falls back to another.
+ * is off or sets none of them, so the caller keeps its own judge. The engine
+ * may be of any kind; config validation has required one that confines the
+ * model-work tool policy. Throws when they resolve to no engine at all,
+ * before anything is generated: the gate never falls back to another judge.
  */
 export function resolveQualityGateJudge(
   config: AkmConfig,
   profile: ImproveProfileConfig | undefined,
   processName: "reflect" | "distill",
   onNotices?: NoticeSink,
-): LlmRunner | undefined {
+): RunnerSpec | undefined {
   const process = profile?.processes?.[processName];
   const gate = process?.qualityGate;
   if (!gate || gate.enabled === false) return undefined;
   if (!["engine", "model", "timeoutMs", "llm"].some((key) => Object.hasOwn(gate, key))) return undefined;
-  const resolved = resolveImproveLlmExecution({
+  const resolved = resolveImproveExecution({
     config,
     processName: `${processName}-quality-judge`,
     ...(profile ? { profile } : {}),
@@ -289,7 +336,7 @@ export function resolveQualityGateJudge(
   });
   if (!resolved) {
     throw new ConfigError(
-      `The ${processName} quality gate's judge must be an LLM engine. Set processes.${processName}.qualityGate.engine to one.`,
+      `The ${processName} quality gate's judge has no engine. Set processes.${processName}.qualityGate.engine.`,
       "INVALID_CONFIG_FILE",
     );
   }
@@ -299,8 +346,10 @@ export function resolveQualityGateJudge(
 
 export interface QualityJudgeOptions {
   similarLessons?: Array<{ ref: string; content: string }>;
+  /** Reflect: the ref of the asset the candidate revises, for a judge on an agent engine to read. */
+  ref?: string;
   /** The exact runner selected for this judge. */
-  llmRunner?: LlmRunner;
+  llmRunner?: RunnerSpec;
   /** The caller already froze judge selection: no runner means fail closed, never re-resolve. */
   runnerSelectionFrozen?: true;
   timeoutMs?: number | null;
@@ -372,15 +421,44 @@ function buildChangedRegion(sourceContent: string, candidateContent: string): st
   return boundedDocument(`Removed or replaced:\n${removed || "(none)"}\n\nAdded or replacement:\n${added || "(none)"}`);
 }
 
-/** Judge prompt for an in-place revision. */
-export function buildReflectJudgePrompt(candidateContent: string, sourceContent: string, feedback: string[]): string {
+/**
+ * What the judge may do with tools when it runs on an agent engine: verify a
+ * fact the revision adds or alters, and nothing else. The plain judge's prompt
+ * is unchanged (its rubric is tuned and measured without this paragraph).
+ */
+function reflectJudgeToolRules(ref: string | undefined): string {
+  const asset = ref ? `The asset is \`${ref}\`: read it with akm_show, ` : "Read an asset with akm_show ";
+  return `Tools: ${asset}or an asset the changed region names, only to verify a fact the revision adds or alters; the text above already shows every change. Do not search, do not read anything else, and do not use a tool to judge structure or wording. One or two reads at most. Before scoring, check two lists: (1) every statement the revision adds: find each in the asset, or as a fact the feedback states about the subject, and score QUALITY 1-2 if any is in neither; a statement is found only when the asset or the feedback says it, in any words: a new step, cause, consequence or detail that merely seems to follow is not found; feedback says what to fix and is not content, so an added statement about how the asset was used, found or verified is unsupported; (2) every fact, caveat and field of the source: find each in the revision, and score PRESERVATION 1-3 if any is missing. A read that finds nothing wrong raises no score above what these lists support. Then reply with the JSON.`;
+}
+
+/**
+ * The reflect judge's rubric, for the frontmatter-only revisions reflect makes, and the paragraph that says what
+ * drove the revision: negative feedback (any `[negative]` line) or maintenance. Tuned on the production model
+ * against 113 reviewed proposals (the stash's eval/judge-gate/tuning/reflect/judge-fm, rubric f07).
+ */
+const REFLECT_JUDGE_INTRO =
+  "You are evaluating a proposed revision of an existing akm asset's frontmatter. The revision may change only the `description`, the `when_to_use` and the title (a level-1 heading added when the body has none); the body is unchanged.";
+const REFLECT_JUDGE_NEGATIVE =
+  "This revision answers negative feedback. It cannot change the body, so it need not resolve the feedback: judge only the fields it changes, and never fault it for a field it leaves as it was. Most negative feedback says the asset did not help with a task it was retrieved for: a retrieval miss, not a defect. It justifies changing a field only when the field claims more than the body covers (narrow it to what the body covers), or when the feedback calls the asset stale, outdated, superseded or historical (a new `when_to_use` must then name the version or date the body records). Feedback about a task the asset never claims to cover justifies no change. Repairing a missing or broken field is always needed, whatever the feedback says.";
+const REFLECT_JUDGE_MAINTENANCE =
+  "This revision is maintenance: there is no negative feedback. Only a missing or broken field needs a change; rewording a sound `description` or `when_to_use` is churn, however accurate.";
+
+/** Judge prompt for an in-place revision. `tools` is set when the judge runs on an agent engine. */
+export function buildReflectJudgePrompt(
+  candidateContent: string,
+  sourceContent: string,
+  feedback: string[],
+  tools?: { ref?: string },
+): string {
   return [
-    "You are evaluating a proposed revision to an existing akm asset.",
+    REFLECT_JUDGE_INTRO,
+    "",
+    feedback.some((line) => line.startsWith("[negative]")) ? REFLECT_JUDGE_NEGATIVE : REFLECT_JUDGE_MAINTENANCE,
     "",
     "Score this revision on each criterion from 1 (poor) to 5 (excellent):",
-    "1. NEED: Does the revision fix a concrete problem in the source? Concrete problems are: something the feedback reports as wrong or missing; a factual error; or broken, garbled, truncated or missing text, including frontmatter fields such as description or when_to_use. Score 4-5 when it fixes one, even a small one. Score 1-2 when the source was already correct and the revision only rewords, restates, reformats, or adds headings, an introduction or a table of contents.",
-    "2. PRESERVATION: Does it keep every concrete fact, identifier, command, path, number and example from the source, without truncation?",
-    "3. QUALITY: Is it coherent and accurate, with no claims, steps or details that the source or the feedback does not support?",
+    "1. NEED: Does every changed field fix a real problem? Real problems: a missing `description`, `when_to_use` or title; a broken description (a sentence split by a stray period at a line wrap, an escaped or unbalanced quote, a truncated ending, a heading fragment); and, for a revision answering negative feedback, a field that claims more than the body covers, or a stale note's `when_to_use` that does not name the version or date the body records. Replacing a stray period that splits a sentence with a comma, a word or nothing repairs a broken description, however small the change looks. Score 4-5 when every changed field fixes one. Score 1-2 when any changed field rewrites a sound field. Score NEED on the changed fields alone: leaving negative feedback about the body unresolved never lowers it.",
+    "2. PRESERVATION: Does the new description keep every fact the old one carried: names, identifiers, numbers, versions, paths, qualifiers and status words such as 'Proposal' or 'draft'? Are all other frontmatter fields unchanged? Score 1-3 when anything is dropped or changed.",
+    "3. QUALITY: Is every new value supported by the body, without inventing, over-claiming or misdescribing? Check each new value as a claim against the body; restating the body in other words is supported. Score only values the revision adds or changes: a field it leaves as it was, however stale, is never this revision's fault. Score 1-2 when a new value says something the body does not support or the opposite of what it says, keeps a truncated or garbled fragment, or offers a dated or historical note for current work: when the feedback calls the note stale, outdated, superseded or historical, or the body records the version or date it was true for, a new `when_to_use` that does not name that version or date, or a new value that calls a dated snapshot 'current', scores 1-2.",
     "",
     "Feedback:",
     "```",
@@ -402,6 +480,7 @@ export function buildReflectJudgePrompt(candidateContent: string, sourceContent:
     buildChangedRegion(sourceContent, candidateContent),
     "```",
     "",
+    ...(tools ? [reflectJudgeToolRules(tools.ref), ""] : []),
     'Return ONLY valid JSON, no prose: {"scores": {"need": <1-5 integer>, "preservation": <1-5 integer>, "quality": <1-5 integer>}, "reason": "<one sentence>"}',
   ].join("\n");
 }
@@ -503,11 +582,11 @@ async function runQualityJudge(
 ): Promise<QualityJudgeResult> {
   const resolved =
     !options.runnerSelectionFrozen && !options.llmRunner
-      ? resolveImproveLlmExecution({ config, processName: `${feature}-judge` })
+      ? resolveImproveExecution({ config, processName: `${feature}-judge` })
       : null;
   if (resolved) options.onNotices?.(resolved.notices);
   const runner = options.llmRunner ?? resolved?.runner;
-  if (!runner) return { pass: false, score: -1, reason: "no LLM configured — cannot judge, failing closed" };
+  if (!runner) return { pass: false, score: -1, reason: "no engine configured — cannot judge, failing closed" };
   const outcome = await callStage({
     feature,
     runner,
@@ -515,13 +594,14 @@ async function runQualityJudge(
     prompt,
     request: {
       // Off unless the judge's own engine enables thinking (a slower, separate judge engine, #1011).
-      enableThinking: runner.connection.enableThinking === true,
+      enableThinking: runnerLlmConnection(runner)?.enableThinking === true,
       temperature: 0,
       responseSchema: judgeResponseSchema(keys),
       ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(chat ? { chat } : {}),
     },
+    parse: (raw) => parseJudgeResponse(raw, keys),
     ...(options.onNotices ? { onNotices: options.onNotices } : {}),
   });
   if (!outcome.ok) {
@@ -579,6 +659,8 @@ export function runReflectQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  const prompt = buildReflectJudgePrompt(candidateContent, sourceContent, feedback);
+  // A judge on an agent engine gets the tool rules; the runner is the frozen one or none.
+  const tools = options.llmRunner && options.llmRunner.kind !== "llm" ? { ref: options.ref } : undefined;
+  const prompt = buildReflectJudgePrompt(candidateContent, sourceContent, feedback, tools);
   return runQualityJudge("proposal_quality_gate", config, prompt, REFLECT_JUDGE_CRITERIA, chat, options);
 }

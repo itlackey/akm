@@ -40,6 +40,7 @@ import { type ResolvedWriteTarget, resolveWriteTarget } from "../../core/write-s
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
+import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { cosineSimilarity, embedBatch, resolveEmbeddingModelId } from "../../llm/embedder";
 import type { Database } from "../../storage/database";
@@ -64,7 +65,7 @@ import { contentHash } from "./content-hash";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
 import { isContentDrivenRow, isLedgerBlocked, ledgerKey, loadLedgerSnapshot, recordLedgerAttempt } from "./ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "./retrieval-scope";
-import { callStage, type LlmRunner, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
+import { callStage, mintProposal, type NoticeSink, noticeSet, stageRunner } from "./stage";
 
 export interface MemoryEntry {
   name: string;
@@ -87,6 +88,11 @@ export interface ConsolidatePromoteOp {
 interface RawChunkPlan {
   operations?: unknown[];
   warnings?: unknown[];
+}
+
+function parsePlan(raw: string) {
+  const plan = parseEmbeddedJsonResponse<RawChunkPlan>(raw);
+  return plan && Array.isArray(plan.operations) ? { ...plan, operations: plan.operations } : undefined;
 }
 
 /** A plan op worth acting on. Retired advisory ops (merge/delete/contradict) are dropped, never thrown on. */
@@ -133,7 +139,7 @@ export interface AkmConsolidateOptions {
   stashDir?: string;
   config?: AkmConfig;
   /** Exact runner frozen by the improve plan (an own key, `null` meaning none). */
-  llmRunner?: LlmRunner | null;
+  llmRunner?: RunnerSpec | null;
   onNotices?: NoticeSink;
   /** Chunk size cap (1–50). */
   maxChunkSize?: number;
@@ -719,9 +725,10 @@ async function judgeConsolidationChunks(args: {
       request: {
         responseSchema: CONSOLIDATE_PLAN_JSON_SCHEMA,
         enableThinking: false,
-        timeoutMs: llmRunner.timeoutMs,
+        ...(Object.hasOwn(llmRunner, "timeoutMs") ? { timeoutMs: llmRunner.timeoutMs } : {}),
         signal: opts.signal,
       },
+      parse: parsePlan,
       ...(opts.onNotices ? { onNotices: opts.onNotices } : {}),
     });
     if (!outcome.ok) {
@@ -729,8 +736,8 @@ async function judgeConsolidationChunks(args: {
       continue;
     }
     warnVerbose(`[akm:consolidate] ${label} raw response (first 500 chars): ${outcome.raw.slice(0, 500)}`);
-    const parsed = parseEmbeddedJsonResponse<RawChunkPlan>(outcome.raw);
-    if (!parsed || !Array.isArray(parsed.operations)) {
+    const parsed = parsePlan(outcome.raw);
+    if (!parsed) {
       const hint =
         outcome.raw.trim() === "" ? " (empty response — if using a thinking model, disable thinking mode)" : "";
       const msg = `Chunk ${chunkIdx + 1}: invalid plan from AI — skipping.${hint}`;
@@ -778,7 +785,7 @@ async function planConsolidation(
   // 500 body chars per memory keep the judgement useful; chunk size varies instead.
   const bodyTruncation = 500;
   const chunkSize = computeSafeChunkSize(
-    llmRunner?.connection.contextLength ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
+    (llmRunner && runnerLlmConnection(llmRunner)?.contextLength) ?? DEFAULT_CONTEXT_LENGTH_TOKENS,
     bodyTruncation,
     opts.maxChunkSize,
   );

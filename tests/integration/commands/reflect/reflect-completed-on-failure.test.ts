@@ -161,35 +161,6 @@ describe("akm reflect — reflect_completed on failure paths (Fix #3)", () => {
     expect(typeof meta.subreason).toBe("string");
   });
 
-  test("ref-mismatch (agent retargets the proposal) emits reflect_completed", async () => {
-    const stash = makeStashDir();
-    // Agent returns a valid JSON payload — but with a DIFFERENT ref than the
-    // caller asked for. R-3 / #366 rejects this; Fix #3 must emit
-    // reflect_completed with subreason="ref_mismatch".
-    const retargetedPayload = JSON.stringify({
-      ref: "lessons/i-was-told-to-write-different-asset",
-      content: "---\ndescription: x\nwhen_to_use: y\n---\n\nBody.\n",
-    });
-    const result = await akmReflect({
-      ref: "lessons/original-target",
-      stashDir: stash,
-      config: quietQualityGateConfig(),
-      runAgentOptions: { spawn: fakeSpawn(retargetedPayload, "", 0) },
-    });
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error("expected failure");
-    expect(result.reason).toBe("parse_error");
-
-    const events = getReflectCompletedEvents();
-    expect(events.length).toBe(1);
-    const meta = events[0]?.metadata as Record<string, unknown>;
-    expect(meta.ok).toBe(false);
-    expect(meta.reason).toBe("parse_error");
-    expect(meta.subreason).toBe("ref_mismatch");
-    expect(meta.expectedRef).toBe("lessons/original-target");
-    expect(meta.actualRef).toBe("lessons/i-was-told-to-write-different-asset");
-  });
-
   test("exactly one reflect_completed event per invocation (no duplicates)", async () => {
     const stash = makeStashDir();
     // Three separate failing invocations.

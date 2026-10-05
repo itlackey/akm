@@ -12,10 +12,9 @@ import { SECRET_STORE_REFERENCE_PATTERN } from "../../core/config/schema/primiti
 import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import { collectSensitiveValues } from "../../core/redaction";
-import { warn } from "../../core/warn";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
-import { DEFAULT_AGENT_TIMEOUT_MS, DEFAULT_LLM_TIMEOUT_MS } from "./config";
+import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
 import { type AgentProfile, getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "./profiles";
 
 // `./runner.ts` imports values from this module, so RunnerSpec is referenced
@@ -333,43 +332,13 @@ function rawLlmConnection(engine: LlmEngineConfig): Record<string, unknown> {
 export function resolveLlmEngineUse(
   config: EngineResolutionConfig,
   layers: readonly EngineUseConfig[],
-  options: { optional: true },
-): ResolvedLlmUse | undefined;
-export function resolveLlmEngineUse(
-  config: EngineResolutionConfig,
-  layers: readonly EngineUseConfig[],
-  options?: { optional?: false },
-): ResolvedLlmUse;
-export function resolveLlmEngineUse(
-  config: EngineResolutionConfig,
-  layers: readonly EngineUseConfig[],
-  options: { optional?: boolean } = {},
-): ResolvedLlmUse | undefined {
+): ResolvedLlmUse {
   const name = selectedEngineName(config, layers, true);
   if (!name) {
-    if (options.optional) return undefined;
     throw new ConfigError("No LLM engine is selected. Set defaults.llmEngine or specify engine.", "LLM_NOT_CONFIGURED");
   }
   const engine = configuredEngine(name, config);
-  if (engine.kind !== "llm") {
-    const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
-    const fallbackEngine = fallbackName ? configuredEngine(fallbackName, config) : undefined;
-    if (!fallbackEngine || fallbackEngine.kind !== "llm") {
-      if (options.optional) return undefined;
-      throw new ConfigError(
-        fallbackName
-          ? `Engine "${name}" is not an LLM engine, and its llmEngine fallback "${fallbackName}" is not one either.`
-          : `Engine "${name}" is not an LLM engine, and has no llmEngine fallback configured.`,
-        "INVALID_CONFIG_FILE",
-      );
-    }
-    warn(
-      `[akm] Engine "${name}" is an agent engine, not an LLM engine; using its llmEngine "${fallbackName}" instead.`,
-    );
-    return options.optional
-      ? resolveLlmEngineUse(config, [{ engine: fallbackName }], { optional: true })
-      : resolveLlmEngineUse(config, [{ engine: fallbackName }]);
-  }
+  if (engine.kind !== "llm") throw new ConfigError(`Engine "${name}" is not an LLM engine.`, "INVALID_CONFIG_FILE");
 
   let connection = rawLlmConnection(engine);
   for (const layer of layers) {
@@ -454,19 +423,16 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model ? { model: engine.model } : {}),
   };
+  // An engine that sets no timeoutMs leaves it unset, so a caller's own default
+  // (model work's 600 s) can apply; a dispatch with none runs unbounded.
   const ownTimeout = Object.hasOwn(engine, "timeoutMs") ? (engine.timeoutMs ?? null) : undefined;
   if (!sdk) {
-    return {
-      kind: "agent",
-      engine: name,
-      profile,
-      timeoutMs: ownTimeout !== undefined ? ownTimeout : DEFAULT_AGENT_TIMEOUT_MS,
-    };
+    return { kind: "agent", engine: name, profile, ...(ownTimeout !== undefined ? { timeoutMs: ownTimeout } : {}) };
   }
-  const fallbackName = engine.llmEngine ?? config.defaults?.llmEngine;
-  const fallback = fallbackName
-    ? resolveLlmEngineUse(config, [{ engine: fallbackName }], { optional: true })
-    : undefined;
+  // The fallback connection is the engine's own `llmEngine` and nothing else. `defaults.llmEngine`
+  // is the default engine for model work, not a connection every SDK engine borrows: with no
+  // `llmEngine`, opencode resolves provider, model and auth from its own configuration.
+  const fallback = engine.llmEngine ? resolveLlmEngineUse(config, [{ engine: engine.llmEngine }]) : undefined;
   return {
     kind: "sdk",
     engine: name,
@@ -480,7 +446,7 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
           fallbackTimeoutMs: fallback.timeoutMs,
         }
       : {}),
-    timeoutMs: ownTimeout !== undefined ? ownTimeout : (fallback?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS),
+    ...(ownTimeout !== undefined ? { timeoutMs: ownTimeout } : fallback ? { timeoutMs: fallback.timeoutMs } : {}),
   };
 }
 

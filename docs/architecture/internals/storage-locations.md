@@ -486,7 +486,7 @@ Keys of `metadata_json`, each written only when the proposal has it:
 | `review` | `{ outcome: accepted\|rejected, reason?, decidedAt }` |
 | `reviewHistory` | Since 0.9.19: the rejections `akm proposal reopen` undid, oldest first, each `{ review?, gateDecision?, reopenedAt, reopenReason? }`; the newest `reopenedAt` is where retention expiry and `--older-than` start counting |
 | `confidence` | Self-estimated confidence in [0, 1] |
-| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, scores?, judgeReason?, decidedAt }`; `scores` (per criterion) and `judgeReason` are the quality judge's evidence on its `staged` pass, and stay on the row when the drain accepts it; a reflect pass deferred as `body-edit` carries them too |
+| `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, scores?, judgeReason?, decidedAt }`; `scores` (per criterion) and `judgeReason` are the quality judge's evidence on its `staged` pass, and stay on the row when the drain accepts it; a reflect pass deferred as `body-edit` by an older release carries them too |
 | `backupContent` | The target's content before promotion, for `revert` |
 | `acceptedTarget` | `{ source, root, path, contentHash }`, where accepted content went |
 | `eligibilitySource` | The improve lane that planned the asset: `signal-delta` or `scope`; `proactive` and `high-salience` only on rows an older release wrote, since those lanes score assets and no longer plan them |
@@ -842,6 +842,7 @@ These paths are read by `akm improve` to scan for repeated failure patterns in a
 | `~/.claude/projects/**/*.jsonl` | Claude Code |
 | `~/.local/share/opencode/` (Linux) | OpenCode |
 | `~/Library/Application Support/opencode/` (macOS) | OpenCode |
+| `$CODEX_HOME/sessions/**/rollout-*.jsonl` (`~/.codex/sessions/` by default) | Codex |
 
 ---
 
@@ -922,6 +923,7 @@ not affect ranking, salience, real-query labels, or GRR.
 | 41 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | FM+Markdown | Improve regression eval cases |
 | 42 | `$STATE/improve/measurement/verdicts/<stash>/verdict-<ts>.{json,md}` | JSON+Markdown | `akm-eval-proactive-verdict` reports |
 | 43 | `$CACHE/index/unresolved-sources/<stash>/<name>` | N/A | Synthetic unresolved-source placeholder path (never written to disk) |
+| 44 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | JSONL | Codex session logs (read-only input; `~/.codex/sessions/` by default) |
 
 ---
 

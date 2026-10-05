@@ -63,13 +63,14 @@ flowchart TD
             REFLECT_A[appendEvent: reflect_invoked] --> REFLECT_B[lookup ref in FTS index\nread asset file content]
             REFLECT_B --> REFLECT_C[readRecentFeedback\nbuildSchemaHints for lessons]
             REFLECT_C --> REFLECT_D[buildReflectPrompt]
-            REFLECT_D --> REFLECT_E{RunnerSpec kind?}
-            REFLECT_E -- sdk --> REFLECT_SDK[runExecution\nin-process SDK call]
-            REFLECT_E -- spawn --> REFLECT_SPAWN[runExecution\nspawn agent CLI binary\ncaptured stdout]
-            REFLECT_SDK --> REFLECT_F
-            REFLECT_SPAWN --> REFLECT_F[parseAgentProposalPayload\nextract JSON from stdout]
-            REFLECT_F --> REFLECT_G[createProposal\nstate.db proposals row\nsource: reflect]
+            REFLECT_D --> REFLECT_E[callStageOnce on any engine kind\nllm, agent CLI or SDK\nthe reply's JSON Schema is the output schema]
+            REFLECT_E --> REFLECT_F{reply valid?\nparseSchemaReflectOutput}
+            REFLECT_F -- no, first reply --> REFLECT_R[one repair turn\nshared across refine passes]
+            REFLECT_R --> REFLECT_E
+            REFLECT_F -- yes --> REFLECT_G[createProposal\nstate.db proposals row\nsource: reflect]
             REFLECT_G --> REFLECT_H([return AkmReflectResult\nok or failure envelope])
+            REFLECT_F -- no, after the repair --> REFLECT_X[parse_error, nothing queued]
+            REFLECT_X --> REFLECT_H
         end
 
         REFLECT_H --> T{distillable memory?\nmemory ref, not derived or proposed,\nnot cooled by the signal delta}
@@ -174,27 +175,37 @@ flowchart TD
 
 `akmReflect` is the agent-invocation subprocess. It always emits a `reflect_invoked` event at entry, regardless of success or failure.
 
-For `skills/*` refs, reflect also reviews related distilled lessons as consolidation evidence. When those lessons show strong, repeatable, factual guidance, the agent may propose promoting that guidance into long-term skill documentation, including companion reference docs under `skills/<skill>/references/*.md` via `knowledge/skills/<skill>/references/<topic>` refs.
+Reflect changes only an asset's `description`, `when_to_use` and title. The engine replies with those fields (each `null` when it needs no fix), and akm applies them to the asset it read: the body is kept byte for byte, apart from a `# <title>` heading akm adds when the body has none. A reply that changes nothing creates no proposal.
 
 **Internal steps:**
 
 1. Emit `reflect_invoked` event via `appendEvent`.
 2. Resolve asset content: look up the ref in the FTS index; read the file if found. Index miss is non-fatal.
 3. Resolve the selected strategy's `reflect.engine`, falling back to `defaults.llmEngine`.
-4. For skill refs, load the canonical derived lesson (`lessons/<type>-<name>-lesson`) plus any lesson files whose frontmatter `sources` cite the skill ref.
-5. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
-6. Dispatch the frozen `RunnerSpec` through `runExecution`. Unattended improve
-   requires an LLM engine; explicit interactive uses may select an agent engine.
-7. Parse stdout: `parseAgentProposalPayload` strips `<think>` blocks and code fences, then JSON-parses the output. Falls back to raw markdown detection if JSON parse fails.
-8. Quality gate (`processes.reflect.qualityGate`, on unless disabled): one judge call scores the revision against the source on **need**, **preservation** and **quality** ([Quality judge](../improvement.md#quality-judge)), and passes it only when every criterion scores 4 or more. A score that does not pass is refused (`quality_rejected`, no proposal). A judge that times out, errors or replies unparseably gives no verdict, and the proposal is deferred for review (`judge-error`, gate `quality-gate`). A revision the size guard or the truncation-marker check flagged skips the judge.
+4. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
+5. Dispatch the frozen `RunnerSpec` through `callStageOnce` under the
+   model-work tool policy
+   ([Engines for unattended model work](../../reference/configuration.md#engines-for-unattended-model-work)).
+   The engine may be an LLM or an agent that confines the policy, and every
+   kind runs the same iteration (`runReflectIteration`). The JSON Schema of
+   the reply (`REFLECT_JSON_SCHEMA`, or the unscoped schema when no ref was
+   given) is the request's output schema: `response_format` for an LLM, the
+   shared schema instruction at the end of the prompt for an agent (`claude`
+   also gets `--output-format json`, which akm unwraps). An agent edits only
+   its own scratch directory, so it returns the proposal as its reply, as an
+   LLM does. An LLM endpoint that rejects JSON Schema gets the framed-markdown
+   contract instead.
+6. Validate the reply with `parseSchemaReflectOutput` (`parseFramedReflectOutput` for the framed contract), which strips `<think>` blocks and code fences, then requires exactly the contract's fields: `confidence` and a `frontmatterPatch` of `description`, `when_to_use` and `title` (each a non-empty single-line string, or `null` for no change), plus `ref` when no target was given. A reply that fails gets one repair turn, shared across self-refine passes: the conversation so far, and a request to reformat the reply in the contract (`reflect-output-repair.md`). A reply still invalid fails with `parse_error` and queues nothing. A failed agent or SDK dispatch is reported as it ran, with its exit code and stderr.
+7. Apply the patch (`applyReflectPatch`) to the source asset: its frontmatter with the non-null `description` and `when_to_use` set, and its body unchanged. A non-null `title` becomes a `# <title>` heading and one blank line at the top of the body, only when the body has no level-1 heading; otherwise it is ignored. A source that requires a `description` and has none gets one derived from its own text when the patch gave none (#636). A patch that changes nothing (every field `null`, or equal to the source's, and no `description` to derive) is the `no_change` outcome (`reflect_skipped_noop`), as is a source with no content to patch; a result that differs only cosmetically is `reflect_skipped_cosmetic`. Neither creates a proposal.
+8. Quality gate (`processes.reflect.qualityGate`, on unless disabled): one judge call scores the revision against the source on **need**, **preservation** and **quality** ([Quality judge](../improvement.md#quality-judge)), and passes it only when every criterion scores 4 or more. A score that does not pass is refused (`quality_rejected`, no proposal). A judge that times out, errors or replies unparseably gives no verdict, and the proposal is deferred for review (`judge-error`, gate `quality-gate`). Before the judge, with the gate on or off, reflect refuses (`quality_rejected`, no proposal, no judge call; the rule is the event's `reflectDefect`) a revision that adds placeholder text (`placeholder_added`: "please confirm", "to be confirmed"; not `TODO`, `TBD` or `FIXME`), talks about its own edit (`meta_commentary_added`: "the feedback says", "this revision") or copies frontmatter into its body (`frontmatter_copied_into_body`: `sources:` or `updated:` lines outside code, a `sources` value). Each rule counts only what the revision adds to its source (`findReflectDefect`), and its wording is a list that `processes.reflect.defectFilter` replaces or, when empty, turns off ([Configuration](../../reference/configuration.md#strategies)).
 9. Retrieval regression gate, after a pass on an existing asset: a revision that grades lower on the asset's own retrieval queries is refused ([Retrieval regression gate](../improvement.md#retrieval-regression-gate)).
-10. Write the proposal (`mintProposal`), routed by what it changes. A pass that leaves the body unchanged (compared after the frontmatter, ignoring whitespace) is stamped `staged`, and the triage drain accepts it. A pass that changes the body, or whose source could not be read, waits for review: it is deferred with the reason `body-edit` (gate `reflect`), and the judge's scores and reason stay on the stamp. With the gate off, such a revision is deferred the same way, with no scores, and one that leaves the body unchanged is minted unstamped for the drain to decide. A flagged revision (`reflect-size-ratio`, `reflect-truncation-leak`) and one made with no judge configured (`no-judge-configured`) are deferred too. The drain leaves every deferral for a person.
+10. Write the proposal (`mintProposal`). A pass the judge passed is stamped `staged`, and the triage drain accepts it; with the gate off the proposal is minted unstamped for the drain to decide. One made with no judge configured (`no-judge-configured`) is deferred for review (gate `reflect`), and so is one whose judge gave no verdict (`judge-error`). The drain leaves every deferral for a person.
 
 **What it writes:** one durable proposal row in `state.db`. It never writes asset files directly.
 
-**Prompt shape (`buildReflectPrompt`):** The prompt instructs the agent to review the current asset content plus recent feedback signals and return a single JSON object `{ ref, content, frontmatter? }`. When `feedback` is empty and a ref is set, the prompt normally constrains the agent to schema/structural improvements only. The exception is `skills/*` refs with related distilled lessons: in that case the prompt allows substantive changes justified by those lessons and explicitly asks whether durable guidance should stay in `SKILL.md` or be promoted into a companion `knowledge/skills/<skill>/references/<topic>` doc. Lesson refs get a distinct goal framing ("distill what usage signals reveal") versus non-lesson refs ("produce an improved version"). The response contract (`RESPONSE_CONTRACT_JSON`) requires the agent to produce only the JSON object — no prose before or after. Non-empty feedback is always preceded by a caveat (`reflect-feedback-framing.md`) framing it as an unverified signal to investigate, not a fact to insert — feedback claims a model treated as ground truth were fabricating whole sections asserting details the asset never contained (#952). When feedback asks for information the asset lacks, the caveat's only instruction is to leave the section unchanged. It used to offer a `TODO: verify …` placeholder as an alternative, and a model inserted one into a memory from a feedback line reporting that `akm show` had failed; a later distill pass then built a lesson on that line (#999).
+**Prompt shape (`buildReflectPrompt`):** The prompt asks the engine to check the asset's `description`, `when_to_use` and title against its body and the recent feedback signals, and to return a single JSON object `{ confidence, frontmatterPatch }`, with `ref` as well when no target was given. Each patch field is a non-empty single-line string, or `null` when it needs no fix. akm applies the patch to the source it read, so a reply names neither the target nor a body. The goal sentence is the same for every asset type. When `feedback` is empty and a ref is set, the prompt says to fix only a missing or broken field and otherwise return `null` for each. The response contract (`reflect-llm-schema-contract.md`, the same for every engine kind) requires the engine to produce only the JSON object — no prose before or after. Non-empty feedback is always preceded by a caveat (`reflect-feedback-framing.md`) framing it as a signal, not a fact to insert: change a field only when it is missing or broken, or claims more than the body covers, and then only to describe what the body covers; feedback about a task the asset never claims to cover, or asking for information the asset lacks, needs no change. Feedback claims a model treated as ground truth were fabricating whole sections asserting details the asset never contained (#952), and the caveat once offered a `TODO: verify …` placeholder, which a model inserted into a memory from a feedback line reporting that `akm show` had failed; a later distill pass then built a lesson on that line (#999). Previously rejected proposals for the ref are listed with the instruction not to propose the same change again.
 
-**Asset content cap:** the asset content section is capped to keep the prompt well under OS ARG_MAX when it travels through CLI argv (agent/SDK runners always use the flat `REFLECT_CONTENT_CAP`, 12 000 chars). The direct-LLM (`kind: "llm"`) path never touches argv, so its cap is instead computed from the resolved engine's `contextLength` (chars-per-token estimate × the reserve actually used by the rest of that prompt, measured per call rather than guessed), halved to reserve the other half of the usable context window for the model's response — a reflect rewrite returns a body roughly the size of the input, so the request must leave room to receive one — and never dropping below the flat floor. When content is truncated, a `REFLECT_TRUNCATION_MARKER` notice is appended; the output contracts explicitly forbid echoing that marker back, and `sanitizeReflectPayload` still detects a leaked marker in the response and defers the proposal for review (`reflect-truncation-leak`) rather than queuing it silently (#952).
+**Asset content cap:** the asset content section is capped to keep the prompt well under OS ARG_MAX when it travels through CLI argv (agent/SDK runners always use the flat `REFLECT_CONTENT_CAP`, 12 000 chars). The direct-LLM (`kind: "llm"`) path never touches argv, so its cap is instead computed from the resolved engine's `contextLength` (chars-per-token estimate × the reserve actually used by the rest of that prompt, measured per call rather than guessed), halved (the other half is left for the model's reply), and never dropping below the flat floor. When content is truncated, a `REFLECT_TRUNCATION_MARKER` notice is appended after the visible portion (#952).
 
 ### distill (akmDistill)
 
@@ -592,12 +603,13 @@ An explicit ref scope bypasses every gate. Consolidation, extract and schema rep
 
 | Process | Config path | Controls |
 |---|---|---|
-| `distill` | `improve.strategies.<name>.processes.distill` | Enables distillation and selects its LLM engine/model/request overrides. |
-| `consolidate` | `improve.strategies.<name>.processes.consolidate` | Enables consolidation and selects its LLM engine/model/request overrides. |
+| `distill` | `improve.strategies.<name>.processes.distill` | Enables distillation and selects its engine/model/request overrides. |
+| `consolidate` | `improve.strategies.<name>.processes.consolidate` | Enables consolidation and selects its engine/model/request overrides. |
 
 Improve process selection is resolved once by `resolveImprovePlan`; the plan
 contains every process's frozen enablement, process config, and resolved runner.
-LLM-only processes reject an explicit agent engine rather than falling through.
+A process runs on any engine that confines the model-work tool policy; one that
+cannot is refused when the plan is built, never replaced by another engine.
 
 ## Output shape
 

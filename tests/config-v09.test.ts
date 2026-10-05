@@ -356,15 +356,23 @@ describe("0.9 config contract", () => {
       engines: {
         llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" },
         agent: { kind: "agent", platform: "pi" },
+        confined: { kind: "agent", platform: "claude" },
       },
     };
     expect(validateConfigShape({ ...base, defaults: { improveStrategy: "missing" } }).ok).toBe(false);
     expect(validateConfigShape({ ...base, defaults: { improveStrategy: "quick" } }).ok).toBe(true);
     expect(validateConfigShape({ ...base, improve: { strategies: { custom: { engine: "agent" } } } }).ok).toBe(false);
+    // A triage judgment is unattended model work: an agent that cannot confine the policy is refused.
     expect(
       validateConfigShape({
         ...base,
         improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "agent" } } } } } },
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateConfigShape({
+        ...base,
+        improve: { strategies: { custom: { processes: { triage: { judgment: { engine: "confined" } } } } } },
       }).ok,
     ).toBe(true);
     expect(
@@ -439,6 +447,7 @@ describe("0.9 config contract", () => {
   test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
     writeConfig({
       configVersion: "0.9.0",
+      engines: { index: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" } },
       index: { metadataEnhance: { enabled: true }, defaults: { engine: "index" } },
     });
 

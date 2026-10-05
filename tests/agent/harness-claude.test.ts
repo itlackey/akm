@@ -6,8 +6,9 @@
  * Tests for the Claude Code harness adapter's structured-output path (Codex
  * round-3 finding A):
  *   - harnesses/claude/agent-builder.ts    — claudeBuilder: `--output-format
- *     json` + schema directive when a schema is present; byte-identical
- *     plain-prompt argv otherwise.
+ *     json` when a schema is present (the shared lowering has already put the
+ *     schema instruction in the prompt); byte-identical plain-prompt argv
+ *     otherwise.
  *   - harnesses/claude/result-extractor.ts — unwrap the `claude -p
  *     --output-format json` result envelope; plain-text passthrough otherwise.
  *
@@ -60,17 +61,14 @@ describe("claudeBuilder — schemaless dispatch (unchanged)", () => {
 });
 
 describe("claudeBuilder — schema-bearing dispatch (native-json path)", () => {
-  test("schema unit emits --output-format json and appends the schema directive", () => {
+  test("schema unit emits --output-format json and passes the lowered prompt through", () => {
     const req: AgentDispatchRequest = { prompt: "classify it", schema: SCHEMA };
     const argv = claudeBuilder.build(makeClaudeProfile(), req).argv;
     const fmtIdx = argv.indexOf("--output-format");
     expect(fmtIdx).toBeGreaterThan(-1);
     expect(argv[fmtIdx + 1]).toBe("json");
-    // The positional prompt carries the same schema directive the engine uses.
-    const prompt = argv[argv.length - 1];
-    expect(prompt).toContain("classify it");
-    expect(prompt).toContain("Respond with ONLY a JSON value matching this JSON Schema");
-    expect(prompt).toContain(JSON.stringify(SCHEMA));
+    // The shared lowering appended the schema instruction; the builder adds no second copy.
+    expect(argv[argv.length - 1]).toBe("classify it");
   });
 
   test("--print and -- still frame the prompt with a schema present", () => {

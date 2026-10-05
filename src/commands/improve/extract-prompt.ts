@@ -10,9 +10,9 @@
  * session data into the markdown template loaded from
  * `src/assets/prompts/extract-session.md`.
  *
- * The schema is intentionally strict — providers with `supportsJsonSchema:
- * true` enforce shape upstream, so the parser only has to handle the
- * happy path. `additionalProperties: false` means any hallucinated keys
+ * The schema is intentionally strict — a provider that honours
+ * `response_format` enforces shape upstream, so the parser only has to handle
+ * the happy path. `additionalProperties: false` means any hallucinated keys
  * the model emits get dropped before we parse.
  */
 
@@ -25,7 +25,7 @@ const EXTRACT_CANDIDATE_NAME_RE = new RegExp(EXTRACT_CANDIDATE_NAME_PATTERN);
 
 /**
  * JSON Schema for the structured extract output. Passed to `chatCompletion`
- * when the configured LLM connection has `supportsJsonSchema: true`.
+ * unless the configured LLM connection sets `supportsJsonSchema: false`.
  *
  * Shape:
  *   {

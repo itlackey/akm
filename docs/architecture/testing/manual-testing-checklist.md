@@ -369,9 +369,9 @@ Copy this only after exact ranking assertions:
 ```sh
 cp -R "$REPO/tests/fixtures/manual-qa/bundle/." "$AKM_BUNDLE_DIR/"
 akm index
-akm show knowledge/qa-guide --no-track-usage | jq -e '.name == "qa-guide"'
-akm show workflows/typed-route --no-track-usage | jq -e '.type == "workflow"'
-akm show tasks/manual-success --no-track-usage | jq -e '.type == "task"'
+akm show knowledge/qa-guide | jq -e '.name == "qa-guide"'
+akm show workflows/typed-route | jq -e '.type == "workflow"'
+akm show tasks/manual-success | jq -e '.type == "task"'
 ```
 
 It supplies `.meta`, typed/gated workflows, command tasks, and fake-agent input
@@ -674,15 +674,15 @@ test -s "$AKM_SANDBOX/index-verbose.stderr"
 
 ```sh
 akm search k8s-deploy \
-  --detail full --no-track-usage --format json |
+  --detail full --format json |
   jq -e '
     .hits[0].ref == "skills/k8s-deploy" and
     .hits[0].type == "skill" and
     .hits[0].score >= 0 and .hits[0].score <= 1
   '
 
-json_count="$(akm search docker --no-track-usage | jq '.hits | length')"
-jsonl_count="$(akm search docker --no-track-usage --format jsonl | jq -s 'length')"
+json_count="$(akm search docker | jq '.hits | length')"
+jsonl_count="$(akm search docker --format jsonl | jq -s 'length')"
 test "$json_count" -gt 0
 test "$json_count" -eq "$jsonl_count"
 ```
@@ -704,15 +704,15 @@ test "$json_count" -eq "$jsonl_count"
 - [ ] **[LOCAL]** Belief current/historical/all partitions state correctly.
 - [ ] **[LOCAL]** Proposed quality and sessions are excluded by default and
       included only through explicit flags.
-- [ ] **[LOCAL]** `--no-track-usage` leaves usage-event state unchanged;
-      default successful read advances it.
+- [ ] **[LOCAL]** A successful read advances usage-event state in
+      `$AKM_DATA_DIR` only.
 - [ ] **[LOCAL]** Zero/negative/fractional/prefix numeric limits (`2x`), overflow,
       and conflicting repeats are rejected. `parseInt` prefix acceptance fails.
 
 ### 7.3 Curate
 
 ```sh
-akm curate "docker homelab" --detail full --no-track-usage --format json |
+akm curate "docker homelab" --detail full --format json |
   jq -e '.items[0].ref == "skills/docker-homelab" and (.summary | type == "string")'
 ```
 
@@ -720,15 +720,14 @@ akm curate "docker homelab" --detail full --no-track-usage --format json |
 - [ ] **[CORE]** Empty query exits `2`, `MISSING_REQUIRED_ARGUMENT`.
 - [ ] **[LOCAL]** Type, limit, source, detail, agent shape, related refs, and
       family collapse are correct.
-- [ ] **[LOCAL]** No-track causes no durable signal; invalid limits match search
-      strictness.
+- [ ] **[LOCAL]** Invalid limits match search strictness.
 - [ ] **[SERVICE]** Registry-only items have install guidance and no local
       path/editability.
 
 ### 7.4 Show, fragments, scope, and meta
 
 ```sh
-akm show skills/k8s-deploy --no-track-usage --format json |
+akm show skills/k8s-deploy --format json |
   jq -e '
     .type == "skill" and
     .ref == "skills/k8s-deploy" and
@@ -737,7 +736,7 @@ akm show skills/k8s-deploy --no-track-usage --format json |
   '
 
 akm show 'knowledge/incident-response-runbook#severity-levels' \
-  --no-track-usage --format json |
+  --format json |
   jq -e '(.content | contains("SEV1")) and ((.content | contains("Escalation Path")) | not)'
 ```
 
@@ -834,7 +833,7 @@ do not emit normal result envelopes.
 
 ```sh
 expect_error 2 MISSING_REQUIRED_ARGUMENT curate ""
-expect_error 1 ASSET_NOT_FOUND show skills/does-not-exist --no-track-usage
+expect_error 1 ASSET_NOT_FOUND show skills/does-not-exist
 expect_error 2 UNKNOWN_FLAG info --totally-bogus
 expect_error 2 INVALID_FORMAT_VALUE info --format xml
 expect_error 2 INVALID_DETAIL_VALUE info --detail maximum
@@ -879,8 +878,8 @@ akm bundle add "$AKM_SANDBOX/bundle-a" --name bundle-a
 akm bundle add "$AKM_SANDBOX/bundle-b" --name bundle-b
 akm remember "body A" --name shared --bundle bundle-a
 akm remember "body B" --name shared --bundle bundle-b
-akm show bundle-a//memories/shared --no-track-usage | jq -e '.content | contains("body A")'
-akm show bundle-b//memories/shared --no-track-usage | jq -e '.content | contains("body B")'
+akm show bundle-a//memories/shared | jq -e '.content | contains("body A")'
+akm show bundle-b//memories/shared | jq -e '.content | contains("body B")'
 ```
 
 - [ ] **[LOCAL]** Qualified identity remains stable through index/search/show.
@@ -926,8 +925,8 @@ cp -R "$REPO/tests/fixtures/bundles/llm-wiki" "$AKM_SANDBOX/sample-wiki"
 akm bundle add "$AKM_SANDBOX/sample-wiki" --name sample-wiki
 akm bundle show sample-wiki --format json
 akm index --full
-akm show sample-wiki//pages/http-caching --no-track-usage
-akm show sample-wiki//raw/2026-07-http-rfc --no-track-usage
+akm show sample-wiki//pages/http-caching
+akm show sample-wiki//raw/2026-07-http-rfc
 akm lint --dir "$AKM_SANDBOX/sample-wiki"
 ```
 
@@ -947,7 +946,7 @@ printf '%s\n' '# Filesystem Marker' '' 'qa-filesystem-source-marker' \
   >"$AKM_SANDBOX/fs-source/knowledge/marker.md"
 akm bundle add "$AKM_SANDBOX/fs-source" --name fs-source
 akm bundle list --kind filesystem
-akm search qa-filesystem-source-marker --from fs-source --no-track-usage
+akm search qa-filesystem-source-marker --from fs-source
 ```
 
 - [ ] **[LOCAL]** Add indexes in place with kind `filesystem`, writable true.
@@ -1001,7 +1000,7 @@ Protocol-only fixture:
 ```sh
 NODE_ENV=test akm bundle add "$AKM_QA_WEBSITE_URL" \
   --name qa-site --allow-insecure-transport --max-pages 2 --max-depth 1
-NODE_ENV=test akm search qa-site --from qa-site --no-track-usage
+NODE_ENV=test akm search qa-site --from qa-site
 ```
 
 - [ ] **[SERVICE]** Production blocks private start/redirect hosts;
@@ -1090,7 +1089,7 @@ test "$(sha256sum "$AKM_CONFIG_DIR/config.json")" = "$before_config"
 
 ```sh
 akm remember "test memory body" --name test-memory
-akm show memories/test-memory --no-track-usage | jq -e '.content | contains("test memory body")'
+akm show memories/test-memory | jq -e '.content | contains("test memory body")'
 expect_error 1 RESOURCE_ALREADY_EXISTS remember "duplicate" --name test-memory
 akm remember "replacement" --name test-memory --force
 printf 'stdin body\n' | akm remember --name from-stdin
@@ -1238,9 +1237,9 @@ printf '%s\n' "$QA_SECRET_VALUE" |
 akm env list --format json >"$AKM_SANDBOX/env-list.json"
 akm secret list --format json >"$AKM_SANDBOX/secret-list.json"
 akm index
-akm show env/qa-runtime --no-track-usage --format json \
+akm show env/qa-runtime --format json \
   >"$AKM_SANDBOX/env-show.json"
-akm show secrets/qa-token --no-track-usage --format json \
+akm show secrets/qa-token --format json \
   >"$AKM_SANDBOX/secret-show.json"
 
 jq -e 'any(.envs[]; .ref == "env/qa-runtime" and (.keys | index("QA_PUBLIC")))' \
@@ -1563,7 +1562,6 @@ akm log --since "@offset:$event_id" --format json
 - [ ] **LOCAL** Type/ref/run/since/limit/include-tags/exclude-tags filters compose correctly.
 - [ ] **LOCAL** `@offset:<id>` returns only later events across a fresh process and exposes a reusable next offset.
 - [ ] **LOCAL** Include-tags requires all requested tags; exclude removes any matching event.
-- [ ] **LOCAL** No-track search/show/curate appends no later usage event.
 - [ ] **LOCAL** Retired `log list` and `log tail` fail with current `akm log` guidance.
 - [ ] **LOCAL** Full rebuild/source update/restart preserve events and monotonic cursors.
 - [ ] **LOCAL** Event metadata stores ids/status/counts, not workflow instructions, child output, prompts, env values, or credentials.
@@ -2122,7 +2120,8 @@ jq -s -e '
   all($proposal[]; .authorizationPresent == true) and
   $proposal[0].maxTokensPresent == false and
   $proposal[1].maxTokensPresent == true and
-  all(.[]; .responseFormatPresent == false)
+  $enrich[0].responseFormatPresent == false and
+  all($proposal[]; .responseFormatPresent == true)
 ' \
   "$AKM_QA_SERVICE_LOG"
 ```

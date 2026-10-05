@@ -12,58 +12,65 @@
  * in `agent/builders.ts`, which imports this builder back into
  * `BUILTIN_BUILDERS`.
  *
- * ## Structured output (Codex round-3 finding A)
+ * ## Structured output
  *
- * The headless `claude -p` (`--print`) CLI has NO native output-SCHEMA flag
- * (unlike Codex's `--output-schema <file>`). Its documented structured path is
- * `--output-format json`, which wraps the run in a RESULT ENVELOPE
- * (`{"type":"result","result":"<final answer>","session_id":"…", …}`) — the
- * "native-json" tier, NOT "native-schema". (The registry's earlier
- * `native-schema` claim described Claude Code's IN-HARNESS `Workflow`/`agent()`
- * tool-input-schema path, which is a different execution surface than the
- * agentBuilder dispatch akm's local-runner uses; the descriptor is aligned to
- * `native-json` to match this builder honestly.)
+ * For a schema-bearing request this builder emits `--output-format json`,
+ * which wraps the run in a RESULT ENVELOPE
+ * (`{"type":"result","result":"<final answer>","session_id":"…", …}`); the
+ * shared request lowering has already appended the schema instruction to the
+ * prompt. The envelope is unwrapped by `./result-extractor.ts`, and the
+ * engine's shared `runStructured` retry-until-valid loop validates the
+ * extracted text against the schema (hinted output is trusted but verified).
+ * Without a schema the argv carries no output flag.
  *
- * So for a schema-bearing unit this builder emits `--output-format json` and
- * appends the SAME schema directive the engine's prompt assembly uses
- * (`step-work.ts` `buildUnitPrompt`) so a direct (non-workflow) dispatch is
- * self-sufficient — matching the copilot/gemini native-json builders. The
- * result envelope is unwrapped by `./result-extractor.ts`, and the engine's
- * shared `runStructured` retry-until-valid loop still validates the extracted
- * text against the node schema (constrained/hinted output is trusted but
- * verified). Without a schema the argv is byte-identical to the pre-fix shape.
+ * Claude Code 2.1.283 also has `--json-schema <schema>` (JSON Schema for
+ * structured output validation, with `--print`). akm does not pass it; the
+ * instruction and the validation loop above are what enforce a schema.
  *
  * The builder's `platform` stays `'claude'` (the canonical harness id).
  */
 
 import {
   type AgentCommandBuilder,
-  type AgentDispatchRequest,
+  modelFromArgs,
   normalizeTools,
   resolveDispatchModel,
 } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
-/**
- * Assemble the positional prompt: the task prompt and — when a schema is
- * requested — the same schema directive the workflow engine's prompt assembly
- * uses (`step-work.ts` `buildUnitPrompt`), so both dispatch paths speak one
- * dialect. Claude Code takes the system prompt as a `--system-prompt` FLAG (it
- * has one, unlike copilot/gemini), so only the schema directive is folded in
- * here.
- */
-function buildPromptPayload(req: AgentDispatchRequest): string {
-  if (!req.schema) return req.prompt;
-  return `${req.prompt}\n\nRespond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):\n${JSON.stringify(req.schema)}`;
-}
+/** The model-work tool policy on Claude Code: read, edit in the working directory, `akm search`, `akm show`. */
+export const MODEL_WORK_CLAUDE_FLAGS: readonly string[] = Object.freeze([
+  "--restricted",
+  "--strict-mcp-config",
+  "--tools",
+  "Read,Edit,Bash",
+  "--allowedTools",
+  "Read,Edit,Bash(akm search *),Bash(akm show *)",
+  "--permission-mode",
+  "dontAsk",
+]);
 
 /**
  * Claude Code builder.
  * Command shape:
  *   claude [--agent <name>] [--system-prompt "..."] [--model <m>] [--allowedTools <t>]
- *          [--output-format json] --print -- "<prompt (+ schema directive)>"
+ *          [--output-format json] --print -- "<prompt>"
  *
  * --print switches Claude Code to non-interactive captured output mode.
+ *
+ * The model-work tool policy lowers to {@link MODEL_WORK_CLAUDE_FLAGS} in place
+ * of the engine's `args` and `--allowedTools`, verified against Claude Code
+ * 2.1.283 and a local stub:
+ *   - `--restricted` ignores the user, project and local settings files (whose
+ *     allow rules would otherwise pre-approve any command or path) and confines
+ *     the file tools to the working directory;
+ *   - `--strict-mcp-config` starts no MCP server, and `--tools` offers only
+ *     Read, Edit and Bash;
+ *   - `--allowedTools` pre-approves Read, Edit, `akm search` and `akm show`,
+ *     and `--permission-mode dontAsk` denies everything else instead of
+ *     prompting, including a compound, redirected or substituted command.
+ * The engine's `args` are left out because `--add-dir`, `--settings` or a
+ * second `--allowedTools` would widen that. Only the model they name is kept.
  */
 export const claudeBuilder: AgentCommandBuilder = {
   platform: "claude",
@@ -73,10 +80,10 @@ export const claudeBuilder: AgentCommandBuilder = {
     personaChannel: "native",
     nativeAgentSelector: true,
     tools: "all",
-    outputSchema: true,
   }),
   build(profile, req) {
-    const args: string[] = [...profile.args];
+    const modelWork = req.modelWork === true;
+    const args: string[] = modelWork ? [...MODEL_WORK_CLAUDE_FLAGS] : [...profile.args];
     if (req.agent) {
       args.push("--agent", req.agent);
     }
@@ -86,6 +93,9 @@ export const claudeBuilder: AgentCommandBuilder = {
     if (req.model) {
       const resolved = resolveDispatchModel(req, profile, "claude") as string;
       args.push("--model", resolved);
+    } else if (modelWork) {
+      const model = modelFromArgs(profile.args);
+      if (model) args.push("--model", model);
     }
     if (req.tools) {
       args.push("--allowedTools", normalizeTools(req.tools));
@@ -98,7 +108,7 @@ export const claudeBuilder: AgentCommandBuilder = {
     // --print = non-interactive, outputs to stdout — required for captured mode
     args.push("--print");
     args.push("--");
-    args.push(buildPromptPayload(req));
+    args.push(req.prompt);
     return { argv: [profile.bin, ...args] };
   },
 };

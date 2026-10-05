@@ -3,18 +3,17 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { AkmConfig, IndexPassConfig } from "../core/config/config";
-import { warn } from "../core/warn";
 import { cloneExecutionJsonObject } from "../execution/json";
 import type { LoweringNotice } from "../execution/resolved-request";
 import type { UnresolvedExecutionDefaults } from "../execution/source";
 import { buildExecution, resolveExecution } from "../integrations/agent/execution";
-import type { StructuredLlmRunner } from "./structured-call";
+import type { RunnerSpec } from "../integrations/agent/runner";
 
 const NO_LOWERING_NOTICES: readonly Readonly<LoweringNotice>[] = Object.freeze([]);
 
 /** One frozen standalone-index selection, including its safe lowering diagnostics. */
 export interface ResolvedIndexPassExecution {
-  readonly runner: StructuredLlmRunner | undefined;
+  readonly runner: RunnerSpec | undefined;
   readonly notices: readonly Readonly<LoweringNotice>[];
 }
 
@@ -51,16 +50,14 @@ export function resolveIndexPassExecution(passName: string, config: AkmConfig): 
     ...indexExecutionDefaults(defaults),
     ...(!own(defaults, "engine") && fallbackLlmEngine ? { engine: fallbackLlmEngine } : {}),
   } satisfies UnresolvedExecutionDefaults;
+  // Under the model-work tool policy, so an engine that cannot confine it is refused here.
   const prepared = resolveExecution({
     content: "",
     config,
     invocationDefaults,
     current: indexExecutionDefaults(pass),
+    modelWork: true,
   });
   const lowered = buildExecution(prepared.request, prepared.runner);
-  if (lowered.runner.kind !== "llm") {
-    warn("[akm] Index pass %s requires an LLM engine; %s is not one. Skipping this pass.", passName, selectedEngine);
-    return Object.freeze({ runner: undefined, notices: NO_LOWERING_NOTICES });
-  }
   return Object.freeze({ runner: lowered.runner, notices: lowered.notices });
 }

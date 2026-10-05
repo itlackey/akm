@@ -129,15 +129,13 @@ describe("aiderBuilder — exact model selection", () => {
 
 // ── Builder — schema (prompt-injected; tier "none") ──────────────────────────
 
-describe("aiderBuilder — schema injection (no structured output mode)", () => {
+describe("aiderBuilder — schema-bearing dispatch (no structured output mode)", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
 
-  test("schema directive is appended to the message payload", () => {
+  test("the message payload is the lowered prompt", () => {
     const cmd = aiderBuilder.build(makeAiderProfile(), { prompt: "judge it", schema });
-    const payload = messagePayload(cmd.argv);
-    expect(payload).toStartWith("judge it");
-    expect(payload).toContain("Respond with ONLY a JSON value matching this JSON Schema (no prose, no code fences):");
-    expect(payload).toContain(JSON.stringify(schema));
+    // The shared lowering appended the schema instruction; the builder adds no second copy.
+    expect(messagePayload(cmd.argv)).toBe("judge it");
   });
 
   test("no native schema/json flags leak into argv (aider has none)", () => {
@@ -148,15 +146,9 @@ describe("aiderBuilder — schema injection (no structured output mode)", () => 
     expect(argv.includes("--mode")).toBe(false);
   });
 
-  test("systemPrompt + schema compose in order: system, task, directive", () => {
+  test("systemPrompt + task compose in order", () => {
     const cmd = aiderBuilder.build(makeAiderProfile(), { prompt: "judge it", systemPrompt: "Be strict.", schema });
-    const payload = messagePayload(cmd.argv);
-    const sysIdx = payload.indexOf("Be strict.");
-    const taskIdx = payload.indexOf("judge it");
-    const directiveIdx = payload.indexOf("Respond with ONLY a JSON value");
-    expect(sysIdx).toBe(0);
-    expect(taskIdx).toBeGreaterThan(sysIdx);
-    expect(directiveIdx).toBeGreaterThan(taskIdx);
+    expect(messagePayload(cmd.argv)).toBe("Be strict.\n\njudge it");
   });
 
   test("no schema → payload is exactly the prompt", () => {

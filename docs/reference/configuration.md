@@ -116,9 +116,31 @@ settable via `extraParams`. A response with reasoning tokens despite
 `enableThinking: false` triggers a runtime warning and the `akm health`
 `thinking-control` advisory.
 
-An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`.
-Only `platform: "opencode-sdk"` may set `llmEngine`; it names
-the LLM engine used as that SDK engine's fallback connection.
+When a call asks for JSON that matches a schema, an LLM engine sends the schema
+as `response_format` (`json_schema`, strict) unless the engine sets
+`supportsJsonSchema: false`. If the endpoint rejects it with a 4xx other than
+429, AKM retries once without `response_format` and stops sending it to that
+endpoint and model for the rest of the process. An agent engine receives the
+schema as one instruction at the end of its prompt (`Respond with ONLY a JSON
+value matching this JSON Schema (no prose, no code fences):` followed by the
+schema), plus the harness's own schema channel where it has one (codex
+`--output-schema`).
+
+An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`;
+it takes no inference of its own (see
+[Inference on an agent engine](#inference-on-an-agent-engine)). Only `platform: "opencode-sdk"` may set `llmEngine`; it names
+the LLM engine used as that SDK engine's fallback connection. With no
+`llmEngine`, an SDK engine has no fallback connection and opencode resolves
+provider, model and auth from its own configuration. `defaults.llmEngine` is
+not a substitute.
+
+On an engine without `timeoutMs`, model work (an improve process, a quality or
+triage judge, or an index pass) stops after 600 seconds, whatever the engine's
+kind; other work on an agent engine runs until it finishes. An improve stage's
+reply that the stage cannot read gets one corrective retry. Reflect holds its
+reply to its own contract the same way on every engine kind: a reply that is not
+the JSON object of reflect's schema gets one repair turn, and one still invalid
+fails with `parse_error`.
 
 Executable assets may request tools, but the request is not authority. Configure
 the host-local `execution.allowedTools` list to define the ceiling; `"*"` is an
@@ -131,6 +153,85 @@ pointing at it). akm bundles `@opencode-ai/sdk`, but that package is an HTTP
 client with no dependencies — it spawns `opencode serve` and talks to it — so
 the npm dependency alone does not make the platform usable. Install the binary
 with `npm i -g opencode-ai` or opencode's own installer.
+
+### Inference on an agent engine
+
+An agent engine sets no inference of its own. For `opencode`, set it on the
+model in your own opencode config, which akm leaves as it is. akm carries
+inference (`temperature`, `reasoningEffort`, `enableThinking`, `maxTokens`,
+`contextLength`) into opencode only where it writes opencode's config itself:
+
+- **Model work on `opencode` and `opencode-sdk`:** an improve process's `llm`
+  overlay becomes the options of the `akm-model-work` agent that runs the
+  dispatch, so opencode's own title call on the same model keeps its defaults.
+- **An `opencode-sdk` engine's `llmEngine` fallback:** the model akm declares for
+  it under `akm-custom` carries the fallback's inference and the request's.
+  `maxTokens` and `contextLength` become `limit.output` and `limit.context`, and
+  only together: opencode refuses half a `limit`.
+
+Inference from an asset, a workflow's `llm:` or a `models.json` alias reaches an
+LLM engine. On an agent engine it is reported as an `untranslated-field`
+notice and dispatch continues; model work's agent carries `temperature`,
+`reasoningEffort` and `enableThinking` without one.
+
+Reasoning effort has one word in a request, `reasoningEffort`. `effort`, as a
+`models.json` alias or an asset's `effort:` frontmatter spells it, is read as
+`reasoningEffort` wherever layers are merged, so an LLM engine sends it as
+`reasoning_effort`.
+
+### Engines for unattended model work
+
+Unattended model work is the work akm hands a model with no one watching:
+- the improve processes (reflect, distill, consolidate, memory inference,
+  extract, and validation's repair);
+- the quality, triage and retrieval-gate judges;
+- index passes;
+- `akm remember --enrich`.
+
+It runs on any engine kind under one tool policy. The model may read, edit
+files only inside a scratch working directory that akm creates for the
+dispatch and removes after it, and run `akm search` and `akm show`. The
+stash stays read-only to it: what model work changes reaches the stash only
+as a proposal, through the review queue.
+
+Each engine enforces as much of the policy as it can, and grants nothing it
+cannot enforce:
+
+| Engine | What the model gets |
+|---|---|
+| LLM | No tools. |
+| `claude` | Read and Edit inside the working directory, and Bash for `akm search` and `akm show` only. akm runs it with `--restricted`, so your user, project and local settings cannot widen that. |
+| `opencode`, `opencode-sdk` | Read, grep and glob in the working directory and the stash, edit in the working directory only, and `akm_search` and `akm_show`, through an injected `akm-model-work` agent. No bash, because opencode cannot stop a redirect such as `akm show x > file` from writing elsewhere. |
+| `codex`, `copilot`, `pi`, `gemini`, `aider`, `amazonq`, `openhands` | Cannot run model work: akm refuses the request before it starts. |
+
+**The one rule.** Every key model work reads its engine from must name an
+LLM engine or a `claude`, `opencode` or `opencode-sdk` agent engine. Those
+keys are:
+- `defaults.llmEngine`;
+- `index.defaults.engine` and `index.<pass>.engine`;
+- `improve.strategies.<name>.engine`;
+- `improve.strategies.<name>.processes.<process>.engine`;
+- an enabled `processes.triage.judgment.engine`;
+- `processes.<process>.qualityGate.engine`.
+
+A config that breaks the rule fails to load, with an error that names the
+key, the engine and its platform. Other engine keys, `defaults.engine` and
+`workflow.judgeEngine`, may name any configured engine.
+
+**Further details:**
+- A model-work dispatch builds its own command, so the engine's `args` do not
+  apply to it, except a `--model` they name, and neither does its `workspace`.
+- An improve process's `llm` overlay reaches the `akm-model-work` agent on
+  `opencode` and `opencode-sdk` (see
+  [Inference on an agent engine](#inference-on-an-agent-engine)); on any other
+  agent engine it is reported as `untranslated-field` notices, not errors.
+- opencode model work may read the stash and write only its working directory.
+  `akm_search` and `akm_show` come from the akm-opencode plugin (0.9.21 or
+  later), which akm does not load: put it in your opencode config
+  (`"plugin": ["akm-opencode"]`). akm turns off the plugin's curation, learning
+  and write gate for these dispatches and keeps its state in akm's state
+  directory. The stash is protected from edits only while the temporary
+  directory is outside a git repository.
 
 ### Model-map files
 
@@ -176,7 +277,8 @@ profile may omit `model` when the installed layer already supplies it, as the
 partial Claude override above does. After overlay, every alias/engine entry
 must have a usable model. Unknown profile fields are rejected; JSON-safe
 fields inside `inference` are preserved for engine adapters to lower
-optimistically.
+optimistically. An `inference.effort` is read as `reasoningEffort`
+(see [Inference on an agent engine](#inference-on-an-agent-engine)).
 
 A profile's `engine` field (0.9.15, #946) borrows a column's `model` (and, for
 an `llm`-kind engine, its inference defaults) from a configured
@@ -265,16 +367,24 @@ the embedded copy, and release tests pin copied bytes to `src/assets/models.json
 The health check passes when the optional user file is absent and warns with
 its path and JSON location when the user file is unreadable or invalid.
 
-`defaults.engine` names an LLM or agent engine. `defaults.llmEngine` must name
-an LLM engine. There is no first-engine fallback: an unset `defaults.engine`
+`defaults.engine` names an LLM or agent engine. `defaults.llmEngine` names the
+default engine for unattended model work, so it follows
+[the one rule](#engines-for-unattended-model-work). There is no first-engine
+fallback: an unset `defaults.engine`
 never resolves to some arbitrary entry in `engines`. It resolves instead to a
 synthesized, config-free `opencode-sdk` engine when the `opencode` binary is on
 PATH — announced once per run, and preempted by any `opencode-sdk` engine you
 configure yourself. Naming an engine that is not configured is always an error
 and is never rescued by that fallback.
 
+`defaults.llmEngine` is not an `opencode-sdk` engine's fallback connection. An
+SDK engine gets an LLM fallback only from its own `llmEngine`, so the
+synthesized engine, which sets none, runs on opencode's own provider, model and
+auth.
+
 Index passes select engines through `index.defaults.engine` or
-`index.<pass>.engine`. Per-pass `model`, `timeoutMs`, and `llm` fields are
+`index.<pass>.engine`, which follow
+[the one rule](#engines-for-unattended-model-work). Per-pass `model`, `timeoutMs`, and `llm` fields are
 invocation overrides; `enabled: false` disables that pass. Connection fields
 such as `endpoint`, `provider`, `apiKey`, and `apiKeyFile` belong only on
 named engines.
@@ -323,7 +433,8 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
 }
 ```
 
-LLM-only improve processes require an LLM engine; an explicit invalid or
+An improve process's engine follows
+[the one rule](#engines-for-unattended-model-work); an explicit invalid or
 incompatible engine never falls back to another engine. Built-in strategies
 are complete presets. User-defined strategies inherit omitted fields from the
 built-in `default` strategy before applying their own overrides.
@@ -356,14 +467,14 @@ guidance. When enabled, engine selection is judgment → triage → strategy →
 
 `processes.reflect.qualityGate` and `processes.distill.qualityGate` control
 each process's LLM-as-judge quality gate. Each is on unless it sets
-`enabled: false`, and each follows only its own switch. A reflect revision
-that changes the body is never auto-accepted; when the judge passes it, it
-waits for review. With the gate off, it waits for review too. The judge is the
-process's own LLM engine, or `defaults.llmEngine` when an agent generates.
-`engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
+`enabled: false`, and each follows only its own switch. The judge is the
+process's own engine when that is an LLM engine, or the `defaults.llmEngine`
+engine when an agent generates. `engine`, `model`, `timeoutMs` and `llm` give the gate a judge of its own,
 resolved over the process's settings the way `triage.judgment` resolves over
-triage's. A gate whose settings resolve to no LLM engine fails before anything
-is generated; it never falls back to another engine. The judge runs at
+triage's. The judge may be any engine that follows
+[the one rule](#engines-for-unattended-model-work). A gate whose settings
+resolve to no engine fails before anything is generated; it never falls back
+to another engine. The judge runs at
 temperature 0 with thinking off unless its engine sets `enableThinking: true`.
 Thinking is slow: on a 27B llama.cpp server, a thinking judgment took a median
 of 30–67 s and up to about 3 minutes, against about 5 s without.
@@ -385,6 +496,46 @@ judge's engine at the server directly.
       "nightly": {
         "processes": {
           "reflect": { "qualityGate": { "engine": "judge" } }
+        }
+      }
+    }
+  }
+}
+```
+
+`processes.reflect.defectFilter` sets the wording of the checks reflect runs
+before the judge. With the quality gate on or off, reflect refuses a revision
+that adds placeholder text, talks about its own edit, or copies frontmatter into
+its body: no proposal, and no judge call. Each rule counts only what the
+revision adds to its source, so wording the asset already had and kept is not
+held against it. Each of the three lists is optional. A list you set replaces
+that rule's default list, and `[]` turns the rule off.
+
+| List | Rule | Default |
+|---|---|---|
+| `placeholders` | `placeholder_added` | `please confirm`, `please verify`, `to be confirmed`, `to be determined`, `to be verified` |
+| `metaCommentary` | `meta_commentary_added` | `feedback signal`, `feedback signals`, `feedback indicate`, `feedback indicates`, `feedback suggest`, `feedback suggests`, `feedback ask`, `feedback asks`, `feedback says`, `feedback report`, `feedback reports`, `feedback request`, `feedback requests`, `this revision`, `the source asset`, `the source note`, `the source memory`, `the original asset`, `the original note`, `the original memory`, `the original version of this`, `quality gate rejected`, `proposal rejected` |
+| `frontmatterKeys` | `frontmatter_copied_into_body` | `sources`, `updated`, `inferenceProcessed`, `captureMode`, `beliefState`, `xrefs`, `contradictedBy`, `outcomeData`, `orderedActions`, `generated`, `verified`, `description`, `when_to_use`, `tags`, `searchHints`, `quality`, `salience`, `salienceInputs`, `lint_skip`, `type` |
+
+`placeholders` and `metaCommentary` entries are plain phrases, not patterns:
+whole words, in any case, with any run of whitespace between words.
+`frontmatterKeys` entries are exact key names: a line outside a code fence that
+starts with `key:` counts. The rule also refuses a `sources`, `xrefs` or
+`contradictedBy` value copied into the body; `frontmatterKeys: []` turns that
+off too. Every entry must be a non-empty string, or the config does not load.
+
+```jsonc
+{
+  "improve": {
+    "strategies": {
+      "nightly": {
+        "processes": {
+          "reflect": {
+            "defectFilter": {
+              "placeholders": ["please confirm", "to be confirmed", "[draft]"],
+              "frontmatterKeys": []
+            }
+          }
         }
       }
     }

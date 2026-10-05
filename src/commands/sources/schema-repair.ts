@@ -71,8 +71,8 @@ export interface SchemaRepairOptions {
   startMs: number;
   /** Budget deadline in ms since epoch. */
   budgetMs: number;
-  /** Pre-resolved symbolic LLM runner supplied by the improve plan. */
-  llmRunner?: Extract<RunnerSpec, { kind: "llm" }>;
+  /** Pre-resolved symbolic runner supplied by the improve plan. */
+  llmRunner?: RunnerSpec;
   /** Stash directory for proposal-queue writes. Required: schema-repair never writes directly. */
   stashDir?: string;
   /** Override the asset file-path resolver (test seam). */
@@ -184,7 +184,7 @@ export async function runSchemaRepairPass(
     chatFn,
   } = options;
   const llmRunner = options.llmRunner ?? null;
-  if (!llmRunner) throw new Error("runSchemaRepairPass requires a resolved LLM runner");
+  if (!llmRunner) throw new Error("runSchemaRepairPass requires a resolved runner");
 
   if (!stashDir) {
     throw new Error("runSchemaRepairPass requires stashDir so repairs route through the proposal queue");

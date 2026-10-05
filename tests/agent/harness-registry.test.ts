@@ -7,9 +7,8 @@
  *   - every registry entry with `agentDispatch` resolves a command builder
  *     without throwing (the missing-builder ConfigError no longer fires for
  *     codex/gemini/aider);
- *   - the workflow-engine descriptor fields (pattern, structuredOutput,
- *     identityEnv, agentBuilder, resultExtractor) are populated per
- *     the capability matrix;
+ *   - the workflow-engine descriptor fields (identityEnv, agentBuilder,
+ *     resultExtractor) are populated per the capability matrix;
  *   - `getCommandBuilder` resolves each canonical id to the harness-owned
  *     builder and rejects retired profile aliases.
  */
@@ -43,18 +42,10 @@ describe("HARNESS_REGISTRY — P2 adapter integration", () => {
     expect(() => getCommandBuilder("claude-code")).toThrow();
   });
 
-  test("every registry entry declares the P2 descriptor fields (pattern + structuredOutput)", () => {
-    for (const h of HARNESS_REGISTRY) {
-      expect(h.pattern).toBeDefined();
-      expect(h.structuredOutput).toBeDefined();
-    }
-  });
-
   for (const id of NEW_ADAPTER_IDS) {
-    test(`"${id}": dispatch-capable local-runner with builder + extractor + builtin profiles`, () => {
+    test(`"${id}": dispatch-capable with builder + extractor + builtin profiles`, () => {
       const h = requireHarness(id);
       expect(h.capabilities.agentDispatch).toBe(true);
-      expect(h.pattern).toBe("local-runner");
       // The builder is harness-owned and platform-tagged with the canonical id.
       expect(h.agentBuilder).toBeDefined();
       expect(h.agentBuilder?.platform).toBe(id);
@@ -68,16 +59,6 @@ describe("HARNESS_REGISTRY — P2 adapter integration", () => {
       expect(getBuiltinAgentProfile(`${id}-headless`)).toBeUndefined();
     });
   }
-
-  test("structured-output tiers match the capability matrix", () => {
-    expect(requireHarness("codex").structuredOutput).toBe("native-schema");
-    for (const id of ["copilot", "pi", "gemini", "openhands"]) {
-      expect(requireHarness(id).structuredOutput).toBe("native-json");
-    }
-    for (const id of ["aider", "amazonq"]) {
-      expect(requireHarness(id).structuredOutput).toBe("none");
-    }
-  });
 
   test("identity markers: session-id vars on identityEnv, presence-only flags on presenceEnv", () => {
     // Session-id-bearing vars → identityEnv (their VALUES persist as

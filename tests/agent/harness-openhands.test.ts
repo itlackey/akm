@@ -126,12 +126,10 @@ describe("openhandsBuilder — exact model selection through LLM_MODEL", () => {
 describe("openhandsBuilder — schema passthrough (prompt+validate tier)", () => {
   const schema = { type: "object", properties: { verdict: { type: "string" } }, required: ["verdict"] };
 
-  test("schema directive is injected into the task payload (no native schema flag)", () => {
+  test("the task payload is the lowered prompt (no native schema flag)", () => {
     const cmd = openhandsBuilder.build(makeOpenhandsProfile(), { prompt: "judge it", schema });
-    const payload = taskPayloadOf(cmd.argv);
-    expect(payload).toStartWith("judge it");
-    expect(payload).toContain("Respond with ONLY a JSON value matching this JSON Schema");
-    expect(payload).toContain(JSON.stringify(schema));
+    // The shared lowering appended the schema instruction; the builder adds no second copy.
+    expect(taskPayloadOf(cmd.argv)).toBe("judge it");
     // No codex-style schema flag leaks into openhands argv.
     expect((cmd.argv as string[]).includes("--output-schema")).toBe(false);
   });
@@ -143,16 +141,13 @@ describe("openhandsBuilder — schema passthrough (prompt+validate tier)", () =>
     expect((withSchema.argv as string[]).includes("--json")).toBe(true);
   });
 
-  test("system + prompt + schema compose in order in one payload", () => {
+  test("system + prompt compose in order in one payload", () => {
     const cmd = openhandsBuilder.build(makeOpenhandsProfile(), {
       prompt: "judge it",
       systemPrompt: "Be strict.",
       schema,
     });
-    const payload = taskPayloadOf(cmd.argv);
-    expect(payload.indexOf("Be strict.")).toBe(0);
-    expect(payload.indexOf("judge it")).toBeGreaterThan(payload.indexOf("Be strict."));
-    expect(payload.indexOf("JSON Schema")).toBeGreaterThan(payload.indexOf("judge it"));
+    expect(taskPayloadOf(cmd.argv)).toBe("Be strict.\n\njudge it");
   });
 });
 

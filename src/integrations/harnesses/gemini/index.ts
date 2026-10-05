@@ -33,11 +33,6 @@ export class GeminiHarness extends BaseHarness {
   readonly agentBuilder = geminiBuilder;
   readonly resultExtractor = geminiResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
-  // akm spawns the `gemini` CLI locally per unit ⇒ local-runner.
-  readonly pattern = "local-runner" as const;
-  // `--output-format json` emits a documented JSON envelope akm parses, then
-  // validates against the node schema ⇒ native-json tier.
-  readonly structuredOutput = "native-json" as const;
   // The matrix's identity marker: Gemini CLI stamps GEMINI_CLI=1 only on
   // processes it spawns, so it genuinely means "running under gemini" (it is
   // not a user-profile config var) — but its VALUE ("1") is a bare flag, not

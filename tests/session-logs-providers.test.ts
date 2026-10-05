@@ -4,8 +4,9 @@
 //   - extractInlineRefMentions() helper used by both providers
 //
 // Each test scaffolds a temp directory mirroring the real platform layout.
-// Claude uses ~/.claude/projects/<project>/<id>.jsonl; OpenCode coverage uses
-// the sole supported opencode.db layout.
+// Claude uses ~/.claude/projects/<project>/<id>.jsonl; Codex uses
+// $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<timestamp>-<id>.jsonl; OpenCode
+// coverage uses the sole supported opencode.db layout.
 // No system home is touched.
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -13,9 +14,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ClaudeCodeProvider } from "../src/integrations/harnesses/claude/session-log";
+import { CodexProvider } from "../src/integrations/harnesses/codex/session-log";
 import { OpenCodeProvider } from "../src/integrations/harnesses/opencode/session-log";
 import { extractInlineRefMentions } from "../src/integrations/session-logs/inline-refs";
 import { openDatabase } from "../src/storage/database";
+import { codexMessage, writeCodexRollout } from "./_helpers/codex-rollout";
+import { withEnvSync } from "./_helpers/sandbox";
 
 const tempDirs: string[] = [];
 function makeTempDir(prefix: string): string {
@@ -280,6 +284,284 @@ describe("ClaudeCodeProvider.readSession", () => {
     const data = provider.readSession(summary);
     expect(data.events).toHaveLength(1);
     expect(data.events[0]?.text).toBe("real content here.");
+  });
+});
+
+// ── CodexProvider ───────────────────────────────────────────────────────────
+
+const threadId = (n: number): string => `00000000-0000-7000-8000-${String(n).padStart(12, "0")}`;
+
+/** Set a file's mtime, which Codex leaves at its session's last record. */
+function touch(file: string, iso: string): void {
+  const seconds = Date.parse(iso) / 1000;
+  fs.utimesSync(file, seconds, seconds);
+}
+
+/** One `response_item` record of a given payload. */
+const item = (payload: Record<string, unknown>) => ({ type: "response_item", payload });
+
+describe("CodexProvider.listSessions", () => {
+  test("lists a person's sessions from the date tree, newest first, `codex exec` runs included", () => {
+    const root = makeTempDir("akm-codex-list-");
+    const exec = writeCodexRollout(
+      root,
+      { id: threadId(1), source: "exec", cwd: "/home/user/project-b", startedAt: "2026-08-01T10:00:00.000Z" },
+      [codexMessage("user", "scripted run")],
+    );
+    const vscode = writeCodexRollout(
+      root,
+      { id: threadId(2), source: "vscode", cwd: "/home/user/project-a", startedAt: "2026-09-03T10:00:00.000Z" },
+      [codexMessage("user", "hello")],
+    );
+    touch(exec, "2026-08-01T10:30:00.000Z");
+    touch(vscode, "2026-09-03T11:00:00.000Z");
+
+    const sessions = new CodexProvider().listSessions({ location: root });
+    expect(sessions).toEqual([
+      {
+        harness: "codex",
+        sessionId: threadId(2),
+        filePath: vscode,
+        projectHint: "/home/user/project-a",
+        startedAt: Date.parse("2026-09-03T10:00:00.000Z"),
+        endedAt: Date.parse("2026-09-03T11:00:00.000Z"),
+      },
+      {
+        harness: "codex",
+        sessionId: threadId(1),
+        filePath: exec,
+        projectHint: "/home/user/project-b",
+        startedAt: Date.parse("2026-08-01T10:00:00.000Z"),
+        endedAt: Date.parse("2026-08-01T10:30:00.000Z"),
+      },
+    ]);
+  });
+
+  test("leaves out subagent, guardian and internal rollouts, which are not sessions", () => {
+    const root = makeTempDir("akm-codex-agents-");
+    const spawned = {
+      thread_spawn: {
+        parent_thread_id: threadId(1),
+        depth: 1,
+        agent_path: null,
+        agent_nickname: "Ada",
+        agent_role: null,
+      },
+    };
+    writeCodexRollout(root, { id: threadId(1), source: "vscode" }, [codexMessage("user", "real work")]);
+    writeCodexRollout(root, { id: threadId(2), source: { subagent: spawned } }, [codexMessage("user", "delegated")]);
+    writeCodexRollout(root, { id: threadId(3), source: { subagent: { other: "guardian" } } }, [
+      codexMessage("user", "x"),
+    ]);
+    writeCodexRollout(root, { id: threadId(4), source: { internal: "memory_consolidation" } }, []);
+    // A custom client or an MCP caller is still a person's session.
+    writeCodexRollout(root, { id: threadId(5), source: { custom: "my-client" } }, []);
+    writeCodexRollout(root, { id: threadId(6), source: "mcp" }, []);
+
+    const sessions = new CodexProvider().listSessions({ location: root });
+    expect(sessions.map((s) => s.sessionId).sort()).toEqual([threadId(1), threadId(5), threadId(6)]);
+  });
+
+  test("lists a rollout whose first line is not a session_meta record, with file times and no project", () => {
+    const root = makeTempDir("akm-codex-nometa-");
+    const dir = path.join(root, "2026", "08", "01");
+    fs.mkdirSync(dir, { recursive: true });
+    const odd = path.join(dir, `rollout-2026-08-01T10-00-00-${threadId(1)}.jsonl`);
+    fs.writeFileSync(odd, '{"id":"cut short\n');
+    // Only rollout-*.jsonl files are sessions.
+    fs.writeFileSync(path.join(dir, "notes.jsonl"), "{}\n");
+    fs.writeFileSync(path.join(dir, `rollout-2026-08-01T10-00-00-${threadId(2)}.json`), "{}\n");
+
+    const sessions = new CodexProvider().listSessions({ location: root });
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]).toMatchObject({ sessionId: threadId(1), filePath: odd });
+    expect(sessions[0]?.projectHint).toBeUndefined();
+    expect(sessions[0]?.startedAt).toBeNumber();
+  });
+
+  test("resolves its root from CODEX_HOME, per call", () => {
+    const codexHome = makeTempDir("akm-codex-home-");
+    writeCodexRollout(path.join(codexHome, "sessions"), { id: threadId(1) });
+    const provider = new CodexProvider();
+
+    withEnvSync({ CODEX_HOME: codexHome }, () => {
+      expect(provider.isAvailable()).toBe(true);
+      expect(provider.listSessions().map((s) => s.sessionId)).toEqual([threadId(1)]);
+    });
+    // A home with no sessions/ directory has no sessions; bun's os.homedir()
+    // cannot be redirected in-process, so the ~/.codex default is not exercised.
+    withEnvSync({ CODEX_HOME: path.join(codexHome, "missing") }, () => {
+      expect(provider.isAvailable()).toBe(false);
+      expect(provider.listSessions()).toEqual([]);
+    });
+  });
+});
+
+describe("CodexProvider.readSession", () => {
+  test("reads the conversation as user and assistant events, without Codex's own instructions and context", () => {
+    const root = makeTempDir("akm-codex-read-");
+    const file = writeCodexRollout(root, { id: threadId(1), source: "vscode", cwd: "/home/user/project-a" }, [
+      { type: "event_msg", payload: { type: "task_started", turn_id: "t1" } },
+      codexMessage("developer", "<permissions>Sandbox mode is workspace-write.</permissions>"),
+      codexMessage(
+        "user",
+        "# AGENTS.md instructions for /home/user/project-a\n\n<INSTRUCTIONS>\nUse bun.\n</INSTRUCTIONS>",
+      ),
+      codexMessage("user", "<environment_context>\n  <cwd>/home/user/project-a</cwd>\n</environment_context>"),
+      codexMessage("user", "<recommended_plugins>\nTry the deploy plugin.\n</recommended_plugins>"),
+      { type: "turn_context", payload: { turn_id: "t1", cwd: "/home/user/project-a", model: "test-model" } },
+      // Injected context and the person's words can share one message.
+      codexMessage(
+        "user",
+        "<environment_context>\n  <shell>bash</shell>\n</environment_context>",
+        "Why does the deploy hang?",
+      ),
+      item({ type: "reasoning", summary: [], content: null, encrypted_content: "opaque" }),
+      codexMessage("assistant", "It waits on the VPN. Which window do you deploy in?"),
+      // A block in a tag Codex is not known to inject is the person's reply.
+      codexMessage("user", "<answer>Friday evenings.</answer>"),
+      { type: "event_msg", payload: { type: "token_count", info: null } },
+      codexMessage("assistant", "Connect first, then rerun it."),
+    ]);
+
+    const provider = new CodexProvider();
+    const summary = provider.listSessions({ location: root })[0];
+    if (!summary) throw new Error("test fixture missing session summary");
+    const data = provider.readSession(summary);
+
+    expect(data.events.map((e) => [e.role, e.text])).toEqual([
+      ["user", "Why does the deploy hang?"],
+      ["assistant", "It waits on the VPN. Which window do you deploy in?"],
+      ["user", "<answer>Friday evenings.</answer>"],
+      ["assistant", "Connect first, then rerun it."],
+    ]);
+    expect(data.events.every((e) => e.harness === "codex" && e.sessionId === threadId(1) && e.filePath === file)).toBe(
+      true,
+    );
+    // Records are stamped a minute apart from the session start.
+    expect(data.events.map((e) => e.ts)).toEqual([
+      Date.parse("2026-08-01T10:07:00.000Z"),
+      Date.parse("2026-08-01T10:09:00.000Z"),
+      Date.parse("2026-08-01T10:10:00.000Z"),
+      Date.parse("2026-08-01T10:12:00.000Z"),
+    ]);
+    expect(data.ref).toEqual({
+      harness: "codex",
+      sessionId: threadId(1),
+      filePath: file,
+      projectHint: "/home/user/project-a",
+      startedAt: Date.parse("2026-08-01T10:00:00.000Z"),
+      endedAt: Date.parse("2026-08-01T10:12:00.000Z"),
+    });
+    expect(data.inlineRefs).toEqual([]);
+  });
+
+  test("flattens tool calls and their results like the Claude reader, and finds inline akm invocations", () => {
+    const root = makeTempDir("akm-codex-tools-");
+    writeCodexRollout(root, { id: threadId(1) }, [
+      codexMessage("user", "Save what you learn."),
+      item({
+        type: "function_call",
+        name: "shell",
+        call_id: "c1",
+        arguments: JSON.stringify({ command: ["bash", "-lc", 'akm remember "deploys need the VPN"'], workdir: "/tmp" }),
+      }),
+      item({ type: "function_call_output", call_id: "c1", output: "exit 0" }),
+      item({ type: "function_call", name: "exec_command", call_id: "c2", arguments: '{"cmd":"git status --short"}' }),
+      item({
+        type: "function_call_output",
+        call_id: "c2",
+        output: [
+          { type: "input_text", text: "M README.md" },
+          { type: "input_image", image_url: "data:image/png;base64,AAAA" },
+        ],
+      }),
+      item({ type: "custom_tool_call", name: "apply_patch", call_id: "c3", input: "*** Begin Patch\n*** End Patch" }),
+      item({
+        type: "custom_tool_call_output",
+        call_id: "c3",
+        output: [{ type: "input_text", text: "Success. Updated the files." }],
+      }),
+      item({
+        type: "local_shell_call",
+        call_id: "c4",
+        status: "completed",
+        action: { type: "exec", command: ["ls", "-la"] },
+      }),
+      item({ type: "function_call_output", call_id: "c4", output: "" }),
+      item({ type: "function_call", name: "update_plan", call_id: "c5", arguments: '{"plan":[]}' }),
+    ]);
+
+    const provider = new CodexProvider();
+    const summary = provider.listSessions({ location: root })[0];
+    if (!summary) throw new Error("test fixture missing session summary");
+    const data = provider.readSession(summary);
+
+    // An empty result is dropped; a non-shell call keeps its raw arguments.
+    expect(data.events.map((e) => [e.role, e.text])).toEqual([
+      ["user", "Save what you learn."],
+      ["assistant", '[tool:shell] bash -lc akm remember "deploys need the VPN"'],
+      ["tool", "[tool_result] exit 0"],
+      ["assistant", "[tool:exec_command] git status --short"],
+      ["tool", "[tool_result] M README.md"],
+      ["assistant", "[tool:apply_patch] *** Begin Patch\n*** End Patch"],
+      ["tool", "[tool_result] Success. Updated the files."],
+      ["assistant", "[tool:shell] ls -la"],
+      ["assistant", '[tool:update_plan] {"plan":[]}'],
+    ]);
+    expect(data.inlineRefs).toEqual([
+      { kind: "remember", text: "deploys need the VPN", ts: Date.parse("2026-08-01T10:02:00.000Z") },
+    ]);
+  });
+
+  test("an empty or aborted session reads as no events", () => {
+    const root = makeTempDir("akm-codex-empty-");
+    // Opened and closed with no input, and interrupted before the model answered.
+    const empty = writeCodexRollout(root, { id: threadId(1), cwd: "/home/user/project-a" });
+    const aborted = writeCodexRollout(root, { id: threadId(2), cwd: "/home/user/project-b" }, [
+      { type: "event_msg", payload: { type: "task_started", turn_id: "t1" } },
+      codexMessage("developer", "<turn_aborted>The user interrupted the previous turn on purpose.</turn_aborted>"),
+      { type: "event_msg", payload: { type: "turn_aborted", turn_id: "t1", reason: "interrupted" } },
+    ]);
+
+    const provider = new CodexProvider();
+    for (const [file, cwd] of [
+      [empty, "/home/user/project-a"],
+      [aborted, "/home/user/project-b"],
+    ] as const) {
+      const summary = provider.listSessions({ location: root }).find((s) => s.filePath === file);
+      if (!summary) throw new Error("test fixture missing session summary");
+      const data = provider.readSession(summary);
+      expect(data.events).toEqual([]);
+      expect(data.inlineRefs).toEqual([]);
+      expect(data.ref.projectHint).toBe(cwd);
+      expect(data.ref.startedAt).toBe(Date.parse("2026-08-01T10:00:00.000Z"));
+      expect(data.ref.endedAt).toBe(fs.statSync(file).mtimeMs);
+    }
+  });
+
+  test("skips a malformed, truncated or non-record line and keeps reading", () => {
+    const root = makeTempDir("akm-codex-malformed-");
+    writeCodexRollout(root, { id: threadId(1) }, [
+      codexMessage("user", "before the damage"),
+      "this is not json",
+      '{"timestamp":"2026-08-01T10:03:00.000Z","type":"response_item","payload":{"type":"message","role":"assist',
+      "null",
+      "42",
+      '"text"',
+      "[]",
+      JSON.stringify(item({ type: "message", role: "user" })),
+      JSON.stringify({ type: "response_item", payload: "not an object" }),
+      JSON.stringify({ type: "response_item", payload: null }),
+      "",
+      codexMessage("assistant", "after the damage"),
+    ]);
+
+    const provider = new CodexProvider();
+    const summary = provider.listSessions({ location: root })[0];
+    if (!summary) throw new Error("test fixture missing session summary");
+    const data = provider.readSession(summary);
+    expect(data.events.map((e) => e.text)).toEqual(["before the damage", "after the damage"]);
   });
 });
 

@@ -10,7 +10,10 @@ import { deepMergeConfig } from "../src/core/config/deep-merge";
 import { ConfigError } from "../src/core/errors";
 import { resolveDispatchModel } from "../src/integrations/agent/builder-shared";
 import {
+  type AgentEngineConfig,
   collectEngineCredentialValues,
+  type EngineConfig,
+  type EngineResolutionConfig,
   lookupApiKeyFileValue,
   lookupApiKeySecretRefValue,
   materializeLlmConnection,
@@ -165,6 +168,54 @@ describe("engine resolution", () => {
     expect(resolved.fallbackCredential).toBeUndefined();
   });
 
+  // An SDK engine's LLM fallback connection comes only from its own
+  // `llmEngine`. `defaults.llmEngine` is the default engine for model work;
+  // it is not a connection every SDK engine borrows.
+  describe("an opencode-sdk engine's LLM fallback comes only from its own llmEngine", () => {
+    // `config.defaults.llmEngine` is "fast", an LLM engine that exists.
+    const withSdk = (
+      sdk: AgentEngineConfig,
+      extraEngines: Record<string, EngineConfig> = {},
+    ): EngineResolutionConfig => ({
+      ...config,
+      engines: { ...config.engines, ...extraEngines, sdk },
+    });
+
+    test("with no llmEngine of its own it gets no fallback connection, whatever defaults.llmEngine names", () => {
+      const lowered = resolveEngine("sdk", withSdk({ kind: "agent", platform: "opencode-sdk" }));
+      if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
+      expect(lowered.fallbackConnection).toBeUndefined();
+      expect(lowered.fallbackCredential).toBeUndefined();
+      expect(lowered.fallbackApiKeyFile).toBeUndefined();
+      expect(lowered.fallbackApiKeySecretRef).toBeUndefined();
+      expect(lowered.fallbackTimeoutMs).toBeUndefined();
+      // The fallback's timeout is not borrowed either.
+      expect(Object.hasOwn(lowered, "timeoutMs")).toBe(false);
+      // Nothing of akm's is mirrored into the server config: opencode keeps its own provider and model.
+      expect(buildSdkConfig(lowered.profile, lowered.fallbackConnection)).toEqual({});
+    });
+
+    test("with its own llmEngine, that engine is the fallback, not defaults.llmEngine's", () => {
+      const other = {
+        kind: "llm" as const,
+        endpoint: "https://example.test/other/v1/chat/completions",
+        model: "other",
+      };
+      const lowered = resolveEngine(
+        "sdk",
+        withSdk({ kind: "agent", platform: "opencode-sdk", llmEngine: "other" }, { other }),
+      );
+      if (lowered.kind !== "sdk") throw new Error("fixture must lower to SDK");
+      expect(lowered.fallbackConnection).toMatchObject({ endpoint: other.endpoint, model: "other" });
+      expect(lowered.fallbackCredential?.names).toEqual(["AKM_ENGINE_OTHER_API_KEY"]);
+      const server = buildSdkConfig(lowered.profile, lowered.fallbackConnection);
+      expect(server.model).toBe("akm-custom/other");
+      expect(server.provider).toMatchObject({
+        "akm-custom": { options: { baseURL: "https://example.test/other/v1" }, models: { other: {} } },
+      });
+    });
+  });
+
   test("applies exact timeout precedence and preserves explicit null in direct HTTP materialization", () => {
     // ISOLATION-01/02 fallout: `materializeLlmConnection` throws unless the
     // "fast" engine's required FAST_API_KEY credential resolves (see
@@ -199,9 +250,10 @@ describe("engine resolution", () => {
     }
   });
 
-  test("uses no timeout for CLI agents and inherits the fallback LLM timeout for SDK agents", () => {
+  test("leaves a CLI agent's unset timeout unset and inherits the fallback LLM timeout for SDK agents", () => {
+    // Unset, not null, so a caller's own default (model work's 600 s) can apply.
     const direct = resolveEngine("reviewer", config);
-    expect(direct.timeoutMs).toBeNull();
+    expect(Object.hasOwn(direct, "timeoutMs")).toBe(false);
 
     const inherited = resolveEngine("sdk", {
       ...config,
@@ -237,52 +289,22 @@ describe("engine resolution", () => {
     ).toThrow(/cannot dispatch agents/);
   });
 
-  // resolveLlmEngineUse used to reject an agent
-  // engine outright, even when the exact fallback machinery lowerAgentEngine
-  // already uses (AgentEngineConfig.llmEngine, then defaults.llmEngine)
-  // names a real LLM engine. Falling back is strictly less capable than the
-  // agent engine (never an interactive/tool-capable runner), so it is safe.
-  describe("resolveLlmEngineUse falls back off an agent engine's llmEngine", () => {
-    test("falls back to the agent engine's OWN llmEngine when set", () => {
+  // `resolveLlmEngineUse` resolves one LLM engine. It used to swap an agent
+  // engine for its `llmEngine`, then for `defaults.llmEngine`, with a warning.
+  // Only the implicit SDK fallback could reach that, and an SDK engine no
+  // longer borrows `defaults.llmEngine`.
+  describe("resolveLlmEngineUse resolves an LLM engine and refuses any other", () => {
+    test("an agent engine is refused, whatever its llmEngine or defaults.llmEngine name", () => {
       const withOwnFallback = {
         ...config,
         engines: { ...config.engines, reviewer: { ...config.engines.reviewer, llmEngine: "fast" } },
       };
-      const resolved = resolveLlmEngineUse(withOwnFallback, [{ engine: "reviewer" }]);
-      expect(resolved.engine).toBe("fast");
-      expect(resolved.connection.model).toBe("base-model");
-    });
-
-    test("falls back to defaults.llmEngine when the agent engine names no fallback of its own", () => {
-      // `config.defaults.llmEngine` is "fast"; `reviewer` itself declares none.
-      const resolved = resolveLlmEngineUse(config, [{ engine: "reviewer" }]);
-      expect(resolved.engine).toBe("fast");
-    });
-
-    test("an agent engine's own llmEngine wins over defaults.llmEngine", () => {
-      const withBoth = {
-        ...config,
-        engines: {
-          ...config.engines,
-          reviewer: { ...config.engines.reviewer, llmEngine: "sdk-fallback-target" },
-          "sdk-fallback-target": { kind: "llm" as const, endpoint: "https://example.test/other", model: "other-model" },
-        },
-      };
-      expect(resolveLlmEngineUse(withBoth, [{ engine: "reviewer" }]).engine).toBe("sdk-fallback-target");
-    });
-
-    test("optional resolution returns undefined, not a throw, when no fallback exists", () => {
-      const noFallback = { ...config, defaults: { engine: "reviewer" } };
-      expect(resolveLlmEngineUse(noFallback, [{ engine: "reviewer" }], { optional: true })).toBeUndefined();
-    });
-
-    test("aborts only when truly no LLM engine exists anywhere — even the fallback names a non-LLM engine", () => {
-      const selfReferential = {
-        configVersion: "0.9.0",
-        engines: { wrong: { kind: "agent" as const, platform: "pi" as const } },
-        defaults: { llmEngine: "wrong" },
-      };
-      expect(() => resolveLlmEngineUse(selfReferential, [{ engine: "wrong" }])).toThrow(/is not an LLM engine/);
+      // `config.defaults.llmEngine` is "fast", an LLM engine, in both fixtures.
+      for (const fixture of [config, withOwnFallback]) {
+        expect(() => resolveLlmEngineUse(fixture, [{ engine: "reviewer" }])).toThrow(
+          'Engine "reviewer" is not an LLM engine.',
+        );
+      }
     });
   });
 });

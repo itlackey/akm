@@ -97,6 +97,8 @@ interface ChatCompletionResponse {
   }>;
   /** OpenAI-compatible token accounting. Best-effort: providers may omit it. */
   usage?: RawUsage;
+  /** A provider failure reported in a 2xx body, with no choices. */
+  error?: unknown;
 }
 
 export interface ChatCompletionOptions {
@@ -577,6 +579,15 @@ async function chatCompletionAttemptOnce(
       throw new LlmCallError(
         `LLM response was not valid JSON ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
         "parse_error",
+        response.status,
+      );
+    }
+    // A 2xx can still carry a provider failure. OpenRouter answers a provider
+    // that fails after the headers with a body holding only `error`.
+    if (json.error !== undefined && json.error !== null && !json.choices?.length) {
+      throw new LlmCallError(
+        `LLM provider error (${response.status}) ${config.endpoint}: ${redactSensitiveText(redactErrorBody(rawOkBody), resolvedKey ? [resolvedKey] : [])}`,
+        "provider_error",
         response.status,
       );
     }

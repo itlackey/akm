@@ -35,7 +35,7 @@ export interface SessionSummary extends SessionRef {
   startedAt?: number;
   /** Session end in ms epoch (from last event or file mtime). */
   endedAt?: number;
-  /** Platform-specific project hint (claude: project dir; opencode: working dir). */
+  /** Platform-specific project hint (claude: project dir; codex, opencode: working dir). */
   projectHint?: string;
   /** Human-readable session title when the platform provides one. */
   title?: string;

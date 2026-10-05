@@ -29,19 +29,25 @@ export interface HarnessIdEntry {
   readonly id: string;
   /** Mirrors `AkmHarness.capabilities.agentDispatch`. */
   readonly agentDispatch: boolean;
+  /**
+   * The harness confines the model-work tool policy (`MODEL_WORK_POLICY_ID`), so
+   * unattended model work may run on it. The one copy of this fact: the shared
+   * lowerer (`agent/request-lowering.ts`) reads it too.
+   */
+  readonly enforcesModelWorkTools: boolean;
 }
 
 export const HARNESS_ID_TABLE: readonly HarnessIdEntry[] = [
-  { id: "opencode", agentDispatch: true },
-  { id: "claude", agentDispatch: true },
-  { id: "opencode-sdk", agentDispatch: true },
-  { id: "codex", agentDispatch: true },
-  { id: "copilot", agentDispatch: true },
-  { id: "pi", agentDispatch: true },
-  { id: "gemini", agentDispatch: true },
-  { id: "aider", agentDispatch: true },
-  { id: "amazonq", agentDispatch: true },
-  { id: "openhands", agentDispatch: true },
+  { id: "opencode", agentDispatch: true, enforcesModelWorkTools: true },
+  { id: "claude", agentDispatch: true, enforcesModelWorkTools: true },
+  { id: "opencode-sdk", agentDispatch: true, enforcesModelWorkTools: true },
+  { id: "codex", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "copilot", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "pi", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "gemini", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "aider", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "amazonq", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "openhands", agentDispatch: true, enforcesModelWorkTools: false },
 ] as const;
 
 /**
@@ -58,4 +64,9 @@ export const VALID_HARNESS_IDS = Object.freeze(HARNESS_ID_TABLE.map((h) => h.id)
 /** Harness ids whose `capabilities.agentDispatch` is `true`. */
 export const HARNESS_AGENT_DISPATCH_IDS: ReadonlySet<string> = new Set(
   HARNESS_ID_TABLE.filter((h) => h.agentDispatch).map((h) => h.id),
+);
+
+/** Harness ids that confine the model-work tool policy, so unattended model work may run on them. */
+export const HARNESS_MODEL_WORK_IDS: ReadonlySet<string> = new Set(
+  HARNESS_ID_TABLE.filter((h) => h.enforcesModelWorkTools).map((h) => h.id),
 );

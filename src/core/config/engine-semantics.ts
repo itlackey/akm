@@ -14,14 +14,19 @@ export const BUILTIN_IMPROVE_STRATEGY_NAMES = [
   "proactive-maintenance",
 ] as const;
 
-/** Engine capability required by each configured improve process. `null` means engine-free. */
-export const IMPROVE_PROCESS_ENGINE_CAPABILITIES = {
-  reflect: "llm",
-  distill: "llm",
-  consolidate: "llm",
-  memoryInference: "llm",
-  extract: "llm",
-  validation: "llm",
-  triage: "runner",
-  proactiveMaintenance: null,
-} as const;
+/**
+ * The improve processes that use an engine. Triage's engine is its judgment's;
+ * each of the others makes the process's own model calls.
+ */
+export const IMPROVE_ENGINE_PROCESSES = [
+  "reflect",
+  "distill",
+  "consolidate",
+  "memoryInference",
+  "extract",
+  "validation",
+  "triage",
+] as const;
+
+/** Every improve process, in plan order: the engine processes and `proactiveMaintenance`, which uses none. */
+export const IMPROVE_PROCESS_NAMES = [...IMPROVE_ENGINE_PROCESSES, "proactiveMaintenance"] as const;

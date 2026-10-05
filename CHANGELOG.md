@@ -4,6 +4,305 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+## [0.9.25] - 2026-10-04
+
+The stable release of the 0.9.25 line: 0.9.25-alpha.1 to alpha.4, unchanged. Their
+sections below list every change. When upgrading from 0.9.24:
+
+- **Reflect edits only an asset's `description`, `when_to_use` and title, and
+  keeps the body byte for byte;** it may answer "nothing to change" (alpha.3).
+  Its quality judge has a rubric for these revisions and tells one answering
+  negative feedback from maintenance (alpha.4). A proposal deferred as
+  `body-edit` by 0.9.24 stays deferred.
+- **Reflect refuses defective revisions before the judge runs** (placeholder
+  text, talk about its own edit, frontmatter copied into the body), with the
+  wording lists under `processes.reflect.defectFilter` (alpha.2).
+- **`akm improve judge`** runs reflect's quality judge on one revision, for
+  testing a judge engine (alpha.2).
+- **akm learns from Codex sessions:** `akm proposal extract --type codex`,
+  `--auto` and `akm improve` read `$CODEX_HOME/sessions` (alpha.3).
+- **Engines are interchangeable for model work:** one tool policy, one config
+  rule for which engines model work may use, a 600-second bound on every engine
+  kind, and `reasoningEffort` as the one effort word (alpha.1 and alpha.2).
+- **Removed:** the `--track-usage` / `--no-track-usage` flag on `akm search`,
+  `akm curate` and `akm show` (either spelling now fails as an unknown flag),
+  and opencode model work's step limit (alpha.2).
+
+## [0.9.25-alpha.4] - 2026-10-04
+
+### Changed
+
+- **The reflect quality judge's rubric is written for the frontmatter-only
+  revisions reflect makes, and says what drove each one.** A revision answering
+  negative feedback (any `[negative]` line) is judged only on the fields it
+  changes, since it cannot change the body and need not resolve feedback about
+  it. A field change is justified when the field is missing or broken, claims
+  more than the body covers, or, for a note the feedback calls stale, needs to
+  name the version or date the body records. A maintenance revision needs a
+  missing or broken field, and rewording a sound one is churn. New values are
+  checked as claims against the body. On 113 frontmatter-only proposals
+  reviewed by Claude Opus, the production model passed 78 of the 95 good ones
+  and 3 of the 18 bad ones, against 53 and 7 under the previous rubric, which
+  was tuned on body rewrites. The agent judge's tool paragraph drops its
+  feedback-points check, which contradicted that rule.
+
+## [0.9.25-alpha.3] - 2026-10-04
+
+### Added
+
+- **akm learns from Codex sessions.** `akm proposal extract --type codex` reads
+  the rollout files Codex writes under `$CODEX_HOME/sessions` (`~/.codex/sessions`
+  by default), as it reads Claude Code's and opencode's session files. `--auto`
+  and `akm improve`'s session extraction include Codex on a machine that has
+  them, and a session is extracted once, as for the other harnesses. The model
+  sees what the person and Codex said and the tool calls and results between
+  them, without Codex's own instructions or injected context (AGENTS.md, the
+  environment, an invoked skill). The reader lists a person's sessions,
+  `codex exec` runs included. It leaves out the rollouts Codex writes for
+  subagents and its other internal agents, which are not sessions of their own, and
+  unlike a Claude Code subagent transcript it does not fold them into their
+  parent.
+
+### Changed
+
+- **Reflect changes only an asset's `description`, `when_to_use` and title;
+  akm keeps the body byte for byte.** On 396 labelled reflect edits, those that
+  fixed a frontmatter defect and left the body alone were good 24 times in 26;
+  those that also rewrote the body were bad 175 times in 224. The reply is now
+  `confidence` and a `frontmatterPatch` of `description`, `when_to_use` and
+  `title` (each a non-empty single-line string, or `null` for no change), plus
+  `ref` when no target was given, and no body: the JSON Schema, both output
+  contracts and the repair prompt say so, and the framed reply for an endpoint
+  that rejects JSON Schema has no content markers. akm applies the patch to the
+  asset it read by rewriting only the changed keys' frontmatter lines, so every
+  other line, including a list beside a description the YAML parser cannot read,
+  stays as it was; a source whose closing `---` is fused onto a value gets no
+  proposal. A non-null `title` becomes a
+  `# <title>` heading and one blank line at the top of the body, only when the
+  body has no level-1 heading; otherwise it is ignored. A patch that changes
+  nothing, whether every field is `null` or equal to the source's, creates no
+  proposal (`no_change`); an asset that requires a `description` and has none
+  still gets one derived from its own text, as before (#636).
+- **Reflect may answer "nothing to change."** Its prompt forbade it: "your
+  proposal must correct or add something the source lacks", "must meaningfully
+  differ" from a rejected proposal, "do not return the same content
+  unchanged", and "you MUST generate" a `when_to_use`. On the same edits, those
+  that fixed no defect were bad 86 times in 93, and those driven by negative
+  feedback 50 times in 53; most of that feedback says the asset did not help
+  with an unrelated task. One goal sentence now covers every asset type: check
+  the three fields against the body and the feedback, and return `null` for
+  each that needs no fix. The feedback caveat says that feedback about a task
+  the asset never claims to cover needs no change, and with no feedback the
+  prompt says to fix only a missing or broken field. A rejected proposal is not
+  to be proposed again, and the engine returns `null` when no other change is
+  justified.
+- **Reflect's prompt names the frontmatter problems akm can see** (a
+  description split by a stray period or carrying an escaped quote, no
+  `when_to_use`, no title) and asks for a repair that keeps the description's
+  wording, names, numbers and paths rather than a rewrite. Without the list the
+  model fixed 51 of 122 broken descriptions and 93 of 193 missing titles; with
+  it, 120 and 189. When the feedback calls a note stale or historical, a new
+  `when_to_use` names the version or date the body records, or stays as it is.
+  On an 80-case sample of the labelled set, Claude Opus reviewers judged 64 of
+  the new reflect's 78 proposals good; the old reflect's edits in the set are
+  good 81 times in 396.
+- **`akm proposal accept` warns about an echoed "Avoid These Patterns"
+  section instead of refusing.** Reflect keeps a body as it is, so a proposal
+  for an asset that already carries the section (a leftover of the run-only
+  prompt text) would never be accepted, and the person accepting cannot edit
+  the proposal.
+
+### Removed
+
+- **Everything reflect needed to rewrite a body.** The prompt's "Content
+  preservation rules" and the size bounds computed for them; the related
+  distilled lessons section and the companion-doc
+  (`knowledge/skills/<skill>/references/<topic>`) option, with the gathering
+  behind them and the `derived_from_reflect` marker it read; the size guard and
+  the truncation-marker check on reflect's output, and their review reasons
+  `reflect-size-ratio` and `reflect-truncation-leak`; the stripping of an
+  appended frontmatter block and of an echoed "Avoid These Patterns" section
+  from a body; and the restore of identity fields, which a patch cannot name.
+  The accept-time size advisory and truncation-marker block stay.
+- **The `body-edit` review reason.** A reflect revision no longer changes the
+  body, so one the judge passed is stamped `staged` and the triage drain
+  accepts it, as before 0.9.24; with `processes.reflect.qualityGate` off it is
+  minted unstamped for the drain to decide. A proposal already deferred as
+  `body-edit` stays deferred.
+
+## [0.9.25-alpha.2] - 2026-10-03
+
+### Added
+
+- **`akm improve judge`** runs reflect's quality judge on one revision, read as
+  `{"source", "candidate", "feedback", "ref"}` JSON from stdin, with the engine
+  `processes.reflect.qualityGate.engine` names, and prints the verdict. It
+  writes nothing: it tests a judge engine on revisions whose right answer you
+  know.
+
+### Changed
+
+- **Reflect refuses three kinds of defective revision before the judge runs,**
+  with the quality gate on or off: one that adds placeholder text ("please
+  confirm", "to be confirmed"; not `TODO`, `TBD` or `FIXME`), one that talks about
+  its own edit ("the feedback says", "this revision", "the source asset", a
+  quoted gate rejection), and one that copies frontmatter into its body (key
+  lines such as `sources:` or `updated:` outside code, or a `sources`,
+  `xrefs` or `contradictedBy` value). Each rule counts only what the revision
+  adds to its source. A hit is a `quality_rejected` refusal with no proposal
+  and no judge call, and the event names the rule (`reflectDefect`). Each
+  rule's wording is a list that `processes.reflect.defectFilter` can replace:
+  `placeholders` and `metaCommentary` are plain phrases, matched as whole words
+  in any case, and `frontmatterKeys` are exact key names. A list left out keeps
+  its default, and `[]` turns its rule off. On 396 labelled reflect edits the
+  default lists hit 22 of 313 bad edits and none of 83 good ones.
+- **The reflect quality judge's rubric names what it kept missing.** Tuned on
+  the labelled judge-gate set (plain judge, qwen3.8-27b): a description with a
+  sentence split by a stray period or an unbalanced quote is broken text; a
+  missing title, description or `when_to_use` is a concrete problem whether or
+  not the feedback mentions it, while a bare `type:` or a provenance stamp is
+  not; PRESERVATION and QUALITY are judged line by line in the changed region,
+  so a fix elsewhere no longer excuses a dropped fact, an invented or
+  strengthened claim, a hedge or a placeholder. On a stratified 100-case sample
+  the gate passed 31 of 40 good edits instead of 18 and 3 of 60 bad instead of 2.
+- **A reflect quality judge on an agent engine reads only to verify what a
+  revision adds.** Its prompt names the revised asset's ref and adds one
+  paragraph: read that asset, or one the changed region names, with `akm_show`
+  only to check a fact the revision adds or alters, at most twice, and never
+  search; before scoring, find each added statement in the asset or the
+  feedback (a step or cause that merely seems to follow does not count), each
+  source fact in the revision, and each feedback point in a change to the text
+  it is about. The plain judge's prompt is unchanged. On the same 100 cases
+  (qwen3.8-27b, thinking on) the agent judge passed 38 of 40 good edits and 14
+  of 60 bad, against 34 and 12 for the plain judge on that model. Give the
+  engine's `llmEngine` `enableThinking: true`: without thinking the model
+  looped on tool calls.
+- **A failed reflect reply reads the same on every engine kind:** the parser's
+  own message. 0.9.25-alpha.1 named the engine on an agent engine.
+- **Inference reaches opencode only where akm writes opencode's config:** an
+  improve process's `llm` overlay on model work's agent, and an `opencode-sdk`
+  engine's `llmEngine` fallback model. Set the rest in your opencode config; a
+  task's or workflow's `inference` is an `untranslated-field` notice, as before
+  0.9.25-alpha.1. `claude` takes no `--effort`.
+- **An `opencode-sdk` session the dispatch times out on or aborts is aborted on
+  the server for every dispatch,** not only model work.
+- **An improve stage retries a reply only when the stage cannot read it,** not
+  when it misses the JSON Schema. A reply it can read costs no second call.
+- **opencode model work can read the stash and search it.** The `akm-model-work`
+  agent reads, greps and globs in the stash and its working directory, edits
+  only in the working directory, and has `akm_search` and `akm_show` from the
+  akm-opencode plugin (0.9.21 or later, in your own opencode config). The
+  plugin's curation, learning and write gate are off for these dispatches, and
+  its state goes to akm's state directory, not `~/.local/state/akm-opencode`.
+
+### Removed
+
+- **The agent-engine inference fields,** which 0.9.25-alpha.1 accepted: they
+  fail to load again.
+- **The `opencode-sdk` step watcher and the git-repository refusal for model
+  work's scratch directory.**
+- **opencode model work's step limit.** At the limit opencode sends a "maximum
+  steps" message as a trailing assistant message, which a qwen chat template
+  (LM Studio, llama-server) renders as the start of the model's reply: LM
+  Studio returned nothing, llama-server returned that message as the answer,
+  and the dispatch failed. The dispatch timeout bounds a run.
+- **A prompt builder that nothing called** (`buildSchemaRepairPrompt`).
+- **The `--track-usage` / `--no-track-usage` flag on `akm search`, `akm curate`
+  and `akm show`.** A successful read always records its usage event, stamped
+  with its source (`user`, `improve`, `task` or `audit`); only `user` events
+  feed ranking and eval, so machine reads never skew them. Either spelling now
+  fails as an unknown flag.
+
+### Fixed
+
+- **The reflect size guard no longer flags a body that does not grow.** The
+  expansion ceiling is capped at 25,000 characters, so a source body longer than
+  that was flagged `EXCESSIVE_EXPANSION` even when the proposed body was its own
+  length (ratio 1.00), and went to review instead of the judge. A body no longer
+  than its source is never expansion; one that grows past the cap still is, by
+  any amount. The reflect prompt agrees: it told the model its body could be at
+  most 25,000 characters even when the source was longer, and now gives such a
+  source's own length.
+- **An asset's or a task's own `tools:` can no longer name the model-work
+  policy.** In 0.9.25-alpha.1 exactly `read`, `edit`, `akm search`, `akm show`,
+  in that order, skipped `execution.allowedTools`. It is ordinary tools now:
+  only akm's own model-work callers ask for the policy.
+- **An agent engine that names its model only in `args` is named in the usage
+  report,** where it showed `unattributed`.
+- **`opencode` and `opencode-sdk` engines receive the XDG base-directory
+  variables.** Under a custom `XDG_CONFIG_HOME` the spawned opencode missed its
+  provider config and failed every dispatch with `Unexpected server error`.
+
+## [0.9.25-alpha.1] - 2026-10-02
+
+### Changed
+
+- **Unattended model work runs under one tool policy, on any engine that
+  confines it.** The model may read, edit inside a scratch directory akm removes
+  after the dispatch, and run `akm search` and `akm show`; the stash stays
+  read-only. An LLM engine has no tools, `claude` confines the policy, and
+  `opencode` and `opencode-sdk` run an injected `akm-model-work` agent with
+  read and edit only. Every other harness refuses it before the request starts.
+- **One config rule names the engines model work may use.** Every key it reads
+  its engine from (`defaults.llmEngine`, `index.*.engine`, a strategy's or
+  process's `engine`, an enabled triage `judgment.engine`, a
+  `qualityGate.engine`) must name an LLM engine or a `claude`, `opencode` or
+  `opencode-sdk` agent engine, or the config fails to load. `--require-engines`
+  and `akm health` check agent engines too.
+- **Model work is bounded at 600 seconds on every engine kind** whose engine
+  sets no `timeoutMs`; agent and `opencode-sdk` engines ran until they finished.
+- **`akm proposal new` returns the proposal as JSON on every engine kind,**
+  with no draft file and no live session. A reply that is not a proposal gets
+  one retry.
+- **Reflect asks every engine kind for the same JSON reply and repairs it
+  once.** An agent or `opencode-sdk` engine gets reflect's JSON Schema and a
+  repair turn, as an LLM engine did. An LLM engine's requests are unchanged.
+- **An improve stage's reply that fails its JSON Schema gets one corrective
+  retry,** then the stage reads the last reply with its own parser.
+- **One schema instruction for every agent engine,** appended by the shared
+  request lowering: `opencode` and `opencode-sdk` now receive a requested
+  schema, and a workflow unit on seven harnesses no longer carries it twice.
+- **Agent and `opencode-sdk` dispatches leave a usage record.**
+- **An `opencode-sdk` engine's LLM fallback comes only from its own
+  `llmEngine`; `defaults.llmEngine` no longer supplies one.** If you relied on
+  that, set `llmEngine` on the SDK engine. Without one, opencode uses its own
+  provider, model and auth.
+- **Inference reaches `opencode`, `opencode-sdk` and `claude` engines.**
+  `temperature`, `maxTokens`, `contextLength`, `enableThinking` and
+  `reasoningEffort` from an engine, an improve process's `llm` overlay, an
+  asset, a workflow or a `models.json` alias were dropped on every agent
+  engine. An agent engine may set them, and `claude` takes `reasoningEffort` as
+  `--effort`.
+- **Reasoning effort has one word, `reasoningEffort`.** `effort` in a
+  `models.json` alias or an asset is read as it, so an LLM engine now sends it
+  as `reasoning_effort`.
+
+### Removed
+
+- **Dead code; nothing you run changes:** each harness's unused `pattern` and
+  `structuredOutput` fields, `resolveLlmEngineUse`'s swap of an agent engine
+  for an LLM engine, the agent request's unread `effort` hint, and the agent
+  file-write contract (`DRAFT_WRITTEN`, reflect's `ref_mismatch` check).
+
+### Fixed
+
+- **An `opencode-sdk` engine with an LLM fallback reaches its endpoint, and a
+  failed dispatch is a failure (#1015).** An SDK error or provider rejection is
+  `ok: false` with opencode's message, and a reply's last text part is its answer.
+- **An LLM engine reports a provider error sent with HTTP 200 as a failure**
+  (OpenRouter does this), not as an empty reply.
+- **An `opencode` engine runs a persona** instead of failing on
+  `--system-prompt`, which opencode 1.18 rejects.
+- **An LLM engine sends a requested schema** unless it sets
+  `supportsJsonSchema: false`; it sent one only when it set `true`.
+- **A feature gate's timeout stops the call it bounds,** and a stage call
+  reports a timeout or abort as `timeout` or `aborted`, not `error`.
+- **`akm proposal new` keeps the reply's `confidence`.**
+- **Model work on an agent or `opencode-sdk` engine with no `timeoutMs` stops
+  after 600 seconds** as documented; it resolved to no timeout.
+
 ## [0.9.24] - 2026-10-02
 
 ### Changed

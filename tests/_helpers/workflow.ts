@@ -42,7 +42,7 @@ export const WORKFLOW_TEST_CONFIG = {
   configVersion: "0.9.0",
   semanticSearchMode: "off",
   engines: {
-    "test-agent": { kind: "agent", platform: "opencode-sdk" },
+    "test-agent": { kind: "agent", platform: "opencode-sdk", llmEngine: "test-llm" },
     "test-llm": {
       kind: "llm",
       endpoint: "http://localhost:1/v1/chat/completions",
@@ -167,7 +167,7 @@ function targetConcurrency(runner: RunnerSpec, config: AkmConfig): number | unde
   }
   if (runner.kind !== "sdk" || !runner.fallbackConnection) return undefined;
   const selected = typeof runner.engine === "string" ? config.engines?.[runner.engine] : undefined;
-  const fallbackName = selected?.kind === "agent" ? (selected.llmEngine ?? config.defaults?.llmEngine) : undefined;
+  const fallbackName = selected?.kind === "agent" ? selected.llmEngine : undefined;
   const fallback = fallbackName ? config.engines?.[fallbackName] : undefined;
   return defaultLlmEngineConcurrency(
     runner.fallbackConnection.endpoint,

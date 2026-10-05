@@ -7,9 +7,10 @@ import type { LlmConnectionConfig } from "../../src/core/config/config";
 import type { UnresolvedExecutionDefaults } from "../../src/execution/source";
 import type { AgentRunResult } from "../../src/integrations/agent";
 import { type BuiltExecution, buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
-import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import { type AgentProfile, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { type RunExecutionOptions, runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../src/llm/usage-telemetry";
 import { withEnv } from "../_helpers/sandbox";
 
 function okResult(stdout: string): AgentRunResult {
@@ -205,6 +206,31 @@ describe("runExecution redacts what the child could have seen", () => {
     expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(4);
   });
 
+  // The XDG directories are paths, like HOME and TMPDIR: an opencode child that echoes the config
+  // directory it read (in an error, say) must not have it scrubbed to [REDACTED].
+  test("not the XDG base directories an opencode child was given", async () => {
+    const opencode = getBuiltinAgentProfile("opencode") as AgentProfile;
+    const directories = {
+      XDG_CONFIG_HOME: "/sandbox/xdg-config",
+      XDG_DATA_HOME: "/sandbox/xdg-data",
+      XDG_CACHE_HOME: "/sandbox/xdg-cache",
+      XDG_STATE_HOME: "/sandbox/xdg-state",
+    };
+    const echoed = Object.values(directories).join(" | ");
+    const result = await runExecution(
+      built({ kind: "agent", engine: "oc", profile: { ...opencode, platform: "opencode" } }),
+      {
+        runOptions: { envSource: { PATH: "/safe/bin", ...directories } },
+        runAgent: async () => ({ ...okResult(echoed), stderr: echoed, error: echoed, parsed: { echoed } }),
+      },
+    );
+
+    expect(result.stdout).toBe(echoed);
+    expect(result.stderr).toBe(echoed);
+    expect(result.error).toBe(echoed);
+    expect(result.stdout).not.toContain("[REDACTED]");
+  });
+
   test("credential-bearing values even when their passthrough names are allowlisted", async () => {
     const userinfo = "https://user:password@example.test/v1";
     const signed = "https://example.test/object?X-Amz-Credential=owner&X-Amz-Signature=signed-secret";
@@ -233,5 +259,68 @@ describe("runExecution redacts what the child could have seen", () => {
     }
     for (const secret of partialCredentials) expect(JSON.stringify(result)).not.toContain(secret);
     expect(result.stdout).toBe("[REDACTED] | [REDACTED] | [REDACTED] | [REDACTED]");
+  });
+});
+
+describe("runExecution's usage record names the model the dispatch ran", () => {
+  const agentRunner = (args: string[]): RunnerSpec => ({
+    kind: "agent",
+    engine: "oc",
+    profile: { ...agentProfile, args },
+  });
+
+  /** The usage records one dispatch of `runner` leaves. */
+  async function usageOf(runner: RunnerSpec, current?: UnresolvedExecutionDefaults): Promise<LlmUsageRecord[]> {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => records.push(record));
+    try {
+      await runExecution(built(runner, "p", current), {
+        runAgent: async () => okResult("ok"),
+        runSdk: async () => okResult("ok"),
+      });
+    } finally {
+      clearLlmUsageSink();
+    }
+    return records;
+  }
+
+  test("an agent engine that names its model only in args is attributed to it", async () => {
+    const records = await usageOf(agentRunner(["run", "--model", "krang/chat/qwen3.8-27b"]));
+
+    expect(records).toHaveLength(1);
+    expect(records[0]?.model).toBe("krang/chat/qwen3.8-27b");
+  });
+
+  test("the --model=<id> form is read too, and the last --model wins", async () => {
+    const equals = await usageOf(agentRunner(["run", "--model=krang/chat/qwen3.8-27b"]));
+    const twice = await usageOf(agentRunner(["--model", "first/model", "run", "--model=second/model"]));
+
+    expect(equals[0]?.model).toBe("krang/chat/qwen3.8-27b");
+    expect(twice[0]?.model).toBe("second/model");
+  });
+
+  test("a model the request names wins over the one in args", async () => {
+    const records = await usageOf(agentRunner(["run", "--model", "from/args"]), { model: "from/request" });
+
+    expect(records[0]?.model).toBe("from/request");
+  });
+
+  test("an agent engine that names no model stays unattributed", async () => {
+    const records = await usageOf(agentRunner(["run"]));
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).not.toHaveProperty("model");
+  });
+
+  test("an sdk engine's args are not read: its server never sees them", async () => {
+    const { model: _model, ...unmodelled } = sdkProfile;
+    const records = await usageOf({
+      kind: "sdk",
+      engine: "sdk",
+      profile: { ...unmodelled, args: ["--model", "from/args"] },
+    });
+
+    expect(records).toHaveLength(1);
+    expect(records[0]).not.toHaveProperty("model");
   });
 });

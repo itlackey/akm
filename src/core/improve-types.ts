@@ -199,7 +199,7 @@ export interface ImproveExecutionPlan {
   effectiveRefs: Array<{ ref: string; lane: ImprovePlanLane; reason: ImproveEligibleRef["reason"] }>;
   /**
    * Resolved process -> engine -> model routing table (#947), one row per
-   * `IMPROVE_PROCESS_ENGINE_CAPABILITIES` name plus a `"triage.judgment"` row
+   * `IMPROVE_PROCESS_NAMES` name plus a `"triage.judgment"` row
    * when configured. Present on dry AND live results — this is a preflight
    * projection, not a dispatch report; #944's post-run cost/routing report is
    * a separate, additional field. Sourced from `ResolvedImprovePlan`, which

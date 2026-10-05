@@ -73,6 +73,8 @@ const HARNESSED: readonly string[] = [
   "XDG_STATE_HOME",
   // Home directory itself.
   "HOME",
+  // Codex session-log root (pointed into the sandbox at preload).
+  "CODEX_HOME",
   // Diagnostic / secret env vars production code reads.
   "AKM_VERBOSE",
   "AKM_LLM_API_KEY",
@@ -129,6 +131,11 @@ function installSuiteWideSandbox(): void {
   delete process.env.AKM_VERBOSE;
   delete process.env.AKM_LLM_API_KEY;
   delete process.env.AKM_EMBED_API_KEY;
+  // The Codex session reader's default root is `os.homedir()/.codex`, and bun's
+  // os.homedir() keeps returning the real home after the HOME override above, so
+  // `extract --auto` and `improve` would read the developer's real rollouts.
+  // Codex's own `CODEX_HOME` overrides that default (and a developer's export).
+  process.env.CODEX_HOME = path.join(suiteSandboxRoot, "codex-home");
   // Teardown must fire on signal-kills too, not just clean exit. A worker that
   // is SIGTERM/SIGINT/SIGHUP'd (e.g. an orphaned/hung `bun test` worker being
   // reaped) otherwise leaks its entire `akm-test-suite-*` root under /tmp — the

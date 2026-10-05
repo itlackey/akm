@@ -238,6 +238,17 @@ describe("checkReflectSize — hard cap (REFLECT_ABSOLUTE_MAX_BYTES)", () => {
     if (result.ok) throw new Error("expected rejection");
     expect(result.code).toBe("EXCESSIVE_EXPANSION");
   });
+
+  test("source past the cap (30KB), proposed at its own length → ok:true (a body that does not grow is not expansion)", () => {
+    expect(checkReflectSize(body(30000), body(30000))).toEqual({ ok: true });
+  });
+
+  test("source past the cap (30KB), proposed 1 byte longer → EXCESSIVE_EXPANSION (a body that grows is still capped)", () => {
+    const result = checkReflectSize(body(30000), body(30001));
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("expected rejection");
+    expect(result.code).toBe("EXCESSIVE_EXPANSION");
+  });
 });
 
 // ── G. Absolute floor protects small shrinkage ───────────────────────────────

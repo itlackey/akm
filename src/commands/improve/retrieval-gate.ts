@@ -21,9 +21,10 @@ import type { LlmConnectionConfig } from "../../core/config/config";
 import { nonTaskInput } from "../../core/non-task-input";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { listRetrievalQueries } from "../../indexer/usage/usage-events";
+import type { RunnerSpec } from "../../integrations/agent/runner";
 import type { ChatCompletionOptions, ChatMessage } from "../../llm/client";
 import { type LedgerAccess, readLedgerDb, stripBundle } from "./ledger";
-import { callStage, type LlmRunner, type NoticeSink } from "./stage";
+import { callStage, type NoticeSink } from "./stage";
 
 /** Queries graded per rewrite, as measured. */
 const MAX_QUERIES = 5;
@@ -38,6 +39,11 @@ const GRADE_SCHEMA: Record<string, unknown> = {
   additionalProperties: false,
   properties: { grade: { type: "integer", minimum: 0, maximum: 3 }, reason: { type: "string" } },
 };
+
+function parseGrade(raw: string): number | undefined {
+  const grade = parseEmbeddedJsonResponse<{ grade?: unknown }>(raw)?.grade;
+  return typeof grade === "number" && Number.isInteger(grade) && grade >= 0 && grade <= 3 ? grade : undefined;
+}
 
 /** Up to five distinct task queries, in the given order, whitespace collapsed. */
 export function usableRetrievalQueries(raw: readonly string[]): string[] {
@@ -107,7 +113,7 @@ export async function runRetrievalRegressionGate(args: {
   before: string;
   after: string;
   queries: readonly string[];
-  runner: LlmRunner;
+  runner: RunnerSpec;
   chat?: JudgeChat;
   timeoutMs?: number | null;
   signal?: AbortSignal;
@@ -131,10 +137,11 @@ export async function runRetrievalRegressionGate(args: {
           ...(args.signal ? { signal: args.signal } : {}),
           ...(args.chat ? { chat: args.chat } : {}),
         },
+        parse: parseGrade,
         ...(args.onNotices ? { onNotices: args.onNotices } : {}),
       });
-      const grade = outcome.ok ? parseEmbeddedJsonResponse<{ grade?: unknown }>(outcome.raw)?.grade : undefined;
-      if (typeof grade !== "number" || !Number.isInteger(grade) || grade < 0 || grade > 3) {
+      const grade = outcome.ok ? parseGrade(outcome.raw) : undefined;
+      if (grade === undefined) {
         return {
           pass: false,
           queries: args.queries.length,

@@ -3,12 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
 import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
+import { validateConfigShape } from "../src/core/config/config-schema";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
 import type { LoweringNotice } from "../src/execution/resolved-request";
 import { resolveIndexPassExecution } from "../src/llm/index-passes";
+import { asLlmRunner } from "./_helpers/llm-runner";
 import { type Cleanup, sandboxXdgConfigHome } from "./_helpers/sandbox";
-import { overrideSeam } from "./_helpers/seams";
 
 // Tests for standalone index-pass engine resolution.
 
@@ -41,7 +42,7 @@ function resolvedConnection(passName: string, config: AkmConfig): Record<string,
   const runner = resolveIndexPassExecution(passName, config).runner;
   return runner
     ? {
-        ...runner.connection,
+        ...asLlmRunner(runner).connection,
         ...(Object.hasOwn(runner, "timeoutMs") ? { timeoutMs: runner.timeoutMs } : {}),
       }
     : undefined;
@@ -56,7 +57,7 @@ describe("resolveIndexPassExecution", () => {
         version: 1,
         aliases: {
           reasoning: {
-            index: { model: "exact-index-model", inference: { effort: "high" } },
+            index: { model: "exact-index-model", inference: { topP: 0.9 } },
           },
         },
       }),
@@ -69,14 +70,14 @@ describe("resolveIndexPassExecution", () => {
 
     const resolved = resolveIndexPassExecution("memory", config);
 
-    expect(resolved.runner?.connection.model).toBe("exact-index-model");
-    expect(resolved.runner?.connection).not.toHaveProperty("effort");
+    expect(asLlmRunner(resolved.runner).connection.model).toBe("exact-index-model");
+    expect(asLlmRunner(resolved.runner).connection).not.toHaveProperty("topP");
     expect(resolved.notices).toEqual([
       expect.objectContaining({
         code: "untranslated-field",
         severity: "warning",
         adapter: "llm",
-        field: "inference.effort",
+        field: "inference.topP",
       }) as LoweringNotice,
     ]);
   });
@@ -117,8 +118,8 @@ describe("resolveIndexPassExecution", () => {
       engine: "index",
       credential: { names: ["AKM_INDEX_PASS_REQUIRED_KEY"], required: true },
     });
-    expect(runner?.connection).toEqual(SAMPLE_LLM);
-    expect(runner?.connection).not.toHaveProperty("apiKey");
+    expect(asLlmRunner(runner).connection).toEqual(SAMPLE_LLM);
+    expect(asLlmRunner(runner).connection).not.toHaveProperty("apiKey");
   });
 
   test("standalone enrichment preserves an explicit unbounded timeout", () => {
@@ -158,21 +159,28 @@ describe("resolveIndexPassExecution", () => {
       expect(() => resolveIndexPassExecution("memory", config)).toThrow(/missing/i);
     });
 
-    test("a non-LLM engine on a pass degrades to no runner (with a warning) instead of aborting the whole index run", () => {
-      const seen: unknown[][] = [];
-      overrideSeam(_setWarnSinkForTests, (level, args) => {
-        if (level === "warn") seen.push(args);
-      });
+    test("an agent engine that confines the model-work tool policy runs the pass", () => {
       const config: AkmConfig = {
         semanticSearchMode: "auto",
-        engines: { wrong: { kind: "agent", platform: "pi" } },
-        index: { defaults: { engine: "primary" }, memory: { engine: "wrong" } },
+        engines: { primary: { kind: "llm", ...PRIMARY }, agent: { kind: "agent", platform: "claude" } },
+        index: { defaults: { engine: "primary" }, memory: { engine: "agent" } },
       };
-      expect(() => resolveIndexPassExecution("memory", config)).not.toThrow();
       const resolved = resolveIndexPassExecution("memory", config);
-      expect(resolved.runner).toBeUndefined();
-      expect(resolved.notices).toEqual([]);
-      expect(seen.some((args) => args.some((a) => String(a).includes("memory")))).toBe(true);
+      expect(resolved.runner).toMatchObject({ kind: "agent", engine: "agent" });
+    });
+
+    test("an index pass engine that cannot confine the policy is refused when the config loads", () => {
+      const result = validateConfigShape({
+        configVersion: "0.9.0",
+        engines: { wrong: { kind: "agent", platform: "pi" } },
+        index: { memory: { engine: "wrong" } },
+      });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.errors).toContainEqual({
+        path: "index.memory.engine",
+        message: expect.stringContaining('engine "wrong" (platform pi) cannot confine the model-work tool policy'),
+      });
     });
 
     test("index.<pass>.enabled === false opts the pass out", () => {
@@ -242,7 +250,7 @@ describe("resolveIndexPassExecution", () => {
     };
 
     const runner = resolveIndexPassExecution("enrichment", config).runner;
-    expect(runner?.connection).toMatchObject({
+    expect(asLlmRunner(runner).connection).toMatchObject({
       model: "pass-model",
       temperature: 0.2,
       maxTokens: 400,
@@ -351,7 +359,7 @@ describe("config loader: `index` block parsing", () => {
       index: { enrichment: { llm: { temperature: 0.2, maxTokens: 64 } } },
     });
     const resolved = resolveIndexPassExecution("enrichment", loadUserConfig()).runner;
-    expect(resolved?.connection).toMatchObject({ temperature: 0.2, maxTokens: 64 });
+    expect(asLlmRunner(resolved).connection).toMatchObject({ temperature: 0.2, maxTokens: 64 });
   });
 
   test("keeps an unknown key under a pass entry and names it once instead of failing config load", () => {

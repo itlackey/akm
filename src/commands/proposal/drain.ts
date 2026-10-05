@@ -29,6 +29,7 @@ import { appendEvent, type EventsContext } from "../../core/events";
 import { escapeJsonStringControls, stripCodeFences, stripThinkBlocks } from "../../core/parse";
 import { info, warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
+import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { buildExecution, resolveExecution } from "../../integrations/agent/execution";
 import type { RunnerSpec } from "../../integrations/agent/runner";
 import {
@@ -267,7 +268,14 @@ async function dispatchJudgment(
 ): Promise<{ verdict: JudgmentVerdict | null; notices: readonly Readonly<LoweringNotice>[]; error?: string }> {
   let notices: readonly Readonly<LoweringNotice>[] = [];
   try {
-    const prepared = resolveExecution({ content: prompt, runner });
+    // Model work is bounded on every runner kind: one with no timeout of its own gets the default.
+    // The judgment runs under the model-work tool policy.
+    const prepared = resolveExecution({
+      content: prompt,
+      runner,
+      current: Object.hasOwn(runner, "timeoutMs") ? {} : { timeout: DEFAULT_LLM_TIMEOUT_MS },
+      modelWork: true,
+    });
     const lowered = buildExecution(prepared.request, prepared.runner);
     notices = lowered.notices;
     const chat = seams.chat;
@@ -438,10 +446,11 @@ export async function drainProposals(
   }
 
   if (opts.judgment && result.deferred.length > 0) {
-    // Symbolic credentials are checked before any gate, reject or promote.
+    // Symbolic credentials, and the runner's model-work tool policy, are checked before any gate, reject or promote.
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
       runner: opts.judgment,
+      modelWork: true,
     });
     assertRunnerCredentials(buildExecution(prepared.request, prepared.runner).runner);
   }
