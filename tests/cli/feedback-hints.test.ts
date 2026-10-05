@@ -61,7 +61,7 @@ describe("shipped hints on recording feedback (#999)", () => {
     ["brief", EMBEDDED_HINTS],
     ["full", EMBEDDED_HINTS_FULL],
   ] as const) {
-    test(`${name} hints say improve repairs only the frontmatter, name the exact-fix flags, and positive triggers no rewrite`, () => {
+    test(`${name} hints say improve repairs only the frontmatter, name the exact-fix flags and how to mark an outdated note, and positive triggers no rewrite`, () => {
       const prose = hints.replace(/\s+/g, " ");
       expect(prose).toContain('--negative --reason "<what is wrong and what should change>"');
       expect(prose).toMatch(/flags (it|the asset):/);
@@ -70,6 +70,9 @@ describe("shipped hints on recording feedback (#999)", () => {
       );
       expect(prose).not.toContain("proposes a fix based on your reason");
       expect(prose).toContain('--replace "<exact current text>" --with "<corrected text>"');
+      expect(prose).toContain(
+        "A note that is outdated can be marked with `--outdated`, or `--superseded-by <ref>` when another note replaces it.",
+      );
       expect(prose).toContain("does not trigger a rewrite");
     });
   }

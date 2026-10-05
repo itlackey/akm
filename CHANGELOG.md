@@ -47,7 +47,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and 89 of those only said it did not fit the agent's task, which still lowered
   the note's ranking and sent it to improve. The hints and the guides no longer
   list "unhelpful" among the reasons to flag a note, and their example reasons
-  name a wrong fact instead of "wrong framework" or "incomplete-edge-cases".
+  name a wrong fact instead of "wrong framework" or "incomplete-edge-cases". The
+  hints also say that an outdated note can be marked with `--outdated`, or
+  `--superseded-by <ref>` when another note replaces it.
 - **Distill skips a memory that was flagged wrong and not edited since.** A
   memory with negative feedback in the last 30 days on the text it still has is
   no source for a lesson, so the improve loop skips distill for it: a

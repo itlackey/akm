@@ -112,6 +112,8 @@ not fit your task is not negative feedback: record nothing for it. Improve does
 not rewrite an asset's text: once you have verified the correct fact, attach the
 exact fix with `--replace "<exact current text>" --with "<corrected text>"
 --source "<URL, command or file>"`, which akm checks and queues as a proposal.
+A note that is outdated can be marked with `--outdated`, or
+`--superseded-by <ref>` when another note replaces it.
 `--positive` records that an asset helped (it raises its ranking) and does not
 trigger a rewrite; improve no longer rewrites assets from positive signals or on
 a proactive cadence. An akm command that fails says nothing about the asset;
