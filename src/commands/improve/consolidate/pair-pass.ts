@@ -91,7 +91,7 @@ export const BACKFILL_FLOOR = 0.95;
 export const NEW_MATERIAL_DAYS = 7;
 /** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
-/** Body characters sent to the judge per side (plan §4.3: bodies were truncated at this length for calibration). */
+/** Body characters sent to the judge per side: enough for nearly every note, so a retirement is judged on the whole text. */
 const PAIR_BODY_TRUNCATE_CHARS = 12_000;
 const MS_PER_DAY = 86_400_000;
 
@@ -105,6 +105,7 @@ function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLa
   return RETIRE_LABELS.has(label);
 }
 
+/** Exported, with {@link buildPairUserPrompt}, so a replay can drive the exact judge call. */
 export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["onlyInA", "onlyInB", "relation", "redundant", "stale", "confidence", "reason"],
@@ -637,11 +638,6 @@ interface PairPassContext {
   retiredThisRun: Set<string>;
 }
 
-/**
- * One pair: judge it, then (for a retire class) apply the guards and mint
- * the proposal. Never throws — a failure is counted in `failedJudgments` or
- * pushed to `warnings`, never lost silently and never aborting the run.
- */
 function checkSection(label: string, side: PairSide): string {
   return [
     `Note ${label}:`,
@@ -682,6 +678,11 @@ async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, succe
   return claimList(parseEmbeddedJsonResponse<{ missing?: unknown }>(outcome.raw)?.missing)?.length === 0;
 }
 
+/**
+ * One pair: judge it, then (for a retire class) apply the guards and mint
+ * the proposal. Never throws — a failure is counted in `failedJudgments` or
+ * pushed to `warnings`, never lost silently and never aborting the run.
+ */
 async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise<{ failed: boolean }> {
   const initiatorSide = loadSide(candidate.initiator, ctx.gitFirstAdded, ctx.stashDir);
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
