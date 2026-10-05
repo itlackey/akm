@@ -574,7 +574,7 @@ function qualityGateEnabled(run: DistillRun): boolean {
 }
 
 /**
- * Judge the distilled content, then queue it. A rejected, uncertain or
+ * Judge the distilled content, then queue it for review. A rejected, uncertain or
  * source-contradicting result is recorded instead (see {@link writeQualityRejection}).
  */
 async function judgeAndQueue(
@@ -661,7 +661,20 @@ async function judgeAndQueue(
       // The ledger keys the attempt by the input, not the output.
       attemptedRefs: [run.ledgerRef],
     },
-    { judged },
+    // A pass goes to a person, never to the triage drain or its judgment tier. Staged precision was 2 of 12 on
+    // 2026-10-05: ten of the staged lessons restated their memory, claimed what it does not say, or filed a dated
+    // status as a lesson, and no judge score separated them from the two good ones. The judge's evidence stays on
+    // the decision for the reviewer. With the gate off nothing was judged, and the drain decides as before.
+    judged
+      ? {
+          review: {
+            reason: "distill-review",
+            gate: "quality-gate",
+            ...(judged.criteria ? { scores: judged.criteria } : {}),
+            judgeReason: judged.reason,
+          },
+        }
+      : {},
   );
   persistOutputEncodingSalience(run, out.ref, content);
   const swapped = out.descriptionSwapped ? { descriptionSwapped: out.descriptionSwapped } : {};

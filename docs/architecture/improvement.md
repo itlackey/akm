@@ -204,10 +204,16 @@ or more and a rejection below that. The rubric and the rule were chosen on 90
 labelled real rewrites, where judging on the mean let rewrites that only
 reworded a correct asset through.
 
-A pass is stamped on the proposal as a `staged` decision from the `quality-gate`
-with the per-criterion `scores` and the judge's `judgeReason`; both stay on the
-proposal when the drain accepts it, so a later audit can read why it passed
-(`akm proposal show --format json`). Reflect revises only an asset's
+A reflect pass is stamped on the proposal as a `staged` decision from the
+`quality-gate` with the per-criterion `scores` and the judge's `judgeReason`;
+both stay on the proposal when the drain accepts it, so a later audit can read
+why it passed (`akm proposal show --format json`). A distill pass is not staged:
+the lesson or promotion is minted `deferred` for a person (reason
+`distill-review`, same gate) with the same `scores` and `judgeReason`, and the
+triage drain and its judgment tier leave it alone. On 2026-10-05 the gate had
+staged 12 lessons and 10 were bad (they restated the memory, claimed what it
+does not say, or filed a dated status as a lesson), and no score separated them
+from the two good ones. Reflect revises only an asset's
 `description`, `when_to_use` and title, never its body. On 396 labelled edits,
 those that fixed a frontmatter defect and left the body alone were good 24
 times in 26, and those that also rewrote the body were bad 175 times in 224.

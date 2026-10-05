@@ -7,13 +7,15 @@
  * touching the real indexer or events stream.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 
 import { akmDistill, buildDistillPrompt, deriveLessonRef } from "../../src/commands/improve/distill";
 import { assessMemoryKnowledgePromotionCandidate } from "../../src/commands/improve/distill-promotion-policy";
 import { getAssetSalience } from "../../src/commands/improve/salience";
+import { drainProposals } from "../../src/commands/proposal/drain";
+import type { akmProposalAccept } from "../../src/commands/proposal/proposal";
 import { archiveProposal, createProposal, listProposals } from "../../src/commands/proposal/repository";
 import {
   detectDoubleFrontmatter,
@@ -26,6 +28,7 @@ import { ConfigError } from "../../src/core/errors";
 import { readEvents } from "../../src/core/events";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { deriveEntryProvenance, deriveInstallations, slugForPath } from "../../src/indexer/installations";
+import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { LlmFeatureTimeoutError } from "../../src/llm/feature-gate";
 import { listImproveLedgerRows } from "../../src/storage/repositories/improve-ledger-repository";
 import {
@@ -131,6 +134,13 @@ sources: [skill:deploy]
 
 Connect the VPN before production deploys.
 `;
+
+/** A judgment-tier runner; the drain's injected `chat` seam ignores its connection. */
+const JUDGMENT_RUNNER: RunnerSpec = {
+  kind: "llm",
+  engine: "judgment",
+  connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "judgment-model" },
+};
 
 const noopLookup = async () => null;
 const emptyEvents = (() => ({ events: [], nextOffset: 0 })) as unknown as typeof readEvents;
@@ -2128,7 +2138,8 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     }
   });
 
-  test("a queued lesson's staged stamp keeps the judge's scores and reason", async () => {
+  // The gate staged 12 lessons on 2026-10-05 and 10 were bad, so a pass is a person's call, not the drain's.
+  test("a lesson that passes the judge is deferred for review, with the judge's scores and reason", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({
       ref: "skills/deploy",
@@ -2149,12 +2160,64 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
     });
 
     expect(result.outcome).toBe("queued");
-    expect(listProposals(stash)[0]?.gateDecision).toMatchObject({
-      outcome: "staged",
+    const [proposal] = listProposals(stash);
+    expect(proposal).toMatchObject({ status: "pending", source: "distill" });
+    expect(proposal?.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "distill-review",
       gate: "quality-gate",
       scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
       judgeReason: "adds the rollback step",
     });
+    expect(proposal?.confidence).toBeCloseTo(4.5 / 5, 9);
+    const db = openStateDatabase();
+    try {
+      const row = listImproveLedgerRows(db, stash, ["distill"]).find((entry) => entry.ref === "skills/deploy");
+      expect(row).toMatchObject({ outcome: "review_needed", proposalId: proposal?.id });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("the triage drain leaves a judged lesson for a person, as does its judgment tier", async () => {
+    const stash = makeStashDir();
+    await akmDistill({
+      ref: "skills/deploy",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) =>
+        messages.some((m) => m.content.includes("Score this lesson"))
+          ? JSON.stringify({ scores: { novelty: 5, nonRedundancy: 5, grounding: 5 }, reason: "adds new info" })
+          : VALID_LESSON,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+    const before = listProposals(stash);
+    expect(before).toHaveLength(1);
+
+    const accept = mock(async () => {
+      throw new Error("the drain accepted a distill lesson unattended");
+    });
+    const judgment = mock(async () => {
+      throw new Error("a distill lesson reached the judgment tier");
+    });
+    const result = await drainProposals(
+      {
+        stashDir: stash,
+        applyMode: "promote",
+        maxAccepts: 5,
+        dryRun: false,
+        judgment: JUDGMENT_RUNNER,
+      },
+      accept as unknown as typeof akmProposalAccept,
+      undefined,
+      { chat: judgment },
+    );
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(judgment).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ promoted: [], rejected: [], deferred: [], staged: [] });
+    expect(listProposals(stash)).toEqual(before);
   });
 
   test("07 P0-2 end-to-end: gate ON + unjudgeable verdict → routed to review, never auto-queued", async () => {

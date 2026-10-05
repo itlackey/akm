@@ -123,7 +123,8 @@ export interface ProposalGateDecision {
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
    * `no-judge-configured`, `judgment-deferred`, `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
-   * `quality-review` for a human, `judge-error` for a human when reflect's
+   * `quality-review` for a human, `distill-review` for a human on a distill
+   * pass, `judge-error` for a human when reflect's
    * judge gave no verdict. Reflect (`reflect`), for a human:
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
@@ -136,7 +137,7 @@ export interface ProposalGateDecision {
   thresholds?: { maxDiffLines?: number; minContentLines?: number };
   /** SHA-256 of the content the gate evaluated, to tell an unchanged retry from an edit. */
   contentHash?: string;
-  /** The quality judge's per-criterion scores, on a `quality-gate` pass. */
+  /** The quality judge's per-criterion scores, on a `quality-gate` pass, staged or deferred for review. */
   scores?: Record<string, number>;
   /** The quality judge's one-sentence reason, on a `quality-gate` pass. */
   judgeReason?: string;

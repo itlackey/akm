@@ -63,6 +63,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the memory while it is newer than the file's last write (its modification
   time, as in the retrieval scope's new-material test), so any later write ends
   it. An explicit `akm improve <ref>` still distills it.
+- **A distill proposal that passes the quality judge goes to review, not to the
+  drain.** The gate used to stamp a passing lesson (or knowledge promotion)
+  `staged`, and the triage drain accepted it on the next run with no one
+  looking. It is now minted `deferred` for a person: gate decision
+  `deferred`/`quality-gate` with the reason `distill-review`, carrying the
+  judge's per-criterion `scores` and `judgeReason`, so neither the drain nor its
+  judgment tier accepts it, and the improve ledger records `review_needed`. The
+  `distill_invoked` outcome is still `queued`. On 2026-10-05 the gate had
+  staged 12 lessons and 10 were bad (they restated the memory, claimed what it
+  does not say, or filed a dated status as a lesson); no judge score separated
+  them from the two good ones. A failed judgment behaves as before, and with
+  `processes.distill.qualityGate` off nothing is judged, so the proposal is
+  minted unstamped for the drain to decide.
 
 ### Removed
 
