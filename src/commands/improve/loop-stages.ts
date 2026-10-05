@@ -61,7 +61,7 @@ import type {
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import { type ImproveLedgerOutcome, recordLedgerAttempt, stateKey, stripBundle } from "./ledger";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
-import { pushRecentError } from "./preparation";
+import { isFlaggedSinceLastEdit, pushRecentError } from "./preparation";
 import type { AkmReflectOptions } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { attributeStage, errMessage } from "./stage";
@@ -272,6 +272,8 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
   recordPlasticity(env, planned, reason === "no_change" ? "noop" : result.ok ? "changed" : undefined);
 }
 
+const FLAGGED_WRONG_REASON = "flagged wrong since its last edit";
+
 async function runLoopDistillPass(
   planned: ImproveEligibleRef,
   refType: string,
@@ -297,6 +299,12 @@ async function runLoopDistillPass(
   // The ledger holds cooled refs; an explicit `--scope` ref overrides it.
   if (!isDistillCandidateRef(planned.ref, options.stashDir)) return;
   if (env.distillCooledRefs.has(planned.ref) && !explicitRefScope) return;
+  // A memory flagged wrong and not edited since is no source for a lesson. The attempt goes in the
+  // ledger so the ref waits for newer feedback; an explicit `--scope` ref still runs.
+  if (!explicitRefScope && isFlaggedSinceLastEdit(planned, env.eventsCtx)) {
+    recordLoopAttempt(planned, env, "distill", "unchanged", FLAGGED_WRONG_REASON);
+    return recordSkip(tally, planned.ref, FLAGGED_WRONG_REASON, { env, reason: "distill_flagged_wrong" });
+  }
 
   const result = await attributeStage(resolvedPlan, "distill", () =>
     env.distillFn({

@@ -15,8 +15,14 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { type ImproveLedgerOutcome, type ImproveLedgerRow, ledgerKey } from "../../../src/commands/improve/ledger";
-import { buildSnapshotManifest, partitionBySignalDelta } from "../../../src/commands/improve/preparation";
+import {
+  buildSnapshotManifest,
+  isFlaggedSinceLastEdit,
+  partitionBySignalDelta,
+} from "../../../src/commands/improve/preparation";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
@@ -370,5 +376,65 @@ describe("buildSnapshotManifest", () => {
     });
     expect(snap.latestFeedbackTs.size).toBe(0);
     expect(snap.latestNegativeTs.size).toBe(0);
+  });
+});
+
+describe("isFlaggedSinceLastEdit", () => {
+  const DAY_MS = 24 * 3_600_000;
+  const memory = "memories/port-note";
+
+  /** A memory file last written `editedAgoMs` ago; a candidate naming it. */
+  function candidateEditedAgo(editedAgoMs: number, extra: Partial<ImproveEligibleRef> = {}): ImproveEligibleRef {
+    const filePath = path.join(freshStash(), "memories", "port-note.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "The default port is 8000.\n");
+    const editedAt = new Date(Date.now() - editedAgoMs);
+    fs.utimesSync(filePath, editedAt, editedAt);
+    return ref(memory, { filePath, ...extra });
+  }
+
+  function feedbackAgo(agoMs: number, metadata: Record<string, unknown>, eventRef = memory): void {
+    appendEvent({ eventType: "feedback", ref: eventRef, metadata }, { now: () => Date.now() - agoMs });
+  }
+
+  test("negative feedback newer than the file's last write flags it", () => {
+    const candidate = candidateEditedAgo(3 * DAY_MS);
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
+  });
+
+  test("an edit after the feedback lifts the flag", () => {
+    const candidate = candidateEditedAgo(DAY_MS);
+    feedbackAgo(3 * DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+  });
+
+  test("a positive signal, a note, or a negative older than the 30-day window does not flag it", () => {
+    const candidate = candidateEditedAgo(60 * DAY_MS);
+    feedbackAgo(DAY_MS, { signal: "positive" });
+    feedbackAgo(DAY_MS, { note: "worked" });
+    feedbackAgo(40 * DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+  });
+
+  test("a candidate with no file path or no file on disk is not flagged", () => {
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+
+    expect(isFlaggedSinceLastEdit(ref(memory))).toBe(false);
+    expect(isFlaggedSinceLastEdit(ref(memory, { filePath: path.join(freshStash(), "memories", "gone.md") }))).toBe(
+      false,
+    );
+  });
+
+  test("feedback is read under the candidate's durable item_ref", () => {
+    const candidate = candidateEditedAgo(3 * DAY_MS, { itemRef: `stash//${memory}` });
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" });
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(false);
+
+    feedbackAgo(DAY_MS, { signal: "negative", reason: "the default port is 4096" }, `stash//${memory}`);
+    expect(isFlaggedSinceLastEdit(candidate)).toBe(true);
   });
 });

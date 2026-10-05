@@ -2535,8 +2535,10 @@ feedback in the last 30 days newer than the stage's last ledger attempt, or for
 an explicit ref scope. A positive or note-only signal never plans one, so
 improve does not rewrite an asset from a positive signal. Distill keeps its own
 trigger: a memory with feedback of any kind (a signal or a note) in that window,
-newer than distill's last attempt. Two fallback lanes pick refs with no such
-feedback: high salience (content-scored refs at or above
+newer than distill's last attempt. It skips a memory flagged wrong and not
+edited since (its newest negative feedback in that window is newer than the
+file's last write), unless the ref is explicit. Two fallback lanes pick refs
+with no such feedback: high salience (content-scored refs at or above
 `improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
 capped at 10% of the limit, at least one ref) and, in a strategy that enables
 `proactiveMaintenance`, refs due for a revisit. They only select and score refs

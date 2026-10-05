@@ -77,6 +77,8 @@ flowchart TD
         T -- no --> NEXT_ASSET
         T -- yes + memory without recent feedback
         --> SKIP_WEAK[push distill-skipped action\nappendEvent improve_skipped\nreason: memory_distill_requires_feedback]
+        T -- yes + flagged wrong since its last edit
+        --> SKIP_FLAGGED[push distill-skipped action\nimprove_ledger row: unchanged\nappendEvent improve_skipped\nreason: distill_flagged_wrong]
         T -- yes --> DISTILL
 
         subgraph DISTILL["distillFn subprocess"]
@@ -101,6 +103,7 @@ flowchart TD
         end
 
         SKIP_WEAK --> NEXT_ASSET
+        SKIP_FLAGGED --> NEXT_ASSET
         DISTILL_RETURN --> NEXT_ASSET([completedCount++\nlog progress])
     end
 
@@ -601,6 +604,7 @@ Every stage reads the improve ledger (`improve_ledger` in `state.db`, one row pe
 - A ref that passes only distill, and is a distill candidate, is planned distill-only.
 - A ref with no in-window feedback and no reflect window is left to the fallback lanes (proactive maintenance and high salience), which pick only what retrieval returned or new material (see [Retrieval scope](../improvement.md#retrieval-scope)). The lanes only select and score: a ref they pick is not planned for reflect or distill, so improve does not rewrite assets on a proactive cadence.
 - Every ref the loop does not take is counted in the plan's `signal` gate (or its `retrieval` gate, when the fallback lanes could not pick it for lack of usage evidence) and reported once, in aggregate, as an `improve_skipped` event (`no_new_signal`, `not_retrieved`).
+- A memory flagged wrong is not distilled: when its newest negative feedback in the 30-day window is newer than its file's last write, the loop skips distill for it (a `distill-skipped` action and an `improve_skipped` event with reason `distill_flagged_wrong`) and records the attempt in the ledger as `unchanged`, so the ref waits for newer feedback. Reflect still plans it. The file's modification time is the edit signal, as for the retrieval scope's new material.
 - The loop's refs are ranked by salience (`scoreSalience` in `preparation.ts`, which also scores the fallback lanes' picks and computes each vector with `computeSalience` from `salience.ts`): encoding, outcome, and retrieval frequency and recency, discounted for file size, with a ref that was repeatedly skipped as a no-op ranked lower. Refs missing on disk are dropped, and `--limit` cuts the list: reflect-path refs first, then distill-only refs.
 
 An explicit ref scope bypasses every gate. Consolidation, extract and schema repair read their own ledger sources in their own stages.

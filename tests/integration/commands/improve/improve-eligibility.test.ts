@@ -594,17 +594,21 @@ describe("distill signal-delta eligibility", () => {
     expect(distilled).toEqual(["memories/reinforced"]);
   });
 
-  test("distill needs no reflect: with a negative ref in the run, only that one is reflected and both are distilled", async () => {
+  test("distill needs no reflect: with a negative ref in the run, only that one is reflected, and distill still runs for the reinforced one", async () => {
     const stash = makeTempDir("akm-elig-distill-beside-negative-");
     writeMemory(stash, "reinforced", "Helped an agent twice.");
-    writeMemory(stash, "complained", "Carries a stale port.");
+    // Flagged after its last edit: reflect still plans it, distill does not (see the flagged-wrong test below).
+    writeMemory(stash, "complained", "Carries a stale port.", new Date(OLDER_MS));
     await buildIndex(stash);
     appendEvent({ eventType: "feedback", ref: durableRef("memories/reinforced"), metadata: { signal: "positive" } });
-    appendEvent({
-      eventType: "feedback",
-      ref: durableRef("memories/complained"),
-      metadata: { signal: "negative", reason: "stale port" },
-    });
+    appendEvent(
+      {
+        eventType: "feedback",
+        ref: durableRef("memories/complained"),
+        metadata: { signal: "negative", reason: "stale port" },
+      },
+      { now: () => NEWER_MS },
+    );
 
     const reflected: string[] = [];
     const distilled: string[] = [];
@@ -624,7 +628,48 @@ describe("distill signal-delta eligibility", () => {
     });
 
     expect(reflected).toEqual(["memories/complained"]);
-    expect(distilled.sort()).toEqual(["memories/complained", "memories/reinforced"]);
+    expect(distilled).toEqual(["memories/reinforced"]);
+  });
+
+  test("a memory flagged wrong and not edited since is not distilled; the skip is reported and a newer edit lifts it", async () => {
+    const stash = makeTempDir("akm-elig-distill-flagged-");
+    writeMemory(stash, "flagged", "The default port is 8000.", new Date(OLDER_MS));
+    writeMemory(stash, "fixed", "The default port is 4096.");
+    await buildIndex(stash);
+    for (const name of ["flagged", "fixed"]) {
+      appendEvent(
+        {
+          eventType: "feedback",
+          ref: durableRef(`memories/${name}`),
+          metadata: { signal: "negative", reason: "the default port is 4096" },
+        },
+        { now: () => NEWER_MS },
+      );
+    }
+
+    const distilled: string[] = [];
+    const result = await akmImprove({
+      scope: "memory",
+      stashDir: stash,
+      ensureIndexFn: async () => false,
+      reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
+      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
+      distillFn: async ({ ref }) => {
+        if (ref) distilled.push(ref);
+        return okDistill(ref ?? "");
+      },
+    });
+
+    // `fixed` was written after its flag (its mtime is now, the flag is older); `flagged` was not.
+    expect(distilled).toEqual(["memories/fixed"]);
+    expect(result.distillSkipped?.byReason["flagged wrong since its last edit"]).toBe(1);
+    expect(result.distillSkipped?.samples).toContainEqual({
+      ref: "memories/flagged",
+      reason: "flagged wrong since its last edit",
+    });
+    expect(
+      readEvents({ type: "improve_skipped" }).events.filter((e) => e.metadata?.reason === "distill_flagged_wrong"),
+    ).toMatchObject([{ ref: "memories/flagged" }]);
   });
 
   test("never-distilled memory without signal → ineligible", async () => {

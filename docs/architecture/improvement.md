@@ -73,7 +73,9 @@ everything else routes through `akm proposal accept`.
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
    a positive or note-only signal never plans one. Distill reads any feedback
-   on a memory in that window. Unless `--require-feedback-signal` is set, the
+   on a memory in that window, but skips a memory flagged wrong and not edited
+   since: its newest negative feedback in the window is newer than its file's
+   last write. Unless `--require-feedback-signal` is set, the
    fallback lanes (high salience, and proactive maintenance where the strategy
    enables it) pick what the retrieval scope below admits, for scoring only:
    they plan nothing, so improve does not rewrite assets on a proactive

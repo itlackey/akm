@@ -13,6 +13,8 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { deriveLessonRef } from "../../../src/commands/improve/distill";
 import type { AkmImproveOptions, ImproveLoopState } from "../../../src/commands/improve/improve-run-types";
 import {
@@ -23,6 +25,7 @@ import {
 import type { Proposal } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { UsageError } from "../../../src/core/errors";
+import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmReflectResult, ImproveEligibleRef } from "../../../src/core/improve-types";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { getImproveLedgerRow } from "../../../src/storage/repositories/improve-ledger-repository";
@@ -370,6 +373,123 @@ describe("processImproveLoopRef — distill half", () => {
 
     expect(tally.actions.map((a) => a.mode)).toEqual(["error"]);
     expect(tally.actions[0]!.result).toEqual({ ok: false, error: "engine crashed" });
+  });
+});
+
+describe("processImproveLoopRef — a memory flagged wrong and not edited since", () => {
+  const memoryRef = "memories/flagged-1";
+  const DAY_MS = 24 * 3_600_000;
+  const REASON = "flagged wrong since its last edit";
+
+  /**
+   * A memory file last written `editedAgoMs` ago and one feedback event per
+   * `feedback` entry (`agoMs` before now), with the candidate that names the file.
+   */
+  function flaggedMemory(
+    sandbox: { stashDir: string; eventsDbPath: string },
+    editedAgoMs: number,
+    feedback: Array<{ signal: "negative" | "positive"; agoMs: number }>,
+  ) {
+    const filePath = path.join(sandbox.stashDir, "memories", "flagged-1.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, "---\ndescription: Server ports\n---\nThe default port is 8000.\n");
+    const editedAt = new Date(Date.now() - editedAgoMs);
+    fs.utimesSync(filePath, editedAt, editedAt);
+    for (const { signal, agoMs } of feedback) {
+      appendEvent(
+        { eventType: "feedback", ref: memoryRef, metadata: { signal, reason: "the default port is 4096" } },
+        { dbPath: sandbox.eventsDbPath, now: () => Date.now() - agoMs },
+      );
+    }
+    return { ...eligibleRef(memoryRef), filePath };
+  }
+
+  /** A loop env that distils `memoryRef` (a feedback-bearing, distill-only ref) unless the gate stops it. */
+  function distillingEnv(
+    sandbox: { stashDir: string; eventsDbPath: string },
+    overrides: Partial<ImproveLoopEnv> = {},
+  ): ImproveLoopEnv {
+    return makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      distillOnlyRefSet: new Set([memoryRef]),
+      signalBearingSet: new Set([memoryRef]),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+      ...overrides,
+    });
+  }
+
+  test("distill is skipped, reported as a skip and left in the ledger; reflect still runs", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "negative", agoMs: DAY_MS }]);
+    const env = makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      signalBearingSet: new Set([memoryRef]),
+      reflectFn: () => Promise.resolve(reflectOk(memoryRef)),
+      // distillFn is left as the default: it throws if the gate lets the ref through.
+    });
+
+    const tally = await processImproveLoopRef(candidate, env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["reflect", "distill-skipped"]);
+    expect(tally.actions[1]!.result).toEqual({ ok: true, reason: REASON });
+    expect(tally.memoryRefsForInference).toEqual([]);
+    expect(ledgerRow(sandbox.stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: REASON });
+    expect(
+      readEvents({ type: "improve_skipped", ref: memoryRef }, { dbPath: sandbox.eventsDbPath }).events.map(
+        (e) => e.metadata,
+      ),
+    ).toEqual([{ reason: "distill_flagged_wrong" }]);
+  });
+
+  test("a distill-only ref is skipped the same way", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "negative", agoMs: DAY_MS }]);
+    const env = distillingEnv(sandbox, { distillFn: () => Promise.reject(new Error("distilled a flagged memory")) });
+
+    const tally = await processImproveLoopRef(candidate, env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+    expect(tally.actions[0]!.result).toEqual({ ok: true, reason: REASON });
+  });
+
+  test("a memory edited after the flag is distilled", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, DAY_MS, [{ signal: "negative", agoMs: 3 * DAY_MS }]);
+
+    const tally = await processImproveLoopRef(candidate, distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    expect(ledgerRow(sandbox.stashDir, memoryRef, "distill")).toBeUndefined();
+  });
+
+  test("positive feedback after the edit does not flag a memory", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "positive", agoMs: DAY_MS }]);
+
+    const tally = await processImproveLoopRef(candidate, distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("a flag older than the 30-day feedback window does not hold a memory back", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 60 * DAY_MS, [{ signal: "negative", agoMs: 40 * DAY_MS }]);
+
+    const tally = await processImproveLoopRef(candidate, distillingEnv(sandbox));
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+
+  test("an explicit --scope ref is distilled anyway", async () => {
+    const sandbox = freshSandbox();
+    const candidate = flaggedMemory(sandbox, 3 * DAY_MS, [{ signal: "negative", agoMs: DAY_MS }]);
+    const env = distillingEnv(sandbox, { scope: { mode: "ref", value: memoryRef } });
+
+    const tally = await processImproveLoopRef(candidate, env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
   });
 });
 

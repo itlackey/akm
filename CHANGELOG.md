@@ -48,6 +48,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the note's ranking and sent it to improve. The hints and the guides no longer
   list "unhelpful" among the reasons to flag a note, and their example reasons
   name a wrong fact instead of "wrong framework" or "incomplete-edge-cases".
+- **Distill skips a memory that was flagged wrong and not edited since.** A
+  memory whose newest negative feedback in the last 30 days is newer than its
+  file's last write is no source for a lesson, so the improve loop skips distill
+  for it: a `distill-skipped` action with the reason "flagged wrong since its
+  last edit" and an `improve_skipped` event (`distill_flagged_wrong`). The
+  attempt goes in the improve ledger as `unchanged`, so the memory waits for
+  newer feedback, and reflect still plans it. The file's modification time is the
+  edit signal, as in the retrieval scope's new-material test; any later write,
+  an accepted frontmatter repair included, ends the flag. An explicit
+  `akm improve <ref>` still distills it.
 
 ### Removed
 

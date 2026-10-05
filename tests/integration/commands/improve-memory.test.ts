@@ -1278,11 +1278,15 @@ describe("akm improve memory cleanup", () => {
     writeMemory(stashDir, "vpn", { description: "vpn memory" }, "Remember vpn details.");
     await buildIndex(stashDir);
 
-    appendEvent({
-      eventType: "feedback",
-      ref: durableRef("memories/vpn"),
-      metadata: { signal: "negative", reason: "stale endpoint" },
-    });
+    // Flagged before the memory's last edit, so distill is not held back by the flag.
+    appendEvent(
+      {
+        eventType: "feedback",
+        ref: durableRef("memories/vpn"),
+        metadata: { signal: "negative", reason: "stale endpoint" },
+      },
+      { now: () => Date.now() - 60_000 },
+    );
 
     const result = await akmImprove({
       scope: "memory",

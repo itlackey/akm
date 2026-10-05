@@ -712,6 +712,26 @@ function isSignalEvent(metadata: unknown): boolean {
   return meta !== undefined && (typeof meta.signal === "string" || typeof meta.note === "string");
 }
 
+/**
+ * Whether `candidate` was flagged wrong and not edited since: its newest
+ * negative feedback inside the signal window is newer than its file's last
+ * write. The edit signal is the file's mtime, the one the retrieval scope reads
+ * for new material; a candidate with no readable file is not flagged.
+ */
+export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?: EventsContext): boolean {
+  if (!candidate.filePath) return false;
+  let editedAtMs: number;
+  try {
+    editedAtMs = fs.statSync(candidate.filePath).mtimeMs;
+  } catch {
+    return false;
+  }
+  const since = new Date(Date.now() - daysToMs(FEEDBACK_SIGNAL_WINDOW_DAYS)).toISOString();
+  return readEvents({ type: "feedback", ref: keyOf(candidate), since }, eventsCtx).events.some(
+    (e) => (e.metadata as { signal?: unknown } | undefined)?.signal === "negative" && Date.parse(e.ts) > editedAtMs,
+  );
+}
+
 interface SignalDeltaSnapshot {
   feedbackSinceCutoff: string;
   nowIso: string;
