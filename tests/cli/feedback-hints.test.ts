@@ -35,9 +35,27 @@ describe("shipped hints on recording feedback (#999)", () => {
   }
 
   test("the brief task loop ties --negative to the asset's content and names the akm show example", () => {
-    expect(EMBEDDED_HINTS).toContain("when its content was wrong, stale or unhelpful");
+    expect(EMBEDDED_HINTS).toContain("Record negative feedback only when the asset's content is wrong or stale");
     expect(EMBEDDED_HINTS).toContain("A failed akm command (e.g. `akm show` erroring) is not feedback on the asset");
   });
+
+  for (const [name, hints] of [
+    ["brief", EMBEDDED_HINTS],
+    ["full", EMBEDDED_HINTS_FULL],
+  ] as const) {
+    test(`${name} hints keep --negative for wrong or stale content, record nothing for a note that did not fit the task, and attach a verified fix`, () => {
+      const prose = hints.replace(/\s+/g, " ");
+      expect(prose).toContain(
+        "Record negative feedback only when the asset's content is wrong or stale, and say what is wrong and what it should say.",
+      );
+      expect(prose).toContain(
+        "A note that simply did not fit your task is not negative feedback: record nothing for it.",
+      );
+      expect(prose).toMatch(/[Oo]nce you have verified the correct fact, (add|attach) the exact fix/);
+      // A search miss is not a reason to flag a note.
+      expect(prose).not.toMatch(/unhelpful|incomplete/i);
+    });
+  }
 
   for (const [name, hints] of [
     ["brief", EMBEDDED_HINTS],

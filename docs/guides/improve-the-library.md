@@ -16,20 +16,21 @@ AKM creates a proposal -> human or policy reviews the diff -> accept / reject / 
 
 `akm feedback` records a positive or negative signal for any indexed asset.
 The signal updates the asset's utility score immediately, so highly-rated
-assets rank higher and underperformers surface less often right away. See
+assets rank higher and assets flagged wrong or stale surface less often right
+away. See
 [Architecture: The Improvement Loop](../architecture/improvement.md#utility-scoring)
 for how that score is computed.
 
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
 flags the asset: it ranks lower right away, and the next improve run may repair
 its description, title or `when_to_use` from your reason. Improve does not
-rewrite an asset's text. To correct a wrong fact there, attach the exact fix:
-`--replace "<exact current text>" --with "<corrected text>" --source "<URL,
-command or file that shows it>"` (repeat `--replace`/`--with` for several
-edits). akm checks that each `--replace` text appears exactly once, records
-nothing if one does not, and queues the edit as a `feedback` proposal for
-review. `--positive` records that an asset helped (it raises its ranking) and
-does not trigger a rewrite.
+rewrite an asset's text. Once you have verified the correct fact, attach the
+exact fix: `--replace "<exact current text>" --with "<corrected text>"
+--source "<URL, command or file that shows it>"` (repeat `--replace`/`--with`
+for several edits). akm checks that each `--replace` text appears exactly once,
+records nothing if one does not, and queues the edit as a `feedback` proposal
+for review. `--positive` records that an asset helped (it raises its ranking)
+and does not trigger a rewrite.
 
 ```sh
 akm feedback skills/code-review --positive
@@ -38,7 +39,7 @@ akm feedback knowledge/opencode-server --negative --reason "the default port is 
 akm feedback workflows/ship-release --positive --reason "Worked end-to-end on 0.8.0"
 
 # With a structured reason slug (consumed by improve/distill prompts):
-akm feedback skills/planner --negative --reason "incomplete-edge-cases"
+akm feedback skills/planner --negative --reason "wrong-default-timeout"
 ```
 
 Specify exactly one of `--positive` or `--negative`. The ref must be present in
@@ -47,10 +48,12 @@ omitting it exits 2. Full flag reference:
 [CLI Reference — feedback](../reference/cli.md#feedback---reason).
 
 Record feedback about the asset's content: that it helped, or that it turned
-out wrong, stale or unhelpful. A failed `akm` command, such as an `akm show`
-that errors on the ref, says nothing about the asset, so don't record it as
-feedback on it: reflect and distill read each reason as a report about the
-asset's content.
+out wrong or stale. Record `--negative` only for content that is wrong or stale,
+and say what is wrong and what it should say. A note that simply did not fit
+your task is not negative feedback: record nothing for it. A failed `akm`
+command, such as an `akm show` that errors on the ref, says nothing about the
+asset, so don't record it as feedback on it: reflect and distill read each
+reason as a report about the asset's content.
 
 **Example: flag a skill that gave bad advice**
 

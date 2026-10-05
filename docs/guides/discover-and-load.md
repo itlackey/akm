@@ -109,15 +109,18 @@ akm feedback scripts/deploy.sh --positive
 akm feedback skills/code-review --negative --reason "references a removed flag"
 ```
 
+Record `--negative` only when the asset's content is wrong or stale, and say what
+is wrong and what it should say. A note that simply did not fit your task is not
+negative feedback: record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
 flags the asset: it ranks lower right away, and the next `akm improve` run may
 repair its description, title or `when_to_use` from your reason. Improve does
-not rewrite an asset's text, so to correct a wrong fact there, attach the exact
-fix: `--replace "<exact current text>" --with "<corrected text>" --source "<URL,
-command or file that shows it>"`. That is how a one-off task turns into a durable
-improvement to the shared library rather than a result nobody else benefits
-from. `--positive` records that an asset helped (it raises its ranking) and does
-not trigger a rewrite.
+not rewrite an asset's text, so once you have verified the correct fact, attach
+the exact fix: `--replace "<exact current text>" --with "<corrected text>"
+--source "<URL, command or file that shows it>"`. That is how a one-off task
+turns into a durable improvement to the shared library rather than a result
+nobody else benefits from. `--positive` records that an asset helped (it raises
+its ranking) and does not trigger a rewrite.
 
 ## 6. Troubleshoot an empty or poor result
 

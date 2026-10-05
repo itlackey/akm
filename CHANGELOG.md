@@ -38,6 +38,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   knows the text changed since. A line without a `contentHash` (all feedback
   recorded before this change) or with a matching one reads as before, and the
   rest of the prompt is unchanged.
+- **The shipped hints and docs say what negative feedback is for.** Record
+  `akm feedback --negative` only when an asset's content is wrong or stale, and
+  say what is wrong and what it should say. A note that simply did not fit the
+  task is not negative feedback: record nothing for it. Once the correct fact is
+  verified, attach the exact fix with `--replace`/`--with`/`--source`. Of the 195
+  negative reasons recorded in the last 30 days, 100 named no error in the note,
+  and 89 of those only said it did not fit the agent's task, which still lowered
+  the note's ranking and sent it to improve. The hints and the guides no longer
+  list "unhelpful" among the reasons to flag a note, and their example reasons
+  name a wrong fact instead of "wrong framework" or "incomplete-edge-cases".
 
 ### Removed
 

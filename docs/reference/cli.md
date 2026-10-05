@@ -1587,14 +1587,18 @@ preserves it byte-for-byte.
 
 ### feedback
 
-Record positive or negative feedback for any indexed bundle asset.
+Record positive or negative feedback for any indexed bundle asset. Record
+`--negative` only when the asset's content is wrong or stale, and say what is
+wrong and what it should say; a note that simply did not fit your task is not
+negative feedback, so record nothing for it.
 `akm feedback <ref> --negative --reason "<what is wrong and what should change>"`
 flags the asset: it ranks lower right away, and the next improve run may repair
 its description, title or `when_to_use` from your reason. Improve does not
-rewrite an asset's text. To correct a wrong fact there, attach the exact fix
-with `--replace`, `--with` and `--source`: akm checks that each `--replace`
-text appears exactly once and that the frontmatter still parses, records nothing
-if either check fails, and queues the edit as a `feedback` proposal for review.
+rewrite an asset's text. Once you have verified the correct fact, attach the
+exact fix with `--replace`, `--with` and `--source`: akm checks that each
+`--replace` text appears exactly once and that the frontmatter still parses,
+records nothing if either check fails, and queues the edit as a `feedback`
+proposal for review.
 To mark the asset's history, with or without a text fix, add `--superseded-by
 <ref>` (another asset replaces it) or `--outdated` (it describes a past state
 and no single asset replaces it), with `--reason` and `--source`. The same single
