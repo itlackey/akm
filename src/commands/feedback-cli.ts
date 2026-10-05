@@ -3,13 +3,15 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import fs from "node:fs";
+import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
+import { assetPathForName, stashDirFor } from "../core/asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { assembleAsset } from "../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
-import { isWithin, resolveStashDir, writeFileAtomic } from "../core/common";
+import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
 import { NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
@@ -320,6 +322,25 @@ function assertFrontmatterStillParses(before: string, after: string, file: strin
   }
 }
 
+/**
+ * Refuse a fix that a proposal could not apply to the asset's file. A proposal
+ * writes the file `createProposal` computes from the ref's type and name under
+ * the bundle's root. For an asset indexed anywhere else (a git bundle's
+ * `tasks/README.md` is `knowledge/tasks/README`) nothing is there: accepting
+ * the proposal would create a second file and leave the real one unfixed.
+ */
+export function assertProposalWritesFile(itemRef: string, root: string, filePath: string): void {
+  const { type, name } = parseRefInput(itemRef);
+  const typeDir = stashDirFor(type);
+  const writes =
+    typeDir === undefined ? undefined : assetPathForName(type, path.join(path.resolve(root), typeDir), name);
+  if (writes !== undefined && safeRealpath(writes) === safeRealpath(filePath)) return;
+  throw new UsageError(
+    `akm cannot queue a fix for ${itemRef}: its file is ${filePath}, but a proposal would write ${writes ?? `no file (akm has no directory for "${type}" assets)`}. Edit the file directly.`,
+    "INVALID_PROPOSAL",
+  );
+}
+
 // ── Command definition ────────────────────────────────────────────────────────
 
 export const feedbackCommand = defineJsonCommand({
@@ -530,6 +551,7 @@ export const feedbackCommand = defineJsonCommand({
         if (!isWithin(filePath, resolved.target.source.path)) {
           throw new UsageError(`${itemRef} is outside bundle "${resolved.target.source.name}".`);
         }
+        assertProposalWritesFile(itemRef, resolved.target.source.path, filePath);
         const before = fs.readFileSync(filePath, "utf8");
         const after = applyExactReplacements(before, fixPairs, filePath);
         if (after === before) throw new UsageError("The fix changes nothing.", "INVALID_FLAG_VALUE");

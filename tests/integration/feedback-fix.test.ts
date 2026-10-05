@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { applyExactReplacements } from "../../src/commands/feedback-cli";
+import { applyExactReplacements, assertProposalWritesFile } from "../../src/commands/feedback-cli";
 import { getProposal, listProposals } from "../../src/commands/proposal/repository";
 import { saveConfig } from "../../src/core/config/config";
 import { UsageError } from "../../src/core/errors";
@@ -29,10 +29,13 @@ afterEach(() => {
   stashDir = "";
 });
 
-async function indexNote(content = NOTE): Promise<string> {
-  const file = path.join(stashDir, "knowledge", "opencode-server.md");
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, content);
+/** Write `files` (stash-relative path to content), make the stash the only bundle, and index it. */
+async function indexFiles(files: Record<string, string>): Promise<void> {
+  for (const [rel, content] of Object.entries(files)) {
+    const file = path.join(stashDir, rel);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, content);
+  }
   saveConfig({
     semanticSearchMode: "off",
     bundles: { stash: { path: stashDir, writable: true } },
@@ -40,17 +43,18 @@ async function indexNote(content = NOTE): Promise<string> {
     defaultWriteTarget: "stash",
   });
   await akmIndex({ stashDir, full: true });
-  return file;
 }
 
-async function feedback(args: string[]): Promise<{ code: number | null; json: Record<string, unknown> }> {
-  const { stdout, stderr, code } = await runCliCapture([
-    "feedback",
-    "knowledge/opencode-server",
-    "--negative",
-    "--format=json",
-    ...args,
-  ]);
+async function indexNote(content = NOTE): Promise<string> {
+  await indexFiles({ "knowledge/opencode-server.md": content });
+  return path.join(stashDir, "knowledge", "opencode-server.md");
+}
+
+async function feedback(
+  args: string[],
+  ref = "knowledge/opencode-server",
+): Promise<{ code: number | null; json: Record<string, unknown> }> {
+  const { stdout, stderr, code } = await runCliCapture(["feedback", ref, "--negative", "--format=json", ...args]);
   return { code, json: JSON.parse(stdout.trim() || stderr.trim()) as Record<string, unknown> };
 }
 
@@ -183,6 +187,67 @@ describe("akm feedback --replace/--with/--source", () => {
     expect(positive.code).not.toBe(0);
     expect(positive.stdout + positive.stderr).toContain("only for negative feedback");
     expect(feedbackEvents()).toBe(0);
+  });
+});
+
+describe("a fix for a file a proposal would not write", () => {
+  // An asset indexed outside its type's directory: the path the proposal would
+  // write does not exist, so accepting it would create a duplicate and fix nothing.
+  test.each([
+    ["a bundle's tasks/README", "tasks/README.md", "knowledge/tasks/README"],
+    [
+      "a skill's reference file",
+      "skills/deploy/references/symptom-map.md",
+      "knowledge/skills/deploy/references/symptom-map",
+    ],
+  ])("%s is refused, and nothing is recorded", async (_label, rel, ref) => {
+    await indexFiles({
+      "skills/deploy/SKILL.md": "---\ndescription: Deploy\n---\n# Deploy\n",
+      [rel]: "---\ndescription: Notes\n---\n# Notes\n\nThe server listens on port 8000 by default.\n",
+    });
+    const { code, json } = await feedback(FIX, ref);
+    expect(code).not.toBe(0);
+    const wouldWrite = path.join(stashDir, `${ref}.md`);
+    expect(json.error).toBe(
+      `akm cannot queue a fix for stash//${ref}: its file is ${path.join(stashDir, rel)}, but a proposal would write ${wouldWrite}. Edit the file directly.`,
+    );
+    expect(feedbackEvents()).toBe(0);
+    expect(listProposals(stashDir, { status: "pending" })).toHaveLength(0);
+    expect(fs.existsSync(wouldWrite)).toBe(false);
+  });
+
+  test("plain negative feedback on such an asset is still recorded", async () => {
+    await indexFiles({ "tasks/README.md": "---\ndescription: Tasks\n---\n# Tasks\n" });
+    const { code } = await feedback(["--reason", "The page is out of date."], "knowledge/tasks/README");
+    expect(code).toBe(0);
+    expect(feedbackEvents()).toBe(1);
+  });
+});
+
+describe("assertProposalWritesFile", () => {
+  const root = path.join(path.sep, "bundle");
+
+  test("passes when the proposal would write the asset's file", () => {
+    expect(() =>
+      assertProposalWritesFile("b//knowledge/guide", root, path.join(root, "knowledge", "guide.md")),
+    ).not.toThrow();
+    expect(() =>
+      assertProposalWritesFile("b//skills/deploy", root, path.join(root, "skills", "deploy", "SKILL.md")),
+    ).not.toThrow();
+  });
+
+  test("names both paths when it would write somewhere else", () => {
+    expect(() =>
+      assertProposalWritesFile("b//knowledge/tasks/README", root, path.join(root, "tasks", "README.md")),
+    ).toThrow(
+      `akm cannot queue a fix for b//knowledge/tasks/README: its file is ${path.join(root, "tasks", "README.md")}, but a proposal would write ${path.join(root, "knowledge", "tasks", "README.md")}. Edit the file directly.`,
+    );
+  });
+
+  test("refuses an asset whose type has no directory to write into", () => {
+    expect(() =>
+      assertProposalWritesFile("b//tables/customers", root, path.join(root, "tables", "customers.md")),
+    ).toThrow("akm has no directory for");
   });
 });
 

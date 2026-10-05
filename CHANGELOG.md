@@ -31,6 +31,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `feedback.allowedFailureModes` loads, names the key once as unknown, and
   `akm migrate apply` drops it. Events recorded earlier keep their `failureMode`.
 
+### Fixed
+
+- **`akm feedback --replace` no longer queues a fix that accepting would turn
+  into a duplicate file.** A proposal writes the path computed from the ref's
+  type and name under the bundle's root, which is not where an asset indexed
+  outside that layout lives (a git bundle's `tasks/README.md` is
+  `knowledge/tasks/README`; a skill's `references/symptom-map.md` is
+  `knowledge/skills/<name>/references/symptom-map`). Accepting such a proposal
+  created a second file and left the real one unfixed. akm now refuses before
+  recording anything, naming the file and the path the proposal would write, and
+  says to edit the file directly. Plain negative feedback on these assets is
+  unaffected.
+
 ## [0.9.26-alpha.2] - 2026-10-05
 
 ### Added
