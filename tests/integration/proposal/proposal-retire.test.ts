@@ -39,12 +39,14 @@ import {
   akmProposalShow,
   bulkAdjudicateProposals,
 } from "../../../src/commands/proposal/proposal";
-import type { RetirementMetadata } from "../../../src/commands/proposal/proposal-types";
+import { PAIR_PASS_GATE, type RetirementMetadata } from "../../../src/commands/proposal/proposal-types";
 import {
   createProposal,
   createRetireProposal,
   getProposal,
   listProposals,
+  proposalContentHash,
+  recordGateDecision,
 } from "../../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 import { UsageError } from "../../../src/core/errors";
@@ -892,8 +894,8 @@ describe("akm proposal revert on a retire proposal", () => {
   });
 });
 
-describe("triage never auto-accepts a retire proposal", () => {
-  test("drainProposals with applyMode: promote leaves it pending", async () => {
+describe("triage auto-accepts only a retire proposal the pair judge staged as a duplicate", () => {
+  test("drainProposals with applyMode: promote leaves an unstaged retire proposal pending", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const config = makeConfig(storage.stashDir);
@@ -918,6 +920,86 @@ describe("triage never auto-accepts a retire proposal", () => {
     expect(result.rejected).not.toContain(proposal.id);
     expect(result.deferred.map((d) => d.id)).not.toContain(proposal.id);
     expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+  });
+
+  function stagedDuplicate(continuityRisk?: RetirementMetadata["continuityRisk"]) {
+    const oldPath = writeAsset("memories/old-note.md", "description: an old note");
+    const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old-note",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        retiredRef: "memories/old-note",
+        successorPath: newPath,
+        successorRef: "memories/new-note",
+        ...(continuityRisk ? { continuityRisk } : {}),
+      }),
+    });
+    recordGateDecision(storage.stashDir, proposal.id, {
+      outcome: "staged",
+      reason: "duplicate",
+      gate: PAIR_PASS_GATE,
+      contentHash: proposalContentHash(proposal),
+    });
+    return { proposal, oldPath };
+  }
+
+  test("a staged duplicate is accepted and archived under applyMode: promote", async () => {
+    const { proposal, oldPath } = stagedDuplicate();
+    const config = makeConfig(storage.stashDir);
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config,
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(result.promoted).toContain(proposal.id);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
+    expect(fs.existsSync(oldPath)).toBe(false);
+  });
+
+  test("a dry run counts a staged duplicate as promoted without archiving it", async () => {
+    const { proposal, oldPath } = stagedDuplicate();
+    const config = makeConfig(storage.stashDir);
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config,
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: true,
+    });
+    expect(result.promoted).toContain(proposal.id);
+    expect(result.failed).toEqual([]);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    expect(fs.existsSync(oldPath)).toBe(true);
+  });
+
+  test("a staged duplicate stays pending under applyMode: queue", async () => {
+    const { proposal, oldPath } = stagedDuplicate();
+    const config = makeConfig(storage.stashDir);
+    await drainProposals({ stashDir: storage.stashDir, config, applyMode: "queue", maxAccepts: 25, dryRun: false });
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    expect(fs.existsSync(oldPath)).toBe(true);
+  });
+
+  test("a staged duplicate with a continuity risk waits for a person", async () => {
+    const { proposal, oldPath } = stagedDuplicate({
+      failingQueries: 1,
+      ranks: [{ query: "how do I configure X", retiredRank: 1, successorRank: null }],
+    });
+    const config = makeConfig(storage.stashDir);
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config,
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(result.promoted).not.toContain(proposal.id);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    expect(fs.existsSync(oldPath)).toBe(true);
   });
 });
 

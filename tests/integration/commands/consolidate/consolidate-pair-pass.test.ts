@@ -118,11 +118,15 @@ function baseOpts(): AkmConsolidateOptions {
 function fixedChat(verdict: {
   relation: string;
   redundant: "A" | "B" | null;
+  onlyInA?: string[];
+  onlyInB?: string[];
   confidence?: number;
   reason?: string;
 }): PairJudgeChat {
   return async () =>
     JSON.stringify({
+      onlyInA: verdict.onlyInA ?? [],
+      onlyInB: verdict.onlyInB ?? [],
       relation: verdict.relation,
       redundant: verdict.redundant,
       stale: null,
@@ -405,6 +409,8 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(proposal.retirement?.cosine).toBeGreaterThan(0.96);
     // Item 1: no recorded query for old-note means no continuity check ran.
     expect(proposal.retirement?.continuityRisk).toBeUndefined();
+    // Nothing unique on either side: staged for the triage drain to accept unattended.
+    expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "duplicate", gate: "consolidate-pair" });
 
     // Ledger: consolidate-pair source, distinguishable from the promote pass's own "consolidate" rows.
     const stateDb = openStateDatabase();
@@ -586,6 +592,39 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/small-note");
     expect(proposal.retirement?.reason).toBe("subsumed");
+    // Only a duplicate retires unattended; a subsumed retirement waits for a person.
+    expect(proposal.gateDecision).toBeUndefined();
+  });
+
+  function indexOldAndNew(): void {
+    const oldPath = writeAsset("memories/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("memories/new-note.md", "description: new");
+    dateAsset(newPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "old-note", oldPath, 0);
+      indexAsset(db, "memory", "new-note", newPath, angleForCosine(BACKFILL_FLOOR + 0.02));
+    } finally {
+      closeDatabase(db);
+    }
+  }
+
+  test("a side the judge lists a claim for is never retired, whatever the label", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "duplicate", redundant: "A", onlyInA: ["`--force` flag"] }),
+    });
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("a duplicate with a claim listed on the kept side still mints, but is not staged", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "duplicate", redundant: "A", onlyInB: ["port 8080"] }),
+    });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
   });
 
   test("never retires a captureMode: hot memory — the pair is left alone", async () => {
@@ -694,7 +733,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async () => {
         chatCalls++;
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(chatCalls).toBe(0);
@@ -761,7 +808,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async () => {
         chatCalls++;
-        return JSON.stringify({ relation: "unrelated", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "unrelated",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(chatCalls).toBe(0); // no candidates at all — nothing to judge
@@ -788,7 +843,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const result2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async () => {
         chatCalls++;
-        return JSON.stringify({ relation: "unrelated", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "unrelated",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(result2.initiators).toBe(0); // unchanged content: not eligible again
@@ -840,7 +903,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async () => {
         chatCalls++;
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(chatCalls).toBe(0); // old-note's content never changed since it was judged — not eligible again
@@ -888,7 +959,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       chat: async (_connection, messages) => {
         const text = messages.map((m) => m.content).join("\n");
         if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(r1.retired).toHaveLength(1);
@@ -935,7 +1014,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         if (text.includes("memories/y-note")) {
           throw new Error("(I,Y) must not reach the judge — it was already rejected, unchanged (S1)");
         }
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
@@ -991,7 +1078,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       chat: async (_connection, messages) => {
         const text = messages.map((m) => m.content).join("\n");
         if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(r1.retired).toHaveLength(1);
@@ -1043,7 +1138,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
         if (text.includes("memories/y-note")) {
           throw new Error("(I,Y) must not reach the judge — it was already reverted, unchanged (S1)");
         }
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(chatCalls2).toBe(1); // only (I,Z) reaches the judge — (I,Y) is skipped before callStage (S1)
@@ -1079,7 +1182,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
       chat: async (_connection, messages) => {
         const text = messages.map((m) => m.content).join("\n");
         if (text.includes("memories/z-note")) throw new Error("simulated transport failure");
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(r1.retired).toHaveLength(1);
@@ -1118,7 +1229,15 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const r2 = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
       chat: async () => {
         chatCalls++;
-        return JSON.stringify({ relation: "duplicate", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+        return JSON.stringify({
+          onlyInA: [],
+          onlyInB: [],
+          relation: "duplicate",
+          redundant: null,
+          stale: null,
+          confidence: 0.9,
+          reason: "x",
+        });
       },
     });
     expect(chatCalls).toBe(0);

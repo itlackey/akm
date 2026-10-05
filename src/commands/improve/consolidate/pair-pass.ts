@@ -52,8 +52,19 @@ import {
 } from "../../../storage/repositories/index-connection";
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
 import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
-import { isRetireProposal, type RetirementMetadata, type RetireReason } from "../../proposal/proposal-types";
-import { createRetireProposal, listProposalsReadOnly, type ProposalsContext } from "../../proposal/repository";
+import {
+  isRetireProposal,
+  PAIR_PASS_GATE,
+  type RetirementMetadata,
+  type RetireReason,
+} from "../../proposal/proposal-types";
+import {
+  createRetireProposal,
+  listProposalsReadOnly,
+  type ProposalsContext,
+  proposalContentHash,
+  recordGateDecision,
+} from "../../proposal/repository";
 import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
@@ -752,6 +763,23 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     ctx.retired.push(proposal.id);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
+    // A duplicate with nothing unique on either side is the one class that
+    // retires unattended (56 of 56 safe on the owner's reviewed pairs,
+    // 2026-10-04): the triage drain accepts it under its usual applyMode.
+    // Every other retirement waits for a person.
+    if (verdict.relation === "duplicate" && verdict.onlyInA.length + verdict.onlyInB.length === 0 && !continuityRisk) {
+      recordGateDecision(
+        ctx.stashDir,
+        proposal.id,
+        {
+          outcome: "staged",
+          reason: "duplicate",
+          gate: PAIR_PASS_GATE,
+          contentHash: proposalContentHash(proposal),
+        },
+        ctx.opts.proposalsCtx,
+      );
+    }
     return { failed: false };
   } catch (error) {
     ctx.warnings.push(

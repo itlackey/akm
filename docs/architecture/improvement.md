@@ -82,9 +82,12 @@ everything else routes through `akm proposal accept`.
    the memory, and it offers a memory whose promotion was accepted or
    rejected again only after the memory's body changes; the pair pass judges
    near-duplicate and superseding pairs in the memory tier and emits a
-   reviewed `retire` proposal for the `duplicate`/`subsumed`/`supersedes`
-   classes; `overlap`, `unrelated` and `contradicts` are recorded as
-   `judged_no_action` with no proposal.
+   `retire` proposal for the `duplicate`/`subsumed`/`supersedes` classes;
+   `overlap`, `unrelated` and `contradicts` are recorded as
+   `judged_no_action` with no proposal. The judge first lists the durable
+   claims each side alone holds, and a side with any listed claim is never
+   retired. A duplicate with nothing listed on either side is staged for the
+   triage drain to accept; every other retirement waits for a person.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
 6. A human (via `akm proposal diff` / `accept` / `reject`) or a configured
@@ -324,10 +327,10 @@ unless `experimental.improveAutonomy` is explicitly set to `true`:
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
 `akm health`'s improve skip-reason summary. Consolidation stays enabled with
-autonomy off: both its passes only ever emit a reviewable proposal, and a
-pair-pass `retire` proposal is never auto-accepted by `triage`
-`applyMode: "promote"` regardless of this gate — it always waits for
-`akm proposal accept`. An absent `experimental`
+autonomy off: both its passes only ever emit a reviewable proposal. The one
+pair-pass `retire` proposal `triage` `applyMode: "promote"` accepts is a
+duplicate the pair judge staged (nothing unique on either side, no
+continuity risk); every other one waits for `akm proposal accept`. An absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off —
 autonomy is never inferred. `akm proposal drain --promote` is a second,
 explicit promote surface independent of this gate.

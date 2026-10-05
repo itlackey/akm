@@ -44,33 +44,80 @@ describe("parsePairJudgeResponse", () => {
       "unrelated",
     ];
     for (const relation of labels) {
-      const raw = JSON.stringify({ relation, redundant: null, stale: null, confidence: 0.8, reason: "why" });
+      const raw = JSON.stringify({
+        onlyInA: [],
+        onlyInB: [],
+        relation,
+        redundant: null,
+        stale: null,
+        confidence: 0.8,
+        reason: "why",
+      });
       expect(parsePairJudgeResponse(raw)?.relation).toBe(relation);
     }
   });
 
   test("accepts redundant: A or B", () => {
-    const raw = JSON.stringify({ relation: "duplicate", redundant: "A", stale: null, confidence: 0.9, reason: "x" });
+    const raw = JSON.stringify({
+      onlyInA: [],
+      onlyInB: [],
+      relation: "duplicate",
+      redundant: "A",
+      stale: null,
+      confidence: 0.9,
+      reason: "x",
+    });
     expect(parsePairJudgeResponse(raw)?.redundant).toBe("A");
   });
 
   test("rejects an unknown relation label", () => {
-    const raw = JSON.stringify({ relation: "merge", redundant: null, stale: null, confidence: 0.9, reason: "x" });
+    const raw = JSON.stringify({
+      onlyInA: [],
+      onlyInB: [],
+      relation: "merge",
+      redundant: null,
+      stale: null,
+      confidence: 0.9,
+      reason: "x",
+    });
     expect(parsePairJudgeResponse(raw)).toBeUndefined();
   });
 
   test("rejects an invalid redundant value", () => {
-    const raw = JSON.stringify({ relation: "duplicate", redundant: "C", stale: null, confidence: 0.9, reason: "x" });
+    const raw = JSON.stringify({
+      onlyInA: [],
+      onlyInB: [],
+      relation: "duplicate",
+      redundant: "C",
+      stale: null,
+      confidence: 0.9,
+      reason: "x",
+    });
     expect(parsePairJudgeResponse(raw)).toBeUndefined();
   });
 
   test("rejects a missing or non-numeric confidence", () => {
-    const raw = JSON.stringify({ relation: "duplicate", redundant: null, stale: null, reason: "x" });
+    const raw = JSON.stringify({
+      onlyInA: [],
+      onlyInB: [],
+      relation: "duplicate",
+      redundant: null,
+      stale: null,
+      reason: "x",
+    });
     expect(parsePairJudgeResponse(raw)).toBeUndefined();
   });
 
   test("clamps an out-of-range confidence into [0, 1] rather than rejecting it", () => {
-    const raw = JSON.stringify({ relation: "overlap", redundant: null, stale: null, confidence: 1.4, reason: "x" });
+    const raw = JSON.stringify({
+      onlyInA: [],
+      onlyInB: [],
+      relation: "overlap",
+      redundant: null,
+      stale: null,
+      confidence: 1.4,
+      reason: "x",
+    });
     expect(parsePairJudgeResponse(raw)?.confidence).toBe(1);
   });
 
@@ -80,8 +127,52 @@ describe("parsePairJudgeResponse", () => {
   });
 
   test("a missing reason defaults to an empty string rather than rejecting", () => {
-    const raw = JSON.stringify({ relation: "unrelated", redundant: null, stale: null, confidence: 0.5 });
+    const raw = JSON.stringify({
+      onlyInA: [],
+      onlyInB: [],
+      relation: "unrelated",
+      redundant: null,
+      stale: null,
+      confidence: 0.5,
+    });
     expect(parsePairJudgeResponse(raw)?.reason).toBe("");
+  });
+
+  test("rejects a verdict without both claim lists: a missing list is never read as empty", () => {
+    const raw = JSON.stringify({
+      onlyInB: [],
+      relation: "duplicate",
+      redundant: "A",
+      stale: null,
+      confidence: 1,
+      reason: "x",
+    });
+    expect(parsePairJudgeResponse(raw)).toBeUndefined();
+    const notStrings = JSON.stringify({
+      onlyInA: [1],
+      onlyInB: [],
+      relation: "duplicate",
+      redundant: "A",
+      stale: null,
+      confidence: 1,
+      reason: "x",
+    });
+    expect(parsePairJudgeResponse(notStrings)).toBeUndefined();
+  });
+
+  test("keeps the listed claims, trimmed, dropping blank items", () => {
+    const raw = JSON.stringify({
+      onlyInA: [" `--force` flag ", ""],
+      onlyInB: [],
+      relation: "subsumed",
+      redundant: "B",
+      stale: null,
+      confidence: 1,
+      reason: "x",
+    });
+    const verdict = parsePairJudgeResponse(raw);
+    expect(verdict?.onlyInA).toEqual(["`--force` flag"]);
+    expect(verdict?.onlyInB).toEqual([]);
   });
 });
 
@@ -123,31 +214,42 @@ describe("tombstoneReason", () => {
 describe("decideRetirement — the calibrated outcome table (owner grades, O5)", () => {
   const older = side({ ref: "memories/older" });
   const newer = side({ ref: "memories/newer" });
+  const NONE = { onlyInA: [], onlyInB: [] };
 
   test("duplicate retires the older side, keeps the newer", () => {
-    const decision = decideRetirement("duplicate", null, older, newer);
+    const decision = decideRetirement("duplicate", null, older, newer, NONE);
     expect(decision?.retired).toBe(older);
     expect(decision?.successor).toBe(newer);
   });
 
   test("supersedes retires the older side, keeps the newer — same rule as duplicate", () => {
-    const decision = decideRetirement("supersedes", "A", older, newer);
+    const decision = decideRetirement("supersedes", "A", older, newer, NONE);
     expect(decision?.retired).toBe(older);
     expect(decision?.successor).toBe(newer);
   });
 
   test("subsumed retires whichever side the judge names redundant", () => {
-    expect(decideRetirement("subsumed", "A", older, newer)?.retired).toBe(older);
-    expect(decideRetirement("subsumed", "B", older, newer)?.retired).toBe(newer);
+    expect(decideRetirement("subsumed", "A", older, newer, NONE)?.retired).toBe(older);
+    expect(decideRetirement("subsumed", "B", older, newer, NONE)?.retired).toBe(newer);
   });
 
   test("subsumed with a missing or invalid redundant pointer proposes nothing", () => {
-    expect(decideRetirement("subsumed", null, older, newer)).toBeUndefined();
+    expect(decideRetirement("subsumed", null, older, newer, NONE)).toBeUndefined();
+  });
+
+  test("never retires a side the judge listed a claim for, whatever the label says", () => {
+    expect(
+      decideRetirement("duplicate", "A", older, newer, { onlyInA: ["`-readonly` flag"], onlyInB: [] }),
+    ).toBeUndefined();
+    expect(decideRetirement("supersedes", "A", older, newer, { onlyInA: ["port 8080"], onlyInB: [] })).toBeUndefined();
+    expect(decideRetirement("subsumed", "B", older, newer, { onlyInA: [], onlyInB: ["a path"] })).toBeUndefined();
+    // The other side's own claims do not block: the redundant side is the one that must be empty.
+    expect(decideRetirement("subsumed", "A", older, newer, { onlyInA: [], onlyInB: ["a path"] })?.retired).toBe(older);
   });
 
   test("contradicts, overlap and unrelated never propose a retirement", () => {
-    expect(decideRetirement("contradicts", null, older, newer)).toBeUndefined();
-    expect(decideRetirement("overlap", null, older, newer)).toBeUndefined();
-    expect(decideRetirement("unrelated", null, older, newer)).toBeUndefined();
+    expect(decideRetirement("contradicts", null, older, newer, NONE)).toBeUndefined();
+    expect(decideRetirement("overlap", null, older, newer, NONE)).toBeUndefined();
+    expect(decideRetirement("unrelated", null, older, newer, NONE)).toBeUndefined();
   });
 });

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Consolidate's pair judge lists what each note alone holds before it
+  classifies the pair, and akm never retires a note the judge listed anything
+  for.** The judge also reads 12,000 characters of each note instead of 2,500.
+  On 650 reviewed pairs from the owner's library, 70% of the old judge's
+  retirements lost nothing; with the lists, 93% do.
+- **A duplicate with nothing unique on either side retires unattended.** The
+  pair pass stages it, and `triage` `applyMode: "promote"` accepts it like a
+  judged revision (it still counts against `maxAcceptsPerRun`, and a
+  continuity risk keeps it for review). All 56 such duplicates in the reviewed
+  pairs were safe to retire. Every other retirement still waits for
+  `akm proposal accept`.
+
 ## [0.9.25] - 2026-10-04
 
 The stable release of the 0.9.25 line: 0.9.25-alpha.1 to alpha.4, unchanged. Their
