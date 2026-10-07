@@ -378,11 +378,14 @@ duplicate, subsumed and superseding retirement, review-gated.
    retiring a side the judge listed a claim for. `contradicts`,
    `overlap` and `unrelated` are recorded `judged_no_action` with no
    proposal; `contradicts` is counted in the run report and stays a human
-   decision. A `duplicate` with both lists empty and no continuity risk gets
-   a second call (`consolidate-pair-check.md`: what does the retired note
-   hold that the kept one lacks?); an empty answer stages the proposal
-   (gate `consolidate-pair`), and the triage drain accepts it under its
-   usual `applyMode`. Every other retire proposal waits for a person.
+   decision. A retirement (`duplicate`, `subsumed` or `supersedes`) whose
+   retired side has nothing listed (a `duplicate` must also have nothing listed
+   on the kept side; a subsumed or superseding successor may hold more) and no continuity risk gets a second call
+   (`consolidate-pair-check.md`: what does the retired note hold that the kept
+   one lacks?); an empty answer stages the proposal (gate `consolidate-pair`,
+   reason the judge's label), and the triage drain accepts it under its usual
+   `applyMode`. Replay precision was 336/360 (duplicate 0.98, subsumed 0.92,
+   supersedes 0.875). Every other retire proposal waits for a person.
 5. **Ledger:** a row is written for an initiator only once every one of its
    own candidates was admitted this run (whole-initiator admission in step 2
    makes this an all-or-nothing membership check) AND actually resolved to a
@@ -442,8 +445,9 @@ present, archived copy missing" resumes as an earlier, crashed revert's own
 work — UNLESS that original path's current content does not match the
 `retirement.retiredContentHash` recorded at accept, meaning the path was
 reused by an unrelated file since, which refuses instead of overwriting it.
-Triage never auto-accepts a `retire` proposal, whatever `applyMode` says —
-review reuses `akm proposal list --generator consolidate-pair` (S4: the
+Triage auto-accepts a `retire` proposal only when the pair pass staged it
+(gate `consolidate-pair`, see step 4 above) and `applyMode` allows it; every
+other one waits for a person. Review reuses `akm proposal list --generator consolidate-pair` (S4: the
 backlog is reviewed as its own list, not mixed in with every other
 generator's proposals), `show`, `diff` (which renders a retirement as the
 retired file's lines leaving under a `retire` header, with the pair's verdict
