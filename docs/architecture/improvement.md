@@ -72,7 +72,7 @@ everything else routes through `akm proposal accept`.
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
-   a positive or note-only signal never plans one. Distill reads any feedback
+   a positive or note-only signal never plans one, and neither does a negative whose exact fix has since been accepted as a `feedback` proposal. Distill reads any feedback
    on a memory in that window, but skips a memory flagged wrong and not edited
    since: a negative feedback in the window judged the body it still has (or,
    recorded without that body's hash, is newer than its file's last write). It
@@ -91,7 +91,8 @@ everything else routes through `akm proposal accept`.
    a proposal turning a memory into knowledge (and, once accepted, retires
    the source memory) unless a neighbouring `knowledge/` doc already covers
    the memory, and it offers a memory whose promotion was accepted or
-   rejected again only after the memory's body changes; the pair pass judges
+   rejected, or that the model judged and left alone, again only after the
+   memory's body changes; the pair pass judges
    near-duplicate and superseding pairs in the memory tier and emits a
    `retire` proposal for the `duplicate`/`subsumed`/`supersedes` classes;
    `overlap`, `unrelated` and `contradicts` are recorded as

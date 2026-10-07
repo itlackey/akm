@@ -37,6 +37,7 @@ import {
   type RunExecutionOptions,
   runExecution,
 } from "../../integrations/agent/runner-dispatch";
+import { nearestKnowledgeNotes } from "../improve/consolidate/coverage";
 import { errMessage, noticeSet } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
@@ -140,8 +141,14 @@ async function acceptProposal(
   reason: string,
   promoteFn: PromoteFn,
   rejectFn: RejectFn,
+  judgeReason?: string,
 ): Promise<AcceptOutcome> {
-  const gateDecision = { outcome: "auto-accepted" as const, reason, gate: DRAIN_GATE };
+  const gateDecision = {
+    outcome: "auto-accepted" as const,
+    reason,
+    gate: DRAIN_GATE,
+    ...(judgeReason ? { judgeReason } : {}),
+  };
   try {
     if (!opts.dryRun) {
       await promoteFn({
@@ -186,6 +193,7 @@ async function rejectProposal(
   reason: string,
   gateReason: string,
   rejectFn: RejectFn,
+  judgeReason?: string,
 ): Promise<string | undefined> {
   if (opts.dryRun) return undefined;
   try {
@@ -193,7 +201,12 @@ async function rejectProposal(
       stashDir: opts.stashDir,
       id,
       reason,
-      gateDecision: { outcome: "auto-rejected", reason: gateReason, gate: DRAIN_GATE },
+      gateDecision: {
+        outcome: "auto-rejected",
+        reason: gateReason,
+        gate: DRAIN_GATE,
+        ...(judgeReason ? { judgeReason } : {}),
+      },
     });
     return undefined;
   } catch (err) {
@@ -201,11 +214,27 @@ async function rejectProposal(
   }
 }
 
-/** The judgment prompt: the proposal, the live asset it would overwrite, and same-ref siblings. */
+/**
+ * `text` as a fenced block whose fence is longer than any backtick run inside
+ * it (the CommonMark rule), so a note holding its own code block is not cut
+ * short at the first inner fence.
+ */
+export function fencedBlock(text: string): string[] {
+  let longest = 2;
+  for (const run of text.match(/`+/g) ?? []) if (run.length > longest) longest = run.length;
+  const fence = "`".repeat(longest + 1);
+  return [fence, text, fence];
+}
+
+/** The judgment prompt: the proposal, the live asset it would overwrite, same-ref siblings, and for a promotion the nearest knowledge notes. */
 export function buildJudgmentPrompt(
   proposal: Proposal,
   reason: DrainDeferReason,
-  ctx: { liveAsset: string | undefined; siblings: Proposal[] },
+  ctx: {
+    liveAsset: string | undefined;
+    siblings: Proposal[];
+    neighbours?: ReturnType<typeof nearestKnowledgeNotes>;
+  },
 ): string {
   const sections: string[] = [
     "You are adjudicating a pending knowledge-base proposal no quality judge has",
@@ -216,20 +245,25 @@ export function buildJudgmentPrompt(
     `Left for judgment because: ${reason === "needs-judgment" ? "no quality judge has passed this content yet" : reason}`,
     "",
     "## Proposed content",
-    "```",
-    proposalContent(proposal),
-    "```",
+    ...fencedBlock(proposalContent(proposal)),
   ];
   if (ctx.liveAsset !== undefined) {
-    sections.push("", "## Current live asset (would be overwritten on accept)", "```", ctx.liveAsset, "```");
+    sections.push("", "## Current live asset (would be overwritten on accept)", ...fencedBlock(ctx.liveAsset));
   } else {
     sections.push("", "## Current live asset", "(none — this proposal would create a new asset)");
   }
   if (ctx.siblings.length > 0) {
     sections.push("", "## Other pending proposals for the same ref (dedup context)");
     for (const sib of ctx.siblings) {
-      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", proposalContent(sib), "```");
+      sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, ...fencedBlock(proposalContent(sib)));
     }
+  }
+  if (ctx.neighbours && ctx.neighbours.length > 0) {
+    sections.push("", "## Existing knowledge notes nearest to this promotion's source memory");
+    for (const note of ctx.neighbours) {
+      sections.push("", `### ${note.ref}`, note.description, ...fencedBlock(note.excerpt));
+    }
+    sections.push("", "Reject the promotion if these notes already cover what it says, even in other words.");
   }
   sections.push(
     "",
@@ -258,6 +292,12 @@ export function parseJudgmentVerdict(raw: string): JudgmentVerdict | null {
   const { decision, reason } = (obj ?? {}) as { decision?: unknown; reason?: unknown };
   if (decision !== "accept" && decision !== "reject" && decision !== "defer") return null;
   return { decision, reason: typeof reason === "string" ? reason : "" };
+}
+
+/** Why a judged item is still deferred: a stable token and, for a model defer, its words. */
+interface DeferNote {
+  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error";
+  judgeReason?: string;
 }
 
 /** Lower the judgment prompt through the frozen runner and dispatch it. */
@@ -308,6 +348,7 @@ async function runJudgmentTier(
   promoteFn: PromoteFn,
   rejectFn: RejectFn,
   seams: JudgmentSeams,
+  deferNotes: Map<string, DeferNote>,
 ): Promise<void> {
   const byId = new Map(pending.map((p) => [p.id, p]));
   const notices = noticeSet();
@@ -319,15 +360,27 @@ async function runJudgmentTier(
       stillDeferred.push(item);
       continue;
     }
+    const liveAsset = readLiveAssetContent(opts.stashDir, proposal.ref);
     const prompt = buildJudgmentPrompt(proposal, item.reason, {
-      liveAsset: readLiveAssetContent(opts.stashDir, proposal.ref),
+      liveAsset,
       siblings: pending.filter((p) => p.ref === proposal.ref && p.id !== proposal.id),
+      // A create the model otherwise judges blind: the model never sees knowledge/.
+      ...(liveAsset === undefined ? { neighbours: promotionNeighbours(opts.stashDir, proposal) } : {}),
     });
     const dispatch = await dispatchJudgment(opts.judgment, prompt, seams);
     notices.add(dispatch.notices);
     if (dispatch.error) warn(`[triage] judgment dispatch failed for ${item.id}: ${dispatch.error}`);
     const verdict = dispatch.error ? null : dispatch.verdict;
-    if (!verdict || verdict.decision === "defer") {
+    if (!verdict) {
+      deferNotes.set(item.id, { reason: dispatch.error ? "judgment-error" : "judgment-parse-failure" });
+      stillDeferred.push(item);
+      continue;
+    }
+    if (verdict.decision === "defer") {
+      deferNotes.set(item.id, {
+        reason: "judgment-deferred",
+        ...(verdict.reason ? { judgeReason: verdict.reason } : {}),
+      });
       stillDeferred.push(item);
       continue;
     }
@@ -338,6 +391,7 @@ async function runJudgmentTier(
         verdict.reason || "judgment: reject",
         "judgment-reject",
         rejectFn,
+        verdict.reason,
       );
       if (failure === undefined) {
         result.rejected.push(item.id);
@@ -359,6 +413,7 @@ async function runJudgmentTier(
           reason: "judgment-accept",
           contentHash: proposalContentHash(proposal),
           gate: DRAIN_GATE,
+          ...(verdict.reason ? { judgeReason: verdict.reason } : {}),
         });
         result.staged.push(item.id);
       } catch (err) {
@@ -371,7 +426,15 @@ async function runJudgmentTier(
       result.skippedByCap.push(item.id);
       continue;
     }
-    const outcome = await acceptProposal(opts, proposal, item.id, "judgment-accept", promoteFn, rejectFn);
+    const outcome = await acceptProposal(
+      opts,
+      proposal,
+      item.id,
+      "judgment-accept",
+      promoteFn,
+      rejectFn,
+      verdict.reason,
+    );
     if (outcome === "promoted") {
       result.promoted.push(item.id);
       acceptBudget -= 1;
@@ -390,6 +453,19 @@ async function runJudgmentTier(
   }
   if (notices.list().length > 0) result.notices = notices.list();
   result.deferred = stillDeferred;
+}
+
+/** The knowledge notes nearest to a consolidate promotion's source memory; none for any other proposal. */
+function promotionNeighbours(stashDir: string, proposal: Proposal): ReturnType<typeof nearestKnowledgeNotes> {
+  if (proposal.source !== "consolidate" || proposal.promotionSource === undefined) return [];
+  try {
+    const parsed = parseRefInput(proposal.promotionSource);
+    const typeDir = stashDirFor(parsed.type);
+    if (!typeDir) return [];
+    return nearestKnowledgeNotes(assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name));
+  } catch {
+    return [];
+  }
 }
 
 /** The live asset a proposal would overwrite, if any. */
@@ -506,6 +582,7 @@ export async function drainProposals(
     }
   }
 
+  const deferNotes = new Map<string, DeferNote>();
   if (opts.judgment && result.deferred.length > 0) {
     await runJudgmentTier(
       { ...opts, judgment: opts.judgment },
@@ -515,14 +592,21 @@ export async function drainProposals(
       promoteFn,
       rejectFn,
       judgmentSeams,
+      deferNotes,
     );
   }
   // #577: whatever stays undecided is left for review (`review_needed` in the ledger).
   if (!opts.dryRun) {
-    const reviewReason = opts.judgment ? "judgment-deferred" : "no-judge-configured";
     for (const item of result.deferred) {
+      const note = deferNotes.get(item.id);
+      const reviewReason = note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured");
       try {
-        recordGateDecision(opts.stashDir, item.id, { outcome: "deferred", reason: reviewReason, gate: DRAIN_GATE });
+        recordGateDecision(opts.stashDir, item.id, {
+          outcome: "deferred",
+          reason: reviewReason,
+          gate: DRAIN_GATE,
+          ...(note?.judgeReason ? { judgeReason: note.judgeReason } : {}),
+        });
       } catch (err) {
         warn(`[triage] failed to record gate decision for ${item.id}: ${errMessage(err)}`);
       }

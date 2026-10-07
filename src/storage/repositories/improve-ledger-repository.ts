@@ -106,11 +106,16 @@ export const CONSOLIDATE_LEDGER_SOURCE = "consolidate";
  * promotion is a verdict on that memory's text; asking the model about the
  * same text again can only reproduce the proposal (accepted used to be
  * eligible at once, rejected after 7 days), so the memory waits for an edit.
+ * So does a memory the model judged and left alone (`judged_no_action`):
+ * the same text would be judged weekly with the same answer.
  * The clock stays for a row with no recorded hash — one decided before the
  * hash was recorded — see {@link nextEligibleAt} and {@link isContentDrivenRow}.
  */
 export function isContentDrivenDecision(source: string, outcome: ImproveLedgerOutcome): boolean {
-  return source === CONSOLIDATE_LEDGER_SOURCE && (outcome === "accepted" || outcome === "rejected");
+  return (
+    source === CONSOLIDATE_LEDGER_SOURCE &&
+    (outcome === "accepted" || outcome === "rejected" || outcome === "judged_no_action")
+  );
 }
 
 /**

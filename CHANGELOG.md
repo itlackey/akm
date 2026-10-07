@@ -26,6 +26,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The drain's judge no longer sees a note with a code block as truncated.**
+  The judgment prompt fenced the proposed content (and the live asset, sibling
+  proposals and neighbour excerpts) in three backticks, so a note holding its
+  own code block closed the fence early and read as cut off; real rejections said
+  "ends in an empty code block" or "truncated". Each block now uses a fence longer
+  than any backtick run inside it. The judge's reason is also kept on accepts,
+  staged accepts and defers (as the gate decision's `judgeReason`, until now
+  rejections only), and a judge reply that is not a verdict is stamped
+  `judgment-parse-failure`, and a runner failure `judgment-error`, instead of
+  looking like a defer.
+
+- **Reflect no longer plans an asset whose negative feedback is already acted
+  on.** A negative `akm feedback` that came with an exact fix (`--replace` and
+  `--with`, `--outdated` or `--superseded-by`) makes a `feedback` proposal, and
+  once that proposal is accepted the feedback has done its work. Reflect still
+  took the ref as having fresh negative feedback, and on 2026-10-07 44 of its 50
+  refs were of that kind: the judge refused or the model changed nothing for
+  most of them. A negative event with a fix is now left out of the reflect
+  cursor when an accepted `feedback` proposal for the ref was created at or
+  after it. A negative with no fix, one given after the proposal, and one whose
+  proposal is still pending or was rejected plan a reflect as before.
+- **Consolidate stops re-offering memories a reviewer already turned down, and
+  the nightly judge sees what a promotion may duplicate.** About 53 promotions a
+  night reached review at ~5% precision, 64-70% of them a memory body already
+  proposed or rejected. Four causes, four changes: a memory whose body equals
+  that of a consolidate promotion rejected on or after 2026-09-29 is held until
+  its body changes, under any name (earlier rejections, the bulk audits of
+  2026-08, do not count); a memory the model judged and left alone is held by its
+  body hash instead of a 7-day clock, so an unchanged memory is no longer judged
+  every week (a row recorded without a hash keeps the 7 days); the coverage gate
+  skips a memory when 30% of its text, not 50%, is in a neighbouring knowledge
+  doc, which catches paraphrases; and the drain's judgment tier, which judged a
+  promotion seeing only the proposal and never `knowledge/`, is now shown the 5
+  nearest knowledge notes (ref, description, excerpt) and told to reject a
+  promotion they already cover. No new settings.
 - **A confident `subsumed` or `supersedes` retirement resolves unattended, as a
   `duplicate` already did.** The pair pass staged a retire proposal for the
   triage drain only when the judge's label was `duplicate`; every other retirement
