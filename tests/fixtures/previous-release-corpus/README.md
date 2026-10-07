@@ -36,6 +36,13 @@ JSON config, respectively) — there is nothing to check in here for them.
   task targeting a workflow that targets a command), trimmed to the tables the
   layout-26 migration reads. Paths are rebased to `/fixture/stash`.
 
+- `index-v20.sql` — a layout-20 index as `akm index --full` in 0.9.1 wrote it
+  over a two-note stash: `entries` keeps the transitional NOT NULL columns
+  layout 21 removed (`entry_key`, `dir_path`, `stash_dir`, `entry_json`,
+  `entry_type`) beside the current ones, and `document_json` is NULL on every
+  row. Trimmed to the tables the opener reads. Paths are rebased to
+  `/fixture/stash`.
+
 - `openpalm-consumer/` — downstream-consumer fixtures (#880) standing in for
   the shapes OpenPalm (a real, if unofficial, integration point) writes and
   schedules against: `config.json` (a `bundles` entry as its `akm-sources.ts`

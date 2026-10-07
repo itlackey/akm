@@ -35,6 +35,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `file_outside_layout` in the `reflect_completed` event). This is the rule
   0.9.26 added to `akm feedback --replace`. An asset that another bundle owns is
   still refused by `createProposal` (#1000).
+- **An index that 0.9.1 wrote no longer crashes akm.** Every `akm index` on it
+  exited 70 with `null is not an object (evaluating 'doc.xrefs')`, `akm migrate
+  apply` and `akm index --full` did not help, and `akm search` failed with
+  `null is not an object (evaluating 'item.entry.quality')`; the only way out
+  was moving `index.db` aside. That layout (20) keeps the transitional
+  `entry_key`, `dir_path`, `stash_dir`, `entry_json` and `entry_type` columns
+  that layout 21 removed, each NOT NULL, beside the current columns, and leaves
+  `document_json` NULL on every row. The table had every column akm checks for,
+  so it was taken for a current one: the links migration read the NULL
+  documents, and no insert could ever have succeeded (`NOT NULL constraint
+  failed: entries.entry_key`). akm now treats a table that still has a retired
+  column as older than layout 21, as the compat notes already said: the
+  writable opener recreates its entries-keyed tables (the LLM enrichment cache
+  is kept) and the next `akm index` re-walks every source, and a read rebuilds
+  inline. An index that a failed open already half-migrated (layout stamp still
+  20, `search_text` dropped, `asset_links` created) recovers the same way.
+- **Two files that claim one ref no longer trade places in the index, and `akm
+  index` says so.** A skill's `references/a.md` and a note at
+  `knowledge/skills/x/references/a.md` are both the ref
+  `knowledge/skills/x/references/a`, and the index holds one row for it. The
+  first file a run persisted held it, so a full build followed the filesystem's
+  listing order (one bundle indexed on tmpfs and on ext4 held different files),
+  and the first incremental run after a full build handed the row to the other
+  file, because it drains only the directory that lost: with no file touched,
+  the row, its search entry and the text its vector is embedded from changed,
+  and the vector was dropped and recomputed. When a smaller-path file was added
+  later and then deleted, the ref also left the index until `--full`, although
+  its other file was still on disk. The file with the smaller path (code-point
+  order, as `akm show`'s refusal lists them) now holds the ref however the
+  directories are drained and the walk is ordered, a directory that gives a ref
+  up is drained again so the ref passes back when its holder goes, and each
+  pair is reported in the `warnings` of `akm index`, naming the file indexed
+  and the one skipped.
 
 ## [0.9.26] - 2026-10-05
 

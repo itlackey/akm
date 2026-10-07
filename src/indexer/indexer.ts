@@ -8,7 +8,7 @@ import type { BundleAdapter } from "../core/adapter/bundle-adapter";
 import { detectAdapterId } from "../core/adapter/detect-adapter";
 import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
-import { isHttpUrl } from "../core/common";
+import { compareCodePoints, isHttpUrl } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
@@ -1325,11 +1325,6 @@ function persistDirRecords(
   warnings: string[],
   bundleByRoot: ReadonlyMap<string, { bundleId: string; componentId: string; adapterId: string }>,
 ): void {
-  // Per-source dedup: the same logical asset can appear more than once within
-  // one owning source, where source order still makes the first occurrence win.
-  // The owner is part of the key so identical concepts in different bundles
-  // remain distinct indexed rows.
-  const indexedAssetIdentities = new Set<string>();
   const deletedUsageEntryIds = new Set<number>();
   const findPersisted = db.prepare("SELECT id, content_hash, file_path, adapter_id FROM entries WHERE item_ref = ?");
 
@@ -1397,7 +1392,7 @@ function persistDirRecords(
       let dedupedRows = 0;
 
       if (stash) {
-        const ownerIdentity = bundle.bundleId;
+        const sourceRoot = `${path.resolve(currentStashDir)}${path.sep}`;
         for (const entry of stash.entries) {
           const entryPath = entry.filename ? path.join(dirPath, entry.filename) : null;
           if (!entryPath) {
@@ -1410,25 +1405,40 @@ function persistDirRecords(
             warn(`Skipping entry without adapter-owned concept identity: ${entryPath}`);
             continue;
           }
-          // Adapter-owned concept identity is path-based and cannot be replaced
-          // by presentation fields such as type/title.
-          const identityKey = `${ownerIdentity}\0${adapterConceptId}`;
-          if (indexedAssetIdentities.has(identityKey)) {
-            dedupedRows++;
-            continue;
-          }
-          indexedAssetIdentities.add(identityKey);
-
           // content_hash = doc.hash from the drain, keyed by the recognized
           // file's path. A missing hash preserves the existing value on upsert.
           const contentHash = hashByFile?.get(entryPath);
+          // Adapter-owned concept identity is path-based and cannot be replaced
+          // by presentation fields such as type/title.
           const provenance = deriveEntryProvenance(bundle, entry.type, entry.name, adapterConceptId);
+
+          // Two files of one source can claim one ref (a skill's references/a.md and
+          // knowledge/skills/x/references/a.md are both knowledge/skills/x/references/a). The file with
+          // the smaller path holds it, whichever directories this run drains and in whatever order the
+          // walk met them (#1050): an entry yields to a row held by a file with a smaller path and
+          // otherwise takes the ref over. The same concept in another bundle is a different row, and a
+          // holder whose file is gone is no claim.
+          const holder = (findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined;
+          if (
+            holder &&
+            holder.file_path !== entryPath &&
+            holder.file_path.startsWith(sourceRoot) &&
+            fs.existsSync(holder.file_path)
+          ) {
+            const yields = compareCodePoints(holder.file_path, entryPath) < 0;
+            const [indexed, skipped] = yields ? [holder.file_path, entryPath] : [entryPath, holder.file_path];
+            warnings.push(`Two files claim ${provenance.itemRef}: indexed ${indexed}, skipped ${skipped}.`);
+            if (yields) {
+              dedupedRows++;
+              continue;
+            }
+            // The directory the ref comes from now has a row fewer than its files: drain it again.
+            deleteIndexDirState(db, path.dirname(holder.file_path));
+          }
           keptItemRefs.add(provenance.itemRef);
           persistedRows++;
 
-          const previous = sameVariant
-            ? ((findPersisted.get(provenance.itemRef) as PersistedEntryRow | null) ?? undefined)
-            : undefined;
+          const previous = sameVariant ? holder : undefined;
           const unchanged =
             previous !== undefined &&
             contentHash !== undefined &&

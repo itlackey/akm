@@ -125,8 +125,9 @@ Opened by:
 **Retention:** `index.db` is a regenerable derived cache. The one
 from-scratch rebuild is on-disk corruption (`SQLITE_CORRUPT`, #865): the file
 is deleted and rebuilt. An `entries` table older than layout 21 (no
-`item_ref`) has its entries-keyed tables recreated; the LLM enrichment
-cache is kept. This path never modifies `state.db`.
+`item_ref`, or still the retired `entry_key` columns, as 0.9.1 wrote it) has its
+entries-keyed tables recreated; the LLM enrichment cache is kept. This path
+never modifies `state.db`.
 `clearStaleCacheEntries()` removes orphaned LLM cache rows. `akm index`
 VACUUMs the file at the end of a run after a layout migration (the writable
 opener sets `index_meta.vacuumPending`) and whenever more than half its pages
