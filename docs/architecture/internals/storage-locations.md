@@ -140,7 +140,7 @@ are free, the threshold improve applies to `state.db`; each VACUUM appends an
 | `key` | TEXT PRIMARY KEY | Metadata key |
 | `value` | TEXT NOT NULL | String-encoded value |
 
-Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `hasEmbeddings` (`"0"` or `"1"`), `vacuumPending` (`"1"` after a layout migration, until `akm index` VACUUMs).
+Known keys: `version` (layout marker), `embeddingFingerprint` (the embedding model the index currently serves), `hasEmbeddings` (`"0"` or `"1"`), `vacuumPending` (`"1"` after a layout migration, until `akm index` VACUUMs), `ftsTotalsStale` (`"1"` once a delete has taken a row out of `entries_fts`, until `akm index` rebuilds it).
 
 #### Table: `entries`
 
@@ -182,7 +182,20 @@ content-bearing table instead; readers and writers handle both.
 The canonical entry repository replaces this projection in the same SQLite
 transaction as its `entries` upsert. Deletes remove the FTS row before the
 parent entry. There is no caller-managed FTS dirty queue; a full FTS rebuild is
-reserved for explicit recovery of regenerable index state.
+reserved for explicit recovery of regenerable index state and for the totals
+below.
+
+FTS5 cannot take a deleted row out of a contentless table's BM25 totals (its
+row count, and the token counts the average document length comes from), and
+has no command that recomputes them: `delete` and `rebuild` are refused on a
+contentless table. Every removal or replacement therefore leaves them one row
+too high, and an index that has been updated would score differently from a
+fresh one (#1048). A delete that removes a row stamps `index_meta.ftsTotalsStale`
+in its own transaction, whichever process made it, and the next `akm index`
+rebuilds the table from `entries` before it finishes (about a second at 25,000
+entries; a run that removed or replaced nothing does not). The content-bearing
+table older SQLite gets subtracts a deleted row itself and is never rebuilt for
+this.
 
 Rows carry `rowid = entry_id`, so a per-entry delete is a rowid lookup.
 
