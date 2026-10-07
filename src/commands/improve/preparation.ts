@@ -766,7 +766,11 @@ interface SignalDeltaSnapshot {
   nowIso: string;
   /** Newest in-window signal per ref. */
   latestFeedbackTs: Map<string, string>;
-  /** Newest in-window negative signal per ref: the only feedback that plans a reflect. */
+  /**
+   * Newest in-window negative signal per ref: the only feedback that plans a reflect. One that came with an
+   * exact fix (`akm feedback --replace`, `--outdated`, `--superseded-by`) whose feedback proposal was accepted
+   * since is already acted on and does not count.
+   */
   latestNegativeTs: Map<string, string>;
   ledger: LedgerSnapshot;
   /** `ref → last_attempt_at` from the ledger. */
@@ -794,6 +798,15 @@ export function buildSnapshotManifest(args: {
     candidates.map((r) => [r.ref, { hasSignal: false, positive: 0, negative: 0 }]),
   );
   if (candidates.length > 0) {
+    // When each ref's accepted feedback proposals were created: a fix event is acted on once one exists at or after it.
+    const fixedAt = new Map<string, string[]>();
+    if (stashDir) {
+      withRunState(eventsCtx, args.readOnly !== true, (db) => {
+        for (const p of listStateProposals(db, { stashDir, status: "accepted" })) {
+          if (p.source === "feedback") fixedAt.set(p.ref, [...(fixedAt.get(p.ref) ?? []), p.createdAt]);
+        }
+      });
+    }
     for (const e of readEvents({ type: "feedback" }, eventsCtx).events) {
       const ref = e.ref ? refByKey.get(e.ref) : undefined;
       const entry = ref ? feedback.get(ref) : undefined;
@@ -803,7 +816,12 @@ export function buildSnapshotManifest(args: {
       if (ts >= feedbackSinceCutoff && isSignalEvent(e.metadata)) {
         entry.hasSignal = true;
         if (ts > (latestFeedbackTs.get(ref) ?? "")) latestFeedbackTs.set(ref, ts);
-        if (signal === "negative" && ts > (latestNegativeTs.get(ref) ?? "")) latestNegativeTs.set(ref, ts);
+        const fixApplied =
+          (e.metadata as { fix?: unknown } | undefined)?.fix !== undefined &&
+          (fixedAt.get(e.ref ?? "") ?? []).some((createdAt) => createdAt >= ts);
+        if (signal === "negative" && !fixApplied && ts > (latestNegativeTs.get(ref) ?? "")) {
+          latestNegativeTs.set(ref, ts);
+        }
       }
       if (signal === "positive") entry.positive++;
       else if (signal === "negative") entry.negative++;
