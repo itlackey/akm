@@ -189,7 +189,7 @@ Reflect changes only an asset's `description`, `when_to_use` and title. The engi
 **Internal steps:**
 
 1. Emit `reflect_invoked` event via `appendEvent`.
-2. Resolve asset content: look up the ref in the FTS index; read the file if found. Index miss is non-fatal.
+2. Resolve asset content: look up the ref in the FTS index; read the file if found. Index miss is non-fatal. A file in the write target that is not the one a proposal writes (`<root>/<type dir>/<name>.md`, derived from the ref) is refused here as `unsupported_type`, before any model call: a skill's `references/a.md` is the ref `knowledge/skills/<name>/references/a`, and a proposal for it would create a second file (`file_outside_layout`, #1052).
 3. Resolve the selected strategy's `reflect.engine`, falling back to `defaults.llmEngine`.
 4. Build the reflection prompt via `buildReflectPrompt` (see Prompt shape below).
 5. Dispatch the frozen `RunnerSpec` through `callStageOnce` under the
