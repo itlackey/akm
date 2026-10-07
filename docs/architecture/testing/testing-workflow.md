@@ -213,19 +213,13 @@ lives in the standalone repo **[itlackey/akm-bench](https://github.com/itlackey/
 Run it from there after any change to `src/output/`, `src/commands/read/show.ts`,
 APPLY directives, or other content that affects what agents see.
 
-For curate/search ranking quality — which stays in this repo — use the
-deterministic, rank-aware curate benchmark instead (no LLM provider needed):
-
-```sh
-# Single scorecard for the current source
-scripts/akm-eval/bin/akm-eval-curate-bench --akm "bun src/cli.ts"
-
-# Compare two checkouts and fail on a per-case regression
-scripts/akm-eval/bin/akm-eval-curate-bench \
-  --akm "bun /path/to/baseline/src/cli.ts" --compare "bun src/cli.ts" --fail-on-regression
-```
-
-See `docs/maintainers/eval.md`.
+For curate/search ranking quality, run the retrieval eval of
+**[itlackey/akm-eval](https://github.com/itlackey/akm-eval)**
+(`evals/retrieval/run --corpus public`, with `AKM_BIN` naming the build under
+test). It scores `akm search` and `akm curate` against graded judgments and
+calls no model service. The in-repo curate benchmark that used to do this,
+`akm-eval-curate-bench`, left with the rest of `scripts/akm-eval/`; see
+`docs/maintainers/eval.md`.
 
 ## Recommended Workflow
 

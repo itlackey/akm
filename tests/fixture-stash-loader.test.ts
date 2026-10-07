@@ -72,6 +72,6 @@ describe("fixtureContentHash", () => {
 describe("listFixtures", () => {
   test("returns all shipped fixtures, sorted", () => {
     const names = listFixtures();
-    expect(names).toEqual(["all-types", "curate-golden", "minimal", "ranking-baseline", "search-filter"]);
+    expect(names).toEqual(["all-types", "minimal", "ranking-baseline", "search-filter"]);
   });
 });

@@ -17,4 +17,4 @@ Authoritative reference documentation for the akm CLI and its data.
 - [Website Sources](https://github.com/itlackey/akm/blob/main/docs/reference/website-sources.md) -- The pluggable fetcher API behind `akm import <url>` and other URL-based knowledge reads
 - [Data & Telemetry](data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
 
-See also: [akm-eval](https://github.com/itlackey/akm/blob/main/docs/maintainers/eval.md) -- the standalone toolkit for measuring whether `akm improve` is working (maintainer docs), and the repo-root [Roadmap](https://github.com/itlackey/akm/blob/main/ROADMAP.md) -- high-level focus for upcoming releases.
+See also: [akm-eval](https://github.com/itlackey/akm-eval) -- the evals and benchmarks for measuring whether `akm improve` is working, and the repo-root [Roadmap](https://github.com/itlackey/akm/blob/main/ROADMAP.md) -- high-level focus for upcoming releases.

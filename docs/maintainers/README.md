@@ -11,8 +11,9 @@ actually improve it, and the current state of the `curate` implementation.
 - [Release Checklist](release-checklist.md) — local release validation, exact
   candidate-SHA semantic/Docker/native-scheduler gates, and the evidence links
   required before publication.
-- [akm-eval](eval.md) — the standalone, read-only toolkit that measures
-  whether `akm improve` and retrieval changes are actually working.
+- [akm-eval](https://github.com/itlackey/akm-eval) — the evals and benchmarks
+  that measure whether `akm improve` and retrieval changes are actually
+  working. The old in-repo toolkit is retired: see [eval.md](eval.md).
 - [Curate Workmap](curate-workmap.md) — the current `akm curate` contract,
   where its implementation diverges from intended behavior, and the
   highest-value next fixes.

@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The `scripts/akm-eval` toolkit has moved out of this repository.** The
+  read-only measurement toolkit (the case runner and its suites, the twin
+  experiment, the real-query verdict for the proactive lane, the state
+  analyzers and the curate benchmark) is retired; every live eval is in
+  [itlackey/akm-eval](https://github.com/itlackey/akm-eval). Its code is kept
+  there, to read and not to run, in `retired/akm-scripts-akm-eval/`, copied from
+  commit `f57a7fd44b37`. It imports akm's `src/` by relative path, so it runs
+  only in a checkout at that commit. Removed here with it: `scripts/akm-eval/`,
+  its tests (`tests/integration/akm-eval/`, `tests/akm-eval-*.test.ts`,
+  `tests/curate-metrics.test.ts`) and fixtures (`tests/fixtures/akm-eval/`, and
+  the `curate-golden` stash, which only the curate benchmark read), the
+  `akm-eval determinism` CI job, and `getMeasurementVerdictsDir`, whose only
+  caller was the verdict runner. akm no longer names
+  `$STATE/improve/measurement/verdicts/<stash>/`; a file already there is inert.
+  `docs/maintainers/eval.md` is now a pointer to the new home.
+
 ### Fixed
 
 - **A codex dispatch with an output schema no longer leaves a temp folder
