@@ -236,6 +236,8 @@ export function buildJudgmentPrompt(
     neighbours?: ReturnType<typeof nearestKnowledgeNotes>;
   },
 ): string {
+  // A promotion (a memory proposed as a new knowledge note) must also be durable.
+  const promotion = proposal.source === "consolidate" && ctx.liveAsset === undefined;
   const sections: string[] = [
     "You are adjudicating a pending knowledge-base proposal no quality judge has",
     "passed yet. Decide whether to accept, reject, or defer it.",
@@ -270,7 +272,9 @@ export function buildJudgmentPrompt(
     "## Your task",
     'Return ONLY a JSON object: {"decision": "accept" | "reject" | "defer", "reason": "<short reason>"}.',
     "- accept: the proposed content is a correct, valuable update worth committing.",
-    "- reject: the proposal is wrong, a duplicate, or contradicts the live asset.",
+    promotion
+      ? '- reject: the proposal is wrong, a duplicate, contradicts the live asset, or is not durable: it reports the state of something that changes (a status, rollout, branch, commit, version, test count, "as of <date>"), is a plan not yet carried out, or describes something already retired, replaced or superseded. A lesson drawn from an incident is durable.'
+      : "- reject: the proposal is wrong, a duplicate, or contradicts the live asset.",
     "- defer: you cannot decide from the provided context (leave it pending).",
     "Output the JSON object and nothing else.",
   );

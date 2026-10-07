@@ -923,6 +923,25 @@ describe("buildJudgmentPrompt — fences", () => {
   });
 });
 
+describe("buildJudgmentPrompt — rubric", () => {
+  const prompt = (source: string, liveAsset?: string) =>
+    buildJudgmentPrompt(proposalFixture(source, VALID_LESSON), "needs-judgment", { liveAsset, siblings: [] });
+
+  test("a promotion is rejected when it is a status, a plan or a retired thing, not only when it is wrong or a duplicate", () => {
+    const text = prompt("consolidate");
+    expect(text).toContain("or is not durable: it reports the state of something that changes");
+    expect(text).toContain("describes something already retired, replaced or superseded.");
+    expect(text).toContain("A lesson drawn from an incident is durable.");
+  });
+
+  test("a proposal that is not a promotion keeps the plain rubric", () => {
+    for (const text of [prompt("reflect"), prompt("consolidate", "live note")]) {
+      expect(text).toContain("- accept: the proposed content is a correct, valuable update worth committing.");
+      expect(text).not.toContain("durable");
+    }
+  });
+});
+
 describe("drainProposals — judgment tier (agent mode)", () => {
   test("engine accepts a deferred item when the agent verdict is accept", async () => {
     const stash = makeStashDir();
