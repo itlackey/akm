@@ -601,8 +601,30 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/small-note");
     expect(proposal.retirement?.reason).toBe("subsumed");
-    // Only a duplicate retires unattended; a subsumed retirement waits for a person.
-    expect(proposal.gateDecision).toBeUndefined();
+    // Nothing unique on either side and a clean second look: staged for the drain.
+    expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "subsumed", gate: "consolidate-pair" });
+  });
+
+  test("supersedes: staged like a duplicate when nothing is lost", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "supersedes", redundant: "A" }),
+    });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toMatchObject({
+      outcome: "staged",
+      reason: "supersedes",
+      gate: "consolidate-pair",
+    });
+  });
+
+  test("a subsumed retirement the second look finds a missing claim in still mints, but is not staged", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "subsumed", redundant: "A", missing: ["port 8080"] }),
+    });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
   });
 
   function indexOldAndNew(): void {

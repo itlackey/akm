@@ -652,7 +652,7 @@ function checkSection(label: string, side: PairSide): string {
 }
 
 /**
- * The second look a duplicate gets before it may retire unattended: one call
+ * The second look a retirement gets before it may retire unattended: one call
  * that asks only what the retired note holds that the kept one lacks. True
  * only on a clean, empty answer (it caught 2 of 4 duplicates the judge got
  * wrong, and held back none of 109 right ones).
@@ -812,12 +812,12 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     ctx.retired.push(proposal.id);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
-    // A duplicate with nothing unique on either side, confirmed by a second
-    // look, is the one class that retires unattended (109 of 111 safe on the
-    // owner's reviewed pairs, 2026-10-04): the triage drain accepts it under
-    // its usual applyMode. Every other retirement waits for a person.
+    // A retirement with nothing unique on either side, confirmed by a second
+    // look, retires unattended: the triage drain accepts it under its usual
+    // applyMode. Replay precision 336/360 (duplicate 0.98, subsumed 0.92,
+    // supersedes 0.875, 2026-10-07); a duplicate alone was 109 of 111 safe on
+    // the owner's reviewed pairs (2026-10-04). Anything else waits for a person.
     if (
-      verdict.relation === "duplicate" &&
       verdict.onlyInA.length + verdict.onlyInB.length === 0 &&
       !continuityRisk &&
       (await confirmNothingLost(ctx, retired, successor))
@@ -827,7 +827,7 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
         proposal.id,
         {
           outcome: "staged",
-          reason: "duplicate",
+          reason: verdict.relation,
           gate: PAIR_PASS_GATE,
           contentHash: proposalContentHash(proposal),
         },

@@ -894,7 +894,7 @@ describe("akm proposal revert on a retire proposal", () => {
   });
 });
 
-describe("triage auto-accepts only a retire proposal the pair judge staged as a duplicate", () => {
+describe("triage auto-accepts only a retire proposal the pair pass staged", () => {
   test("drainProposals with applyMode: promote leaves an unstaged retire proposal pending", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
@@ -922,7 +922,7 @@ describe("triage auto-accepts only a retire proposal the pair judge staged as a 
     expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
   });
 
-  function stagedDuplicate(continuityRisk?: RetirementMetadata["continuityRisk"]) {
+  function stagedDuplicate(continuityRisk?: RetirementMetadata["continuityRisk"], reason = "duplicate") {
     const oldPath = writeAsset("memories/old-note.md", "description: an old note");
     const newPath = writeAsset("memories/new-note.md", "description: a new note");
     const proposal = createRetireProposal(storage.stashDir, {
@@ -938,12 +938,26 @@ describe("triage auto-accepts only a retire proposal the pair judge staged as a 
     });
     recordGateDecision(storage.stashDir, proposal.id, {
       outcome: "staged",
-      reason: "duplicate",
+      reason,
       gate: PAIR_PASS_GATE,
       contentHash: proposalContentHash(proposal),
     });
     return { proposal, oldPath };
   }
+
+  test("a staged subsumed retirement is accepted and archived under applyMode: promote", async () => {
+    const { proposal, oldPath } = stagedDuplicate(undefined, "subsumed");
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(result.promoted).toContain(proposal.id);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
+    expect(fs.existsSync(oldPath)).toBe(false);
+  });
 
   test("a staged duplicate is accepted and archived under applyMode: promote", async () => {
     const { proposal, oldPath } = stagedDuplicate();

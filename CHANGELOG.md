@@ -26,6 +26,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A confident `subsumed` or `supersedes` retirement resolves unattended, as a
+  `duplicate` already did.** The pair pass staged a retire proposal for the
+  triage drain only when the judge's label was `duplicate`; every other retirement
+  waited for a person. It now stages any of the three retire labels when both
+  claim lists are empty, the second look (what does the retired note hold that the
+  kept one lacks?) comes back empty and there is no continuity risk. The staged
+  gate reason is the judge's label, and the drain records it. Replay over 360
+  judged pairs: 336 safe (0.93): `duplicate` 0.98, `subsumed` 0.92, `supersedes`
+  0.875. In production, unstaged `subsumed` retirements were accepted 45 of 54
+  times by hand, and in the latest run 41 of 47 pair proposals would have resolved
+  without a person. `docs/architecture/internals/improve-workflow.md` said triage
+  never auto-accepts a retire proposal, which stopped being true in 0.9.26; it,
+  and the matching lines in `improvement.md`, now describe the staging rule.
 - **A codex dispatch with an output schema no longer leaves a temp folder
   behind.** Every build of the codex command for a request with a schema made a
   new `akm-codex-schema-*` folder in the OS temp dir for `--output-schema` and

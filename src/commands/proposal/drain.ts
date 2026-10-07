@@ -426,8 +426,8 @@ export async function drainProposals(
   const empties: string[] = [];
   for (const proposal of pending) {
     // A consolidate pair-pass `retire` proposal is auto-accepted only when the
-    // pair judge staged it as a duplicate with nothing unique on either side
-    // (spec §25.9, equivalent content); every other one waits for a direct
+    // pair pass staged it: nothing unique on either side, confirmed by a
+    // second look, no continuity risk; every other one waits for a direct
     // `akm proposal accept` (spec §25.6). Checked before isEmptyDiff, which
     // has nothing meaningful to read on a delete-primary change.
     if (isRetireProposal(proposal)) {
@@ -438,7 +438,7 @@ export async function drainProposals(
         staged.contentHash === proposalContentHash(proposal) &&
         !proposal.retirement?.continuityRisk
       ) {
-        accepts.push({ id: proposal.id, reason: "duplicate" });
+        accepts.push({ id: proposal.id, reason: staged.reason });
       }
       continue;
     }

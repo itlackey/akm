@@ -319,7 +319,7 @@ export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
 
 /** A promote refused because the target changed after mint (STALE, R20) — not a merit judgement. */
 export const STALE_TARGET_GATE_REASON = "stale-target";
-/** The gate on a retire proposal the triage drain may accept unattended: a pair-judged duplicate. */
+/** The gate on a retire proposal the triage drain may accept unattended: a staged pair-judged retirement. */
 export const PAIR_PASS_GATE = "consolidate-pair";
 export const EXPIRED_GATE_REASON = "expired";
 export const ASSET_MISSING_GATE_REASON = "asset-missing";
