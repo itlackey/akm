@@ -25,6 +25,7 @@ import {
   isFlaggedSinceLastEdit,
   partitionBySignalDelta,
 } from "../../../src/commands/improve/preparation";
+import { archiveProposal, createProposal } from "../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { appendEvent } from "../../../src/core/events";
 import type { ImproveEligibleRef } from "../../../src/core/improve-types";
@@ -367,6 +368,73 @@ describe("buildSnapshotManifest", () => {
       "memories/positive",
     ]);
     expect([...snap.latestNegativeTs.keys()]).toEqual(["memories/negative"]);
+  });
+
+  describe("a negative that came with an exact fix", () => {
+    const fix = { source: "https://example.test/docs", replacements: 1 };
+
+    /**
+     * A feedback proposal for `memories/<name>`, accepted or left pending. Returns the candidate and the durable ref
+     * the proposal (and so a feedback event) carries. Events are stamped relative to the proposal's creation.
+     */
+    function withProposal(stash: string, name: string, accept: boolean) {
+      const proposal = createProposal(stash, {
+        ref: `memories/${name}`,
+        source: "feedback",
+        payload: { content: "fixed\n" },
+        feedback: { reason: "the port is 4096", source: fix.source },
+      });
+      if (accept) archiveProposal(stash, proposal.id, "accepted", undefined);
+      const durable = proposal.ref;
+      const created = Date.parse(proposal.createdAt);
+      return {
+        created,
+        negative: (offsetMs: number, metadata: Record<string, unknown>) =>
+          appendEvent(
+            { eventType: "feedback", ref: durable, metadata: { signal: "negative", ...metadata } },
+            { now: () => created + offsetMs },
+          ),
+        latestNegative: () =>
+          buildSnapshotManifest({
+            postCleanupRefs: [ref(`memories/${name}`, { itemRef: durable })],
+            validationFailureRefs: new Set(),
+            stashDir: stash,
+          }).latestNegativeTs.get(`memories/${name}`),
+      };
+    }
+
+    test("does not plan a reflect once its feedback proposal is accepted", () => {
+      const p = withProposal(freshStash(), "fixed", true);
+      p.negative(-5000, { fix });
+      expect(p.latestNegative()).toBeUndefined();
+    });
+
+    test("still plans a reflect while its feedback proposal is pending", () => {
+      const p = withProposal(freshStash(), "pending", false);
+      p.negative(-5000, { fix });
+      expect(p.latestNegative()).toBeDefined();
+    });
+
+    test("still plans a reflect when the negative was given after the accepted proposal", () => {
+      const p = withProposal(freshStash(), "later", true);
+      p.negative(5000, { fix });
+      expect(p.latestNegative()).toBeDefined();
+    });
+
+    test("still plans a reflect for a negative with no fix, even beside an accepted proposal", () => {
+      const p = withProposal(freshStash(), "plain", true);
+      p.negative(-5000, { reason: "the port is 4096" });
+      expect(p.latestNegative()).toBeDefined();
+    });
+
+    test("the newest negative that is not acted on is the cursor", () => {
+      const p = withProposal(freshStash(), "mixed", true);
+      p.negative(-9000, { fix });
+      p.negative(-1000, { reason: "also wrong about the host" });
+      p.negative(-2000, { fix });
+      // The fix events are acted on; the plain one, newest of those not acted on, is the cursor.
+      expect(p.latestNegative()).toBe(new Date(p.created - 1000).toISOString());
+    });
   });
 
   test("validation-failure refs are excluded from the timestamp-map candidate set", () => {
