@@ -142,23 +142,40 @@ const REQUIRED_ENTRY_COLUMNS = [
   "derived_from",
 ] as const;
 
+/**
+ * The transitional columns layout 20 and earlier kept beside the current ones
+ * and layout 21 removed (`entry_key` was the key). They are NOT NULL, so a
+ * table that still has one takes none of this release's inserts, and its
+ * `document_json` is empty (the entry sat in `entry_json`), so none of its rows
+ * can be read either. A 0.9.1 index is such a table.
+ */
+const RETIRED_ENTRY_COLUMNS = ["entry_key", "dir_path", "stash_dir", "entry_json", "entry_type"] as const;
+
+function entryColumnNames(db: EntrySchemaInspectionDatabase): Set<string> {
+  return new Set((db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((c) => c.name));
+}
+
 /** Required `entries` columns the table lacks; every column when there is no `entries` table. */
 export function missingEntryColumns(db: EntrySchemaInspectionDatabase): string[] {
-  const present = new Set(
-    (db.prepare("PRAGMA table_info(entries)").all() as Array<{ name: string }>).map((c) => c.name),
-  );
+  const present = entryColumnNames(db);
   return REQUIRED_ENTRY_COLUMNS.filter((column) => !present.has(column));
+}
+
+/** Retired `entries` columns the table still has: it was written by layout 20 or earlier. */
+export function retiredEntryColumns(db: EntrySchemaInspectionDatabase): string[] {
+  const present = entryColumnNames(db);
+  return RETIRED_ENTRY_COLUMNS.filter((column) => present.has(column));
 }
 
 /**
  * Whether an index database has an `entries` table this release can read. A
  * fresh or empty file has none; an index older than layout 21 has one keyed
- * by columns this release no longer reads, and serves nothing until the next
- * `akm index` recreates it.
+ * by columns this release no longer reads (or lacks the ones it does), and
+ * serves nothing until the next `akm index` recreates it.
  */
 export function hasCurrentEntriesTable(db: EntrySchemaInspectionDatabase): boolean {
   try {
-    return missingEntryColumns(db).length === 0;
+    return missingEntryColumns(db).length === 0 && retiredEntryColumns(db).length === 0;
   } catch {
     return false;
   }
