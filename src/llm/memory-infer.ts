@@ -74,7 +74,7 @@ export interface MemoryInferTelemetry {
  * — no more "incomplete derived memory payload from LLM; skipping memory"
  * for shape-only failures.
  */
-const DERIVED_MEMORY_JSON_SCHEMA = {
+export const DERIVED_MEMORY_JSON_SCHEMA = {
   type: "object",
   properties: {
     title: { type: "string", minLength: 1 },

@@ -342,7 +342,7 @@ export const REFLECT_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
-const REFLECT_UNSCOPED_JSON_SCHEMA: Record<string, unknown> = {
+export const REFLECT_UNSCOPED_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["ref", "confidence", "frontmatterPatch"],
   additionalProperties: false,

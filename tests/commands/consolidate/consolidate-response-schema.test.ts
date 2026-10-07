@@ -65,15 +65,12 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — top-level shape", () => {
 });
 
 describe("CONSOLIDATE_PLAN_JSON_SCHEMA — promote op shape", () => {
-  test("requires ref, knowledgeRef, reason; description is optional", () => {
+  test("requires every property, as a strict provider needs: an empty description and a null confidence are none", () => {
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
     const v = s.properties.operations.items;
-    expect(v.required).toContain("ref");
-    expect(v.required).toContain("knowledgeRef");
-    expect(v.required).toContain("reason");
-    expect(v.required).not.toContain("description");
-    const desc = v.properties.description as { type?: string };
-    expect(desc.type).toBe("string");
+    expect([...v.required].sort()).toEqual(Object.keys(v.properties).sort());
+    expect((v.properties.description as { type?: string }).type).toBe("string");
+    expect((v.properties.confidence as { type?: string[] }).type).toEqual(["number", "null"]);
   });
 
   test("caps reason at 200 chars", () => {
@@ -93,6 +90,8 @@ describe("CONSOLIDATE_PLAN_JSON_SCHEMA — promote op shape", () => {
       ref: "memories/auth-tips",
       knowledgeRef: "knowledge/auth-tips",
       reason: "Stable, reusable guidance.",
+      description: "",
+      confidence: null,
     };
     const s = CONSOLIDATE_PLAN_JSON_SCHEMA as unknown as SchemaView;
     expect(s.properties.operations.items.required.every((k) => k in sample)).toBe(true);
@@ -123,6 +122,11 @@ describe("consolidate-system.md — promote-only prompt (R12a)", () => {
   test("the JSON example carries no top-level warnings array", () => {
     expect(consolidateSystemPrompt).not.toContain('"warnings"');
   });
+
+  test("does not tell the model to leave out a field the schema requires", () => {
+    expect(consolidateSystemPrompt).not.toMatch(/\bOmit the field\b/i);
+    expect(consolidateSystemPrompt).toContain("Use `null` rather than guessing");
+  });
 });
 
 describe("isValidOp — rejects retired advisory op shapes (R12a)", () => {
@@ -133,6 +137,19 @@ describe("isValidOp — rejects retired advisory op shapes (R12a)", () => {
         ref: "memories/foo",
         knowledgeRef: "knowledge/foo",
         reason: "stable fact",
+      }),
+    ).toBe(true);
+  });
+
+  test("accepts a promote op that leaves description empty and confidence null", () => {
+    expect(
+      isValidOp({
+        op: "promote",
+        ref: "memories/foo",
+        knowledgeRef: "knowledge/foo",
+        reason: "stable fact",
+        description: "",
+        confidence: null,
       }),
     ).toBe(true);
   });

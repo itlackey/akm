@@ -81,8 +81,10 @@ export interface ConsolidatePromoteOp {
   ref: string;
   knowledgeRef: string;
   reason: string;
+  /** Empty keeps the memory's own description. */
   description?: string;
-  confidence?: number;
+  /** `null` when the model is unsure. */
+  confidence?: number | null;
 }
 
 interface RawChunkPlan {
@@ -162,7 +164,9 @@ export interface AkmConsolidateOptions {
 /**
  * Structured-output schema for a plan. Promote-only: merge/delete/contradict
  * were removed in 0.9.17-alpha.1 (`e82eec811`) after running in production —
- * they cost thousands of completion tokens.
+ * they cost thousands of completion tokens. Every property is required, as a
+ * strict structured-output provider needs: an empty `description` keeps the
+ * memory's own, a null `confidence` is none.
  */
 export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
@@ -174,15 +178,23 @@ export const CONSOLIDATE_PLAN_JSON_SCHEMA: Record<string, unknown> = {
       description: "Ordered list of promote operations the planner proposes.",
       items: {
         type: "object",
-        required: ["op", "ref", "knowledgeRef", "reason"],
+        required: ["op", "ref", "knowledgeRef", "reason", "description", "confidence"],
         additionalProperties: false,
         properties: {
           op: { type: "string", enum: ["promote"] },
           ref: { type: "string", minLength: 1 },
           knowledgeRef: { type: "string", minLength: 1 },
           reason: { type: "string", minLength: 1, maxLength: 200 },
-          description: { type: "string" },
-          confidence: { type: "number", minimum: 0, maximum: 1 },
+          description: {
+            type: "string",
+            description: "One sentence describing the new knowledge asset; an empty string keeps the memory's own.",
+          },
+          confidence: {
+            type: ["number", "null"],
+            minimum: 0,
+            maximum: 1,
+            description: "Certainty in [0, 1] that the operation is correct and safe; null when unsure.",
+          },
         },
       },
     },

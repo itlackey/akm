@@ -41,9 +41,10 @@ export interface SessionSummaryResult {
 /** Summarize a session; `undefined` (disabled, no LLM) writes no asset. */
 export type SessionSummaryGenerator = (data: SessionData) => Promise<SessionSummaryResult | undefined>;
 
+// Every property is required, as a strict structured-output provider needs; an empty `tags` array is none.
 export const SESSION_SUMMARY_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["summary", "key_topics"],
+  required: ["summary", "key_topics", "tags"],
   additionalProperties: false,
   properties: {
     summary: { type: "string" },
@@ -87,7 +88,7 @@ export function buildSessionSummaryPrompt(data: SessionData): string {
     "Transcript:",
     renderTranscriptForSummary(data.events),
     "",
-    'Respond as JSON: {"summary": string, "key_topics": string[], "tags"?: string[]}.',
+    'Respond as JSON: {"summary": string, "key_topics": string[], "tags": string[]} (an empty array for no tags).',
   ].join("\n");
 }
 
