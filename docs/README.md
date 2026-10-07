@@ -49,7 +49,6 @@ Working on akm itself, not just using it.
 
 - [Maintainer Docs](https://github.com/itlackey/akm/blob/main/docs/maintainers/README.md) -- Start here: local development, measuring improvement, and the curate contract
 - [Local Development](https://github.com/itlackey/akm/blob/main/docs/maintainers/local-development.md) -- Dogfooding akm while editing its own source
-- [akm-eval](https://github.com/itlackey/akm/blob/main/docs/maintainers/eval.md) -- Standalone toolkit for measuring whether `akm improve` is working
 - [Curate Workmap](https://github.com/itlackey/akm/blob/main/docs/maintainers/curate-workmap.md) -- The current `akm curate` contract and the highest-value next fixes
 
 ## Look up details
@@ -100,7 +99,7 @@ Source articles for the dev.to publishing pipeline (historical record). See
 - [itlackey/akm-registry](https://github.com/itlackey/akm-registry) -- the official registry index that powers built-in discovery
 - [itlackey/akm-plugins](https://github.com/itlackey/akm-plugins) -- optional integrations for tools like OpenCode
 - [itlackey/akm-bench](https://github.com/itlackey/akm-bench) -- the standalone benchmark harness for measuring agent performance with akm
-- [itlackey/akm-eval](https://github.com/itlackey/akm-eval) -- the eval framework and tools for akm asset quality (distinct from the in-repo [`scripts/akm-eval/` toolkit](https://github.com/itlackey/akm/blob/main/docs/maintainers/eval.md))
+- [itlackey/akm-eval](https://github.com/itlackey/akm-eval) -- the eval framework and tools for akm asset quality
 
 ---
 

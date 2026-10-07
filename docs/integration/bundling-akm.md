@@ -266,7 +266,7 @@ rather than rely on `$HOME`-derived defaults (names verified against
 | `AKM_CONFIG_DIR` | `config.json`'s directory. |
 | `AKM_DATA_DIR` | Durable, non-regenerable data: **`index.db` and `state.db` live here.** This is the directory a migration snapshot's safety copy sits beside. |
 | `AKM_CACHE_DIR` | Regenerable cache: registry downloads, config backups, task logs. Safe to discard between image builds (not between boots of the same running install). |
-| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds scheduled-task invocation context, companion-plugin hook state (Claude Code / OpenCode hook logs), and, per stash, `akm improve`'s machine-local writers (`improve/measurement/verdicts/`) and whole-run lock (`locks/`) — see [Storage locations](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/storage-locations.md). Set it anyway if you schedule akm tasks inside the image, so that context is captured consistently rather than falling back to `$HOME/.local/state/akm`. |
+| `AKM_STATE_DIR` | **Not** where `state.db` lives, despite the name — this is the XDG "state" directory. Holds scheduled-task invocation context, companion-plugin hook state (Claude Code / OpenCode hook logs), and, per stash, `akm improve`'s whole-run lock (`locks/`) — see [Storage locations](https://github.com/itlackey/akm/blob/main/docs/architecture/internals/storage-locations.md). Set it anyway if you schedule akm tasks inside the image, so that context is captured consistently rather than falling back to `$HOME/.local/state/akm`. |
 
 Set all five to paths that persist across container restarts (a mounted
 volume), or `akm migrate apply` will see an empty `state.db` on every boot
