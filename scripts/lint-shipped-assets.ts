@@ -20,21 +20,11 @@
  *   - src/assets/**           (cli-hints, help text, stash-skeleton conventions,
  *                              improve-strategy JSONs, prompts, templates, ...)
  *   - scripts/akm-asset/**    (akm-asset command docs)
- *   - scripts/akm-eval/cases/** (eval cases + judge-calibration probes - an
- *                              embedded `skill:`/`knowledge:` ref there fails
- *                              akm-eval-smoke at cutover, plan 16)
- *   - scripts/akm-eval/example-stash/** (agent workflow/skill/command prompts
- *                              executed as eval material - added after a real
- *                              incident: `workflows/*.md` taught the retired
- *                              `akm wiki` verb family for 24 lines across 6
- *                              files, undetected because this gate never
- *                              scanned the directory. NOTE this gate only
- *                              catches the dead `type:name` COLON grammar
- *                              below, not arbitrary references to a removed
- *                              command name with no colon (e.g. `akm wiki
- *                              search`) - that class of defect needs a
- *                              maintained-command-surface check, which this
- *                              script does not attempt.)
+ *
+ * NOTE this gate only catches the dead `type:name` COLON grammar below, not
+ * arbitrary references to a removed command name with no colon (e.g. `akm wiki
+ * search`) - that class of defect needs a maintained-command-surface check,
+ * which this script does not attempt.
  *
  * AST-scanned root (W2-C/F1 - closed a real blind spot):
  *   - src/**\/*.ts             (every TS source file in the app). Plain text
@@ -59,18 +49,7 @@
  * What is NOT the dead grammar (not flagged):
  *  1. `${type:NAME}` env/secret SUBSTITUTION tokens (`${secret:API_KEY}`) -
  *     template injection syntax, not a ref (same carve-out as the test lint).
- *  2. The SANCTIONED `derived_from` / belief-transition `memory:<name>` channel
- *     in the eval MEMORY-REGRESSION suite: `akm improve --json-to-stdout` emits
- *     `beliefStateTransitions[].ref`/`archived[].ref` as `memory:<name>`
- *     (`commands/improve/memory/memory-improve.ts`), and the runner's
- *     `refToPath` resolves the same spelling - the case expectations MUST match
- *     what the CLI prints (chunk-8 ledger: WI-8.5c sanctioned survivor). That
- *     whole suite dir is excluded; the actual eval run in CI smoke guards it.
- *     `memory-improve.ts` itself builds this ref as a template literal whose
- *     colon is immediately followed by `${name}` (no allowlist entry needed
- *     there - see the AST-scan note below, this shape is structurally outside
- *     what `TOKEN` can even see).
- *  3. A known-type word immediately followed by `${…}` interpolation with NO
+ *  2. A known-type word immediately followed by `${…}` interpolation with NO
  *     literal characters in between (e.g. a hypothetical `` `skill:${id}` ``)
  *     is invisible to the AST scan by construction: template literals are
  *     walked piece-by-piece (head / each span's literal), and `TOKEN` only
@@ -90,17 +69,11 @@ import { KNOWN_TYPES } from "../src/core/recognition-util";
 const REPO_ROOT = path.resolve(import.meta.dir, "..");
 
 // Agent-facing shipped roots (plan 7.3/16), scanned as plain text.
-const SCAN_ROOTS = ["src/assets", "scripts/akm-asset", "scripts/akm-eval/cases", "scripts/akm-eval/example-stash"];
+const SCAN_ROOTS = ["src/assets", "scripts/akm-asset"];
 
 // Every TS source file, scanned via the TS AST (string/template literal
 // content only - see the module doc "AST-scanned root" section above).
 const TS_SCAN_ROOT = "src";
-
-// The sanctioned `memory:<name>` derived-from / belief-transition channel lives
-// here; those refs MUST match the CLI's emitted spelling, so the suite keeps the
-// legacy grammar by design (chunk-8 ledger WI-8.5c). Excluded from this gate;
-// the real eval run in akm-eval-smoke.yml guards it instead.
-const EXCLUDED_DIRS = ["scripts/akm-eval/cases/memory-regression"];
 
 // Binary extensions to skip outright (the assets tree is otherwise all text).
 const SKIP_EXT = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".woff", ".woff2", ".ttf", ".otf"]);
@@ -156,10 +129,6 @@ function walk(dir: string, out: string[], filter: (name: string) => boolean): vo
     if (entry.isDirectory()) walk(full, out, filter);
     else if (entry.isFile() && filter(entry.name)) out.push(full);
   }
-}
-
-function isExcluded(rel: string): boolean {
-  return EXCLUDED_DIRS.some((d) => rel === d || rel.startsWith(`${d}/`));
 }
 
 function scanFile(abs: string, rel: string, offenses: Offense[]): void {
@@ -232,7 +201,6 @@ function main(): void {
     walk(absRoot, files, (name) => !SKIP_EXT.has(path.extname(name).toLowerCase()));
     for (const file of files.sort()) {
       const rel = path.relative(REPO_ROOT, file).replace(/\\/g, "/");
-      if (isExcluded(rel)) continue;
       scanFile(file, rel, rawOffenses);
     }
   }
@@ -243,7 +211,6 @@ function main(): void {
     walk(absRoot, files, (name) => name.endsWith(".ts"));
     for (const file of files.sort()) {
       const rel = path.relative(REPO_ROOT, file).replace(/\\/g, "/");
-      if (isExcluded(rel)) continue;
       scanTsFile(file, rel, rawOffenses);
     }
   }
