@@ -293,30 +293,31 @@ describe("an accepted promotion (#998)", () => {
 
 describe("a promotion queued before its source hash was recorded", () => {
   // Older releases minted proposals with `promotionSource` but no
-  // `promotionSourceHash`. Nothing to compare a body against, so their
-  // decisions keep the clock they always had: 7 days after a rejection.
-  async function decideLegacy(name: string, decidedDaysAgo: number) {
-    writeMemory(name, BODY);
+  // `promotionSourceHash`, so their decisions have no hash on the memory's
+  // ledger row and keep the clock they always had: 7 days after a rejection.
+  // A rejection from 2026-09-29 on also holds the memory by the proposal's own
+  // body (see the recycling test); an earlier one, from the bulk audits of
+  // 2026-08, only has the clock.
+  const AUDIT_DAY = Date.parse("2026-08-02T10:00:00Z");
+
+  async function decideLegacy(name: string, decidedAt: number) {
+    const body = `${BODY} Variant ${name}.`; // another text per memory, or one rejection would hold them all
+    writeMemory(name, body);
     markRetrieved(name);
     const proposal = createProposal(stash, {
       ref: `knowledge/${name}-notes`,
       source: "consolidate",
       target: { source: "stash", root: stash },
-      payload: { content: `---\ndescription: ${name}\n---\n\n${BODY}\n`, frontmatter: { description: name } },
+      payload: { content: `---\ndescription: ${name}\n---\n\n${body}\n`, frontmatter: { description: name } },
       attemptedRefs: [`memories/${name}`],
       promotionSource: `memories/${name}`,
     });
-    await akmProposalReject({
-      stashDir: stash,
-      id: proposal.id,
-      config,
-      ctx: { now: () => Date.now() - decidedDaysAgo * DAY_MS },
-    });
+    await akmProposalReject({ stashDir: stash, id: proposal.id, config, ctx: { now: () => decidedAt } });
   }
 
-  it("is held for 7 days and then released, as before", async () => {
-    await decideLegacy("recent", 3);
-    await decideLegacy("old", 8);
+  it("is held for 7 days and then released, as before, when decided before the cutoff", async () => {
+    await decideLegacy("recent", Date.now() - 3 * DAY_MS);
+    await decideLegacy("old", AUDIT_DAY);
 
     expect(ledgerRow("recent")?.contentHash).toBeNull();
     expect(ledgerRow("recent")?.nextEligibleAt).not.toBeNull();

@@ -345,7 +345,9 @@ export function resolveQualityGateJudge(
 }
 
 export interface QualityJudgeOptions {
-  similarLessons?: Array<{ ref: string; content: string }>;
+  related?: Array<{ ref: string; content: string }>;
+  /** Distill: the feedback lines the writer was given. */
+  feedback?: string[];
   /** Reflect: the ref of the asset the candidate revises, for a judge on an agent engine to read. */
   ref?: string;
   /** The exact runner selected for this judge. */
@@ -357,42 +359,49 @@ export interface QualityJudgeOptions {
   onNotices?: NoticeSink;
 }
 
-/** Lesson judge prompt; similar existing lessons let it mark near-duplicates down. */
+/** Lesson judge prompt: what the writer was given (the source and its feedback), the assets nearest the new lesson, the lesson. */
 export function buildJudgePrompt(
   lessonContent: string,
   sourceContent: string,
-  similarLessons?: Array<{ ref: string; content: string }>,
+  related?: Array<{ ref: string; content: string }>,
+  feedback?: string[],
 ): string {
   const lines = [
-    "You are evaluating a proposed lesson asset for an akm knowledge base.",
+    "You are evaluating a lesson an agent wrote from a memory and the feedback about it, for an akm knowledge base.",
     "",
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
-    "1. NOVELTY: Does the lesson add information not already present in the source asset?",
-    "2. NON-REDUNDANCY: Is this lesson meaningfully different from what the source already says?",
-    "3. GROUNDING: Is the lesson about what the source asset is about? Score 1-2 only if it is about a different subject than the source; 3 if it is on the source's subject but goes beyond or corrects what the source says (it may draw on feedback you are not shown); 4-5 if the source supports it. A lesson may generalize the source's point.",
+    "1. REUSABLE: Does the lesson state a rule an agent can use on another occasion, with the reason it holds? Score 1-2 when it only records what was done, shipped, decided, found or is pending, on a date or for one build, machine or project, or how a system is set up now, however it is phrased. Score 4-5 for a rule with its reason.",
+    "2. NON-REDUNDANCY: Is the lesson new next to the existing assets shown below? Score 1-2 only when one of them already states the same rule. Assets on other subjects change nothing: score 4-5 when none is shown or none is on the same subject.",
+    "3. GROUNDING: Is every statement in the lesson stated by the source or its feedback, in any words? Check each cause, step, number, rule and limit in the lesson against them. Score 4-5 when each is stated. Score 3 when one stretches what the source says. Score 1-2 when any is in neither, when the lesson drops a limit the source states (one place checked, not confirmed, a guess) and says more than it, or when it is about another subject than the source.",
     "",
-    "Source asset content:",
+    "Source memory:",
     "```",
     // The window distill generates from (buildDistillPrompt): grounding can reject, so the judge reads all of it.
     sourceContent.slice(0, 3000),
     "```",
   ];
-  if (similarLessons && similarLessons.length > 0) {
+  if (feedback && feedback.length > 0) {
     lines.push(
       "",
-      "Existing similar lessons (top-3 by similarity). Rate NOVELTY and NON-REDUNDANCY lower if the proposed lesson is substantially similar to any of these:",
+      "Feedback recorded about the memory (the writer saw it too):",
+      "```",
+      feedback.join("\n").slice(0, 1500),
+      "```",
     );
-    for (const sl of similarLessons)
-      lines.push(`\nExisting lesson ref: ${sl.ref}`, "```", sl.content.slice(0, 500), "```");
+  }
+  if (related && related.length > 0) {
+    lines.push("", "Existing assets nearest the new lesson (they may be on another subject):");
+    for (const asset of related)
+      lines.push(`\nExisting asset ref: ${asset.ref}`, "```", asset.content.slice(0, 600), "```");
   }
   lines.push(
     "",
-    "Proposed lesson content:",
+    "Proposed lesson:",
     "```",
-    lessonContent.slice(0, 1000),
+    lessonContent.slice(0, 2000),
     "```",
     "",
-    'Return ONLY valid JSON, no prose: {"scores": {"novelty": <1-5 integer>, "nonRedundancy": <1-5 integer>, "grounding": <1-5 integer>}, "reason": "<one sentence>"}',
+    'Return ONLY valid JSON, no prose: {"scores": {"reusable": <1-5 integer>, "nonRedundancy": <1-5 integer>, "grounding": <1-5 integer>}, "reason": "<one sentence naming the weakest criterion>"}',
   );
   return lines.join("\n");
 }
@@ -487,24 +496,20 @@ export function buildReflectJudgePrompt(
 
 /**
  * `grounding` is scored with the other lesson criteria but left out of their
- * mean: a lesson about a different subject than its source reads as novel and
- * non-redundant, so they would pass it (or, in the review band, mint it as
- * a pending proposal). The rubric reserves 1-2 for a different subject. A score
- * of {@link UNGROUNDED_MAX_SCORE} or less is a rejection whatever the mean says
- * (#999). A higher score up to {@link BORDERLINE_GROUNDING_MAX_SCORE} is only
- * borderline: a lesson on its source's subject that advises beyond it has scored
- * 2, and a score can move a point between runs (see `runQualityJudge`), so it
- * goes to a person unless the mean alone already rejects it. A lesson that goes
- * beyond or corrects its source is on its subject: distill folds feedback into
- * the lesson, and the judge is never shown it. A contradiction of the source is
- * the optional fidelity check's to send to a human (`judgeAndQueue` in
- * distill.ts), so the rubric must not pre-empt it.
+ * mean. A lesson criterion scored {@link LESSON_REJECT_MAX_SCORE} or less is a
+ * rejection whatever the mean says: the mean would hide it (4 and 1 average
+ * 2.5, a review), and a reviewer was reading every lesson that was not rejected,
+ * 17 of 19 of them bad on 2026-10-05. The rubric reserves 1-2 for a lesson that
+ * records what was done instead of a rule, repeats an asset the library holds,
+ * or states what neither its source nor its feedback does. The judge is shown
+ * the feedback the writer saw, so a statement it supports is not an invention. A
+ * contradiction of the source is the optional fidelity check's to send to a
+ * human (`judgeAndQueue` in distill.ts).
  */
 const GROUNDING_CRITERION = "grounding";
-const UNGROUNDED_MAX_SCORE = 1;
-const BORDERLINE_GROUNDING_MAX_SCORE = 2;
+const LESSON_REJECT_MAX_SCORE = 2;
 
-const LESSON_JUDGE_CRITERIA = ["novelty", "nonRedundancy", GROUNDING_CRITERION] as const;
+const LESSON_JUDGE_CRITERIA = ["reusable", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
 
 /**
@@ -565,9 +570,8 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
  * The quality judge. Fails closed: no runner, an unparseable verdict or a
  * provider failure never passes content. Bands: every criterion in the mean
  * >= 4 passes, otherwise a mean >= 2.5 is review and a lower one reject; a
- * `grounding` score of {@link UNGROUNDED_MAX_SCORE} or less rejects whatever
- * the mean is, and one of {@link BORDERLINE_GROUNDING_MAX_SCORE} routes a lesson
- * that would pass to review (a mean that rejects stays a rejection).
+ * lesson criterion (`grounding` included) of {@link LESSON_REJECT_MAX_SCORE}
+ * or less rejects whatever the mean is.
  * Temperature is set to 0, which reduces run-to-run variation but does not
  * remove it: on some servers (llama.cpp batching, for one) the same request can
  * score a point apart, so the routing rules are chosen with that margin in mind.
@@ -610,31 +614,13 @@ async function runQualityJudge(
   const parsed = parseJudgeResponse(outcome.raw, keys);
   if (!parsed) return { pass: false, score: -1, reason: "judge parse failed — routed to review", reviewNeeded: true };
   const { score, lowest, reason, criteria } = parsed;
-  const grounding = criteria?.[GROUNDING_CRITERION];
-  if (criteria && grounding !== undefined && grounding <= UNGROUNDED_MAX_SCORE) {
-    return {
-      pass: false,
-      score,
-      reason: `Off-subject for its source (grounding ${grounding}/5): ${reason}`,
-      criteria,
-    };
+  // A lesson criterion at 2 or below is a defect the mean would hide (4 and 1 average 2.5, a review): it rejects.
+  if (criteria && criteria[GROUNDING_CRITERION] !== undefined) {
+    const [weakest, low] = Object.entries(criteria).sort((x, y) => x[1] - y[1])[0] as [string, number];
+    if (low <= LESSON_REJECT_MAX_SCORE)
+      return { pass: false, score, reason: `${weakest} ${low}/5: ${reason}`, criteria };
   }
   const verdict = lowest >= 4 ? { pass: true } : score >= 2.5 ? { pass: false, reviewNeeded: true } : { pass: false };
-  // Borderline grounding is a person's call even when the lesson would pass; a mean that rejects stays rejected.
-  if (
-    criteria &&
-    grounding !== undefined &&
-    grounding <= BORDERLINE_GROUNDING_MAX_SCORE &&
-    (verdict.pass || verdict.reviewNeeded)
-  ) {
-    return {
-      pass: false,
-      reviewNeeded: true,
-      score,
-      reason: `Borderline on grounding (${grounding}/5), routed to review: ${reason}`,
-      criteria,
-    };
-  }
   return { ...verdict, score, reason, ...(criteria ? { criteria } : {}) };
 }
 
@@ -646,7 +632,7 @@ export function runLessonQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  const prompt = buildJudgePrompt(lessonContent, sourceContent, options.similarLessons);
+  const prompt = buildJudgePrompt(lessonContent, sourceContent, options.related, options.feedback);
   return runQualityJudge("lesson_quality_gate", config, prompt, LESSON_JUDGE_CRITERIA, chat, options);
 }
 

@@ -70,15 +70,15 @@ on request. Nothing deletes this user data without that explicit opt-in.
 `unresolved-sources/`, and the improve-pipeline `.lock` files used to be
 written under `$STASH/.akm` but never met the "must travel with the content"
 rule above — none of them are read to resolve anything about the bundle
-content itself. Three of them now live under `$STATE`/`$CACHE`, namespaced per
+content itself. Two of them now live under `$STATE`/`$CACHE`, namespaced per
 stash by `getStashStateKey()` (`src/core/paths.ts`) so two stashes on one
-machine never collide; the other two no longer exist:
+machine never collide; the other three no longer exist:
 
 | Old path | New path |
 |---|---|
 | `$STASH/.akm/distill-rejected/` | none: the improve ledger replaced it (`improve_ledger`, below) |
 | `$STASH/.akm/eval-cases/` | none: the write-only eval-cases path was removed |
-| `$STASH/.akm/measurement/verdicts/` | `$STATE/improve/measurement/verdicts/<stash>/` |
+| `$STASH/.akm/measurement/verdicts/` | none: the verdict reports belonged to the `scripts/akm-eval` toolkit, which has left akm (itlackey/akm-eval keeps its code) |
 | `$STASH/.akm/unresolved-sources/` | `$CACHE/index/unresolved-sources/<stash>/` |
 | `$STASH/.akm/improve.lock` | `$STATE/locks/<stash>/improve.lock` |
 
@@ -751,7 +751,6 @@ adapter recognizes — `schema.md` + `pages/` is the probe) contains:
 | `$STASH/.akm/memory-cleanup/archive/<ts>-<ref>/` | Belief-state archived memory files + `cleanup.md` audit record | No cleanup |
 | `$DATA/state.db` (`improve_ledger` table) | One row per `(stash_dir, ref, source)`: what an improve stage last did with the asset (`outcome`: proposed, accepted, rejected, quality_rejected, review_needed, expired, unchanged, failed, judged_no_action), when (`last_attempt_at`), and when it may try again (`next_eligible_at`, or — for the consolidate pair pass and a decided consolidate promotion — the body hash the asset must differ from, `content_hash`). Every stage's candidate selection reads it before any model call (`src/storage/repositories/improve-ledger-repository.ts`). Replaces the cooldown events, `proposal_fingerprints`, and the `$STATE/improve/distill-rejected/` files. | One row per asset and stage (upserted) |
 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | Regression eval cases captured from rejected distill/proposal output. Moved out of `$STASH/.akm/eval-cases/` (itlackey/akm#890). | No cleanup |
-| `$STATE/improve/measurement/verdicts/<stash>/verdict-<ts>.{json,md}` | `akm-eval-proactive-verdict` reports. Moved out of `$STASH/.akm/measurement/verdicts/` (itlackey/akm#890); the pilot treatment file stays at `$STASH/.akm/measurement/` (manually-authored input, not a writer output). | No cleanup |
 | `$STASH/memories/MEMORY.md` | Human-maintained memory index. Budget: warn at 180 lines, hard cap at 200. Read-only for akm (not written by current code). | Manual |
 | `<dir>/.stash.json` | Legacy per-directory metadata manifest (pre-0.9.0). The live indexer no longer reads it; only the storage migrator reads and folds it into inline asset metadata before deleting it. | Manual |
 
@@ -935,10 +934,9 @@ not affect ranking, salience, real-query labels, or GRR.
 | 39 | `$XDG_STATE_HOME/akm-claude/` | JSONL+Markdown+text | Claude Code plugin hook state (events, memory candidates, curated prompts, logs); written by akm-plugins, not core akm; no retention policy today |
 | 40 | `$XDG_STATE_HOME/akm-opencode/` | JSONL | OpenCode plugin hook state (events, memory candidates); written by akm-plugins, not core akm; no retention policy today |
 | 41 | `$STATE/improve/eval-cases/<stash>/<slug>.md` | FM+Markdown | Improve regression eval cases |
-| 42 | `$STATE/improve/measurement/verdicts/<stash>/verdict-<ts>.{json,md}` | JSON+Markdown | `akm-eval-proactive-verdict` reports |
-| 43 | `$CACHE/index/unresolved-sources/<stash>/<name>` | N/A | Synthetic unresolved-source placeholder path (never written to disk) |
-| 44 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | JSONL | Codex session logs (read-only input; `~/.codex/sessions/` by default) |
+| 42 | `$CACHE/index/unresolved-sources/<stash>/<name>` | N/A | Synthetic unresolved-source placeholder path (never written to disk) |
+| 43 | `$CODEX_HOME/sessions/**/rollout-*.jsonl` | JSONL | Codex session logs (read-only input; `~/.codex/sessions/` by default) |
 
 ---
 
-Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getStateDbPathInDataDir`, `getSemanticStatusPath`, `getStateDir`, `getStashStateKey`, and the per-stash `$STATE`/`$CACHE` writer helpers `getEvalCasesDir`, `getMeasurementVerdictsDir`, `getUnresolvedSourcesDir`, `getStashLocksDir`).
+Check `src/core/paths.ts` for the canonical path resolution functions (`getCacheDir`, `getConfigDir`, `getDataDir`, `getDbPath`, `getStateDbPathInDataDir`, `getSemanticStatusPath`, `getStateDir`, `getStashStateKey`, and the per-stash `$STATE`/`$CACHE` writer helpers `getEvalCasesDir`, `getUnresolvedSourcesDir`, `getStashLocksDir`).

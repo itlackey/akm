@@ -242,25 +242,25 @@ describe("runLessonQualityJudge — pinned temperature (R13)", () => {
 describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => {
   test('new-shape {"scores": {...}} JSON parses to the correct average and exposes criteria', async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 4, nonRedundancy: 5, grounding: 5 }, reason: "solid" }),
+      JSON.stringify({ scores: { reusable: 4, nonRedundancy: 5, grounding: 5 }, reason: "solid" }),
     );
 
     expect(result.pass).toBe(true);
     expect(result.score).toBeCloseTo((4 + 5) / 2, 9);
-    expect(result.criteria).toEqual({ novelty: 4, nonRedundancy: 5, grounding: 5 });
+    expect(result.criteria).toEqual({ reusable: 4, nonRedundancy: 5, grounding: 5 });
   });
 
   test("JUDGE2: an unexpected extra key (e.g. dropped ACTIONABILITY) is ignored — not averaged, not validated", async () => {
     // A model still echoing the retired ACTIONABILITY criterion, or one wildly
     // out of range (99), must not change the score or fail the parse: only
-    // the three expected keys (novelty, nonRedundancy, grounding) are read.
+    // the three expected keys (reusable, nonRedundancy, grounding) are read.
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 4, actionability: 99, nonRedundancy: 5, grounding: 5 }, reason: "solid" }),
+      JSON.stringify({ scores: { reusable: 4, actionability: 99, nonRedundancy: 5, grounding: 5 }, reason: "solid" }),
     );
 
     expect(result.pass).toBe(true);
     expect(result.score).toBeCloseTo((4 + 5) / 2, 9);
-    expect(result.criteria).toEqual({ novelty: 4, nonRedundancy: 5, grounding: 5 });
+    expect(result.criteria).toEqual({ reusable: 4, nonRedundancy: 5, grounding: 5 });
   });
 
   test('old-shape {"score": float} JSON still parses, with no criteria field', async () => {
@@ -275,7 +275,7 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
 
   test("a criterion of 0 routes to review exactly as a parse failure does today", async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 0, nonRedundancy: 4, grounding: 4 }, reason: "bad" }),
+      JSON.stringify({ scores: { reusable: 0, nonRedundancy: 4, grounding: 4 }, reason: "bad" }),
     );
 
     expect(result.pass).toBe(false);
@@ -286,7 +286,7 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
 
   test("a criterion of 7 (out of range) routes to review exactly as a parse failure does today", async () => {
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 7, nonRedundancy: 4, grounding: 4 }, reason: "bad" }),
+      JSON.stringify({ scores: { reusable: 7, nonRedundancy: 4, grounding: 4 }, reason: "bad" }),
     );
 
     expect(result.pass).toBe(false);
@@ -306,10 +306,10 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
   });
 
   test("a partial scores object (missing criterion key) routes to review exactly as a parse failure does today", async () => {
-    // Only `novelty` present — `nonRedundancy` is missing. A truncated or
+    // Only `reusable` present — `nonRedundancy` is missing. A truncated or
     // partial judge response must not auto-average over whatever arrived.
     const result = await runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
-      JSON.stringify({ scores: { novelty: 5 }, reason: "partial" }),
+      JSON.stringify({ scores: { reusable: 5 }, reason: "partial" }),
     );
 
     expect(result.pass).toBe(false);
@@ -320,14 +320,14 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
 
   test("a mean of 2.5 or more that does not pass is a review; a lower mean is a rejection", async () => {
     const reviewBand = await runLessonQualityJudge(configWithLlm(), "body", "source", async () =>
-      JSON.stringify({ scores: { novelty: 3, nonRedundancy: 3, grounding: 4 }, reason: "uncertain" }),
+      JSON.stringify({ scores: { reusable: 3, nonRedundancy: 3, grounding: 4 }, reason: "uncertain" }),
     );
     expect(reviewBand.pass).toBe(false);
     expect(reviewBand.reviewNeeded).toBe(true);
     expect(reviewBand.score).toBeCloseTo(3, 9);
 
     const rejectBand = await runLessonQualityJudge(configWithLlm(), "body", "source", async () =>
-      JSON.stringify({ scores: { novelty: 2, nonRedundancy: 2, grounding: 4 }, reason: "weak" }),
+      JSON.stringify({ scores: { reusable: 2, nonRedundancy: 2, grounding: 4 }, reason: "weak" }),
     );
     expect(rejectBand.pass).toBe(false);
     expect(rejectBand.reviewNeeded).toBeUndefined();
@@ -340,14 +340,14 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
 
     // A mean of 3.5 (and 4.0 with one 3) used to pass; a single 3 now sends the lesson to review.
     for (const scores of [
-      { novelty: 4, nonRedundancy: 3, grounding: 5 },
-      { novelty: 5, nonRedundancy: 3, grounding: 5 },
+      { reusable: 4, nonRedundancy: 3, grounding: 5 },
+      { reusable: 5, nonRedundancy: 3, grounding: 5 },
     ]) {
       const verdict = await lesson(scores);
       expect(verdict.pass).toBe(false);
       expect(verdict.reviewNeeded).toBe(true);
     }
-    expect((await lesson({ novelty: 4, nonRedundancy: 4, grounding: 4 })).pass).toBe(true);
+    expect((await lesson({ reusable: 4, nonRedundancy: 4, grounding: 4 })).pass).toBe(true);
 
     // The reflect judge reads the same rule over its own three criteria.
     const reflect = (scores: Record<string, number>) =>
@@ -377,108 +377,77 @@ describe("runLessonQualityJudge — per-criterion scores (R16 / JUDGE2)", () => 
   });
 });
 
-// #999: distill minted lessons about an `akm show` failure (recorded as feedback)
-// for memories on unrelated subjects. A lesson about a different subject than
-// its source reads as novel and non-redundant, so the mean of those two alone
-// passes it or lands it in the review band, where it became a pending proposal.
-// Only grounding 1 is a veto: a 2 is borderline and goes to a person, unless the
-// mean alone already rejects the lesson.
-describe("runLessonQualityJudge — grounding 1 rejects, grounding 2 goes to review, neither is averaged (#999)", () => {
+// 17 of the 19 lessons distill queued on 2026-10-05 were bad, and a reviewer read every one the judge did not reject.
+// A mean hides a decisive score (4 and 1 average 2.5, a review), so a lesson criterion at 2 or below rejects.
+describe("runLessonQualityJudge — a criterion at 2 or below rejects, grounding included, and none is averaged away", () => {
   const judge = (scores: Record<string, number>, reason = "one sentence from the judge") =>
     runLessonQualityJudge(configWithLlm(), "some lesson body", "some source body", async () =>
       JSON.stringify({ scores, reason }),
     );
 
-  test("grounding 1 rejects outright although novelty and non-redundancy alone would pass", async () => {
-    const result = await judge(
-      { novelty: 5, nonRedundancy: 5, grounding: 1 },
-      "The lesson is about duplicate refs; the source is a performance runbook.",
-    );
-
-    expect(result.pass).toBe(false);
-    expect(result.reviewNeeded).toBeUndefined();
-    expect(result.score).toBeCloseTo(5, 9);
-    expect(result.criteria).toEqual({ novelty: 5, nonRedundancy: 5, grounding: 1 });
-    expect(result.reason).toContain("Off-subject for its source (grounding 1/5)");
-    expect(result.reason).toContain("The lesson is about duplicate refs; the source is a performance runbook.");
-  });
-
-  test("grounding 1 rejects in every band of the mean and never routes to review", async () => {
-    for (const mean of [5, 3, 2]) {
-      const result = await judge({ novelty: mean, nonRedundancy: mean, grounding: 1 });
+  test("grounding 1 and 2 reject although the other criteria would pass", async () => {
+    for (const grounding of [1, 2]) {
+      const result = await judge(
+        { reusable: 5, nonRedundancy: 5, grounding },
+        "It states a cause the source does not.",
+      );
 
       expect(result.pass).toBe(false);
       expect(result.reviewNeeded).toBeUndefined();
-      expect(result.reason).toContain("Off-subject for its source (grounding 1/5)");
+      expect(result.score).toBeCloseTo(5, 9);
+      expect(result.criteria).toEqual({ reusable: 5, nonRedundancy: 5, grounding });
+      expect(result.reason).toContain(`grounding ${grounding}/5`);
+      expect(result.reason).toContain("It states a cause the source does not.");
     }
   });
 
-  test("grounding 2 goes to review although novelty and non-redundancy alone would pass", async () => {
-    const result = await judge(
-      { novelty: 5, nonRedundancy: 5, grounding: 2 },
-      "On the source's subject, but the advice goes beyond it.",
-    );
+  test("reusable or non-redundancy at 2 or below rejects although the mean alone would be a review", async () => {
+    for (const scores of [
+      { reusable: 4, nonRedundancy: 2, grounding: 5 },
+      { reusable: 2, nonRedundancy: 5, grounding: 5 },
+      { reusable: 5, nonRedundancy: 1, grounding: 5 },
+    ]) {
+      const result = await judge(scores);
 
-    expect(result.pass).toBe(false);
-    expect(result.reviewNeeded).toBe(true);
-    expect(result.score).toBeCloseTo(5, 9);
-    expect(result.criteria).toEqual({ novelty: 5, nonRedundancy: 5, grounding: 2 });
-    expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
-    expect(result.reason).toContain("On the source's subject, but the advice goes beyond it.");
-    expect(result.reason).not.toContain("Off-subject");
+      expect(result.pass).toBe(false);
+      expect(result.reviewNeeded).toBeUndefined();
+      expect(result.reason).toMatch(/^(reusable|nonRedundancy) [12]\/5: /);
+    }
   });
 
-  test("grounding 2 in the review band stays in review and says why it is borderline", async () => {
-    const result = await judge({ novelty: 3, nonRedundancy: 3, grounding: 2 });
+  test("the weakest criterion is the one the reason names", async () => {
+    const result = await judge({ reusable: 4, nonRedundancy: 5, grounding: 1 });
 
-    expect(result.pass).toBe(false);
-    expect(result.reviewNeeded).toBe(true);
-    expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
+    expect(result.reason).toMatch(/^grounding 1\/5: /);
   });
 
-  test("grounding 2 does not lift a mean that rejects into review", async () => {
-    const result = await judge({ novelty: 2, nonRedundancy: 2, grounding: 2 });
+  // Without schema enforcement a reply may not be an integer: a score is compared as it is.
+  test("a fractional score above 2 is no rejection, and one at or below it is", async () => {
+    expect((await judge({ reusable: 5, nonRedundancy: 5, grounding: 2.5 })).pass).toBe(true);
 
-    expect(result.pass).toBe(false);
-    expect(result.reviewNeeded).toBeUndefined();
-    expect(result.score).toBeCloseTo(2, 9);
-    expect(result.reason).toBe("one sentence from the judge");
+    const low = await judge({ reusable: 5, nonRedundancy: 1.5, grounding: 5 });
+    expect(low.pass).toBe(false);
+    expect(low.reviewNeeded).toBeUndefined();
   });
 
-  // Without schema enforcement a reply may not be an integer; a lower score is never treated more leniently.
-  test("a grounding between 1 and 2 is borderline too, never a pass", async () => {
-    const result = await judge({ novelty: 5, nonRedundancy: 5, grounding: 1.5 });
-
-    expect(result.pass).toBe(false);
-    expect(result.reviewNeeded).toBe(true);
-    expect(result.reason).toContain("Borderline on grounding (1.5/5), routed to review");
-  });
-
-  test("grounding 3 is not a veto: the mean of novelty and non-redundancy decides", async () => {
-    const passes = await judge({ novelty: 4, nonRedundancy: 4, grounding: 3 });
+  test("a 3 is not a rejection: grounding 3 does not stop a pass, and a 3 in the mean is a review", async () => {
+    const passes = await judge({ reusable: 4, nonRedundancy: 4, grounding: 3 });
     expect(passes.pass).toBe(true);
 
-    const review = await judge({ novelty: 3, nonRedundancy: 3, grounding: 3 });
+    const review = await judge({ reusable: 3, nonRedundancy: 3, grounding: 3 });
     expect(review.pass).toBe(false);
     expect(review.reviewNeeded).toBe(true);
     expect(review.reason).toBe("one sentence from the judge");
   });
 
-  test("grounding is not part of the mean, so the pass, review and reject bands are unchanged", async () => {
-    const pass = await judge({ novelty: 4, nonRedundancy: 4, grounding: 5 });
+  test("grounding is not part of the mean", async () => {
+    const pass = await judge({ reusable: 4, nonRedundancy: 4, grounding: 5 });
     expect(pass.pass).toBe(true);
     expect(pass.score).toBeCloseTo(4, 9);
-
-    // A fully grounded but redundant lesson stays rejected: grounding 5 does not lift 2.0 into the review band.
-    const reject = await judge({ novelty: 2, nonRedundancy: 2, grounding: 5 });
-    expect(reject.pass).toBe(false);
-    expect(reject.reviewNeeded).toBeUndefined();
-    expect(reject.score).toBeCloseTo(2, 9);
-    expect(reject.reason).toBe("one sentence from the judge");
   });
 
   test("scores without grounding are a partial reply, routed to review like any other missing criterion", async () => {
-    const result = await judge({ novelty: 5, nonRedundancy: 5 });
+    const result = await judge({ reusable: 5, nonRedundancy: 5 });
 
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
@@ -486,31 +455,34 @@ describe("runLessonQualityJudge — grounding 1 rejects, grounding 2 goes to rev
     expect(result.criteria).toBeUndefined();
   });
 
-  test("the judge prompt defines the grounding criterion and asks for it in the reply", () => {
+  test("the judge prompt defines the three criteria and asks for them in the reply", () => {
     const prompt = buildJudgePrompt("lesson body", "source body");
 
     expect(prompt).toContain("Score this lesson");
+    expect(prompt).toContain("1. REUSABLE:");
+    expect(prompt).toContain("2. NON-REDUNDANCY:");
     expect(prompt).toContain("3. GROUNDING:");
-    expect(prompt).toContain('"grounding": <1-5 integer>');
+    expect(prompt).toContain('"reusable": <1-5 integer>, "nonRedundancy": <1-5 integer>, "grounding": <1-5 integer>');
+    // The old novelty question asked for information beyond the source, which a faithful lesson cannot give.
+    expect(prompt).not.toMatch(/novelty|not already present in the source/i);
   });
 
-  // The judge never sees the feedback a lesson is distilled from, and a lesson
-  // that corrects its source (the source says port 8080, feedback says it
-  // clashes, the lesson says use 8081) is on the source's subject. A
-  // contradiction is not this criterion's to reject: the optional fidelity
-  // check routes it to a human.
-  test("the rubric reserves 1-2 for a different subject, so a lesson that corrects its source scores 3", () => {
-    const prompt = buildJudgePrompt("lesson body", "source body");
+  // The judge saw neither the feedback nor an invention's source: a statement in neither is an invention.
+  test("the rubric scores a statement in neither the source nor its feedback 1-2, and the judge is shown the feedback", () => {
+    const without = buildJudgePrompt("lesson body", "source body");
+    expect(without).toContain("Score 1-2 when any is in neither");
+    expect(without).not.toContain("Feedback recorded about the memory");
 
-    expect(prompt).toContain(
-      "Score 1-2 only if it is about a different subject than the source; 3 if it is on the source's subject but goes beyond or corrects what the source says (it may draw on feedback you are not shown); 4-5 if the source supports it.",
-    );
-    expect(prompt).not.toMatch(/contradict/i);
+    const prompt = buildJudgePrompt("lesson body", "source body", undefined, [
+      "- [negative] The port clashed with the proxy.",
+    ]);
+    expect(prompt).toContain("Feedback recorded about the memory");
+    expect(prompt).toContain("- [negative] The port clashed with the proxy.");
   });
 
   // Distill generates from the first 3000 characters of the source body
   // (buildDistillPrompt). A judge that reads fewer would call a lesson drawn
-  // from later in the source off-subject, and grounding can now reject.
+  // from later in the source ungrounded, and grounding can reject.
   test("the judge reads the same 3000 characters of source the generator did", () => {
     const source = `${"a".repeat(2500)}INSIDE_WINDOW${"b".repeat(600)}BEYOND_WINDOW`;
     const prompt = buildJudgePrompt("lesson body", source);
@@ -519,10 +491,11 @@ describe("runLessonQualityJudge — grounding 1 rejects, grounding 2 goes to rev
     expect(prompt).not.toContain("BEYOND_WINDOW");
   });
 
-  test("the instruction to rate similar existing lessons lower names the criteria it applies to", () => {
-    const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "lessons/other", content: "Other lesson." }]);
+  test("the existing assets shown to the judge are lessons, knowledge notes or skills near the lesson", () => {
+    const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "skills/deploy", content: "Deploy steps." }]);
 
-    expect(prompt).toContain("Rate NOVELTY and NON-REDUNDANCY lower if the proposed lesson is substantially similar");
+    expect(prompt).toContain("Existing asset ref: skills/deploy");
+    expect(prompt).toContain("Score 1-2 only when one of them already states the same rule");
   });
 
   test("grounding belongs to the lesson judge: a reflect verdict neither reads nor is vetoed by it", async () => {
@@ -592,7 +565,7 @@ describe("runLessonQualityJudge / runReflectQualityJudge — responseSchema (JUD
       "some source body",
       async (_connection, _messages, options) => {
         receivedSchema = options?.responseSchema;
-        return JSON.stringify({ scores: { novelty: 4, nonRedundancy: 4, grounding: 4 }, reason: "ok" });
+        return JSON.stringify({ scores: { reusable: 4, nonRedundancy: 4, grounding: 4 }, reason: "ok" });
       },
     );
 
@@ -601,8 +574,8 @@ describe("runLessonQualityJudge / runReflectQualityJudge — responseSchema (JUD
     const scoresSchema = (
       receivedSchema as { properties: { scores: { required: string[]; properties: Record<string, unknown> } } }
     ).properties.scores;
-    expect(scoresSchema.required).toEqual(["novelty", "nonRedundancy", "grounding"]);
-    expect(Object.keys(scoresSchema.properties)).toEqual(["novelty", "nonRedundancy", "grounding"]);
+    expect(scoresSchema.required).toEqual(["reusable", "nonRedundancy", "grounding"]);
+    expect(Object.keys(scoresSchema.properties)).toEqual(["reusable", "nonRedundancy", "grounding"]);
   });
 
   test("lesson judge sends no responseSchema when the runner does not opt into supportsJsonSchema", async () => {
@@ -615,7 +588,7 @@ describe("runLessonQualityJudge / runReflectQualityJudge — responseSchema (JUD
       async (_connection, _messages, options) => {
         schemaKeyPresent = Boolean(options && Object.hasOwn(options, "responseSchema"));
         receivedSchema = options?.responseSchema;
-        return JSON.stringify({ scores: { novelty: 4, nonRedundancy: 4, grounding: 4 }, reason: "ok" });
+        return JSON.stringify({ scores: { reusable: 4, nonRedundancy: 4, grounding: 4 }, reason: "ok" });
       },
     );
 

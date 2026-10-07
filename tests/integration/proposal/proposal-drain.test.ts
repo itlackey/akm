@@ -9,6 +9,8 @@ import {
   drainProposals,
   isEmptyDiff,
   type JudgmentSeams,
+  type PromoteFn,
+  type RejectFn,
 } from "../../../src/commands/proposal/drain";
 import type { ProposalAcceptResult, ProposalRejectResult } from "../../../src/commands/proposal/proposal";
 import {
@@ -717,6 +719,82 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(promoteFn).not.toHaveBeenCalled();
   });
 
+  test("the judge's reason is recorded on accept, reject and defer, and a parse failure or runner error is its own reason", async () => {
+    const stash = makeStashDir();
+    const accepted = seed(stash, "lessons/rec-accept", "consolidate", BIG_LESSON);
+    const rejected = seed(stash, "lessons/rec-reject", "consolidate", BIG_LESSON);
+    const deferred = seed(stash, "lessons/rec-defer", "consolidate", BIG_LESSON);
+    const garbled = seed(stash, "lessons/rec-garbled", "consolidate", BIG_LESSON);
+    const failed = seed(stash, "lessons/rec-error", "consolidate", BIG_LESSON);
+    const byContent: Record<string, string> = {
+      "lessons/rec-accept": JSON.stringify({ decision: "accept", reason: "new and correct" }),
+      "lessons/rec-reject": JSON.stringify({ decision: "reject", reason: "already covered" }),
+      "lessons/rec-defer": JSON.stringify({ decision: "defer", reason: "needs the source memory" }),
+      "lessons/rec-garbled": "I think this is fine.",
+    };
+    const chat = mock(async (_config: unknown, messages: Array<{ content: string }>) => {
+      const prompt = messages[0]?.content ?? "";
+      if (prompt.includes("lessons/rec-error")) throw new Error("runner down");
+      return byContent[Object.keys(byContent).find((r) => prompt.includes(r)) ?? ""] ?? "";
+    });
+    const accepts: Array<{ id: string; gateDecision?: unknown }> = [];
+    const rejects: Array<{ id: string; gateDecision?: unknown }> = [];
+    const promoteFn: PromoteFn = async (opts) => {
+      accepts.push(opts);
+      return { schemaVersion: 1, ok: true, id: opts.id, ref: "lessons/fake", assetPath: "/tmp/fake.md" } as never;
+    };
+    const rejectFn: RejectFn = (opts) => {
+      rejects.push(opts);
+      return { schemaVersion: 1, ok: true, id: opts.id, ref: "lessons/fake" } as never;
+    };
+
+    await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, rejectFn, {
+      chat: chat as unknown as JudgmentSeams["chat"],
+    });
+
+    expect(accepts.map((a) => a.id)).toEqual([accepted.id]);
+    expect(accepts[0]?.gateDecision).toMatchObject({
+      outcome: "auto-accepted",
+      reason: "judgment-accept",
+      judgeReason: "new and correct",
+    });
+    expect(rejects.map((r) => r.id)).toEqual([rejected.id]);
+    expect(rejects[0]?.gateDecision).toMatchObject({
+      outcome: "auto-rejected",
+      reason: "judgment-reject",
+      judgeReason: "already covered",
+    });
+    expect(getProposal(stash, deferred.id).gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "judgment-deferred",
+      judgeReason: "needs the source memory",
+    });
+    const garbledDecision = getProposal(stash, garbled.id).gateDecision;
+    expect(garbledDecision).toMatchObject({ outcome: "deferred", reason: "judgment-parse-failure" });
+    expect(garbledDecision?.judgeReason).toBeUndefined();
+    const failedDecision = getProposal(stash, failed.id).gateDecision;
+    expect(failedDecision).toMatchObject({ outcome: "deferred", reason: "judgment-error" });
+    expect(JSON.stringify(failedDecision)).not.toContain("runner down");
+  });
+
+  test("a staged queue-mode accept keeps the judge's reason", async () => {
+    const stash = makeStashDir();
+    const deferred = seed(stash, "lessons/staged-reason", "consolidate", BIG_LESSON);
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "new and correct" }));
+    await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "queue" }),
+      fakeAccept(),
+      fakeReject(),
+      {
+        chat,
+      },
+    );
+    expect(getProposal(stash, deferred.id).gateDecision).toMatchObject({
+      outcome: "staged",
+      judgeReason: "new and correct",
+    });
+  });
+
   test("provider rejection remains deferred without fabricating lowering notices", async () => {
     const stash = makeStashDir();
     const deferred = seed(stash, "lessons/provider-reject", "consolidate", BIG_LESSON);
@@ -817,6 +895,31 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(rejectFn).not.toHaveBeenCalled();
     expect(getProposal(stash, created.id).status).toBe("pending");
     expect(fs.readFileSync(assetPath, "utf8")).toContain("Newer: someone else edited this");
+  });
+});
+
+describe("buildJudgmentPrompt — fences", () => {
+  const inner = "Intro\n\n```ts\nconst a = 1;\n```\n\nOutro after the block.\n";
+  const proposal = (content: string) => proposalFixture("consolidate", content);
+
+  test("a note holding its own code block is wrapped in a longer fence", () => {
+    const prompt = buildJudgmentPrompt(proposal(inner), "needs-judgment", { liveAsset: undefined, siblings: [] });
+    expect(prompt).toContain(`\n\`\`\`\`\n${inner}\n\`\`\`\`\n`);
+    // the only line that could close the block is the four-backtick fence itself
+    const fences = prompt.split("\n").filter((l) => /^`{4,}$/.test(l));
+    expect(fences).toEqual(["````", "````"]);
+  });
+
+  test("the live asset, siblings and neighbour excerpts get the same treatment, and plain content keeps three backticks", () => {
+    const six = "a ``````` run of seven";
+    const prompt = buildJudgmentPrompt(proposal(VALID_LESSON), "needs-judgment", {
+      liveAsset: inner,
+      siblings: [proposal(six)],
+      neighbours: [{ ref: "knowledge/n", description: "d", excerpt: inner }] as never,
+    });
+    expect(prompt).toContain("```\n---\ndescription: Use ripgrep");
+    const fences = prompt.split("\n").filter((l) => /^`{4,}$/.test(l));
+    expect(fences).toEqual(["````", "````", "````````", "````````", "````", "````"]);
   });
 });
 

@@ -173,7 +173,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
   test("a drain accept keeps the judge's evidence beside its own verdict", async () => {
     const stash = makeStashDir();
     const created = stageJudgedProposal(stash, seed(stash, "lessons/rg", "distill", VALID_LESSON), {
-      criteria: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+      criteria: { reusable: 4, nonRedundancy: 5, grounding: 3 },
       reason: "adds the rollback step",
     });
 
@@ -191,7 +191,7 @@ describe("drainProposals records a gate decision per path (#577)", () => {
     expect(accepted.gateDecision).toMatchObject({
       outcome: "auto-accepted",
       reason: "judge-passed",
-      scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+      scores: { reusable: 4, nonRedundancy: 5, grounding: 3 },
       judgeReason: "adds the rollback step",
     });
   });

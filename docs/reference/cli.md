@@ -2492,16 +2492,19 @@ day; an asset a stage looked at and left unchanged is revisited after 7 days,
 or as soon as new feedback (or, for consolidation, an edit) arrives.
 
 Consolidation's promotion of a memory into `knowledge/` is the exception to the
-7-day rule: once a promotion is accepted or rejected, its memory is not offered
-to the model again until its body changes, however long that takes. The ledger
+7-day rule: once a promotion is accepted or rejected, or the model judged the
+memory and proposed nothing, the memory is not offered to the model again until
+its body changes, however long that takes. The ledger
 records the body hash the promotion was decided against and compares it with
 the memory's current body (frontmatter edits do not count), the same
 content-driven rule the consolidate pair pass uses. A promotion decided by an
-older release, which recorded no hash, keeps the old windows. Consolidation
+older release, which recorded no hash, keeps the old windows. A memory whose
+body equals that of a consolidate promotion rejected on or after 2026-09-29 is
+held the same way, under whatever name it has. Consolidation
 also does not promote a memory that `knowledge/` already covers: before it
 queues a promotion it compares the memory with the 20 `knowledge/` docs in its
 bundle nearest to it by stored vector, and skips the memory when one of them
-holds at least half of its distinct 5-word shingles (skip reason
+holds at least 30% of its distinct 5-word shingles (skip reason
 `dedup_covered_by_knowledge` in the result's `consolidation.skipReasons`). A
 covering doc that ranks lower than the 20th nearest goes unseen. With no stored
 vector (semantic search off, or the memory not indexed yet) that check does

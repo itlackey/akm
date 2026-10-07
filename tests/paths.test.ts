@@ -10,7 +10,6 @@ import {
   getDefaultStashDir,
   getLockfileLockPath,
   getLockfilePath,
-  getMeasurementVerdictsDir,
   getRegistryCacheDir,
   getRegistryIndexCacheDir,
   getStashLocksDir,
@@ -494,18 +493,14 @@ describe("per-stash $STATE/$CACHE writer dirs", () => {
   test("namespace two different stashes to two different directories", () => {
     process.env.XDG_STATE_HOME = "/state";
     process.env.XDG_CACHE_HOME = "/cache";
-    expect(getMeasurementVerdictsDir("/stash-a")).not.toBe(getMeasurementVerdictsDir("/stash-b"));
     expect(getUnresolvedSourcesDir("/stash-a")).not.toBe(getUnresolvedSourcesDir("/stash-b"));
     expect(getStashLocksDir("/stash-a")).not.toBe(getStashLocksDir("/stash-b"));
   });
 
-  test("are rooted at $STATE/improve/*, $STATE/locks/*, or $CACHE/index/* respectively", () => {
+  test("are rooted at $STATE/locks/* or $CACHE/index/* respectively", () => {
     process.env.XDG_STATE_HOME = "/state";
     process.env.XDG_CACHE_HOME = "/cache";
     const key = getStashStateKey("/stash-a");
-    expect(getMeasurementVerdictsDir("/stash-a")).toBe(
-      path.join("/state", "akm", "improve", "measurement", "verdicts", key),
-    );
     expect(getUnresolvedSourcesDir("/stash-a")).toBe(path.join("/cache", "akm", "index", "unresolved-sources", key));
     expect(getStashLocksDir("/stash-a")).toBe(path.join("/state", "akm", "locks", key));
   });

@@ -121,7 +121,9 @@ export interface ProposalGateDecision {
   /**
    * Stable reason token. The drain (`triage` gate): `empty-diff`,
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
-   * `no-judge-configured`, `judgment-deferred`, `stale-target`. The stage
+   * `no-judge-configured`, `judgment-deferred`, `judgment-parse-failure`
+   * (the judge answered, but not with a verdict), `judgment-error` (the runner
+   * failed), `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
    * `quality-review` for a human, `distill-review` for a human on a distill
    * pass, `judge-error` for a human when reflect's
@@ -139,7 +141,7 @@ export interface ProposalGateDecision {
   contentHash?: string;
   /** The quality judge's per-criterion scores, on a `quality-gate` pass, staged or deferred for review. */
   scores?: Record<string, number>;
-  /** The quality judge's one-sentence reason, on a `quality-gate` pass. */
+  /** The judge's one-sentence reason: the quality judge on a `quality-gate` pass, or the drain's judgment tier on any verdict. */
   judgeReason?: string;
   gate?: string;
   decidedAt: string;
@@ -319,7 +321,7 @@ export function isRetireProposal(proposal: Pick<Proposal, "changes">): boolean {
 
 /** A promote refused because the target changed after mint (STALE, R20) — not a merit judgement. */
 export const STALE_TARGET_GATE_REASON = "stale-target";
-/** The gate on a retire proposal the triage drain may accept unattended: a pair-judged duplicate. */
+/** The gate on a retire proposal the triage drain may accept unattended: a staged pair-judged retirement. */
 export const PAIR_PASS_GATE = "consolidate-pair";
 export const EXPIRED_GATE_REASON = "expired";
 export const ASSET_MISSING_GATE_REASON = "asset-missing";

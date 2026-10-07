@@ -6,6 +6,118 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.27-alpha.2] - 2026-10-07
+
+### Removed
+
+- **The `scripts/akm-eval` toolkit has moved out of this repository.** The
+  read-only measurement toolkit (the case runner and its suites, the twin
+  experiment, the real-query verdict for the proactive lane, the state
+  analyzers and the curate benchmark) is retired; every live eval is in
+  [itlackey/akm-eval](https://github.com/itlackey/akm-eval). Its code is kept
+  there, to read and not to run, in `retired/akm-scripts-akm-eval/`, copied from
+  commit `f57a7fd44b37`. It imports akm's `src/` by relative path, so it runs
+  only in a checkout at that commit. Removed here with it: `scripts/akm-eval/`,
+  its tests (`tests/integration/akm-eval/`, `tests/akm-eval-*.test.ts`,
+  `tests/curate-metrics.test.ts`) and fixtures (`tests/fixtures/akm-eval/`, and
+  the `curate-golden` stash, which only the curate benchmark read), the
+  `akm-eval determinism` CI job, and `getMeasurementVerdictsDir`, whose only
+  caller was the verdict runner. akm no longer names
+  `$STATE/improve/measurement/verdicts/<stash>/`; a file already there is inert.
+  `docs/maintainers/eval.md` is now a pointer to the new home.
+
+### Fixed
+
+- **The drain's judge no longer sees a note with a code block as truncated.**
+  The judgment prompt fenced the proposed content (and the live asset, sibling
+  proposals and neighbour excerpts) in three backticks, so a note holding its
+  own code block closed the fence early and read as cut off; real rejections said
+  "ends in an empty code block" or "truncated". Each block now uses a fence longer
+  than any backtick run inside it. The judge's reason is also kept on accepts,
+  staged accepts and defers (as the gate decision's `judgeReason`, until now
+  rejections only), and a judge reply that is not a verdict is stamped
+  `judgment-parse-failure`, and a runner failure `judgment-error`, instead of
+  looking like a defer.
+
+- **Distill writes a lesson only when its memory holds one, says only what the
+  memory says, and its judge rejects what a reviewer would.** 2 of the 22 distill
+  proposals since 0.9.26 began were accepted, and 17 of the 19 queued on
+  2026-10-05 were bad (they restated their memory, filed a dated status as a
+  lesson, claimed what the memory does not say, or repeated an asset the library
+  holds). Four causes, found in the code and the rejected proposals, and fixed:
+  (1) the prompt and schema forced a lesson from every memory, and 18 of the 19
+  were records of what was done; the writer now says why a memory holds a
+  lesson or none (`reason`, then `decision: lesson|none`, or the word `NONE`),
+  defined as a cause and what to do about it, or a rule with its reason, and
+  writes only what the memory and its feedback state, in the scope they have; a
+  `NONE` is a `skipped` distill (`skipReason: nothing_reusable`, the writer's
+  reason in the message) with no proposal and no judge call, and the loop keeps
+  its ledger row `unchanged`. (2) The judge asked for "information not already
+  present in the source", so an invented claim scored as novel and a faithful
+  lesson of a lesson-worthy memory as a restatement, and it passed anything that
+  "goes beyond the source" because it "may draw on feedback you are not shown".
+  The rubric is now reusable (a rule with its reason, not a record of what was
+  done), non-redundancy and grounding (every cause, step, number and limit is
+  in the source or its feedback), and the judge is shown the feedback the writer
+  saw. (3) A mean hid a decisive score (4 and 1 average 2.5, a review), and a
+  reviewer read everything the judge did not reject; any criterion at 2 or
+  below, grounding included, is now `quality_rejected`, and the reason names it
+  (`grounding 2/5: …`). The "borderline grounding" routing is gone. (4) Neither
+  the writer nor the judge could see a knowledge note or a skill that already
+  states the rule (the judge saw the 3 lexically nearest lessons, none of them
+  related); both now see the lessons, knowledge notes and skills nearest the
+  memory, which is the existing `processes.distill.cls` context turned on by
+  default (`enabled: false` turns it off). Judge scores are keyed `reusable`
+  where they were `novelty`. Measured on the local qwen3.8-27b with akm-eval's
+  `evals/distill` (30 fictional memories, 5 runs each side): good lessons 7/14 on
+  average (5 to 9) against 3.7/14 (3 to 5), lessons queued for memories that
+  deserve none 0.4/16 against 3.3/16. On 37 real memories with their feedback
+  (34 reviewed bad, 3 good; 3 runs against 2): a lesson was queued for 11% of the
+  bad ones against 44%, and for 6 of 9 good ones against 4 of 6; of the memories
+  that pass 0.9.26's skip of bare positive feedback, 20% of the bad against 50%.
+  No new settings.
+
+- **Reflect no longer plans an asset whose negative feedback is already acted
+  on.** A negative `akm feedback` that came with an exact fix (`--replace` and
+  `--with`, `--outdated` or `--superseded-by`) makes a `feedback` proposal, and
+  once that proposal is accepted the feedback has done its work. Reflect still
+  took the ref as having fresh negative feedback, and on 2026-10-07 44 of its 50
+  refs were of that kind: the judge refused or the model changed nothing for
+  most of them. A negative event with a fix is now left out of the reflect
+  cursor when an accepted `feedback` proposal for the ref was created at or
+  after it. A negative with no fix, one given after the proposal, and one whose
+  proposal is still pending or was rejected plan a reflect as before.
+
+- **Consolidate stops re-offering memories a reviewer already turned down, and
+  the nightly judge sees what a promotion may duplicate.** About 53 promotions a
+  night reached review at ~5% precision, 64-70% of them a memory body already
+  proposed or rejected. Four causes, four changes: a memory whose body equals
+  that of a consolidate promotion rejected on or after 2026-09-29 is held until
+  its body changes, under any name (earlier rejections, the bulk audits of
+  2026-08, do not count); a memory the model judged and left alone is held by its
+  body hash instead of a 7-day clock, so an unchanged memory is no longer judged
+  every week (a row recorded without a hash keeps the 7 days); the coverage gate
+  skips a memory when 30% of its text, not 50%, is in a neighbouring knowledge
+  doc, which catches paraphrases; and the drain's judgment tier, which judged a
+  promotion seeing only the proposal and never `knowledge/`, is now shown the 5
+  nearest knowledge notes (ref, description, excerpt) and told to reject a
+  promotion they already cover. No new settings.
+
+- **A confident `subsumed` or `supersedes` retirement resolves unattended, as a
+  `duplicate` already did.** The pair pass staged a retire proposal for the
+  triage drain only when the judge's label was `duplicate`; every other retirement
+  waited for a person. It now stages any of the three retire labels when the
+  second look (what does the retired note hold that the kept one lacks?) comes
+  back empty and there is no continuity risk; the retired side's claim list is
+  already empty for any proposal, and a `duplicate` must still have an empty list
+  on the kept side too. The staged gate reason is the judge's label, and the drain records it. Replay over 360
+  judged pairs: 336 safe (0.93): `duplicate` 0.98, `subsumed` 0.92, `supersedes`
+  0.875. In production, unstaged `subsumed` retirements were accepted 45 of 54
+  times by hand, and in the latest run 41 of 47 pair proposals would have resolved
+  without a person. `docs/architecture/internals/improve-workflow.md` said triage
+  never auto-accepts a retire proposal, which stopped being true in 0.9.26; it,
+  and the matching lines in `improvement.md`, now describe the staging rule.
+
 ## [0.9.27-alpha.1] - 2026-10-06
 
 ### Fixed
