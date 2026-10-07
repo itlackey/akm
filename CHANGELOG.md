@@ -35,6 +35,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   answered by one retry without both (which may in turn fall back without the
   schema), and akm stops sending them to that endpoint and model for the rest
   of the process, as it already does for `response_format`.
+- **A lesson the model wrote without a `when_to_use` is no longer thrown away
+  silently by `akm proposal extract`.** The extract schema left `when_to_use`
+  optional while the parser dropped a lesson without one (or with one under 15
+  characters) and said nothing, so a model that followed the schema could
+  write a sound lesson that akm discarded and the session reported no
+  candidates: on akm-eval's extract eval qwen3.8-27b kept 3 of 11 expected
+  insights against 9 for gpt-oss-120b. Every property of the schema is now
+  required, `when_to_use` and `rationale_if_empty` included, with an empty
+  string for none (a memory or knowledge candidate needs no trigger, a
+  non-empty answer no rationale), which is also what a strict structured-output
+  provider needs; the prompt's output contract says the same. Any candidate the
+  contract still refuses, for this reason or another, is named in its session's
+  `warnings` as `<type>:<name> dropped: <reason>`.
 - **Distill's response schemas are valid for a strict structured-output
   provider.** The client sends a response schema `strict: true`, and OpenAI
   refuses one whose objects leave a property out of `required`: `400 Invalid

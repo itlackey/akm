@@ -72,12 +72,39 @@ describe("EXTRACT_JSON_SCHEMA", () => {
     expect(s.additionalProperties).toBe(false);
   });
 
-  test("candidate items require type, name, description, body, confidence, evidence", () => {
+  test("candidate items require type, name, description, when_to_use, body, confidence, evidence", () => {
     const candItem = (EXTRACT_JSON_SCHEMA as { properties: Record<string, { items: { required: string[] } }> })
       .properties.candidates!.items;
-    for (const key of ["type", "name", "description", "body", "confidence", "evidence"]) {
+    for (const key of ["type", "name", "description", "when_to_use", "body", "confidence", "evidence"]) {
       expect(candItem.required).toContain(key);
     }
+  });
+
+  // A model that follows the schema writes what it requires. `when_to_use` used to be optional, so a model could
+  // leave it out of a lesson and the parser dropped the lesson (#1047); a strict provider also refuses a schema
+  // with a property outside `required` (#1046).
+  test("lists every property of every object in `required`, as strict structured outputs need", () => {
+    const check = (schema: unknown, at: string): void => {
+      if (typeof schema !== "object" || schema === null) return;
+      const node = schema as { properties?: Record<string, unknown>; required?: string[]; items?: unknown };
+      if (node.properties) {
+        expect([at, [...(node.required ?? [])].sort()]).toEqual([at, Object.keys(node.properties).sort()]);
+        for (const [key, child] of Object.entries(node.properties)) check(child, `${at}.${key}`);
+      }
+      if (node.items) check(node.items, `${at}[]`);
+    };
+    check(EXTRACT_JSON_SCHEMA, "(root)");
+  });
+
+  test("when_to_use and rationale_if_empty accept an empty string, which is how a reply says none", () => {
+    const s = EXTRACT_JSON_SCHEMA as {
+      properties: {
+        candidates: { items: { properties: { when_to_use: { minLength?: number } } } };
+        rationale_if_empty: { minLength?: number };
+      };
+    };
+    expect(s.properties.candidates.items.properties.when_to_use.minLength).toBeUndefined();
+    expect(s.properties.rationale_if_empty.minLength).toBeUndefined();
   });
 
   test("type enum restricts to memory|lesson|knowledge", () => {
@@ -327,7 +354,7 @@ describe("parseExtractPayload", () => {
     );
   });
 
-  test("rejects lesson candidates missing when_to_use", () => {
+  test("rejects lesson candidates missing when_to_use, and says so", () => {
     const payload = {
       candidates: [
         {
@@ -342,6 +369,93 @@ describe("parseExtractPayload", () => {
     };
     const out = parseExtractPayload(JSON.stringify(payload));
     expect(out.candidates).toHaveLength(0);
+    expect(out.dropped).toEqual(["lesson:missing-wtu dropped: a lesson needs a when_to_use of at least 15 characters"]);
+  });
+
+  test("a lesson whose when_to_use is empty or too short is dropped and reported, a good one next to it kept", () => {
+    const lesson = (name: string, whenToUse: string) => ({
+      type: "lesson",
+      name,
+      description: "This is a valid-length description for the lesson candidate in the test.",
+      when_to_use: whenToUse,
+      body: "Some body content that is fifty characters or more in length to pass the minimum body check.",
+      confidence: 0.8,
+      evidence: "fake evidence pointer",
+    });
+    const out = parseExtractPayload(
+      JSON.stringify({
+        candidates: [
+          lesson("empty-wtu", ""),
+          lesson("short-wtu", "When X."),
+          lesson("good-wtu", "When a deploy hangs without the VPN connected."),
+        ],
+        rationale_if_empty: "",
+      }),
+    );
+    expect(out.candidates.map((candidate) => candidate.name)).toEqual(["good-wtu"]);
+    expect(out.dropped).toEqual([
+      "lesson:empty-wtu dropped: a lesson needs a when_to_use of at least 15 characters",
+      "lesson:short-wtu dropped: a lesson needs a when_to_use of at least 15 characters",
+    ]);
+  });
+
+  test("every other reason a candidate is refused is reported too", () => {
+    const base = {
+      type: "memory",
+      name: "ok-name",
+      description: "This is a valid-length description for the memory candidate in the test.",
+      when_to_use: "",
+      body: "Some body content that is fifty characters or more in length to pass the minimum body check.",
+      confidence: 0.8,
+      evidence: "fake evidence pointer",
+    };
+    const out = parseExtractPayload(
+      JSON.stringify({
+        candidates: [
+          { ...base, type: "skill" },
+          { ...base, name: "Bad Name" },
+          { ...base, description: "too short" },
+          { ...base, body: "too short" },
+          { ...base, confidence: "high" },
+          { ...base, evidence: "no" },
+          "not an object",
+        ],
+        rationale_if_empty: "",
+      }),
+    );
+    expect(out.candidates).toEqual([]);
+    expect(out.dropped).toEqual([
+      "skill:ok-name dropped: type is not memory, lesson or knowledge",
+      "memory:Bad Name dropped: name is not a kebab-case slug",
+      "memory:ok-name dropped: description is shorter than 20 characters",
+      "memory:ok-name dropped: body is shorter than 50 characters",
+      "memory:ok-name dropped: confidence is not a number",
+      "memory:ok-name dropped: evidence is shorter than 5 characters",
+      "candidate dropped: not an object",
+    ]);
+  });
+
+  test("an empty when_to_use on a memory or knowledge candidate, and an empty rationale, mean none", () => {
+    const out = parseExtractPayload(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "memory",
+            name: "no-trigger",
+            description: "This is a valid-length description for the memory candidate in the test.",
+            when_to_use: "",
+            body: "Some body content that is fifty characters or more in length to pass the minimum body check.",
+            confidence: 0.8,
+            evidence: "fake evidence pointer",
+          },
+        ],
+        rationale_if_empty: "",
+      }),
+    );
+    expect(out.candidates).toHaveLength(1);
+    expect(out.candidates[0]).not.toHaveProperty("when_to_use");
+    expect(out).not.toHaveProperty("rationale_if_empty");
+    expect(out).not.toHaveProperty("dropped");
   });
 
   test("rejects candidates with placeholder/invalid descriptions", () => {

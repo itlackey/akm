@@ -2780,6 +2780,7 @@ harvest" branch on `skipReasons`, `warnings`, or `sessionsProcessed` /
 | `engineKind` | `"llm"`, `"sdk"`, or `"agent"` — the kind of runner `engine` resolved to. Same absence condition as `engine`. |
 | `skipReasons` | Per-`skipReason` count across `sessions[]` (e.g. `{ "llm_unavailable": 25 }`). Present only when `sessionsSkipped > 0`. |
 | `warnings` | Includes one aggregate line per infrastructure skip reason that fired (`llm_unavailable`, `read_failed`, `exception`, `locked_concurrent`) — e.g. `25 of 25 sessions skipped: llm_unavailable (engine "default")` — so an engine outage is visible without inspecting `sessions[]`. Session-content skips (`already_extracted`, `too_short`, `triaged_out`) are counted in `skipReasons` but never produce a warning line. |
+| `sessions[].warnings` | One line per candidate the model wrote that the output contract refuses, as `<type>:<name> dropped: <reason>` — a lesson without a `when_to_use` of 15 characters, a description under 20, a name that is not a kebab-case slug — and one per candidate held back by the improve ledger. A session whose every candidate was dropped has `candidateCount: 0` and no `rationaleIfEmpty`, so this is where the loss shows. |
 
 #### proposal new
 
