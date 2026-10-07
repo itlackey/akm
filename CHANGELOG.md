@@ -36,6 +36,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is kept) and the next `akm index` re-walks every source, and a read rebuilds
   inline. An index that a failed open already half-migrated (layout stamp still
   20, `search_text` dropped, `asset_links` created) recovers the same way.
+- **Two files that claim one ref no longer trade places in the index, and `akm
+  index` says so.** A skill's `references/a.md` and a note at
+  `knowledge/skills/x/references/a.md` are both the ref
+  `knowledge/skills/x/references/a`, and the index holds one row for it. The
+  first file a run persisted held it, so a full build followed the filesystem's
+  listing order (one bundle indexed on tmpfs and on ext4 held different files),
+  and the first incremental run after a full build handed the row to the other
+  file, because it drains only the directory that lost: with no file touched,
+  the row, its search entry and the text its vector is embedded from changed,
+  and the vector was dropped and recomputed. When a smaller-path file was added
+  later and then deleted, the ref also left the index until `--full`, although
+  its other file was still on disk. The file with the smaller path (code-point
+  order, as `akm show`'s refusal lists them) now holds the ref however the
+  directories are drained and the walk is ordered, a directory that gives a ref
+  up is drained again so the ref passes back when its holder goes, and each
+  pair is reported in the `warnings` of `akm index`, naming the file indexed
+  and the one skipped.
 
 ## [0.9.26] - 2026-10-05
 
