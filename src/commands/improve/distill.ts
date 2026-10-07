@@ -137,10 +137,14 @@ export function deriveLessonRef(inputRef: string): string {
 }
 
 // ── Output contract ──────────────────────────────────────────────────────────
+//
+// The client sends a response schema `strict: true`, and a strict provider
+// (OpenAI's) rejects an object whose `required` leaves out any of its
+// properties, so every property is required and "none" is an empty array (#1046).
 
 export const DISTILL_LESSON_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["description", "when_to_use", "body"],
+  required: ["description", "when_to_use", "body", "tags"],
   additionalProperties: false,
   properties: {
     description: {
@@ -162,14 +166,14 @@ export const DISTILL_LESSON_JSON_SCHEMA: Record<string, unknown> = {
     tags: {
       type: "array",
       items: { type: "string" },
-      description: "Optional tag list. Empty array is allowed; the post-processor drops it if empty.",
+      description: "Tag list. Use an empty array for none; the post-processor drops it if empty.",
     },
   },
 };
 
 export const DISTILL_KNOWLEDGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["description", "body"],
+  required: ["description", "body", "tags", "sources"],
   additionalProperties: false,
   properties: {
     description: { type: "string", minLength: 1, description: "One-line summary of the knowledge asset." },
@@ -181,12 +185,12 @@ export const DISTILL_KNOWLEDGE_JSON_SCHEMA: Record<string, unknown> = {
     tags: {
       type: "array",
       items: { type: "string" },
-      description: "Optional tag list. Empty array is allowed; the post-processor drops it if empty.",
+      description: "Tag list. Use an empty array for none; the post-processor drops it if empty.",
     },
     sources: {
       type: "array",
       items: { type: "string" },
-      description: "Optional list of source refs the knowledge was distilled from.",
+      description: "Source refs the knowledge was distilled from. Use an empty array for none.",
     },
   },
 };
