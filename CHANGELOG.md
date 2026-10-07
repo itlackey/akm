@@ -26,6 +26,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The drain's judge rejects a promotion that is a status snapshot, a plan or
+  something retired, not only a duplicate.** Its rubric for a promotion (a memory
+  proposed as a new knowledge note) said to reject a note that is wrong, a
+  duplicate or contradicts the live asset, and to accept a correct, valuable one,
+  so it judged only whether the note was new: the reasons it gave for accepting a
+  note pinned to commits and versions, a rollout status or a retired host were
+  "distinct from the existing notes". The reject line now also names a note that
+  reports the state of something that changes (a status, rollout, branch, commit,
+  version, test count, "as of <date>"), a plan not yet carried out, or something
+  already retired, replaced or superseded, and says a lesson drawn from an
+  incident is durable. On the owner's 65 labelled promotions (chat/qwen3.8-27b,
+  two runs each) the judge accepted 7 and 8 of the 14 stale ones and 4 and 5 of
+  the 7 ephemeral ones before, and 1 and 3, 0 and 1 after. Other proposals keep
+  the old rubric. No new settings.
+
 - **The drain's judge no longer sees a note with a code block as truncated.**
   The judgment prompt fenced the proposed content (and the live asset, sibling
   proposals and neighbour excerpts) in three backticks, so a note holding its
