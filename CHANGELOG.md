@@ -8,6 +8,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An index that has been updated ranks like a fresh index of the same files,
+  and `akm index --full` no longer doubles the full-text totals.** `entries_fts`
+  is contentless, and FTS5 cannot take a deleted row out of a contentless
+  table's BM25 totals (its row count, and the token counts the average document
+  length comes from). Every replaced or removed row left them one row too high:
+  40 notes read 40, then 41 after one edit, then 81 after `--full`, and a delete
+  never lowered them, so scores drifted away from what a fresh index gives.
+  SQLite has no command that recomputes them (`delete` and `rebuild` are refused
+  on a contentless table), so a delete that removes a row now stamps
+  `index_meta.ftsTotalsStale` in its own transaction, whichever process made it,
+  and the next `akm index` rebuilds the table from `entries` before it finishes:
+  about a second at 25,000 entries, and only when rows have left the table. A
+  row the write-path index replaced after an accepted proposal is settled the
+  same way, and an index that has already drifted is corrected by the first run
+  that replaces or removes a row.
+- **`akm improve` runs against an API that rejects `chat_template_kwargs`,
+  OpenAI's among them.** Improve's reflect, consolidate and judge calls always
+  ask for thinking off, and the client sends that as
+  `chat_template_kwargs.enable_thinking` and a top-level `enable_thinking`. A
+  strict API answers 400 `Unknown parameter: 'chat_template_kwargs'`, the retry
+  without the response schema sent both fields again, and `akm improve judge`
+  reported `judge timeout/error — routed to review`. No engine setting could
+  stop it: the call sites override the engine's `enableThinking`, and
+  `extraParams` can only add fields. A 4xx that names either field is now
+  answered by one retry without both (which may in turn fall back without the
+  schema), and akm stops sending them to that endpoint and model for the rest
+  of the process, as it already does for `response_format`.
 - **Distill's response schemas are valid for a strict structured-output
   provider.** The client sends a response schema `strict: true`, and OpenAI
   refuses one whose objects leave a property out of `required`: `400 Invalid
@@ -48,6 +75,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   is kept) and the next `akm index` re-walks every source, and a read rebuilds
   inline. An index that a failed open already half-migrated (layout stamp still
   20, `search_text` dropped, `asset_links` created) recovers the same way.
+- **Two files that claim one ref no longer trade places in the index, and `akm
+  index` says so.** A skill's `references/a.md` and a note at
+  `knowledge/skills/x/references/a.md` are both the ref
+  `knowledge/skills/x/references/a`, and the index holds one row for it. The
+  first file a run persisted held it, so a full build followed the filesystem's
+  listing order (one bundle indexed on tmpfs and on ext4 held different files),
+  and the first incremental run after a full build handed the row to the other
+  file, because it drains only the directory that lost: with no file touched,
+  the row, its search entry and the text its vector is embedded from changed,
+  and the vector was dropped and recomputed. When a smaller-path file was added
+  later and then deleted, the ref also left the index until `--full`, although
+  its other file was still on disk. The file with the smaller path (code-point
+  order, as `akm show`'s refusal lists them) now holds the ref however the
+  directories are drained and the walk is ordered, a directory that gives a ref
+  up is drained again so the ref passes back when its holder goes, and each
+  pair is reported in the `warnings` of `akm index`, naming the file indexed
+  and the one skipped.
 
 ## [0.9.26] - 2026-10-05
 
