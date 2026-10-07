@@ -48,13 +48,13 @@ Respond with EXACTLY one JSON object matching this shape:
       "type": "memory" | "lesson" | "knowledge",
       "name": "<kebab-case name, e.g. jwt-token; optionally under one kebab-case scope, e.g. auth/jwt-token>",
       "description": "<one sentence 20-400 chars>",
-      "when_to_use": "<one sentence 15-400 chars; REQUIRED only when type=lesson>",
+      "when_to_use": "<one sentence 15-400 chars for a lesson; an empty string for a memory or knowledge candidate>",
       "body": "<markdown body, 200-3000 chars typical>",
       "confidence": <number 0.0-1.0>,
       "evidence": "<one-line pointer to the moment in the session>"
     }
   ],
-  "rationale_if_empty": "<one sentence; REQUIRED when candidates is empty>"
+  "rationale_if_empty": "<one sentence when candidates is empty; an empty string otherwise>"
 }
 ```
 
