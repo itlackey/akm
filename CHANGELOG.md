@@ -6,6 +6,33 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.27] - 2026-10-07
+
+The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.
+When upgrading from 0.9.26:
+
+- **The nightly queue stops refilling with duplicates.** Consolidate no longer
+  re-offers a memory whose body a reviewer rejected, and the drain's judge sees
+  the five knowledge notes nearest a promotion and rejects one they already
+  cover. A confident `subsumed` or `supersedes` retirement that the second look
+  confirms resolves unattended, like a duplicate (alpha.2).
+- **The judge rejects a promotion that is not durable:** a status, rollout,
+  version or test count, a plan not yet carried out, or something retired or
+  replaced. On 65 labelled promotions it accepted 13 of 61 bad ones before and
+  3 to 6 after, keeping 3 of the 4 good ones (alpha.3).
+- **Distill writes a lesson only when its memory holds one.** The writer may
+  answer that there is none; its judge rejects a lesson that only records what
+  was done, repeats an asset the library holds or claims what the memory does
+  not say; both see the related lessons, knowledge notes and skills (alpha.2).
+- **Reflect skips feedback an accepted exact fix already resolved**, and no
+  longer writes a second copy of a skill's reference files (alpha.1, alpha.2).
+- **Fixed:** an old (0.9.1-era) index is recreated instead of crashing every
+  `akm index`; an updated index scores like a fresh one; strict APIs that reject
+  `chat_template_kwargs` get one retry without it, and every response schema is
+  strict-valid; extract reports a lesson it refuses; a codex dispatch with a
+  schema leaves no temp folder (alpha.1).
+- **Removed:** `scripts/akm-eval`, now in itlackey/akm-eval (alpha.2).
+
 ## [0.9.27-alpha.3] - 2026-10-07
 
 ### Fixed
