@@ -812,13 +812,16 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     );
     ctx.retired.push(proposal.id);
     ctx.perInitiatorProposed.add(candidate.initiator.ref);
-    // A retirement with nothing unique on either side, confirmed by a second
-    // look, retires unattended: the triage drain accepts it under its usual
-    // applyMode. Replay precision 336/360 (duplicate 0.98, subsumed 0.92,
-    // supersedes 0.875, 2026-10-07); a duplicate alone was 109 of 111 safe on
-    // the owner's reviewed pairs (2026-10-04). Anything else waits for a person.
+    // A retirement the second look confirms loses nothing retires unattended:
+    // the triage drain accepts it under its usual applyMode. The retired side
+    // holds no claim of its own for any label (`decideRetirement` mints nothing
+    // else); a duplicate must also leave the kept side with none, while a
+    // subsumed or superseding successor holds more by definition. Replay
+    // precision 336/360 (duplicate 0.98, subsumed 0.92, supersedes 0.875,
+    // 2026-10-07); a duplicate alone was 109 of 111 safe on the owner's
+    // reviewed pairs (2026-10-04). Anything else waits for a person.
     if (
-      verdict.onlyInA.length + verdict.onlyInB.length === 0 &&
+      (verdict.relation !== "duplicate" || verdict.onlyInA.length + verdict.onlyInB.length === 0) &&
       !continuityRisk &&
       (await confirmNothingLost(ctx, retired, successor))
     ) {

@@ -97,8 +97,8 @@ everything else routes through `akm proposal accept`.
    `overlap`, `unrelated` and `contradicts` are recorded as
    `judged_no_action` with no proposal. The judge first lists the durable
    claims each side alone holds, and a side with any listed claim is never
-   retired. A retirement with nothing listed on either side, confirmed by a
-   second look, is staged for the triage drain to accept; every other
+   retired. A retirement whose retired side lists nothing (a duplicate: neither
+   side), confirmed by a second look, is staged for the triage drain to accept; every other
    retirement waits for a person.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
    status `pending`.
@@ -347,8 +347,8 @@ Every downgrade is reported, not silent: it warns on stderr, appends an
 `akm health`'s improve skip-reason summary. Consolidation stays enabled with
 autonomy off: both its passes only ever emit a reviewable proposal. The one
 pair-pass `retire` proposal `triage` `applyMode: "promote"` accepts is a
-retirement the pair pass staged (nothing unique on either side, confirmed by a
-second look, no continuity risk); every other one waits for `akm proposal accept`. An absent `experimental`
+retirement the pair pass staged (nothing unique to the retired side, confirmed
+by a second look, no continuity risk); every other one waits for `akm proposal accept`. An absent `experimental`
 section, an absent key, and an explicit `false` all read identically as off —
 autonomy is never inferred. `akm proposal drain --promote` is a second,
 explicit promote surface independent of this gate.

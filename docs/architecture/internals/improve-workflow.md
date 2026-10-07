@@ -378,8 +378,9 @@ duplicate, subsumed and superseding retirement, review-gated.
    retiring a side the judge listed a claim for. `contradicts`,
    `overlap` and `unrelated` are recorded `judged_no_action` with no
    proposal; `contradicts` is counted in the run report and stays a human
-   decision. A retirement (`duplicate`, `subsumed` or `supersedes`) with both
-   lists empty and no continuity risk gets a second call
+   decision. A retirement (`duplicate`, `subsumed` or `supersedes`) whose
+   retired side has nothing listed (a `duplicate` must also have nothing listed
+   on the kept side; a subsumed or superseding successor may hold more) and no continuity risk gets a second call
    (`consolidate-pair-check.md`: what does the retired note hold that the kept
    one lacks?); an empty answer stages the proposal (gate `consolidate-pair`,
    reason the judge's label), and the triage drain accepts it under its usual

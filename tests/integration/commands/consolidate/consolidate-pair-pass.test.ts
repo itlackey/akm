@@ -601,8 +601,20 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
     expect(proposal.ref).toBe("stash//memories/small-note");
     expect(proposal.retirement?.reason).toBe("subsumed");
-    // Nothing unique on either side and a clean second look: staged for the drain.
+    // The retired side holds no claim and the second look is clean: staged for the drain.
     expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "subsumed", gate: "consolidate-pair" });
+  });
+
+  test("subsumed: staged although the kept side holds a claim the retired one lacks", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "subsumed", redundant: "A", onlyInB: ["port 8080"] }),
+    });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toMatchObject({
+      outcome: "staged",
+      reason: "subsumed",
+    });
   });
 
   test("supersedes: staged like a duplicate when nothing is lost", async () => {
