@@ -97,6 +97,21 @@ describe("DISTILL_LESSON_JSON_SCHEMA", () => {
     expect(schema.required).toContain("body");
   });
 
+  // The writer may find no lesson: it says so in `decision`, after a one-sentence `reason` it writes first, and
+  // leaves the content fields empty, which a `minLength` would forbid.
+  test("lets the writer find no lesson: a reason, then a lesson-or-none decision, and content fields that may be empty", () => {
+    const schema = DISTILL_LESSON_JSON_SCHEMA as {
+      required: string[];
+      properties: Record<string, { type?: string; enum?: string[]; minLength?: number }>;
+    };
+    expect(Object.keys(schema.properties).slice(0, 2)).toEqual(["reason", "decision"]);
+    expect(schema.properties.reason?.type).toBe("string");
+    expect(schema.properties.decision?.enum).toEqual(["lesson", "none"]);
+    for (const field of ["description", "when_to_use", "body"]) {
+      expect(schema.properties[field]?.minLength).toBeUndefined();
+    }
+  });
+
   test("forbids additionalProperties so providers cannot smuggle ad-hoc fields past the schema", () => {
     const schema = DISTILL_LESSON_JSON_SCHEMA as { additionalProperties: boolean };
     expect(schema.additionalProperties).toBe(false);

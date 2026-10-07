@@ -113,8 +113,8 @@ export interface AkmDistillOptions {
   excludeFeedbackFromRefs?: readonly string[];
   excludeTags?: string[];
   includeTags?: string[];
-  /** Test seam: top-N similar lessons for the judge and the CLS context. */
-  fetchSimilarLessonsFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+  /** Test seam: the top-N lessons, knowledge notes and skills related to a query, for the writer and the judge. */
+  fetchRelatedFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
   /** The improve lane that selected the asset, stamped on the event and proposal. */
   eligibilitySource?: EligibilitySource;
   /** The input's durable `item_ref`; direct invocations key by the conceptId. */
@@ -144,24 +144,33 @@ export function deriveLessonRef(inputRef: string): string {
 
 export const DISTILL_LESSON_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["description", "when_to_use", "body", "tags"],
+  required: ["reason", "decision", "description", "when_to_use", "body", "tags"],
   additionalProperties: false,
   properties: {
+    reason: {
+      type: "string",
+      description: "One sentence, written first: the cause and the fix the memory states, or why it states none.",
+    },
+    decision: {
+      type: "string",
+      enum: ["lesson", "none"],
+      description:
+        "`none` when the memory holds no lesson (it records what was done, a design, or steps already written elsewhere): leave the other fields empty. Otherwise `lesson`.",
+    },
     description: {
       type: "string",
-      minLength: 10,
       description:
-        "Single complete sentence (80-200 chars) summarising what the lesson teaches. No markdown, no leading 'When'/'If'.",
+        "Single complete sentence summarising what the lesson teaches. No markdown, no leading 'When'/'If'. Empty for `none`.",
     },
     when_to_use: {
       type: "string",
-      minLength: 10,
-      description: "Single complete sentence describing the concrete trigger condition for the lesson.",
+      description:
+        "Single complete sentence describing the concrete trigger condition for the lesson. Empty for `none`.",
     },
     body: {
       type: "string",
-      minLength: 1,
-      description: "Lesson body — plain markdown, 1-3 short paragraphs of practical guidance.",
+      description:
+        "Lesson body: plain markdown, shorter than the memory, stating only what it and its feedback say. Empty for `none`.",
     },
     tags: {
       type: "array",
@@ -196,6 +205,8 @@ export const DISTILL_KNOWLEDGE_JSON_SCHEMA: Record<string, unknown> = {
 };
 
 interface StructuredDistillPayload {
+  reason?: unknown;
+  decision?: unknown;
   description?: unknown;
   when_to_use?: unknown;
   body?: unknown;
@@ -229,6 +240,19 @@ export function assembleStructuredDistillMarkdown(
   const sources = kind === "knowledge" ? list(payload.sources) : [];
   if (sources.length > 0) fm.xrefs = sources;
   return assembleAssetFromString(serializeFrontmatterQuoted(fm), body);
+}
+
+/**
+ * The writer's answer when it found no lesson: the word NONE, or `decision: "none"` in a reply bound to the schema,
+ * with the reason it gave (`""` for the bare word). `null` for any other reply.
+ */
+function answeredNone(raw: string): { reason: string } | null {
+  if (/^[\s"'`*_]*none[\s.!"'`*_]*$/i.test(stripMarkdownFences(raw))) return { reason: "" };
+  const payload = parseEmbeddedJsonResponse<StructuredDistillPayload>(raw);
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload) || payload.decision !== "none") {
+    return null;
+  }
+  return { reason: typeof payload.reason === "string" ? payload.reason.trim() : "" };
 }
 
 function validateKnowledgeContent(content: string, inputRef: string): DistillValidationFinding[] {
@@ -339,7 +363,7 @@ export function buildDistillPrompt(input: BuildPromptInput): string {
   lines.push(
     input.proposalKind === "knowledge"
       ? "Produce the knowledge markdown file now. Start your response with `---` on the first line, followed by a `description:` field whose value is a 1-sentence summary (20–400 chars). Never use placeholder values like `---`, `tbd`, `n/a`, or a single dash. If the source has nothing meaningful to summarize, do NOT produce a proposal — return an empty response instead. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body."
-      : "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields. Both must be real one-sentence summaries (20–400 chars) — never placeholder values like `---`, `tbd`, or `n/a`. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body.",
+      : "Produce the lesson markdown file now. Start your response with `---` on the first line, followed by `description:` and `when_to_use:` fields. Both must be real one-sentence summaries (20–400 chars) — never placeholder values like `---`, `tbd`, or `n/a`. The frontmatter block ends with a second `---` line; do not emit any additional `---` fences in the body. If the memory holds no lesson, answer NONE instead.",
   );
   return lines.join("\n");
 }
@@ -369,7 +393,7 @@ interface DistillRun {
   asset: { path: string | null; content: string | null };
   vocabulary: Set<string>;
   outcomeWeightEnabled: boolean;
-  similar: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+  related: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
   lookup: (ref: string) => Promise<string | null>;
 }
 
@@ -473,7 +497,7 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     asset,
     vocabulary: loadRefVocabulary(),
     outcomeWeightEnabled: config.improve?.salience?.outcomeWeightEnabled !== false,
-    similar: options.fetchSimilarLessonsFn ?? fetchTopSimilarLessons,
+    related: options.fetchRelatedFn ?? fetchRelatedAssets,
     lookup,
   };
   const feedbackEvents = readDistillFeedback(run);
@@ -524,6 +548,8 @@ async function distill(
         system,
         prompt,
         gate: { config: run.config, enabled: true },
+        // NONE is an answer: a parser that rejected it would ask for a lesson again.
+        parse: (raw) => (answeredNone(raw) ? raw : parseEmbeddedJsonResponse(raw)),
         // The injected test transport never sees the schema.
         request: {
           ...(run.options.chat === undefined
@@ -556,6 +582,17 @@ async function distill(
     };
   }
 
+  const none = answeredNone(call.raw);
+  if (none) {
+    return skipDistill(
+      run,
+      outputRef,
+      kind,
+      "nothing_reusable",
+      `The writer found no lesson in ${run.inputRef}${none.reason ? `: ${none.reason}` : "."}`,
+    );
+  }
+
   const assembled = assembleDistilledContent(run, call.raw, kind, outputRef);
   if ("rejection" in assembled) return assembled.rejection;
   return judgeAndQueue(run, {
@@ -564,7 +601,21 @@ async function distill(
     content: assembled.content,
     source: run.asset.content,
     descriptionSwapped: assembled.descriptionSwapped,
+    feedback: feedbackLines(feedback),
   });
+}
+
+/** The feedback that says something, one line each, for the judge. A bare signal says nothing the writer could use. */
+function feedbackLines(feedback: BuildPromptInput["feedback"]): string[] {
+  const lines: string[] = [];
+  for (const event of feedback) {
+    const meta = event.metadata ?? {};
+    const detail =
+      (typeof meta.reason === "string" ? meta.reason : "") || (typeof meta.note === "string" ? meta.note : "");
+    if (detail.trim())
+      lines.push(`- [${typeof meta.signal === "string" ? meta.signal : event.eventType}] ${detail.trim()}`);
+  }
+  return lines;
 }
 
 /** Whether a file already holds the lesson `ref` in the stash the proposal would be filed in. */
@@ -647,6 +698,8 @@ async function judgeAndQueue(
     content: string;
     source: string | null;
     descriptionSwapped?: number;
+    /** The feedback lines the writer saw, for the judge. */
+    feedback?: string[];
     /** Knowledge promotions keep their own frontmatter and skip the fidelity check. */
     promotion?: boolean;
   },
@@ -655,11 +708,12 @@ async function judgeAndQueue(
   let confidence: number | undefined;
   let judged: QualityJudgeResult | undefined;
   if (qualityGateEnabled(run)) {
-    const similarLessons = await run.similar(content.slice(0, 500), 3);
+    const related = await run.related(content.slice(0, 500), RELATED_COUNT);
     // The judge reads what the generator read: the source body, without its frontmatter (buildDistillPrompt).
     const source = out.source ? parseFrontmatter(out.source).content.trim() : "";
     const verdict = await runLessonQualityJudge(run.config, content, source, run.options.chat, {
-      ...(similarLessons.length > 0 ? { similarLessons } : {}),
+      ...(related.length > 0 ? { related } : {}),
+      ...(out.feedback && out.feedback.length > 0 ? { feedback: out.feedback } : {}),
       ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
       ...(run.options.signal ? { signal: run.options.signal } : {}),
       onNotices: run.notices.add,
@@ -1114,14 +1168,14 @@ async function buildDistillMessages(
   outputRef: string,
 ): Promise<{ system: string; prompt: string }> {
   const rejectedProposals = rejectedProposalContext(run.stash, run.inputRef, run.options.ctx, run.options.eventsCtx);
-  // CLS interleaving (default off): show related lessons so the model does not overwrite them.
+  // CLS interleaving (default on): show the related lessons, knowledge notes and skills, so the writer neither repeats nor overwrites them.
   const cls =
     (getImproveProcessConfig("distill", run.profile)?.cls as { enabled?: boolean; adjacentCount?: number }) ?? {};
   let clsContext = "";
-  if (cls.enabled) {
+  if (cls.enabled !== false) {
     try {
       const query = run.asset.content ? run.asset.content.slice(0, 500) : run.inputRef;
-      clsContext = buildClsContext(await run.similar(query, cls.adjacentCount ?? DEFAULT_CLS_ADJACENT_COUNT), cls);
+      clsContext = buildClsContext(await run.related(query, cls.adjacentCount ?? DEFAULT_CLS_ADJACENT_COUNT), cls);
     } catch {
       // CLS context is supplemental.
     }
@@ -1151,12 +1205,21 @@ async function defaultLookup(ref: string, stashDir: string): Promise<string | nu
   });
 }
 
-/** Top-N existing lessons similar to `query` (empty when search is unavailable). */
-async function fetchTopSimilarLessons(query: string, n: number): Promise<Array<{ ref: string; content: string }>> {
+/** What the library already holds on a subject: lessons and knowledge notes say it, a skill is how to do it. */
+const RELATED_TYPES = ["lesson", "knowledge", "skill"] as const;
+const RELATED_COUNT = 3;
+
+/** The top-N lessons, knowledge notes and skills related to `query`, best first (empty when search is unavailable). */
+async function fetchRelatedAssets(query: string, n: number): Promise<Array<{ ref: string; content: string }>> {
   try {
-    const result = await akmSearch({ query, type: "lesson", limit: n, skipLogging: true, eventSource: "improve" });
-    return (result?.hits ?? [])
+    // One search per type: memories outnumber the rest and would fill an untyped list.
+    const results = await Promise.all(
+      RELATED_TYPES.map((type) => akmSearch({ query, type, limit: n, skipLogging: true, eventSource: "improve" })),
+    );
+    return results
+      .flatMap((result) => result?.hits ?? [])
       .filter((h): h is import("../../sources/types").SourceSearchHit => "path" in h && typeof h.path === "string")
+      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
       .slice(0, n)
       .map((h) => {
         let content = "";

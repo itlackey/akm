@@ -86,9 +86,9 @@ const qualityGateField = z
 
 /**
  * WS-3b: CLS (Complementary Learning System) interleaving (step 9).
- * distill/memoryInference prompts include embedding-retrieved existing adjacent
- * lessons/knowledge to prevent catastrophic interference with prior generalizations.
- * Default OFF. Only meaningful on `distill` and `memoryInference` processes.
+ * The distill prompt includes the lessons, knowledge notes and skills the library already holds near the
+ * memory, so the writer answers NONE for a rule one of them states and does not overwrite a prior
+ * generalization. Default ON; `enabled: false` turns it off. Only meaningful on the `distill` process.
  */
 const clsField = z
   .object({

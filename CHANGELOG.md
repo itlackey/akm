@@ -37,6 +37,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `judgment-parse-failure`, and a runner failure `judgment-error`, instead of
   looking like a defer.
 
+- **Distill writes a lesson only when its memory holds one, says only what the
+  memory says, and its judge rejects what a reviewer would.** 2 of the 22 distill
+  proposals since 0.9.26 began were accepted, and 17 of the 19 queued on
+  2026-10-05 were bad (they restated their memory, filed a dated status as a
+  lesson, claimed what the memory does not say, or repeated an asset the library
+  holds). Four causes, found in the code and the rejected proposals, and fixed:
+  (1) the prompt and schema forced a lesson from every memory, and 18 of the 19
+  were records of what was done; the writer now says why a memory holds a
+  lesson or none (`reason`, then `decision: lesson|none`, or the word `NONE`),
+  defined as a cause and what to do about it, or a rule with its reason, and
+  writes only what the memory and its feedback state, in the scope they have; a
+  `NONE` is a `skipped` distill (`skipReason: nothing_reusable`, the writer's
+  reason in the message) with no proposal and no judge call, and the loop keeps
+  its ledger row `unchanged`. (2) The judge asked for "information not already
+  present in the source", so an invented claim scored as novel and a faithful
+  lesson of a lesson-worthy memory as a restatement, and it passed anything that
+  "goes beyond the source" because it "may draw on feedback you are not shown".
+  The rubric is now reusable (a rule with its reason, not a record of what was
+  done), non-redundancy and grounding (every cause, step, number and limit is
+  in the source or its feedback), and the judge is shown the feedback the writer
+  saw. (3) A mean hid a decisive score (4 and 1 average 2.5, a review), and a
+  reviewer read everything the judge did not reject; any criterion at 2 or
+  below, grounding included, is now `quality_rejected`, and the reason names it
+  (`grounding 2/5: …`). The "borderline grounding" routing is gone. (4) Neither
+  the writer nor the judge could see a knowledge note or a skill that already
+  states the rule (the judge saw the 3 lexically nearest lessons, none of them
+  related); both now see the lessons, knowledge notes and skills nearest the
+  memory, which is the existing `processes.distill.cls` context turned on by
+  default (`enabled: false` turns it off). Judge scores are keyed `reusable`
+  where they were `novelty`. Measured on the local qwen3.8-27b with akm-eval's
+  `evals/distill` (30 fictional memories, 5 runs each side): good lessons 7/14 on
+  average (5 to 9) against 3.7/14 (3 to 5), lessons queued for memories that
+  deserve none 0.4/16 against 3.3/16. On 37 real memories with their feedback
+  (34 reviewed bad, 3 good; 3 runs against 2): a lesson was queued for 11% of the
+  bad ones against 44%, and for 6 of 9 good ones against 4 of 6; of the memories
+  that pass 0.9.26's skip of bare positive feedback, 20% of the bad against 50%.
+  No new settings.
 - **Reflect no longer plans an asset whose negative feedback is already acted
   on.** A negative `akm feedback` that came with an exact fix (`--replace` and
   `--with`, `--outdated` or `--superseded-by`) makes a `feedback` proposal, and

@@ -46,13 +46,13 @@ function lastDistillEvent(): Record<string, unknown> | undefined {
 
 describe("writeQualityRejection — quality_rejected lands in the improve ledger (R16)", () => {
   test("criteria reach the event and the envelope; the input gets the distill rejection window", () => {
-    const criteria = { novelty: 2, actionability: 3, nonRedundancy: 2 };
+    const criteria = { reusable: 2, actionability: 3, nonRedundancy: 2 };
     const result = writeQualityRejection({
       stash: stashDir,
       inputRef: "memories/source-ref",
       proposalRef: "lessons/proposed-ref",
       content: "proposed lesson body",
-      score: (criteria.novelty + criteria.actionability + criteria.nonRedundancy) / 3,
+      score: (criteria.reusable + criteria.actionability + criteria.nonRedundancy) / 3,
       reason: "judge reason",
       meta: { criteria },
       ledgerRef: "stash//memories/source-ref",
