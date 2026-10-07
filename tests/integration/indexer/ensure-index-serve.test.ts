@@ -86,6 +86,19 @@ function replaceWithPopulatedV17Index(): void {
   }
 }
 
+/** The index 0.9.1 wrote (`index-v20.sql`): the retired columns beside the current ones, `document_json` NULL, built for this stash. */
+function replaceWithPopulatedV20Index(): void {
+  const dbPath = getDbPath();
+  for (const candidate of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) fs.rmSync(candidate, { force: true });
+  const fixture = path.join(import.meta.dir, "..", "..", "fixtures", "previous-release-corpus", "index-v20.sql");
+  const legacy = openDatabase(dbPath);
+  try {
+    legacy.exec(fs.readFileSync(fixture, "utf8").replaceAll("/fixture/stash", stashDir.replaceAll("'", "''")));
+  } finally {
+    legacy.close();
+  }
+}
+
 beforeEach(async () => {
   const stash = sandboxStashDir();
   stashDir = stash.dir;
@@ -130,6 +143,15 @@ describe("ensureIndex read-path (background mode)", () => {
     replaceWithPopulatedV17Index();
     closeDatabase(openExistingDatabase(getDbPath()));
     expect(isIndexStale(stashDir)).toBe(true);
+  });
+
+  test("a populated layout-20 index (0.9.1) cannot serve the stash, so a read rebuilds it first (#1053)", async () => {
+    replaceWithPopulatedV20Index();
+    closeDatabase(openExistingDatabase(getDbPath()));
+    expect(isIndexStale(stashDir)).toBe(true);
+
+    expect(await ensureIndex(stashDir)).toBe(true);
+    expect(indexedPaths()).toContain(path.join(stashDir, "memories", "first.md"));
   });
 
   test("a populated pre-current generation rebuilds from materialized sources before serving", async () => {

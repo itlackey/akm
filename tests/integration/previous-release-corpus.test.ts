@@ -75,6 +75,12 @@
  *     whose relations sat only in `document_json` — a reader serves it as-is,
  *     and the writable opener derives its declared links (#935) in place,
  *     re-reading only the directories that hold workflows and tasks.
+ *   - a layout-20 derived index as 0.9.1 wrote it (`index-v20.sql`), whose
+ *     `entries` table keeps the transitional NOT NULL columns layout 21
+ *     removed and leaves `document_json` NULL — a reader cannot serve it, and
+ *     the writable opener recreates its entries-keyed tables instead of
+ *     migrating it in place (#1053), from the pristine file and from the
+ *     half-migrated one a failed 0.9.17+ open left behind.
  *   - a pre-`--scheduler-context` crontab row (akm < 0.9.2, #881): the
  *     scheduled invocation still sits inside akm's own `# akm:task …
  *     BEGIN/END` sentinels but predates `--bundle` and the
@@ -105,6 +111,7 @@ import {
 import { getConfigPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { _resetWarnOnceForTests, _setWarnSinkForTests, resetQuiet, setQuiet } from "../../src/core/warn";
+import { deriveEntryProvenance } from "../../src/indexer/installations";
 import { generateEmbeddingsForDb } from "../../src/indexer/materialize-embeddings";
 import { _setEmbedderForTests } from "../../src/llm/embedder";
 import {
@@ -112,7 +119,8 @@ import {
   openIndexDatabase,
   openReadonlyExistingDatabase,
 } from "../../src/storage/repositories/index-connection";
-import { CANONICAL_INDEX_DB_VERSION } from "../../src/storage/repositories/index-entry-schema";
+import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
+import { CANONICAL_INDEX_DB_VERSION, hasCurrentEntriesTable } from "../../src/storage/repositories/index-entry-schema";
 import { searchFts } from "../../src/storage/repositories/index-fts-repository";
 import { countLinksByKind, readEntryLinks } from "../../src/storage/repositories/index-links-repository";
 import { getMeta } from "../../src/storage/repositories/index-meta-repository";
@@ -282,6 +290,75 @@ describe("previous-release corpus — upgrade must not break reads", () => {
       }
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  describe("a layout-20 index (0.9.1) is recreated, not migrated in place (#1053)", () => {
+    // What the 0.9.17+ opener had already committed when it died on this index (`search_text` hashed away,
+    // `asset_links` created) with the layout stamp still at 20.
+    const HALF_MIGRATED = `
+      ALTER TABLE entries ADD COLUMN embed_hash TEXT;
+      ALTER TABLE entries DROP COLUMN search_text;
+      CREATE TABLE asset_links (
+        entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE, ord INTEGER NOT NULL,
+        kind TEXT NOT NULL, raw TEXT NOT NULL, dst_bundle TEXT, dst_concept TEXT NOT NULL,
+        PRIMARY KEY (entry_id, ord)
+      ) WITHOUT ROWID;
+    `;
+
+    for (const [shape, extraSql] of [
+      ["as 0.9.1 wrote it", ""],
+      ["after a failed 0.9.17+ open left it half-migrated", HALF_MIGRATED],
+    ] as const) {
+      test(`the index ${shape} opens: its entries-keyed tables are recreated and take new entries`, () => {
+        const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-v20-index-"));
+        try {
+          const dbPath = path.join(root, "index.db");
+          const legacy = new Database(dbPath);
+          legacy.exec(readFixture("index-v20.sql"));
+          if (extraSql) legacy.exec(extraSql);
+          legacy.close();
+
+          // Every row's document_json is NULL and the transitional columns remain: a reader cannot serve it.
+          const reader = openReadonlyExistingDatabase(dbPath);
+          if (!reader) throw new Error("expected a read handle");
+          try {
+            expect(hasCurrentEntriesTable(reader)).toBe(false);
+          } finally {
+            closeDatabase(reader);
+          }
+
+          // Migrating its links in place died here with "null is not an object (evaluating 'doc.xrefs')".
+          const upgraded = openIndexDatabase(dbPath);
+          try {
+            expect(getMeta(upgraded, "version")).toBe(String(CANONICAL_INDEX_DB_VERSION));
+            expect(hasCurrentEntriesTable(upgraded)).toBe(true);
+            // Recreated empty: the next `akm index` re-walks every source.
+            expect(upgraded.prepare("SELECT COUNT(*) AS count FROM entries").get()).toEqual({ count: 0 });
+            expect(upgraded.prepare("SELECT COUNT(*) AS count FROM index_dir_state").get()).toEqual({ count: 0 });
+
+            // The retired NOT NULL columns used to refuse every insert ("NOT NULL constraint failed: entries.entry_key").
+            const entry = { type: "knowledge" as const, name: "new-note", description: "Added after the upgrade." };
+            upsertEntry(
+              upgraded,
+              "/fixture/stash/knowledge/new-note.md",
+              entry,
+              deriveEntryProvenance(
+                { bundleId: "stash", componentId: "stash", adapterId: "akm" },
+                entry.type,
+                entry.name,
+              ),
+            );
+            expect(upgraded.prepare("SELECT item_ref FROM entries").all()).toEqual([
+              { item_ref: "stash//knowledge/new-note" },
+            ]);
+          } finally {
+            closeDatabase(upgraded);
+          }
+        } finally {
+          fs.rmSync(root, { recursive: true, force: true });
+        }
+      });
     }
   });
 

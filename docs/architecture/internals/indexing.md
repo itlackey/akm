@@ -403,9 +403,10 @@ so a layout change is applied in place rather than by discarding the index.
   older) also has its per-directory cursor cleared so the next run
   re-reads every source and fills the fragments; entry ids, and therefore
   embeddings, stay put.
-- An `entries` table older than layout 21 (no `item_ref`) cannot be keyed by
-  this release: its entries-keyed tables are recreated and re-walked, keeping
-  the LLM enrichment cache.
+- An `entries` table older than layout 21 (no `item_ref`, or still the retired
+  `entry_key` columns, as 0.9.1 wrote it) cannot be keyed by this release: its
+  entries-keyed tables are recreated and re-walked, keeping the LLM enrichment
+  cache.
 - Read-only and existing-database openers never refuse over the marker: an
   older layout is served as-is (readers handle both FTS layouts and a missing
   `embeddings.model`), a newer one likewise, each named once on stderr.
