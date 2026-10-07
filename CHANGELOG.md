@@ -35,6 +35,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   answered by one retry without both (which may in turn fall back without the
   schema), and akm stops sending them to that endpoint and model for the rest
   of the process, as it already does for `response_format`.
+- **Distill's response schemas are valid for a strict structured-output
+  provider.** The client sends a response schema `strict: true`, and OpenAI
+  refuses one whose objects leave a property out of `required`: `400 Invalid
+  schema for response_format 'akm_response': ... Missing 'tags'`. The lesson
+  schema left out `tags`, and the knowledge schema `tags` and `sources`, so
+  the first distill request on such a provider always failed. After a 4xx the
+  client retries once without the schema, but a gateway that answers the same
+  rejection with a 502 is not retried, and every distill call through it
+  failed; the workaround, `supportsJsonSchema: false`, loses the guidance that
+  keeps a model from leaving out `when_to_use`. Every property is now
+  required, and an empty array stands for none (distill already dropped an
+  empty `tags` or `sources`).
 - **`akm improve` no longer reflects on an asset whose file a proposal would not
   write, so accepting a reflect proposal no longer adds a second file.** A
   skill's `references/a.md` is indexed as `knowledge/skills/<name>/references/a`,
