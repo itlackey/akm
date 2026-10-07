@@ -104,7 +104,7 @@ one `akm improve --bundle <name>` run per other bundle you want improved.
 
 A rewrite (reflect) is planned only for assets with negative feedback in the
 last 30 days that is newer than the last time improve tried them, or for an
-explicit ref; a positive or note-only signal never plans one. Distill reads any
+explicit ref; a positive or note-only signal never plans one, and neither does a negative whose exact fix (`--replace`, `--outdated`, `--superseded-by`) has since been accepted. Distill reads any
 feedback on a memory in that window, but skips a memory flagged wrong and not
 edited since: a negative feedback in that window judged the body it still has
 (or, recorded without that body's hash, is newer than its file's last write).

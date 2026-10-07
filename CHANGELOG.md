@@ -26,6 +26,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Reflect no longer plans an asset whose negative feedback is already acted
+  on.** A negative `akm feedback` that came with an exact fix (`--replace` and
+  `--with`, `--outdated` or `--superseded-by`) makes a `feedback` proposal, and
+  once that proposal is accepted the feedback has done its work. Reflect still
+  took the ref as having fresh negative feedback, and on 2026-10-07 44 of its 50
+  refs were of that kind: the judge refused or the model changed nothing for
+  most of them. A negative event with a fix is now left out of the reflect
+  cursor when an accepted `feedback` proposal for the ref was created at or
+  after it. A negative with no fix, one given after the proposal, and one whose
+  proposal is still pending or was rejected plan a reflect as before.
 - **Consolidate stops re-offering memories a reviewer already turned down, and
   the nightly judge sees what a promotion may duplicate.** About 53 promotions a
   night reached review at ~5% precision, 64-70% of them a memory body already
