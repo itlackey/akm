@@ -26,6 +26,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The drain's judge no longer sees a note with a code block as truncated.**
+  The judgment prompt fenced the proposed content (and the live asset, sibling
+  proposals and neighbour excerpts) in three backticks, so a note holding its
+  own code block closed the fence early and read as cut off; real rejections said
+  "ends in an empty code block" or "truncated". Each block now uses a fence longer
+  than any backtick run inside it. The judge's reason is also kept on accepts,
+  staged accepts and defers (as the gate decision's `judgeReason`, until now
+  rejections only), and a judge reply that is not a verdict is stamped
+  `judgment-parse-failure`, and a runner failure `judgment-error`, instead of
+  looking like a defer.
+
 - **Reflect no longer plans an asset whose negative feedback is already acted
   on.** A negative `akm feedback` that came with an exact fix (`--replace` and
   `--with`, `--outdated` or `--superseded-by`) makes a `feedback` proposal, and
