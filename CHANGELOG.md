@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm improve` no longer reflects on an asset whose file a proposal would not
+  write, so accepting a reflect proposal no longer adds a second file.** A
+  skill's `references/a.md` is indexed as `knowledge/skills/<name>/references/a`,
+  but a proposal writes the path derived from that ref,
+  `knowledge/skills/<name>/references/a.md`. Nothing is there, so the proposal
+  was a `create`, and accepting it wrote a copy beside the skill's own file;
+  later proposals then revised the copy while the skill's file drifted. Reflect
+  now refuses before it calls the model, naming the file and the path a
+  proposal would write, and the loop records it as a skip (`unsupported_type`,
+  `file_outside_layout` in the `reflect_completed` event). This is the rule
+  0.9.26 added to `akm feedback --replace`. An asset that another bundle owns is
+  still refused by `createProposal` (#1000).
+
 ## [0.9.26] - 2026-10-05
 
 The stable release of the 0.9.26 line: 0.9.26-alpha.1 and alpha.2, and the

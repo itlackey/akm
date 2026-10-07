@@ -15,11 +15,13 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
+import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { DESCRIPTION_MAX_CHARS, requiresDescription } from "../../core/authoring-rules";
-import { resolveStashDir } from "../../core/common";
+import { isWithin, resolveStashDir, safeRealpath } from "../../core/common";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { generatedContentRejection } from "../../core/content-safety";
@@ -712,6 +714,30 @@ function unsupportedTypeFailure(
   };
 }
 
+/**
+ * A proposal writes the file derived from the ref's type and name under the bundle's root. An asset indexed
+ * anywhere else (a skill's `references/a.md` is `knowledge/skills/<name>/references/a`) has nothing there, so the
+ * proposal would be a `create` and accepting it would add a second file for the ref (#1052).
+ */
+function fileOutsideLayoutFailure(
+  ref: string,
+  file: string,
+  writes: string,
+  emitFailed: ReflectRun["emitFailed"],
+): { failure: AkmReflectResult } {
+  emitFailed("unsupported_type", "file_outside_layout", ref);
+  return {
+    failure: {
+      schemaVersion: 2,
+      ok: false,
+      reason: "unsupported_type" as AgentFailureReason,
+      error: `Reflect refused: the file for ${ref} is ${file}, but a proposal would write ${writes}. Edit the file directly.`,
+      ref,
+      exitCode: null,
+    },
+  };
+}
+
 /** The target's parsed ref and current content, or a refusal for a type reflect cannot patch. */
 async function resolveReflectSource(
   options: AkmReflectOptions,
@@ -730,16 +756,18 @@ async function resolveReflectSource(
     );
   }
   let assetContent = options.assetContent;
+  let assetFile: string | undefined;
   if (assetContent === undefined) {
     try {
       const qualifiedRef = options.itemRef ?? options.ref;
       const localFilePath = await findAssetFilePath(qualifiedRef, stash);
       if (localFilePath && fs.existsSync(localFilePath)) {
-        assetContent = fs.readFileSync(localFilePath, "utf8");
+        assetFile = localFilePath;
       } else {
         const entry = await lookup(parseRefInput(qualifiedRef));
-        if (entry?.filePath && fs.existsSync(entry.filePath)) assetContent = fs.readFileSync(entry.filePath, "utf8");
+        if (entry?.filePath && fs.existsSync(entry.filePath)) assetFile = entry.filePath;
       }
+      if (assetFile !== undefined) assetContent = fs.readFileSync(assetFile, "utf8");
     } catch {
       // An index miss is not fatal: reflect then has no content to patch.
     }
@@ -749,6 +777,15 @@ async function resolveReflectSource(
     (assetContent === undefined || parseFrontmatter(assetContent).frontmatter === null)
   ) {
     return unsupportedTypeFailure(options.ref, parsedRef.type, "its content is not frontmatter + markdown", emitFailed);
+  }
+  // A file in another bundle is `createProposal`'s to refuse (#1000); this one is in the proposal's own bundle.
+  const root = path.resolve(options.target?.root ?? stash);
+  const typeDir = stashDirFor(parsedRef.type);
+  if (assetFile !== undefined && typeDir !== undefined && isWithin(assetFile, root)) {
+    const writes = assetPathForName(parsedRef.type, path.join(root, typeDir), parsedRef.name);
+    if (safeRealpath(writes) !== safeRealpath(assetFile)) {
+      return fileOutsideLayoutFailure(options.ref, assetFile, writes, emitFailed);
+    }
   }
   return { assetContent, parsedRef };
 }
