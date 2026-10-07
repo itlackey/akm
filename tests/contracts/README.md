@@ -29,3 +29,4 @@ section names are intentionally absent from this active suite.
 | `engine-boundary.test.ts` | Engine lowering and stateless LLM boundary |
 | `engine-interchange.test.ts` | One cross-engine contract over the LLM path, every CLI harness and opencode-sdk |
 | `lesson-type.test.ts` | Lesson registration and lint behavior |
+| `response-schemas-strict.test.ts` | Every response schema akm sends is valid for a strict structured-output provider |

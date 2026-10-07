@@ -33,7 +33,7 @@ const MAX_QUERY_CHARS = 2000;
 /** The judge sees this much of the body, as in the retrieval eval. */
 const MAX_DOC_CHARS = 1500;
 
-const GRADE_SCHEMA: Record<string, unknown> = {
+export const GRADE_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["grade", "reason"],
   additionalProperties: false,

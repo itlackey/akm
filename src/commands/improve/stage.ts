@@ -544,7 +544,7 @@ function parseJudgeResponse(
   return inRange(parsed.score) ? { score: parsed.score, lowest: parsed.score, reason } : undefined;
 }
 
-function judgeResponseSchema(keys: readonly string[]): Record<string, unknown> {
+export function judgeResponseSchema(keys: readonly string[]): Record<string, unknown> {
   return {
     type: "object",
     required: ["scores", "reason"],

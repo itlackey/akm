@@ -121,7 +121,7 @@ export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   },
 };
 
-const PAIR_CHECK_JSON_SCHEMA: Record<string, unknown> = {
+export const PAIR_CHECK_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
   required: ["missing"],
   additionalProperties: false,

@@ -114,6 +114,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   up is drained again so the ref passes back when its holder goes, and each
   pair is reported in the `warnings` of `akm index`, naming the file indexed
   and the one skipped.
+- **Consolidate's plan schema and the session summary schema are valid for a
+  strict structured-output provider, and a new response schema can no longer
+  skip the rule.** The client sends a response schema `strict: true`, and
+  OpenAI refuses one whose objects leave a property out of `required`. The
+  consolidate plan left out `description` and `confidence`, and the session
+  summary `tags`, so the first request of every plan and every summary to such
+  a provider was refused. The client then retries without the schema and
+  remembers that per connection (endpoint and model), not per schema, so one
+  invalid schema also switched the response schema off for every valid one
+  that followed on that connection. Every property of both is now required: an
+  empty `description` keeps the memory's own, a null `confidence` records none
+  and an empty `tags` array is no tags, which is how all three were already
+  read. A contract test runs every schema akm sends through the rule, so a
+  property added later without being required fails CI.
 
 ## [0.9.26] - 2026-10-05
 
