@@ -22,15 +22,36 @@ import { warn } from "../../core/warn";
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import { ftsOrMatch, ftsQueryTokens } from "../../indexer/search/fts-query";
 import { buildSearchFields } from "../../indexer/search/search-fields";
-import type { Database, SqlValue } from "../database";
+import type { Database, RunResult, SqlValue } from "../database";
+import { isContentlessFtsDdl, readTableSql } from "./index-entry-schema";
+import { deleteMeta, getMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
 // `entries_fts.rowid = entries.id`, so a per-entry delete is a rowid lookup.
 const INSERT_FTS_SQL =
   "INSERT INTO entries_fts (rowid, entry_id, name, description, tags, hints, content) VALUES (?, ?, ?, ?, ?, ?, ?)";
 
+/**
+ * `index_meta` key stamped when a delete took a row out of `entries_fts`.
+ *
+ * FTS5 cannot take a deleted row out of a contentless table's BM25 totals (its
+ * row count, and the token counts the average document length comes from), so
+ * every removal or replacement leaves them one row too high and an updated
+ * index scores differently from a fresh one (#1048). SQLite has no command that
+ * recomputes them (`delete` and `rebuild` are refused on a contentless table),
+ * so the next `akm index` rebuilds the table from `entries`
+ * ({@link rebuildFtsIfTotalsStale}).
+ */
+const FTS_TOTALS_STALE_META = "ftsTotalsStale";
+
+/** The content-bearing table older SQLite gets subtracts a deleted row itself. */
+function isContentlessFts(db: Database): boolean {
+  return isContentlessFtsDdl(readTableSql(db, "entries_fts"));
+}
+
 interface FtsMutationStatements {
   deleteOne: ReturnType<Database["prepare"]>;
+  markTotalsStale: ReturnType<Database["prepare"]>;
   insert: ReturnType<Database["prepare"]>;
   upsertFragmentSource: ReturnType<Database["prepare"]>;
   deleteFragmentSource: ReturnType<Database["prepare"]>;
@@ -43,6 +64,9 @@ function getFtsMutationStatements(db: Database): FtsMutationStatements {
   if (existing) return existing;
   const statements = {
     deleteOne: db.prepare("DELETE FROM entries_fts WHERE rowid = ?"),
+    markTotalsStale: db.prepare(
+      `INSERT OR IGNORE INTO index_meta (key, value) VALUES ('${FTS_TOTALS_STALE_META}', '1')`,
+    ),
     insert: db.prepare(INSERT_FTS_SQL),
     upsertFragmentSource: db.prepare(
       "INSERT INTO entry_fragments (entry_id, safe_markdown) VALUES (?, ?) ON CONFLICT(entry_id) DO UPDATE SET safe_markdown = excluded.safe_markdown",
@@ -51,6 +75,11 @@ function getFtsMutationStatements(db: Database): FtsMutationStatements {
   };
   ftsMutationStatementsByDb.set(db, statements);
   return statements;
+}
+
+/** A delete that removed a row leaves the table's BM25 totals too high until it is rebuilt. */
+function noteRemoval(statements: FtsMutationStatements, removed: RunResult): void {
+  if (removed.changes > 0) statements.markTotalsStale.run();
 }
 
 /**
@@ -65,7 +94,7 @@ export function replaceFtsEntry(
 ): void {
   const fields = buildSearchFields(entry);
   const statements = getFtsMutationStatements(db);
-  statements.deleteOne.run(entryId);
+  noteRemoval(statements, statements.deleteOne.run(entryId));
   statements.insert.run(entryId, entryId, fields.name, fields.description, fields.tags, fields.hints, fields.content);
   if (fragmentContent === undefined) {
     // Metadata-only re-upserts and re-keys deserialize the public document
@@ -82,7 +111,10 @@ export function deleteFtsEntries(db: Database, entryIds: readonly number[]): voi
   for (let i = 0; i < entryIds.length; i += SQLITE_CHUNK_SIZE) {
     const chunk = entryIds.slice(i, i + SQLITE_CHUNK_SIZE);
     const placeholders = chunk.map(() => "?").join(",");
-    db.prepare(`DELETE FROM entries_fts WHERE rowid IN (${placeholders})`).run(...chunk);
+    noteRemoval(
+      getFtsMutationStatements(db),
+      db.prepare(`DELETE FROM entries_fts WHERE rowid IN (${placeholders})`).run(...chunk),
+    );
     db.prepare(`DELETE FROM entry_fragments WHERE entry_id IN (${placeholders})`).run(...chunk);
   }
 }
@@ -207,7 +239,11 @@ export interface IndexedMarkdownFragment {
  */
 export function rebuildFts(db: Database): void {
   db.transaction(() => {
-    db.exec("DELETE FROM entries_fts");
+    // `delete-all` also resets the BM25 totals, which a plain DELETE leaves as they were (#1048).
+    db.exec(
+      isContentlessFts(db) ? "INSERT INTO entries_fts(entries_fts) VALUES('delete-all')" : "DELETE FROM entries_fts",
+    );
+    deleteMeta(db, FTS_TOTALS_STALE_META);
     // Keyset pages, so a large index is never held in memory at once.
     const page = db.prepare("SELECT id, document_json FROM entries WHERE id > ? ORDER BY id LIMIT 500");
     const insertStmt = db.prepare(INSERT_FTS_SQL);
@@ -234,4 +270,19 @@ export function rebuildFts(db: Database): void {
       warn(`[db] rebuildFts: skipped ${skipped} entr${skipped === 1 ? "y" : "ies"} with invalid document_json`);
     }
   })();
+}
+
+/**
+ * Rebuild `entries_fts` from `entries` when rows have left it since its BM25
+ * totals were last taken (#1048): about a second at 25,000 entries. Returns
+ * whether it did.
+ */
+export function rebuildFtsIfTotalsStale(db: Database): boolean {
+  if (getMeta(db, FTS_TOTALS_STALE_META) === undefined) return false;
+  if (!isContentlessFts(db)) {
+    deleteMeta(db, FTS_TOTALS_STALE_META);
+    return false;
+  }
+  rebuildFts(db);
+  return true;
 }

@@ -35,6 +35,7 @@ import {
   isContentlessFtsDdl,
   missingEntryColumns,
   readTableSql,
+  retiredEntryColumns,
   supportsContentlessDelete,
   tableExists,
 } from "./index-entry-schema";
@@ -90,11 +91,13 @@ const REGISTRY_INDEX_CACHE_DDL = `
 `;
 
 /**
- * An `entries` table missing a required column cannot be read or written by
- * this release (the last such change was v20→v21, which removed the
- * transitional `entry_key`/`dir_path`/... columns and made `item_ref` the
- * key). Recreate only the tables keyed by `entries.id` — their ids are about
- * to be re-minted, so the rows would dangle anyway. The LLM enrichment cache
+ * An `entries` table missing a required column, or still carrying a retired
+ * one, cannot be read or written by this release (the last such change was
+ * v20→v21, which removed the transitional `entry_key`/`dir_path`/... columns
+ * and made `item_ref` the key). Layouts 18–20 carried the current columns
+ * beside the retired ones, so only the retired ones give them away.
+ * Recreate only the tables keyed by `entries.id` — their ids are about to be
+ * re-minted, so the rows would dangle anyway. The LLM enrichment cache
  * (keyed by ref) is kept. The LLM entity-graph tables are unconditionally
  * dropped elsewhere in this file regardless of this recreation (retired
  * 0.9.17-alpha.9), not kept. The next index run re-walks every source.
@@ -102,9 +105,14 @@ const REGISTRY_INDEX_CACHE_DDL = `
 function ensureEntriesLayout(db: Database): void {
   if (!tableExists(db, "entries")) return;
   const missing = missingEntryColumns(db);
-  if (missing.length === 0) return;
+  const retired = retiredEntryColumns(db);
+  if (missing.length === 0 && retired.length === 0) return;
+  const why =
+    missing.length > 0
+      ? `predates the ${missing.join(", ")} column${missing.length === 1 ? "" : "s"}`
+      : `still has the retired ${retired.join(", ")} column${retired.length === 1 ? "" : "s"}`;
   warn(
-    `Index database entries table predates the ${missing.join(", ")} column${missing.length === 1 ? "" : "s"} — ` +
+    `Index database entries table ${why} — ` +
       "recreating the entries-keyed tables (entries, full-text, embeddings, utility scores); the " +
       "LLM enrichment cache is kept. The next index run re-walks every source.",
   );

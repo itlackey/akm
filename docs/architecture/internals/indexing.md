@@ -67,6 +67,19 @@ or maintain alternate result collections.
   entry through the same id-preserving upsert, so vectors, utility scores
   and usage links stay attached to unchanged entries
 
+## Two files, one ref
+
+A source can hold two files that claim one ref: a skill's `references/a.md` and
+`knowledge/skills/x/references/a.md` are both `knowledge/skills/x/references/a`.
+The index holds one row for the ref, and the file with the smaller path
+(code-point order, the order `akm show`'s refusal lists them in) holds it,
+whichever directories a run drains and in whatever order the walk finds them
+(#1050). `akm index` reports each pair in its `warnings`, naming the file it
+indexed and the one it skipped. A directory that gives a ref up is drained
+again on later runs, so the ref passes to the other file when its holder is
+deleted. `akm show` refuses such a ref (`RESOURCE_ALREADY_EXISTS`); search
+returns the indexed file.
+
 Each derived population keeps its own cursor, so a change to one pass's
 inputs re-runs only that pass: `entries.content_hash` for entries and their
 FTS rows (written in the same transaction), `embeddings.model` for vectors,
@@ -403,9 +416,10 @@ so a layout change is applied in place rather than by discarding the index.
   older) also has its per-directory cursor cleared so the next run
   re-reads every source and fills the fragments; entry ids, and therefore
   embeddings, stay put.
-- An `entries` table older than layout 21 (no `item_ref`) cannot be keyed by
-  this release: its entries-keyed tables are recreated and re-walked, keeping
-  the LLM enrichment cache.
+- An `entries` table older than layout 21 (no `item_ref`, or still the retired
+  `entry_key` columns, as 0.9.1 wrote it) cannot be keyed by this release: its
+  entries-keyed tables are recreated and re-walked, keeping the LLM enrichment
+  cache.
 - Read-only and existing-database openers never refuse over the marker: an
   older layout is served as-is (readers handle both FTS layouts and a missing
   `embeddings.model`), a newer one likewise, each named once on stderr.
