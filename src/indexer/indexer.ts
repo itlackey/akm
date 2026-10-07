@@ -59,6 +59,7 @@ import {
   upsertEntry,
 } from "../storage/repositories/index-entries-repository";
 import type { EntryProvenance } from "../storage/repositories/index-entry-types";
+import { rebuildFtsIfTotalsStale } from "../storage/repositories/index-fts-repository";
 import { clearStaleCacheEntries } from "../storage/repositories/index-llm-cache-repository";
 import {
   deleteIndexDirState,
@@ -344,7 +345,14 @@ function finalizeIndex(args: {
   onProgress: (event: IndexProgressEvent) => void;
 }): { tFtsEnd: number } {
   const { db, sources, sourceDirs, stashDir, signal, onProgress } = args;
-  onProgress({ phase: "fts", message: "Full-text search index is current." });
+  // Rows replaced or removed since its BM25 totals were taken leave them off; recompute them (#1048).
+  const rebuilt = rebuildFtsIfTotalsStale(db);
+  onProgress({
+    phase: "fts",
+    message: rebuilt
+      ? "Rebuilt the full-text search index to recompute its totals."
+      : "Full-text search index is current.",
+  });
   const tFtsEnd = Date.now();
 
   // Re-link state.db usage events to the regenerated index and recompute the
