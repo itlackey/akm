@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm improve` runs against an API that rejects `chat_template_kwargs`,
+  OpenAI's among them.** Improve's reflect, consolidate and judge calls always
+  ask for thinking off, and the client sends that as
+  `chat_template_kwargs.enable_thinking` and a top-level `enable_thinking`. A
+  strict API answers 400 `Unknown parameter: 'chat_template_kwargs'`, the retry
+  without the response schema sent both fields again, and `akm improve judge`
+  reported `judge timeout/error — routed to review`. No engine setting could
+  stop it: the call sites override the engine's `enableThinking`, and
+  `extraParams` can only add fields. A 4xx that names either field is now
+  answered by one retry without both (which may in turn fall back without the
+  schema), and akm stops sending them to that endpoint and model for the rest
+  of the process, as it already does for `response_format`.
 - **`akm improve` no longer reflects on an asset whose file a proposal would not
   write, so accepting a reflect proposal no longer adds a second file.** A
   skill's `references/a.md` is indexed as `knowledge/skills/<name>/references/a`,

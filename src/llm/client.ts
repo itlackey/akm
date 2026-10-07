@@ -125,7 +125,11 @@ export interface ChatCompletionOptions {
    * {@link isJsonSchemaKnownUnsupported}.
    */
   responseSchema?: Record<string, unknown>;
-  /** Override the config's enableThinking for this call. */
+  /**
+   * Override the config's enableThinking for this call. A provider that
+   * rejects the two fields this sends is retried once without them — see
+   * {@link isThinkingControlKnownRejected}.
+   */
   enableThinking?: boolean;
   /**
    * Invoked exactly once when a retryable first failure triggers a single
@@ -338,13 +342,20 @@ async function chatCompletionReal(
  */
 const jsonSchemaUnsupportedConnections = new Set<string>();
 
+/**
+ * The same, for the two thinking-control fields (`chat_template_kwargs` and
+ * `enable_thinking`): a strict hosted API answers 400 `Unknown parameter`.
+ */
+const thinkingControlRejectedConnections = new Set<string>();
+
 function connectionKey(config: LlmConnectionConfig): string {
   return `${config.endpoint}|${config.model}`;
 }
 
-/** TEST-ONLY. Clear the in-memory json-schema-support tracker between tests. */
-export function _resetJsonSchemaSupportTrackerForTests(): void {
+/** TEST-ONLY. Clear the in-memory endpoint-support trackers between tests. */
+export function _resetEndpointSupportTrackersForTests(): void {
   jsonSchemaUnsupportedConnections.clear();
+  thinkingControlRejectedConnections.clear();
 }
 
 /**
@@ -358,6 +369,29 @@ export function isJsonSchemaKnownUnsupported(config: LlmConnectionConfig): boole
   return jsonSchemaUnsupportedConnections.has(connectionKey(config));
 }
 
+/** Whether a real call this process showed this connection rejects the thinking-control fields (#1045). */
+export function isThinkingControlKnownRejected(config: LlmConnectionConfig): boolean {
+  return thinkingControlRejectedConnections.has(connectionKey(config));
+}
+
+/**
+ * Whether `err` is a provider's 4xx (a rate limit is not one) that may be a
+ * verdict on the shape of this request rather than on the request's own content.
+ */
+function isRejectedRequest(err: unknown): err is LlmCallError {
+  return (
+    err instanceof LlmCallError &&
+    err.code === "provider_error" &&
+    typeof err.statusCode === "number" &&
+    err.statusCode >= 400 &&
+    err.statusCode < 500 &&
+    err.statusCode !== 429
+  );
+}
+
+/** A strict API names the field it does not know: `Unknown parameter: 'chat_template_kwargs'.` */
+const THINKING_FIELD_NAMED = /chat_template_kwargs|enable_thinking/;
+
 /**
  * A single chat-completion attempt: one HTTP request/response cycle, with an
  * inline fallback-once when a schema was requested and the provider 4xx's
@@ -367,33 +401,38 @@ export function isJsonSchemaKnownUnsupported(config: LlmConnectionConfig): boole
  * `config.supportsJsonSchema === false` is the only thing that skips it,
  * and that is a value a human (or workflow author) set explicitly, not one
  * a probe wrote automatically.
+ *
+ * The thinking-control fields get the same treatment (#1045): a 4xx that
+ * names `chat_template_kwargs` or `enable_thinking` is answered by one retry
+ * without them, which may in turn fall back without the schema.
  */
 async function chatCompletionAttempt(
   config: ChatCompletionConfig,
   messages: ChatMessage[],
   options: ChatCompletionOptions | undefined,
   timeoutMs: number | null,
+  includeThinking = (options?.enableThinking ?? config.enableThinking) !== undefined &&
+    !isThinkingControlKnownRejected(config),
 ): Promise<string> {
   const wantsSchema =
     Boolean(options?.responseSchema) && config.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(config);
   try {
-    return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema);
+    return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema, includeThinking);
   } catch (err) {
-    if (
-      !wantsSchema ||
-      !(err instanceof LlmCallError) ||
-      err.code !== "provider_error" ||
-      typeof err.statusCode !== "number" ||
-      err.statusCode < 400 ||
-      err.statusCode >= 500 ||
-      err.statusCode === 429
-    ) {
-      throw err;
+    if (!isRejectedRequest(err)) throw err;
+    if (includeThinking && THINKING_FIELD_NAMED.test(err.message)) {
+      warnVerbose(
+        `[akm] LLM rejected chat_template_kwargs/enable_thinking (${err.statusCode}); retrying once without them: ${err.message}`,
+      );
+      const fallback = await chatCompletionAttempt(config, messages, options, timeoutMs, false);
+      thinkingControlRejectedConnections.add(connectionKey(config));
+      return fallback;
     }
+    if (!wantsSchema) throw err;
     warnVerbose(
       `[akm] LLM rejected response_format:json_schema (${err.statusCode}); retrying once without it: ${err.message}`,
     );
-    const fallback = await chatCompletionAttemptOnce(config, messages, options, timeoutMs, false);
+    const fallback = await chatCompletionAttemptOnce(config, messages, options, timeoutMs, false, includeThinking);
     jsonSchemaUnsupportedConnections.add(connectionKey(config));
     return fallback;
   }
@@ -405,6 +444,7 @@ async function chatCompletionAttemptOnce(
   options: ChatCompletionOptions | undefined,
   timeoutMs: number | null,
   includeSchema: boolean,
+  includeThinking: boolean,
 ): Promise<string> {
   if (config.extraParams !== undefined) {
     const issue = validateExtraParams(config.extraParams)[0];
@@ -445,7 +485,7 @@ async function chatCompletionAttemptOnce(
   // (freellmapi, Bifrost) can drop either one depending on how it was built.
   // Send both whenever thinking is explicitly resolved so the same engine
   // block keeps working across a direct vhost or any gateway in front of it.
-  const resolvedEnableThinking = options?.enableThinking ?? config.enableThinking;
+  const resolvedEnableThinking = includeThinking ? (options?.enableThinking ?? config.enableThinking) : undefined;
   const thinkingParams =
     resolvedEnableThinking === undefined
       ? {}
