@@ -20,6 +20,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `file_outside_layout` in the `reflect_completed` event). This is the rule
   0.9.26 added to `akm feedback --replace`. An asset that another bundle owns is
   still refused by `createProposal` (#1000).
+- **An index that 0.9.1 wrote no longer crashes akm.** Every `akm index` on it
+  exited 70 with `null is not an object (evaluating 'doc.xrefs')`, `akm migrate
+  apply` and `akm index --full` did not help, and `akm search` failed with
+  `null is not an object (evaluating 'item.entry.quality')`; the only way out
+  was moving `index.db` aside. That layout (20) keeps the transitional
+  `entry_key`, `dir_path`, `stash_dir`, `entry_json` and `entry_type` columns
+  that layout 21 removed, each NOT NULL, beside the current columns, and leaves
+  `document_json` NULL on every row. The table had every column akm checks for,
+  so it was taken for a current one: the links migration read the NULL
+  documents, and no insert could ever have succeeded (`NOT NULL constraint
+  failed: entries.entry_key`). akm now treats a table that still has a retired
+  column as older than layout 21, as the compat notes already said: the
+  writable opener recreates its entries-keyed tables (the LLM enrichment cache
+  is kept) and the next `akm index` re-walks every source, and a read rebuilds
+  inline. An index that a failed open already half-migrated (layout stamp still
+  20, `search_text` dropped, `asset_links` created) recovers the same way.
 - **Two files that claim one ref no longer trade places in the index, and `akm
   index` says so.** A skill's `references/a.md` and a note at
   `knowledge/skills/x/references/a.md` are both the ref
