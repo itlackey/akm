@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A codex dispatch with an output schema no longer leaves a temp folder
+  behind.** Every build of the codex command for a request with a schema made a
+  new `akm-codex-schema-*` folder in the OS temp dir for `--output-schema` and
+  nothing ever removed it (the builder has no post-run hook, and the file is read
+  after it returns), so a machine whose `/tmp` is tmpfs held a folder in RAM per
+  dispatch until reboot. The schema is now written once to akm's cache dir, in a
+  file named by its hash: concurrent units dispatching the same schema share it,
+  a rewrite is an atomic rename of identical bytes, and the only residue is one
+  small file per distinct schema.
 - **An index that has been updated ranks like a fresh index of the same files,
   and `akm index --full` no longer doubles the full-text totals.** `entries_fts`
   is contentless, and FTS5 cannot take a deleted row out of a contentless
