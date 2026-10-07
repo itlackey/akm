@@ -2,7 +2,7 @@
  * Tests for the OpenAI Codex harness adapter (P2, plan §"The adapter contract"
  * / §"Capability matrix" / §"Structured-output normalization"):
  *   - harnesses/codex/agent-builder.ts    — codexBuilder argv construction,
- *     native --output-schema temp file, codexResumeArgs
+ *     native --output-schema file, codexResumeArgs
  *   - harnesses/codex/result-extractor.ts — JSONL (both dialects) / plain
  *     stdout normalization into { text, sessionId? }
  *
@@ -12,8 +12,9 @@
  * result extraction. No real binaries are spawned.
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { getCacheDir } from "../../src/core/paths";
 import type { AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
@@ -23,6 +24,7 @@ import {
   writeCodexOutputSchemaFile,
 } from "../../src/integrations/harnesses/codex/agent-builder";
 import { codexResultExtractor } from "../../src/integrations/harnesses/codex/result-extractor";
+import { makeSandboxDir, withEnvSync } from "../_helpers/sandbox";
 
 // ── Fixtures ──────────────────────────────────────────────────────────────────
 
@@ -166,38 +168,50 @@ describe("codexBuilder — exact model selection", () => {
 
 // ── codexBuilder — native schema (--output-schema) ────────────────────────────
 
-describe("codexBuilder — native --output-schema temp file", () => {
+describe("codexBuilder — native --output-schema file", () => {
   const schema: Record<string, unknown> = {
     type: "object",
     properties: { verdict: { type: "string", enum: ["pass", "fail"] } },
     required: ["verdict"],
   };
 
+  const schemaFlag = (forSchema: Record<string, unknown>): string =>
+    flagValue(codexBuilder.build(makeCodexProfile(), { prompt: "x", schema: forSchema }).argv, "--output-schema");
+
   test("schema request emits --output-schema <file> whose content round-trips", () => {
     const req: AgentDispatchRequest = { prompt: "judge it", schema };
     const cmd = codexBuilder.build(makeCodexProfile(), req);
     const argv = cmd.argv as string[];
     const file = flagValue(argv, "--output-schema");
-    try {
-      expect(file.endsWith("output-schema.json")).toBe(true);
-      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(schema);
-      // Prompt still terminates argv after the separator.
-      expect(argv[argv.length - 1]).toBe("judge it");
-      const sepIdx = argv.indexOf("--");
-      expect(sepIdx).toBeGreaterThan(argv.indexOf("--output-schema"));
-    } finally {
-      rmSync(dirname(file), { recursive: true, force: true });
-    }
+    expect(file.endsWith(".json")).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(schema);
+    // Prompt still terminates argv after the separator.
+    expect(argv[argv.length - 1]).toBe("judge it");
+    const sepIdx = argv.indexOf("--");
+    expect(sepIdx).toBeGreaterThan(argv.indexOf("--output-schema"));
   });
 
-  test("each build writes a distinct file (concurrent fan-out units cannot collide)", () => {
-    const a = flagValue(codexBuilder.build(makeCodexProfile(), { prompt: "x", schema }).argv, "--output-schema");
-    const b = flagValue(codexBuilder.build(makeCodexProfile(), { prompt: "y", schema }).argv, "--output-schema");
+  // The file is named by the hash of the schema: concurrent fan-out units that dispatch the same schema share one
+  // file instead of leaving one each behind (#1051), and a different schema is a different file.
+  test("every build of one schema is one file in akm's cache dir, and another schema gets its own", () => {
+    const a = schemaFlag(schema);
+    const b = schemaFlag(schema);
+    const other = schemaFlag({ ...schema, title: "another schema" });
+    expect(b).toBe(a);
+    expect(other).not.toBe(a);
+    expect(dirname(a).startsWith(getCacheDir())).toBe(true);
+    expect(readdirSync(dirname(a))).toHaveLength(2);
+  });
+
+  test("dispatching with a schema leaves nothing behind in the OS temp dir (#1051)", () => {
+    const osTmp = makeSandboxDir("akm-codex-os-tmp");
     try {
-      expect(a).not.toBe(b);
+      withEnvSync({ TMPDIR: osTmp.dir }, () => {
+        for (let unit = 0; unit < 5; unit++) codexBuilder.build(makeCodexProfile(), { prompt: `unit ${unit}`, schema });
+      });
+      expect(readdirSync(osTmp.dir)).toEqual([]);
     } finally {
-      rmSync(dirname(a), { recursive: true, force: true });
-      rmSync(dirname(b), { recursive: true, force: true });
+      osTmp.cleanup();
     }
   });
 
@@ -208,12 +222,8 @@ describe("codexBuilder — native --output-schema temp file", () => {
 
   test("writeCodexOutputSchemaFile returns an absolute path to valid JSON", () => {
     const file = writeCodexOutputSchemaFile(schema);
-    try {
-      expect(file.startsWith("/")).toBe(true);
-      expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(schema);
-    } finally {
-      rmSync(dirname(file), { recursive: true, force: true });
-    }
+    expect(file.startsWith("/")).toBe(true);
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual(schema);
   });
 });
 

@@ -20,12 +20,13 @@
  *     `./result-extractor.ts`. Always emitted, mirroring how the Claude builder
  *     always emits `--print`: dispatch is the captured, non-interactive path.
  *   - Codex is the NATIVE-SCHEMA tier (plan §"Structured-output
- *     normalization"): `req.schema` is written to a temp file and passed via
- *     `--output-schema <file>`. The file is tiny, uniquely named under the OS
- *     temp dir, and intentionally NOT cleaned up here — `BuiltCommand` has no
- *     post-run hook, and the spawned process reads the file after `build()`
- *     returns. OS temp reaping owns the lifecycle. The engine still validates
- *     the output defensively (the constrained output is trusted but verified).
+ *     normalization"): `req.schema` is written to a file and passed via
+ *     `--output-schema <file>`. The file is named by the hash of the schema
+ *     and lives in akm's cache dir, so a schema is written once however many
+ *     units dispatch with it: `BuiltCommand` has no post-run hook, and the
+ *     spawned process reads the file after `build()` returns, so a file per
+ *     dispatch could only leak (#1051). The engine still validates the output
+ *     defensively (the constrained output is trusted but verified).
  *   - `codex exec` has no system-prompt flag; `req.systemPrompt` is folded
  *     into the prompt payload (system text first, blank line, then the task),
  *     after the `--` end-of-options separator so it can never be parsed as a
@@ -54,23 +55,30 @@
  * name without any further wiring.
  */
 
-import { mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { writeFileAtomic } from "../../../core/common";
+import { getCacheDir } from "../../../core/paths";
+import { sha256Hex } from "../../../runtime";
 import { type AgentCommandBuilder, resolveDispatchModel } from "../../agent/builder-shared";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 
 /**
- * Write a node's JSON Schema to a fresh temp file for `--output-schema`.
+ * Write a node's JSON Schema to a file for `--output-schema`, named by the hash
+ * of its text, in akm's cache dir. Returns the absolute file path (the value
+ * handed to the flag).
  *
- * A unique `mkdtemp` directory per build avoids collisions between concurrent
- * fan-out units dispatching in the same process. Returns the absolute file
- * path (the value handed to the flag).
+ * The same schema is the same file, so concurrent fan-out units share it, and
+ * the atomic rename makes a write of identical bytes safe under a reader: no
+ * unit can see a half-written schema, and none removes it from another. Nothing
+ * is cleaned up, because nothing accumulates but one file per distinct schema.
  */
 export function writeCodexOutputSchemaFile(schema: Record<string, unknown>): string {
-  const dir = mkdtempSync(join(tmpdir(), "akm-codex-schema-"));
-  const file = join(dir, "output-schema.json");
-  writeFileSync(file, `${JSON.stringify(schema, null, 2)}\n`, "utf8");
+  const text = `${JSON.stringify(schema, null, 2)}\n`;
+  const dir = join(getCacheDir(), "codex-output-schemas");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${sha256Hex(text)}.json`);
+  writeFileAtomic(file, text);
   return file;
 }
 

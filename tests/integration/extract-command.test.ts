@@ -1026,6 +1026,41 @@ describe("akmExtract — LLM call wiring", () => {
     expect(receivedSchema).toEqual(EXTRACT_JSON_SCHEMA);
   });
 
+  test("a lesson the contract refuses is named in its session's warnings, not silently lost (#1047)", async () => {
+    const stash = makeStashDir();
+    const session = fakeSession("ses_dropped", Date.now() - 60_000);
+    const lesson = (name: string, whenToUse?: string) => ({
+      type: "lesson",
+      name,
+      description: "Always connect to the corporate VPN before running deploy.sh, or the stage rollout hangs.",
+      ...(whenToUse === undefined ? {} : { when_to_use: whenToUse }),
+      body: "deploy.sh hangs at the 'pushing to stage' step without the VPN, and its error message is misleading.",
+      confidence: 0.9,
+      evidence: "tool failure in the Bash sequence around the deploy",
+    });
+
+    const result = await akmExtract({
+      type: "claude",
+      sessionId: "ses_dropped",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeFakeHarness([session])],
+      chat: async () =>
+        JSON.stringify({
+          candidates: [
+            lesson("vpn-before-deploy"),
+            lesson("vpn-hangs-deploy", "When deploy.sh hangs at the push to the stage environment."),
+          ],
+          rationale_if_empty: "",
+        }),
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.sessions[0]?.candidateCount).toBe(1);
+    const dropped = "lesson:vpn-before-deploy dropped: a lesson needs a when_to_use of at least 15 characters";
+    expect(result.sessions[0]?.warnings).toEqual([dropped]);
+  });
+
   test("passes a prompt that mentions the session title + harness", async () => {
     const stash = makeStashDir();
     const session = fakeSession("ses_prompt", Date.now() - 60_000);

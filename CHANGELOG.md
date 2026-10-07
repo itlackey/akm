@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A codex dispatch with an output schema no longer leaves a temp folder
+  behind.** Every build of the codex command for a request with a schema made a
+  new `akm-codex-schema-*` folder in the OS temp dir for `--output-schema` and
+  nothing ever removed it (the builder has no post-run hook, and the file is read
+  after it returns), so a machine whose `/tmp` is tmpfs held a folder in RAM per
+  dispatch until reboot. The schema is now written once to akm's cache dir, in a
+  file named by its hash: concurrent units dispatching the same schema share it,
+  a rewrite is an atomic rename of identical bytes, and the only residue is one
+  small file per distinct schema.
 - **An index that has been updated ranks like a fresh index of the same files,
   and `akm index --full` no longer doubles the full-text totals.** `entries_fts`
   is contentless, and FTS5 cannot take a deleted row out of a contentless
@@ -35,6 +44,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   answered by one retry without both (which may in turn fall back without the
   schema), and akm stops sending them to that endpoint and model for the rest
   of the process, as it already does for `response_format`.
+- **A lesson the model wrote without a `when_to_use` is no longer thrown away
+  silently by `akm proposal extract`.** The extract schema left `when_to_use`
+  optional while the parser dropped a lesson without one (or with one under 15
+  characters) and said nothing, so a model that followed the schema could
+  write a sound lesson that akm discarded and the session reported no
+  candidates: on akm-eval's extract eval qwen3.8-27b kept 3 of 11 expected
+  insights against 9 for gpt-oss-120b. Every property of the schema is now
+  required, `when_to_use` and `rationale_if_empty` included, with an empty
+  string for none (a memory or knowledge candidate needs no trigger, a
+  non-empty answer no rationale), which is also what a strict structured-output
+  provider needs; the prompt's output contract says the same. Any candidate the
+  contract still refuses, for this reason or another, is named in its session's
+  `warnings` as `<type>:<name> dropped: <reason>`.
+- **Distill's response schemas are valid for a strict structured-output
+  provider.** The client sends a response schema `strict: true`, and OpenAI
+  refuses one whose objects leave a property out of `required`: `400 Invalid
+  schema for response_format 'akm_response': ... Missing 'tags'`. The lesson
+  schema left out `tags`, and the knowledge schema `tags` and `sources`, so
+  the first distill request on such a provider always failed. After a 4xx the
+  client retries once without the schema, but a gateway that answers the same
+  rejection with a 502 is not retried, and every distill call through it
+  failed; the workaround, `supportsJsonSchema: false`, loses the guidance that
+  keeps a model from leaving out `when_to_use`. Every property is now
+  required, and an empty array stands for none (distill already dropped an
+  empty `tags` or `sources`).
 - **`akm improve` no longer reflects on an asset whose file a proposal would not
   write, so accepting a reflect proposal no longer adds a second file.** A
   skill's `references/a.md` is indexed as `knowledge/skills/<name>/references/a`,

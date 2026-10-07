@@ -675,7 +675,8 @@ async function processSession(
   }
 
   const { payload } = extraction;
-  const warnings: string[] = [];
+  // A candidate the contract refused is reported, not silently lost (#1047).
+  const warnings: string[] = [...(payload.dropped ?? [])];
   // Provenance xrefs are added only after the cited session asset exists.
   const { warning, ...sessionAsset } = await maybeWriteSessionAsset(run, data);
   if (warning) warnings.push(warning);
