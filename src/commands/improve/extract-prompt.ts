@@ -29,16 +29,21 @@ const EXTRACT_CANDIDATE_NAME_RE = new RegExp(EXTRACT_CANDIDATE_NAME_PATTERN);
  *
  * Shape:
  *   {
- *     "candidates": [{type, name, description, when_to_use?, body, confidence, evidence}, ...],
- *     "rationale_if_empty"?: string
+ *     "candidates": [{type, name, description, when_to_use, body, confidence, evidence}, ...],
+ *     "rationale_if_empty": string
  *   }
  *
  * `additionalProperties: false` at each level so any hallucinated keys are
- * dropped before parsing.
+ * dropped before parsing. Every property is required, as a strict structured-
+ * output provider needs (#1046), and an empty string stands for "none": a
+ * `when_to_use` only a lesson needs, a `rationale_if_empty` only an empty
+ * answer needs. Before, `when_to_use` was optional, so a model that followed
+ * the schema could leave it out of a lesson and the parser dropped the lesson
+ * (#1047).
  */
 export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["candidates"],
+  required: ["candidates", "rationale_if_empty"],
   additionalProperties: false,
   properties: {
     candidates: {
@@ -46,7 +51,7 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
       description: "Zero or more durable-insight candidates extracted from the session.",
       items: {
         type: "object",
-        required: ["type", "name", "description", "body", "confidence", "evidence"],
+        required: ["type", "name", "description", "when_to_use", "body", "confidence", "evidence"],
         additionalProperties: false,
         properties: {
           type: {
@@ -68,9 +73,9 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
           },
           when_to_use: {
             type: "string",
-            minLength: 15,
             maxLength: 400,
-            description: "Trigger sentence for the candidate; REQUIRED when type=lesson.",
+            description:
+              "Trigger sentence of at least 15 characters; REQUIRED when type=lesson (a lesson without one is dropped). An empty string for a memory or knowledge candidate.",
           },
           body: {
             type: "string",
@@ -93,8 +98,8 @@ export const EXTRACT_JSON_SCHEMA: Record<string, unknown> = {
     },
     rationale_if_empty: {
       type: "string",
-      minLength: 10,
-      description: "Required when `candidates` is empty — explains why nothing rose to durable-insight level.",
+      description:
+        "When `candidates` is empty, one sentence on why nothing rose to durable-insight level; an empty string otherwise.",
     },
   },
 };
@@ -201,6 +206,8 @@ export interface ExtractCandidate {
 
 export interface ExtractPayload {
   candidates: ExtractCandidate[];
+  /** Candidates the model wrote that the contract refuses, each as `type:name dropped: <why>`. Absent when none. */
+  dropped?: string[];
   rationale_if_empty?: string;
   /** Present only when the model response could not satisfy the payload boundary. */
   parseFailure?: {
@@ -257,10 +264,46 @@ function parseFirstJsonObject(stdout: string): { objectFound: boolean; value?: u
   return { objectFound: true };
 }
 
+/** The candidate the model wrote when the contract keeps it, else the first rule it breaks. */
+function readCandidate(c: Record<string, unknown>): { candidate: ExtractCandidate } | { problem: string } {
+  const { type, name, description, body, confidence, evidence } = c;
+  if (type !== "memory" && type !== "lesson" && type !== "knowledge") {
+    return { problem: "type is not memory, lesson or knowledge" };
+  }
+  if (typeof name !== "string" || !EXTRACT_CANDIDATE_NAME_RE.test(name)) {
+    return { problem: "name is not a kebab-case slug" };
+  }
+  if (typeof description !== "string" || description.trim().length < 20) {
+    return { problem: "description is shorter than 20 characters" };
+  }
+  if (typeof body !== "string" || body.trim().length < 50) return { problem: "body is shorter than 50 characters" };
+  if (typeof confidence !== "number" || !Number.isFinite(confidence)) return { problem: "confidence is not a number" };
+  if (typeof evidence !== "string" || evidence.trim().length < 5) {
+    return { problem: "evidence is shorter than 5 characters" };
+  }
+  // An empty string is how a strict-schema reply says "none".
+  const whenToUse = typeof c.when_to_use === "string" ? c.when_to_use.trim() : "";
+  if (type === "lesson" && whenToUse.length < 15) {
+    return { problem: "a lesson needs a when_to_use of at least 15 characters" };
+  }
+  return {
+    candidate: {
+      type,
+      name,
+      description: description.trim(),
+      ...(whenToUse ? { when_to_use: whenToUse } : {}),
+      body,
+      confidence: Math.max(0, Math.min(1, confidence)),
+      evidence: evidence.trim(),
+    },
+  };
+}
+
 /**
  * Parse the LLM's JSON response into a structured {@link ExtractPayload}.
  * Defensive — drops candidates that violate the shape rather than failing
- * the whole call. Returns the empty-candidates payload when nothing parses.
+ * the whole call, and names each one in `dropped` so the run can say so.
+ * Returns the empty-candidates payload when nothing parses.
  */
 export function parseExtractPayload(stdout: string): ExtractPayload {
   if (!stdout || stdout.trim().length === 0) {
@@ -281,33 +324,25 @@ export function parseExtractPayload(stdout: string): ExtractPayload {
   }
   const rawCandidates = obj.candidates;
   const candidates: ExtractCandidate[] = [];
+  const dropped: string[] = [];
   for (const raw of rawCandidates) {
-    if (!raw || typeof raw !== "object") continue;
-    const c = raw as Record<string, unknown>;
-    const type = c.type;
-    if (type !== "memory" && type !== "lesson" && type !== "knowledge") continue;
-    if (typeof c.name !== "string" || !EXTRACT_CANDIDATE_NAME_RE.test(c.name)) continue;
-    if (typeof c.description !== "string" || c.description.trim().length < 20) continue;
-    if (typeof c.body !== "string" || c.body.trim().length < 50) continue;
-    if (typeof c.confidence !== "number" || !Number.isFinite(c.confidence)) continue;
-    if (typeof c.evidence !== "string" || c.evidence.trim().length < 5) continue;
-    if (type === "lesson") {
-      if (typeof c.when_to_use !== "string" || c.when_to_use.trim().length < 15) continue;
+    if (!raw || typeof raw !== "object") {
+      dropped.push("candidate dropped: not an object");
+      continue;
     }
-    const confidence = Math.max(0, Math.min(1, c.confidence));
-    const candidate: ExtractCandidate = {
-      type,
-      name: c.name,
-      description: c.description.trim(),
-      body: c.body,
-      confidence,
-      evidence: c.evidence.trim(),
-    };
-    if (typeof c.when_to_use === "string") candidate.when_to_use = c.when_to_use.trim();
-    candidates.push(candidate);
+    const c = raw as Record<string, unknown>;
+    const read = readCandidate(c);
+    if ("problem" in read) {
+      dropped.push(
+        `${typeof c.type === "string" ? c.type : "candidate"}:${typeof c.name === "string" ? c.name : "(unnamed)"} dropped: ${read.problem}`,
+      );
+      continue;
+    }
+    candidates.push(read.candidate);
   }
   const result: ExtractPayload = { candidates };
-  if (typeof obj.rationale_if_empty === "string") {
+  if (dropped.length > 0) result.dropped = dropped;
+  if (typeof obj.rationale_if_empty === "string" && obj.rationale_if_empty.trim()) {
     result.rationale_if_empty = obj.rationale_if_empty.trim();
   }
   return result;

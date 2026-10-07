@@ -3,9 +3,10 @@ import type { LlmConnectionConfig } from "../../../src/core/config/config";
 import { parseEmbeddedJsonResponse, parseJsonResponse } from "../../../src/core/parse";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import {
-  _resetJsonSchemaSupportTrackerForTests,
+  _resetEndpointSupportTrackersForTests,
   chatCompletion,
   isJsonSchemaKnownUnsupported,
+  isThinkingControlKnownRejected,
   LlmCallError,
   redactErrorBody,
 } from "../../../src/llm/client";
@@ -109,7 +110,7 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
   };
 
   beforeEach(() => {
-    _resetJsonSchemaSupportTrackerForTests();
+    _resetEndpointSupportTrackersForTests();
   });
 
   test("a 4xx rejection of response_format falls back once, in the same call, without it", async () => {
@@ -169,6 +170,131 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
       await expect(chatCompletion(config, messages, { responseSchema })).rejects.toThrow(LlmCallError);
       expect(requestBodies).toHaveLength(1);
       expect(isJsonSchemaKnownUnsupported(config)).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("chatCompletion against an API that rejects the thinking-control fields (#1045)", () => {
+  const messages = [{ role: "user" as const, content: "Return a result" }];
+  const responseSchema = {
+    type: "object",
+    properties: { result: { type: "string" } },
+    required: ["result"],
+    additionalProperties: false,
+  };
+  const ok = () => Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
+  // What OpenAI answers for a field it does not know.
+  const unknownParameter = (name: string) =>
+    Response.json(
+      {
+        error: {
+          message: `Unknown parameter: '${name}'.`,
+          type: "invalid_request_error",
+          param: name,
+          code: "unknown_parameter",
+        },
+      },
+      { status: 400 },
+    );
+  const rejectsThinking = (body: Record<string, unknown>) =>
+    "chat_template_kwargs" in body ? unknownParameter("chat_template_kwargs") : undefined;
+
+  beforeEach(() => {
+    _resetEndpointSupportTrackersForTests();
+  });
+
+  test("a 400 that names the fields is retried once without them, and the connection stops sending them", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      return rejectsThinking(body) ?? ok();
+    });
+    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    try {
+      expect(await chatCompletion(config, messages, { enableThinking: false })).toBe('{"result":"ok"}');
+      expect(requestBodies).toHaveLength(2);
+      expect(requestBodies[0]).toMatchObject({
+        chat_template_kwargs: { enable_thinking: false },
+        enable_thinking: false,
+      });
+      expect(requestBodies[1]).not.toHaveProperty("chat_template_kwargs");
+      expect(requestBodies[1]).not.toHaveProperty("enable_thinking");
+      expect(isThinkingControlKnownRejected(config)).toBe(true);
+
+      requestBodies.length = 0;
+      await chatCompletion(config, messages, { enableThinking: false });
+      expect(requestBodies).toHaveLength(1);
+      expect(requestBodies[0]).not.toHaveProperty("chat_template_kwargs");
+      expect(requestBodies[0]).not.toHaveProperty("enable_thinking");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("an engine's own enableThinking is dropped the same way", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      return rejectsThinking(body) ?? ok();
+    });
+    try {
+      await chatCompletion({ endpoint: url, model: "gpt-test", enableThinking: true }, messages);
+      expect(requestBodies).toHaveLength(2);
+      expect(requestBodies[1]).not.toHaveProperty("chat_template_kwargs");
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("one call falls back past a rejected thinking field and then a rejected schema", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      const thinking = rejectsThinking(body);
+      if (thinking) return thinking;
+      if (body.response_format) {
+        return Response.json(
+          {
+            error: {
+              message:
+                "Invalid schema for response_format 'akm_response': In context=(), 'required' is required to be supplied and to be an array including every key in properties.",
+            },
+          },
+          { status: 400 },
+        );
+      }
+      return ok();
+    });
+    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    try {
+      expect(await chatCompletion(config, messages, { enableThinking: false, responseSchema })).toBe('{"result":"ok"}');
+      expect(requestBodies.map((body) => [body.response_format !== undefined, "chat_template_kwargs" in body])).toEqual(
+        [
+          [true, true],
+          [true, false],
+          [false, false],
+        ],
+      );
+      expect(isThinkingControlKnownRejected(config)).toBe(true);
+      expect(isJsonSchemaKnownUnsupported(config)).toBe(true);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a 4xx that does not name the fields is not retried, and the connection is not marked", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      return Response.json({ error: { message: "Incorrect API key provided." } }, { status: 401 });
+    });
+    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    try {
+      await expect(chatCompletion(config, messages, { enableThinking: false })).rejects.toThrow(LlmCallError);
+      expect(requestBodies).toHaveLength(1);
+      expect(isThinkingControlKnownRejected(config)).toBe(false);
     } finally {
       server.stop(true);
     }

@@ -110,8 +110,11 @@ distill quality-gate judges do too unless the judge's engine sets
 `reasoning_effort` when set. Backend support: llama.cpp direct honors both forms
 (`reasoning_effort` from build ≥ b10644); vLLM honors
 `chat_template_kwargs`; Bifrost drops `chat_template_kwargs` and passes
-`reasoning_effort` through, so also set `reasoningEffort: "none"` behind it; a
-strict hosted API may 400 on unrecognized keys. Both fields are AKM-owned, not
+`reasoning_effort` through, so also set `reasoningEffort: "none"` behind it. A
+strict hosted API that rejects the two fields (OpenAI answers 400 `Unknown
+parameter: 'chat_template_kwargs'`) gets one retry without both, and AKM stops
+sending them to that endpoint and model for the rest of the process, as it
+does for `response_format` below. Both fields are AKM-owned, not
 settable via `extraParams`. A response with reasoning tokens despite
 `enableThinking: false` triggers a runtime warning and the `akm health`
 `thinking-control` advisory.

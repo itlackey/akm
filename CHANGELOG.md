@@ -32,6 +32,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   row the write-path index replaced after an accepted proposal is settled the
   same way, and an index that has already drifted is corrected by the first run
   that replaces or removes a row.
+- **`akm improve` runs against an API that rejects `chat_template_kwargs`,
+  OpenAI's among them.** Improve's reflect, consolidate and judge calls always
+  ask for thinking off, and the client sends that as
+  `chat_template_kwargs.enable_thinking` and a top-level `enable_thinking`. A
+  strict API answers 400 `Unknown parameter: 'chat_template_kwargs'`, the retry
+  without the response schema sent both fields again, and `akm improve judge`
+  reported `judge timeout/error — routed to review`. No engine setting could
+  stop it: the call sites override the engine's `enableThinking`, and
+  `extraParams` can only add fields. A 4xx that names either field is now
+  answered by one retry without both (which may in turn fall back without the
+  schema), and akm stops sending them to that endpoint and model for the rest
+  of the process, as it already does for `response_format`.
+- **A lesson the model wrote without a `when_to_use` is no longer thrown away
+  silently by `akm proposal extract`.** The extract schema left `when_to_use`
+  optional while the parser dropped a lesson without one (or with one under 15
+  characters) and said nothing, so a model that followed the schema could
+  write a sound lesson that akm discarded and the session reported no
+  candidates: on akm-eval's extract eval qwen3.8-27b kept 3 of 11 expected
+  insights against 9 for gpt-oss-120b. Every property of the schema is now
+  required, `when_to_use` and `rationale_if_empty` included, with an empty
+  string for none (a memory or knowledge candidate needs no trigger, a
+  non-empty answer no rationale), which is also what a strict structured-output
+  provider needs; the prompt's output contract says the same. Any candidate the
+  contract still refuses, for this reason or another, is named in its session's
+  `warnings` as `<type>:<name> dropped: <reason>`.
+- **Distill's response schemas are valid for a strict structured-output
+  provider.** The client sends a response schema `strict: true`, and OpenAI
+  refuses one whose objects leave a property out of `required`: `400 Invalid
+  schema for response_format 'akm_response': ... Missing 'tags'`. The lesson
+  schema left out `tags`, and the knowledge schema `tags` and `sources`, so
+  the first distill request on such a provider always failed. After a 4xx the
+  client retries once without the schema, but a gateway that answers the same
+  rejection with a 502 is not retried, and every distill call through it
+  failed; the workaround, `supportsJsonSchema: false`, loses the guidance that
+  keeps a model from leaving out `when_to_use`. Every property is now
+  required, and an empty array stands for none (distill already dropped an
+  empty `tags` or `sources`).
 - **`akm improve` no longer reflects on an asset whose file a proposal would not
   write, so accepting a reflect proposal no longer adds a second file.** A
   skill's `references/a.md` is indexed as `knowledge/skills/<name>/references/a`,

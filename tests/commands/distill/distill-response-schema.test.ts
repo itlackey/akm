@@ -3,7 +3,7 @@
  *
  * Asset-writers-investigation PR 1: providers that honour
  * `response_format: json_schema` return a typed JSON object
- * (`{description, when_to_use, body, tags?, sources?}`) which distill
+ * (`{description, when_to_use, body, tags, sources}`) which distill
  * re-assembles into the canonical `---\n<fm>\n---\n\n<body>` markdown. The
  * existing prompt-contract markdown path remains as a fallback for providers
  * that ignore the schema and for the `chat` test seam that returns strings.
@@ -77,6 +77,17 @@ afterEach(() => {
 
 // ── 1. Schema shape ─────────────────────────────────────────────────────────
 
+/** The rule OpenAI's strict structured outputs enforce on every object: all of its properties are required. */
+function expectEveryPropertyRequired(schema: unknown, at = "(root)"): void {
+  if (typeof schema !== "object" || schema === null) return;
+  const node = schema as { properties?: Record<string, unknown>; required?: string[]; items?: unknown };
+  if (node.properties) {
+    expect([at, [...(node.required ?? [])].sort()]).toEqual([at, Object.keys(node.properties).sort()]);
+    for (const [key, child] of Object.entries(node.properties)) expectEveryPropertyRequired(child, `${at}.${key}`);
+  }
+  if (node.items) expectEveryPropertyRequired(node.items, `${at}[]`);
+}
+
 describe("DISTILL_LESSON_JSON_SCHEMA", () => {
   test("requires description, when_to_use, body — the three load-bearing lesson fields", () => {
     const schema = DISTILL_LESSON_JSON_SCHEMA as { required: string[]; type: string };
@@ -91,14 +102,18 @@ describe("DISTILL_LESSON_JSON_SCHEMA", () => {
     expect(schema.additionalProperties).toBe(false);
   });
 
-  test("tags is optional and typed as a string array", () => {
+  test("tags is a required string array, empty for none, as strict structured outputs need (#1046)", () => {
     const schema = DISTILL_LESSON_JSON_SCHEMA as {
       properties: Record<string, { type?: string; items?: { type?: string } }>;
       required: string[];
     };
-    expect(schema.required).not.toContain("tags");
+    expect(schema.required).toContain("tags");
     expect(schema.properties.tags?.type).toBe("array");
     expect(schema.properties.tags?.items?.type).toBe("string");
+  });
+
+  test("lists every property in `required`, which a strict provider refuses to accept the schema without (#1046)", () => {
+    expectEveryPropertyRequired(DISTILL_LESSON_JSON_SCHEMA);
   });
 });
 
@@ -110,14 +125,18 @@ describe("DISTILL_KNOWLEDGE_JSON_SCHEMA", () => {
     expect(schema.required).not.toContain("when_to_use");
   });
 
-  test("exposes optional sources array for provenance tracking", () => {
+  test("exposes a sources array for provenance tracking, empty when there are none", () => {
     const schema = DISTILL_KNOWLEDGE_JSON_SCHEMA as {
       properties: Record<string, { type?: string; items?: { type?: string } }>;
       required: string[];
     };
-    expect(schema.required).not.toContain("sources");
+    expect(schema.required).toContain("sources");
     expect(schema.properties.sources?.type).toBe("array");
     expect(schema.properties.sources?.items?.type).toBe("string");
+  });
+
+  test("lists every property in `required`, which a strict provider refuses to accept the schema without (#1046)", () => {
+    expectEveryPropertyRequired(DISTILL_KNOWLEDGE_JSON_SCHEMA);
   });
 });
 
