@@ -26,6 +26,10 @@ describe("buildClsContext", () => {
     expect(ctx).toBe("");
   });
 
+  test("is on unless the config turns it off", () => {
+    expect(buildClsContext([{ ref: "lessons/x", content: "foo" }], {})).toContain("lessons/x");
+  });
+
   test("returns formatted context block when enabled and items present", () => {
     const ctx = buildClsContext(
       [
@@ -34,19 +38,20 @@ describe("buildClsContext", () => {
       ],
       { enabled: true },
     );
-    expect(ctx).toContain("## Existing adjacent lessons / knowledge (CLS context)");
+    expect(ctx).toContain("## Related assets already in the library");
+    expect(ctx).toContain("answer NONE");
     expect(ctx).toContain("lessons/alpha");
     expect(ctx).toContain("Learn from past mistakes.");
     expect(ctx).toContain("knowledge/beta");
     expect(ctx).toContain("The sky is blue.");
   });
 
-  test("truncates long content to 400 chars", () => {
+  test("truncates long content to 600 chars", () => {
     const longContent = "x".repeat(1000);
     const ctx = buildClsContext([{ ref: "lessons/long", content: longContent }], { enabled: true });
-    // Only first 400 chars should appear
-    expect(ctx).toContain("x".repeat(400));
-    expect(ctx).not.toContain("x".repeat(401));
+    // Only first 600 chars should appear
+    expect(ctx).toContain("x".repeat(600));
+    expect(ctx).not.toContain("x".repeat(601));
   });
 });
 

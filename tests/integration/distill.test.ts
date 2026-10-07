@@ -541,7 +541,7 @@ describe("akmDistill — LLM error paths", () => {
           stashDir: stash,
           lookupFn: async () => inputPath,
           readEventsFn: emptyEvents,
-          fetchSimilarLessonsFn: async () => [],
+          fetchRelatedFn: async () => [],
         }),
       ).rejects.toBeInstanceOf(ConfigError);
     });
@@ -1063,7 +1063,7 @@ describe("akmDistill — queued proposal", () => {
           stashDir: stash,
           chat: async (connection) => {
             models.push(connection.model);
-            return JSON.stringify({ scores: { novelty: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
+            return JSON.stringify({ scores: { reusable: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
           },
           lookupFn: async (ref) => (ref === "memories/judged-promotion" ? memoryFile : null),
           readEventsFn: eventsFor("memories/judged-promotion", ["positive", "positive"]),
@@ -2057,7 +2057,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
           if (observed.length === 1) mutateScopedEnv("AKM_DISTILL_ROTATING_KEY", rotated);
           const joined = messages.map((message) => message.content).join("\n");
           if (joined.includes("Score this lesson")) {
-            return JSON.stringify({ scores: { novelty: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
+            return JSON.stringify({ scores: { reusable: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" });
           }
           return VALID_LESSON;
         },
@@ -2089,7 +2089,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
         const judging = messages.some((m) => m.content.includes("Score this lesson"));
         calls.push(`${judging ? "judge" : "generate"}:${connection.model}`);
         return judging
-          ? JSON.stringify({ scores: { novelty: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" })
+          ? JSON.stringify({ scores: { reusable: 5, nonRedundancy: 4, grounding: 5 }, reason: "adds new info" })
           : VALID_LESSON;
       },
       lookupFn: noopLookup,
@@ -2149,7 +2149,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
         const joined = messages.map((m) => m.content).join("\n");
         if (joined.includes("Score this lesson")) {
           return JSON.stringify({
-            scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+            scores: { reusable: 4, nonRedundancy: 5, grounding: 3 },
             reason: "adds the rollback step",
           });
         }
@@ -2166,7 +2166,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
       outcome: "deferred",
       reason: "distill-review",
       gate: "quality-gate",
-      scores: { novelty: 4, nonRedundancy: 5, grounding: 3 },
+      scores: { reusable: 4, nonRedundancy: 5, grounding: 3 },
       judgeReason: "adds the rollback step",
     });
     expect(proposal?.confidence).toBeCloseTo(4.5 / 5, 9);
@@ -2187,7 +2187,7 @@ describe("akmDistill — R3 judge verdict routing + G4 output encoding salience"
       stashDir: stash,
       chat: async (_cfg, messages) =>
         messages.some((m) => m.content.includes("Score this lesson"))
-          ? JSON.stringify({ scores: { novelty: 5, nonRedundancy: 5, grounding: 5 }, reason: "adds new info" })
+          ? JSON.stringify({ scores: { reusable: 5, nonRedundancy: 5, grounding: 5 }, reason: "adds new info" })
           : VALID_LESSON,
       lookupFn: noopLookup,
       readEventsFn: emptyEvents,
@@ -2307,8 +2307,10 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
   // #999: negative feedback recording that `akm show` failed on a memory
   // ("two physical assets share the same logical ref") reached distill as
   // evidence about the memory. The lessons it produced were about the tool
-  // error, not the memory's subject, and became proposals for a human.
-  describe("a lesson about a different subject than its source memory (#999)", () => {
+  // error, not the memory's subject, and became proposals for a human. A lesson
+  // criterion at 2 or below rejects, so does the lesson that states what neither
+  // its source nor its feedback does (17 of the 19 queued on 2026-10-05 were bad).
+  describe("a lesson the judge scores 2 or below on a criterion, or about a different subject than its source (#999)", () => {
     const TOOL_FAILURE = "The curated ref could not be shown because two physical assets share the same logical ref.";
     const RUNBOOK = "Run the report against the nightly snapshot, then compare p95 latency with last week.";
 
@@ -2344,7 +2346,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     /** Distill `fixture` with a judge that answers `scores`; returns the result and the prompt the judge was given. */
     async function distillWithJudge(
       fixture: Fixture,
-      scores: { novelty: number; nonRedundancy: number; grounding: number },
+      scores: { reusable: number; nonRedundancy: number; grounding: number },
       reason: string,
       options: { lesson?: string; config?: AkmConfig } = {},
     ) {
@@ -2377,7 +2379,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     test("is quality_rejected: a ledger row and an event with the reason, and no proposal", async () => {
       const fixture = setup();
       const reason = "The lesson is about duplicate refs; the source is a performance runbook.";
-      const { result } = await distillWithJudge(fixture, { novelty: 5, nonRedundancy: 5, grounding: 1 }, reason);
+      const { result } = await distillWithJudge(fixture, { reusable: 5, nonRedundancy: 5, grounding: 1 }, reason);
 
       expect(result.outcome).toBe("quality_rejected");
       expect(result.proposalId).toBeUndefined();
@@ -2385,7 +2387,7 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
 
       const row = ledgerRow(fixture);
       expect(row).toMatchObject({ outcome: "quality_rejected" });
-      expect(row?.detail).toContain("Off-subject for its source (grounding 1/5)");
+      expect(row?.detail).toContain("grounding 1/5");
       expect(row?.detail).toContain(reason);
       // The distill rejection window keeps selection from regenerating it.
       expect(Date.parse(row?.nextEligibleAt ?? "") - Date.parse(row?.lastAttemptAt ?? "")).toBe(30 * 86_400_000);
@@ -2393,17 +2395,17 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       const { events } = readEvents({ type: "distill_invoked" });
       expect(events.at(-1)?.metadata).toMatchObject({
         outcome: "quality_rejected",
-        criteria: { novelty: 5, nonRedundancy: 5, grounding: 1 },
+        criteria: { reusable: 5, nonRedundancy: 5, grounding: 1 },
       });
-      expect(String(events.at(-1)?.metadata?.reason)).toContain("(grounding 1/5)");
+      expect(String(events.at(-1)?.metadata?.reason)).toContain("grounding 1/5");
     });
 
     test("a grounded lesson in the same review band still mints a pending proposal for a human", async () => {
       const fixture = setup();
-      // Mean 2.5 is the review band. Only the grounding score differs from the case below.
+      // Mean 3 is the review band: no criterion is at 2 or below.
       const { result } = await distillWithJudge(
         fixture,
-        { novelty: 2, nonRedundancy: 3, grounding: 4 },
+        { reusable: 3, nonRedundancy: 3, grounding: 4 },
         "Mostly restates the runbook.",
       );
 
@@ -2415,61 +2417,60 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
       expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
     });
 
-    // Grounding 2 is borderline, not off-subject: a person decides. Nothing is dropped
-    // unless the mean of novelty and non-redundancy already rejects it.
-    test("grounding 2 with a passing mean mints a pending proposal for a human and says it is borderline", async () => {
+    // A lesson that says what neither its source nor its feedback says is an invention. It reached a reviewer
+    // as a borderline on 2026-10-05; it is rejected now, with the judge's reason in the ledger.
+    test("grounding 2 is quality_rejected like grounding 1, whatever the mean is", async () => {
       const fixture = setup();
-      const reason = "On the runbook's subject, but the advice goes beyond it.";
-      const { result } = await distillWithJudge(fixture, { novelty: 5, nonRedundancy: 5, grounding: 2 }, reason);
+      const reason = "On the runbook's subject, but it adds a cause the runbook does not state.";
+      const { result } = await distillWithJudge(fixture, { reusable: 5, nonRedundancy: 5, grounding: 2 }, reason);
 
-      expect(result.outcome).toBe("review_needed");
-      expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
+      expect(result.outcome).toBe("quality_rejected");
+      expect(result.reason).toContain("grounding 2/5");
       expect(result.reason).toContain(reason);
-      const proposals = listProposals(fixture.stash);
-      expect(proposals).toHaveLength(1);
-      expect(proposals[0]).toMatchObject({ status: "pending", source: "distill" });
-      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
-      expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
+      expect(result.proposalId).toBeUndefined();
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+      expect(ledgerRow(fixture)).toMatchObject({ outcome: "quality_rejected" });
 
       const { events } = readEvents({ type: "distill_invoked" });
       expect(events.at(-1)?.metadata).toMatchObject({
-        outcome: "review_needed",
-        criteria: { novelty: 5, nonRedundancy: 5, grounding: 2 },
+        outcome: "quality_rejected",
+        criteria: { reusable: 5, nonRedundancy: 5, grounding: 2 },
       });
-      expect(String(events.at(-1)?.metadata?.reason)).toContain("Borderline on grounding (2/5)");
     });
 
-    test("the same review-band scores with grounding 2 also mint a pending proposal, with the borderline reason", async () => {
+    test("a lesson that repeats an existing asset (non-redundancy 2) is quality_rejected although the mean is a review", async () => {
       const fixture = setup();
       const { result } = await distillWithJudge(
         fixture,
-        { novelty: 2, nonRedundancy: 3, grounding: 2 },
-        "Mostly restates the runbook.",
+        { reusable: 4, nonRedundancy: 2, grounding: 5 },
+        "skills/deploy already states this rule.",
       );
 
-      expect(result.outcome).toBe("review_needed");
-      expect(result.reason).toContain("Borderline on grounding (2/5), routed to review");
-      expect(listProposals(fixture.stash)).toHaveLength(1);
-      expect(ledgerRow(fixture)).toMatchObject({ outcome: "review_needed" });
+      expect(result.outcome).toBe("quality_rejected");
+      expect(result.reason).toContain("nonRedundancy 2/5");
+      expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
     });
 
     test("grounding 2 does not rescue a mean that rejects: quality_rejected, no proposal", async () => {
       const fixture = setup();
       const { result } = await distillWithJudge(
         fixture,
-        { novelty: 2, nonRedundancy: 2, grounding: 2 },
+        { reusable: 2, nonRedundancy: 2, grounding: 2 },
         "Restates the runbook.",
       );
 
       expect(result.outcome).toBe("quality_rejected");
       expect(result.proposalId).toBeUndefined();
       expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
-      expect(ledgerRow(fixture)).toMatchObject({ outcome: "quality_rejected", detail: "Restates the runbook." });
+      expect(ledgerRow(fixture)).toMatchObject({
+        outcome: "quality_rejected",
+        detail: "reusable 2/5: Restates the runbook.",
+      });
     });
 
-    // The judge is never shown the feedback a lesson is distilled from, so a
-    // lesson that corrects its source is not evidence of a different subject.
-    test("a lesson that corrects its source on the same subject is not vetoed", async () => {
+    // The judge reads what the writer read: the memory and its feedback. A lesson that corrects the memory
+    // from its feedback states nothing that neither says, and is not an invention.
+    test("a lesson that corrects its source from the feedback is judged with the feedback in view", async () => {
       const fixture = setup(
         "gateway-port",
         "The gateway listens on port 8080.",
@@ -2480,24 +2481,41 @@ description: Bind the gateway to port 8081 on hosts that already run another ser
 when_to_use: When configuring the gateway listener on a host where port 8080 is already in use.
 ---
 
-Bind the gateway to port 8081. Port 8080 is taken on hosts that also run the metrics exporter.
+Bind the gateway to port 8081. Port 8080 conflicts with another service on the host.
 `;
       const { result, judgePrompt } = await distillWithJudge(
         fixture,
-        { novelty: 4, nonRedundancy: 4, grounding: 3 },
-        "It corrects the source's port on the same subject.",
+        { reusable: 4, nonRedundancy: 4, grounding: 4 },
+        "The feedback states the conflict.",
         { lesson },
       );
 
       expect(result.outcome).toBe("queued");
       expect(listProposals(fixture.stash)).toHaveLength(1);
       expect(ledgerRow(fixture)).not.toMatchObject({ outcome: "quality_rejected" });
-      // What the judge was told: 1-2 only for a different subject, never for a correction or a contradiction.
-      expect(judgePrompt).toContain("Score 1-2 only if it is about a different subject than the source");
-      expect(judgePrompt).toContain("goes beyond or corrects what the source says");
+      expect(judgePrompt).toContain("Feedback recorded about the memory");
+      expect(judgePrompt).toContain(`- [negative] ${fixture.feedbackReason}`);
       expect(judgePrompt).not.toMatch(/contradict/i);
-      // ... and it was not shown the feedback that motivated the correction.
-      expect(judgePrompt).not.toContain(fixture.feedbackReason);
+    });
+
+    test("a bare signal is not shown to the judge as feedback", async () => {
+      const fixture = setup();
+      fixture.feedbackEvents = (() => ({
+        events: [
+          {
+            schemaVersion: 1 as const,
+            id: 1,
+            ts: "2026-09-17T08:23:43.906Z",
+            eventType: "feedback",
+            ref: fixture.ref,
+            metadata: { signal: "positive" },
+          },
+        ],
+        nextOffset: 0,
+      })) as unknown as typeof readEvents;
+      const { judgePrompt } = await distillWithJudge(fixture, { reusable: 4, nonRedundancy: 4, grounding: 4 }, "Fine.");
+
+      expect(judgePrompt).not.toContain("Feedback recorded about the memory");
     });
 
     // The generator is given the source body, frontmatter stripped, first 3000
@@ -2513,7 +2531,7 @@ Bind the gateway to port 8081. Port 8080 is taken on hosts that also run the met
       );
       const { judgePrompt } = await distillWithJudge(
         fixture,
-        { novelty: 4, nonRedundancy: 4, grounding: 4 },
+        { reusable: 4, nonRedundancy: 4, grounding: 4 },
         "Draws on the runbook.",
       );
 
@@ -2536,7 +2554,7 @@ Always restart the gateway once the deploy finishes. A running gateway keeps ser
 `;
       const { result } = await distillWithJudge(
         fixture,
-        { novelty: 4, nonRedundancy: 4, grounding: 3 },
+        { reusable: 4, nonRedundancy: 4, grounding: 3 },
         "Same subject, and it goes beyond the source.",
         {
           lesson,
@@ -2665,5 +2683,176 @@ describe("akmDistill — a lesson already at the target ref", () => {
     });
 
     expect(result.outcome).toBe("queued");
+  });
+});
+
+// 18 of the 19 memories distilled on 2026-10-05 recorded what was done, and the prompt and schema forced a lesson
+// from every one. The writer may find none.
+describe("akmDistill — the writer finds no lesson", () => {
+  const NONE_JSON = (reason: string) =>
+    JSON.stringify({ reason, decision: "none", description: "", when_to_use: "", body: "", tags: [] });
+
+  async function distillWith(stash: string, reply: string, extra: { fetchRelatedFn?: () => Promise<[]> } = {}) {
+    let calls = 0;
+    const result = await akmDistill({
+      ref: "memories/deploy-log",
+      config: configJudgeEnabled(stash),
+      stashDir: stash,
+      chat: async () => {
+        calls++;
+        return reply;
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+      ...extra,
+    });
+    return { result, calls };
+  }
+
+  test("the word NONE is a skip, with no proposal and no judge call", async () => {
+    const stash = makeStashDir();
+    const { result, calls } = await distillWith(stash, "NONE");
+
+    expect(result).toMatchObject({
+      ok: true,
+      outcome: "skipped",
+      skipReason: "nothing_reusable",
+      proposalKind: "lesson",
+      proposalRef: "lessons/memory-deploy-log-lesson",
+    });
+    expect(calls).toBe(1);
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)?.metadata).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+  });
+
+  test("decision none in a reply bound to the schema is the same skip, and says why", async () => {
+    const stash = makeStashDir();
+    const { result, calls } = await distillWith(stash, NONE_JSON("It records a deploy and no cause."));
+
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(result.message).toContain("It records a deploy and no cause.");
+    expect(calls).toBe(1);
+    expect(listProposals(stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("a lesson that merely starts with the word none is still a lesson", async () => {
+    const stash = makeStashDir();
+    const lesson = VALID_LESSON.replace(
+      "Prefer ripgrep over grep on large repos",
+      "None of the greps respects gitignore",
+    );
+    const result = await akmDistill({
+      ref: "memories/deploy-log",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => lesson,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+  });
+
+  test("decision lesson is written like any lesson, and the reason field stays out of it", async () => {
+    const stash = makeStashDir();
+    const reply = JSON.stringify({
+      reason: "It states the cause and the fix.",
+      decision: "lesson",
+      description: "Prefer ripgrep over grep on large repos.",
+      when_to_use: "Searching for symbols across a multi-thousand-file repo.",
+      body: "Use `rg`: it respects `.gitignore` by default.",
+      tags: [],
+    });
+    const result = await akmDistill({
+      ref: "memories/deploy-log",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async () => reply,
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(result.outcome).toBe("queued");
+    const [proposal] = listProposals(stash);
+    expect(proposal?.payload.content).toContain("Use `rg`");
+    expect(proposal?.payload.content).not.toContain("It states the cause and the fix.");
+  });
+
+  test("the writer is told what a lesson is and may answer NONE", async () => {
+    const stash = makeStashDir();
+    let system = "";
+    await akmDistill({
+      ref: "memories/deploy-log",
+      config: configEnabled(stash),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        system = messages.find((m) => m.role === "system")?.content ?? "";
+        return "NONE";
+      },
+      lookupFn: noopLookup,
+      readEventsFn: emptyEvents,
+    });
+
+    expect(system).toContain("ANSWER NONE");
+    expect(system).toContain("a cause and what to do about it");
+    expect(system).toContain("Add no cause, step, rule, number, check or safeguard that neither states.");
+    expect(system).toContain("`decision` to `none`");
+  });
+});
+
+// A lesson, a knowledge note or a skill that already states the rule is the commonest reason a reviewer rejected a
+// distilled lesson after it restated its memory.
+describe("akmDistill — the writer sees what the library already holds", () => {
+  const RELATED = [{ ref: "skills/deploy", content: "Deploy rule: connect the VPN before production deploys." }];
+
+  async function promptFor(stash: string, distill: Record<string, unknown>, related = RELATED) {
+    let user = "";
+    let query = "";
+    let count = 0;
+    await akmDistill({
+      ref: "memories/deploy-log",
+      config: distillConfig(stash, { enabled: true, qualityGate: { enabled: false }, ...distill }),
+      stashDir: stash,
+      chat: async (_cfg, messages) => {
+        user = messages.filter((m) => m.role === "user").at(-1)?.content ?? "";
+        return "NONE";
+      },
+      lookupFn: async () => {
+        const file = path.join(stash, "memories", "deploy-log.md");
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, "---\ndescription: Deploy log\n---\n\nThe deploy failed until the VPN was up.\n");
+        return file;
+      },
+      readEventsFn: emptyEvents,
+      fetchRelatedFn: async (q, n) => {
+        query = q;
+        count = n;
+        return related;
+      },
+    });
+    return { user, query, count };
+  }
+
+  test("lessons, knowledge notes and skills near the memory are in the prompt by default", async () => {
+    const { user, query, count } = await promptFor(makeStashDir(), {});
+
+    expect(user).toContain("## Related assets already in the library");
+    expect(user).toContain("### skills/deploy");
+    expect(user).toContain("Deploy rule: connect the VPN before production deploys.");
+    expect(query).toContain("The deploy failed until the VPN was up.");
+    expect(count).toBe(3);
+  });
+
+  test("cls.enabled false turns them off", async () => {
+    const { user } = await promptFor(makeStashDir(), { cls: { enabled: false } });
+
+    expect(user).not.toContain("Related assets already in the library");
+  });
+
+  test("nothing related adds no section", async () => {
+    const { user } = await promptFor(makeStashDir(), {}, []);
+
+    expect(user).not.toContain("Related assets already in the library");
   });
 });
