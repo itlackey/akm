@@ -13,9 +13,15 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmConsolidate, emitPromotionProposal } from "../../../../src/commands/improve/consolidate";
-import { findCoveringKnowledge, openKnowledgeCoverage } from "../../../../src/commands/improve/consolidate/coverage";
+import {
+  findCoveringKnowledge,
+  nearestKnowledgeNotes,
+  openKnowledgeCoverage,
+} from "../../../../src/commands/improve/consolidate/coverage";
 import { PAIR_NEIGHBOR_FETCH_K } from "../../../../src/commands/improve/consolidate/pair-pass";
-import { listProposals } from "../../../../src/commands/proposal/repository";
+import { contentHash } from "../../../../src/commands/improve/content-hash";
+import { drainProposals } from "../../../../src/commands/proposal/drain";
+import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getDbPath } from "../../../../src/core/paths";
 import { openStateDatabase } from "../../../../src/core/state-db";
@@ -140,7 +146,7 @@ describe("findCoveringKnowledge — neighbours from the index, decided by shared
     });
   });
 
-  test("a doc holding less than half of the memory's text does not cover it, and neither does an unrelated one", () => {
+  test("a doc holding less than 30% of the memory's text does not cover it, and neither does an unrelated one", () => {
     const memoryFile = writeAsset("memory", "release-note", "release note", RELEASE_NOTE);
     const partialFile = writeAsset(
       "knowledge",
@@ -399,10 +405,116 @@ describe("akmConsolidate — a covered memory is not promoted, an uncovered one 
 
     const db = openStateDatabase();
     try {
-      expect(getImproveLedgerRow(db, stash, "memories/covered-note", "consolidate")?.outcome).toBe("judged_no_action");
+      const covered = getImproveLedgerRow(db, stash, "memories/covered-note", "consolidate");
+      expect(covered?.outcome).toBe("judged_no_action");
+      // The judged text is recorded, so the memory is not asked about again until it changes.
+      expect(covered?.contentHash).toBe(contentHash(fs.readFileSync(coveredFile, "utf8"), "body"));
+      expect(covered?.nextEligibleAt).toBeNull();
       expect(getImproveLedgerRow(db, stash, "memories/fresh-note", "consolidate")?.outcome).toBe("proposed");
     } finally {
       db.close();
     }
+  });
+});
+
+describe("the drain's judge sees the knowledge a promotion may duplicate", () => {
+  const RUNNER = {
+    kind: "llm",
+    engine: "fake-judge",
+    connection: { endpoint: "http://fake.invalid/v1/chat/completions", model: "judge", contextLength: 8_192 },
+  } as const;
+
+  function promotionOf(memory: string, knowledgeRef: string) {
+    return createProposal(stash, {
+      ref: knowledgeRef,
+      source: "consolidate",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: `---\ndescription: ${memory}\n---\n\n${RELEASE_NOTE}\n`,
+        frontmatter: { description: memory },
+      },
+      attemptedRefs: [`memories/${memory}`],
+      promotionSource: `memories/${memory}`,
+    });
+  }
+
+  /** Drain with a judge that defers (writes nothing) and returns the prompts it was sent. */
+  async function judgedPrompts(): Promise<string[]> {
+    const prompts: string[] = [];
+    await drainProposals(
+      { stashDir: stash, applyMode: "promote", maxAccepts: 5, dryRun: false, judgment: RUNNER },
+      undefined,
+      undefined,
+      {
+        chat: async (_connection, messages) => {
+          prompts.push(String(messages[0]?.content));
+          return JSON.stringify({ decision: "defer", reason: "test" });
+        },
+      },
+    );
+    return prompts;
+  }
+
+  test("a promotion's prompt lists the nearest knowledge notes, nearest first, with description and excerpt", async () => {
+    const memoryFile = writeAsset("memory", "release-note", "release note", RELEASE_NOTE);
+    const guideFile = writeAsset("knowledge", "release-habits", "release habits", `${GUIDE_INTRO}\n\n${RELEASE_NOTE}`);
+    const otherFile = writeAsset("knowledge", "credentials", "credentials", UNRELATED);
+    const foreignFile = writeAsset("knowledge", "foreign", "elsewhere", RELEASE_NOTE);
+    withIndex((db) => {
+      indexAsset(db, "memory", "release-note", memoryFile, 0);
+      indexAsset(db, "knowledge", "credentials", otherFile, 20);
+      indexAsset(db, "knowledge", "release-habits", guideFile, 4);
+      indexAsset(db, "knowledge", "foreign", foreignFile, 1, "other-bundle");
+    });
+    promotionOf("release-note", "knowledge/release-note-copy");
+
+    const [prompt, ...more] = await judgedPrompts();
+    expect(more).toEqual([]);
+    expect(prompt).toContain("## Existing knowledge notes nearest to this promotion's source memory");
+    expect(prompt).toContain("Reject the promotion if these notes already cover what it says");
+    expect(prompt).toContain("### knowledge/release-habits\ndesc for release-habits");
+    expect(prompt).toContain(GUIDE_INTRO);
+    expect(prompt!.indexOf("knowledge/release-habits")).toBeLessThan(prompt!.indexOf("knowledge/credentials"));
+    expect(prompt).not.toContain("knowledge/foreign"); // another bundle's note is not a neighbour
+  });
+
+  test("an excerpt is cut short, and the nearest notes are capped at five", () => {
+    const memoryFile = writeAsset("memory", "release-note", "release note", RELEASE_NOTE);
+    withIndex((db) => {
+      indexAsset(db, "memory", "release-note", memoryFile, 0);
+      for (let i = 0; i < 8; i++) {
+        indexAsset(
+          db,
+          "knowledge",
+          `long-${i}`,
+          writeAsset("knowledge", `long-${i}`, "long", "word ".repeat(400)),
+          1 + i,
+        );
+      }
+    });
+    const notes = nearestKnowledgeNotes(memoryFile);
+    expect(notes.map((n) => n.ref)).toEqual([0, 1, 2, 3, 4].map((i) => `knowledge/long-${i}`));
+    expect(notes[0]?.excerpt.length).toBeLessThan(310);
+  });
+
+  test("nothing is added for a memory the index does not know, for a proposal that is not a promotion, or when there is no index", async () => {
+    expect(nearestKnowledgeNotes(path.join(stash, "memories", "ghost.md"))).toEqual([]);
+    promotionOf("ghost", "knowledge/ghost-copy");
+    const [prompt] = await judgedPrompts();
+    expect(prompt).not.toContain("Existing knowledge notes");
+
+    // A consolidate proposal that is not a promotion (no source memory) is judged as before.
+    createProposal(stash, {
+      ref: "knowledge/not-a-promotion",
+      source: "consolidate",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: `---\ndescription: x\n---\n\n${RELEASE_NOTE}\n`,
+        frontmatter: { description: "x" },
+      },
+    });
+    const prompts = await judgedPrompts();
+    expect(prompts.filter((p) => p.includes("knowledge/not-a-promotion"))).toHaveLength(1);
+    expect(prompts.some((p) => p.includes("Existing knowledge notes"))).toBe(false);
   });
 });

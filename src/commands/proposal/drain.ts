@@ -37,6 +37,7 @@ import {
   type RunExecutionOptions,
   runExecution,
 } from "../../integrations/agent/runner-dispatch";
+import { nearestKnowledgeNotes } from "../improve/consolidate/coverage";
 import { errMessage, noticeSet } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
@@ -201,11 +202,15 @@ async function rejectProposal(
   }
 }
 
-/** The judgment prompt: the proposal, the live asset it would overwrite, and same-ref siblings. */
+/** The judgment prompt: the proposal, the live asset it would overwrite, same-ref siblings, and for a promotion the nearest knowledge notes. */
 export function buildJudgmentPrompt(
   proposal: Proposal,
   reason: DrainDeferReason,
-  ctx: { liveAsset: string | undefined; siblings: Proposal[] },
+  ctx: {
+    liveAsset: string | undefined;
+    siblings: Proposal[];
+    neighbours?: ReturnType<typeof nearestKnowledgeNotes>;
+  },
 ): string {
   const sections: string[] = [
     "You are adjudicating a pending knowledge-base proposal no quality judge has",
@@ -230,6 +235,13 @@ export function buildJudgmentPrompt(
     for (const sib of ctx.siblings) {
       sections.push("", `### Sibling ${sib.id} (source: ${sib.source})`, "```", proposalContent(sib), "```");
     }
+  }
+  if (ctx.neighbours && ctx.neighbours.length > 0) {
+    sections.push("", "## Existing knowledge notes nearest to this promotion's source memory");
+    for (const note of ctx.neighbours) {
+      sections.push("", `### ${note.ref}`, note.description, "```", note.excerpt, "```");
+    }
+    sections.push("", "Reject the promotion if these notes already cover what it says, even in other words.");
   }
   sections.push(
     "",
@@ -319,9 +331,12 @@ async function runJudgmentTier(
       stillDeferred.push(item);
       continue;
     }
+    const liveAsset = readLiveAssetContent(opts.stashDir, proposal.ref);
     const prompt = buildJudgmentPrompt(proposal, item.reason, {
-      liveAsset: readLiveAssetContent(opts.stashDir, proposal.ref),
+      liveAsset,
       siblings: pending.filter((p) => p.ref === proposal.ref && p.id !== proposal.id),
+      // A create the model otherwise judges blind: the model never sees knowledge/.
+      ...(liveAsset === undefined ? { neighbours: promotionNeighbours(opts.stashDir, proposal) } : {}),
     });
     const dispatch = await dispatchJudgment(opts.judgment, prompt, seams);
     notices.add(dispatch.notices);
@@ -390,6 +405,19 @@ async function runJudgmentTier(
   }
   if (notices.list().length > 0) result.notices = notices.list();
   result.deferred = stillDeferred;
+}
+
+/** The knowledge notes nearest to a consolidate promotion's source memory; none for any other proposal. */
+function promotionNeighbours(stashDir: string, proposal: Proposal): ReturnType<typeof nearestKnowledgeNotes> {
+  if (proposal.source !== "consolidate" || proposal.promotionSource === undefined) return [];
+  try {
+    const parsed = parseRefInput(proposal.promotionSource);
+    const typeDir = stashDirFor(parsed.type);
+    if (!typeDir) return [];
+    return nearestKnowledgeNotes(assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name));
+  } catch {
+    return [];
+  }
 }
 
 /** The live asset a proposal would overwrite, if any. */

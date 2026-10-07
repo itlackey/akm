@@ -344,6 +344,37 @@ function loadPendingConsolidateProposalHashes(stashDir: string, proposalsCtx?: P
 }
 
 /**
+ * Rejections decided before this are not a verdict on the memory's text: the
+ * 2026-08-02 and 2026-08-18 bulk audits rejected hundreds of promotions
+ * wholesale, and holding their bodies would skip good memories for good.
+ */
+const REJECTED_BODY_HOLD_FROM = "2026-09-29";
+
+/**
+ * Body hashes of the memories whose promotion was rejected on review. A
+ * proposal minted with `promotionSourceHash` names the memory's raw body; an
+ * older one is hashed from its own body, which is the memory's unless
+ * sanitization changed it.
+ */
+function loadRejectedPromotionBodyHashes(stashDir: string, proposalsCtx?: ProposalsContext): Set<string> {
+  const hashes = new Set<string>();
+  try {
+    for (const p of listProposalsReadOnly(stashDir, { status: "rejected", includeArchive: true }, proposalsCtx)) {
+      if (p.source !== "consolidate") continue;
+      if ((p.review?.decidedAt ?? p.updatedAt) < REJECTED_BODY_HOLD_FROM) continue;
+      try {
+        hashes.add(p.promotionSourceHash ?? contentHash(proposalContent(p), "body"));
+      } catch {
+        // A malformed payload cannot hold a memory.
+      }
+    }
+  } catch {
+    // Best-effort: a failed read never blocks judging.
+  }
+  return hashes;
+}
+
+/**
  * Body hashes of the live knowledge assets, read from disk (the index may lag
  * a just-written asset), so an accepted promotion is not proposed again.
  */
@@ -600,6 +631,17 @@ export function inspectConsolidationPool(
         changedAt = undefined;
       }
       return !isLedgerBlocked(row, nowIso, changedAt);
+    });
+  }
+  // A memory whose text a reviewer already rejected as a promotion waits for an edit, whatever it is called.
+  const rejectedBodies = loadRejectedPromotionBodyHashes(stashDir, opts.proposalsCtx);
+  if (rejectedBodies.size > 0) {
+    memories = memories.filter((memory) => {
+      try {
+        return !rejectedBodies.has(contentHash(fs.readFileSync(memory.filePath, "utf8"), "body"));
+      } catch {
+        return true;
+      }
     });
   }
   const judgedUnchanged = poolSize - memories.length;
@@ -956,7 +998,13 @@ async function consolidate(
           !ctx.promotedSourceRefs.has(ref) &&
           !acc.skipReasonByRef.get(ref)?.skips.some((skip) => skip.reason === "promote_create_failed"),
       )
-      .map((ref) => ({ stashDir, ref, source: "consolidate", outcome: "judged_no_action" as const })),
+      .map((ref) => ({
+        stashDir,
+        ref,
+        source: "consolidate",
+        outcome: "judged_no_action" as const,
+        ...bodyHashOf(ctx.memoryByRef.get(ref)),
+      })),
   );
   return makeConsolidateResult({
     ...summary(),
@@ -992,6 +1040,16 @@ export interface PromoteContext {
   promotionFailures: { count: number };
   warnings: string[];
   pushSkipReason: (op: ConsolidateOpKind | "unknown", ref: string, reason: string) => void;
+}
+
+/** The memory's current body hash as a ledger input field; empty when it cannot be read (the row then keeps its 7-day window). */
+function bodyHashOf(memory: MemoryEntry | undefined): { contentHash?: string } {
+  if (!memory) return {};
+  try {
+    return { contentHash: contentHash(fs.readFileSync(memory.filePath, "utf8"), "body") };
+  } catch {
+    return {};
+  }
 }
 
 /** The conceptId a ref maps to, or undefined for an invalid ref. */

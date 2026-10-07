@@ -7,7 +7,7 @@
  * `knowledge/` proposal, ask whether `knowledge/` already says it.
  *
  * The rule: a memory is covered when at least {@link COVERAGE_MIN_CONTAINMENT}
- * (half) of its distinct {@link COVERAGE_SHINGLE_WORDS}-word shingles appear in
+ * (30%) of its distinct {@link COVERAGE_SHINGLE_WORDS}-word shingles appear in
  * one of the knowledge docs nearest to it. It is a containment of the MEMORY in
  * the doc, not a similarity: a long guide that quotes the memory covers it; a
  * memory that quotes a short doc and adds claims of its own does not.
@@ -26,9 +26,13 @@
  * this gate achieves: it reads only the {@link PAIR_NEIGHBOR_FETCH_K} nearest
  * knowledge docs (below), and a covering doc that ranks lower goes unseen. The
  * recall over that candidate set is unmeasured. The rest of the rejected
- * proposals (paraphrases, partial overlaps) still reach review: the next cut
- * measured, 0.2 (169 of 224 rejected), would also have skipped 2 of the 103
- * accepted ones, and no cosine cut was measured at all. A wrong skip is a
+ * proposals (paraphrases, partial overlaps) still reach review. 0.5 let
+ * paraphrases through: of the 54 promotions minted on 2026-10-07, 18 of the 51
+ * later rejected held 30% or more of their text in a neighbouring doc. The cut is
+ * now 0.3, between the two measured points: 0.2 (169 of 224 rejected) also
+ * skipped 2 of the 103 accepted ones. At 0.3, none of the 5 promotions graded
+ * good in the 2026-10-05 review sample would be skipped (their best doc holds
+ * at most 1% of them) while 5 of its 15 bad ones would. A wrong skip is a
  * promotion nobody gets to review.
  *
  * Candidates are the memory's {@link PAIR_NEIGHBOR_FETCH_K} nearest knowledge
@@ -53,7 +57,7 @@ import { PAIR_NEIGHBOR_FETCH_K } from "./pair-pass";
 /** Words per shingle. */
 export const COVERAGE_SHINGLE_WORDS = 5;
 /** Share of a memory's distinct shingles one knowledge doc must hold for the memory to count as covered. */
-export const COVERAGE_MIN_CONTAINMENT = 0.5;
+export const COVERAGE_MIN_CONTAINMENT = 0.3;
 
 const WORD = /[\p{L}\p{N}]+/gu;
 
@@ -87,23 +91,24 @@ export interface CoveringKnowledge {
 /** The knowledge doc covering the memory at `filePath` whose body is `body`, if any. */
 export type CoveringKnowledgeFinder = (filePath: string, body: string) => CoveringKnowledge | undefined;
 
+/** A knowledge doc near a memory by stored vector. */
+export interface KnowledgeNeighbour {
+  /** The doc's concept id, e.g. `knowledge/akm-proposal-drain-policy`. */
+  ref: string;
+  description: string;
+  /** The doc's body without frontmatter. */
+  body: string;
+}
+
 /**
- * The best-covering knowledge doc among the {@link PAIR_NEIGHBOR_FETCH_K}
- * knowledge docs in `bundleId` nearest to the memory. `filePath` is the
- * memory's indexed file; a memory the index does not know has no stored vector
- * and so no candidates.
+ * The {@link PAIR_NEIGHBOR_FETCH_K} knowledge docs in `bundleId` nearest to the
+ * memory at `filePath`, nearest first. A memory the index does not know has no
+ * stored vector and so no neighbours.
  */
-export function findCoveringKnowledge(
-  db: Database,
-  bundleId: string,
-  filePath: string,
-  body: string,
-): CoveringKnowledge | undefined {
-  const shingles = wordShingles(body);
-  if (shingles.size === 0) return undefined;
+function knowledgeNeighbours(db: Database, bundleId: string, filePath: string): KnowledgeNeighbour[] {
   const entryId = getEntryIdByFilePath(db, filePath);
-  if (entryId === undefined) return undefined;
-  let best: CoveringKnowledge | undefined;
+  if (entryId === undefined) return [];
+  const out: KnowledgeNeighbour[] = [];
   for (const hit of getNeighborsByEntryId(db, entryId, PAIR_NEIGHBOR_FETCH_K, { type: "knowledge", bundleId })) {
     const neighbour = getEntryById(db, hit.id);
     if (!neighbour) continue;
@@ -113,12 +118,71 @@ export function findCoveringKnowledge(
     } catch {
       continue; // the index outlived the file
     }
-    const containment = shingleContainment(shingles, stripFrontmatterBody(raw));
+    out.push({
+      ref: neighbour.conceptId,
+      description: neighbour.entry.description ?? "",
+      body: stripFrontmatterBody(raw),
+    });
+  }
+  return out;
+}
+
+/**
+ * The best-covering knowledge doc among the {@link PAIR_NEIGHBOR_FETCH_K}
+ * knowledge docs in `bundleId` nearest to the memory. `filePath` is the
+ * memory's indexed file; a memory the index does not know has no stored
+ * vector and so no candidates.
+ */
+export function findCoveringKnowledge(
+  db: Database,
+  bundleId: string,
+  filePath: string,
+  body: string,
+): CoveringKnowledge | undefined {
+  const shingles = wordShingles(body);
+  if (shingles.size === 0) return undefined;
+  let best: CoveringKnowledge | undefined;
+  for (const neighbour of knowledgeNeighbours(db, bundleId, filePath)) {
+    const containment = shingleContainment(shingles, neighbour.body);
     if (containment >= COVERAGE_MIN_CONTAINMENT && (best === undefined || containment > best.containment)) {
-      best = { ref: neighbour.conceptId, containment };
+      best = { ref: neighbour.ref, containment };
     }
   }
   return best;
+}
+
+/** Knowledge docs a reviewer is shown for a promotion, nearest first. */
+export const NEIGHBOUR_NOTE_COUNT = 5;
+const NEIGHBOUR_EXCERPT_CHARS = 300;
+
+/**
+ * The knowledge notes nearest to the memory at `memoryPath`, for the drain's
+ * judge to compare a promotion against: the nearest {@link NEIGHBOUR_NOTE_COUNT}
+ * of the same candidates the coverage gate reads. The memory's bundle is the one
+ * the index recorded for it. Empty when the index has no vector for the memory
+ * or cannot be opened; never throws.
+ */
+export function nearestKnowledgeNotes(
+  memoryPath: string,
+): Array<{ ref: string; description: string; excerpt: string }> {
+  let db: Database | undefined;
+  try {
+    db = openExistingDatabase();
+    const entryId = getEntryIdByFilePath(db, memoryPath);
+    const bundleId = entryId === undefined ? undefined : getEntryById(db, entryId)?.bundleId;
+    if (bundleId === undefined) return [];
+    return knowledgeNeighbours(db, bundleId, memoryPath)
+      .slice(0, NEIGHBOUR_NOTE_COUNT)
+      .map((n) => ({
+        ref: n.ref,
+        description: n.description,
+        excerpt: n.body.length > NEIGHBOUR_EXCERPT_CHARS ? `${n.body.slice(0, NEIGHBOUR_EXCERPT_CHARS)}...` : n.body,
+      }));
+  } catch {
+    return [];
+  } finally {
+    if (db) closeDatabase(db);
+  }
 }
 
 /**
