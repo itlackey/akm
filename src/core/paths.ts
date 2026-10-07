@@ -384,16 +384,6 @@ function stashScopedDir(base: string, stashDir: string): string {
 }
 
 /**
- * `$STATE/improve/measurement/verdicts/<stash>/` — `akm-eval-proactive-verdict`
- * reports. Moved out of `$STASH/.akm/measurement/verdicts/` (itlackey/akm#890);
- * the pilot treatment file at `$STASH/.akm/measurement/` is manually-authored
- * measurement input and stays put.
- */
-export function getMeasurementVerdictsDir(stashDir: string): string {
-  return stashScopedDir(path.join(getStateDir(), "improve", "measurement", "verdicts"), stashDir);
-}
-
-/**
  * `$CACHE/index/unresolved-sources/<stash>/` — synthetic placeholder path for
  * a configured source whose content root did not resolve this run. Never
  * written to disk; only used as a stable, reportable `SearchSource.path`.
