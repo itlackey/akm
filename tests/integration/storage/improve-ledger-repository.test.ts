@@ -85,9 +85,13 @@ describe("nextEligibleAt — the one cadence function", () => {
     expect(nextEligibleAt("consolidate", "accepted", T0)).toBeNull();
   });
 
+  test("a consolidate no-action that recorded a hash starts no clock; without one it keeps the revisit cadence", () => {
+    expect(nextEligibleAt("consolidate", "judged_no_action", T0, "h")).toBeNull();
+    expect(nextEligibleAt("consolidate", "judged_no_action", T0)).toBe(plusDays(T0, 7));
+  });
+
   test("a hash changes nothing for the outcomes and sources that are not content-driven", () => {
     expect(nextEligibleAt("consolidate", "expired", T0, "h")).toBe(plusDays(T0, 1));
-    expect(nextEligibleAt("consolidate", "judged_no_action", T0, "h")).toBe(plusDays(T0, 7));
     expect(nextEligibleAt("consolidate", "proposed", T0, "h")).toBe(plusDays(T0, 7));
     expect(nextEligibleAt("reflect", "rejected", T0, "h")).toBe(plusDays(T0, 14));
     expect(nextEligibleAt("distill", "rejected", T0, "h")).toBe(plusDays(T0, 30));
@@ -106,11 +110,12 @@ describe("isContentDrivenRow", () => {
     contentHash: hash,
   });
 
-  test("only a decided consolidate promotion that recorded a hash is held by content", () => {
+  test("only a decided or judged consolidate promotion that recorded a hash is held by content", () => {
     expect(isContentDrivenRow(row("consolidate", "rejected", "h"))).toBe(true);
     expect(isContentDrivenRow(row("consolidate", "accepted", "h"))).toBe(true);
     expect(isContentDrivenRow(row("consolidate", "rejected", null))).toBe(false);
-    expect(isContentDrivenRow(row("consolidate", "judged_no_action", "h"))).toBe(false);
+    expect(isContentDrivenRow(row("consolidate", "judged_no_action", "h"))).toBe(true);
+    expect(isContentDrivenRow(row("consolidate", "judged_no_action", null))).toBe(false);
     expect(isContentDrivenRow(row("consolidate", "expired", "h"))).toBe(false);
     // The pair pass has its own content test (selectInitiators) and never a decided outcome.
     expect(isContentDrivenRow(row("consolidate-pair", "judged_no_action", "h"))).toBe(false);

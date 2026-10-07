@@ -4,7 +4,7 @@
 
 /**
  * #998 — the promote pass's coverage rule, as pure text logic: a memory is
- * covered when at least half of its distinct 5-word shingles appear in one
+ * covered when at least 30% of its distinct 5-word shingles appear in one
  * knowledge doc. No database, model or network (unit target); the neighbour
  * lookup that feeds it is covered by the integration file of the same name.
  */
@@ -64,9 +64,14 @@ describe("shingleContainment", () => {
     expect(shingleContainment(wordShingles(smallDoc), words(20))).toBe(1);
   });
 
-  it("reaches the 0.5 cut when exactly half of the memory's shingles are in the doc", () => {
-    expect(shingleContainment(memory, words(10))).toBeCloseTo(6 / 16); // just under the cut
-    expect(shingleContainment(memory, words(12))).toBe(COVERAGE_MIN_CONTAINMENT); // 8 of 16
+  it("reaches the 0.3 cut when 5 of the memory's 16 shingles are in the doc, and not with 4", () => {
+    expect(shingleContainment(memory, words(8))).toBeLessThan(COVERAGE_MIN_CONTAINMENT); // 4 of 16
+    expect(shingleContainment(memory, words(9))).toBeGreaterThanOrEqual(COVERAGE_MIN_CONTAINMENT); // 5 of 16
+  });
+
+  it("covers a paraphrase that keeps a third of the wording, which the old 0.5 cut let through", () => {
+    expect(COVERAGE_MIN_CONTAINMENT).toBe(0.3);
+    expect(shingleContainment(memory, `${words(10)} ${words(30, "p")}`)).toBeCloseTo(6 / 16); // 0.375
   });
 
   it("is not fooled by reordering: shingles keep word order", () => {

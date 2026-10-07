@@ -91,7 +91,8 @@ everything else routes through `akm proposal accept`.
    a proposal turning a memory into knowledge (and, once accepted, retires
    the source memory) unless a neighbouring `knowledge/` doc already covers
    the memory, and it offers a memory whose promotion was accepted or
-   rejected again only after the memory's body changes; the pair pass judges
+   rejected, or that the model judged and left alone, again only after the
+   memory's body changes; the pair pass judges
    near-duplicate and superseding pairs in the memory tier and emits a
    `retire` proposal for the `duplicate`/`subsumed`/`supersedes` classes;
    `overlap`, `unrelated` and `contradicts` are recorded as

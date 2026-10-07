@@ -26,6 +26,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Consolidate stops re-offering memories a reviewer already turned down, and
+  the nightly judge sees what a promotion may duplicate.** About 53 promotions a
+  night reached review at ~5% precision, 64-70% of them a memory body already
+  proposed or rejected. Four causes, four changes: a memory whose body equals
+  that of a consolidate promotion rejected on or after 2026-09-29 is held until
+  its body changes, under any name (earlier rejections, the bulk audits of
+  2026-08, do not count); a memory the model judged and left alone is held by its
+  body hash instead of a 7-day clock, so an unchanged memory is no longer judged
+  every week (a row recorded without a hash keeps the 7 days); the coverage gate
+  skips a memory when 30% of its text, not 50%, is in a neighbouring knowledge
+  doc, which catches paraphrases; and the drain's judgment tier, which judged a
+  promotion seeing only the proposal and never `knowledge/`, is now shown the 5
+  nearest knowledge notes (ref, description, excerpt) and told to reject a
+  promotion they already cover. No new settings.
 - **A codex dispatch with an output schema no longer leaves a temp folder
   behind.** Every build of the codex command for a request with a schema made a
   new `akm-codex-schema-*` folder in the OS temp dir for `--output-schema` and

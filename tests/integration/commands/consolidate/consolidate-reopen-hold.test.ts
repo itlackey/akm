@@ -265,7 +265,7 @@ describe("reject, reopen and reject again (#997, #998)", () => {
     expect(pendingPromotions()).toEqual([proposal.id]); // still the one proposal, no duplicate
     // That run judged the memory, which took over its ledger row and dropped the link to the proposal: the
     // situation step 4 is about. (Should a run ever stop doing that, force this precondition instead.)
-    expect(ledgerRow()).toMatchObject({ outcome: "judged_no_action", proposalId: null, contentHash: null });
+    expect(ledgerRow()).toMatchObject({ outcome: "judged_no_action", proposalId: null, contentHash: hash });
 
     // 4. The drain defers the reopened proposal to a person. The deferral goes to the memory's row, not to one
     // under the knowledge ref (which the next verdict would then have updated instead).
