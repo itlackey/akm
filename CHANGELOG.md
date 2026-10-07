@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.27] - 2026-10-07
+
+The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.
+When upgrading from 0.9.26:
+
+- **The nightly queue stops refilling with duplicates.** Consolidate no longer
+  re-offers a memory whose body a reviewer rejected, and the drain's judge sees
+  the five knowledge notes nearest a promotion and rejects one they already
+  cover. A confident `subsumed` or `supersedes` retirement that the second look
+  confirms resolves unattended, like a duplicate (alpha.2).
+- **The judge rejects a promotion that is not durable:** a status, rollout,
+  version or test count, a plan not yet carried out, or something retired or
+  replaced. On 65 labelled promotions it accepted 13 of 61 bad ones before and
+  3 to 6 after, keeping 3 of the 4 good ones (alpha.3).
+- **Distill writes a lesson only when its memory holds one.** The writer may
+  answer that there is none; its judge rejects a lesson that only records what
+  was done, repeats an asset the library holds or claims what the memory does
+  not say; both see the related lessons, knowledge notes and skills (alpha.2).
+- **Reflect skips feedback an accepted exact fix already resolved**, and no
+  longer writes a second copy of a skill's reference files (alpha.1, alpha.2).
+- **Fixed:** an old (0.9.1-era) index is recreated instead of crashing every
+  `akm index`; an updated index scores like a fresh one; strict APIs that reject
+  `chat_template_kwargs` get one retry without it, and every response schema is
+  strict-valid; extract reports a lesson it refuses; a codex dispatch with a
+  schema leaves no temp folder (alpha.1).
+- **Removed:** `scripts/akm-eval`, now in itlackey/akm-eval (alpha.2).
+
+## [0.9.27-alpha.3] - 2026-10-07
+
+### Fixed
+
+- **The drain's judge rejects a promotion that is a status snapshot, a plan or
+  something retired, not only a duplicate.** Its rubric for a promotion (a memory
+  proposed as a new knowledge note) said to reject a note that is wrong, a
+  duplicate or contradicts the live asset, and to accept a correct, valuable one,
+  so it judged only whether the note was new: the reasons it gave for accepting a
+  note pinned to commits and versions, a rollout status or a retired host were
+  "distinct from the existing notes". The reject line now also names a note that
+  reports the state of something that changes (a status, rollout, branch, commit,
+  version, test count, "as of <date>"), a plan not yet carried out, or something
+  already retired, replaced or superseded, and says a lesson drawn from an
+  incident is durable. On the owner's 65 labelled promotions (chat/qwen3.8-27b,
+  two runs each) the judge accepted 7 and 8 of the 14 stale ones and 4 and 5 of
+  the 7 ephemeral ones before, and 1 and 3, 0 and 1 after. Other proposals keep
+  the old rubric. No new settings.
+
+## [0.9.27-alpha.2] - 2026-10-07
+
 ### Removed
 
 - **The `scripts/akm-eval` toolkit has moved out of this repository.** The
@@ -25,21 +73,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `docs/maintainers/eval.md` is now a pointer to the new home.
 
 ### Fixed
-
-- **The drain's judge rejects a promotion that is a status snapshot, a plan or
-  something retired, not only a duplicate.** Its rubric for a promotion (a memory
-  proposed as a new knowledge note) said to reject a note that is wrong, a
-  duplicate or contradicts the live asset, and to accept a correct, valuable one,
-  so it judged only whether the note was new: the reasons it gave for accepting a
-  note pinned to commits and versions, a rollout status or a retired host were
-  "distinct from the existing notes". The reject line now also names a note that
-  reports the state of something that changes (a status, rollout, branch, commit,
-  version, test count, "as of <date>"), a plan not yet carried out, or something
-  already retired, replaced or superseded, and says a lesson drawn from an
-  incident is durable. On the owner's 65 labelled promotions (chat/qwen3.8-27b,
-  two runs each) the judge accepted 7 and 8 of the 14 stale ones and 4 and 5 of
-  the 7 ephemeral ones before, and 1 and 3, 0 and 1 after. Other proposals keep
-  the old rubric. No new settings.
 
 - **The drain's judge no longer sees a note with a code block as truncated.**
   The judgment prompt fenced the proposed content (and the live asset, sibling
@@ -89,6 +122,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bad ones against 44%, and for 6 of 9 good ones against 4 of 6; of the memories
   that pass 0.9.26's skip of bare positive feedback, 20% of the bad against 50%.
   No new settings.
+
 - **Reflect no longer plans an asset whose negative feedback is already acted
   on.** A negative `akm feedback` that came with an exact fix (`--replace` and
   `--with`, `--outdated` or `--superseded-by`) makes a `feedback` proposal, and
@@ -99,6 +133,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   cursor when an accepted `feedback` proposal for the ref was created at or
   after it. A negative with no fix, one given after the proposal, and one whose
   proposal is still pending or was rejected plan a reflect as before.
+
 - **Consolidate stops re-offering memories a reviewer already turned down, and
   the nightly judge sees what a promotion may duplicate.** About 53 promotions a
   night reached review at ~5% precision, 64-70% of them a memory body already
@@ -113,6 +148,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   promotion seeing only the proposal and never `knowledge/`, is now shown the 5
   nearest knowledge notes (ref, description, excerpt) and told to reject a
   promotion they already cover. No new settings.
+
 - **A confident `subsumed` or `supersedes` retirement resolves unattended, as a
   `duplicate` already did.** The pair pass staged a retire proposal for the
   triage drain only when the judge's label was `duplicate`; every other retirement
@@ -127,6 +163,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   without a person. `docs/architecture/internals/improve-workflow.md` said triage
   never auto-accepts a retire proposal, which stopped being true in 0.9.26; it,
   and the matching lines in `improvement.md`, now describe the staging rule.
+
+## [0.9.27-alpha.1] - 2026-10-06
+
+### Fixed
+
 - **A codex dispatch with an output schema no longer leaves a temp folder
   behind.** Every build of the codex command for a request with a schema made a
   new `akm-codex-schema-*` folder in the OS temp dir for `--output-schema` and
