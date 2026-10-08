@@ -495,8 +495,9 @@ describe("runLessonQualityJudge — a criterion at 2 or below rejects, grounding
     const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "skills/deploy", content: "Deploy steps." }]);
 
     expect(prompt).toContain("Existing asset ref: skills/deploy");
+    expect(prompt).toContain("never with the source memory");
     expect(prompt).toContain(
-      "Score 1-2 when one of them already states the same rule, or states most of what the lesson says",
+      "Score 1-2 when a listed asset already states the same rule, or states most of what the lesson says",
     );
   });
 
