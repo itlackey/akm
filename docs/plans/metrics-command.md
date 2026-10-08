@@ -1,6 +1,6 @@
 # Plan: `akm metrics`
 
-Status: in progress · 2026-10-08
+Status: implemented on `feature/metric-report` · 2026-10-08
 
 ## Goal
 
@@ -300,3 +300,19 @@ Item notes:
 
 Test placement follows AGENTS.md: anything that opens a real DB goes under
 `tests/integration/`, and pure aggregation/rendering goes under `tests/`.
+
+## 9. Found while verifying end to end
+
+Running the command against a real data dir turned up three defects, each
+fixed with a test or a browser check:
+
+- `select` events store the ref as typed (often bundle-less), while
+  `usage_events` stores `bundle//conceptId`, so one asset appeared as two rows
+  and `--bundle` dropped its selects. Selects are now resolved to the durable
+  ref the way `--ref` is, then filtered.
+- `usage_events.created_at` has one-second resolution, so a row written during
+  the window end's own second (`--until` defaults to now) was excluded. The
+  exclusive bound is rounded up to the next whole second.
+- The dashboard timeline drew nothing for a one-day window: a stacked area
+  with hidden symbols has no visible mark for a single point. One day now
+  renders as a stacked bar.
