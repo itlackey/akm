@@ -203,7 +203,6 @@ const OPENCODE_SDK: Transport = {
             if (reply === SDK_HANG) return new Promise<never>(() => {});
             return (typeof reply === "function" ? reply(sdkBodies.length) : reply) as never;
           },
-          delete: async () => ({}),
         },
       },
       server: { close() {} },
@@ -453,7 +452,6 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
               sdkBodies.push(args.body as Record<string, unknown>);
               return sdkText(REPLY) as never;
             },
-            delete: async () => ({}),
           },
         },
         server: { close() {} },
@@ -637,7 +635,6 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
           session: {
             create: async () => ({ data: { id: "contract-session" } }),
             prompt: async () => sdkText(REPLY) as never,
-            delete: async () => ({}),
           },
         },
         server: { close() {} },

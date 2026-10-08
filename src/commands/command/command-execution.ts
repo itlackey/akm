@@ -70,6 +70,8 @@ export interface CommandDispatchResult {
   readonly durationMs: number;
   readonly error?: string;
   readonly reason?: string;
+  /** The harness's own session id when it exposes one (kept in the harness's history, #1100). */
+  readonly sessionId?: string;
   readonly warnings?: readonly string[];
   readonly notices?: readonly Readonly<LoweringNotice>[];
 }
@@ -394,6 +396,7 @@ function resultEnvelope(
     durationMs: result.durationMs,
     ...(result.error !== undefined ? { error: result.error } : {}),
     ...(result.reason !== undefined ? { reason: result.reason } : {}),
+    ...(result.sessionId !== undefined ? { sessionId: result.sessionId } : {}),
     ...(warnings.length > 0 ? { warnings } : {}),
     ...(notices.length > 0 ? { notices } : {}),
   };

@@ -62,6 +62,8 @@ export interface AkmAgentDispatchResult {
   durationMs: number;
   error?: string;
   reason?: string;
+  /** The harness's own session id when it exposes one (kept in the harness's history, #1100). */
+  sessionId?: string;
   /**
    * Non-fatal announcements — today only the implicit `opencode-sdk` engine
    * fallback (`integrations/agent/engine-fallback.ts`), surfaced here so JSON
