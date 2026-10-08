@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The distill judge scores a lesson 1–2 on non-redundancy when a listed asset
+  states most of what it says, not only when it states the same rule, and is
+  told to compare only with the listed assets, never with the source memory.
+  Before, a lesson that restated a skill the library holds scored 3 ("largely
+  redundant") and went to a reviewer. Judge-only replay of the lessons the
+  writer produced (local qwen3.8-27b, 3 repeats): of 4 public lessons for
+  memories that deserve none, 12 verdicts passed 3 before and 1 after, and of
+  12 such own lessons 33 of 36 passed before and 27 after, while the 31
+  lesson-worthy own lessons lost no verdict (2 of 93 rejected before, 0 after).
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.
