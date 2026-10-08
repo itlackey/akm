@@ -1,6 +1,6 @@
 # Plan: `akm metrics`
 
-Status: proposed · 2026-10-07
+Status: in progress · 2026-10-08
 
 ## Goal
 
@@ -128,42 +128,14 @@ akm metrics [--since 30d] [--until <ts>] [--bundle <id>]... [--ref <ref>]
 
 ## 3. Result shape (`schemaVersion: 1`)
 
-```ts
-interface AkmMetricsResult {
-  schemaVersion: 1;
-  window: { since: string; until: string };   // ISO
-  filters: { source: string; bundles: string[]; ref?: string };
-  usage: {
-    totals: { searches; shows; curates; selects; zeroResultSearches; distinctAssets; distinctQueries };
-    selectRate: number | null;                 // selects / searches with ≥1 hit
-    daily: Array<{ day: string; search; show; curate; feedback }>;
-    topAssets: Array<{ ref; shows; searchHits; selects; lastUsedAt }>;
-    topQueries: Array<{ query; count; avgResults }>;
-    zeroResultQueries: Array<{ query; count; lastAt }>;
-    bySource: Record<string, number>;
-  };
-  feedback: {
-    totals: { positive; negative };
-    byAsset: Array<{ ref; positive; negative; valence; lastAt }>;  // valence = computeValenceScore
-    byTag: Record<string, { positive; negative }>;
-    recentNegative: Array<{ ref; reason?; tags?; at }>;
-  };
-  utility: {
-    count: number;
-    histogram: Array<{ bucket: string; count: number }>;   // 10 buckets 0..1
-    lowest: Array<{ ref; utility; showCount; searchCount; selectRate; lastUsedAt }>;
-    highest: Array<…same…>;
-    neverUsed: number;                       // entries with no utility row
-  };
-  outcomes: { lowestOutcome: Array<{ ref; outcomeScore; retrievalCount; negativeFeedbackCount; acceptedChangeCount }> };
-  llm: LlmUsageAggregate;                     // readLlmUsageAggregate (health/llm-usage.ts), unchanged
-  tasks: { runs; failed; failRate; byTask: Array<{ taskId; runs; failed; medianMs }> };
-  proposals: { byStatus: Record<string, number>; acceptRateBySource: … };   // health/accept-rate.ts
-  workflows: { runs; byStatus; tokens; byModel: Record<string, number> };
-  rows?: { usage: UsageRow[]; feedback: FeedbackRow[]; llm: LlmUsageRow[] };   // raw window rows, see §5
-  notes: string[];
-}
-```
+The authoritative shape is `AkmMetricsResult` in `src/commands/metrics/types.ts`.
+Its sections are: `window`, `filters`, `usage` (totals, select rate, search
+median ms, daily series, top assets, top and zero-result queries, by source),
+`feedback` (totals, by asset with valence, by tag, recent negatives), `utility`
+(histogram, lowest/highest, never used), `outcomes`, `llm` (the health
+`LlmUsageAggregate` plus `cost[]`), `index` (runs and median time), `tasks`,
+`proposals`, `workflows`, optional `rows` (raw usage and LLM rows), and
+`notes[]`.
 
 Top-N lists are capped by `--top`. Rates are `null` when the denominator is 0,
 never `NaN`.
@@ -174,7 +146,7 @@ All formats go through the existing `output("metrics", result)` path.
 
 | Format | Rendering |
 |---|---|
-| `json` / `yaml` / `jsonl` | Serialization of the shaped envelope (free). The shaper drops `rows` unless `--detail full`. |
+| `json` / `yaml` / `jsonl` | Serialization of the envelope (free). `rows` is present only under `--detail full` (see §5). |
 | `text` | Registered text formatter in `src/output/text/metrics.ts`: aligned sections (Usage, Feedback, Utility, LLM, Tasks, Proposals, Workflows), top-N tables, with lists cut to 5 at `brief` and to `--top` at `normal`. |
 | `md` | `registerMdRenderer("metrics", …)`: one heading per section, GFM tables. |
 | `html` | Bespoke dashboard (§5). |
@@ -216,21 +188,20 @@ Like health, nothing in the HTML builder reads `Date.now()`. `generatedAt` comes
 from `window.until`, so identical input gives byte-identical output, which the
 tests rely on.
 
-### Open decision: when `rows` is populated
+### When `rows` is populated (decided)
 
-The raw rows ride in the envelope, and the shaper drops them below
-`--detail full`. Plain `akm metrics --format html` therefore needs the rows
-without the user also typing `--detail full`. There are two options:
-
-- **Recommended:** the command includes `rows` when `getOutputMode().format === "html"` or detail is `full`. This is one line in the command.
-- **Alternative:** follow health's precedent with an explicit `--report` flag. It is more consistent with health but adds a flag users must remember.
+The command includes `rows` whenever `getOutputMode().format === "html"` or
+`--detail full`. Plain `akm metrics --format html --output metrics.html` gives
+the full analyzable dashboard, and there is no extra flag. The shaper is a
+passthrough: it never drops `rows` that the command chose to include.
 
 ## 6. Data access
 
 Repositories hold the SQL; the command holds none.
 
+- Result types are fixed in `src/commands/metrics/types.ts` (committed before the work items start).
 - New `src/storage/repositories/metrics-repository.ts`, with read-only queries over `usage_events`, `events` (feedback only; LLM goes through health's reader), `asset_outcome` and workflow units.
-  - **Time filtering must normalize `created_at`.** Compare `datetime(created_at)` against `datetime(?)` with the bound ISO value. A raw string compare against ISO is wrong, because a space sorts before `T`. That same bug exists in `purgeOldUsageEvents` (`usage-events.ts:199`), which purges up to a day early. Note it for a separate fix; it is not part of this change.
+  - **Time filtering must normalize `created_at`.** Compare `datetime(created_at)` against `datetime(?)` with the bound ISO value. A raw string compare against ISO is wrong, because a space sorts before `T`. The same bug in `purgeOldUsageEvents` is fixed by G6.
   - Day bucketing uses `substr(datetime(created_at),1,10)`.
 - Utility goes in `index-utility-repository.ts`: a `listUtilityWithRefs(db)` that joins `entries` to get refs.
 - Reuse, unchanged:
@@ -240,29 +211,92 @@ Repositories hold the SQL; the command holds none.
   - `computeValenceScore` (`improve/feedback-valence.ts`)
 - Aggregation from rows to result is pure functions in `src/commands/metrics/collect.ts`, so it can be unit-tested without a DB.
 
-## 7. Implementation steps
+## 7. Gaps in the stored data, and their fixes
 
-| # | Step | Verify |
+Each gap was checked against the code. Fix items are listed in §8.
+
+### G1. LLM usage covers only part of the calls
+
+**Cause.** `emitLlmUsage` drops the record when no sink is installed
+(`src/llm/usage-telemetry.ts:131`). Only `akm improve` (`improve.ts:249`) and
+`akm proposal drain` (`proposal-cli.ts:549`) install one. Calls from `akm index`
+memory inference, curate, workflow and agent dispatch, and `akm command run`
+are never stored.
+
+**Fix (item `llm-sink`).**
+- `runCli` (`src/cli.ts:1055`) installs `installLlmUsagePersistenceIfAbsent()` once per process and disposes it in a `finally`.
+- `installLlmUsagePersistence` saves the sink that was installed before it and **restores** it on dispose, instead of clearing. Improve's per-run sink (shared handle plus the `onRecord` heartbeat) therefore still wins inside a run, and the process-wide sink resumes afterwards.
+- Add `getLlmUsageSink()` beside `setLlmUsageSink` for that.
+
+No new event type and no schema change. Volume is one `events` row per LLM call, already purged by `improve.eventRetentionDays`.
+
+### G2. Search and index timings are not persisted
+
+**Cause.** `timing` exists only in the command output (`search.ts:177-287`,
+`indexer.ts:802`).
+
+**Fix (item `timing`).**
+- Search: add `totalMs` (plus `rankMs` and `embedMs` when present) to the existing search **summary** `usage_events` row's metadata (`search.ts:398`). No new row, no new table. The total covers the whole search, and the usage write happens after the result is computed, so pass the timing into `logSearchEvent`.
+- Index: append one `index_completed` event (`{mode, totalMs, walkMs, llmMs, embedMs, ftsMs, finalizeMs}`) when an index run finishes (`indexer.ts`, beside the returned `timing`), and add the type to the `events.ts` union.
+
+### G3. Usage lost on a fresh install: **not a real gap, no change**
+
+`withStateDbTelemetry` skips when `state.db` is missing, but every caller first
+calls `appendEvent` (`search.ts:370`, `curate.ts:154`, `show-usage.ts:45`, and
+via `appendShowTrace` for `recordIndexedShowUsage`). `appendEvent` opens
+`state.db` through `withStateDb`, which creates and migrates it. By the time the
+usage write runs, the file exists. The only remaining skip is a read-only data
+dir, where nothing can be written anyway.
+
+### G4. The retention window silently truncates long `--since` windows
+
+**Cause.** `usage_events` is kept for 90 days (`USAGE_EVENT_RETENTION_DAYS`) and
+`events` for `improve.eventRetentionDays` (default 90). A 180-day window shows
+only 90 days with no indication.
+
+**Fix (in item `metrics-core`).** When `since` is older than `now − retention`
+for either store, push a `notes[]` entry naming the store, its retention, and
+the effective start. No retention change.
+
+### G5. No cost data
+
+**Cause.** Nothing in config or the records carries a price.
+
+**Fix (in item `metrics-core`).**
+- Optional `engines.<name>.pricing: { inputPerMillion: number, outputPerMillion: number, currency?: string }` (non-negative finite, currency defaults to `"USD"`) on both LLM and agent engine schemas (`src/core/config/schema/engines.ts`). Add a doc line in `docs/reference/configuration.md`. Regenerate `schemas/` with `bun scripts/gen-config-schema.ts`.
+- `akm metrics` computes `llm.cost[]` at report time from `llm.byEngine` × pricing: completion tokens are charged at the output rate and reasoning tokens are not charged separately (they are part of completion).
+- Nothing is persisted, so changing a price re-prices history.
+- Engines without pricing are omitted, not shown as zero.
+
+### G6. The usage purge boundary is off by up to a day
+
+**Cause.** `purgeOldUsageEvents` (`src/indexer/usage/usage-events.ts:199`) runs
+`created_at < <ISO cutoff>`. `created_at` is `YYYY-MM-DD HH:MM:SS`, and a space
+sorts before `T`, so every row on the cutoff's date compares as older and is
+deleted, up to 24 h early.
+
+**Fix (item `purge-fix`).** `WHERE datetime(created_at) < datetime(?)`. Add a
+test with a row 1 h newer than the cutoff on the same date: it must survive.
+
+## 8. Work items
+
+The items are built to be independent. Each one owns its files, and all of them
+build on the types in §3 / `src/commands/metrics/types.ts`. CHANGELOG bullets
+may conflict at merge; the integrator keeps every one of them.
+
+| Key | Title | Owns |
 |---|---|---|
-| 1 | Repository queries plus pure aggregators | unit tests on fixtures (aggregators); integration test against a seeded `state.db`/`index.db` (repository) |
-| 2 | `metrics-cli.ts` + register in `cli.ts` + shaper (drop `rows` below full) | `bun test` on a new `tests/integration/commands/metrics.test.ts`: empty DB, seeded DB, `--bundle`, `--ref`, `--source`, `--since` boundaries |
-| 3 | text and md renderers | snapshot tests at each detail level |
-| 4 | HTML template + builder + `shared.ts` wiring + embedded template | token-completeness test (as health), `</script>`-in-query escaping test, determinism test, node-compat/compiled-binary template test |
-| 5 | Docs: `docs/reference/cli.md`, `docs/reference/data-and-telemetry.md` (point at `akm metrics`), `src/assets/hints/cli-hints-{short,full}.md`, CHANGELOG | — |
-| 6 | Gate | `bunx biome check --write src/ tests/`, `bun run check` green |
+| `llm-sink` | Persist LLM usage for every command (G1) | `src/llm/usage-persist.ts`, `src/llm/usage-telemetry.ts`, `src/cli.ts` (`runCli` only), `tests/integration/llm/llm-usage-persist.test.ts` |
+| `timing` | Persist search and index timings (G2) | `src/commands/read/search.ts` (usage summary row only), `src/indexer/indexer.ts`, `src/core/events.ts` (type union), tests |
+| `purge-fix` | Fix the usage purge boundary (G6) | `src/indexer/usage/usage-events.ts`, test |
+| `metrics-core` | `akm metrics` command, data collection, JSON/YAML, G4 notes, G5 pricing | `src/commands/metrics/{metrics-cli,collect}.ts`, `src/storage/repositories/metrics-repository.ts`, `index-utility-repository.ts` (one new reader), engine schema + `schemas/`, `src/cli.ts` `subCommands` + output registry passthrough shaper, `docs/reference/{cli,configuration,data-and-telemetry}.md`, hints, tests |
+| `metrics-text-md` | text and md renderers | `src/output/text/metrics.ts` + its registration, `src/commands/metrics/md-report.ts` + `registerMdRenderer`, tests on fixture `AkmMetricsResult`s |
+| `metrics-html` | HTML dashboard (§5) | `src/assets/templates/html/metrics.html`, `src/commands/metrics/html-report.ts` (`renderMetricsHtml`), `src/output/html-render.ts` (embedded template), `src/cli/shared.ts` html case, tests on fixture results |
+
+Item notes:
+- `metrics-text-md` and `metrics-html` render from fixture `AkmMetricsResult` objects in their tests and do not depend on `metrics-core` code. Wiring them into `output()` uses the command name `"metrics"`, which `metrics-core` registers. If the name registry rejects an unknown name before integration, add the registration line in your item as well; the integrator dedupes it.
+- `metrics-core` reuses `readLlmUsageAggregate`, `computeAcceptRateBySource`, `queryTaskHistory`, `computeValenceScore` and `parseHealthSince`. It does not copy them.
+- `metrics-html`: there are no external scripts except the ECharts tag from `buildEchartsTag` (export it from `health/html-report.ts` instead of copying the URL). The JSON island escapes `<` as `\u003c`. The builder never reads the clock. Rows over 50,000 are cut to the most recent 50,000, with a note.
 
 Test placement follows AGENTS.md: anything that opens a real DB goes under
 `tests/integration/`, and pure aggregation/rendering goes under `tests/`.
-
-## 8. Known gaps in the stored data (surface, don't fix here)
-
-The dashboard states these in `notes[]` / a footer so numbers are not over-read:
-
-1. **LLM usage covers only part of the calls.** It is persisted only while `akm improve` or `akm proposal drain` installs the sink (`src/llm/usage-telemetry.ts:131`). Index-time memory inference, curate, etc. are not counted.
-2. **Search and index timings are not persisted**, so there are no latency metrics for search.
-3. **Usage on a fresh install can be lost.** `withStateDbTelemetry` skips writes until `state.db` exists.
-4. **Old data is purged.** `usage_events` and `events` are purged after about 90 days, so longer windows silently truncate. The command warns when `--since` exceeds the retention.
-5. **No cost data exists.** Tokens are reported; dollars are not.
-6. **The usage purge boundary is off by up to a day** (`created_at` format; see §6).
-
-Each of these is a candidate follow-up issue, independent of this command.
