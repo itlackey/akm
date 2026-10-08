@@ -543,10 +543,71 @@ esac`,
       const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
       expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
       expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
-      expect(run.result.lockstep?.reason).toContain("older than akm-opencode@latest");
+      expect(run.result.lockstep?.reason).toContain("older than the 0.9.26 that akm-opencode@latest");
       expect(entry(run, "opencode").outcome).toBe("failed");
       expect(run.mode === "upgrade" && run.failed).toBe(true);
       expect(mutations()).toEqual([]);
+    });
+
+    test("real version shapes: a prerelease plugin build is not behind the stable one, the pins decide (#1089)", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.28-alpha.8.202610071200", "next");
+      // By semver the dotted prerelease sorts below the concatenated-patch stable build.
+      stubNpm({
+        latest: ["0.9.27202610072331", "0.9.27"],
+        next: ["0.9.28-alpha.8.202610081938", "0.9.28-alpha.8"],
+      });
+      stubOpenCodeNext("0.9.28-alpha.8.202610081938");
+      const deps = fakeDeps("0.9.28-alpha.8", "0.9.27");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.27", deps));
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.28-alpha.8" });
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.28-alpha.8", updateAvailable: true });
+      expect(entry(run, "opencode")).toMatchObject({
+        outcome: "updated",
+        from: "0.9.28-alpha.8.202610071200",
+        to: "0.9.28-alpha.8.202610081938",
+      });
+    });
+
+    test("real version shapes: @next whose pin is older than @latest's pin still fails closed", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.26-alpha.1.202610010000", "next");
+      stubNpm({
+        latest: ["0.9.27202610072331", "0.9.27"],
+        next: ["0.9.27-alpha.1.202610081938", "0.9.26"],
+      });
+      stubOpenCodeNext("0.9.27-alpha.1.202610081938");
+      const deps = fakeDeps("0.9.28-alpha.8", "0.9.26");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.26", deps));
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
+      expect(run.result.lockstep?.reason).toContain("pins akm-cli 0.9.26, older than the 0.9.27");
+      expect(entry(run, "opencode").outcome).toBe("failed");
+      expect(mutations()).toEqual([]);
+    });
+
+    test("an @next cache that already holds npm's @next build is current: plugin versions are compared for equality only", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.28-alpha.8.202610081938", "next");
+      stubNpm({
+        latest: ["0.9.27202610072331", "0.9.27"],
+        next: ["0.9.28-alpha.8.202610081938", "0.9.28-alpha.8"],
+      });
+      stubOpenCodeNext("0.9.28-alpha.8.202610081938");
+      const run = await withEnv(world.env, () =>
+        runUpgrade(NEXT, "0.9.28-alpha.8", fakeDeps("0.9.28-alpha.8", "0.9.27")),
+      );
+      expect(entry(run, "opencode").outcome).toBe("current");
+    });
+
+    test("the stable cache is compared by equality with npm @latest: a concatenated-patch build is stale or current", async () => {
+      writeCachedOpenCode("0.9.27202610062331");
+      stubOpenCode({ latest: "0.9.27202610072331", pin: "0.9.27", running: false });
+      const run = await upgrade();
+      expect(entry(run, "opencode")).toMatchObject({
+        outcome: "updated",
+        from: "0.9.27202610062331",
+        to: "0.9.27202610072331",
+      });
     });
 
     test("a missing akm-opencode@next fails closed", async () => {

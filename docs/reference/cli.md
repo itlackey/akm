@@ -1427,8 +1427,8 @@ carries `channel: "next"` (`"latest"` otherwise); no other field changes.
   With that line in the global OpenCode config (`~/.config/opencode/opencode.json`
   or `.jsonc`, or the file named by `OPENCODE_CONFIG`), lockstep and the cache
   refresh use `akm-opencode@next` (its version and its `akm-cli` pin) instead of
-  `@latest`. If `akm-opencode@next` is missing, older than `@latest`, or its
-  `akm-cli` pin is unreadable, the CLI is held where it is and the OpenCode entry
+  `@latest`. If `akm-opencode@next` is missing, pins an older `akm-cli` than
+  `@latest` does, or its `akm-cli` pin is unreadable, the CLI is held where it is and the OpenCode entry
   is `failed`, exactly as in the stable lockstep above.
 
   Without that line the OpenCode entry is `skipped`, its message names the line

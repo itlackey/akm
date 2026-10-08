@@ -234,15 +234,33 @@ export function lookupOpenCodeLatest(tag: UpgradeChannel = "latest"): OpenCodeLa
   return { version: parsed.version, akmCli: typeof akmCli === "string" ? akmCli : undefined };
 }
 
-/** `akm-opencode@next`, which must exist and be no older than `@latest`: a prerelease channel that trails the stable one is not a target. */
+/**
+ * `akm-opencode@next`, which must exist and pin an akm-cli no older than the one
+ * `@latest` pins: a prerelease channel that trails the stable one is not a target.
+ *
+ * The two builds are compared by their akm-cli pins, never by their own
+ * versions. akm-plugins' stable versions are `<akm_version><yyyymmddhhmm>`
+ * concatenated into the PATCH (`0.9.27202610072331`), while prereleases are
+ * `<akm_version>.<ts>` (`0.9.28-alpha.8.202610081938`), so by semver every
+ * prerelease sorts below the stable build and the comparison means nothing
+ * (#1089). For the same reason plugin versions are only ever tested for
+ * equality (is the cache already this build?), never ordered.
+ */
 export function lookupOpenCodeNext(): OpenCodeLatest {
   const next = lookupOpenCodeLatest("next");
   if ("error" in next) return next;
   const latest = lookupOpenCodeLatest("latest");
   if ("error" in latest) return { error: `could not compare with ${OPENCODE_PACKAGE}@latest: ${latest.error}` };
-  if (semverOrder(next.version, latest.version) < 0) {
+  // No pin on @next: returned as is, and the lockstep holds the CLI and says why.
+  if (!next.akmCli) return next;
+  if (!latest.akmCli) {
+    return { error: `could not compare with ${OPENCODE_PACKAGE}@latest: it declares no akm-cli dependency` };
+  }
+  if (semverOrder(next.akmCli, latest.akmCli) < 0) {
     return {
-      error: `${OPENCODE_NEXT_SPEC} (${next.version}) is older than ${OPENCODE_PACKAGE}@latest (${latest.version})`,
+      error:
+        `${OPENCODE_NEXT_SPEC} (${next.version}) pins akm-cli ${next.akmCli}, older than the ` +
+        `${latest.akmCli} that ${OPENCODE_PACKAGE}@latest (${latest.version}) pins`,
     };
   }
   return next;

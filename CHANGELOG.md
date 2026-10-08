@@ -83,6 +83,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm upgrade --next` no longer fails OpenCode as "older than `@latest`" (#1089).** akm-plugins' stable
+  versions concatenate a timestamp into the patch (`0.9.27202610072331`), so by semver every prerelease build
+  (`0.9.28-alpha.8.202610081938`) sorted below stable and `akm-opencode@next` was always rejected. `@next` is
+  now judged by the `akm-cli` it pins against the one `@latest` pins; plugin versions are only compared for
+  equality (is the cache already this build?).
+
 - **`opencode-sdk` runs keep their OpenCode session (#1100).** The SDK runner deleted the session after every
   dispatch, so a workflow, task or `akm agent` run left no transcript in OpenCode's history to debug or to learn
   from, unlike `opencode run`. The session is now kept; a dispatch akm gives up on (timeout or abort) is still
