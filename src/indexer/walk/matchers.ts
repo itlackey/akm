@@ -191,10 +191,11 @@ function matchDirectoryHint(dirName: string, ctx: PathFileContext, specificity: 
  * True when some ancestor directory already DECLARES this file's type via
  * `DIR_TYPE_MAP` — the same walk `classifyByDirectory` performs. Derived from
  * path fields alone, so `smartMdPathCandidates` can apply it without reading
- * bytes.
+ * bytes. A skill's folder is a declared context too: a file in it is a skill
+ * resource, so a shell `$1` in one of its snippets must not retype it (#1063).
  */
 function hasDeclaredDirType(ctx: PathFileContext): boolean {
-  if (isNestedSkillResource(ctx)) return false;
+  if (isNestedSkillResource(ctx)) return true;
   return ctx.ancestorDirs.some((dir) => matchDirectoryHint(dir, ctx, 0) !== null);
 }
 

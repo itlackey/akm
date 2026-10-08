@@ -41,13 +41,23 @@ import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import { pkgVersion } from "../../version";
+import { runUpgrade } from "./plugin-upgrade";
 import { checkForUpdate, performUpgrade } from "./self-update";
 import { akmClone } from "./source-clone";
 
 export const upgradeCommand = defineJsonCommand({
-  meta: { name: "upgrade", description: "Upgrade akm to the latest release" },
+  meta: {
+    name: "upgrade",
+    description:
+      "Upgrade akm to the latest release, then update the akm plugin of each installed harness " +
+      "(Claude Code, Codex, OpenCode). With the OpenCode plugin installed, akm moves to the version that plugin pins.",
+  },
   args: {
-    check: { type: "boolean", description: "Check for updates without installing", default: false },
+    check: {
+      type: "boolean",
+      description: "Report pending updates, CLI and per-harness plugins, without changing anything",
+      default: false,
+    },
     force: { type: "boolean", description: "Force upgrade even if on latest", default: false },
     "skip-post-upgrade": {
       type: "boolean",
@@ -56,17 +66,16 @@ export const upgradeCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    const check = await checkForUpdate(pkgVersion);
-    if (args.check) {
-      output("upgrade", check);
+    const run = await runUpgrade(
+      { check: args.check, force: args.force, skipPostUpgrade: args["skip-post-upgrade"] },
+      pkgVersion,
+      { checkForUpdate, performUpgrade: (check, opts) => performUpgrade(check, opts) },
+    );
+    if (run.mode === "check") {
+      output("upgrade", run.result);
       return;
     }
-    const skipPostUpgrade = args["skip-post-upgrade"];
-    const result = await performUpgrade(check, { force: args.force, skipPostUpgrade });
-    // The install may have succeeded, but an upgrade whose migration is
-    // blocked or could not run is not done: exit like `akm migrate apply` does.
-    const migrationFailed = result.migration?.status === "blocked" || result.migration?.status === "failed";
-    outputWithExitCode("upgrade", result, migrationFailed ? EXIT_CODES.GENERAL : undefined);
+    outputWithExitCode("upgrade", run.result, run.failed ? EXIT_CODES.GENERAL : undefined);
   },
 });
 

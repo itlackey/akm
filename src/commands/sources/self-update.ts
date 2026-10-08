@@ -250,7 +250,7 @@ function checksumBypassRequested(): boolean {
 
 export async function performUpgrade(
   check: UpgradeCheckResponse,
-  opts?: { force?: boolean; skipPostUpgrade?: boolean },
+  opts?: { force?: boolean; skipPostUpgrade?: boolean; targetVersion?: string },
   dependencies?: Partial<SelfUpdateDependencies>,
 ): Promise<UpgradeResponse> {
   const { currentVersion, latestVersion, installMethod } = check;
@@ -285,7 +285,7 @@ export async function performUpgrade(
     };
   }
 
-  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod);
+  const packageManagerCommand = getPackageManagerUpgradeCommand(installMethod, undefined, opts?.targetVersion);
   if (packageManagerCommand) {
     return runPackageManagerUpgrade({
       packageManagerCommand,
@@ -665,8 +665,9 @@ function resolveNodePackageManagerCommand(name: "npm" | "pnpm"): string {
 export function getPackageManagerUpgradeCommand(
   installMethod: InstallMethod,
   packageName = getInstalledPackageName(),
+  version = "latest",
 ): { command: string; args: string[]; displayCommand: string } | undefined {
-  const pkgRef = `${packageName}@latest`;
+  const pkgRef = `${packageName}@${version}`;
 
   if (installMethod === "bun") {
     return {
