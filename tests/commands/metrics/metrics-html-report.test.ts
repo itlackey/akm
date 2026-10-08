@@ -16,6 +16,7 @@ import {
   MAX_HTML_USAGE_ROWS,
   renderMetricsHtml,
 } from "../../../src/commands/metrics/html-report";
+import { renderMetricsMd } from "../../../src/commands/metrics/md-report";
 import type { AkmMetricsResult, MetricsUsageRow } from "../../../src/commands/metrics/types";
 import { initOutputMode, resetOutputMode } from "../../../src/output/context";
 import { renderHtml, resolveTemplatePath } from "../../../src/output/html-render";
@@ -183,6 +184,12 @@ describe("renderMetricsHtml", () => {
   test("returns null for a non-metrics payload so the generic renderer takes over", () => {
     expect(renderMetricsHtml({ foo: 1 })).toBeNull();
     expect(renderMetricsHtml(null)).toBeNull();
+  });
+
+  test("a payload without feedback is not a metrics result for either format", () => {
+    const { feedback: _feedback, ...partial } = fixture();
+    expect(renderMetricsHtml(partial)).toBeNull();
+    expect(renderMetricsMd(partial, "normal")).toBeNull();
   });
 
   test("substitutes every token and loads only the shared ECharts tag", () => {

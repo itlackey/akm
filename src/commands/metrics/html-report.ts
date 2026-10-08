@@ -18,18 +18,13 @@
 import { escapeHtml, isoTimeTag, renderHtml, resolveTemplatePath } from "../../output/html-render";
 import { pkgVersion } from "../../version";
 import { buildEchartsTag } from "../health/html-report";
+import { isMetricsResult } from "./report-view";
 import type { AkmMetricsResult, MetricsUsageRow } from "./types";
 
 const esc = escapeHtml;
 
 /** Most `rows.usage` entries the page carries; older rows are dropped with a note. */
 export const MAX_HTML_USAGE_ROWS = 50_000;
-
-function isMetricsResult(value: unknown): value is AkmMetricsResult {
-  if (value === null || typeof value !== "object") return false;
-  const v = value as Partial<AkmMetricsResult>;
-  return v.schemaVersion === 1 && typeof v.window === "object" && v.window !== null && typeof v.usage === "object";
-}
 
 /**
  * The result as the page receives it: `rows` always present (empty when the
