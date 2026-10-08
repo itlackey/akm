@@ -495,7 +495,7 @@ report time, so changing it re-prices the whole window.
 
 Notes you may see:
 
-- A `--since` older than a store keeps names the store, its retention
+- A `--since` older than what a store keeps names the store, its retention
   (`usage_events` keeps 90 days; `events`, which holds selects, LLM calls and
   index runs, keeps `improve.eventRetentionDays`, default 90) and where its data
   effectively starts, so a long window is never silently shorter than asked.

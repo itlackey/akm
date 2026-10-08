@@ -647,6 +647,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `asset_state_gc` | improve maintenance: orphaned `asset_salience`/`asset_outcome` rows (ref `asset_state/_gc`) | `pending`, `collected`, `byTable` |
 | `events_purged`, `improve_runs_purged`, `task_logs_purged` | improve's retention pass (refs `events/_purge`, `improve_runs/_purge`, `task_logs/_purge`) | `purgedCount`, `retentionDays` |
 | `state_db_vacuumed`, `index_db_vacuumed` | the retention pass's VACUUM of `state.db`; `akm index` compacting `index.db` | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
+| `index_completed` | `akm index`, once when a run finishes | `mode`, `totalMs`, `walkMs`, `llmMs`, `embedMs`, `ftsMs`, `finalizeMs` |
 | `workflow_started` | a workflow run is created | `runId`, `status` |
 | `workflow_step_completed` | a step's genuine `completed` transition | `runId`, `stepId`, `status` |
 | `workflow_step_updated` | every non-`completed` step transition (`failed`, `skipped`, `blocked`) | `runId`, `stepId`, `status` |
@@ -654,8 +655,8 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `workflow_abandoned` | `akm workflow abandon` | `runId` |
 | `workflow_unit_started` | a workflow unit attempt begins | `runId`, `stepId`, `unitId`, `attempt`, `dispatchId`, `phase`, `status` |
 | `workflow_unit_finished` | a unit attempt ends | the same, plus `failureReason` and `tokens` when present |
-| `llm_usage` | every LLM call | `durationMs`, `outcome`, `modelSource`, `stage`, `engine`, `process`, `model`, `finishReason`, token counts, `errorCode` |
-| `llm_usage_summary` | the usage sink's teardown | `expectedTerminalRecords` |
+| `llm_usage` | every LLM call, from any akm command | `durationMs`, `outcome`, `modelSource`, `stage`, `engine`, `process`, `model`, `finishReason`, token counts, `errorCode` |
+| `llm_usage_summary` | the usage sink's teardown; the process-wide sink writes none when it saw no call | `expectedTerminalRecords` |
 | `health_probe` | `akm health`'s state.db write/read probe | none kept: the row is deleted in the same connection |
 | `rekey` | `scripts/rekey-asset-ref.ts`, when it moved rows | `from`, `to`, `changed` |
 
