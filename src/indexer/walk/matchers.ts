@@ -273,8 +273,10 @@ function classifyBySmartMd(ctx: FileContext): MatchFact | null {
   }
 
   // `$ARGUMENTS` is unambiguous, so it keeps its long-standing precedence: a
-  // command dropped under `knowledge/` is still found as a command.
-  if (ARGUMENTS_PLACEHOLDER_RE.test(body)) {
+  // command dropped under `knowledge/` is still found as a command. A skill's
+  // folder is the one declared context it defers to — a file there is a skill
+  // resource, so documenting a command template must not retype it (#1084).
+  if (ARGUMENTS_PLACEHOLDER_RE.test(body) && !isNestedSkillResource(ctx)) {
     return SMART_MD_FACTS.command;
   }
 
