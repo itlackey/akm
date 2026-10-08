@@ -98,7 +98,9 @@ everything else routes through `akm proposal accept`.
    `overlap`, `unrelated` and `contradicts` are recorded as
    `judged_no_action` with no proposal. The judge first lists the durable
    claims each side alone holds, and a side with any listed claim is never
-   retired. A retirement whose retired side lists nothing (a duplicate: neither
+   retired. Knowledge is never retired in favour of a memory: when the judge would
+   do that, the memory is retired in favour of the note if the memory lists no claim of its own,
+   and the pair is left alone otherwise. A retirement whose retired side lists nothing (a duplicate: neither
    side), confirmed by a second look, is staged for the triage drain to accept; every other
    retirement waits for a person.
 5. Every emitted proposal lands in the `proposals` table in `state.db`,
