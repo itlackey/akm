@@ -538,8 +538,11 @@ function toCsv(columns, rows) {
     var byDay = {};
     agg.daily.forEach(function (d) { byDay[d.day] = d; });
     var colors = TYPE_COLORS();
+    // A stacked area with hidden symbols draws nothing for a single day, so
+    // one day renders as a stacked bar instead.
+    var single = days.length === 1;
     var series = EVENT_TYPES.map(function (t) {
-      return { name: t, type: 'line', stack: 'events', areaStyle: { opacity: 0.55 }, showSymbol: false,
+      return { name: t, type: single ? 'bar' : 'line', stack: 'events', areaStyle: { opacity: 0.55 }, showSymbol: false,
         lineStyle: { width: 1 }, itemStyle: { color: colors[t] },
         data: days.map(function (d) { return byDay[d] ? byDay[d][t] : 0; }) };
     });
@@ -549,7 +552,7 @@ function toCsv(columns, rows) {
     chart('ch-timeline', {
       legend: { top: 0, textStyle: { color: css('--muted') } },
       grid: { left: 48, right: 16, top: 32, bottom: 64 },
-      xAxis: Object.assign({ type: 'category', boundaryGap: false, data: days }, axisStyle()),
+      xAxis: Object.assign({ type: 'category', boundaryGap: single, data: days }, axisStyle()),
       yAxis: Object.assign({ type: 'value', minInterval: 1 }, axisStyle()),
       dataZoom: [
         { type: 'slider', height: 22, bottom: 8, startValue: startIdx, endValue: endIdx },
