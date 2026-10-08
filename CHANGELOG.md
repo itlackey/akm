@@ -56,6 +56,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
+  failure-path runs on 0.9.28 (#1099).
 - **Stability tiers for 0.10's stabilization work.** Experimental: the built-in
   improve strategies other than `default` and `consolidate` (`quick`,
   `reflect-distill`, `thorough`, `catchup`), the proactive-maintenance and
