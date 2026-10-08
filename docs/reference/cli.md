@@ -442,6 +442,9 @@ for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 
 ### metrics
 
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): the report, its JSON shape and the
+dashboard may change in any release.
+
 Report what akm has recorded locally: asset usage (search, show, curate),
 feedback, derived utility, LLM tokens, task runs, proposal
 flow, workflow token spend, and index runs. Read-only, and every number comes
