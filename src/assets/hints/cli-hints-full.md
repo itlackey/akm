@@ -416,7 +416,7 @@ akm agent --model sonnet --prompt "..."         # Model override (aliases or exa
 akm info                                       # Capabilities, bundle dir, index stats, semantic-search status
 akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
 akm health --report                            # Adds accept-rate metrics
-akm metrics                                    # Usage, feedback, utility, LLM tokens and cost, tasks, workflows (last 30d, read-only)
+akm metrics                                    # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
 akm metrics --since 7d --bundle <id>           # Narrow the window or the bundle; --ref <ref> for one asset
 akm metrics --format html --output metrics.html # Self-contained dashboard with the window's rows (filter, sort, export CSV)
 akm log                                        # Append-only event stream (mutations, feedback, indexing)

@@ -108,15 +108,6 @@ export interface MetricsOutcomeAsset {
   acceptedChangeCount: number;
 }
 
-/** Estimated spend for one engine, from `engines.<name>.pricing`. */
-export interface MetricsEngineCost {
-  engine: string;
-  currency: string;
-  promptTokens: number;
-  completionTokens: number;
-  cost: number;
-}
-
 export interface MetricsTaskSummary {
   taskId: string;
   runs: number;
@@ -171,10 +162,7 @@ export interface AkmMetricsResult {
     neverUsed: number;
   };
   outcomes: { lowestOutcome: MetricsOutcomeAsset[] };
-  llm: LlmUsageAggregate & {
-    /** Only engines that have `pricing` configured appear; empty when none do. */
-    cost: MetricsEngineCost[];
-  };
+  llm: LlmUsageAggregate;
   index: { runs: number; medianMs: number | null; recent: MetricsIndexRun[] };
   tasks: { runs: number; failed: number; failRate: number | null; byTask: MetricsTaskSummary[] };
   proposals: { byStatus: Record<string, number>; acceptRateBySource: AcceptRateEntry[] };

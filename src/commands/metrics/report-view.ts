@@ -205,17 +205,6 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
         { title: "By engine", headers: LLM_HEADERS, rows: cut(llmRows(llm.byEngine)), hideWhenEmpty: true },
         { title: "By process", headers: LLM_HEADERS, rows: cut(llmRows(llm.byProcess)), hideWhenEmpty: true },
         { title: "By stage", headers: LLM_HEADERS, rows: cut(llmRows(llm.byStage)), hideWhenEmpty: true },
-        {
-          title: "Estimated cost",
-          headers: ["engine", "prompt", "completion", "cost"],
-          rows: llm.cost.map((c) => [
-            c.engine,
-            int(c.promptTokens),
-            int(c.completionTokens),
-            `${c.cost.toFixed(4)} ${c.currency}`,
-          ]),
-          hideWhenEmpty: true,
-        },
       ],
     },
     {

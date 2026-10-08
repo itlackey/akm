@@ -4,7 +4,7 @@
 
 /**
  * `akm metrics` — one read-only report over what akm has already recorded:
- * asset usage, feedback, utility, LLM usage and cost, task runs, proposals and
+ * asset usage, feedback, utility, LLM usage, task runs, proposals and
  * workflow spend. This module reads the stores and hands the rows to the pure
  * aggregation in `collect.ts`; the shape is `AkmMetricsResult` (`types.ts`).
  *
@@ -47,7 +47,6 @@ import { emptyLlmUsageAggregate, summarizeLlmUsage } from "../health/llm-usage";
 import {
   buildMetricsResult,
   DEFAULT_EVENT_RETENTION_DAYS,
-  type EnginePricing,
   indexRunsFromEvents,
   llmRowsFromEvents,
   type MetricsInput,
@@ -147,22 +146,15 @@ function readUtility(): { utility?: UtilityWithRef[]; note?: string } {
   }
 }
 
-function readPricing(): { pricing: Record<string, EnginePricing>; eventRetentionDays: number; note?: string } {
+function readEventRetention(): { eventRetentionDays: number; note?: string } {
   try {
-    const config = loadConfig();
-    const pricing: Record<string, EnginePricing> = {};
-    for (const [name, engine] of Object.entries(config.engines ?? {})) {
-      const price = (engine as { pricing?: EnginePricing }).pricing;
-      if (price) pricing[name] = price;
-    }
-    const days = config.improve?.eventRetentionDays;
-    return { pricing, eventRetentionDays: typeof days === "number" ? days : DEFAULT_EVENT_RETENTION_DAYS };
+    const days = loadConfig().improve?.eventRetentionDays;
+    return { eventRetentionDays: typeof days === "number" ? days : DEFAULT_EVENT_RETENTION_DAYS };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return {
-      pricing: {},
       eventRetentionDays: DEFAULT_EVENT_RETENTION_DAYS,
-      note: `The config could not be loaded (${message}), so llm.cost is empty and event retention assumes ${DEFAULT_EVENT_RETENTION_DAYS} days.`,
+      note: `The config could not be loaded (${message}), so event retention assumes ${DEFAULT_EVENT_RETENTION_DAYS} days.`,
     };
   }
 }
@@ -189,7 +181,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   const top = options.top ?? DEFAULT_TOP;
   const notes: string[] = [];
 
-  const config = readPricing();
+  const config = readEventRetention();
   if (config.note) notes.push(config.note);
   notes.push(
     ...retentionNotes({
@@ -230,7 +222,6 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     outcomes: [],
     llm: emptyLlmUsageAggregate(),
     llmRows: [],
-    pricing: config.pricing,
     indexRuns: [],
     tasks: [],
     proposals: { byStatus: {}, acceptRateBySource: [] },
@@ -288,7 +279,7 @@ export const metricsCommand = defineJsonCommand({
   meta: {
     name: "metrics",
     description:
-      "Report asset usage, feedback, utility, LLM usage and cost, tasks, proposals and workflow spend from local records. Read-only. --format html writes a self-contained dashboard.",
+      "Report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only. --format html writes a self-contained dashboard.",
   },
   args: {
     since: {

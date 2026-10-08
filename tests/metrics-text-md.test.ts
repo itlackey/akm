@@ -84,7 +84,6 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
       byStage: { reflect: stage },
       byProcess: {},
       byEngine: { local: stage },
-      cost: [{ engine: "local", currency: "USD", promptTokens: 100, completionTokens: 40, cost: 0.0123 }],
     },
     index: { runs: 1, medianMs: 800, recent: [{ at: "2026-10-07T08:00:00.000Z", mode: "incremental", totalMs: 800 }] },
     tasks: { runs: 4, failed: 1, failRate: 0.25, byTask: [{ taskId: "improve", runs: 4, failed: 1, medianMs: null }] },
@@ -133,7 +132,6 @@ function emptyFixture(): AkmMetricsResult {
       byStage: {},
       byProcess: {},
       byEngine: {},
-      cost: [],
     },
     index: { runs: 0, medianMs: null, recent: [] },
     tasks: { runs: 0, failed: 0, failRate: null, byTask: [] },
@@ -155,7 +153,6 @@ describe("metrics text formatter", () => {
     expect(out).toContain("40.0%");
     expect(out).toContain("Top assets:");
     expect(out).toContain("kubernetes");
-    expect(out).toContain("0.0123 USD");
     // Newlines in a query never break the row layout.
     expect(out).toContain("vpn | setup notes");
   });

@@ -22,7 +22,6 @@ import type {
   AkmMetricsResult,
   MetricsAssetUsage,
   MetricsDailyUsage,
-  MetricsEngineCost,
   MetricsFeedbackAsset,
   MetricsIndexRun,
   MetricsLlmRow,
@@ -37,21 +36,10 @@ import type {
 const DAY_MS = 86_400_000;
 /** Utility is a score in [0, 1], reported in ten equal buckets. */
 const UTILITY_BUCKETS = 10;
-/** Costs are rounded to a millionth of a currency unit so float noise never reaches the output. */
-const COST_SCALE = 1_000_000;
 /** Mean result counts are rounded to two decimals. */
 const MEAN_SCALE = 100;
-/** `engines.<name>.pricing` is per this many tokens. */
-const TOKENS_PER_PRICE_UNIT = 1_000_000;
 /** `improve.eventRetentionDays` default (`runRetentionPurgePass`); 0 disables the purge. */
 export const DEFAULT_EVENT_RETENTION_DAYS = 90;
-
-/** `engines.<name>.pricing` as configured. */
-export interface EnginePricing {
-  inputPerMillion: number;
-  outputPerMillion: number;
-  currency?: string;
-}
 
 export interface MetricsFilters {
   source: string;
@@ -75,8 +63,6 @@ export interface MetricsInput {
   outcomes: AssetOutcomeRow[];
   llm: LlmUsageAggregate;
   llmRows: MetricsLlmRow[];
-  /** `engines.<name>.pricing`, keyed by engine name. */
-  pricing: Record<string, EnginePricing>;
   indexRuns: MetricsIndexRun[];
   tasks: TaskHistoryRow[];
   proposals: AkmMetricsResult["proposals"];
@@ -474,34 +460,6 @@ function buildUtility(input: MetricsInput): AkmMetricsResult["utility"] {
   };
 }
 
-/**
- * Cost per engine that has `pricing`: prompt tokens at the input rate and
- * completion tokens at the output rate. Reasoning tokens are part of the
- * completion count, so they are not charged again. An engine without pricing
- * is left out rather than shown as zero.
- */
-export function computeEngineCosts(
-  byEngine: LlmUsageAggregate["byEngine"],
-  pricing: Record<string, EnginePricing>,
-): MetricsEngineCost[] {
-  const costs: MetricsEngineCost[] = [];
-  for (const [engine, usage] of Object.entries(byEngine).sort(([a], [b]) => a.localeCompare(b))) {
-    const price = pricing[engine];
-    if (!price) continue;
-    const raw =
-      (usage.promptTokens * price.inputPerMillion + usage.completionTokens * price.outputPerMillion) /
-      TOKENS_PER_PRICE_UNIT;
-    costs.push({
-      engine,
-      currency: price.currency ?? "USD",
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      cost: Math.round(raw * COST_SCALE) / COST_SCALE,
-    });
-  }
-  return costs;
-}
-
 function taskDurationMs(row: TaskHistoryRow): number | undefined {
   try {
     return decodeTaskHistoryMetadata(row.metadata_json).durationMs;
@@ -574,7 +532,7 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
     feedback: buildFeedback(input.top, rows),
     utility: buildUtility(input),
     outcomes: { lowestOutcome: outcomes },
-    llm: { ...input.llm, cost: computeEngineCosts(input.llm.byEngine, input.pricing) },
+    llm: input.llm,
     index: buildIndex(input.top, input.indexRuns),
     tasks: buildTasks(input.top, input.tasks),
     proposals: input.proposals,

@@ -443,7 +443,7 @@ for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 ### metrics
 
 Report what akm has recorded locally: asset usage (search, show, curate),
-feedback, derived utility, LLM tokens and estimated cost, task runs, proposal
+feedback, derived utility, LLM tokens, task runs, proposal
 flow, workflow token spend, and index runs. Read-only, and every number comes
 from `state.db` or `index.db`; nothing is collected that was not already
 recorded.
@@ -475,7 +475,7 @@ Result sections (`schemaVersion: 1`):
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
 | `outcomes` | The assets with the lowest `outcome_score` |
-| `llm` | `akm health`'s LLM usage aggregate (by stage, process and engine) plus `cost[]` |
+| `llm` | `akm health`'s LLM usage aggregate (by stage, process and engine) |
 | `index`, `tasks`, `proposals`, `workflows` | Index runs and median time, task runs and fail rate, proposals by status and accept rate by source, workflow runs and tokens by model |
 | `rows` | The raw usage and LLM rows of the window; see below |
 | `notes` | Anything that limits what the numbers mean |
@@ -487,11 +487,6 @@ with a `notes` entry, and the exit code stays 0.
 `rows` is present with `--format html` (the dashboard re-aggregates from it in
 the browser) and with `--detail full` in any other format; it is absent
 otherwise.
-
-`llm.cost` prices an engine's prompt and completion tokens from its
-`engines.<name>.pricing` ([Configuration](configuration.md#engines)). Engines
-without pricing are left out, not shown as zero, and the price is applied at
-report time, so changing it re-prices the whole window.
 
 Notes you may see:
 

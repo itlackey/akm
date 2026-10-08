@@ -208,9 +208,6 @@
       <div class="panel"><h3>Tokens by process</h3><div class="ec" id="ch-llm-process"></div></div>
       <div class="panel"><h3>Tokens by engine</h3><div class="ec" id="ch-llm-engine"></div></div>
       <div class="panel"><h3>Calls and mean latency per day</h3><div class="ec" id="ch-llm-time"></div></div>
-      <div class="panel full" id="cost-panel" hidden>
-        <h3>Estimated cost</h3><div class="table-wrap" id="tb-cost"></div>
-      </div>
     </div>
   </div>
 
@@ -713,12 +710,6 @@ function toCsv(columns, rows) {
       { key: 'showCount', label: 'Shows', num: true, fmt: fmtN },
       { key: 'searchCount', label: 'Searches', num: true, fmt: fmtN },
       { key: 'selectRate', label: 'Select rate', num: true, fmt: fmtPct }
-    ],
-    cost: [
-      { key: 'engine', label: 'Engine' },
-      { key: 'promptTokens', label: 'Prompt tokens', num: true, fmt: fmtN },
-      { key: 'completionTokens', label: 'Completion tokens', num: true, fmt: fmtN },
-      { key: 'cost', label: 'Cost', num: true, fmt: function (v, r) { return Number(v).toFixed(4) + ' ' + r.currency; } }
     ]
   };
 
@@ -809,9 +800,6 @@ function toCsv(columns, rows) {
     renderTable('zero', $('tb-zero'), COLS.queries.slice(0, 2).concat(COLS.queries.slice(3)), agg.zeroQueries, { sortKey: 'count', file: 'zero-result-queries', empty: 'No zero-result searches in the current view' });
     renderTable('negatives', $('tb-negatives'), COLS.negatives, agg.negatives, { sortKey: 'at', clickRef: true, file: 'negative-feedback', empty: 'No negative feedback in the current view' });
     renderFeedbackCharts(agg);
-    var cost = (DATA.llm && DATA.llm.cost) || [];
-    $('cost-panel').hidden = cost.length === 0;
-    if (cost.length) renderTable('cost', $('tb-cost'), COLS.cost, cost, { sortKey: 'cost', file: 'llm-cost' });
   }
 
   function renderStatic() {

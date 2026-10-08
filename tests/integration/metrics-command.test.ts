@@ -224,41 +224,6 @@ describe("akm metrics", () => {
     expect(never.result.notes.filter((note) => note.includes("keeps"))).toHaveLength(1);
   });
 
-  test("llm.cost prices only the engines that have pricing", async () => {
-    writeSandboxConfig({
-      engines: {
-        paid: {
-          kind: "llm",
-          endpoint: "http://127.0.0.1:1/v1/chat/completions",
-          model: "m",
-          pricing: { inputPerMillion: 2, outputPerMillion: 10, currency: "EUR" },
-        },
-        free: { kind: "llm", endpoint: "http://127.0.0.1:2/v1/chat/completions", model: "m" },
-      },
-    });
-    for (const engine of ["paid", "free"]) {
-      appendEvent({
-        eventType: "llm_usage",
-        metadata: {
-          engine,
-          model: "m",
-          outcome: "success",
-          durationMs: 100,
-          promptTokens: 1_000_000,
-          completionTokens: 500_000,
-          reasoningTokens: 200_000,
-          totalTokens: 1_500_000,
-        },
-      });
-    }
-    const { result } = await metrics();
-    expect(result.llm.calls).toBe(2);
-    // 1M prompt * 2 + 0.5M completion * 10 per million; reasoning is inside completion.
-    expect(result.llm.cost).toEqual([
-      { engine: "paid", currency: "EUR", promptTokens: 1_000_000, completionTokens: 500_000, cost: 7 },
-    ]);
-  });
-
   test("rows ride along with --detail full and --format html, not by default", async () => {
     const at = sqliteTs(Date.now() - HOUR);
     seedUsage([{ type: "search", at, query: "needle-query", metadata: { resultCount: 1 } }]);

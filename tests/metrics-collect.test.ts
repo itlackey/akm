@@ -8,7 +8,6 @@ import { describe, expect, test } from "bun:test";
 import { emptyLlmUsageAggregate, summarizeLlmUsage } from "../src/commands/health/llm-usage";
 import {
   buildMetricsResult,
-  computeEngineCosts,
   indexRunsFromEvents,
   llmRowsFromEvents,
   type MetricsInput,
@@ -47,7 +46,6 @@ function input(partial: Partial<MetricsInput> = {}): MetricsInput {
     outcomes: [],
     llm: emptyLlmUsageAggregate(),
     llmRows: [],
-    pricing: {},
     indexRuns: [],
     tasks: [],
     proposals: { byStatus: {}, acceptRateBySource: [] },
@@ -294,60 +292,10 @@ describe("utility section", () => {
   });
 });
 
-describe("llm cost", () => {
-  const byEngine = {
-    paid: {
-      calls: 1,
-      totalDurationMs: 1,
-      promptTokens: 2_000_000,
-      completionTokens: 1_000_000,
-      totalTokens: 3_000_000,
-      reasoningTokens: 900_000,
-      failures: 0,
-    },
-    free: {
-      calls: 1,
-      totalDurationMs: 1,
-      promptTokens: 5,
-      completionTokens: 5,
-      totalTokens: 10,
-      reasoningTokens: 0,
-      failures: 0,
-    },
-    cheap: {
-      calls: 1,
-      totalDurationMs: 1,
-      promptTokens: 10,
-      completionTokens: 0,
-      totalTokens: 10,
-      reasoningTokens: 0,
-      failures: 0,
-    },
-  };
-
-  test("prompt at the input rate, completion at the output rate, reasoning not charged again", () => {
-    expect(
-      computeEngineCosts(byEngine, {
-        paid: { inputPerMillion: 1.5, outputPerMillion: 6, currency: "EUR" },
-        cheap: { inputPerMillion: 0.1, outputPerMillion: 0.2 },
-      }),
-    ).toEqual([
-      { engine: "cheap", currency: "USD", promptTokens: 10, completionTokens: 0, cost: 0.000001 },
-      { engine: "paid", currency: "EUR", promptTokens: 2_000_000, completionTokens: 1_000_000, cost: 9 },
-    ]);
-  });
-
-  test("no pricing, no rows", () => {
-    expect(computeEngineCosts(byEngine, {})).toEqual([]);
-  });
-
-  test("the llm section is health's aggregate plus cost", () => {
-    const llm = { ...emptyLlmUsageAggregate(), calls: 3, byEngine };
-    const section = buildMetricsResult(
-      input({ llm, pricing: { free: { inputPerMillion: 0, outputPerMillion: 0 } } }),
-    ).llm;
-    expect(section.calls).toBe(3);
-    expect(section.cost).toEqual([{ engine: "free", currency: "USD", promptTokens: 5, completionTokens: 5, cost: 0 }]);
+describe("llm section", () => {
+  test("is health's aggregate unchanged", () => {
+    const llm = { ...emptyLlmUsageAggregate(), calls: 3 };
+    expect(buildMetricsResult(input({ llm })).llm).toEqual(llm);
   });
 });
 

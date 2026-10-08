@@ -81,28 +81,6 @@
               "reasoningEffort": {
                 "type": "string",
                 "minLength": 1
-              },
-              "pricing": {
-                "type": "object",
-                "properties": {
-                  "inputPerMillion": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "outputPerMillion": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "currency": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "inputPerMillion",
-                  "outputPerMillion"
-                ],
-                "additionalProperties": true
               }
             },
             "required": [
@@ -168,28 +146,6 @@
                 "type": "string",
                 "maxLength": 63,
                 "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-              },
-              "pricing": {
-                "type": "object",
-                "properties": {
-                  "inputPerMillion": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "outputPerMillion": {
-                    "type": "number",
-                    "minimum": 0
-                  },
-                  "currency": {
-                    "type": "string",
-                    "minLength": 1
-                  }
-                },
-                "required": [
-                  "inputPerMillion",
-                  "outputPerMillion"
-                ],
-                "additionalProperties": true
               }
             },
             "required": [
@@ -1797,28 +1753,6 @@
                   "reasoningEffort": {
                     "type": "string",
                     "minLength": 1
-                  },
-                  "pricing": {
-                    "type": "object",
-                    "properties": {
-                      "inputPerMillion": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "outputPerMillion": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "currency": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "inputPerMillion",
-                      "outputPerMillion"
-                    ],
-                    "additionalProperties": true
                   }
                 },
                 "required": [
@@ -1884,28 +1818,6 @@
                     "type": "string",
                     "maxLength": 63,
                     "pattern": "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$"
-                  },
-                  "pricing": {
-                    "type": "object",
-                    "properties": {
-                      "inputPerMillion": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "outputPerMillion": {
-                        "type": "number",
-                        "minimum": 0
-                      },
-                      "currency": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    },
-                    "required": [
-                      "inputPerMillion",
-                      "outputPerMillion"
-                    ],
-                    "additionalProperties": true
                   }
                 },
                 "required": [
