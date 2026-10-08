@@ -1385,3 +1385,106 @@ describe("runOpencodeSdk — permission requests are answered, not left pending"
     expect(result.stderr).toContain("event subscription failed: connection refused");
   });
 });
+
+describe("runOpencodeSdk — provider retries (#1108)", () => {
+  function makeRetryServer(status: Record<string, unknown>) {
+    const aborted: string[] = [];
+    let push: (event: unknown) => void = () => {};
+    let subscriptionStarted: () => void = () => {};
+    const subscribed = new Promise<void>((resolve) => {
+      subscriptionStarted = resolve;
+    });
+    const server = {
+      client: {
+        event: {
+          subscribe: async (args: { signal: AbortSignal }) => {
+            const queue: unknown[] = [];
+            let wake: (() => void) | undefined;
+            push = (event) => {
+              queue.push(event);
+              wake?.();
+            };
+            async function* stream() {
+              subscriptionStarted();
+              while (!args.signal.aborted) {
+                const next = queue.shift();
+                if (next !== undefined) {
+                  yield next;
+                  continue;
+                }
+                await new Promise<void>((resolve) => {
+                  wake = resolve;
+                  args.signal.addEventListener("abort", () => resolve(), { once: true });
+                });
+              }
+            }
+            return { stream: stream() };
+          },
+        },
+        postSessionIdPermissionsPermissionId: async () => ({ data: true }),
+        session: {
+          create: async () => ({ data: { id: "sess-1" } }),
+          prompt: async () => {
+            await subscribed;
+            push({ type: "session.status", properties: { sessionID: "sess-1", status } });
+            await new Promise((resolve) => setTimeout(resolve, 10));
+            return { data: { parts: [{ type: "text", text: "retried" }] } };
+          },
+          abort: async (args: { path: { id: string } }) => {
+            aborted.push(args.path.id);
+            return {};
+          },
+        },
+      },
+      server: { close() {} },
+    };
+    return { server, aborted };
+  }
+
+  test("records a retry and lets a retry within the deadline continue", async () => {
+    const reset = Date.now() + 1_000;
+    const fake = makeRetryServer({ type: "retry", attempt: 1, message: "try again", next: reset });
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "go", { timeoutMs: 5_000 });
+
+    expect(result).toMatchObject({ ok: true, stdout: "retried" });
+    expect(result.stderr).toBe(`OpenCode retry attempt 1: try again; retrying at ${new Date(reset).toISOString()}`);
+    expect(fake.aborted).toEqual([]);
+  });
+
+  test("stops promptly when a provider account limit schedules a retry", async () => {
+    const reset = Date.now() + 60_000;
+    const fake = makeRetryServer({
+      type: "retry",
+      attempt: 1,
+      message: "usage limit reached",
+      next: reset,
+      action: { reason: "account_rate_limit", provider: "opencode-go" },
+    });
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "go", { timeoutMs: null });
+
+    expect(result).toMatchObject({ ok: false, reason: "llm_rate_limit" });
+    expect(result.error).toBe(
+      `OpenCode provider limit stopped this run (opencode-go): usage limit reached; reset at ${new Date(reset).toISOString()}`,
+    );
+    expect(result.stderr).toContain("OpenCode retry attempt 1 (opencode-go): usage limit reached");
+    expect(fake.aborted).toEqual(["sess-1"]);
+  });
+
+  test("stops when OpenCode's retry time is after the dispatch deadline", async () => {
+    const reset = Date.now() + 60_000;
+    const fake = makeRetryServer({ type: "retry", attempt: 2, message: "temporarily unavailable", next: reset });
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "go", { timeoutMs: 5_000 });
+
+    expect(result).toMatchObject({ ok: false, reason: "llm_rate_limit" });
+    expect(result.error).toBe(
+      `OpenCode's next retry (${new Date(reset).toISOString()}) is after this run's deadline: temporarily unavailable`,
+    );
+    expect(fake.aborted).toEqual(["sess-1"]);
+  });
+});
