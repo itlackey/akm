@@ -61,7 +61,12 @@ import type {
 import { type ResolvedImprovePlan, shouldSkipRef } from "./improve-strategies";
 import { type ImproveLedgerOutcome, recordLedgerAttempt, stateKey, stripBundle } from "./ledger";
 import type { applyMemoryCleanup } from "./memory/memory-improve";
-import { hasOnlyBarePositiveFeedback, isFlaggedSinceLastEdit, pushRecentError } from "./preparation";
+import {
+  hasOnlyBarePositiveFeedback,
+  isDeprecatedOrSuperseded,
+  isFlaggedSinceLastEdit,
+  pushRecentError,
+} from "./preparation";
 import type { AkmReflectOptions } from "./reflect";
 import { recordNoOp, resetConsecutiveNoOps } from "./salience";
 import { attributeStage, errMessage } from "./stage";
@@ -274,6 +279,7 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
 
 const FLAGGED_WRONG_REASON = "flagged wrong since its last edit";
 const BARE_POSITIVE_REASON = "only positive feedback, without a reason";
+const DEPRECATED_REASON = "marked deprecated or superseded";
 
 async function runLoopDistillPass(
   planned: ImproveEligibleRef,
@@ -312,6 +318,12 @@ async function runLoopDistillPass(
   if (!explicitRefScope && hasOnlyBarePositiveFeedback(planned, env.eventsCtx)) {
     recordLoopAttempt(planned, env, "distill", "unchanged", BARE_POSITIVE_REASON);
     return recordSkip(tally, planned.ref, BARE_POSITIVE_REASON, { env, reason: "distill_positive_without_reason" });
+  }
+  // A memory marked deprecated or superseded is no longer true, so it gives no lesson. The ledger holds it; an
+  // explicit `--scope` ref still runs.
+  if (!explicitRefScope && isDeprecatedOrSuperseded(planned)) {
+    recordLoopAttempt(planned, env, "distill", "unchanged", DEPRECATED_REASON);
+    return recordSkip(tally, planned.ref, DEPRECATED_REASON, { env, reason: "distill_deprecated_or_superseded" });
   }
 
   const result = await attributeStage(resolvedPlan, "distill", () =>

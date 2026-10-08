@@ -44,6 +44,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compared the space-separated `created_at` against an ISO cutoff, so every row on
   the cutoff's date was removed up to 24 hours before its 90 days were up. Both
   sides are now normalized before the comparison.
+- **Distill skips a memory marked `beliefState: deprecated` or `superseded`.** Such a note is no longer true and gave
+  no lesson (26 of about 900 memories carry the state; distill ran on 17 of them). The improve loop records a
+  `distill-skipped` action and an `improve_skipped` event (`distill_deprecated_or_superseded`), and the attempt goes
+  in the ledger as `unchanged`; an explicit `--scope` ref still runs. `contradicted` is still distilled.
+- The distill judge scores a lesson 1–2 on non-redundancy when a listed asset
+  states most of what it says, not only when it states the same rule, and is
+  told to compare only with the listed assets, never with the source memory.
+  Before, a lesson that restated a skill the library holds scored 3 ("largely
+  redundant") and went to a reviewer. Judge-only replay of the lessons the
+  writer produced (local qwen3.8-27b, 3 repeats): of 4 public lessons for
+  memories that deserve none, 12 verdicts passed 3 before and 1 after, and of
+  12 such own lessons 33 of 36 passed before and 27 after, while the 31
+  lesson-worthy own lessons lost no verdict (2 of 93 rejected before, 0 after).
+- **The pair judge's reason no longer swaps A and B.** In a replay of 120 recorded pairs, 18 of 90 retirement
+  reasons said the opposite of what the judge's claim lists decided (for example "B contains all claims from A" for a
+  pair where B was retired). The lists were right, so no retirement changed, but the reason a reviewer reads was
+  wrong. The prompt now asks the reason to name the asset that can be deleted; two replays gave 0 and 1 of about 85.
 
 ## [0.9.27] - 2026-10-07
 

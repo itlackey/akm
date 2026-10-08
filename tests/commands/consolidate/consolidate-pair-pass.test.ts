@@ -9,6 +9,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import consolidatePairPrompt from "../../../src/assets/prompts/consolidate-pair.md" with { type: "text" };
 import {
   decideRetirement,
   isOwnTwinOrParent,
@@ -251,5 +252,11 @@ describe("decideRetirement — the calibrated outcome table (owner grades, O5)",
     expect(decideRetirement("contradicts", null, older, newer, NONE)).toBeUndefined();
     expect(decideRetirement("overlap", null, older, newer, NONE)).toBeUndefined();
     expect(decideRetirement("unrelated", null, older, newer, NONE)).toBeUndefined();
+  });
+});
+
+describe("consolidate-pair prompt", () => {
+  test("the reason names the asset that can be deleted, so it cannot swap A and B", () => {
+    expect(consolidatePairPrompt).toContain("name the asset that can be deleted and what the other asset still holds");
   });
 });

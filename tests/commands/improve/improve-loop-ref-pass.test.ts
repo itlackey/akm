@@ -531,6 +531,67 @@ describe("processImproveLoopRef — a memory flagged wrong and not edited since"
   });
 });
 
+describe("processImproveLoopRef — a memory marked deprecated or superseded", () => {
+  const memoryRef = "memories/retired-1";
+  const REASON = "marked deprecated or superseded";
+
+  function memoryWithState(sandbox: { stashDir: string }, beliefState?: string) {
+    const filePath = path.join(sandbox.stashDir, "memories", "retired-1.md");
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const state = beliefState ? `beliefState: ${beliefState}\n` : "";
+    fs.writeFileSync(filePath, `---\ndescription: Old ports\n${state}---\nThe default port was 8000.\n`);
+    return { ...eligibleRef(memoryRef), filePath };
+  }
+
+  function distillingEnv(sandbox: { stashDir: string; eventsDbPath: string }, overrides: Partial<ImproveLoopEnv> = {}) {
+    return makeEnv({
+      stashDir: sandbox.stashDir,
+      eventsCtx: { dbPath: sandbox.eventsDbPath },
+      distillOnlyRefSet: new Set([memoryRef]),
+      signalBearingSet: new Set([memoryRef]),
+      distillFn: () => Promise.resolve(distillQueued(memoryRef, "lesson")),
+      ...overrides,
+    });
+  }
+
+  for (const state of ["deprecated", "superseded"]) {
+    test(`a ${state} memory is skipped, reported as a skip and left in the ledger`, async () => {
+      const sandbox = freshSandbox();
+      const candidate = memoryWithState(sandbox, state);
+      const env = distillingEnv(sandbox, { distillFn: () => Promise.reject(new Error("distilled a retired memory")) });
+
+      const tally = await processImproveLoopRef(candidate, env);
+
+      expect(tally.actions.map((a) => a.mode)).toEqual(["distill-skipped"]);
+      expect(tally.actions[0]!.result).toEqual({ ok: true, reason: REASON });
+      expect(ledgerRow(sandbox.stashDir, memoryRef, "distill")).toMatchObject({ outcome: "unchanged", detail: REASON });
+      expect(
+        readEvents({ type: "improve_skipped", ref: memoryRef }, { dbPath: sandbox.eventsDbPath }).events.map(
+          (e) => e.metadata,
+        ),
+      ).toEqual([{ reason: "distill_deprecated_or_superseded" }]);
+    });
+  }
+
+  for (const state of [undefined, "active", "asserted", "contradicted"]) {
+    test(`a memory with beliefState ${state ?? "unset"} is distilled`, async () => {
+      const sandbox = freshSandbox();
+      const tally = await processImproveLoopRef(memoryWithState(sandbox, state), distillingEnv(sandbox));
+
+      expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+    });
+  }
+
+  test("an explicit --scope ref is distilled anyway", async () => {
+    const sandbox = freshSandbox();
+    const env = distillingEnv(sandbox, { scope: { mode: "ref", value: memoryRef } });
+
+    const tally = await processImproveLoopRef(memoryWithState(sandbox, "deprecated"), env);
+
+    expect(tally.actions.map((a) => a.mode)).toEqual(["distill"]);
+  });
+});
+
 describe("processImproveLoopRef — a memory whose only feedback is positive without a reason", () => {
   const memoryRef = "memories/praised-1";
   const DAY_MS = 24 * 3_600_000;
