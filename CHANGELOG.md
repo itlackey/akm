@@ -41,6 +41,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A skill's reference file with a shell `$1` is no longer indexed as a command (#1063).** A file under
+  `skills/**` other than `SKILL.md` that showed `local var="$1"` in a code block was retyped to
+  `commands/skills/<name>/...`. A skill's folder now counts as a declared context, as `memories/` and the other typed
+  directories already did, so the file stays a skill resource (`knowledge/skills/<name>/...`). A `$1` under
+  `commands/` or in a loose file is still a command.
 - **Usage-event retention no longer deletes a day early.** The purge on `akm index`
   compared the space-separated `created_at` against an ISO cutoff, so every row on
   the cutoff's date was removed up to 24 hours before its 90 days were up. Both

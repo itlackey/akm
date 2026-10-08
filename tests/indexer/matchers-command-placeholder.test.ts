@@ -135,3 +135,24 @@ describe("#824: a declared directory type outranks a numeric placeholder", () =>
     });
   }
 });
+
+describe("#1063: a skill's folder is a declared context for the numeric guess", () => {
+  const SHELL = `${MEMORY_FRONTMATTER}\`\`\`bash\nrequire_var() {\n  local var="$1"\n}\n\`\`\`\n`;
+
+  test("a skill reference with a shell $1 is not a command", () => {
+    expect(classify("skills/demo/references/setup.md", SHELL)).not.toBe("command");
+    expect(classify("skills/demo/references/setup.md", SHELL)).toBe("knowledge");
+  });
+
+  test("SKILL.md stays a skill", () => {
+    expect(classify("skills/demo/SKILL.md", SHELL)).toBe("skill");
+  });
+
+  test("$ARGUMENTS in a skill resource still reads as a command", () => {
+    expect(classify("skills/demo/references/run.md", `${MEMORY_FRONTMATTER}Run $ARGUMENTS.`)).toBe("command");
+  });
+
+  test("a file under commands/ with $1 is still a command", () => {
+    expect(classify("commands/setup.md", SHELL)).toBe("command");
+  });
+});
