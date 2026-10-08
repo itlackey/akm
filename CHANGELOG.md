@@ -62,6 +62,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Consolidate's pair pass no longer retires a knowledge note in favour of a memory (#1092).** Knowledge is the
+  reviewed form and a memory is raw capture, often the very memory the note was promoted from, yet a `duplicate`,
+  `supersedes` or `subsumed` verdict could retire `knowledge/...` for `memories/...` (a `.derived` memory counts as a
+  memory). Such a pair now mints nothing and is counted as a no-action verdict. A memory is still retired in favour
+  of a knowledge note, and knowledge against knowledge is unchanged.
 - **A skill's reference file with a shell `$1` is no longer indexed as a command (#1063).** A file under
   `skills/**` other than `SKILL.md` that showed `local var="$1"` in a code block was retyped to
   `commands/skills/<name>/...`. A skill's folder now counts as a declared context, as `memories/` and the other typed

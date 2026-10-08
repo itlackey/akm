@@ -734,6 +734,9 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const { retired, successor } = decision;
 
   // Guards (plan §5.2 step 4 / brief §A "Guards").
+  if (retired.asset.type === "knowledge" && successor.asset.type === "memory") {
+    return { failed: false }; // owner rule: knowledge is never replaced with a memory (a `.derived` memory is a memory)
+  }
   if (retired.asset.type === "memory" && isHotCapturedMemory(retired.asset.filePath)) {
     return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
   }
