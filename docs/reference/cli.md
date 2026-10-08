@@ -1372,11 +1372,12 @@ marketplaces at every start.
 The result gains a `plugins` array, one entry per harness:
 `{ "harness": "claude-code" | "codex" | "opencode", "outcome": ..., "from"?, "to"?, "message"? }`.
 `outcome` is `updated`, `current`, `skipped`, `deferred` or `failed`; under
-`--check` it can also be `pending`. `--check` does not fetch the Claude Code or
-Codex marketplaces, so for them it reports `pending` (an update will be
-attempted) rather than whether a newer build exists; for OpenCode it compares
-the cached version with npm. A `failed` plugin makes `akm upgrade` exit `1`
-(not `--check`). On an up-to-date machine the text output prints nothing for
+`--check` it can also be `pending` or `unknown`. `--check` does not fetch the
+Claude Code or Codex marketplaces, so for them it reports `unknown` (whether a
+newer build exists needs a fetch it does not do) rather than guessing; for
+OpenCode it compares the cached version with npm, so it reports `pending` when
+an update is due. A `failed` plugin makes `akm upgrade` exit `1` (not
+`--check`). On an up-to-date machine the text output prints nothing for
 plugins.
 
 **Version lockstep.** The OpenCode plugin runs its own exact-pinned akm-cli
@@ -1385,9 +1386,18 @@ databases it did not migrate. When the OpenCode plugin is present, the CLI
 target is the akm-cli that `akm-opencode@latest` depends on
 (`npm view akm-opencode@latest dependencies.akm-cli`), not the newest release.
 The result then carries `lockstep: { plugin, pinnedVersion, newestVersion, heldBack }`,
-`latestVersion` is the pinned version, and the text output says the CLI is
-held back. The CLI is never moved backwards to meet the pin. Claude Code and
-Codex have no in-process copy and are not part of this rule.
+`latestVersion` is the pinned version, the install names that exact version
+rather than `@latest`, and the text output says the CLI is held back. The CLI
+is never moved backwards to meet the pin. Claude Code and Codex have no
+in-process copy and are not part of this rule.
+
+Lockstep fails closed. When the OpenCode plugin is cached but the pin cannot
+be read (the npm lookup failed, or `akm-opencode@latest` declares no
+`akm-cli`), the CLI is not upgraded: `updateAvailable` is `false`,
+`latestVersion` is the current version, and `lockstep` is
+`{ plugin, pinnedVersion: null, newestVersion, heldBack: true, reason }`. The
+OpenCode entry is `failed` and the run exits `1`; the next `akm upgrade`
+retries.
 
 #### Containers
 

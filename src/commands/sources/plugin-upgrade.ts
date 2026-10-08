@@ -77,13 +77,14 @@ function refreshed(harness: PluginUpgradeEntry["harness"], from: string | undefi
   return { harness, outcome: moved ? "updated" : "current", from, to } as PluginUpgradeEntry;
 }
 
-/** Pending, in `--check`: the marketplace is only refreshed by a real upgrade, so whether a newer build exists is not known yet. */
-function pendingRefresh(harness: PluginUpgradeEntry["harness"], from: string | undefined): PluginUpgradeEntry {
+/** Unknown, in `--check`: knowing whether a newer build exists needs a marketplace fetch, which `--check` does not do. */
+function unknownRefresh(harness: PluginUpgradeEntry["harness"], from: string | undefined): PluginUpgradeEntry {
   return {
     harness,
-    outcome: "pending",
+    outcome: "unknown",
     from,
-    message: "the akm-plugins marketplace is refreshed by `akm upgrade`; --check does not fetch it",
+    message:
+      "checking needs a fetch of the akm-plugins marketplace, which --check does not do; `akm upgrade` refreshes it",
   };
 }
 
@@ -117,7 +118,7 @@ function detectClaudeCode(): Detected {
 function upgradeClaudeCode(dryRun: boolean): PluginUpgradeEntry {
   const detected = detectClaudeCode();
   if ("entry" in detected) return detected.entry;
-  if (dryRun) return pendingRefresh("claude-code", detected.version);
+  if (dryRun) return unknownRefresh("claude-code", detected.version);
   const marketplace = runCommand("claude", ["plugin", "marketplace", "update", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!marketplace.ok) return failed("claude-code", marketplace.error);
   const update = runCommand("claude", ["plugin", "update", PLUGIN_ID], REFRESH_TIMEOUT_MS);
@@ -142,7 +143,7 @@ function upgradeCodex(dryRun: boolean): PluginUpgradeEntry {
   if (before.version === undefined) {
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
-  if (dryRun) return pendingRefresh("codex", before.version);
+  if (dryRun) return unknownRefresh("codex", before.version);
   // Also refreshes the installed plugin's cache, so no re-add is needed.
   const upgrade = runCommand("codex", ["plugin", "marketplace", "upgrade", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!upgrade.ok) return failed("codex", upgrade.error);
@@ -283,18 +284,41 @@ export function upgradePlugins(opts: {
  * When the OpenCode plugin is present the CLI target is the akm-cli that
  * `akm-opencode@latest` pins, not the newest release: the plugin runs that
  * exact akm in-process, against databases a newer CLI may already have
- * migrated. The CLI never moves backwards, and a plugin lookup that failed
- * leaves the target alone (the failure is on the OpenCode entry).
+ * migrated. The CLI never moves backwards to meet the pin.
+ *
+ * It fails closed: when the plugin is present but its pin cannot be read (the
+ * npm lookup failed, or the package declares no akm-cli), the CLI is held where
+ * it is (`updateAvailable: false`, `latestVersion` = the current version) and
+ * `lockstep.reason` says why. Moving the CLI ahead of a pin nobody could read is
+ * what lockstep exists to prevent; the OpenCode entry reports the failure.
  */
 export function applyLockstep<T extends UpgradeCheckResponse>(
   check: T,
   latest: OpenCodeLatest | undefined,
 ): T & { lockstep?: UpgradeLockstep } {
-  if (!latest || "error" in latest || !latest.akmCli) return check;
-  const pinned = latest.akmCli;
-  // Held back only when the pin is below a release this upgrade would install.
-  const heldBack =
-    semverOrder(pinned, check.latestVersion) < 0 && semverOrder(check.currentVersion, check.latestVersion) < 0;
+  if (!latest) return check;
+  // Held back only when there is a release this upgrade would otherwise install.
+  const wouldInstall = semverOrder(check.currentVersion, check.latestVersion) < 0;
+  const pinned = "error" in latest ? undefined : latest.akmCli;
+  if (!pinned) {
+    const reason =
+      "error" in latest
+        ? `could not read the akm-cli pin of ${OPENCODE_PACKAGE}@latest: ${latest.error}`
+        : `${OPENCODE_PACKAGE}@latest declares no akm-cli dependency`;
+    return {
+      ...check,
+      latestVersion: check.currentVersion,
+      updateAvailable: false,
+      lockstep: {
+        plugin: OPENCODE_PACKAGE,
+        pinnedVersion: null,
+        newestVersion: check.latestVersion,
+        heldBack: wouldInstall,
+        reason,
+      },
+    };
+  }
+  const heldBack = semverOrder(pinned, check.latestVersion) < 0 && wouldInstall;
   const lockstep: UpgradeLockstep = {
     plugin: OPENCODE_PACKAGE,
     pinnedVersion: pinned,
@@ -302,7 +326,6 @@ export function applyLockstep<T extends UpgradeCheckResponse>(
     heldBack,
   };
   if (!heldBack) return { ...check, lockstep };
-  // The CLI never moves backwards to meet the pin.
   return {
     ...check,
     latestVersion: pinned,
@@ -315,7 +338,7 @@ export interface UpgradeRunDependencies {
   checkForUpdate: (currentVersion: string) => Promise<UpgradeCheckResponse>;
   performUpgrade: (
     check: UpgradeCheckResponse,
-    opts: { force: boolean; skipPostUpgrade: boolean },
+    opts: { force: boolean; skipPostUpgrade: boolean; targetVersion?: string },
   ) => Promise<UpgradeResponse>;
 }
 
@@ -336,7 +359,12 @@ export async function runUpgrade(
   if (args.check) {
     return { mode: "check", result: { ...check, plugins: upgradePlugins({ dryRun: true, openCode }) } };
   }
-  const upgraded = await deps.performUpgrade(check, { force: args.force, skipPostUpgrade: args.skipPostUpgrade });
+  const upgraded = await deps.performUpgrade(check, {
+    force: args.force,
+    skipPostUpgrade: args.skipPostUpgrade,
+    // A package manager install must name the version, or `@latest` goes past the pin.
+    ...(check.lockstep?.heldBack ? { targetVersion: check.latestVersion } : {}),
+  });
   const plugins = upgradePlugins({ dryRun: false, openCode });
   const result = { ...upgraded, ...(check.lockstep ? { lockstep: check.lockstep } : {}), plugins };
   // The install may have succeeded, but an upgrade whose migration is

@@ -322,7 +322,6 @@ posixOnly("akm upgrade: plugin step", () => {
       const run = await upgrade();
       expect(entry(run, "opencode")).toMatchObject({ outcome: "failed" });
       expect(entry(run, "claude-code").outcome).toBe("current");
-      expect(run.result).not.toHaveProperty("lockstep");
     });
   });
 
@@ -340,6 +339,50 @@ posixOnly("akm upgrade: plugin step", () => {
         heldBack: true,
       });
       expect(formatUpgradePlain(run.result as unknown as Record<string, unknown>)).toContain("held at v0.9.27");
+    });
+
+    test("npm failing to answer holds the CLI where it is, and says why", async () => {
+      writeCachedOpenCode("0.9.26");
+      stubOpenCode({ latest: "0.9.27", pin: "0.9.27", running: true, npmFails: true });
+      const deps = fakeDeps("0.9.28", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
+      expect(run.result.lockstep).toMatchObject({
+        plugin: "akm-opencode",
+        pinnedVersion: null,
+        newestVersion: "0.9.28",
+        heldBack: true,
+      });
+      expect(run.result.lockstep?.reason).toContain("registry unreachable");
+      expect(entry(run, "opencode").outcome).toBe("failed");
+      expect(run.mode === "upgrade" && run.failed).toBe(true);
+      const text = formatUpgradePlain(run.result as unknown as Record<string, unknown>);
+      expect(text).toContain("akm is not upgraded to v0.9.28");
+      expect(text).toContain("registry unreachable");
+    });
+
+    test("an akm-opencode that declares no akm-cli holds the CLI too", async () => {
+      writeCachedOpenCode("0.9.26");
+      stubOpenCode({ latest: "0.9.27", pin: "0.9.27", running: true });
+      stub("npm", `printf '{"version":"0.9.27"}\\n'`);
+      const deps = fakeDeps("0.9.28", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
+      expect(run.result.lockstep?.reason).toContain("no akm-cli");
+    });
+
+    test("a held-back upgrade tells the install step the exact version, so @latest cannot pass the pin", async () => {
+      writeCachedOpenCode("0.9.26");
+      stubOpenCode({ latest: "0.9.27", pin: "0.9.27", running: true });
+      const seen: Array<string | undefined> = [];
+      const deps = fakeDeps("0.9.28", "0.9.25");
+      const performUpgrade = deps.performUpgrade;
+      deps.performUpgrade = (check, opts) => {
+        seen.push(opts.targetVersion);
+        return performUpgrade(check, opts);
+      };
+      await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.25", deps));
+      expect(seen).toEqual(["0.9.27"]);
     });
 
     test("without the OpenCode plugin the CLI goes to the newest release", async () => {
@@ -369,7 +412,7 @@ posixOnly("akm upgrade: plugin step", () => {
   });
 
   describe("--check", () => {
-    test("reports the pending update of each harness and changes nothing", async () => {
+    test("reports each harness (unknown where it needs a fetch) and changes nothing", async () => {
       stubClaude({ from: "0.9.26", to: "0.9.27" });
       stubCodex({ from: "0.9.26", to: "0.9.27" });
       writeCachedOpenCode("0.9.26");
@@ -378,10 +421,11 @@ posixOnly("akm upgrade: plugin step", () => {
       const run = await withEnv(world.env, () => runUpgrade(CHECK, "0.9.25", deps));
       expect(run.mode).toBe("check");
       expect(run.result.plugins.map((p) => [p.harness, p.outcome])).toEqual([
-        ["claude-code", "pending"],
-        ["codex", "pending"],
+        ["claude-code", "unknown"],
+        ["codex", "unknown"],
         ["opencode", "pending"],
       ]);
+      expect(entry(run, "claude-code").message).toContain("--check does not do");
       expect(deps.upgradeCalls).toHaveLength(0);
       expect(mutations()).toEqual([]);
       expect(fs.existsSync(cacheDir())).toBe(true);
@@ -425,7 +469,7 @@ describe("upgrade output shape", () => {
       updateAvailable: true,
       installMethod: "npm",
       lockstep: { plugin: "akm-opencode", pinnedVersion: "0.9.27", newestVersion: "0.9.28", heldBack: true },
-      plugins: [{ harness: "codex", outcome: "pending" }],
+      plugins: [{ harness: "codex", outcome: "unknown" }],
     };
     expect(shapeForCommand("upgrade", result, "normal")).toMatchObject(result);
   });

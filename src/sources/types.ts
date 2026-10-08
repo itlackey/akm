@@ -512,11 +512,12 @@ export type PluginHarness = "claude-code" | "codex" | "opencode";
 
 /**
  * What `akm upgrade` did (or, under `--check`, would do) for one harness's akm
- * plugin. `pending` appears only in a `--check` result.
+ * plugin. `pending` and `unknown` appear only in a `--check` result: `pending` is an
+ * exact comparison, `unknown` means the answer needs a fetch `--check` does not do.
  */
 export interface PluginUpgradeEntry {
   harness: PluginHarness;
-  outcome: "updated" | "current" | "skipped" | "deferred" | "failed" | "pending";
+  outcome: "updated" | "current" | "skipped" | "deferred" | "failed" | "pending" | "unknown";
   from?: string;
   to?: string;
   message?: string;
@@ -529,9 +530,12 @@ export interface PluginUpgradeEntry {
  */
 export interface UpgradeLockstep {
   plugin: "akm-opencode";
-  pinnedVersion: string;
+  /** `null` when the pin could not be read; the CLI is then held where it is. */
+  pinnedVersion: string | null;
   newestVersion: string;
   heldBack: boolean;
+  /** Why the pin could not be read; set only when `pinnedVersion` is `null`. */
+  reason?: string;
 }
 
 export interface UpgradeCheckResponse {

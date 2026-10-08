@@ -666,10 +666,14 @@ const HARNESS_LABELS: Record<string, string> = { "claude-code": "Claude Code", c
 /** The plugin lines worth printing: nothing for a plugin that is current or has no plugin to update. */
 function formatUpgradePluginLines(r: Record<string, unknown>): string[] {
   const lines: string[] = [];
-  const lockstep = r.lockstep as { pinnedVersion?: string; newestVersion?: string; heldBack?: boolean } | undefined;
+  const lockstep = r.lockstep as
+    | { pinnedVersion?: string | null; newestVersion?: string; heldBack?: boolean; reason?: string }
+    | undefined;
   if (lockstep?.heldBack) {
     lines.push(
-      `akm is held at v${lockstep.pinnedVersion} (v${lockstep.newestVersion} is out): the OpenCode plugin pins that version`,
+      lockstep.pinnedVersion
+        ? `akm is held at v${lockstep.pinnedVersion} (v${lockstep.newestVersion} is out): the OpenCode plugin pins that version`
+        : `akm is not upgraded to v${lockstep.newestVersion}: ${lockstep.reason}`,
     );
   }
   const plugins = Array.isArray(r.plugins) ? (r.plugins as Array<Record<string, unknown>>) : [];
