@@ -593,6 +593,12 @@ export interface AkmDistillResult {
    */
   reason?: string;
   /**
+   * The lesson text the gate rejected or sent to review, cut to 2000 characters
+   * (the judge prompt's own cap). Present when `outcome` is `quality_rejected`
+   * or `review_needed`; also on the `distill_invoked` event.
+   */
+  rejectedContent?: string;
+  /**
    * Count of description ↔ when_to_use auto-swaps performed during this
    * distill run (0 or 1 today; reserved as a counter so callers and health
    * dashboards can track how often the swap-normalization guard triggers).

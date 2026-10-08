@@ -70,6 +70,20 @@ describe("writeQualityRejection — quality_rejected lands in the improve ledger
     expect(listProposals(stashDir, { includeArchive: true })).toEqual([]);
   });
 
+  test("the rejected lesson text reaches the event and the envelope, cut to 2000 chars", () => {
+    const content = `lesson body ${"x".repeat(3000)}`;
+    const result = writeQualityRejection({
+      stash: stashDir,
+      inputRef: "memories/source-ref",
+      proposalRef: "lessons/proposed-ref-content",
+      content,
+      score: 1.5,
+      reason: "judge reason",
+    });
+    expect(result.rejectedContent).toBe(content.slice(0, 2000));
+    expect(lastDistillEvent()?.rejectedContent).toBe(content.slice(0, 2000));
+  });
+
   test("no criteria supplied (structural/fidelity rejection) omits them", () => {
     const result = writeQualityRejection({
       stash: stashDir,
@@ -130,6 +144,9 @@ describe("writeQualityRejection — REVIEW: review_needed mint is stamped for a 
     expect(result.outcome).toBe("review_needed");
     expect((result as unknown as { proposalId?: string }).proposalId).toBeUndefined();
     expect(lastDistillEvent()?.outcome).toBe("review_needed");
+    // Nothing was minted, so the event is the only record of the lesson text.
+    expect(lastDistillEvent()?.rejectedContent).toBe("body with no description or when_to_use frontmatter");
+    expect(result.rejectedContent).toBe("body with no description or when_to_use frontmatter");
     expect(ledgerRow("memories/source-ref")).toMatchObject({ outcome: "review_needed" });
   });
 });
