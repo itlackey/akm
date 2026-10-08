@@ -47,6 +47,7 @@ akm clone <ref>                               # Copy an asset to the working bun
 akm sync                                      # Commit (and push if writable remote) changes in the primary bundle (--no-push to commit only)
 akm improve --no-sync                         # Run improve without the end-of-run auto-commit
 akm improve --no-push                         # Auto-commit but skip push for this run
+akm metrics --since 7d                        # What was searched, shown and rated, and which assets went unused (--format html: dashboard)
 akm search "<query>" --from registry          # Search all registries (registry search was folded into search)
 ```
 

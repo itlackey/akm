@@ -42,7 +42,8 @@ Useful for streaming consumption by scripts or agents.
 A command may register a renderer for a document format when it has something
 better to say than the generic one: `akm health --group-by run --format md`
 emits its per-run table, and `akm health --report --format html` renders the
-full report with KPI cards, charts, and advisories. The renderers are
+full report with KPI cards, charts, and advisories. `akm metrics` always carries
+its window rows under `--format html`. The renderers are
 data-driven — they fire when the result carries the report dataset, never on
 the format alone, so the same dataset is available as JSON too. Every other command falls back to a
 generic rendering derived from its own envelope — headings for the top-level
@@ -438,6 +439,61 @@ purpose" from "broken"), `warn` when every session in the window was skipped
 for an infrastructure reason (`llm_unavailable`, `read_failed`, `exception`,
 `locked_concurrent`) — naming the reason and, when recorded, the engine — and
 `pass` otherwise, with per-outcome counts.
+
+### metrics
+
+Report what akm has recorded locally: asset usage (search, show, curate),
+feedback, derived utility, LLM tokens, task runs, proposal
+flow, workflow token spend, and index runs. Read-only, and every number comes
+from `state.db` or `index.db`; nothing is collected that was not already
+recorded.
+
+```sh
+akm metrics
+akm metrics --since 7d
+akm metrics --since 2026-05-01 --format yaml
+akm metrics --format html --output metrics.html
+```
+
+| Flag | Description |
+| --- | --- |
+| `--since` | Window start. Accepts ISO 8601, `YYYY-MM-DD`, epoch milliseconds, or shorthand like `24h` / `7d`. Default: `30d`. |
+
+The window always ends now. Only `user`-source usage rows are counted (matching
+utility and retrieval counts), and every ranked list holds its top 20. For a
+narrower view, open the HTML dashboard and filter by date, bundle, source and
+event type in the browser.
+
+Result sections (`schemaVersion: 1`):
+
+| Field | Description |
+| --- | --- |
+| `window`, `filters` | The resolved window and the usage source counted |
+| `usage` | Search, show, curate and select totals, `selectRate` (selects over searches that returned a hit), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
+| `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
+| `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
+| `outcomes` | The assets with the lowest `outcome_score` |
+| `llm` | `akm health`'s LLM usage aggregate (by stage, process and engine) |
+| `index`, `tasks`, `proposals`, `workflows` | Index runs and median time, task runs and fail rate, proposals by status and accept rate by source, workflow runs and tokens by model |
+| `rows` | The raw usage and LLM rows of the window; see below |
+| `notes` | Anything that limits what the numbers mean |
+
+A rate whose denominator is 0 is `null`, never `NaN`. A missing `state.db`
+gives an empty report and a missing `index.db` an empty `utility` section, each
+with a `notes` entry, and the exit code stays 0.
+
+`rows` is present with `--format html` (the dashboard re-aggregates from it in
+the browser) and with `--detail full` in any other format; it is absent
+otherwise.
+
+Notes you may see:
+
+- A `--since` older than what a store keeps names the store, its retention
+  (`usage_events` keeps 90 days; `events`, which holds selects, LLM calls and
+  index runs, keeps `improve.eventRetentionDays`, default 90) and where its data
+  effectively starts, so a long window is never silently shorter than asked.
+- Selects are read from the events stream, which records no source, so they are
+  counted whatever the usage source is.
 
 ### search
 
@@ -2655,8 +2711,8 @@ precedent as the retired `canary` scope).
 Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
 field on the result (`result_json` in `improve_runs`, and in the
 `--json-to-stdout` / dry-run JSON): `{ byProcessEngineModel, noCalls }`.
-`byProcessEngineModel` is a cross-tab of this run's own `llm_usage` events
-(#576) — one row per distinct `(process, engine, model)` triple, each with
+`byProcessEngineModel` is a cross-tab of the LLM call records this run's own
+usage sink collects (#576) — one row per distinct `(process, engine, model)` triple, each with
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
 `reasoningTokens`, and `totalDurationMs`. `noCalls` lists every model-calling
 process (`reflect`, `distill`, `consolidate`, `memoryInference`,
@@ -2678,7 +2734,7 @@ every real run in the window (`byProcessEngineModel` rows merged by
 `(process, engine, model)`; `noCalls` lists a process only if it made zero
 calls across every included run). A run recorded before 0.9.15 has no
 persisted `usageReport` — the command recomputes `byProcessEngineModel` from
-that run's own `llm_usage` events instead of erroring, sets `noCalls` to `[]`
+that run's stored `llm_usage` events (`summarizeLlmUsageCrossTab`) instead of erroring, sets `noCalls` to `[]`
 (eligibility reasons are not reconstructable after the fact), and adds a
 `notes` entry saying so rather than fabricating precision the old row can't
 support.

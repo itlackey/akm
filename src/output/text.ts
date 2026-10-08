@@ -45,6 +45,7 @@ import { indexFormatters } from "./text/index";
 import { infoFormatters } from "./text/info";
 import { lintFormatters } from "./text/lint";
 import { listFormatters } from "./text/list";
+import { metricsFormatters } from "./text/metrics";
 import { migrateFormatters } from "./text/migrate";
 import { modelsFormatters } from "./text/models";
 import { proposalProducerFormatters } from "./text/proposal/producer";
@@ -86,6 +87,7 @@ const BUILT_IN_TEXT_FORMATTERS: TextFormatterEntry[] = [
   ...proposalProducerFormatters,
   ...infoFormatters,
   ...healthFormatters,
+  ...metricsFormatters,
   ...improveReportFormatters,
   ...lintFormatters,
   ...configFormatters,

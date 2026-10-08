@@ -22,7 +22,13 @@
  */
 
 import { appendEvent, type EventsContext } from "../core/events";
-import { clearLlmUsageSink, hasLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "./usage-telemetry";
+import {
+  clearLlmUsageSink,
+  getLlmUsageSink,
+  hasLlmUsageSink,
+  type LlmUsageRecord,
+  setLlmUsageSink,
+} from "./usage-telemetry";
 
 type EventsContextSource = EventsContext | (() => EventsContext);
 
@@ -56,9 +62,12 @@ function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
 
 /**
  * Install a usage sink that persists each LLM call as an `llm_usage` event via
- * `appendEvent`. Returns a disposer that clears the sink — call it in a
- * `finally` block so per-run wiring does not leak across runs (and so the
- * test-isolation harness sees a clean sink between tests).
+ * `appendEvent`. Returns a disposer that restores the sink that was installed
+ * before this one (clearing it when there was none) — call it in a `finally`
+ * block so per-run wiring does not leak across runs (and so the test-isolation
+ * harness sees a clean sink between tests). Restoring rather than clearing lets
+ * a per-run sink (`akm improve`) sit on top of the process-wide one `runCli`
+ * installs, which then resumes when the run ends.
  *
  * `ctx` should carry the same long-lived `state.db` handle the caller already
  * opened for its other events. A getter is resolved for every append so a
@@ -73,9 +82,11 @@ function toEventMetadata(record: LlmUsageRecord): Record<string, unknown> {
 export function installLlmUsagePersistence(
   ctx?: EventsContextSource,
   onRecord?: (record: LlmUsageRecord) => void,
+  options: { skipEmptySummary?: boolean } = {},
 ): () => void {
   let expectedTerminalRecords = 0;
   let disposed = false;
+  const previous = getLlmUsageSink();
   setLlmUsageSink((record) => {
     expectedTerminalRecords += 1;
     onRecord?.(record);
@@ -87,7 +98,9 @@ export function installLlmUsagePersistence(
   return () => {
     if (disposed) return;
     disposed = true;
-    clearLlmUsageSink();
+    if (previous) setLlmUsageSink(previous);
+    else clearLlmUsageSink();
+    if (options.skipEmptySummary && expectedTerminalRecords === 0) return;
     try {
       appendEvent(
         { eventType: LLM_USAGE_SUMMARY_EVENT, metadata: { expectedTerminalRecords } },
@@ -101,12 +114,14 @@ export function installLlmUsagePersistence(
 
 /**
  * Like {@link installLlmUsagePersistence}, but a no-op when a sink is already
- * installed — used by standalone entry points (`akm proposal drain`)
- * that may also run as a sub-step of `akm improve`. When invoked inside an
- * enclosing run the existing per-run sink keeps ownership; the returned
- * disposer then does nothing, so the enclosing run's `finally` still clears it.
+ * installed — used by `runCli` for the process-wide sink and by standalone
+ * entry points (`akm proposal drain`) that may also run as a sub-step of
+ * `akm improve`. When invoked inside an enclosing run the existing sink keeps
+ * ownership; the returned disposer then does nothing. A sink installed here
+ * writes no summary marker when it saw no call, so commands that never reach an
+ * LLM leave no event behind.
  */
 export function installLlmUsagePersistenceIfAbsent(ctx?: EventsContextSource): () => void {
   if (hasLlmUsageSink()) return () => {};
-  return installLlmUsagePersistence(ctx);
+  return installLlmUsagePersistence(ctx, undefined, { skipEmptySummary: true });
 }

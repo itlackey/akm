@@ -18,7 +18,7 @@
 
 import { resolveStashDir } from "../../core/common";
 import { isProceduralRejection } from "../proposal/proposal-types";
-import { listProposals } from "../proposal/repository";
+import { listProposals, listProposalsReadOnly, type ProposalsContext } from "../proposal/repository";
 
 export interface AcceptRateEntry {
   /** Proposal source (one of PROPOSAL_SOURCES or a custom value). */
@@ -38,15 +38,19 @@ export interface AcceptRateEntry {
 /**
  * Compute accept-rate-per-source metrics from the proposal store. Defaults to
  * the configured default stash when `stashDir` is omitted (same resolution
- * `akm health` already uses for the rest of its report).
+ * `akm health` already uses for the rest of its report). A caller that passes
+ * `ctx` reads through {@link listProposalsReadOnly}, which never opens
+ * state.db for writing (`akm metrics`).
  */
-export function computeAcceptRateBySource(stashDir?: string): AcceptRateEntry[] {
+export function computeAcceptRateBySource(stashDir?: string, ctx?: ProposalsContext): AcceptRateEntry[] {
   const stash = stashDir ?? resolveStashDir();
   const bySource = new Map<string, { accepted: number; rejected: number; pending: number }>();
 
   const countProposals = (statuses: Array<"pending" | "accepted" | "rejected">, includeArchive: boolean) => {
     for (const status of statuses) {
-      const proposals = listProposals(stash, { status, includeArchive });
+      const proposals = ctx
+        ? listProposalsReadOnly(stash, { status, includeArchive }, ctx)
+        : listProposals(stash, { status, includeArchive });
       for (const p of proposals) {
         // A stale-target auto-reject (STALE, R20) is procedural, not a
         // judgement on the content — counting it would understate the

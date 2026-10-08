@@ -1029,11 +1029,12 @@ export interface AkmImproveResult {
   /**
    * #944 — this run's LLM call/token/failure accounting, split by process x
    * engine x model, plus which strategy-enabled processes made zero calls and
-   * why. `byProcessEngineModel` is `summarizeLlmUsageCrossTab` over this run's
-   * own `llm_usage` events (bounded to `[startedAt, completedAt)`, the same
-   * per-run event-scoping technique `health/windows.ts` already uses for wall
-   * time — events carry no `runId` column). `noCalls` covers every process the
-   * active strategy enabled (including one disabled for `engineUnavailable`)
+   * why. `byProcessEngineModel` is `summarizeLlmUsageRecordsCrossTab` over the
+   * LLM call records this run's own usage sink collected in memory, so it
+   * holds this run's own calls only — never those of another akm process
+   * running at the same time (`llm_usage` events carry no `runId`, so they
+   * cannot be attributed to a run after the fact). `noCalls` covers every
+   * process the active strategy enabled (including one disabled for `engineUnavailable`)
    * that ended the run with zero attributed calls; `reason` is drawn from the
    * existing `improve_skipped` reason vocabulary
    * (`"engine_unavailable"`/`"strategy_filtered_all_passes"`/`"autonomy_gated"`,

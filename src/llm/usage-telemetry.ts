@@ -108,6 +108,11 @@ export function setLlmUsageSink(sink: LlmUsageSink): void {
   usageSink = sink;
 }
 
+/** The currently installed sink, or `undefined` when none is. Lets an owner restore it after installing its own. */
+export function getLlmUsageSink(): LlmUsageSink | undefined {
+  return usageSink;
+}
+
 /** Remove the installed sink so subsequent calls emit nowhere. Idempotent. */
 export function clearLlmUsageSink(): void {
   usageSink = undefined;

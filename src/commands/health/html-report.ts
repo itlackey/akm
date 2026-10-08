@@ -28,7 +28,7 @@
  * access. There is no env var or option to opt back into an offline report.
  */
 
-import { escapeHtml } from "../../output/html-render";
+import { escapeHtml, isoTimeTag } from "../../output/html-render";
 import { pkgVersion } from "../../version";
 import {
   buildHealthReportViewModel,
@@ -46,12 +46,6 @@ import type { AkmHealthResult } from "./types";
 export type { HealthHtmlReportOptions, PendingProposalLike };
 
 const esc = escapeHtml;
-
-/** Emit a <time> element that the browser's JS will reformat to the viewer's local timezone. */
-function isoTimeTag(iso: string): string {
-  const fallback = iso.slice(0, 16).replace("T", " ");
-  return `<time data-iso="${esc(iso)}">${esc(fallback)}</time>`;
-}
 
 function trendClass(direction: TrendDirection): string {
   return direction === "up" ? "trend-up" : direction === "down" ? "trend-down" : "trend-flat";
@@ -126,8 +120,8 @@ const badgeByStatus = {
 
 const ECHARTS_CDN = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
 
-/** Always CDN — see the module docstring's chunk-9 WI-9.4d note. */
-function buildEchartsTag(): string {
+/** Always CDN — see the module docstring's chunk-9 WI-9.4d note. Shared with the metrics dashboard. */
+export function buildEchartsTag(): string {
   return `<script src="${ECHARTS_CDN}"></script>`;
 }
 
