@@ -162,6 +162,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `feedback` | `akm feedback <ref>` | `signal` (positive/negative), `reason`, `tags`, `fix` (`source`, the number of replacements and, for `--superseded-by` or `--outdated`, the `beliefState` the proposal leaves and the `supersededBy` ref, when a fix was attached), `contentHash` (sha256 of the asset's body, without its frontmatter, as it stood when the feedback was given: it lets reflect mark feedback given on an earlier version of the text, and the loop's distill pass tell that a memory flagged wrong still has it; left out for an env or secret file and when the file cannot be read) |
 | `sync` | `akm sync` | `name`, `message`, `ok` |
 | `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
+| `index_completed` | `akm index`, once when a run finishes | `mode`, `totalMs`, `walkMs`, `llmMs`, `embedMs`, `ftsMs`, `finalizeMs` (phase timings in milliseconds) |
 | `stash_synced` | `akm improve`'s internal auto-sync pass (the `sync.push` feature), **distinct from** the `akm sync` command above | `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
 | `env_access` | `akm env run <name> -- <command>` (audit trail: key **names** only, values never recorded) | `ref`, `keys` |
 | `secret_access` | `akm secret run <ref> <VAR> -- <command>` (audit trail: var **name** only, value never recorded) | `ref`, `var` |
@@ -222,8 +223,8 @@ the set of types the code actually emits at HEAD (verified against every
 
 | Event type | When emitted | Key metadata fields |
 |---|---|---|
-| `llm_usage` | Per-attempt LLM call usage telemetry (#576) | model provenance, terminal outcome, duration, optional token usage |
-| `llm_usage_summary` | The owning LLM telemetry sink's terminal-record count marker | `expectedTerminalRecords` |
+| `llm_usage` | Per-attempt LLM call usage telemetry (#576), written by every akm command that makes an LLM call (`index`, `curate`, workflows, agent dispatch, `command run`, `improve`, `proposal drain`) | model provenance, terminal outcome, duration, optional token usage |
+| `llm_usage_summary` | The owning LLM telemetry sink's terminal-record count marker. The process-wide sink that covers commands other than `improve` writes none when it saw no call | `expectedTerminalRecords` |
 | `health_probe` | `akm health`'s state.db round-trip write/read probe. **Not durably retained**: the row is inserted then deleted within the same connection once the round trip is confirmed, so the net effect on the `events` table is always zero rows | n/a (ephemeral) |
 
 `llm_usage` rows also carry `process`/`engine`/`stage` (each optional; a call
@@ -250,6 +251,12 @@ configured endpoint.
 
 Successful `search`, `curate`, and `show` commands always record usage. Machine
 reads are stamped by source (below), so they never skew ranking or eval.
+
+The `search` summary row (the one with no `entry_ref`) carries `resultCount`,
+`stashHitCount`, `registryHitCount`, `resolvedCount` and `mode` in its metadata,
+plus latency for `akm metrics`: `totalMs` for the whole search, and `rankMs` and
+`embedMs` for the ranking and query-embedding phases when the local search
+reported them (a registry-only search has `totalMs` alone).
 
 Every runtime writer stamps provenance as `user`, `improve`, `task`, `audit`, or
 `unknown`. Direct interactive CLI traffic defaults to `user`; internal improve,
