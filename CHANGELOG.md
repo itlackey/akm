@@ -16,6 +16,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   compared the space-separated `created_at` against an ISO cutoff, so every row on
   the cutoff's date was removed up to 24 hours before its 90 days were up. Both
   sides are now normalized before the comparison.
+### Added
+
+- **`akm metrics` reports what akm has recorded, in every `--format`.** One
+  read-only command covers asset usage (searches, shows, curates, selects, the
+  queries that returned nothing), feedback with its reasons and tags, utility
+  and outcome scores, LLM tokens, latency and estimated cost, task runs,
+  proposals and workflow token spend. `--since` (default `30d`), `--until`,
+  `--bundle`, `--ref`, `--source` (default `user`) and `--top` narrow it. The raw
+  window rows ride along with `--format html` and `--detail full`. A window
+  longer than a store's retention says so in `notes`. Engines may set
+  `pricing: { inputPerMillion, outputPerMillion, currency? }` to get `llm.cost`;
+  the price is applied at report time, so changing it re-prices history.
 
 ## [0.9.27] - 2026-10-07
 

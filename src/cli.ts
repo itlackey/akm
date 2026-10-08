@@ -102,6 +102,7 @@ import "./commands/health/renderers";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { improveCommand } from "./commands/improve/improve-cli";
+import { metricsCommand } from "./commands/metrics/metrics-cli";
 import { migrateCommand } from "./commands/migrate-cli";
 import { modelsCommand } from "./commands/models-cli";
 import { logCommand } from "./commands/observability-cli";
@@ -498,6 +499,7 @@ const commands = {
   setup: setupCommand,
   index: indexCommand,
   health: healthCommand,
+  metrics: metricsCommand,
   info: infoCommand,
   bundle: bundleCommand,
   upgrade: upgradeCommand,
@@ -872,6 +874,7 @@ const HELP_SECTIONS: ReadonlyArray<{
       "index",
       "lint",
       "health",
+      "metrics",
       "config",
       "models",
       "registry",

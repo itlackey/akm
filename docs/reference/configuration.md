@@ -129,6 +129,14 @@ value matching this JSON Schema (no prose, no code fences):` followed by the
 schema), plus the harness's own schema channel where it has one (codex
 `--output-schema`).
 
+Either kind of engine may set `pricing` so `akm metrics` can estimate what a
+window cost: `{ "inputPerMillion": 0.15, "outputPerMillion": 0.6, "currency":
+"EUR" }`. Both rates are non-negative numbers per million tokens and `currency`
+defaults to `"USD"`. Completion tokens are charged at the output rate;
+reasoning tokens are part of the completion count and are not charged again.
+Nothing is stored with a call, so a price change re-prices history, and an
+engine without `pricing` is left out of `akm metrics`' `llm.cost`.
+
 An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`;
 it takes no inference of its own (see
 [Inference on an agent engine](#inference-on-an-agent-engine)). Only `platform: "opencode-sdk"` may set `llmEngine`; it names
