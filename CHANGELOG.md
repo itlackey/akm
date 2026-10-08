@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- Search latency is recorded in the search summary usage row (`totalMs`, plus `rankMs` and `embedMs` when present), and every `akm index` run appends an `index_completed` event with its phase timings.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.

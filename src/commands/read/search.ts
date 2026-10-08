@@ -404,6 +404,11 @@ function logSearchEvent(
               registryHitCount,
               resolvedCount: resolved.length,
               mode,
+              // Whole-search latency plus the rank/embed phases when the local
+              // search reported them, so `akm metrics` can show timings later.
+              totalMs: response.timing?.totalMs,
+              rankMs: response.timing?.rankMs,
+              embedMs: response.timing?.embedMs,
             }),
             source: eventSource,
           });

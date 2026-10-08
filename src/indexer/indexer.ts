@@ -10,6 +10,7 @@ import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
 import { compareCodePoints, isHttpUrl } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
+import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
@@ -787,6 +788,33 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const totalEntries = getEntryCount(db);
     const tFinalizeEnd = Date.now();
 
+    const timing = {
+      totalMs: Date.now() - t0,
+      walkMs: tWalkEnd - tWalkStart,
+      llmMs: tLlmEnd - tWalkEnd,
+      embedMs: tEmbedEnd - tLlmEnd,
+      ftsMs: tFtsEnd - tEmbedEnd,
+      finalizeMs: tFinalizeEnd - tFinalizeStart,
+      cleanMs: clean ? cleanEnd - cleanStart : 0,
+      preflightMs: t0 - requestedAt,
+      sourceCacheMs: sourceCacheEnd - sourceCacheStart,
+      endToEndMs: Date.now() - requestedAt,
+    };
+    // Persist the phase timings so `akm metrics` can report index latency
+    // after the command output is gone. Best-effort, like every appendEvent.
+    appendEvent({
+      eventType: "index_completed",
+      metadata: {
+        mode,
+        totalMs: timing.totalMs,
+        walkMs: timing.walkMs,
+        llmMs: timing.llmMs,
+        embedMs: timing.embedMs,
+        ftsMs: timing.ftsMs,
+        finalizeMs: timing.finalizeMs,
+      },
+    });
+
     return {
       stashDir,
       totalEntries,
@@ -799,18 +827,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(Object.keys(persistedAdapters).length > 0 ? { configUpdated: { detectedAdapters: persistedAdapters } } : {}),
       verification,
-      timing: {
-        totalMs: Date.now() - t0,
-        walkMs: tWalkEnd - tWalkStart,
-        llmMs: tLlmEnd - tWalkEnd,
-        embedMs: tEmbedEnd - tLlmEnd,
-        ftsMs: tFtsEnd - tEmbedEnd,
-        finalizeMs: tFinalizeEnd - tFinalizeStart,
-        cleanMs: clean ? cleanEnd - cleanStart : 0,
-        preflightMs: t0 - requestedAt,
-        sourceCacheMs: sourceCacheEnd - sourceCacheStart,
-        endToEndMs: Date.now() - requestedAt,
-      },
+      timing,
       ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
     };
   } finally {
