@@ -914,7 +914,9 @@ function abortSessionBestEffort(client: SdkClient, sessionId: string, query: Sdk
  * tool call that needs permission (OpenCode's default `external_directory:
  * ask`) stays `running` and the prompt never settles. A rejection reaches the
  * model as a tool error it can work around. Each request and answer is
- * appended to `notes`. `ready` (absent when the client has no event surface)
+ * appended to `notes`. The same stream reports OpenCode's retries (#1108):
+ * each is noted, and one caused by a usage limit, or due after `deadline`,
+ * ends the run through `stopForRetry` instead of a silent wait. `ready` (absent when the client has no event surface)
  * settles once the subscription is open and never rejects; `stop` closes it.
  */
 function rejectPermissionRequests(
@@ -922,6 +924,8 @@ function rejectPermissionRequests(
   sessionId: string,
   query: SdkDirectoryQuery | undefined,
   notes: string[],
+  deadline: number | null,
+  stopForRetry: (failure: string) => void,
 ): { ready?: Promise<void>; stop: () => void } {
   const subscribe = client.event?.subscribe;
   const reply = client.postSessionIdPermissionsPermissionId;
@@ -937,6 +941,31 @@ function rejectPermissionRequests(
       if (event.type === "session.created" && isRecord(props.info)) {
         const { id, parentID } = props.info;
         if (typeof id === "string" && typeof parentID === "string" && sessions.has(parentID)) sessions.add(id);
+        continue;
+      }
+      if (event.type === "session.status") {
+        const { sessionID, status } = props;
+        if (typeof sessionID !== "string" || !sessions.has(sessionID) || !isRecord(status) || status.type !== "retry") {
+          continue;
+        }
+        const attempt = typeof status.attempt === "number" ? status.attempt : "unknown";
+        const message = typeof status.message === "string" ? status.message : "OpenCode is retrying";
+        const next = typeof status.next === "number" ? status.next : undefined;
+        const retryAt = next === undefined ? "unknown time" : new Date(next).toISOString();
+        // `action` is not present in the SDK's retry type yet, but current
+        // OpenCode servers include it for provider/account limits.
+        const action = isRecord(status.action) ? status.action : undefined;
+        const provider = typeof action?.provider === "string" ? action.provider : undefined;
+        notes.push(
+          `OpenCode retry attempt ${attempt}${provider ? ` (${provider})` : ""}: ${message}; retrying at ${retryAt}`,
+        );
+        if (action?.reason === "account_rate_limit") {
+          stopForRetry(
+            `OpenCode provider limit stopped this run${provider ? ` (${provider})` : ""}: ${message}; reset at ${retryAt}`,
+          );
+        } else if (next !== undefined && deadline !== null && next > deadline) {
+          stopForRetry(`OpenCode's next retry (${retryAt}) is after this run's deadline: ${message}`);
+        }
         continue;
       }
       // `permission.asked` (OpenCode >= 1.3) / `permission.updated` (older).
@@ -1073,7 +1102,12 @@ export async function runOpencodeSdk(
   // One session per call — do NOT reuse (history accumulates, token costs grow).
   // Session creation is startup plumbing, so failures map to spawn_failed rather
   // than bubbling out as a generic workflow dispatch exception.
-  const abortSignal = opts.signal;
+  const callerSignal = opts.signal;
+  const runController = new AbortController();
+  const abortForCaller = (): void => runController.abort();
+  if (callerSignal?.aborted) abortForCaller();
+  else callerSignal?.addEventListener("abort", abortForCaller, { once: true });
+  const abortSignal = runController.signal;
   let sessionId: string | undefined;
   try {
     const created = await raceSdkOperation(
@@ -1155,7 +1189,11 @@ export async function runOpencodeSdk(
 
   // Subscribed before the prompt so no request can be missed; closed in `finally`.
   const permissionNotes: string[] = [];
-  const permissions = rejectPermissionRequests(client, sessionId, query, permissionNotes);
+  let retryFailure: string | undefined;
+  const permissions = rejectPermissionRequests(client, sessionId, query, permissionNotes, deadline, (failure) => {
+    retryFailure ??= failure;
+    runController.abort();
+  });
 
   try {
     // Bounded like every other step; if it times out the prompt race below does too.
@@ -1181,7 +1219,18 @@ export async function runOpencodeSdk(
     if (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT) {
       abortSessionBestEffort(client, sessionId, query);
     }
-    if (prompted === SDK_OPERATION_ABORTED) {
+    if (prompted === SDK_OPERATION_ABORTED && retryFailure) {
+      result = {
+        ok: false,
+        stdout: "",
+        stderr: retryFailure,
+        durationMs: Date.now() - start,
+        exitCode: 1,
+        reason: "llm_rate_limit" as AgentFailureReason,
+        error: retryFailure,
+        sessionId,
+      };
+    } else if (prompted === SDK_OPERATION_ABORTED) {
       result = {
         ok: false,
         stdout: "",
@@ -1251,6 +1300,7 @@ export async function runOpencodeSdk(
     };
   } finally {
     permissions.stop();
+    callerSignal?.removeEventListener("abort", abortForCaller);
   }
   if (permissionNotes.length > 0) {
     result.stderr = [result.stderr, ...permissionNotes].filter(Boolean).join("\n");

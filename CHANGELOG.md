@@ -83,6 +83,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An `opencode-sdk` dispatch now stops promptly when a provider usage limit schedules a retry past its deadline.**
+  The retry, provider and reset time are recorded in the dispatch `stderr`, and account limits fail as provider limits
+  rather than appearing to hang until a timeout (#1108).
 - **Skill resources that document `$ARGUMENTS` command templates no longer index as commands.** The command
   placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
   on the next incremental index (#1084).
