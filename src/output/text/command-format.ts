@@ -661,7 +661,35 @@ export function formatUpdatePlain(r: Record<string, unknown>): string {
   return lines.length > 0 ? lines.join("\n") : `update: nothing to update`;
 }
 
+const HARNESS_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" };
+
+/** The plugin lines worth printing: nothing for a plugin that is current or has no plugin to update. */
+function formatUpgradePluginLines(r: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  const lockstep = r.lockstep as { pinnedVersion?: string; newestVersion?: string; heldBack?: boolean } | undefined;
+  if (lockstep?.heldBack) {
+    lines.push(
+      `akm is held at v${lockstep.pinnedVersion} (v${lockstep.newestVersion} is out): the OpenCode plugin pins that version`,
+    );
+  }
+  const plugins = Array.isArray(r.plugins) ? (r.plugins as Array<Record<string, unknown>>) : [];
+  for (const p of plugins) {
+    if (p.outcome === "current" || p.outcome === "skipped") continue;
+    const versions = p.from && p.to && p.from !== p.to ? ` v${p.from} → v${p.to}` : "";
+    const note = p.message ? ` (${p.message})` : "";
+    lines.push(`${HARNESS_LABELS[String(p.harness)] ?? p.harness} plugin ${p.outcome}${versions}${note}`);
+  }
+  return lines;
+}
+
 export function formatUpgradePlain(r: Record<string, unknown>): string | null {
+  const lines = formatUpgradePluginLines(r);
+  const head = formatUpgradeHead(r);
+  const all = head === null ? lines : [head, ...lines];
+  return all.length > 0 ? all.join("\n") : null;
+}
+
+function formatUpgradeHead(r: Record<string, unknown>): string | null {
   if (r.upgraded === true) {
     return `akm upgraded: v${r.currentVersion} → v${r.newVersion}`;
   }

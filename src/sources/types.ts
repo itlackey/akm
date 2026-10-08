@@ -507,11 +507,41 @@ export interface ShowResponse extends FragmentProvenance {
   contextTruncated?: boolean;
 }
 
+/** An agent harness whose akm plugin `akm upgrade` keeps current. */
+export type PluginHarness = "claude-code" | "codex" | "opencode";
+
+/**
+ * What `akm upgrade` did (or, under `--check`, would do) for one harness's akm
+ * plugin. `pending` appears only in a `--check` result.
+ */
+export interface PluginUpgradeEntry {
+  harness: PluginHarness;
+  outcome: "updated" | "current" | "skipped" | "deferred" | "failed" | "pending";
+  from?: string;
+  to?: string;
+  message?: string;
+}
+
+/**
+ * Present when the OpenCode plugin is installed: the CLI target is the akm-cli
+ * `akm-opencode@latest` pins. `heldBack` is true when that keeps this upgrade
+ * below `newestVersion`.
+ */
+export interface UpgradeLockstep {
+  plugin: "akm-opencode";
+  pinnedVersion: string;
+  newestVersion: string;
+  heldBack: boolean;
+}
+
 export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   installMethod: "binary" | "bun" | "npm" | "pnpm" | "package-local" | "unknown";
+  lockstep?: UpgradeLockstep;
+  /** Per-harness plugin updates that `akm upgrade` would make. */
+  plugins?: PluginUpgradeEntry[];
 }
 
 export interface UpgradeResponse {
@@ -538,6 +568,9 @@ export interface UpgradeResponse {
    * `failed` means the migrator could not run at all; `error` says why.
    */
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
+  lockstep?: UpgradeLockstep;
+  /** The per-harness plugin step that follows the CLI step. */
+  plugins?: PluginUpgradeEntry[];
 }
 
 export interface InfoResponse {

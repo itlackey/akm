@@ -1336,19 +1336,85 @@ computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 1 MiB; an oversized response is cancelled and the staged file is removed.
 
 ```sh
-akm upgrade              # Install a newer release if there is one, then run every pending migration
-akm upgrade --check      # Check for updates without installing (no migration step)
+akm upgrade              # Install a newer release if there is one, run every pending migration, then update the harness plugins
+akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
 ```
 
 | Flag | Description |
 | --- | --- |
-| `--check` | Check for updates without installing |
+| `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.
+
+#### Harness plugins
+
+After the CLI step, `akm upgrade` updates the akm plugin of each agent harness
+it finds. It only updates: a plugin that is not installed is never installed,
+and a harness without the akm plugin is skipped. Each external command runs
+with a timeout, and a failure is recorded on that harness's entry without
+stopping the CLI upgrade.
+
+| Harness | Updated when | What runs |
+| --- | --- | --- |
+| Claude Code | `claude` is on `PATH`, the `akm-plugins` marketplace is configured and `akm@akm-plugins` is installed | `claude plugin marketplace update akm-plugins`, then `claude plugin update akm@akm-plugins` |
+| Codex | `codex` is on `PATH` and `akm@akm-plugins` is installed from the `akm-plugins` marketplace | `codex plugin marketplace upgrade akm-plugins` (this also refreshes the installed plugin cache) |
+| OpenCode | `akm-opencode` is cached at `$XDG_CACHE_HOME/opencode/packages/akm-opencode@latest` (default `~/.cache/opencode/...`) and `opencode` is on `PATH` | If npm's `akm-opencode@latest` differs from the cached version and no OpenCode process is running: the cache directory is moved to the trash (never deleted), then `opencode debug config` is run from a temporary directory to fetch the new version. While OpenCode runs the update is `deferred` to a later `akm upgrade`. |
+
+Claude Code does not update third-party marketplaces on its own (the Claude
+desktop app turns plugin updates off), and OpenCode never re-checks a cached
+plugin, so neither moves without this step. Codex refreshes its git
+marketplaces at every start.
+
+The result gains a `plugins` array, one entry per harness:
+`{ "harness": "claude-code" | "codex" | "opencode", "outcome": ..., "from"?, "to"?, "message"? }`.
+`outcome` is `updated`, `current`, `skipped`, `deferred` or `failed`; under
+`--check` it can also be `pending`. `--check` does not fetch the Claude Code or
+Codex marketplaces, so for them it reports `pending` (an update will be
+attempted) rather than whether a newer build exists; for OpenCode it compares
+the cached version with npm. A `failed` plugin makes `akm upgrade` exit `1`
+(not `--check`). On an up-to-date machine the text output prints nothing for
+plugins.
+
+**Version lockstep.** The OpenCode plugin runs its own exact-pinned akm-cli
+in-process, so a CLI newer than the plugin's pin would run the plugin against
+databases it did not migrate. When the OpenCode plugin is present, the CLI
+target is the akm-cli that `akm-opencode@latest` depends on
+(`npm view akm-opencode@latest dependencies.akm-cli`), not the newest release.
+The result then carries `lockstep: { plugin, pinnedVersion, newestVersion, heldBack }`,
+`latestVersion` is the pinned version, and the text output says the CLI is
+held back. The CLI is never moved backwards to meet the pin. Claude Code and
+Codex have no in-process copy and are not part of this rule.
+
+#### Containers
+
+With the plugin step, a container entrypoint needs only:
+
+```sh
+akm upgrade -q || true
+( while sleep 86400; do akm upgrade -q; done ) &   # long-running containers only
+exec "$@"
+```
+
+Codex hooks need one-time trust, and nobody can open `/hooks` in a container.
+Bake the trust entries into the image's `~/.codex/config.toml`, one per hook the
+plugin declares (today `session_start` and `user_prompt_submit`):
+
+```toml
+[hooks.state."akm@akm-plugins:plugin.json#hooks[0]:session_start:0:0"]
+trusted_hash = "sha256:<hash>"
+
+[hooks.state."akm@akm-plugins:plugin.json#hooks[0]:user_prompt_submit:0:0"]
+trusted_hash = "sha256:<hash>"
+```
+
+Copy the two `trusted_hash` values from a machine where you have trusted the
+hooks in `/hooks` (they are in that machine's `~/.codex/config.toml`). The
+hashes stay the same across plugin version bumps and change only when a hook's
+command changes, so an upgraded plugin keeps running without a prompt.
 
 Checksum verification is not optional and has no flag. If a release's
 `checksums.txt` is genuinely unreachable, the recovery hatch is the
