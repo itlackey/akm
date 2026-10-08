@@ -83,6 +83,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A proposal drain judge now sees overlapping promotions accepted earlier in the same drain (#1085).**
 - **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
   (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
   keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
