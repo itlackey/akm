@@ -38,10 +38,9 @@ interface PromptCapture {
     system?: string;
     tools?: Record<string, boolean>;
   };
-  /** `query.directory` seen by create / prompt / delete (R2 per-call cwd). */
+  /** `query.directory` seen by create / prompt / abort (R2 per-call cwd). */
   createQuery?: { directory?: string };
   promptQuery?: { directory?: string };
-  deleteQuery?: { directory?: string };
 }
 
 /**
@@ -57,14 +56,14 @@ function makeFakeServer(
   }>,
   overrides: {
     createImpl?: () => Promise<{ data?: { id?: string } }>;
-    deleteImpl?: () => Promise<unknown>;
   } = {},
 ) {
-  let deleted = false;
   let deleteCount = 0;
+  const abortedIds: string[] = [];
   return {
-    deletedRef: () => deleted,
+    /** Sessions are kept (#1100): the runner must never call session.delete. */
     deleteCountRef: () => deleteCount,
+    abortedRef: () => abortedIds,
     server: {
       client: {
         session: {
@@ -79,11 +78,13 @@ function makeFakeServer(
             if (promptImpl) return promptImpl();
             return { data: { parts: [{ type: "text", text: "ok-response" }] } };
           },
-          delete: async (args?: { query?: { directory?: string } }) => {
-            deleted = true;
+          // Tripwire: the runner no longer deletes sessions, so this must stay at zero calls.
+          delete: async () => {
             deleteCount++;
-            capture.deleteQuery = args?.query;
-            if (overrides.deleteImpl) return overrides.deleteImpl();
+            return {};
+          },
+          abort: async (args: { path: { id: string } }) => {
+            abortedIds.push(args.path.id);
             return {};
           },
         },
@@ -213,8 +214,10 @@ describe("runOpencodeSdk — #564 bug fix (3): timeout enforcement", () => {
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("timeout");
     expect(res.error).toContain("timed out");
-    // The stalled session is still cleaned up (delete called in finally).
-    expect(fake.deletedRef()).toBe(true);
+    // The stalled session is aborted on the server but kept in OpenCode's history.
+    expect(fake.abortedRef()).toEqual(["sess-1"]);
+    expect(fake.deleteCountRef()).toBe(0);
+    expect(res.sessionId).toBe("sess-1");
   });
 
   test("does not time out when the prompt resolves before the timer", async () => {
@@ -365,7 +368,7 @@ describe("runOpencodeSdk — SDK errors are failures (#1015)", () => {
     expect(result.stdout).toBe("");
     expect(result.error).toBe("UnknownError: Unexpected server error. Check server logs for details.");
     expect(result.stderr).toContain("UnknownError: Unexpected server error.");
-    expect(fake.deletedRef()).toBe(true);
+    expect(fake.deleteCountRef()).toBe(0);
   });
 
   test("a reply carrying `info.error` is ok:false with the provider's message", async () => {
@@ -710,7 +713,7 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(result.sessionId).toBe("sess-1");
   });
 
-  test("abort mid-prompt returns reason 'aborted' and reaps the session", async () => {
+  test("abort mid-prompt returns reason 'aborted', aborts the session on the server and keeps it", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture, () => new Promise(() => {})); // never resolves
     __setTestServer(fake.server as never);
@@ -721,7 +724,9 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     const result = await promise;
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("aborted");
-    expect(fake.deletedRef()).toBe(true);
+    expect(fake.abortedRef()).toEqual(["sess-1"]);
+    expect(fake.deleteCountRef()).toBe(0);
+    expect(result.sessionId).toBe("sess-1");
   });
 
   test("pre-aborted signal short-circuits before any session is created", async () => {
@@ -751,7 +756,7 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(result.reason).toBe("spawn_failed");
     expect(result.error).toContain("create exploded");
     expect(capture.body).toBeUndefined();
-    expect(fake.deletedRef()).toBe(false);
+    expect(fake.deleteCountRef()).toBe(0);
   });
 
   test("session.create timeout returns structured timeout", async () => {
@@ -780,33 +785,7 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(capture.body).toBeUndefined();
   });
 
-  test("a session that is created after timeout is deleted when it arrives", async () => {
-    const capture: PromptCapture = {};
-    let resolveCreate!: (value: { data: { id: string } }) => void;
-    const fake = makeFakeServer(capture, undefined, {
-      createImpl: () => new Promise((resolve) => (resolveCreate = resolve)),
-    });
-    __setTestServer(fake.server as never);
-    const immediateTimer = ((fn: () => void) => {
-      fn();
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
-    }) as any;
-
-    const result = await runOpencodeSdk(profile, "hi", {
-      timeoutMs: 50,
-      setTimeoutFn: immediateTimer,
-      clearTimeoutFn: (() => {}) as never,
-    });
-    expect(result.reason).toBe("timeout");
-
-    resolveCreate({ data: { id: "late-session" } });
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(fake.deleteCountRef()).toBe(1);
-  });
-
-  test("prompt rejection returns non_zero_exit and still deletes the session", async () => {
+  test("prompt rejection returns non_zero_exit and keeps the session", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture, async () => {
       throw new Error("prompt exploded");
@@ -818,36 +797,25 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("non_zero_exit");
     expect(result.error).toContain("prompt exploded");
-    expect(fake.deletedRef()).toBe(true);
+    expect(fake.deleteCountRef()).toBe(0);
+    expect(result.sessionId).toBe("sess-1");
   });
 
-  test("hung session.delete is bounded and reported without masking success", async () => {
+  test("a completed dispatch leaves its session in place and returns the session id", async () => {
     const capture: PromptCapture = {};
-    const fake = makeFakeServer(capture, undefined, {
-      deleteImpl: () => new Promise(() => {}),
-    });
+    const fake = makeFakeServer(capture);
     __setTestServer(fake.server as never);
-    const fakeSetTimeout = ((fn: () => void) => {
-      fn();
-      return 0 as unknown as ReturnType<typeof setTimeout>;
-      // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
-    }) as any;
-    // biome-ignore lint/suspicious/noExplicitAny: timer shim signature
-    const fakeClearTimeout = (() => {}) as any;
 
-    const result = await runOpencodeSdk(profile, "hi", {
-      timeoutMs: null,
-      setTimeoutFn: fakeSetTimeout,
-      clearTimeoutFn: fakeClearTimeout,
-    });
+    const result = await runOpencodeSdk(profile, "hi", { timeoutMs: null });
 
     expect(result.ok).toBe(true);
-    expect(result.stdout).toBe("ok-response");
-    expect(fake.deletedRef()).toBe(true);
-    expect(result.stderr).toContain("OpenCode session cleanup timed out");
+    expect(result.sessionId).toBe("sess-1");
+    expect(result.stderr).toBe("");
+    expect(fake.deleteCountRef()).toBe(0);
+    expect(fake.abortedRef()).toEqual([]);
   });
 
-  test("a prompt that settles after timeout triggers a second session cleanup", async () => {
+  test("a prompt that settles after timeout does not delete the session", async () => {
     const capture: PromptCapture = {};
     let resolvePrompt!: (value: { data: { parts: { type: string; text: string }[] } }) => void;
     const fake = makeFakeServer(capture, () => new Promise((resolve) => (resolvePrompt = resolve)));
@@ -866,12 +834,13 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
       clearTimeoutFn: (() => {}) as never,
     });
     expect(result.reason).toBe("timeout");
-    expect(fake.deleteCountRef()).toBe(1);
+    expect(result.sessionId).toBe("sess-1");
+    expect(fake.abortedRef()).toEqual(["sess-1"]);
 
     resolvePrompt({ data: { parts: [{ type: "text", text: "late" }] } });
     await Promise.resolve();
     await Promise.resolve();
-    expect(fake.deleteCountRef()).toBe(2);
+    expect(fake.deleteCountRef()).toBe(0);
   });
 });
 
@@ -884,7 +853,7 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
 // createOpencode call — the window where the SDK snapshots the child env).
 
 describe("runOpencodeSdk — per-call cwd (R2 worktree isolation seam)", () => {
-  test("opts.cwd is forwarded as query.directory on create, prompt, AND delete", async () => {
+  test("opts.cwd is forwarded as query.directory on create and prompt", async () => {
     const capture: PromptCapture = {};
     const fake = makeFakeServer(capture);
     __setTestServer(fake.server as never);
@@ -894,7 +863,6 @@ describe("runOpencodeSdk — per-call cwd (R2 worktree isolation seam)", () => {
     expect(res.ok).toBe(true);
     expect(capture.createQuery).toEqual({ directory: "/tmp/akm-worktrees/run-1/unit-a" });
     expect(capture.promptQuery).toEqual({ directory: "/tmp/akm-worktrees/run-1/unit-a" });
-    expect(capture.deleteQuery).toEqual({ directory: "/tmp/akm-worktrees/run-1/unit-a" });
   });
 
   test("no cwd ⇒ no query at all (behaviour-preserving for non-isolated units)", async () => {
@@ -906,7 +874,6 @@ describe("runOpencodeSdk — per-call cwd (R2 worktree isolation seam)", () => {
 
     expect(capture.createQuery).toBeUndefined();
     expect(capture.promptQuery).toBeUndefined();
-    expect(capture.deleteQuery).toBeUndefined();
   });
 });
 
@@ -1201,7 +1168,6 @@ describe("runOpencodeSdk — a session the dispatch gives up on is aborted on th
         session: {
           create: async () => ({ data: { id: "sess-1" } }),
           prompt: () => new Promise<never>(() => {}),
-          delete: async () => ({}),
           abort: async (args: { path: { id: string } }) => {
             aborted.push(args.path.id);
             return {};

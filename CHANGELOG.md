@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28-alpha.8] - 2026-10-08
+
+### Fixed
+
+- **`opencode-sdk` runs keep their OpenCode session (#1100).** The SDK runner deleted the session after every
+  dispatch, so a workflow, task or `akm agent` run left no transcript in OpenCode's history to debug or to learn
+  from, unlike `opencode run`. The session is now kept; a dispatch akm gives up on (timeout or abort) is still
+  aborted on the server so it stops calling the model. The OpenCode session id is on the `akm agent` / command
+  result as `sessionId` and in the task log line, as workflow steps already carried it.
+
 ## [0.9.28-alpha.7] - 2026-10-08
 
 ### Added

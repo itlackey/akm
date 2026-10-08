@@ -251,7 +251,6 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
           session: {
             create: async () => ({ data: { id: `sess-${started}` } }),
             prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
-            delete: async () => ({}),
           },
         },
         server: {
@@ -308,7 +307,6 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
         session: {
           create: async () => ({ data: { id: "late" } }),
           prompt: async () => ({ data: { parts: [{ type: "text", text: "ok" }] } }),
-          delete: async () => ({}),
         },
       },
       server: {
@@ -353,7 +351,6 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
               prompted++;
               return { data: { parts: [{ type: "text", text: "sdk-done" }] } };
             },
-            delete: async () => ({}),
           },
         },
         server: {

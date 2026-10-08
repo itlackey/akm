@@ -2550,7 +2550,9 @@ akm agent agents/planner --engine claude --model sonnet --prompt "plan the sprin
 akm agent --engine opencode --model opencode/claude-opus-4-7 --prompt "audit the API"
 ```
 
-Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason? }`. On
+Returns `{ ok, exitCode, stdout?, stderr?, durationMs, reason?, sessionId? }`; `sessionId` is the
+harness's own session id when it reports one (`opencode-sdk` keeps its OpenCode session, so the run can be
+found there). On
 failure, `reason` is one of `timeout | spawn_failed | non_zero_exit |
 parse_error`. Captured dispatches render this final envelope using the selected
 akm format. Interactive child stdout/stderr remain inherited and raw. A failed

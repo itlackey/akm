@@ -258,7 +258,6 @@ describe("proposal consumers lower resolved execution requests", () => {
             const reply = JSON.stringify({ ref: "skills/sdk-fallback-redaction", content });
             return { data: { parts: [{ type: "text", text: reply }] } };
           },
-          delete: async () => ({}),
         },
       },
       server: { close() {} },
