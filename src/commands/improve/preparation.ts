@@ -741,6 +741,21 @@ export function isFlaggedSinceLastEdit(candidate: ImproveEligibleRef, eventsCtx?
 }
 
 /**
+ * Whether `candidate`'s file declares `beliefState: deprecated` or `superseded`: a note its owner marked no longer
+ * true is no source for a lesson (the 2026-10-08 distill-tune run: 26 of ~900 memories carry the state, none gave
+ * a lesson). `contradicted` is left out: it means a conflict is open, not that the note is retired.
+ */
+export function isDeprecatedOrSuperseded(candidate: ImproveEligibleRef): boolean {
+  if (!candidate.filePath) return false;
+  try {
+    const state = parseFrontmatter(fs.readFileSync(candidate.filePath, "utf8")).data.beliefState;
+    return state === "deprecated" || state === "superseded";
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Whether the only feedback `candidate` has inside the signal window is positive and says nothing: no reason, no
  * note. A bare `--positive` only records that a note helped, which gives the writer nothing to distil, so it restates
  * the memory: 10 of the 11 lessons distilled from a memory with nothing more were rejected (the 2026-10-05 review).
