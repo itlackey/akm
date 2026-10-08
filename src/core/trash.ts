@@ -69,6 +69,8 @@ export function moveToTrash(target: string, tools: ReadonlyArray<readonly string
   }
   for (const [command, ...args] of tools) {
     const result = childProcess.spawnSync(command as string, [...args, target], {
+      // The live environment, as the harness commands get it: Bun's default is the env the process started with.
+      env: process.env,
       encoding: "utf8",
       stdio: "pipe",
       timeout: TRASH_TOOL_TIMEOUT_MS,
