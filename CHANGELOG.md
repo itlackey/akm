@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **LLM usage is recorded for every command.** `akm index`, curate, workflow,
+  agent dispatch and `akm command run` now persist their `llm_usage` events
+  like `improve` and `proposal drain` already did; before, a call made outside
+  those two was dropped. An improve run still keeps its own sink and the
+  process-wide one resumes when it ends.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.

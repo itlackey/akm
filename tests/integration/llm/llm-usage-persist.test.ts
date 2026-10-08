@@ -4,6 +4,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import path from "node:path";
+import { defineCommand } from "citty";
+import { main, runCli } from "../../../src/cli";
 import { akmHealth } from "../../../src/commands/health";
 import { type EventsContext, readEvents } from "../../../src/core/events";
 import { openStateDatabase } from "../../../src/core/state-db";
@@ -151,6 +153,73 @@ describe("installLlmUsagePersistence", () => {
       firstDb.close();
       secondDb.close();
     }
+  });
+});
+
+describe("installLlmUsagePersistence over an installed sink", () => {
+  test("the disposer restores the sink that was installed before it", () => {
+    const outer: LlmUsageRecord[] = [];
+    setLlmUsageSink((record) => {
+      outer.push(record);
+    });
+
+    const dispose = installLlmUsagePersistence();
+    emitLlmUsage(terminalRecord({ model: "inner" }));
+    expect(outer).toHaveLength(0);
+    expect(readEvents({ type: LLM_USAGE_EVENT }).events).toHaveLength(1);
+
+    dispose();
+    expect(hasLlmUsageSink()).toBe(true);
+    emitLlmUsage(terminalRecord({ model: "after" }));
+    expect(outer.map((record) => record.model)).toEqual(["after"]);
+    expect(readEvents({ type: LLM_USAGE_EVENT }).events).toHaveLength(1);
+  });
+
+  test("a process-wide sink skips the summary marker when no call was made", () => {
+    const dispose = installLlmUsagePersistenceIfAbsent();
+    dispose();
+    expect(readEvents({ type: LLM_USAGE_SUMMARY_EVENT }).events).toHaveLength(0);
+  });
+});
+
+describe("runCli", () => {
+  const probeName = "llm-sink-probe";
+
+  async function runProbe(run: () => void): Promise<void> {
+    const subCommands = main.subCommands as Record<string, unknown>;
+    const savedArgv = process.argv;
+    subCommands[probeName] = defineCommand({ meta: { name: probeName }, run });
+    process.argv = ["bun", "cli.ts", probeName];
+    try {
+      await runCli();
+    } finally {
+      process.argv = savedArgv;
+      delete subCommands[probeName];
+    }
+  }
+
+  test("persists LLM usage from a command that installs no sink of its own, then clears the sink", async () => {
+    await runProbe(() => {
+      withLlmStage("probe", () => emitLlmUsage(terminalRecord({ model: "cli-model", totalTokens: 3 })), {
+        engine: "fast",
+        process: "probe",
+      });
+    });
+
+    const events = readEvents({ type: LLM_USAGE_EVENT }).events;
+    expect(events).toHaveLength(1);
+    expect(events[0]?.metadata).toMatchObject({ stage: "probe", engine: "fast", model: "cli-model", totalTokens: 3 });
+    expect(hasLlmUsageSink()).toBe(false);
+  });
+
+  test("clears the sink when the command throws", async () => {
+    await runProbe(() => {
+      emitLlmUsage(terminalRecord({ model: "before-throw" }));
+      throw new Error("probe failed");
+    });
+    expect(readEvents({ type: LLM_USAGE_EVENT }).events).toHaveLength(1);
+    expect(hasLlmUsageSink()).toBe(false);
+    process.exitCode = 0;
   });
 });
 
