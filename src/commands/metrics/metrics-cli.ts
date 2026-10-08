@@ -21,12 +21,12 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { getDbPath } from "../../core/paths";
 import { getStateDbPath, openStateDatabase } from "../../core/state-db";
+import { lookupBundleRefReadonly } from "../../indexer/indexer";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { getOutputMode, type OutputMode } from "../../output/context";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
-import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
 import { listUtilityWithRefs, type UtilityWithRef } from "../../storage/repositories/index-utility-repository";
 import {
   countProposalsByStatus,
@@ -82,33 +82,41 @@ export function metricsIncludeRows(mode: Pick<OutputMode, "format" | "detail">):
   return mode.format === "html" || mode.detail === "full";
 }
 
-/** A `--ref` as the durable `bundle//conceptId` the stores key on. */
-function resolveRefFilter(input: string, indexDb: Database | undefined): string {
+/**
+ * A `--ref` as the durable `bundle//conceptId` the stores key on. A short ref
+ * resolves the way `akm show` resolves it (default bundle, then installation
+ * priority), through the same indexer lookup.
+ */
+async function resolveRefFilter(input: string): Promise<string> {
   const parsed = parseBundleRef(input);
-  const ref = makeBundleRef(parsed.bundle, parsed.conceptId);
-  if (parsed.bundle) return ref;
-  const id = indexDb ? findEntryIdByRef(indexDb, ref) : undefined;
-  const durable = id === undefined || !indexDb ? null : getItemRefById(indexDb, id);
-  if (!durable) {
+  if (parsed.bundle) return makeBundleRef(parsed.bundle, parsed.conceptId);
+  let entry: Awaited<ReturnType<typeof lookupBundleRefReadonly>> = null;
+  try {
+    entry = await lookupBundleRefReadonly(parsed);
+  } catch {
+    // A missing or unreadable index resolves nothing; the error below says what to do.
+  }
+  if (!entry) {
     throw new NotFoundError(
       `Ref "${input}" is not in the index. Qualify it as <bundle>//<conceptId>, or run 'akm index' if it was recently added.`,
       "ASSET_NOT_FOUND",
     );
   }
-  return durable;
+  return entry.itemRef;
 }
 
 /** `index.db` utility rows, or a note saying why there are none. */
-function readUtility(): { utility?: UtilityWithRef[]; db?: Database; note?: string } {
+function readUtility(): { utility?: UtilityWithRef[]; note?: string } {
   let db: Database | undefined;
   try {
     db = openReadonlyExistingDatabase(getDbPath());
     if (!db) return { note: "index.db was not found, so the utility section is empty. Run 'akm index' to build it." };
-    return { utility: listUtilityWithRefs(db), db };
+    return { utility: listUtilityWithRefs(db) };
   } catch (error) {
-    if (db) closeDatabase(db);
     const message = error instanceof Error ? error.message : String(error);
     return { note: `index.db could not be read (${message}), so the utility section is empty.` };
+  } finally {
+    if (db) closeDatabase(db);
   }
 }
 
@@ -142,7 +150,7 @@ function readAcceptRate(notes: string[]): AkmMetricsResult["proposals"]["acceptR
 }
 
 /** Read every store and build the report. */
-export function akmMetrics(options: AkmMetricsOptions = {}): AkmMetricsResult {
+export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMetricsResult> {
   const nowMs = (options.now ?? Date.now)();
   const sinceIso = parseHealthSince(options.since ?? DEFAULT_SINCE);
   const untilIso = options.until === undefined ? new Date(nowMs).toISOString() : parseHealthSince(options.until);
@@ -167,73 +175,69 @@ export function akmMetrics(options: AkmMetricsOptions = {}): AkmMetricsResult {
 
   const index = readUtility();
   if (index.note) notes.push(index.note);
-  try {
-    const ref = options.ref === undefined ? undefined : resolveRefFilter(options.ref, index.db);
-    const filter: MetricsQueryFilter = {
-      sinceIso,
-      untilIso,
-      ...(source === ALL_SOURCES ? {} : { source }),
-      bundles,
-      ...(ref !== undefined ? { ref } : {}),
-    };
-    if (bundles.length > 0 || ref !== undefined) {
-      notes.push(
-        "Usage, feedback, utility and outcomes are limited to the matching assets, and searches counts the searches that returned one; llm, index, tasks, proposals (accept rate) and workflows cover everything.",
-      );
-    }
-    if (source !== ALL_SOURCES) {
-      notes.push("Selects come from the events stream, which records no source, so they are counted for every source.");
-    }
-
-    const input: MetricsInput = {
-      window: { since: sinceIso, until: untilIso },
-      filters: { source, bundles, ...(ref !== undefined ? { ref } : {}) },
-      top,
-      includeRows: options.includeRows === true,
-      usage: [],
-      selects: [],
-      utility: index.utility,
-      outcomes: [],
-      llm: emptyLlmUsageAggregate(),
-      llmRows: [],
-      pricing: config.pricing,
-      indexRuns: [],
-      tasks: [],
-      proposals: { byStatus: {}, acceptRateBySource: [] },
-      workflows: { runs: 0, byStatus: {}, tokens: 0, byModel: {} },
-      notes,
-    };
-
-    const stateDbPath = getStateDbPath();
-    if (!fs.existsSync(stateDbPath)) {
-      notes.push("state.db was not found, so every section except utility is empty.");
-      return buildMetricsResult(input);
-    }
-    const stateDb = openStateDatabase(stateDbPath);
-    try {
-      input.usage = listUsageEventRows(stateDb, filter);
-      input.selects = listSelectEvents(stateDb, filter);
-      input.outcomes = listLowestOutcomeAssets(stateDb, filter, top);
-      input.indexRuns = indexRunsFromEvents(listIndexCompletedEvents(stateDb, sinceIso, untilIso));
-      input.tasks = queryTaskHistory(stateDb, { since: sinceIso, until: untilIso });
-      input.proposals = {
-        byStatus: countProposalsByStatus(stateDb, sinceIso, untilIso, filter),
-        acceptRateBySource: readAcceptRate(notes),
-      };
-      input.workflows = summarizeWorkflowRuns(stateDb, sinceIso, untilIso);
-    } finally {
-      stateDb.close();
-    }
-    input.llm = readLlmUsageAggregate(stateDbPath, sinceIso, untilIso);
-    if (input.includeRows) {
-      const untilMs = Date.parse(untilIso);
-      const events = readEvents({ since: sinceIso, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events;
-      input.llmRows = llmRowsFromEvents(events.filter((event) => Date.parse(event.ts) < untilMs));
-    }
-    return buildMetricsResult(input);
-  } finally {
-    if (index.db) closeDatabase(index.db);
+  const ref = options.ref === undefined ? undefined : await resolveRefFilter(options.ref);
+  const filter: MetricsQueryFilter = {
+    sinceIso,
+    untilIso,
+    ...(source === ALL_SOURCES ? {} : { source }),
+    bundles,
+    ...(ref !== undefined ? { ref } : {}),
+  };
+  if (bundles.length > 0 || ref !== undefined) {
+    notes.push(
+      "Usage, feedback, utility and outcomes are limited to the matching assets, and searches counts the searches that returned one; llm, index, tasks, proposals (accept rate) and workflows cover everything.",
+    );
   }
+  if (source !== ALL_SOURCES) {
+    notes.push("Selects come from the events stream, which records no source, so they are counted for every source.");
+  }
+
+  const input: MetricsInput = {
+    window: { since: sinceIso, until: untilIso },
+    filters: { source, bundles, ...(ref !== undefined ? { ref } : {}) },
+    top,
+    includeRows: options.includeRows === true,
+    usage: [],
+    selects: [],
+    utility: index.utility,
+    outcomes: [],
+    llm: emptyLlmUsageAggregate(),
+    llmRows: [],
+    pricing: config.pricing,
+    indexRuns: [],
+    tasks: [],
+    proposals: { byStatus: {}, acceptRateBySource: [] },
+    workflows: { runs: 0, byStatus: {}, tokens: 0, byModel: {} },
+    notes,
+  };
+
+  const stateDbPath = getStateDbPath();
+  if (!fs.existsSync(stateDbPath)) {
+    notes.push("state.db was not found, so every section except utility is empty.");
+    return buildMetricsResult(input);
+  }
+  const stateDb = openStateDatabase(stateDbPath);
+  try {
+    input.usage = listUsageEventRows(stateDb, filter);
+    input.selects = listSelectEvents(stateDb, filter);
+    input.outcomes = listLowestOutcomeAssets(stateDb, filter, top);
+    input.indexRuns = indexRunsFromEvents(listIndexCompletedEvents(stateDb, sinceIso, untilIso));
+    input.tasks = queryTaskHistory(stateDb, { since: sinceIso, until: untilIso });
+    input.proposals = {
+      byStatus: countProposalsByStatus(stateDb, sinceIso, untilIso, filter),
+      acceptRateBySource: readAcceptRate(notes),
+    };
+    input.workflows = summarizeWorkflowRuns(stateDb, sinceIso, untilIso);
+  } finally {
+    stateDb.close();
+  }
+  input.llm = readLlmUsageAggregate(stateDbPath, sinceIso, untilIso);
+  if (input.includeRows) {
+    const untilMs = Date.parse(untilIso);
+    const events = readEvents({ since: sinceIso, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events;
+    input.llmRows = llmRowsFromEvents(events.filter((event) => Date.parse(event.ts) < untilMs));
+  }
+  return buildMetricsResult(input);
 }
 
 export const metricsCommand = defineJsonCommand({
@@ -256,10 +260,10 @@ export const metricsCommand = defineJsonCommand({
     },
     top: { type: "string", description: `Cap on every ranked list (default ${DEFAULT_TOP})` },
   },
-  run({ args }) {
+  async run({ args }) {
     output(
       "metrics",
-      akmMetrics({
+      await akmMetrics({
         since: args.since,
         until: args.until,
         bundles: parseAllFlagValues("--bundle"),

@@ -228,9 +228,19 @@ function byCountThenKey<T extends { count: number }>(key: (item: T) => string): 
 function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsResult["usage"] {
   // A search or curate writes one summary row (no ref) plus one row per hit. A
   // bundle or ref filter drops the summary rows with the refs they lack, so the
-  // hit rows are what is counted: each is a search that returned a matching asset.
+  // hit rows are what is counted. They carry no search id, so the rows of one
+  // search (same type, query and timestamp) count once: a search that returned
+  // several matching assets is still one search.
   const hitMode = input.filters.bundles.length > 0 || input.filters.ref !== undefined;
-  const isUnit = (row: MetricsUsageRow) => (hitMode ? row.ref !== undefined : row.ref === undefined);
+  const seenHitGroups = new Set<string>();
+  const isUnit = (row: MetricsUsageRow) => {
+    if (!hitMode) return row.ref === undefined;
+    if (row.ref === undefined) return false;
+    const group = JSON.stringify([row.eventType, row.query ?? null, row.at]);
+    if (seenHitGroups.has(group)) return false;
+    seenHitGroups.add(group);
+    return true;
+  };
 
   const days = new Map<string, MetricsDailyUsage>();
   const bump = (at: string, field: keyof Omit<MetricsDailyUsage, "day">) => {

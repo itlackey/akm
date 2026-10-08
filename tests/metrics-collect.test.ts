@@ -183,6 +183,36 @@ describe("usage section", () => {
     expect(filtered.totals.zeroResultSearches).toBe(0);
     expect(filtered.topQueries.map((q) => q.query)).toEqual(["deploy"]);
   });
+
+  test("under a bundle filter one search that wrote several per-hit rows is one search", () => {
+    const hit = (ref: string, createdAt: string, eventType: "search" | "curate" = "search") =>
+      usage({ event_type: eventType, created_at: createdAt, query: "deploy", entry_ref: ref });
+    const filtered = buildMetricsResult(
+      input({
+        usage: [
+          hit("b//skills/a", "2026-01-02 10:00:00"),
+          hit("b//skills/b", "2026-01-02 10:00:00"),
+          hit("b//skills/c", "2026-01-02 10:00:00"),
+          hit("b//skills/a", "2026-01-03 10:00:00"),
+          hit("b//skills/a", "2026-01-04 10:00:00", "curate"),
+          hit("b//skills/b", "2026-01-04 10:00:00", "curate"),
+        ],
+        selects: [{ ts: "2026-01-02T10:00:01.000Z", ref: "b//skills/a" }],
+        filters: { source: "user", bundles: ["b"] },
+      }),
+    ).usage;
+    expect(filtered.totals.searches).toBe(2);
+    expect(filtered.totals.curates).toBe(1);
+    expect(filtered.totals.distinctQueries).toBe(1);
+    expect(filtered.topQueries.map((q) => [q.query, q.count])).toEqual([["deploy", 2]]);
+    expect(filtered.daily.map((d) => [d.day, d.search, d.curate])).toEqual([
+      ["2026-01-02", 1, 0],
+      ["2026-01-03", 1, 0],
+      ["2026-01-04", 0, 1],
+    ]);
+    expect(filtered.selectRate).toBe(1 / 2);
+    expect(filtered.topAssets.find((a) => a.ref === "b//skills/a")?.searchHits).toBe(2);
+  });
 });
 
 describe("feedback section", () => {

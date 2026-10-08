@@ -9,14 +9,18 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import type { AkmMetricsResult } from "../../src/commands/metrics/types";
+import { resetConfigCache } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
+import { akmIndex } from "../../src/indexer/indexer";
 import type { Database } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliStatus } from "../_helpers/cli";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
+import { type IsolatedAkmStorage, makeStashDir, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -316,13 +320,47 @@ describe("akm metrics", () => {
       },
     ]);
     expect(result.notes.some((note) => note.includes("index.db"))).toBe(false);
+  });
 
-    // A short ref resolves through the index to the durable one.
-    const byRef = await metrics("--ref", "skills/high");
-    expect(byRef.status).toBe(0);
-    expect(byRef.result.filters.ref).toBe("main//skills/high");
-    expect(byRef.result.utility.count).toBe(1);
-    expect(byRef.result.outcomes.lowestOutcome).toEqual([]);
+  test("a short --ref resolves the way show does: default bundle first", async () => {
+    const first = makeStashDir();
+    const second = makeStashDir();
+    try {
+      for (const root of [first.dir, second.dir]) {
+        const file = path.join(root, "knowledge", "shared.md");
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, "---\ndescription: shared note\n---\n\n# Shared\n", "utf8");
+      }
+      const configure = (defaultBundle: string) => {
+        writeSandboxConfig({
+          semanticSearchMode: "off",
+          bundles: { alpha: { path: first.dir }, beta: { path: second.dir } },
+          defaultBundle,
+        });
+        resetConfigCache();
+      };
+      configure("beta");
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      const at = sqliteTs(Date.now() - HOUR);
+      seedUsage([
+        { type: "show", at, ref: "alpha//knowledge/shared" },
+        { type: "show", at, ref: "beta//knowledge/shared" },
+        { type: "show", at, ref: "beta//knowledge/shared" },
+      ]);
+
+      const beta = await metrics("--ref", "knowledge/shared");
+      expect(beta.status).toBe(0);
+      expect(beta.result.filters.ref).toBe("beta//knowledge/shared");
+      expect(beta.result.usage.totals.shows).toBe(2);
+
+      configure("alpha");
+      const alpha = await metrics("--ref", "knowledge/shared");
+      expect(alpha.result.filters.ref).toBe("alpha//knowledge/shared");
+      expect(alpha.result.usage.totals.shows).toBe(1);
+    } finally {
+      first.cleanup();
+      second.cleanup();
+    }
   });
 
   test("tasks, proposals, workflows and index runs come from state.db", async () => {
