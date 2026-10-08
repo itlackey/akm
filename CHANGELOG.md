@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28-alpha.3] - 2026-10-08
+
+### Changed
+
+- A consolidate pair-pass retire proposal now records the judge's claim lists in its `retirement` metadata as `onlyInRetired` and `onlyInSuccessor`, named by role rather than by the judge's A/B, so what the judge found only on each side survives past the run. Proposals minted before this lack both fields; no row is added for a pair akm keeps.
+
+- A distill lesson the quality gate rejects or sends to review now keeps its text: the `distill_invoked` event and the distill result carry `rejectedContent`, cut to 2000 characters (the judge prompt's cap). Before, a rejected lesson left only its score and reason. It stays local in `state.db`.
+
 ## [0.9.28-alpha.2] - 2026-10-08
 
 ### Added

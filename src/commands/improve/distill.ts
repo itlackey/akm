@@ -842,6 +842,9 @@ function rejectDistilled(
   });
 }
 
+/** Longest lesson text kept on a rejection, the same cap the quality judge's prompt reads (stage.ts). */
+const REJECTED_CONTENT_MAX_CHARS = 2000;
+
 /**
  * Record a distill quality-gate outcome and return its envelope.
  * `quality_rejected` lands in the improve ledger under the input's key (its
@@ -897,6 +900,8 @@ export function writeQualityRejection(args: {
     }
   }
   const eligMeta = args.eligibilitySource ? { eligibilitySource: args.eligibilitySource } : {};
+  // The text the gate turned away, kept in the local event and the result so a rejection can be audited.
+  const rejectedContent = args.content.slice(0, REJECTED_CONTENT_MAX_CHARS);
   appendEvent(
     {
       eventType: "distill_invoked",
@@ -906,6 +911,7 @@ export function writeQualityRejection(args: {
         proposalRef: args.proposalRef,
         score: args.score,
         reason: args.reason,
+        rejectedContent,
         ...meta,
         ...eligMeta,
       },
@@ -920,6 +926,7 @@ export function writeQualityRejection(args: {
     proposalRef: args.proposalRef,
     score: args.score,
     reason: args.reason,
+    rejectedContent,
     ...(proposal ? { proposalId: proposal.id, proposal } : {}),
     ...meta,
   } as AkmDistillResult;

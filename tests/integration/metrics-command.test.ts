@@ -42,6 +42,12 @@ function sqliteTs(ms: number): string {
 
 const HOUR = 3_600_000;
 
+/**
+ * Stamp events an hour back. The window is `[since, now)` at millisecond
+ * resolution, so an event stamped with the command's own `now` falls outside it.
+ */
+const anHourAgo = { now: () => Date.now() - HOUR };
+
 interface SeedUsage {
   type: "search" | "show" | "curate" | "feedback";
   at: string;
@@ -117,7 +123,7 @@ describe("akm metrics", () => {
         metadata: { signal: "negative", reason: "out of date", tags: ["stale"] },
       },
     ]);
-    appendEvent({ eventType: "select", ref: "main//skills/deploy", metadata: { query: "deploy" } });
+    appendEvent({ eventType: "select", ref: "main//skills/deploy", metadata: { query: "deploy" } }, anHourAgo);
 
     const { status, result } = await metrics("--since", "1d");
     expect(status).toBe(0);
@@ -202,10 +208,13 @@ describe("akm metrics", () => {
   test("rows ride along with --detail full and --format html, not by default", async () => {
     const at = sqliteTs(Date.now() - HOUR);
     seedUsage([{ type: "search", at, query: "needle-query", metadata: { resultCount: 1 } }]);
-    appendEvent({
-      eventType: "llm_usage",
-      metadata: { engine: "e", outcome: "success", durationMs: 5, promptTokens: 1 },
-    });
+    appendEvent(
+      {
+        eventType: "llm_usage",
+        metadata: { engine: "e", outcome: "success", durationMs: 5, promptTokens: 1 },
+      },
+      anHourAgo,
+    );
     expect((await metrics()).result.rows).toBeUndefined();
     const full = (await metrics("--detail", "full")).result;
     expect(full.rows?.usage).toHaveLength(1);
@@ -282,7 +291,10 @@ describe("akm metrics", () => {
       await akmIndex({ stashDir: storage.stashDir, full: true });
       // usage_events keys on the durable ref; the events stream keeps the ref as typed.
       seedUsage([{ type: "show", at: sqliteTs(Date.now() - HOUR), ref: "beta//knowledge/shared" }]);
-      appendEvent({ eventType: "select", ref: "knowledge/shared", metadata: { query: "shared", rankPosition: 0 } });
+      appendEvent(
+        { eventType: "select", ref: "knowledge/shared", metadata: { query: "shared", rankPosition: 0 } },
+        anHourAgo,
+      );
 
       const all = await metrics();
       expect(all.result.usage.topAssets.map((asset) => [asset.ref, asset.selects])).toEqual([
@@ -341,8 +353,8 @@ describe("akm metrics", () => {
     } finally {
       state.close();
     }
-    appendEvent({ eventType: "index_completed", metadata: { mode: "full", totalMs: 1200 } });
-    appendEvent({ eventType: "index_completed", metadata: { mode: "incremental", totalMs: 400 } });
+    appendEvent({ eventType: "index_completed", metadata: { mode: "full", totalMs: 1200 } }, anHourAgo);
+    appendEvent({ eventType: "index_completed", metadata: { mode: "incremental", totalMs: 400 } }, anHourAgo);
 
     const { result } = await metrics();
     expect(result.tasks).toMatchObject({ runs: 2, failed: 1, failRate: 0.5 });
