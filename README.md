@@ -104,7 +104,7 @@ AKM is local-first: it stores its index and state on disk and has no remote tele
 | Doc | Description |
 | --- | --- |
 | [Documentation index](docs/README.md) | Full guide and reference index |
-| [Product surface](docs/product-surface.md) | Every feature and its status |
+| [Product surface](https://github.com/itlackey/akm/blob/main/docs/product-surface.md) | Every feature and its status |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
 | [Changelog](CHANGELOG.md) | Per-release behavior changes |
