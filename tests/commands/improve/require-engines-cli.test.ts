@@ -25,13 +25,19 @@ import { makeSandboxDir, makeStashDir, type SandboxedDir, withEnv, writeSandboxC
 const disposers: SandboxedDir[] = [];
 
 function freshEnv(stashDir: string): Record<string, string> {
+  const home = makeSandboxDir("akm-require-engines-home");
+  const cfg = makeSandboxDir("akm-require-engines-cfg");
+  const cache = makeSandboxDir("akm-require-engines-cache");
+  const data = makeSandboxDir("akm-require-engines-data");
+  const state = makeSandboxDir("akm-require-engines-state");
+  disposers.push(home, cfg, cache, data, state);
   return {
     AKM_BUNDLE_DIR: stashDir,
-    HOME: makeSandboxDir("akm-require-engines-home").dir,
-    XDG_CONFIG_HOME: makeSandboxDir("akm-require-engines-cfg").dir,
-    XDG_CACHE_HOME: makeSandboxDir("akm-require-engines-cache").dir,
-    XDG_DATA_HOME: makeSandboxDir("akm-require-engines-data").dir,
-    XDG_STATE_HOME: makeSandboxDir("akm-require-engines-state").dir,
+    HOME: home.dir,
+    XDG_CONFIG_HOME: cfg.dir,
+    XDG_CACHE_HOME: cache.dir,
+    XDG_DATA_HOME: data.dir,
+    XDG_STATE_HOME: state.dir,
   };
 }
 
