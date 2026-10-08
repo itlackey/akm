@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **`akm metrics` renders as text and Markdown.** `--format text` prints aligned
+  Usage, Feedback, Utility, LLM, Index, Tasks, Proposals and Workflows sections
+  with top-N tables (cut to 5 at `--detail brief`); `--format md` prints one
+  heading per section with GFM tables.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.

@@ -99,6 +99,7 @@ import { secretCommand } from "./commands/env/secret-cli";
 import { feedbackCommand } from "./commands/feedback-cli";
 import { akmHealth } from "./commands/health";
 import "./commands/health/renderers";
+import "./commands/metrics/md-report";
 import type { WindowSpec } from "./commands/health/types";
 import { parseWindowSpec } from "./commands/health/windows";
 import { improveCommand } from "./commands/improve/improve-cli";
