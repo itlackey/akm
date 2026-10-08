@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28-alpha.7] - 2026-10-08
+
+### Added
+
+- **An agent engine can name a default `agent`.** `engines.<name>.agent` (`opencode`, `opencode-sdk`, `claude`)
+  is the native agent the engine runs when a request names none, so an `opencode-sdk` engine, which takes no
+  `args`, can run e.g. `akm-workflow` for workflows and tasks. A request's own agent wins, a persona is kept,
+  and model work keeps its confined agent. See [Configuration](docs/reference/configuration.md) (#1049).
+
+### Changed
+
+- **Stability tiers for 0.10's stabilization work.** Experimental: the built-in
+  improve strategies other than `default` and `consolidate` (`quick`,
+  `reflect-distill`, `thorough`, `catchup`), the proactive-maintenance and
+  high-salience lanes, and session extraction (`akm proposal extract`).
+  Evolving and now listed: `akm command run` and `akm models`; every agent
+  harness (the `opencode` CLI path, `copilot`, `pi`, `gemini`, `aider`,
+  `amazonq`, `openhands` included) and the `okf`, `llm-wiki` and
+  `generic-files` adapters are named Evolving. `akm upgrade`'s plugin step and
+  `--next` are targeted to become Stable before the 0.9 series ends.
+
+- **Workflows are Experimental.** The `akm workflow` commands (`run`, `status`,
+  `list`, `create`, `resume`, `abandon`, `plan`), the workflow asset format and
+  the engine move to Experimental in STABILITY.md and the help text, for the rest
+  of 0.9 and all of 0.10, which stabilizes the feature and then promotes it or
+  removes it. Nothing changes in how they run.
+
+### Fixed
+
+- **Consolidate's pair pass no longer retires a knowledge note in favour of a memory (#1092).** Knowledge is the
+  reviewed form and a memory is raw capture, often the very memory the note was promoted from, yet a `duplicate`,
+  `supersedes` or `subsumed` verdict could retire `knowledge/...` for `memories/...` (a `.derived` memory counts as a
+  memory). When the verdict would do that and the judge lists no claim held only by the memory, the memory is retired
+  in favour of the note instead, through the same guards and staging as any memory retirement; when the memory holds
+  a claim of its own, nothing is minted and the pair is counted as a no-action verdict. A memory is still retired in
+  favour of a knowledge note, and knowledge against knowledge is unchanged.
+
 ## [0.9.28-alpha.6] - 2026-10-08
 
 ### Fixed

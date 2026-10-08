@@ -54,17 +54,17 @@ enumeration of the whole `proposal` noun group.
 | `akm bundle show` | Evolving | See note above. |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
-| `akm upgrade` | Evolving | |
+| `akm upgrade` | Evolving | The plugin step and `--next` (0.9.28) are being verified on real hosts to become Stable before the 0.9 series ends. |
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
-| `akm workflow status` | Stable | `--all-scopes` added in 0.9.15 (#942), additive. |
-| `akm workflow plan` | Evolving | New in 0.9.2; secret-free provenance output; envelope shape may change. |
-| `akm workflow list` | Stable | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942), both additive. |
-| `akm workflow create` | Stable | |
-| `akm workflow resume` | Stable | |
-| `akm workflow abandon` | Stable | |
-| `akm workflow run` | Stable | Canonical start/resume/execute command. |
+| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942), additive. |
+| `akm workflow plan` | Experimental | New in 0.9.2; secret-free provenance output; envelope shape may change. |
+| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942), both additive. |
+| `akm workflow create` | Experimental | |
+| `akm workflow resume` | Experimental | |
+| `akm workflow abandon` | Experimental | |
+| `akm workflow run` | Experimental | Canonical start/resume/execute command. |
 | `akm remember` | Stable | |
 | `akm import` | Stable | |
 | `akm sync` | Stable | |
@@ -83,6 +83,8 @@ enumeration of the whole `proposal` noun group.
 | `akm feedback` | Stable | |
 | `akm log` | Evolving | |
 | `akm agent` | Evolving | |
+| `akm command run` | Evolving | Runs stored command templates through the same agent dispatch as `akm agent`. |
+| `akm models` | Evolving | `list` and `copy-defaults` for model intent aliases. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
 | `akm proposal list` | Stable | See reconciliation note above. |
@@ -93,7 +95,7 @@ enumeration of the whole `proposal` noun group.
 | `akm proposal reopen` | Evolving | New in 0.9.19; undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
-| `akm proposal extract` | Evolving | Former top-level `akm extract`. |
+| `akm proposal extract` | Experimental | Former top-level `akm extract`. Session extraction quality is still being measured (0.10, #1094). |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
 | `akm help agents` | Stable | |
@@ -291,9 +293,8 @@ CHANGELOG with a migration note.
 - **Workflow plan** — `akm workflow plan <ref>`, new in 0.9.2: zero-write
   compile+freeze introspection (the canonical step graph, task/child
   expansion, input bindings, and lowering notices for a workflow, without
-  starting or publishing a run). The envelope shape may still change; the
-  five long-Stable `workflow` verbs (`status`, `list`, `create`, `resume`,
-  `abandon`) and `run` are unaffected.
+  starting or publishing a run). The envelope shape may still change. Like every
+  `workflow` verb it is Experimental from 0.9.28 (see Experimental below).
 - **Events / log** — `akm log` is the event-stream surface (0.9.0: the
   asset-scoped `akm history` surface, and `log`'s own `tail` subcommand, were
   both removed; `log` is now a leaf command — the former `list` surface).
@@ -302,7 +303,8 @@ CHANGELOG with a migration note.
   commands/agents, knowledge, YAML workflows, tasks, env/secret files, scripts,
   OKF and LLM-wiki knowledge bases). Config is keyed by `bundles` and
   `defaultBundle`. The adapter set, bundle-recognition rules, and the
-  `bundles` config shape may still shift. Bundles are inspected through
+  `bundles` config shape may still shift; the `okf`, `llm-wiki` and
+  `generic-files` adapters in particular are Evolving. Bundles are inspected through
   `akm bundle list` / `akm bundle show <name>` and enumerated through
   `akm search "bundle//"`. (An earlier `akm bundle items` noun group was
   removed in 0.9.0 as duplicative of `akm search`; the current `akm bundle`
@@ -318,9 +320,15 @@ CHANGELOG with a migration note.
   `log.md` / `raw/` / `pages/` and its ingest flow); wiki pages are addressed
   as ordinary concepts inside their bundle. Adapter behavior and page
   conventions are still iterating.
-- **Agent dispatch** — `akm agent` subcommand. Supported backends: `claude`,
-  `opencode`, `opencode-sdk`, `codex`, `copilot`, `pi`, `gemini`, `aider`,
-  `amazonq`, `openhands`. The set will grow.
+- **Agent dispatch** — `akm agent` and `akm command run`. Supported backends:
+  `claude`, `opencode-sdk` (the primary OpenCode interface), `codex`, and the
+  `opencode` CLI path, `copilot`, `pi`, `gemini`, `aider`, `amazonq`,
+  `openhands`. Every harness is Evolving: the harness implementation is being
+  reworked so harnesses are easy to add, remove and update (0.10), and the
+  `opencode` CLI dispatch path is a deprecation candidate once `opencode-sdk`
+  covers it. The set will grow.
+- **Model aliases** — `akm models list|copy-defaults` and the intent-alias
+  defaults they expose.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
   `proposed`, `rejected`, `archived`) are stable; the JSON shape of a
   proposal record may add fields.
@@ -330,7 +338,9 @@ CHANGELOG with a migration note.
   lives outside the CLI, in `scripts/build-registry-index.ts`.
 - **Upgrade** — `akm upgrade`. Checksum verification is not optional; the
   recovery hatch is the `AKM_UPGRADE_SKIP_CHECKSUM` environment variable
-  (Internal), not a flag.
+  (Internal), not a flag. The harness plugin step and `--next` (new in 0.9.28)
+  are targeted to become Stable before the 0.9 series ends, once verified on
+  real hosts.
 - **Lint** — `akm lint`. The rule set and finding shapes iterate; the
   `--fail-on-flagged` CI contract and the exit codes are stable.
 - **Health** — `akm health` and its exit codes (0 pass / 4 warn / 1 fail) are
@@ -342,6 +352,12 @@ CHANGELOG with a migration note.
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
 
+- **Workflows** — the whole `akm workflow` surface (`run`, `status`, `list`,
+  `create`, `resume`, `abandon`, `plan`), the workflow asset format and the
+  workflow engine are Experimental from 0.9.28 and throughout 0.10. The 0.10
+  series stabilizes the feature and trims what is not useful, then either
+  promotes it out of Experimental or removes it if stabilization does not
+  produce a quality feature.
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
   `--format html` dashboard may change in any release; do not script against
   them.
@@ -361,6 +377,13 @@ for scripted use.
 - **Memory belief-state transitions** — `captureMode`, `beliefState`,
   contradiction edges, and the consolidate journal are observable but
   the algorithm that writes them is tuning across patch releases.
+- **Improve built-in strategies and lanes** — the built-in strategies other
+  than `default` and `consolidate` (`quick`, `reflect-distill`, `thorough`,
+  `catchup`) and the proactive-maintenance and high-salience lanes. 0.10
+  measures each and keeps, folds or removes it (#1094).
+- **Session extraction** — `akm proposal extract` and the `extract` process:
+  what it extracts, its quality gates and its output may change while 0.10
+  measures it (#1094).
 - **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
   engines, limits, gates, and the anti-collapse / CLS / fidelity knobs) and
   the `index.*` per-pass config. The 0.9.x series is explicitly still settling

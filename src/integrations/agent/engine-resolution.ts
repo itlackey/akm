@@ -63,6 +63,7 @@ export interface AgentEngineConfig {
   args?: string[];
   workspace?: string;
   model?: string;
+  agent?: string;
   timeoutMs?: number | null;
   llmEngine?: string;
 }
@@ -422,6 +423,7 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
     parseOutput: "text",
     ...(engine.workspace ? { workspace: path.resolve(engine.workspace) } : {}),
     ...(engine.model ? { model: engine.model } : {}),
+    ...(engine.agent ? { agent: engine.agent } : {}),
   };
   // An engine that sets no timeoutMs leaves it unset, so a caller's own default
   // (model work's 600 s) can apply; a dispatch with none runs unbounded.

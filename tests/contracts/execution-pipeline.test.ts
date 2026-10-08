@@ -538,6 +538,67 @@ describe("dispatch options", () => {
   });
 });
 
+describe("an engine's default agent", () => {
+  const sdk = config({
+    engines: { sdk: { kind: "agent", platform: "opencode-sdk", agent: "akm-workflow" } },
+    defaults: { engine: "sdk" },
+  });
+
+  test("an SDK engine's agent reaches the prompt when the request names none", () => {
+    const resolved = resolveExecution({ content: "Who are you?", config: sdk });
+    expect(resolved.request.agent).toBe("akm-workflow");
+    expect(resolved.provenance.agent).toEqual({ layer: "sdk", kind: "engine", via: "explicit" });
+    expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBe("akm-workflow");
+  });
+
+  test("a request's own agent wins", () => {
+    const resolved = resolveExecution({ content: "x", config: sdk, current: { agent: "reviewer" } });
+    expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBe("reviewer");
+  });
+
+  test("an explicit null agent clears it", () => {
+    const resolved = resolveExecution({ content: "x", config: sdk, current: { agent: null } });
+    expect(buildExecution(resolved.request, resolved.runner).options.dispatch?.agent).toBeUndefined();
+  });
+
+  test("a persona is kept, not replaced by the engine's agent", () => {
+    const resolved = resolveExecution({ content: "x", config: sdk, persona: reviewer() });
+    const dispatch = buildExecution(resolved.request, resolved.runner).options.dispatch;
+    expect(dispatch?.agent).toBeUndefined();
+    expect(dispatch?.systemPrompt).toBe("You review carefully.\n");
+  });
+
+  test("model work keeps its confined agent", () => {
+    const resolved = resolveExecution({ content: "x", config: sdk, modelWork: true });
+    expect(resolved.request.agent).toBeUndefined();
+    const dispatch = buildExecution(resolved.request, resolved.runner).options.dispatch;
+    expect(dispatch?.agent).toBeUndefined();
+    expect(dispatch?.modelWork).toBe(true);
+  });
+
+  test("a pre-resolved runner carries the engine's agent too", () => {
+    const { runner } = resolveExecution({ content: "x", config: sdk });
+    expect(resolveExecution({ content: "y", runner }).request.agent).toBe("akm-workflow");
+  });
+
+  test("the opencode and claude CLIs pass it as --agent", async () => {
+    for (const [platform, bin] of [
+      ["opencode", "opencode"],
+      ["claude", "claude"],
+    ] as const) {
+      const { argv } = await spawnedFor({
+        content: "Hi.",
+        config: config({
+          engines: { e: { kind: "agent", platform, agent: "akm-workflow" } },
+          defaults: { engine: "e" },
+        }),
+      });
+      expect(argv[0]).toBe(bin);
+      expect(argv.slice(argv.indexOf("--agent"), argv.indexOf("--agent") + 2)).toEqual(["--agent", "akm-workflow"]);
+    }
+  });
+});
+
 describe("the model-work tool policy", () => {
   const engines = { claude: { kind: "agent", platform: "claude", workspace: "/configured/workspace" } };
   const modelWork = config({ engines, defaults: { engine: "claude" } });

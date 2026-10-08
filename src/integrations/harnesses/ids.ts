@@ -35,19 +35,25 @@ export interface HarnessIdEntry {
    * lowerer (`agent/request-lowering.ts`) reads it too.
    */
   readonly enforcesModelWorkTools: boolean;
+  /**
+   * The harness can run a named agent of its own (`opencode run --agent`,
+   * `claude --agent`, the SDK's per-prompt `agent`). Read by the shared lowerer
+   * and by the engine schema's `agent` field.
+   */
+  readonly nativeAgentSelector: boolean;
 }
 
 export const HARNESS_ID_TABLE: readonly HarnessIdEntry[] = [
-  { id: "opencode", agentDispatch: true, enforcesModelWorkTools: true },
-  { id: "claude", agentDispatch: true, enforcesModelWorkTools: true },
-  { id: "opencode-sdk", agentDispatch: true, enforcesModelWorkTools: true },
-  { id: "codex", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "copilot", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "pi", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "gemini", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "aider", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "amazonq", agentDispatch: true, enforcesModelWorkTools: false },
-  { id: "openhands", agentDispatch: true, enforcesModelWorkTools: false },
+  { id: "opencode", agentDispatch: true, enforcesModelWorkTools: true, nativeAgentSelector: true },
+  { id: "claude", agentDispatch: true, enforcesModelWorkTools: true, nativeAgentSelector: true },
+  { id: "opencode-sdk", agentDispatch: true, enforcesModelWorkTools: true, nativeAgentSelector: true },
+  { id: "codex", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
+  { id: "copilot", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
+  { id: "pi", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
+  { id: "gemini", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
+  { id: "aider", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
+  { id: "amazonq", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
+  { id: "openhands", agentDispatch: true, enforcesModelWorkTools: false, nativeAgentSelector: false },
 ] as const;
 
 /**
@@ -69,4 +75,9 @@ export const HARNESS_AGENT_DISPATCH_IDS: ReadonlySet<string> = new Set(
 /** Harness ids that confine the model-work tool policy, so unattended model work may run on them. */
 export const HARNESS_MODEL_WORK_IDS: ReadonlySet<string> = new Set(
   HARNESS_ID_TABLE.filter((h) => h.enforcesModelWorkTools).map((h) => h.id),
+);
+
+/** Harness ids that can run a named native agent, so an engine may name a default `agent`. */
+export const HARNESS_NATIVE_AGENT_IDS: ReadonlySet<string> = new Set(
+  HARNESS_ID_TABLE.filter((h) => h.nativeAgentSelector).map((h) => h.id),
 );

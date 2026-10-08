@@ -799,6 +799,9 @@ to run `akm bundle add <origin>` first.
 
 ### workflow
 
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): the workflow commands, asset format and engine may
+change in any release through the 0.10 series, which decides whether the feature is stabilized or removed.
+
 Author, inspect, and execute structured workflow assets.
 
 ```sh
@@ -2891,6 +2894,8 @@ mutation requires either an explicit `--target` or a selected `--queue` that
 authenticates its root; it never falls back to an ambient write target.
 
 #### proposal extract
+
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): session extraction is still being measured in 0.10.
 
 Extract durable insights from native coding-agent session files (claude-code,
 codex, opencode) and queue them as proposals. This is the standalone

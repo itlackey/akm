@@ -30,7 +30,7 @@ export const extractCommand = defineJsonCommand({
   meta: {
     name: "extract",
     description:
-      "Extract durable insights from native session files (claude, codex, opencode) and queue them as proposals.",
+      "Experimental: extract durable insights from native session files (claude, codex, opencode) and queue them as proposals.",
   },
   args: {
     type: {

@@ -1417,6 +1417,150 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
   });
 });
 
+describe("runConsolidatePairPass — knowledge is never replaced with a memory (#1092)", () => {
+  /**
+   * An indexed pair of one knowledge note and one memory; `olderType` says which is older (A), the other is B.
+   * `memoryFrontmatter` and `memoryName` let a test make the memory hot or a `.derived` child.
+   */
+  async function runPair(
+    olderType: "knowledge" | "memory",
+    verdict: Parameters<typeof fixedChat>[0],
+    { memoryName = "topic-memory", memoryFrontmatter = "description: raw capture" } = {},
+  ) {
+    const knowledgePath = writeAsset("knowledge/topic-note.md", "description: curated note");
+    const memoryPath = writeAsset(`memories/${memoryName}.md`, memoryFrontmatter);
+    dateAsset(knowledgePath, olderType === "knowledge" ? 60 : 1);
+    dateAsset(memoryPath, olderType === "knowledge" ? 1 : 60);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "knowledge", "topic-note", knowledgePath, 0);
+      indexAsset(db, "memory", memoryName, memoryPath, angleForCosine(BACKFILL_FLOOR + 0.02));
+    } finally {
+      closeDatabase(db);
+    }
+    return runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat(verdict),
+    });
+  }
+
+  test("duplicate, knowledge older, memory holds nothing of its own: the memory is retired, the note kept, staged", async () => {
+    const result = await runPair("knowledge", { relation: "duplicate", redundant: null });
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/topic-memory");
+    expect(proposal.changes).toEqual([{ path: "memories/topic-memory.md", op: "delete" }]);
+    expect(proposal.retirement).toMatchObject({
+      retiredRef: "memories/topic-memory",
+      successorRef: "knowledge/topic-note",
+      judgeLabel: "duplicate",
+      reason: "duplicate",
+    });
+    // The second look and the staging condition run with retired = memory, successor = knowledge.
+    expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "duplicate", gate: "consolidate-pair" });
+  });
+
+  test("duplicate, knowledge older, memory lists a claim the note lacks: nothing minted, counted as no action", async () => {
+    const result = await runPair("knowledge", {
+      relation: "duplicate",
+      redundant: null,
+      onlyInB: ["a claim only the memory holds"],
+    });
+    expect(result.retired).toHaveLength(0);
+    expect(result.labelCounts.duplicate).toBeGreaterThanOrEqual(1);
+    expect(listProposals(storage.stashDir)).toHaveLength(0);
+    const stateDb = openStateDatabase();
+    try {
+      const row = getImproveLedgerRow(stateDb, storage.stashDir, "knowledge/topic-note", "consolidate-pair");
+      expect(row?.outcome).toBe("judged_no_action");
+    } finally {
+      stateDb.close();
+    }
+  });
+
+  test("subsumed, knowledge called redundant, memory list empty: the memory is retired, the note kept", async () => {
+    // Knowledge is older (A); redundant "A" would retire it for the newer memory; the memory (B) lists nothing.
+    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A" });
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/topic-memory");
+    expect(proposal.retirement).toMatchObject({
+      retiredRef: "memories/topic-memory",
+      successorRef: "knowledge/topic-note",
+      judgeLabel: "subsumed",
+    });
+  });
+
+  test("subsumed, knowledge called redundant, memory lists a claim: nothing minted", async () => {
+    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A", onlyInB: ["memory-only claim"] });
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("a flipped retirement of a hot-captured memory is still refused by the hot guard", async () => {
+    const result = await runPair(
+      "knowledge",
+      { relation: "duplicate", redundant: null },
+      { memoryFrontmatter: "description: hot capture\ncaptureMode: hot" },
+    );
+    expect(result.retired).toHaveLength(0);
+    expect(listProposals(storage.stashDir)).toHaveLength(0);
+  });
+
+  test("a flipped retirement of a .derived memory whose parent exists is still refused", async () => {
+    writeAsset("memories/topic-memory.md", "description: parent memory");
+    const result = await runPair(
+      "knowledge",
+      { relation: "duplicate", redundant: null },
+      { memoryName: "topic-memory.derived", memoryFrontmatter: "inferred: true\nsource: memories/topic-memory" },
+    );
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("a .derived memory with a claim of its own counts as a memory: the note is not retired for it", async () => {
+    const result = await runPair(
+      "knowledge",
+      { relation: "duplicate", redundant: null, onlyInB: ["derived-only claim"] },
+      { memoryName: "topic-memory.derived", memoryFrontmatter: "inferred: true\nsource: memories/topic-memory" },
+    );
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("duplicate, memory older and knowledge newer: the memory is retired in favour of the knowledge note, as before", async () => {
+    const result = await runPair("memory", { relation: "duplicate", redundant: null });
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/topic-memory");
+    expect(proposal.retirement).toMatchObject({
+      retiredRef: "memories/topic-memory",
+      successorRef: "knowledge/topic-note",
+    });
+  });
+
+  test("subsumed with the memory side called redundant: the memory is retired in favour of the knowledge note", async () => {
+    const result = await runPair("knowledge", { relation: "subsumed", redundant: "B" });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).ref).toBe("stash//memories/topic-memory");
+  });
+
+  test("knowledge vs knowledge is unchanged: the older note is retired", async () => {
+    const oldPath = writeAsset("knowledge/old-note.md", "description: old");
+    dateAsset(oldPath, 60);
+    const newPath = writeAsset("knowledge/new-note.md", "description: new");
+    dateAsset(newPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "knowledge", "old-note", oldPath, 0);
+      indexAsset(db, "knowledge", "new-note", newPath, angleForCosine(BACKFILL_FLOOR + 0.02));
+    } finally {
+      closeDatabase(db);
+    }
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "duplicate", redundant: null }),
+    });
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).ref).toBe("stash//knowledge/old-note");
+  });
+});
+
 describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () => {
   // Found by the post-review real-data measurement, not by any hand-sized
   // fixture: `spawnSync`'s default maxBuffer is 1 MB, and the owner's real
