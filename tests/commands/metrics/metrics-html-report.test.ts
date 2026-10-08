@@ -23,7 +23,6 @@ import type { AkmMetricsResult, MetricsUsageRow } from "../../../src/commands/me
 import type { UsageEventRow } from "../../../src/indexer/usage/usage-events";
 import { initOutputMode, resetOutputMode } from "../../../src/output/context";
 import { renderHtml, resolveTemplatePath } from "../../../src/output/html-render";
-import { deregisterOutputShape, registerOutputShape } from "../../../src/output/shapes/registry";
 
 function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
   const usage: MetricsUsageRow[] = [
@@ -487,11 +486,9 @@ describe("dashboard client core", () => {
 describe("output() wiring", () => {
   afterEach(() => {
     resetOutputMode();
-    deregisterOutputShape("metrics");
   });
 
   test("--format html routes the metrics command to the bespoke dashboard", () => {
-    registerOutputShape("metrics", (result) => result);
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-metrics-html-"));
     try {
       const out = path.join(dir, "metrics.html");
