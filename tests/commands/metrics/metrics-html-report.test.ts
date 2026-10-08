@@ -11,12 +11,15 @@ import os from "node:os";
 import path from "node:path";
 import { output } from "../../../src/cli/shared";
 import { buildEchartsTag } from "../../../src/commands/health/html-report";
+import { emptyLlmUsageAggregate } from "../../../src/commands/health/llm-usage";
+import { buildMetricsResult, type MetricsInput } from "../../../src/commands/metrics/collect";
 import {
   buildMetricsHtmlReplacements,
   MAX_HTML_USAGE_ROWS,
   renderMetricsHtml,
 } from "../../../src/commands/metrics/html-report";
 import type { AkmMetricsResult, MetricsUsageRow } from "../../../src/commands/metrics/types";
+import type { UsageEventRow } from "../../../src/indexer/usage/usage-events";
 import { initOutputMode, resetOutputMode } from "../../../src/output/context";
 import { renderHtml, resolveTemplatePath } from "../../../src/output/html-render";
 import { deregisterOutputShape, registerOutputShape } from "../../../src/output/shapes/registry";
@@ -290,6 +293,7 @@ describe("renderMetricsHtml", () => {
 
 interface Agg {
   totals: Record<string, number>;
+  queries: Array<{ query: string; count: number }>;
   assets: Array<{ ref: string; shows: number; searchHits: number }>;
   zeroQueries: Array<{ query: string }>;
   tags: Record<string, { positive: number; negative: number }>;
@@ -305,7 +309,7 @@ describe("dashboard client core", () => {
   const html = renderMetricsHtml(fixture()) as string;
   const core = loadCore(html) as unknown as {
     filterRows: (rows: MetricsUsageRow[], f: Record<string, unknown>) => MetricsUsageRow[];
-    aggregate: (rows: MetricsUsageRow[]) => Agg;
+    aggregate: (rows: MetricsUsageRow[], opts?: { hitMode?: boolean }) => Agg;
     aggregateLlm: (rows: unknown[], f: Record<string, unknown>) => LlmAgg;
     toCsv: (cols: Array<{ key: string; label: string }>, rows: Array<Record<string, unknown>>) => string;
     dayRange: (a: string, b: string) => string[];
@@ -327,6 +331,98 @@ describe("dashboard client core", () => {
     expect(a.tags.outdated?.negative).toBe(1);
     expect(a.negatives[0]?.reason).toBe("stale");
     expect(a.daily.map((d) => d.day)).toEqual(["2026-10-01", "2026-10-02", "2026-10-03"]);
+  });
+
+  describe("hit mode matches the server's counting", () => {
+    let nextId = 1;
+    const event = (
+      partial: Partial<UsageEventRow> & Pick<UsageEventRow, "event_type" | "created_at">,
+    ): UsageEventRow => ({
+      id: nextId++,
+      query: null,
+      entry_id: null,
+      entry_ref: null,
+      signal: null,
+      metadata: null,
+      source: "user",
+      ...partial,
+    });
+    const events: UsageEventRow[] = [
+      // Search 1: summary row plus three hits across two bundles.
+      event({
+        event_type: "search",
+        created_at: "2026-01-02 10:00:00",
+        query: "deploy",
+        metadata: '{"resultCount":3}',
+      }),
+      event({ event_type: "search", created_at: "2026-01-02 10:00:00", query: "deploy", entry_ref: "a//skills/x" }),
+      event({ event_type: "search", created_at: "2026-01-02 10:00:00", query: "deploy", entry_ref: "a//skills/y" }),
+      event({ event_type: "search", created_at: "2026-01-02 10:00:00", query: "deploy", entry_ref: "b//skills/z" }),
+      // Search 2: same query later, one hit.
+      event({
+        event_type: "search",
+        created_at: "2026-01-03 10:00:00",
+        query: "deploy",
+        metadata: '{"resultCount":1}',
+      }),
+      event({ event_type: "search", created_at: "2026-01-03 10:00:00", query: "deploy", entry_ref: "a//skills/x" }),
+      // Search 3: no hits at all, so it exists only as a summary row.
+      event({
+        event_type: "search",
+        created_at: "2026-01-03 11:00:00",
+        query: "nope",
+        metadata: '{"resultCount":0}',
+      }),
+      // Curate with two hits.
+      event({ event_type: "curate", created_at: "2026-01-04 10:00:00", query: "q" }),
+      event({ event_type: "curate", created_at: "2026-01-04 10:00:00", query: "q", entry_ref: "a//skills/x" }),
+      event({ event_type: "curate", created_at: "2026-01-04 10:00:00", query: "q", entry_ref: "a//skills/y" }),
+      event({ event_type: "show", created_at: "2026-01-04 12:00:00", entry_ref: "a//skills/x" }),
+    ];
+    const build = (bundles: string[]) => {
+      const input: MetricsInput = {
+        window: { since: "2026-01-01T00:00:00.000Z", until: "2026-02-01T00:00:00.000Z" },
+        filters: { source: "user", bundles },
+        top: 20,
+        includeRows: true,
+        // The SQL drops ref-less rows under a bundle filter and keeps only that bundle's refs.
+        usage: bundles.length
+          ? events.filter((e) => e.entry_ref !== null && bundles.some((b) => e.entry_ref?.startsWith(`${b}//`)))
+          : events,
+        selects: [],
+        utility: undefined,
+        outcomes: [],
+        llm: emptyLlmUsageAggregate(),
+        llmRows: [],
+        pricing: {},
+        indexRuns: [],
+        tasks: [],
+        proposals: { byStatus: {}, acceptRateBySource: [] },
+        workflows: { runs: 0, byStatus: {}, tokens: 0, byModel: {} },
+        notes: [],
+      };
+      return buildMetricsResult(input);
+    };
+    const queriesOf = (list: Array<{ query: string; count: number }>) =>
+      Object.fromEntries(list.map((q) => [q.query, q.count]));
+
+    for (const [label, bundles] of [
+      ["unfiltered", []],
+      ["bundle-filtered", ["a"]],
+    ] as const) {
+      test(label, () => {
+        const result = build([...bundles]);
+        const agg = core.aggregate(result.rows?.usage as MetricsUsageRow[], { hitMode: bundles.length > 0 });
+        expect(agg.totals.searches).toBe(result.usage.totals.searches);
+        expect(agg.totals.curates).toBe(result.usage.totals.curates);
+        expect(agg.totals.zeroResult).toBe(result.usage.totals.zeroResultSearches);
+        expect(queriesOf(agg.queries)).toEqual(queriesOf(result.usage.topQueries));
+        if (bundles.length) {
+          expect(agg.totals.searches).toBe(2);
+          expect(agg.totals.curates).toBe(1);
+        }
+      });
+    }
   });
 
   test("filters narrow by source, bundle, type, date and text", () => {

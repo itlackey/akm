@@ -262,7 +262,8 @@ function dayRange(first, last) {
 
 // f: { from, to ('YYYY-MM-DD', inclusive), bundles, sources, types (Sets; absent = no filter), text }
 // Rows without a ref (search/curate summary rows) belong to no bundle, so a
-// bundle filter hides them.
+// bundle filter hides them. aggregate() then counts searches from the per-hit
+// rows instead (see its hitMode option).
 function filterRows(rows, f) {
   var q = (f.text || '').trim().toLowerCase();
   return rows.filter(function (r) {
@@ -280,10 +281,17 @@ function filterRows(rows, f) {
   });
 }
 
-// Re-derive the usage and feedback sections from raw usage rows. Search and
-// curate are counted from their summary rows (no ref); show and feedback rows
-// always carry a ref. Per-hit search rows count as `searchHits` for the asset.
-function aggregate(rows) {
+// Re-derive the usage and feedback sections from raw usage rows. Show and
+// feedback rows always carry a ref. Per-hit search rows count as `searchHits`
+// for the asset. A search or curate is one unit, counted two ways:
+//  - default: from its summary row (no ref);
+//  - opts.hitMode: from its per-hit rows, because a bundle or ref filter
+//    removes the summary rows. One unit per distinct (type, query, time) group
+//    of rows that carry a ref, and no zero-result (a hit means results). This
+//    is the rule collect.ts buildUsage applies server-side.
+// Only searches feed the query tables, as on the server.
+function aggregate(rows, opts) {
+  var hitMode = !!(opts && opts.hitMode), seenGroups = Object.create(null);
   var daily = new Map(), assets = new Map(), queries = new Map(), tags = Object.create(null), sources = Object.create(null);
   var t = { searches: 0, shows: 0, curates: 0, feedback: 0, positive: 0, negative: 0, zeroResult: 0 };
   var negatives = [];
@@ -313,16 +321,22 @@ function aggregate(rows) {
         if (neg) e.negative++;
       });
     } else if (r.eventType === 'search' || r.eventType === 'curate') {
-      if (r.ref) {
-        if (r.eventType === 'search' && a) a.searchHits++;
-      } else {
+      if (r.ref && r.eventType === 'search' && a) a.searchHits++;
+      var unit = !r.ref;
+      if (hitMode) {
+        var group = JSON.stringify([r.eventType, r.query || null, r.at]);
+        unit = !!r.ref && !seenGroups[group];
+        seenGroups[group] = true;
+      }
+      if (unit) {
+        var rc = hitMode ? null : r.resultCount;
         if (r.eventType === 'search') { t.searches++; day.search++; } else { t.curates++; day.curate++; }
-        if (r.eventType === 'search' && r.resultCount === 0) t.zeroResult++;
-        if (r.query) {
+        if (r.eventType === 'search' && rc === 0) t.zeroResult++;
+        if (r.eventType === 'search' && r.query) {
           var qe = queries.get(r.query);
           if (!qe) { qe = { query: r.query, count: 0, resultSum: 0, resultN: 0, zero: 0, lastAt: r.at }; queries.set(r.query, qe); }
           qe.count++;
-          if (r.resultCount != null) { qe.resultSum += r.resultCount; qe.resultN++; if (r.resultCount === 0) qe.zero++; }
+          if (rc != null) { qe.resultSum += rc; qe.resultN++; if (rc === 0) qe.zero++; }
           if (r.at > qe.lastAt) qe.lastAt = r.at;
         }
       }
@@ -473,6 +487,13 @@ function toCsv(columns, rows) {
     return f;
   }
 
+  // The server dropped the summary rows when it filtered by bundle or ref, and a
+  // bundle chip subset drops them here; either way searches are counted from hits.
+  function hitMode() {
+    var f = DATA.filters || {};
+    return !!((f.bundles && f.bundles.length > 0) || f.ref || state.bundles.size !== universe.bundles.length);
+  }
+
   // ── Charts ───────────────────────────────────────────────────────────────
   var charts = {};
   function chart(id, option, onReady) {
@@ -508,7 +529,7 @@ function toCsv(columns, rows) {
   var TYPE_COLORS = function () { return { search: css('--accent'), show: css('--green'), curate: css('--purple'), feedback: css('--yellow') }; };
 
   function renderTimeline() {
-    var agg = aggregate(filterRows(ALL, activeFilter(false)));
+    var agg = aggregate(filterRows(ALL, activeFilter(false)), { hitMode: hitMode() });
     if (!hasData('ch-timeline', agg.daily.length > 0)) return;
     var days = dayRange(agg.daily[0].day, agg.daily[agg.daily.length - 1].day);
     var byDay = {};
@@ -767,7 +788,7 @@ function toCsv(columns, rows) {
 
   function render(opts) {
     opts = opts || {};
-    var agg = HAS_ROWS ? aggregate(filterRows(ALL, activeFilter(true))) : fallbackAggregate();
+    var agg = HAS_ROWS ? aggregate(filterRows(ALL, activeFilter(true)), { hitMode: hitMode() }) : fallbackAggregate();
     var llm = renderLlm();
     renderKpis(agg, llm);
     if (!opts.skipTimeline) renderTimeline();
@@ -798,7 +819,7 @@ function toCsv(columns, rows) {
   function openDrawer(ref) {
     lastFocus = document.activeElement;
     var rows = ALL.filter(function (r) { return r.ref === ref; });
-    var agg = aggregate(rows);
+    var agg = aggregate(rows, { hitMode: true });
     var a = agg.assets[0] || { shows: 0, searchHits: 0, positive: 0, negative: 0 };
     var u = utilityByRef[ref], o = outcomeByRef[ref];
     var queries = {};
