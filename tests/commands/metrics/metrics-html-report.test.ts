@@ -425,6 +425,17 @@ describe("dashboard client core", () => {
     }
   });
 
+  test("hit mode ignores ref-less summary rows mixed in with hit rows", () => {
+    const at = "2026-10-01T10:00:00.000Z";
+    const summary = { id: 1, eventType: "search", at, query: "deploy", source: "user" } as MetricsUsageRow;
+    const hit = { ...summary, id: 2, ref: "a//skills/x" } as MetricsUsageRow;
+    const agg = core.aggregate([summary, hit], { hitMode: true });
+    expect(agg.totals.searches).toBe(1);
+    expect(agg.queries.map((q) => q.query)).toEqual(["deploy"]);
+    // A summary row alone is not a hit, so it is not counted in hit mode.
+    expect(core.aggregate([summary], { hitMode: true }).totals.searches).toBe(0);
+  });
+
   test("filters narrow by source, bundle, type, date and text", () => {
     expect(core.filterRows(rows, { sources: new Set(["improve"]) })).toHaveLength(1);
     expect(core.filterRows(rows, { bundles: new Set(["other"]) }).map((r) => r.id)).toEqual([7]);

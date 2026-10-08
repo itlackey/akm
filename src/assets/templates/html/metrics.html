@@ -324,9 +324,12 @@ function aggregate(rows, opts) {
       if (r.ref && r.eventType === 'search' && a) a.searchHits++;
       var unit = !r.ref;
       if (hitMode) {
-        var group = JSON.stringify([r.eventType, r.query || null, r.at]);
-        unit = !!r.ref && !seenGroups[group];
-        seenGroups[group] = true;
+        unit = false;
+        if (r.ref) {
+          var group = JSON.stringify([r.eventType, r.query || null, r.at]);
+          unit = !seenGroups[group];
+          seenGroups[group] = true;
+        }
       }
       if (unit) {
         var rc = hitMode ? null : r.resultCount;
