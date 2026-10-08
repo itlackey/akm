@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **Usage-event retention no longer deletes a day early.** The purge on `akm index`
+  compared the space-separated `created_at` against an ISO cutoff, so every row on
+  the cutoff's date was removed up to 24 hours before its 90 days were up. Both
+  sides are now normalized before the comparison.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.

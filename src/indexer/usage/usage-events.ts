@@ -200,7 +200,9 @@ export function purgeOldUsageEvents(db: Database, retentionDays: number): void {
   if (!Number.isFinite(retentionDays) || retentionDays <= 0) return;
   try {
     const cutoff = new Date(Date.now() - retentionDays * 86_400_000).toISOString();
-    db.prepare("DELETE FROM usage_events WHERE created_at < ?").run(cutoff);
+    // `created_at` is `YYYY-MM-DD HH:MM:SS`, not ISO: normalize both sides so the
+    // space-vs-`T` ordering doesn't delete the whole cutoff date early.
+    db.prepare("DELETE FROM usage_events WHERE datetime(created_at) < datetime(?)").run(cutoff);
   } catch {
     /* Table may not exist yet */
   }
