@@ -230,7 +230,7 @@ export const metricsCommand = defineJsonCommand({
   meta: {
     name: "metrics",
     description:
-      "Report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only. --format html writes a self-contained dashboard.",
+      "Experimental: report asset usage, feedback, utility, LLM usage, tasks, proposals and workflow spend from local records. Read-only. --format html writes a self-contained dashboard.",
   },
   args: {
     since: {

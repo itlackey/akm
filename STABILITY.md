@@ -46,6 +46,7 @@ enumeration of the whole `proposal` noun group.
 | `akm setup` | Stable | |
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
+| `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
@@ -341,6 +342,9 @@ CHANGELOG with a migration note.
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
 
+- **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
+  `--format html` dashboard may change in any release; do not script against
+  them.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
 - **`--shape agent` and `--shape summary`** — the output-projection axis

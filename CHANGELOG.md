@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`akm metrics` reports what akm has recorded, in every `--format`.** One
+- **`akm metrics` (experimental) reports what akm has recorded, in every `--format`.** One
   read-only command covers asset usage (searches, shows, curates, selects, the
   queries that returned nothing), feedback with its reasons and tags, utility
   and outcome scores, LLM tokens, latency, task runs,
