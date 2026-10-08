@@ -6,6 +6,29 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28-alpha.11] - 2026-10-08
+
+### Fixed
+
+- **Skill resources that document `$ARGUMENTS` command templates no longer index as commands.** The command
+  placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
+  on the next incremental index (#1084).
+- **A proposal drain judge now sees overlapping promotions accepted earlier in the same drain (#1085).**
+- **`akm proposal drain --strategy <name>` now honors enabled triage judgment.** A named strategy with
+  `processes.triage.judgment.enabled: true` runs its configured judge without `--judgment`; the flag still
+  forces judgment for disabled strategies, and drains without `--strategy` keep their existing behavior (#1086).
+- **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
+  (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
+  keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
+  process now counts only when it shares akm's mount namespace (or, where that is unreadable, when its cgroup
+  is not a docker/containerd/podman/lxc scope); a process that cannot be inspected still defers.
+- **Five test suites no longer leak their temp folders on a direct `bun test` (#1088).** The outcome-loop,
+  outcome-invariance, memory-improve-archive, plan-flag-cli and require-engines-cli suites created `akm-*`
+  directories under the OS temp dir and never removed them; `scripts/sweep-test-tmp.ts` swept them only for
+  `test-unit.sh`/`test-integration.sh` runs, so running a file straight with `bun test` left a folder per test
+  behind. Each suite now registers its temp dirs with the shared test sandbox helper (`makeSandboxDir`, drained
+  by an `afterEach`), the pattern the other suites already use.
+
 ## [0.9.28-alpha.10] - 2026-10-08
 
 ### Fixed

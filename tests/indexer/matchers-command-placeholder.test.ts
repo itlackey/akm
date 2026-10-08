@@ -136,7 +136,7 @@ describe("#824: a declared directory type outranks a numeric placeholder", () =>
   }
 });
 
-describe("#1063: a skill's folder is a declared context for the numeric guess", () => {
+describe("#1063/#1084: a skill's folder is declared context for command placeholders", () => {
   const SHELL = `${MEMORY_FRONTMATTER}\`\`\`bash\nrequire_var() {\n  local var="$1"\n}\n\`\`\`\n`;
 
   test("a skill reference with a shell $1 is not a command", () => {
@@ -148,8 +148,12 @@ describe("#1063: a skill's folder is a declared context for the numeric guess", 
     expect(classify("skills/demo/SKILL.md", SHELL)).toBe("skill");
   });
 
-  test("$ARGUMENTS in a skill resource still reads as a command", () => {
-    expect(classify("skills/demo/references/run.md", `${MEMORY_FRONTMATTER}Run $ARGUMENTS.`)).toBe("command");
+  test("$ARGUMENTS in a skill resource stays knowledge", () => {
+    expect(classify("skills/demo/references/run.md", `${MEMORY_FRONTMATTER}Run $ARGUMENTS.`)).toBe("knowledge");
+  });
+
+  test("agent frontmatter keeps a skill resource as a command", () => {
+    expect(classify("skills/demo/references/run.md", "---\nagent: run\n---\nRun $ARGUMENTS.")).toBe("command");
   });
 
   test("a file under commands/ with $1 is still a command", () => {

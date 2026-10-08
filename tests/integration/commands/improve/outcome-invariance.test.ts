@@ -19,9 +19,7 @@
  *   3. accepted_change_count is still persisted as raw telemetry.
  */
 
-import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import {
   DIVERSITY_FLOOR_FRACTION,
@@ -32,14 +30,22 @@ import {
 } from "../../../../src/commands/improve/outcome-loop";
 import { openStateDatabase } from "../../../../src/core/state-db";
 import type { Database } from "../../../../src/storage/database";
+import { makeSandboxDir, type SandboxedDir } from "../../../_helpers/sandbox";
 
 const NOW = Date.parse("2026-07-02T00:00:00.000Z");
 
+const disposers: SandboxedDir[] = [];
+
 function openTestDb() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-outcome-invariance-test-"));
-  const db = openStateDatabase(path.join(tmpDir, "state.db"));
-  return { db, tmpDir };
+  const sandbox = makeSandboxDir("akm-outcome-invariance-test");
+  disposers.push(sandbox);
+  const db = openStateDatabase(path.join(sandbox.dir, "state.db"));
+  return { db, tmpDir: sandbox.dir };
 }
+
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
+});
 
 /** Seed an existing row so updateAssetOutcome takes the differential-update path. */
 function seedRow(db: Database, ref: string, retrievalCount: number, expectedRate: number, outcomeScore: number): void {

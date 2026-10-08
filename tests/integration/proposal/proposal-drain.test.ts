@@ -670,6 +670,92 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     expect(rejectFn).not.toHaveBeenCalled();
   });
 
+  test("the second overlapping promotion sees the first accepted in this drain", async () => {
+    const stash = makeStashDir();
+    const source = "Plugin trigger wording is the highest-leverage surface for reliable activation.";
+    fs.writeFileSync(path.join(stash, "memories", "first.md"), source, "utf8");
+    fs.writeFileSync(path.join(stash, "memories", "second.md"), source, "utf8");
+    const first = createProposal(stash, {
+      ref: "knowledge/plugin-trigger-first",
+      source: "consolidate",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: `---\ndescription: First trigger lesson\n---\n\n${source}\n`,
+        frontmatter: { description: "First trigger lesson" },
+      },
+      promotionSource: "memories/first",
+    });
+    const second = createProposal(stash, {
+      ref: "knowledge/plugin-trigger-second",
+      source: "consolidate",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: `---\ndescription: Second trigger lesson\n---\n\n${source}\n`,
+        frontmatter: { description: "Second trigger lesson" },
+      },
+      promotionSource: "memories/second",
+    });
+    const prompts: string[] = [];
+    const chat = mock(async (_config: unknown, messages: Array<{ content: string }>) => {
+      prompts.push(messages[0]?.content ?? "");
+      return JSON.stringify({ decision: "accept", reason: "valuable" });
+    });
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), fakeAccept(), fakeReject(), {
+      chat: chat as unknown as JudgmentSeams["chat"],
+    });
+
+    expect(result.promoted).toEqual([first.id, second.id]);
+    expect(prompts[1]).toContain("### stash//knowledge/plugin-trigger-first");
+    expect(prompts[1]).toContain(source);
+  });
+
+  test("an unrelated promotion accepted in this drain is not a neighbour", async () => {
+    const stash = makeStashDir();
+    fs.writeFileSync(
+      path.join(stash, "memories", "first.md"),
+      "Gutterpress parser errors carry the line number.",
+      "utf8",
+    );
+    fs.writeFileSync(
+      path.join(stash, "memories", "second.md"),
+      "Splinter cron jobs run akm from the bun install.",
+      "utf8",
+    );
+    createProposal(stash, {
+      ref: "knowledge/parser-errors",
+      source: "consolidate",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: "---\ndescription: Parser errors\n---\n\nGutterpress parser errors carry the line number.\n",
+        frontmatter: { description: "Parser errors" },
+      },
+      promotionSource: "memories/first",
+    });
+    createProposal(stash, {
+      ref: "knowledge/cron-install",
+      source: "consolidate",
+      target: { source: "stash", root: stash },
+      payload: {
+        content: "---\ndescription: Cron install\n---\n\nSplinter cron jobs run akm from the bun install.\n",
+        frontmatter: { description: "Cron install" },
+      },
+      promotionSource: "memories/second",
+    });
+    const prompts: string[] = [];
+    const chat = mock(async (_config: unknown, messages: Array<{ content: string }>) => {
+      prompts.push(messages[0]?.content ?? "");
+      return JSON.stringify({ decision: "accept", reason: "valuable" });
+    });
+
+    await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), fakeAccept(), fakeReject(), {
+      chat: chat as unknown as JudgmentSeams["chat"],
+    });
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]).not.toContain("knowledge/parser-errors");
+  });
+
   test("judgment promotion receives the frozen target and config", async () => {
     const stash = makeStashDir();
     seed(stash, "lessons/big", "consolidate", BIG_LESSON);
