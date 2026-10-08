@@ -495,7 +495,9 @@ describe("runLessonQualityJudge — a criterion at 2 or below rejects, grounding
     const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "skills/deploy", content: "Deploy steps." }]);
 
     expect(prompt).toContain("Existing asset ref: skills/deploy");
-    expect(prompt).toContain("Score 1-2 only when one of them already states the same rule");
+    expect(prompt).toContain(
+      "Score 1-2 when one of them already states the same rule, or states most of what the lesson says",
+    );
   });
 
   test("grounding belongs to the lesson judge: a reflect verdict neither reads nor is vetoed by it", async () => {

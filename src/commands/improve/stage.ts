@@ -371,7 +371,7 @@ export function buildJudgePrompt(
     "",
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
     "1. REUSABLE: Does the lesson state a rule an agent can use on another occasion, with the reason it holds? Score 1-2 when it only records what was done, shipped, decided, found or is pending, on a date or for one build, machine or project, or how a system is set up now, however it is phrased. Score 4-5 for a rule with its reason.",
-    "2. NON-REDUNDANCY: Is the lesson new next to the existing assets shown below? Score 1-2 only when one of them already states the same rule. Assets on other subjects change nothing: score 4-5 when none is shown or none is on the same subject.",
+    "2. NON-REDUNDANCY: Is the lesson new next to the existing assets shown below? Score 1-2 when one of them already states the same rule, or states most of what the lesson says in broader words (the lesson then adds a detail to a rule the library has). Score 4-5 only when the lesson gives a rule none of them gives. Assets on other subjects change nothing: score 4-5 when none is shown or none is on the same subject.",
     "3. GROUNDING: Is every statement in the lesson stated by the source or its feedback, in any words? Check each cause, step, number, rule and limit in the lesson against them. Score 4-5 when each is stated. Score 3 when one stretches what the source says. Score 1-2 when any is in neither, when the lesson drops a limit the source states (one place checked, not confirmed, a guess) and says more than it, or when it is about another subject than the source.",
     "",
     "Source memory:",

@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The distill judge scores a lesson 1–2 on non-redundancy when a shown asset
+  states most of what it says, not only when it states the same rule. Before,
+  a lesson that restated a skill the library holds scored 3 ("largely
+  redundant") and went to a reviewer. On akm-eval `evals/distill` (public, 30
+  cases, local qwen3.8-27b, 3 runs each) the lessons queued for memories that
+  deserve none fell from 1.0 to 0 of 16, and the restates-asset class from 3
+  wrong in 15 to 0.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.
