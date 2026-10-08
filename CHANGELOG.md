@@ -83,6 +83,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
+  (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
+  keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
+  process now counts only when it shares akm's mount namespace (or, where that is unreadable, when its cgroup
+  is not a docker/containerd/podman/lxc scope); a process that cannot be inspected still defers.
+
 - **An `opencode-sdk` dispatch no longer hangs when OpenCode asks for a permission (#1104).** The runner never
   answered permission requests, so a tool call that needed one (OpenCode's default `external_directory: ask`,
   e.g. reading the plugin's `/tmp/akm-opencode/curated/<session>.md`) stayed `running` until the dispatch

@@ -266,25 +266,48 @@ export function lookupOpenCodeNext(): OpenCodeLatest {
   return next;
 }
 
+const CONTAINER_CGROUP = /docker|containerd|podman|libpod|lxc/;
+
+/**
+ * Whether the process could use this host's OpenCode cache. A process in another mount namespace (a container's
+ * `opencode serve`) has its own cache; when that cannot be read, a container cgroup says the same. Anything
+ * unreadable counts as a host process, so the answer errs towards deferring.
+ */
+export function usesHostCache(pid: string, procRoot = "/proc"): boolean {
+  try {
+    return fs.readlinkSync(`${procRoot}/${pid}/ns/mnt`) === fs.readlinkSync(`${procRoot}/self/ns/mnt`);
+  } catch {
+    // not readable (another user's process, or no such namespace file): look at the cgroup instead
+  }
+  try {
+    return !CONTAINER_CGROUP.test(fs.readFileSync(`${procRoot}/${pid}/cgroup`, "utf8"));
+  } catch {
+    return true;
+  }
+}
+
 /** Whether an OpenCode process is running (its prefetch would be replaced under it). `undefined` when that cannot be told. */
 function openCodeRunning(): boolean | undefined {
   if (IS_WINDOWS) {
     const tasks = runCommand("tasklist", ["/FI", "IMAGENAME eq opencode.exe", "/NH"], READ_TIMEOUT_MS);
     return tasks.ok ? /opencode\.exe/i.test(tasks.stdout) : undefined;
   }
+  const linux = process.platform === "linux";
   // `-f` because a Node-wrapped opencode shows up as `node …/opencode`; the
   // pattern needs `opencode` to be a whole path segment so `akm-opencode`
   // in some other command's arguments does not match.
   const pgrep = runCommand("pgrep", ["-f", "(^|/)opencode( |$)"], READ_TIMEOUT_MS);
-  if (pgrep.ok) return true;
+  if (pgrep.ok) {
+    return !linux || pgrep.stdout.split(/\s+/).some((pid) => /^\d+$/.test(pid) && usesHostCache(pid));
+  }
   if (!pgrep.missing) return false; // pgrep exits 1 when nothing matched
-  if (process.platform !== "linux") return undefined;
+  if (!linux) return undefined;
   try {
     return fs.readdirSync("/proc").some((pid) => {
       if (!/^\d+$/.test(pid) || Number(pid) === process.pid) return false;
       try {
         const argv = fs.readFileSync(`/proc/${pid}/cmdline`, "utf8").split("\0");
-        return argv.slice(0, 2).some((arg) => path.basename(arg) === "opencode");
+        return argv.slice(0, 2).some((arg) => path.basename(arg) === "opencode") && usesHostCache(pid);
       } catch {
         return false;
       }

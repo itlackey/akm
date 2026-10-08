@@ -6,7 +6,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { runUpgrade, type UpgradeRunDependencies } from "../../src/commands/sources/plugin-upgrade";
+import { runUpgrade, type UpgradeRunDependencies, usesHostCache } from "../../src/commands/sources/plugin-upgrade";
 import { moveToTrash } from "../../src/core/trash";
 import { shapeForCommand } from "../../src/output/shapes";
 import { formatUpgradePlain } from "../../src/output/text/command-format";
@@ -143,7 +143,7 @@ function stubOpenCode(opts: { latest: string; pin: string; running: boolean; npm
 *) exit 2;;
 esac`,
   );
-  stub("pgrep", opts.running ? "echo 4242" : "exit 1");
+  stub("pgrep", opts.running ? `echo ${process.pid}` : "exit 1");
   stub("trash-put", `/bin/mkdir -p "$STUB_STATE/trash" && /bin/mv "$1" "$STUB_STATE/trash/"`);
 }
 
@@ -313,6 +313,15 @@ posixOnly("akm upgrade: plugin step", () => {
       expect(run.mode === "upgrade" && run.failed).toBe(false);
     });
 
+    test("deferred when the matched process cannot be inspected: no way to rule it out", async () => {
+      writeCachedOpenCode("0.9.26");
+      stubOpenCode({ latest: "0.9.27", pin: "0.9.27", running: false });
+      stub("pgrep", "echo 999999999");
+      const run = await upgrade();
+      expect(entry(run, "opencode").outcome).toBe("deferred");
+      expect(mutations()).toEqual([]);
+    });
+
     test("current when the cache already holds npm's latest: no process probe, no trash", async () => {
       writeCachedOpenCode("0.9.27");
       stubOpenCode({ latest: "0.9.27", pin: "0.9.27", running: true });
@@ -462,7 +471,7 @@ esac`,
 *) exit 2;;
 esac`,
       );
-      stub("pgrep", running ? "echo 4242" : "exit 1");
+      stub("pgrep", running ? `echo ${process.pid}` : "exit 1");
       stub("trash-put", `/bin/mkdir -p "$STUB_STATE/trash" && /bin/mv "$1" "$STUB_STATE/trash/"`);
     }
 
@@ -801,5 +810,44 @@ posixOnly("moveToTrash", () => {
     await withEnv(world.env, () => moveToTrash(target, [["trash-put"]]));
     expect(fs.existsSync(target)).toBe(false);
     expect(fs.existsSync(path.join(world.root, "xdg-data", "Trash", "files", "victim2"))).toBe(true);
+  });
+});
+
+describe("usesHostCache", () => {
+  let proc: string;
+  beforeEach(() => {
+    proc = path.join(makeSandboxDir("akm-fake-proc").dir, "proc");
+    fs.mkdirSync(path.join(proc, "self", "ns"), { recursive: true });
+    fs.symlinkSync("mnt:[111]", path.join(proc, "self", "ns", "mnt"));
+  });
+  function fakeProcess(pid: string, mnt?: string, cgroup?: string): void {
+    fs.mkdirSync(path.join(proc, pid, "ns"), { recursive: true });
+    if (mnt) fs.symlinkSync(mnt, path.join(proc, pid, "ns", "mnt"));
+    if (cgroup) fs.writeFileSync(path.join(proc, pid, "cgroup"), cgroup);
+  }
+
+  test("a process in akm's own mount namespace counts, even in a container-looking cgroup", () => {
+    fakeProcess("10", "mnt:[111]", "0::/system.slice/docker-abc.scope\n");
+    expect(usesHostCache("10", proc)).toBe(true);
+  });
+
+  test("a process in another mount namespace is ignored", () => {
+    fakeProcess("11", "mnt:[222]", "0::/user.slice/session-1.scope\n");
+    expect(usesHostCache("11", proc)).toBe(false);
+  });
+
+  test("with the namespace unreadable, a container cgroup is ignored and a host cgroup counts", () => {
+    fakeProcess("12", undefined, "0::/system.slice/docker-abc.scope\n");
+    fakeProcess("13", undefined, "0::/user.slice/user-1000.slice/session-3.scope\n");
+    fakeProcess("14", undefined, "0::/machine.slice/libpod-abc.scope\n");
+    expect(usesHostCache("12", proc)).toBe(false);
+    expect(usesHostCache("13", proc)).toBe(true);
+    expect(usesHostCache("14", proc)).toBe(false);
+  });
+
+  test("with nothing readable, the process counts", () => {
+    fakeProcess("15");
+    expect(usesHostCache("15", proc)).toBe(true);
+    expect(usesHostCache("16", proc)).toBe(true);
   });
 });
