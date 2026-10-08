@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Distill skips a memory marked `beliefState: deprecated` or `superseded`.** Such a note is no longer true and gave
+  no lesson (26 of about 900 memories carry the state; distill ran on 17 of them). The improve loop records a
+  `distill-skipped` action and an `improve_skipped` event (`distill_deprecated_or_superseded`), and the attempt goes
+  in the ledger as `unchanged`; an explicit `--scope` ref still runs. `contradicted` is still distilled.
 - The distill judge scores a lesson 1–2 on non-redundancy when a listed asset
   states most of what it says, not only when it states the same rule, and is
   told to compare only with the listed assets, never with the source memory.
