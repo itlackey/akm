@@ -23,7 +23,7 @@ import { NotFoundError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
-import { lookupBundleRefReadonly } from "../../indexer/indexer";
+import { lookupBundleRefReadonly, lookupBundleRefsReadonly } from "../../indexer/indexer";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { getOutputMode, type OutputMode } from "../../output/context";
@@ -118,18 +118,17 @@ async function resolveRefFilter(input: string): Promise<string> {
 async function durableSelects(
   selects: Array<{ ts: string; ref: string }>,
 ): Promise<Array<{ ts: string; ref: string }>> {
-  const resolved = new Map<string, string>();
-  for (const { ref } of selects) {
-    if (resolved.has(ref)) continue;
-    let durable = ref;
+  const unqualified: Array<{ ref: string; parsed: ReturnType<typeof parseBundleRef> }> = [];
+  for (const ref of new Set(selects.map((select) => select.ref))) {
     try {
       const parsed = parseBundleRef(ref);
-      if (!parsed.bundle) durable = (await lookupBundleRefReadonly(parsed))?.itemRef ?? ref;
+      if (!parsed.bundle) unqualified.push({ ref, parsed });
     } catch {
-      // Not a local bundle ref, or no readable index: keep the ref as recorded.
+      // Not a local bundle ref: keep the ref as recorded.
     }
-    resolved.set(ref, durable);
   }
+  const entries = await lookupBundleRefsReadonly(unqualified.map(({ parsed }) => parsed));
+  const resolved = new Map(unqualified.map(({ ref }, i) => [ref, entries[i]?.itemRef ?? ref]));
   return selects.map((select) => ({ ts: select.ts, ref: resolved.get(select.ref) ?? select.ref }));
 }
 

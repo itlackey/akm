@@ -1647,6 +1647,8 @@ type LookupDatabaseOpener = (dbPath: string) => Database | undefined;
 async function lookupBundleRefWithResolutionUsing(
   ref: BundleRef,
   openLookupDatabase: LookupDatabaseOpener,
+  /** The opener hands out a handle the caller owns and closes. */
+  borrowed = false,
 ): Promise<BundleRefLookupResolution> {
   const sources = await resolveLookupSources();
   if (sources.length === 0) return { entry: null };
@@ -1705,7 +1707,7 @@ async function lookupBundleRefWithResolutionUsing(
     }
     return resolved(null);
   } finally {
-    if (db) closeDatabase(db);
+    if (db && !borrowed) closeDatabase(db);
   }
 }
 
@@ -1732,6 +1734,34 @@ export async function lookupBundleRefReadonly(ref: BundleRef): Promise<IndexEntr
   });
   if (resolution.indexError !== undefined) throw resolution.indexError;
   return resolution.entry;
+}
+
+/**
+ * {@link lookupBundleRefReadonly} for many refs through one snapshot of the
+ * index, which is copied once rather than once per ref. A ref that does not
+ * resolve, or an index that cannot be read, gives `null` for that ref.
+ */
+export async function lookupBundleRefsReadonly(refs: readonly BundleRef[]): Promise<Array<IndexEntry | null>> {
+  if (refs.length === 0) return [];
+  let db: Database | undefined;
+  try {
+    db = openReadonlyExistingDatabase(getDbPath(), { isolatedSnapshot: true });
+  } catch {
+    // Unreadable index: every ref stays unresolved.
+  }
+  try {
+    const entries: Array<IndexEntry | null> = [];
+    for (const ref of refs) {
+      try {
+        entries.push((await lookupBundleRefWithResolutionUsing(ref, () => db, true)).entry);
+      } catch {
+        entries.push(null);
+      }
+    }
+    return entries;
+  } finally {
+    if (db) closeDatabase(db);
+  }
 }
 
 function readLookupEntry(db: Database, id: number, fallbackConceptId: string, sourceRoot: string): IndexEntry | null {
