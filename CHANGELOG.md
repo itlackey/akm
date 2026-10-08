@@ -11,6 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   like `improve` and `proposal drain` already did; before, a call made outside
   those two was dropped. An improve run still keeps its own sink and the
   process-wide one resumes when it ends.
+- Search latency is recorded in the search summary usage row (`totalMs`, plus `rankMs` and `embedMs` when present), and every `akm index` run appends an `index_completed` event with its phase timings.
 
 ## [0.9.27] - 2026-10-07
 
