@@ -630,6 +630,31 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     });
   });
 
+  test("the retirement records the judge's claim lists by role, whichever of A/B was retired", async () => {
+    indexOldAndNew();
+    // redundant "A": the older side is retired, so B's claims are the successor's.
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "subsumed", redundant: "A", onlyInB: ["port 8080"] }),
+    });
+    expect(getProposal(storage.stashDir, result.retired[0]!).retirement).toMatchObject({
+      retiredRef: "memories/old-note",
+      onlyInRetired: [],
+      onlyInSuccessor: ["port 8080"],
+    });
+  });
+
+  test("redundant B retires the newer side: A's claims are the successor's", async () => {
+    indexOldAndNew();
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+      chat: fixedChat({ relation: "subsumed", redundant: "B", onlyInA: ["`--force` flag"] }),
+    });
+    expect(getProposal(storage.stashDir, result.retired[0]!).retirement).toMatchObject({
+      retiredRef: "memories/new-note",
+      onlyInRetired: [],
+      onlyInSuccessor: ["`--force` flag"],
+    });
+  });
+
   test("a subsumed retirement the second look finds a missing claim in still mints, but is not staged", async () => {
     indexOldAndNew();
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {

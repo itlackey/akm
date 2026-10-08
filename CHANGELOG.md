@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A consolidate pair-pass retire proposal now records the judge's claim lists in its `retirement` metadata as `onlyInRetired` and `onlyInSuccessor`, named by role rather than by the judge's A/B, so what the judge found only on each side survives past the run. Proposals minted before this lack both fields; no row is added for a pair akm keeps.
 - **LLM usage is recorded for every command.** `akm index`, curate, workflow,
   agent dispatch and `akm command run` now persist their `llm_usage` events
   like `improve` and `proposal drain` already did; before, a call made outside

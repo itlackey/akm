@@ -167,6 +167,14 @@ export interface RetirementMetadata {
   judgeLabel: "duplicate" | "subsumed" | "supersedes";
   /** The judge's own explanation (<=25 words, its `reason` field). */
   judgeReason: string;
+  /**
+   * The judge's claims only the retired / only the kept side holds (each at
+   * most 20 x 200 chars, the verdict schema's own cap). Named by role rather
+   * than A/B so a reader cannot mix the sides up. Absent on a proposal minted
+   * before they were recorded.
+   */
+  onlyInRetired?: string[];
+  onlyInSuccessor?: string[];
   /** Body-content hash (`contentHash(_, "body")`) of the retired asset at judge time. */
   retiredContentHash: string;
   /** Body-content hash of the successor asset at judge time. */
