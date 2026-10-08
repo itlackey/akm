@@ -67,6 +67,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `commands/skills/<name>/...`. A skill's folder now counts as a declared context, as `memories/` and the other typed
   directories already did, so the file stays a skill resource (`knowledge/skills/<name>/...`). A `$1` under
   `commands/` or in a loose file is still a command.
+- **The #1063 fix now reaches files that have not changed (#1063).** An incremental `akm index` skips a
+  directory whose files are unchanged, so a reference file already filed as a command stayed
+  `commands/skills/<name>/...` until `akm index --full`. The `akm` adapter's version, which is part of each
+  directory's freshness, is bumped, so the next `akm index` after upgrading re-files those rows once (about 18
+  entries in a 18,000-entry library) and drops their old refs. Reading every directory once makes that run slower
+  (about 27 s against 2 s on that library) and re-embeds the entries whose embedding hash was written by an older
+  release (about 8,000 of them); later runs cost what they did before.
 - **Usage-event retention no longer deletes a day early.** The purge on `akm index`
   compared the space-separated `created_at` against an ISO cutoff, so every row on
   the cutoff's date was removed up to 24 hours before its 90 days were up. Both
