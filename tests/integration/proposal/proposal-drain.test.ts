@@ -934,9 +934,16 @@ describe("buildJudgmentPrompt — rubric", () => {
     expect(text).toContain("A lesson drawn from an incident is durable.");
   });
 
+  test("a promotion that records one piece of work is rejected, and the judge is told not to defer for lack of verification", () => {
+    const text = prompt("consolidate");
+    expect(text).toContain("records one piece of work done (what was changed, added, migrated or verified, and when)");
+    expect(text).toContain("Do not defer because you cannot check a claim against the outside world");
+  });
+
   test("a proposal that is not a promotion keeps the plain rubric", () => {
     for (const text of [prompt("reflect"), prompt("consolidate", "live note")]) {
       expect(text).toContain("- accept: the proposed content is a correct, valuable update worth committing.");
+      expect(text).toContain("- defer: you cannot decide from the provided context (leave it pending).");
       expect(text).not.toContain("durable");
     }
   });

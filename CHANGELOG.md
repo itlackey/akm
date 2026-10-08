@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **The judge rejects a promotion that records one piece of work** (what was changed, added, migrated or verified, and
+  when), as well as a status or a plan, and no longer defers a promotion because it cannot check a claim against the
+  outside world. The nightly of 2026-10-07 accepted a rollout report and a note of what an agent added to `health.ts`.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.

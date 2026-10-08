@@ -273,9 +273,11 @@ export function buildJudgmentPrompt(
     'Return ONLY a JSON object: {"decision": "accept" | "reject" | "defer", "reason": "<short reason>"}.',
     "- accept: the proposed content is a correct, valuable update worth committing.",
     promotion
-      ? '- reject: the proposal is wrong, a duplicate, contradicts the live asset, or is not durable: it reports the state of something that changes (a status, rollout, branch, commit, version, test count, "as of <date>"), is a plan not yet carried out, or describes something already retired, replaced or superseded. A lesson drawn from an incident is durable.'
+      ? '- reject: the proposal is wrong, a duplicate, contradicts the live asset, or is not durable: it reports the state of something that changes (a status, rollout, branch, commit, version, test count, "as of <date>"), records one piece of work done (what was changed, added, migrated or verified, and when), is a plan not yet carried out, or describes something already retired, replaced or superseded. A lesson drawn from an incident is durable.'
       : "- reject: the proposal is wrong, a duplicate, or contradicts the live asset.",
-    "- defer: you cannot decide from the provided context (leave it pending).",
+    promotion
+      ? "- defer: the proposal is unreadable. Do not defer because you cannot check a claim against the outside world: judge the note as written."
+      : "- defer: you cannot decide from the provided context (leave it pending).",
     "Output the JSON object and nothing else.",
   );
   return sections.join("\n");
