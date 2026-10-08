@@ -1140,6 +1140,39 @@ describe("runOpencodeSdk — env-keyed server registry (R2 env bindings on the s
     expect(environments[1]?.XDG_CONFIG_HOME).toBe("/sandbox/config-b");
   });
 
+  // A provider that reads its key from the environment (OpenCode Go: OPENCODE_API_KEY) failed with
+  // "Unexpected server error" because the SDK server never received it. It gets the same OpenCode
+  // names the `opencode` CLI profile passes, and a different key value starts another server.
+  test("OPENCODE_API_KEY and OPENCODE_CONFIG reach the server, nothing else does, and a different key starts another one", async () => {
+    const environments: Record<string, string>[] = [];
+    __setServerFactory(((options: { env: Record<string, string> }) => {
+      environments.push(options.env);
+      return Promise.resolve(makeFakeServer({}).server as never);
+    }) as never);
+    const source = (key: string) => ({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      OPENCODE_API_KEY: key,
+      OPENCODE_CONFIG: "/safe/opencode.json",
+      OPENAI_API_KEY: "must-not-leak",
+      AMBIENT_CLOUD_TOKEN: "must-not-leak",
+    });
+
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("key-a"), timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("key-a"), timeoutMs: null });
+    await runOpencodeSdk(baseProfile, "p", { envSource: source("key-b"), timeoutMs: null });
+
+    expect(environments).toHaveLength(2);
+    expect(environments[0]).toEqual({
+      HOME: "/safe/home",
+      PATH: "/safe/bin",
+      OPENCODE_API_KEY: "key-a",
+      OPENCODE_CONFIG: "/safe/opencode.json",
+      OPENCODE_CONFIG_CONTENT: "{}",
+    });
+    expect(environments[1]?.OPENCODE_API_KEY).toBe("key-b");
+  });
+
   test("only explicit passthrough values participate in child materialization and registry identity", async () => {
     const values: Array<string | undefined> = [];
     __setServerFactory(((options: { env: Record<string, string> }) => {
