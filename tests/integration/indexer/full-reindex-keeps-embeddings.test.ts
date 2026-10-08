@@ -124,4 +124,31 @@ describe("akm index --full keeps the vectors of unchanged entries", () => {
     expect(embeddedTexts[0]).toContain("revised");
     expect(storedState()).toEqual(before);
   });
+
+  test("an incremental run refreshes a stale hash without draining its unchanged directory", async () => {
+    writeMemory("alpha", "alpha memory", "Alpha body.");
+    writeMemory("bravo", "bravo memory", "Bravo body.");
+    expect((await akmIndex({ stashDir, full: true })).verification.ok).toBe(true);
+    const db = openExistingDatabase(getDbPath());
+    try {
+      db.prepare("UPDATE entries SET embed_hash = 'stale' WHERE concept_id = 'memories/alpha'").run();
+    } finally {
+      closeDatabase(db);
+    }
+
+    providerCalls = 0;
+    embeddedTexts = [];
+    const incremental = await akmIndex({ stashDir });
+
+    expect(incremental.mode).toBe("incremental");
+    expect(incremental.directoriesScanned).toBe(0);
+    expect(incremental.directoriesSkipped).toBe(1);
+    expect(providerCalls).toBe(1);
+    expect(embeddedTexts).toHaveLength(1);
+    expect(embeddedTexts[0]).toContain("alpha memory");
+
+    providerCalls = 0;
+    expect((await akmIndex({ stashDir })).verification.ok).toBe(true);
+    expect(providerCalls).toBe(0);
+  });
 });

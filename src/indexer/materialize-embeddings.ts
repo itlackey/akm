@@ -37,7 +37,7 @@ import {
   normalizeEmbeddingEndpoint,
 } from "../llm/embedders/remote";
 import type { Database } from "../storage/database";
-import { getEmbeddableEntryCount } from "../storage/repositories/index-entries-repository";
+import { getEmbeddableEntryCount, updateEntryEmbedHash } from "../storage/repositories/index-entries-repository";
 import { getMeta, setMeta } from "../storage/repositories/index-meta-repository";
 import {
   getAllEntriesForEmbedding,
@@ -369,6 +369,7 @@ export async function generateEmbeddingsForDb(
               continue;
             }
             if (upsertEmbedding(db, entry.id, embedding, model)) {
+              updateEntryEmbedHash(db, entry.id, entry.embedHash);
               storedCount++;
               // #954: sum the estimate of the text actually sent —
               // `texts[index]` is the capped string `embedBatch` was handed,

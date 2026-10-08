@@ -705,6 +705,11 @@ export function getEmbeddableEntryCount(db: Database): number {
   return getEntryCount(db);
 }
 
+/** Record the embedding input whose vector was just stored. */
+export function updateEntryEmbedHash(db: Database, id: number, hash: string): void {
+  db.prepare("UPDATE entries SET embed_hash = ? WHERE id = ?").run(hash, id);
+}
+
 export function getEntryById(
   db: Database,
   id: number,

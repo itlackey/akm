@@ -16,6 +16,7 @@
 import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { EmbeddingVector } from "../../llm/embedders/types";
+import { sha256Hex } from "../../runtime";
 import type { Database } from "../database";
 import type { DbVecResult } from "./index-entry-types";
 import { getMeta, setMeta } from "./index-meta-repository";
@@ -181,19 +182,20 @@ export function getNeighborsByEntryId(db: Database, id: number, k: number, scope
 export interface EntryForEmbedding {
   id: number;
   searchText: string;
+  embedHash: string;
   itemRef: string;
   filePath: string;
 }
 
 /**
  * Every entry that has no embedding row for `model` (any row when no model is
- * given), with its embedding input derived from the stored document
- * (`buildSearchText`, whose hash `upsertEntry` keeps in `entries.embed_hash`).
- * This is the embedding pass's cursor: a row generated under another model
- * counts as missing and is replaced when the entry is re-embedded, so a model
- * change re-embeds incrementally and an interrupted pass resumes where it
- * stopped. A row whose `document_json` does not parse has no text to embed
- * and is left out.
+ * given), or whose stored embedding-input hash is stale. Its input is derived
+ * from the stored document (`buildSearchText`, whose hash `upsertEntry` keeps
+ * in `entries.embed_hash`). This is the embedding pass's cursor: a row
+ * generated under another model counts as missing and is replaced when the
+ * entry is re-embedded, so a model change re-embeds incrementally and an
+ * interrupted pass resumes where it stopped. A row whose `document_json` does
+ * not parse has no text to embed and is left out.
  */
 export function getAllEntriesForEmbedding(
   db: Database,
@@ -201,13 +203,24 @@ export function getAllEntriesForEmbedding(
   model?: string,
 ): EntryForEmbedding[] {
   const select =
-    "SELECT e.id, e.document_json AS documentJson, e.item_ref AS itemRef, e.file_path AS filePath FROM entries e";
+    "SELECT e.id, e.document_json AS documentJson, e.embed_hash AS embedHash, e.item_ref AS itemRef, e.file_path AS filePath";
   const current = modelPredicate(db, model, "b");
-  const missing = `NOT EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id AND ${current.sql})`;
-  type Row = { id: number; documentJson: string; itemRef: string; filePath: string };
+  const hasEmbedding = `EXISTS (SELECT 1 FROM embeddings b WHERE b.id = e.id AND ${current.sql})`;
+  type Row = {
+    id: number;
+    documentJson: string;
+    embedHash: string | null;
+    itemRef: string;
+    filePath: string;
+    hasEmbedding: number;
+  };
   const rows: Row[] = [];
   if (entryIds === undefined) {
-    rows.push(...(db.prepare(`${select} WHERE ${missing} ORDER BY e.id`).all(...current.params) as Row[]));
+    rows.push(
+      ...(db
+        .prepare(`${select}, ${hasEmbedding} AS hasEmbedding FROM entries e ORDER BY e.id`)
+        .all(...current.params) as Row[]),
+    );
   } else {
     const targets = [...new Set(entryIds)].sort((left, right) => left - right);
     for (let offset = 0; offset < targets.length; offset += SQLITE_CHUNK_SIZE) {
@@ -215,20 +228,24 @@ export function getAllEntriesForEmbedding(
       const placeholders = chunk.map(() => "?").join(",");
       rows.push(
         ...(db
-          .prepare(`${select} WHERE e.id IN (${placeholders}) AND ${missing} ORDER BY e.id`)
+          .prepare(
+            `${select}, ${hasEmbedding} AS hasEmbedding FROM entries e WHERE e.id IN (${placeholders}) ORDER BY e.id`,
+          )
           .all(...chunk, ...current.params) as Row[]),
       );
     }
   }
   const entries: EntryForEmbedding[] = [];
-  for (const { documentJson, ...row } of rows) {
+  for (const { documentJson, embedHash: storedEmbedHash, hasEmbedding, ...row } of rows) {
     let document: IndexDocument;
     try {
       document = JSON.parse(documentJson) as IndexDocument;
     } catch {
       continue;
     }
-    entries.push({ ...row, searchText: buildSearchText(document) });
+    const searchText = buildSearchText(document);
+    const embedHash = sha256Hex(searchText);
+    if (!hasEmbedding || storedEmbedHash !== embedHash) entries.push({ ...row, searchText, embedHash });
   }
   return entries;
 }

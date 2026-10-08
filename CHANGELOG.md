@@ -83,6 +83,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Incremental indexing now refreshes vectors with stale embedding hashes (#1087).** The embedding pass compares
+  every stored entry's current search text with `embed_hash`, so vectors migrated from older search text are
+  re-embedded even when their directory was unchanged; matching entries remain untouched.
 - **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
   (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
   keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
