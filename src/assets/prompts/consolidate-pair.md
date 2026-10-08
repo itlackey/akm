@@ -16,4 +16,4 @@ Then classify the relation as exactly one of:
 
 Set "redundant" to the asset that could be deleted with no loss: "A" for "duplicate", the asset with the empty list for "subsumed", "A" for "supersedes"; else null. Set "stale" to "A" when the relation is "supersedes", else null.
 
-Answer ONLY with JSON: {"onlyInA": ["..."], "onlyInB": ["..."], "relation": "...", "redundant": "A"|"B"|null, "stale": "A"|null, "confidence": 0.0-1.0, "reason": "<at most 25 words>"}
+Answer ONLY with JSON: {"onlyInA": ["..."], "onlyInB": ["..."], "relation": "...", "redundant": "A"|"B"|null, "stale": "A"|null, "confidence": 0.0-1.0, "reason": "<at most 25 words: name the asset that can be deleted and what the other asset still holds>"}
