@@ -58,13 +58,13 @@ enumeration of the whole `proposal` noun group.
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
-| `akm workflow status` | Stable | `--all-scopes` added in 0.9.15 (#942), additive. |
-| `akm workflow plan` | Evolving | New in 0.9.2; secret-free provenance output; envelope shape may change. |
-| `akm workflow list` | Stable | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942), both additive. |
-| `akm workflow create` | Stable | |
-| `akm workflow resume` | Stable | |
-| `akm workflow abandon` | Stable | |
-| `akm workflow run` | Stable | Canonical start/resume/execute command. |
+| `akm workflow status` | Experimental | `--all-scopes` added in 0.9.15 (#942), additive. |
+| `akm workflow plan` | Experimental | New in 0.9.2; secret-free provenance output; envelope shape may change. |
+| `akm workflow list` | Experimental | `--all-scopes` and a top-level `scopeKey` envelope field added in 0.9.15 (#942), both additive. |
+| `akm workflow create` | Experimental | |
+| `akm workflow resume` | Experimental | |
+| `akm workflow abandon` | Experimental | |
+| `akm workflow run` | Experimental | Canonical start/resume/execute command. |
 | `akm remember` | Stable | |
 | `akm import` | Stable | |
 | `akm sync` | Stable | |
@@ -291,9 +291,8 @@ CHANGELOG with a migration note.
 - **Workflow plan** — `akm workflow plan <ref>`, new in 0.9.2: zero-write
   compile+freeze introspection (the canonical step graph, task/child
   expansion, input bindings, and lowering notices for a workflow, without
-  starting or publishing a run). The envelope shape may still change; the
-  five long-Stable `workflow` verbs (`status`, `list`, `create`, `resume`,
-  `abandon`) and `run` are unaffected.
+  starting or publishing a run). The envelope shape may still change. Like every
+  `workflow` verb it is Experimental from 0.9.28 (see Experimental below).
 - **Events / log** — `akm log` is the event-stream surface (0.9.0: the
   asset-scoped `akm history` surface, and `log`'s own `tail` subcommand, were
   both removed; `log` is now a leaf command — the former `list` surface).
@@ -342,6 +341,12 @@ CHANGELOG with a migration note.
 Subject to change without notice within minor releases. Not yet recommended
 for scripted use.
 
+- **Workflows** — the whole `akm workflow` surface (`run`, `status`, `list`,
+  `create`, `resume`, `abandon`, `plan`), the workflow asset format and the
+  workflow engine are Experimental from 0.9.28 and throughout 0.10. The 0.10
+  series stabilizes the feature and trims what is not useful, then either
+  promotes it out of Experimental or removes it if stabilization does not
+  produce a quality feature.
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
   `--format html` dashboard may change in any release; do not script against
   them.

@@ -485,7 +485,7 @@ const workflowResumeCommand = defineJsonCommand({
 export const workflowCommand = defineGroupCommand({
   meta: {
     name: "workflow",
-    description: "Author, inspect, and execute step-by-step workflow assets",
+    description: "Experimental: author, inspect, and execute step-by-step workflow assets",
   },
   subCommands: {
     status: workflowStatusCommand,

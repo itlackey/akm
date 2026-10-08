@@ -51,6 +51,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Workflows are Experimental.** The `akm workflow` commands (`run`, `status`,
+  `list`, `create`, `resume`, `abandon`, `plan`), the workflow asset format and
+  the engine move to Experimental in STABILITY.md and the help text, for the rest
+  of 0.9 and all of 0.10, which stabilizes the feature and then promotes it or
+  removes it. Nothing changes in how they run.
+
 - A consolidate pair-pass retire proposal now records the judge's claim lists in its `retirement` metadata as `onlyInRetired` and `onlyInSuccessor`, named by role rather than by the judge's A/B, so what the judge found only on each side survives past the run. Proposals minted before this lack both fields; no row is added for a pair akm keeps.
 - A distill lesson the quality gate rejects or sends to review now keeps its text: the `distill_invoked` event and the distill result carry `rejectedContent`, cut to 2000 characters (the judge prompt's cap). Before, a rejected lesson left only its score and reason. It stays local in `state.db`.
 - **LLM usage is recorded for every command.** `akm index`, curate, workflow,

@@ -799,6 +799,9 @@ to run `akm bundle add <origin>` first.
 
 ### workflow
 
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): the workflow commands, asset format and engine may
+change in any release through the 0.10 series, which decides whether the feature is stabilized or removed.
+
 Author, inspect, and execute structured workflow assets.
 
 ```sh
