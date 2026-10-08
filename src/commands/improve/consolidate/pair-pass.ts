@@ -731,12 +731,16 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
 
   const decision = decideRetirement(verdict.relation, verdict.redundant, older, newer, verdict);
   if (!decision) return { failed: false };
-  const { retired, successor } = decision;
+  let { retired, successor } = decision;
+  // Owner rule (#1092): knowledge is never replaced with a memory (a `.derived` memory is a memory). When the memory
+  // holds nothing the note lacks, retire the memory in favour of the note instead; otherwise leave the pair alone.
+  // The flipped pair then runs every guard below like any memory retirement.
+  if (retired.asset.type === "knowledge" && successor.asset.type === "memory") {
+    if ((successor === older ? verdict.onlyInA : verdict.onlyInB).length > 0) return { failed: false };
+    [retired, successor] = [successor, retired];
+  }
 
   // Guards (plan §5.2 step 4 / brief §A "Guards").
-  if (retired.asset.type === "knowledge" && successor.asset.type === "memory") {
-    return { failed: false }; // owner rule: knowledge is never replaced with a memory (a `.derived` memory is a memory)
-  }
   if (retired.asset.type === "memory" && isHotCapturedMemory(retired.asset.filePath)) {
     return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
   }

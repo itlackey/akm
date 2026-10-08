@@ -1418,14 +1418,17 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 });
 
 describe("runConsolidatePairPass — knowledge is never replaced with a memory (#1092)", () => {
-  /** An indexed pair of one knowledge note and one memory; `olderType` says which of the two is older. */
+  /**
+   * An indexed pair of one knowledge note and one memory; `olderType` says which is older (A), the other is B.
+   * `memoryFrontmatter` and `memoryName` let a test make the memory hot or a `.derived` child.
+   */
   async function runPair(
     olderType: "knowledge" | "memory",
     verdict: Parameters<typeof fixedChat>[0],
-    memoryName = "topic-memory",
+    { memoryName = "topic-memory", memoryFrontmatter = "description: raw capture" } = {},
   ) {
     const knowledgePath = writeAsset("knowledge/topic-note.md", "description: curated note");
-    const memoryPath = writeAsset(`memories/${memoryName}.md`, "description: raw capture");
+    const memoryPath = writeAsset(`memories/${memoryName}.md`, memoryFrontmatter);
     dateAsset(knowledgePath, olderType === "knowledge" ? 60 : 1);
     dateAsset(memoryPath, olderType === "knowledge" ? 1 : 60);
     const db = openIndexDatabase(getDbPath());
@@ -1435,14 +1438,33 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     } finally {
       closeDatabase(db);
     }
-    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
+    return runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], {
       chat: fixedChat(verdict),
     });
-    return result;
   }
 
-  test("duplicate, knowledge older and memory newer: nothing minted, counted like a no-action verdict", async () => {
+  test("duplicate, knowledge older, memory holds nothing of its own: the memory is retired, the note kept, staged", async () => {
     const result = await runPair("knowledge", { relation: "duplicate", redundant: null });
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/topic-memory");
+    expect(proposal.changes).toEqual([{ path: "memories/topic-memory.md", op: "delete" }]);
+    expect(proposal.retirement).toMatchObject({
+      retiredRef: "memories/topic-memory",
+      successorRef: "knowledge/topic-note",
+      judgeLabel: "duplicate",
+      reason: "duplicate",
+    });
+    // The second look and the staging condition run with retired = memory, successor = knowledge.
+    expect(proposal.gateDecision).toMatchObject({ outcome: "staged", reason: "duplicate", gate: "consolidate-pair" });
+  });
+
+  test("duplicate, knowledge older, memory lists a claim the note lacks: nothing minted, counted as no action", async () => {
+    const result = await runPair("knowledge", {
+      relation: "duplicate",
+      redundant: null,
+      onlyInB: ["a claim only the memory holds"],
+    });
     expect(result.retired).toHaveLength(0);
     expect(result.labelCounts.duplicate).toBeGreaterThanOrEqual(1);
     expect(listProposals(storage.stashDir)).toHaveLength(0);
@@ -1455,12 +1477,54 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     }
   });
 
-  test("a .derived memory successor counts as a memory", async () => {
-    const result = await runPair("knowledge", { relation: "duplicate", redundant: null }, "topic-memory.derived");
+  test("subsumed, knowledge called redundant, memory list empty: the memory is retired, the note kept", async () => {
+    // Knowledge is older (A); redundant "A" would retire it for the newer memory; the memory (B) lists nothing.
+    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A" });
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/topic-memory");
+    expect(proposal.retirement).toMatchObject({
+      retiredRef: "memories/topic-memory",
+      successorRef: "knowledge/topic-note",
+      judgeLabel: "subsumed",
+    });
+  });
+
+  test("subsumed, knowledge called redundant, memory lists a claim: nothing minted", async () => {
+    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A", onlyInB: ["memory-only claim"] });
     expect(result.retired).toHaveLength(0);
   });
 
-  test("duplicate, memory older and knowledge newer: the memory is still retired in favour of the knowledge note", async () => {
+  test("a flipped retirement of a hot-captured memory is still refused by the hot guard", async () => {
+    const result = await runPair(
+      "knowledge",
+      { relation: "duplicate", redundant: null },
+      { memoryFrontmatter: "description: hot capture\ncaptureMode: hot" },
+    );
+    expect(result.retired).toHaveLength(0);
+    expect(listProposals(storage.stashDir)).toHaveLength(0);
+  });
+
+  test("a flipped retirement of a .derived memory whose parent exists is still refused", async () => {
+    writeAsset("memories/topic-memory.md", "description: parent memory");
+    const result = await runPair(
+      "knowledge",
+      { relation: "duplicate", redundant: null },
+      { memoryName: "topic-memory.derived", memoryFrontmatter: "inferred: true\nsource: memories/topic-memory" },
+    );
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("a .derived memory with a claim of its own counts as a memory: the note is not retired for it", async () => {
+    const result = await runPair(
+      "knowledge",
+      { relation: "duplicate", redundant: null, onlyInB: ["derived-only claim"] },
+      { memoryName: "topic-memory.derived", memoryFrontmatter: "inferred: true\nsource: memories/topic-memory" },
+    );
+    expect(result.retired).toHaveLength(0);
+  });
+
+  test("duplicate, memory older and knowledge newer: the memory is retired in favour of the knowledge note, as before", async () => {
     const result = await runPair("memory", { relation: "duplicate", redundant: null });
     expect(result.retired).toHaveLength(1);
     const proposal = getProposal(storage.stashDir, result.retired[0]!);
@@ -1469,12 +1533,6 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
       retiredRef: "memories/topic-memory",
       successorRef: "knowledge/topic-note",
     });
-  });
-
-  test("subsumed with the knowledge side called redundant and a memory successor: nothing minted", async () => {
-    // Knowledge is older (A); redundant "A" retires it in favour of the newer memory.
-    const result = await runPair("knowledge", { relation: "subsumed", redundant: "A" });
-    expect(result.retired).toHaveLength(0);
   });
 
   test("subsumed with the memory side called redundant: the memory is retired in favour of the knowledge note", async () => {
