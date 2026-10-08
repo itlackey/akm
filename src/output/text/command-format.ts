@@ -698,7 +698,7 @@ function formatUpgradeHead(r: Record<string, unknown>): string | null {
     return `akm upgraded: v${r.currentVersion} → v${r.newVersion}`;
   }
   if (r.updateAvailable === true) {
-    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade' to install)`;
+    return `akm v${r.currentVersion} → v${r.latestVersion} available (run 'akm upgrade${r.channel === "next" ? " --next" : ""}' to install)`;
   }
   if (r.updateAvailable === false && r.latestVersion) {
     return `akm v${r.currentVersion} is already the latest version`;

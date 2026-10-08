@@ -15,14 +15,21 @@ import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IS_WINDOWS } from "../../core/common";
+import { IS_WINDOWS, stripJsonComments } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
 import { semverOrder } from "../../runtime";
-import type { PluginUpgradeEntry, UpgradeCheckResponse, UpgradeLockstep, UpgradeResponse } from "../../sources/types";
+import type {
+  PluginUpgradeEntry,
+  UpgradeChannel,
+  UpgradeCheckResponse,
+  UpgradeLockstep,
+  UpgradeResponse,
+} from "../../sources/types";
 
 const MARKETPLACE = "akm-plugins";
 const PLUGIN_ID = `akm@${MARKETPLACE}`;
 const OPENCODE_PACKAGE = "akm-opencode";
+const OPENCODE_NEXT_SPEC = `${OPENCODE_PACKAGE}@next`;
 const READ_TIMEOUT_MS = 30_000;
 const REFRESH_TIMEOUT_MS = 120_000;
 const PREFETCH_TIMEOUT_MS = 180_000;
@@ -160,12 +167,46 @@ export interface OpenCodeCache {
 
 export type OpenCodeLatest = { version: string; akmCli: string | undefined } | { error: string };
 
-/** The cached `akm-opencode` OpenCode installed on first use, or undefined when there is none. */
-export function detectOpenCodeCache(): OpenCodeCache | undefined {
-  const cacheHome =
-    process.env.XDG_CACHE_HOME?.trim() ||
-    path.join(process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || os.homedir(), ".cache");
-  const dir = path.join(cacheHome, "opencode", "packages", `${OPENCODE_PACKAGE}@latest`);
+function homeDir(): string {
+  return process.env.HOME?.trim() || process.env.USERPROFILE?.trim() || os.homedir();
+}
+
+/**
+ * Whether the user's global OpenCode config asks for `akm-opencode@next`.
+ * A bare `akm-opencode` resolves to `@latest` when OpenCode prefetches it, so
+ * only a config that names the tag can follow prereleases. The config is only
+ * read, never written; project configs are not looked at (akm does not know
+ * which project OpenCode runs in).
+ */
+export function openCodeConfigRequestsNext(): boolean {
+  const configHome = process.env.XDG_CONFIG_HOME?.trim() || path.join(homeDir(), ".config");
+  const files = [
+    process.env.OPENCODE_CONFIG?.trim(),
+    path.join(configHome, "opencode", "opencode.json"),
+    path.join(configHome, "opencode", "opencode.jsonc"),
+  ];
+  for (const file of files) {
+    if (!file) continue;
+    try {
+      const config = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8"))) as { plugin?: unknown };
+      if (!Array.isArray(config.plugin)) continue;
+      // An entry is a spec string or a `[spec, options]` pair.
+      if (config.plugin.some((entry) => (Array.isArray(entry) ? entry[0] : entry) === OPENCODE_NEXT_SPEC)) return true;
+    } catch {
+      // Missing or unparseable: this file does not request it.
+    }
+  }
+  return false;
+}
+
+/**
+ * The cached `akm-opencode` OpenCode installed on first use, or undefined when
+ * there is none. OpenCode names the folder after the spec it resolved, so a
+ * bare `akm-opencode` lands in `@latest` and `akm-opencode@next` in `@next`.
+ */
+export function detectOpenCodeCache(tag: UpgradeChannel = "latest"): OpenCodeCache | undefined {
+  const cacheHome = process.env.XDG_CACHE_HOME?.trim() || path.join(homeDir(), ".cache");
+  const dir = path.join(cacheHome, "opencode", "packages", `${OPENCODE_PACKAGE}@${tag}`);
   if (!fs.existsSync(dir)) return undefined;
   const readVersion = (file: string): string | undefined => {
     try {
@@ -178,18 +219,33 @@ export function detectOpenCodeCache(): OpenCodeCache | undefined {
   return { dir, version: readVersion(path.join(dir, "node_modules", OPENCODE_PACKAGE, "package.json")) };
 }
 
-/** What npm's `akm-opencode@latest` is, and which akm-cli it pins. */
-export function lookupOpenCodeLatest(): OpenCodeLatest {
+/** What npm's `akm-opencode@<tag>` is, and which akm-cli it pins. */
+export function lookupOpenCodeLatest(tag: UpgradeChannel = "latest"): OpenCodeLatest {
+  const spec = `${OPENCODE_PACKAGE}@${tag}`;
   const view = runCommand(
     IS_WINDOWS ? "npm.cmd" : "npm",
-    ["view", `${OPENCODE_PACKAGE}@latest`, "version", "dependencies.akm-cli", "--json"],
+    ["view", spec, "version", "dependencies.akm-cli", "--json"],
     READ_TIMEOUT_MS,
   );
   if (!view.ok) return { error: view.error };
   const parsed = parseJson(view.stdout) as { version?: unknown; "dependencies.akm-cli"?: unknown } | undefined;
-  if (typeof parsed?.version !== "string") return { error: "npm did not report a version for akm-opencode@latest" };
+  if (typeof parsed?.version !== "string") return { error: `npm did not report a version for ${spec}` };
   const akmCli = parsed["dependencies.akm-cli"];
   return { version: parsed.version, akmCli: typeof akmCli === "string" ? akmCli : undefined };
+}
+
+/** `akm-opencode@next`, which must exist and be no older than `@latest`: a prerelease channel that trails the stable one is not a target. */
+export function lookupOpenCodeNext(): OpenCodeLatest {
+  const next = lookupOpenCodeLatest("next");
+  if ("error" in next) return next;
+  const latest = lookupOpenCodeLatest("latest");
+  if ("error" in latest) return { error: `could not compare with ${OPENCODE_PACKAGE}@latest: ${latest.error}` };
+  if (semverOrder(next.version, latest.version) < 0) {
+    return {
+      error: `${OPENCODE_NEXT_SPEC} (${next.version}) is older than ${OPENCODE_PACKAGE}@latest (${latest.version})`,
+    };
+  }
+  return next;
 }
 
 /** Whether an OpenCode process is running (its prefetch would be replaced under it). `undefined` when that cannot be told. */
@@ -220,13 +276,20 @@ function openCodeRunning(): boolean | undefined {
   }
 }
 
+const NOT_FOLLOWING_NEXT =
+  `--next: OpenCode resolves a bare "${OPENCODE_PACKAGE}" to @latest, so it is not updated to a prerelease; ` +
+  `set "plugin": ["${OPENCODE_NEXT_SPEC}"] in your OpenCode config to follow prereleases`;
+
 function upgradeOpenCode(
   dryRun: boolean,
   cache: OpenCodeCache | undefined,
   latest: OpenCodeLatest | undefined,
+  tag: UpgradeChannel,
+  notFollowingNext: boolean,
 ): PluginUpgradeEntry {
-  if (!cache || !latest) return skipped("opencode", "no cached akm-opencode plugin");
+  if (!cache || !latest) return skipped("opencode", `no cached ${OPENCODE_PACKAGE}@${tag} plugin`);
   if ("error" in latest) return failed("opencode", latest.error);
+  if (notFollowingNext) return skipped("opencode", NOT_FOLLOWING_NEXT);
   if (cache.version === latest.version)
     return { harness: "opencode", outcome: "current", from: cache.version, to: latest.version };
   const base = { harness: "opencode" as const, from: cache.version, to: latest.version };
@@ -262,21 +325,44 @@ function upgradeOpenCode(
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
-  const after = detectOpenCodeCache();
+  const after = detectOpenCodeCache(tag);
   if (!after) return failed("opencode", "opencode did not re-create the plugin cache (the old cache is in the trash)");
   return { ...base, outcome: "updated", to: after.version ?? latest.version };
 }
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
+const NO_PRERELEASE_CHANNEL =
+  "--next: no prerelease channel; the akm-plugins marketplace is followed as usual and works with any 0.9.x akm";
+
+/** The note `--next` adds to a harness whose plugin has no prerelease channel. */
+function withNextNote(entry: PluginUpgradeEntry): PluginUpgradeEntry {
+  if (entry.outcome === "skipped") return entry;
+  return { ...entry, message: entry.message ? `${entry.message}; ${NO_PRERELEASE_CHANNEL}` : NO_PRERELEASE_CHANNEL };
+}
+
+/** What `--next` means for the OpenCode plugin: which npm tag it follows, and whether the user's config follows it too. */
+export interface OpenCodeTarget {
+  cache: OpenCodeCache | undefined;
+  latest: OpenCodeLatest | undefined;
+  /** The npm tag `latest` was read from, and the cache folder's tag. */
+  tag: UpgradeChannel;
+  /** `--next` was asked for but the OpenCode config names the bare package, so it keeps resolving `@latest`. */
+  notFollowingNext: boolean;
+}
+
 export function upgradePlugins(opts: {
   dryRun: boolean;
-  openCode: { cache: OpenCodeCache | undefined; latest: OpenCodeLatest | undefined };
+  next: boolean;
+  openCode: OpenCodeTarget;
 }): PluginUpgradeEntry[] {
+  const { cache, latest, tag, notFollowingNext } = opts.openCode;
+  const claude = upgradeClaudeCode(opts.dryRun);
+  const codex = upgradeCodex(opts.dryRun);
   return [
-    upgradeClaudeCode(opts.dryRun),
-    upgradeCodex(opts.dryRun),
-    upgradeOpenCode(opts.dryRun, opts.openCode.cache, opts.openCode.latest),
+    opts.next ? withNextNote(claude) : claude,
+    opts.next ? withNextNote(codex) : codex,
+    upgradeOpenCode(opts.dryRun, cache, latest, tag, notFollowingNext),
   ];
 }
 
@@ -295,6 +381,7 @@ export function upgradePlugins(opts: {
 export function applyLockstep<T extends UpgradeCheckResponse>(
   check: T,
   latest: OpenCodeLatest | undefined,
+  tag: UpgradeChannel = "latest",
 ): T & { lockstep?: UpgradeLockstep } {
   if (!latest) return check;
   // Held back only when there is a release this upgrade would otherwise install.
@@ -303,8 +390,8 @@ export function applyLockstep<T extends UpgradeCheckResponse>(
   if (!pinned) {
     const reason =
       "error" in latest
-        ? `could not read the akm-cli pin of ${OPENCODE_PACKAGE}@latest: ${latest.error}`
-        : `${OPENCODE_PACKAGE}@latest declares no akm-cli dependency`;
+        ? `could not read the akm-cli pin of ${OPENCODE_PACKAGE}@${tag}: ${latest.error}`
+        : `${OPENCODE_PACKAGE}@${tag} declares no akm-cli dependency`;
     return {
       ...check,
       latestVersion: check.currentVersion,
@@ -335,7 +422,7 @@ export function applyLockstep<T extends UpgradeCheckResponse>(
 }
 
 export interface UpgradeRunDependencies {
-  checkForUpdate: (currentVersion: string) => Promise<UpgradeCheckResponse>;
+  checkForUpdate: (currentVersion: string, channel: UpgradeChannel) => Promise<UpgradeCheckResponse>;
   performUpgrade: (
     check: UpgradeCheckResponse,
     opts: { force: boolean; skipPostUpgrade: boolean; targetVersion?: string },
@@ -346,27 +433,45 @@ export type UpgradeRunResult =
   | { mode: "check"; result: UpgradeCheckResponse & { plugins: PluginUpgradeEntry[] } }
   | { mode: "upgrade"; result: UpgradeResponse & { plugins: PluginUpgradeEntry[] }; failed: boolean };
 
+/**
+ * Which OpenCode plugin build the CLI is held to, and which cache refreshes.
+ * Under `--next` that is `akm-opencode@next`, but only when the user's OpenCode
+ * config names that tag: otherwise OpenCode keeps resolving `@latest`, so the
+ * lockstep stays against the `@latest` pin and the entry is reported as skipped.
+ */
+function resolveOpenCodeTarget(next: boolean): OpenCodeTarget {
+  const followNext = next && openCodeConfigRequestsNext();
+  const tag: UpgradeChannel = followNext ? "next" : "latest";
+  const cache = detectOpenCodeCache(tag);
+  const latest = cache ? (followNext ? lookupOpenCodeNext() : lookupOpenCodeLatest()) : undefined;
+  return { cache, latest, tag, notFollowingNext: next && !followNext };
+}
+
 /** `akm upgrade`: the CLI step (held to the OpenCode plugin's akm), then the plugins. */
 export async function runUpgrade(
-  args: { check: boolean; force: boolean; skipPostUpgrade: boolean },
+  args: { check: boolean; force: boolean; skipPostUpgrade: boolean; next?: boolean },
   currentVersion: string,
   deps: UpgradeRunDependencies,
 ): Promise<UpgradeRunResult> {
-  const cache = detectOpenCodeCache();
-  const latest = cache ? lookupOpenCodeLatest() : undefined;
-  const check = applyLockstep(await deps.checkForUpdate(currentVersion), latest);
-  const openCode = { cache, latest };
+  const next = args.next === true;
+  const channel: UpgradeChannel = next ? "next" : "latest";
+  const openCode = resolveOpenCodeTarget(next);
+  const check = {
+    ...applyLockstep(await deps.checkForUpdate(currentVersion, channel), openCode.latest, openCode.tag),
+    channel,
+  };
   if (args.check) {
-    return { mode: "check", result: { ...check, plugins: upgradePlugins({ dryRun: true, openCode }) } };
+    return { mode: "check", result: { ...check, plugins: upgradePlugins({ dryRun: true, next, openCode }) } };
   }
   const upgraded = await deps.performUpgrade(check, {
     force: args.force,
     skipPostUpgrade: args.skipPostUpgrade,
-    // A package manager install must name the version, or `@latest` goes past the pin.
-    ...(check.lockstep?.heldBack ? { targetVersion: check.latestVersion } : {}),
+    // A package manager install must name the version, or `@latest` goes past the pin
+    // (or past the prerelease that `--next` chose).
+    ...(check.lockstep?.heldBack || (next && check.latestVersion) ? { targetVersion: check.latestVersion } : {}),
   });
-  const plugins = upgradePlugins({ dryRun: false, openCode });
-  const result = { ...upgraded, ...(check.lockstep ? { lockstep: check.lockstep } : {}), plugins };
+  const plugins = upgradePlugins({ dryRun: false, next, openCode });
+  const result = { ...upgraded, channel, ...(check.lockstep ? { lockstep: check.lockstep } : {}), plugins };
   // The install may have succeeded, but an upgrade whose migration is
   // blocked or could not run is not done, and neither is one whose plugin
   // step failed.

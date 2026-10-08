@@ -1339,6 +1339,7 @@ computed, with a 256 MiB binary limit. Release/checksum metadata is capped at
 akm upgrade              # Install a newer release if there is one, run every pending migration, then update the harness plugins
 akm upgrade --check      # Report pending updates, CLI and plugins, without changing anything (no migration step)
 akm upgrade --force      # Force the install even if already on latest
+akm upgrade --next       # Install the newest prerelease (@next) instead of the latest stable release
 ```
 
 | Flag | Description |
@@ -1346,6 +1347,7 @@ akm upgrade --force      # Force the install even if already on latest
 | `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
+| `--next` | Follow the `next` prerelease channel: install the newest prerelease of akm (and of the OpenCode plugin, see [Prereleases](#prereleases-next)). Works with `--check`, `--force` and `-q` |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.
@@ -1398,6 +1400,41 @@ be read (the npm lookup failed, or `akm-opencode@latest` declares no
 `{ plugin, pinnedVersion: null, newestVersion, heldBack: true, reason }`. The
 OpenCode entry is `failed` and the run exits `1`; the next `akm upgrade`
 retries.
+
+#### Prereleases (`--next`)
+
+`akm upgrade --next` means "newest available, prereleases included". The result
+carries `channel: "next"` (`"latest"` otherwise); no other field changes.
+
+- **CLI.** The target is the `next` dist-tag of `akm-cli` (read from the npm
+  registry, so it works for binary installs too) when that is newer than the
+  latest stable release; otherwise the latest stable release. It never moves
+  backwards. npm, Bun and pnpm installs run `<manager> add|install -g akm-cli@<that exact version>`;
+  standalone binaries download the GitHub release tagged `v<that version>`
+  (prereleases are GitHub releases too) and verify its checksum as usual.
+- **OpenCode.** OpenCode resolves a bare `"akm-opencode"` in its `plugin` list
+  to `@latest`, and caches `@next` in its own folder
+  (`$XDG_CACHE_HOME/opencode/packages/akm-opencode@next`). akm does not edit
+  your OpenCode config, so it can only follow `@next` when you ask for it:
+
+  ```json
+  { "plugin": ["akm-opencode@next"] }
+  ```
+
+  With that line in the global OpenCode config (`~/.config/opencode/opencode.json`
+  or `.jsonc`, or the file named by `OPENCODE_CONFIG`), lockstep and the cache
+  refresh use `akm-opencode@next` (its version and its `akm-cli` pin) instead of
+  `@latest`. If `akm-opencode@next` is missing, older than `@latest`, or its
+  `akm-cli` pin is unreadable, the CLI is held where it is and the OpenCode entry
+  is `failed`, exactly as in the stable lockstep above.
+
+  Without that line the OpenCode entry is `skipped`, its message names the line
+  to add, and lockstep stays against the `@latest` pin, so the CLI does not go
+  past what OpenCode will run.
+- **Claude Code and Codex.** Unchanged: their plugin comes from the `akm-plugins`
+  git marketplace, which has no prerelease channel and accepts any 0.9.x akm,
+  prereleases included. Their entries carry a note saying so.
+- `--check --next` reports all of this and changes nothing.
 
 #### Containers
 

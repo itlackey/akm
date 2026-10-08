@@ -538,11 +538,16 @@ export interface UpgradeLockstep {
   reason?: string;
 }
 
+/** Which release stream `akm upgrade` follows: `next` (`--next`) is the newest available, prereleases included. */
+export type UpgradeChannel = "latest" | "next";
+
 export interface UpgradeCheckResponse {
   currentVersion: string;
   latestVersion: string;
   updateAvailable: boolean;
   installMethod: "binary" | "bun" | "npm" | "pnpm" | "package-local" | "unknown";
+  /** The stream this check followed; set by `akm upgrade`. */
+  channel?: UpgradeChannel;
   lockstep?: UpgradeLockstep;
   /** Per-harness plugin updates that `akm upgrade` would make. */
   plugins?: PluginUpgradeEntry[];
@@ -572,6 +577,8 @@ export interface UpgradeResponse {
    * `failed` means the migrator could not run at all; `error` says why.
    */
   migration?: { status: "current" | "ready" | "blocked" | "failed"; error?: string } & Record<string, unknown>;
+  /** The stream this upgrade followed; set by `akm upgrade`. */
+  channel?: UpgradeChannel;
   lockstep?: UpgradeLockstep;
   /** The per-harness plugin step that follows the CLI step. */
   plugins?: PluginUpgradeEntry[];
