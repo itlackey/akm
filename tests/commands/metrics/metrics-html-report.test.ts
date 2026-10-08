@@ -138,28 +138,32 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
       usage,
       llm: [
         {
-          at: "2026-10-01T09:00:00.000Z",
+          day: "2026-10-01",
           stage: "distill",
           process: "improve",
           engine: "local",
           model: "m",
           outcome: "success",
+          calls: 1,
           durationMs: 1000,
           promptTokens: 60,
           completionTokens: 30,
           totalTokens: 90,
+          reasoningTokens: 0,
         },
         {
-          at: "2026-10-02T09:00:00.000Z",
+          day: "2026-10-02",
           stage: "judge",
           process: "improve",
           engine: "local",
           model: "m",
           outcome: "error",
+          calls: 1,
           durationMs: 2000,
           promptTokens: 40,
           completionTokens: 20,
           totalTokens: 60,
+          reasoningTokens: 0,
         },
       ],
     },
@@ -211,6 +215,17 @@ describe("renderMetricsHtml", () => {
     expect(data.rows.llm).toHaveLength(2);
     expect(data.usage.totals.searches).toBe(2);
     expect(data.window.until).toBe("2026-10-08T00:00:00.000Z");
+  });
+
+  test("per-hit rows carry their query as an index into rows.queries; summary rows keep the text", () => {
+    const html = renderMetricsHtml(fixture()) as string;
+    const data = JSON.parse(island(html));
+    const hit = data.rows.usage.find((r: { id: number }) => r.id === 2);
+    expect(hit.query).toBeUndefined();
+    expect(data.rows.queries[hit.q]).toBe("vpn setup");
+    const summary = data.rows.usage.find((r: { id: number }) => r.id === 1);
+    expect(summary.query).toBe("vpn setup");
+    expect(summary.q).toBeUndefined();
   });
 
   test("a hostile query or reason cannot break out of the data island", () => {
@@ -279,7 +294,7 @@ describe("renderMetricsHtml", () => {
     const { rows: _rows, ...rest } = fixture();
     const html = renderMetricsHtml(rest as AkmMetricsResult) as string;
     const data = JSON.parse(island(html));
-    expect(data.rows).toEqual({ usage: [], llm: [] });
+    expect(data.rows).toEqual({ usage: [], llm: [], queries: [] });
   });
 
   test("replacement tokens escape header text", () => {
@@ -309,6 +324,7 @@ interface Agg {
 interface LlmAgg {
   totals: Record<string, number>;
   byStage: Array<{ name: string }>;
+  daily: Array<{ day: string; calls: number; avgMs: number }>;
 }
 
 describe("dashboard client core", () => {
@@ -471,6 +487,17 @@ describe("dashboard client core", () => {
     const sorted = core.sortRows([{ v: null }, { v: 1 }, { v: 5 }], "v", "desc");
     expect(sorted.map((r) => r.v)).toEqual([5, 1, null]);
     expect(core.sortRows([{ v: null }, { v: 1 }, { v: 5 }], "v", "asc").map((r) => r.v)).toEqual([1, 5, null]);
+  });
+
+  test("aggregateLlm adds up per-day sums: calls, failures, time and tokens", () => {
+    const rows = [
+      { day: "2026-10-01", stage: "a", engine: "e", outcome: "success", calls: 3, durationMs: 300, totalTokens: 30 },
+      { day: "2026-10-01", stage: "a", engine: "e", outcome: "error", calls: 2, durationMs: 100, totalTokens: 0 },
+    ];
+    const a = core.aggregateLlm(rows, {});
+    expect(a.totals).toMatchObject({ calls: 5, tokens: 30, failures: 2, durationMs: 400 });
+    expect(a.byStage[0]).toMatchObject({ name: "a", calls: 5, failures: 2 });
+    expect(a.daily).toEqual([{ day: "2026-10-01", calls: 5, avgMs: 80 }]);
   });
 
   test("aggregateLlm sums tokens per dimension inside the date range", () => {

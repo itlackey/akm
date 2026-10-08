@@ -5,17 +5,19 @@
 /** Pure aggregation behind `akm metrics`: plain rows in, the result envelope out. */
 
 import { describe, expect, test } from "bun:test";
-import { emptyLlmUsageAggregate } from "../src/commands/health/llm-usage";
+import { emptyLlmUsageAggregate, summarizeLlmUsage } from "../src/commands/health/llm-usage";
 import {
   buildMetricsResult,
   computeEngineCosts,
   indexRunsFromEvents,
+  llmRowsFromEvents,
   type MetricsInput,
   refMatchesFilters,
   retentionNotes,
   toUsageRow,
   usageCreatedAtToIso,
 } from "../src/commands/metrics/collect";
+import type { EventEnvelope } from "../src/core/events-types";
 import type { UsageEventRow } from "../src/indexer/usage/usage-events";
 import type { TaskHistoryRow } from "../src/storage/repositories/task-history-repository";
 
@@ -389,6 +391,62 @@ describe("tasks, index and rows", () => {
     const withRows = buildMetricsResult(input({ usage: usageRows, includeRows: true }));
     expect(withRows.rows?.usage).toHaveLength(1);
     expect(withRows.rows?.llm).toEqual([]);
+  });
+});
+
+describe("llmRowsFromEvents", () => {
+  const call = (ts: string, metadata: Record<string, unknown>) =>
+    ({ ts, eventType: "llm_usage", metadata }) as unknown as EventEnvelope;
+
+  test("sums calls, time and tokens per day x stage x process x engine x model x outcome", () => {
+    const base = { stage: "distill", process: "improve", engine: "local", model: "m" };
+    const events = [
+      call("2026-10-01T01:00:00.000Z", {
+        ...base,
+        outcome: "success",
+        durationMs: 100,
+        promptTokens: 10,
+        completionTokens: 5,
+        totalTokens: 15,
+      }),
+      call("2026-10-01T23:00:00.000Z", {
+        ...base,
+        outcome: "success",
+        durationMs: 300,
+        promptTokens: 20,
+        completionTokens: 10,
+      }),
+      call("2026-10-01T23:30:00.000Z", { ...base, outcome: "error", durationMs: 50 }),
+      call("2026-10-02T00:00:00.000Z", {
+        ...base,
+        outcome: "success",
+        durationMs: 200,
+        totalTokens: 7,
+        reasoningTokens: 2,
+      }),
+      call("2026-10-02T00:00:01.000Z", { durationMs: 1 }),
+      call("2026-10-02T00:00:02.000Z", { outcome: "success" }),
+    ];
+    const rows = llmRowsFromEvents(events);
+    expect(rows).toHaveLength(4);
+    expect(rows[0]).toEqual({
+      day: "2026-10-01",
+      ...base,
+      outcome: "success",
+      calls: 2,
+      durationMs: 400,
+      promptTokens: 30,
+      completionTokens: 15,
+      totalTokens: 45,
+      reasoningTokens: 0,
+    });
+    expect(rows[3]).toMatchObject({ day: "2026-10-02", outcome: "success", calls: 1, durationMs: 1 });
+    expect(rows[3]?.stage).toBeUndefined();
+    // The rows add up to the window totals the JSON report carries.
+    const totals = summarizeLlmUsage(events as never);
+    expect(rows.reduce((n, r) => n + r.calls, 0)).toBe(totals.calls);
+    expect(rows.reduce((n, r) => n + r.durationMs, 0)).toBe(totals.totalDurationMs);
+    expect(rows.filter((r) => r.outcome === "error").reduce((n, r) => n + r.calls, 0)).toBe(totals.failures);
   });
 });
 

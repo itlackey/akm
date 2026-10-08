@@ -173,27 +173,46 @@ export function toUsageRow(row: UsageEventRow): MetricsUsageRow {
   };
 }
 
-/** `llm_usage` events as the raw rows the dashboard re-aggregates; events that do not decode are skipped. */
+/**
+ * `llm_usage` events summed per UTC day x stage x process x engine x model x
+ * outcome: the rows the dashboard re-aggregates. One row per call would be the
+ * largest thing in the page, and the page only ever filters them by date.
+ * Events that do not decode are skipped; rows come out in first-seen order.
+ */
 export function llmRowsFromEvents(events: EventEnvelope[]): MetricsLlmRow[] {
-  const rows: MetricsLlmRow[] = [];
+  const rows = new Map<string, MetricsLlmRow>();
   for (const event of events) {
     const record = decodeLlmUsageRecord(event.metadata);
     if (!record) continue;
-    rows.push({
-      at: event.ts,
-      ...(record.stage !== undefined ? { stage: record.stage } : {}),
-      ...(record.process !== undefined ? { process: record.process } : {}),
-      ...(record.engine !== undefined ? { engine: record.engine } : {}),
-      ...(record.model !== undefined ? { model: record.model } : {}),
-      outcome: record.outcome,
-      durationMs: record.durationMs,
-      ...(record.promptTokens !== undefined ? { promptTokens: record.promptTokens } : {}),
-      ...(record.completionTokens !== undefined ? { completionTokens: record.completionTokens } : {}),
-      ...(record.totalTokens !== undefined ? { totalTokens: record.totalTokens } : {}),
-      ...(record.reasoningTokens !== undefined ? { reasoningTokens: record.reasoningTokens } : {}),
-    });
+    const day = event.ts.slice(0, 10);
+    const key = JSON.stringify([day, record.stage, record.process, record.engine, record.model, record.outcome]);
+    let row = rows.get(key);
+    if (!row) {
+      row = {
+        day,
+        ...(record.stage !== undefined ? { stage: record.stage } : {}),
+        ...(record.process !== undefined ? { process: record.process } : {}),
+        ...(record.engine !== undefined ? { engine: record.engine } : {}),
+        ...(record.model !== undefined ? { model: record.model } : {}),
+        outcome: record.outcome,
+        calls: 0,
+        durationMs: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        reasoningTokens: 0,
+      };
+      rows.set(key, row);
+    }
+    row.calls += 1;
+    row.durationMs += record.durationMs;
+    row.promptTokens += record.promptTokens ?? 0;
+    row.completionTokens += record.completionTokens ?? 0;
+    // A call without a total counts as prompt + completion, as the dashboard did per call.
+    row.totalTokens += record.totalTokens ?? (record.promptTokens ?? 0) + (record.completionTokens ?? 0);
+    row.reasoningTokens += record.reasoningTokens ?? 0;
   }
-  return rows;
+  return [...rows.values()];
 }
 
 /** `index_completed` events as index runs; rows without a numeric `totalMs` are skipped. */

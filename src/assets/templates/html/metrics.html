@@ -362,25 +362,24 @@ function aggregate(rows, opts) {
   };
 }
 
-// LLM rows carry no ref, source or event type, so only the date range applies.
+// LLM rows are per-day sums (calls, durationMs and tokens already added up)
+// and carry no ref, source or event type, so only the date range applies.
 function aggregateLlm(rows, f) {
   var by = { stage: Object.create(null), process: Object.create(null), engine: Object.create(null) }, daily = new Map();
   var t = { calls: 0, tokens: 0, failures: 0, durationMs: 0 };
   rows.forEach(function (r) {
-    var d = dayOf(r.at);
+    var d = dayOf(r.day);
     if (f.from && d < f.from) return;
     if (f.to && d > f.to) return;
-    var tok = tokensOf(r);
-    t.calls++; t.tokens += tok; t.durationMs += r.durationMs || 0;
-    if (r.outcome === 'error') t.failures++;
+    var tok = tokensOf(r), calls = r.calls || 0, failed = r.outcome === 'error' ? calls : 0;
+    t.calls += calls; t.tokens += tok; t.durationMs += r.durationMs || 0; t.failures += failed;
     [['stage', r.stage], ['process', r.process], ['engine', r.engine]].forEach(function (p) {
       var k = p[1] || 'unattributed';
       var e = by[p[0]][k] || (by[p[0]][k] = { name: k, calls: 0, tokens: 0, failures: 0 });
-      e.calls++; e.tokens += tok;
-      if (r.outcome === 'error') e.failures++;
+      e.calls += calls; e.tokens += tok; e.failures += failed;
     });
     var day = daily.get(d) || { day: d, calls: 0, durationMs: 0 };
-    day.calls++; day.durationMs += r.durationMs || 0;
+    day.calls += calls; day.durationMs += r.durationMs || 0;
     daily.set(d, day);
   });
   function list(o) {
@@ -425,7 +424,14 @@ function toCsv(columns, rows) {
 (function () {
   'use strict';
   var DATA = JSON.parse(document.getElementById('akm-data').textContent);
-  var ALL = (DATA.rows && DATA.rows.usage) || [];
+  var QUERIES = (DATA.rows && DATA.rows.queries) || [];
+  // Per-hit rows carry their query as an index into rows.queries; put the text back.
+  var ALL = ((DATA.rows && DATA.rows.usage) || []).map(function (r) {
+    if (r.q == null) return r;
+    var row = Object.assign({}, r, { query: QUERIES[r.q] });
+    delete row.q;
+    return row;
+  });
   var LLM = (DATA.rows && DATA.rows.llm) || [];
   var HAS_ROWS = ALL.length > 0;
   var $ = function (id) { return document.getElementById(id); };

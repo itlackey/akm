@@ -13,8 +13,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   queries that returned nothing), feedback with its reasons and tags, utility
   and outcome scores, LLM tokens, latency and estimated cost, task runs,
   proposals and workflow token spend. `--since` (default `30d`), `--until`,
-  `--bundle`, `--ref`, `--source` (default `user`) and `--top` narrow it. The raw
-  window rows ride along with `--format html` and `--detail full`. A window
+  `--bundle`, `--ref`, `--source` (default `user`) and `--top` narrow it. The
+  window rows (usage rows as recorded, LLM calls summed per day, engine, model, process and stage) ride along with
+  `--format html` and `--detail full`. A window
   longer than a store's retention says so in `notes`. Engines may set
   `pricing: { inputPerMillion, outputPerMillion, currency? }` to get `llm.cost`;
   the price is applied at report time, so changing it re-prices history.

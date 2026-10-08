@@ -43,7 +43,7 @@ A command may register a renderer for a document format when it has something
 better to say than the generic one: `akm health --group-by run --format md`
 emits its per-run table, and `akm health --report --format html` renders the
 full report with KPI cards, charts, and advisories. `akm metrics` always carries
-its raw window rows under `--format html`. The renderers are
+its window rows under `--format html`. The renderers are
 data-driven — they fire when the result carries the report dataset, never on
 the format alone, so the same dataset is available as JSON too. Every other command falls back to a
 generic rendering derived from its own envelope — headings for the top-level

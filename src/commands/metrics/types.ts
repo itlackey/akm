@@ -30,19 +30,22 @@ export interface MetricsUsageRow {
   tags?: string[];
 }
 
-/** One `llm_usage` event in the window. */
+/** The `llm_usage` events of one UTC day x stage x process x engine x model x outcome, summed. */
 export interface MetricsLlmRow {
-  at: string;
+  /** `YYYY-MM-DD` (UTC). */
+  day: string;
   stage?: string;
   process?: string;
   engine?: string;
   model?: string;
   outcome: "success" | "error";
+  calls: number;
   durationMs: number;
-  promptTokens?: number;
-  completionTokens?: number;
-  totalTokens?: number;
-  reasoningTokens?: number;
+  promptTokens: number;
+  completionTokens: number;
+  /** Sum of each call's total, or of its prompt + completion when it had none. */
+  totalTokens: number;
+  reasoningTokens: number;
 }
 
 export interface MetricsDailyUsage {
@@ -177,8 +180,9 @@ export interface AkmMetricsResult {
   proposals: { byStatus: Record<string, number>; acceptRateBySource: AcceptRateEntry[] };
   workflows: { runs: number; byStatus: Record<string, number>; tokens: number; byModel: Record<string, number> };
   /**
-   * Raw window rows. Present when `--format html` or `--detail full`; the
-   * HTML dashboard re-aggregates from these client-side.
+   * Window rows: usage rows as recorded, LLM calls summed per day and
+   * dimension. Present when `--format html` or `--detail full`; the HTML
+   * dashboard re-aggregates from these client-side.
    */
   rows?: { usage: MetricsUsageRow[]; llm: MetricsLlmRow[] };
   notes: string[];
