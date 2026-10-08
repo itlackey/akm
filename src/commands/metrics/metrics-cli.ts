@@ -48,6 +48,7 @@ import {
   indexRunsFromEvents,
   llmRowsFromEvents,
   type MetricsInput,
+  refMatchesFilters,
   retentionNotes,
 } from "./collect";
 import type { AkmMetricsResult } from "./types";
@@ -103,6 +104,30 @@ async function resolveRefFilter(input: string): Promise<string> {
     );
   }
   return entry.itemRef;
+}
+
+/**
+ * `select` events keyed on the durable ref. The events stream stores the ref
+ * as typed (`knowledge/x` for the default bundle), while `usage_events` stores
+ * `bundle//conceptId`; resolving here keeps one asset from showing as two rows.
+ * A ref that does not resolve (registry results, removed assets) is kept as is.
+ */
+async function durableSelects(
+  selects: Array<{ ts: string; ref: string }>,
+): Promise<Array<{ ts: string; ref: string }>> {
+  const resolved = new Map<string, string>();
+  for (const { ref } of selects) {
+    if (resolved.has(ref)) continue;
+    let durable = ref;
+    try {
+      const parsed = parseBundleRef(ref);
+      if (!parsed.bundle) durable = (await lookupBundleRefReadonly(parsed))?.itemRef ?? ref;
+    } catch {
+      // Not a local bundle ref, or no readable index: keep the ref as recorded.
+    }
+    resolved.set(ref, durable);
+  }
+  return selects.map((select) => ({ ts: select.ts, ref: resolved.get(select.ref) ?? select.ref }));
 }
 
 /** `index.db` utility rows, or a note saying why there are none. */
@@ -217,9 +242,10 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     return buildMetricsResult(input);
   }
   const stateDb = openStateDatabase(stateDbPath);
+  let selects: Array<{ ts: string; ref: string }> = [];
   try {
     input.usage = listUsageEventRows(stateDb, filter);
-    input.selects = listSelectEvents(stateDb, filter);
+    selects = listSelectEvents(stateDb, sinceIso, untilIso);
     input.outcomes = listLowestOutcomeAssets(stateDb, filter, top);
     input.indexRuns = indexRunsFromEvents(listIndexCompletedEvents(stateDb, sinceIso, untilIso));
     input.tasks = queryTaskHistory(stateDb, { since: sinceIso, until: untilIso });
@@ -231,6 +257,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   } finally {
     stateDb.close();
   }
+  input.selects = (await durableSelects(selects)).filter((select) => refMatchesFilters(select.ref, filter));
   input.llm = readLlmUsageAggregate(stateDbPath, sinceIso, untilIso);
   if (input.includeRows) {
     const untilMs = Date.parse(untilIso);

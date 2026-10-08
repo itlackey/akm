@@ -11,6 +11,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
 import type { AkmMetricsResult } from "../../src/commands/metrics/types";
 import { resetConfigCache } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
@@ -361,6 +362,48 @@ describe("akm metrics", () => {
       first.cleanup();
       second.cleanup();
     }
+  });
+
+  test("a select recorded under a short ref counts toward the durable asset", async () => {
+    const first = makeStashDir();
+    const second = makeStashDir();
+    try {
+      for (const root of [first.dir, second.dir]) {
+        const file = path.join(root, "knowledge", "shared.md");
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, "---\ndescription: shared note\n---\n\n# Shared\n", "utf8");
+      }
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        bundles: { alpha: { path: first.dir }, beta: { path: second.dir } },
+        defaultBundle: "beta",
+      });
+      resetConfigCache();
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      // usage_events keys on the durable ref; the events stream keeps the ref as typed.
+      seedUsage([{ type: "show", at: sqliteTs(Date.now() - HOUR), ref: "beta//knowledge/shared" }]);
+      appendEvent({ eventType: "select", ref: "knowledge/shared", metadata: { query: "shared", rankPosition: 0 } });
+
+      const all = await metrics();
+      expect(all.result.usage.topAssets.map((asset) => [asset.ref, asset.selects])).toEqual([
+        ["beta//knowledge/shared", 1],
+      ]);
+      expect((await metrics("--bundle", "beta")).result.usage.totals.selects).toBe(1);
+      expect((await metrics("--bundle", "alpha")).result.usage.totals.selects).toBe(0);
+    } finally {
+      first.cleanup();
+      second.cleanup();
+    }
+  });
+
+  test("a usage row written in the window end's own second is inside the window", async () => {
+    // created_at has whole-second resolution; `until` defaults to now, with milliseconds.
+    seedUsage([{ type: "show", at: "2026-01-10 12:00:00", ref: "main//skills/now" }]);
+    const result = await akmMetrics({
+      since: "2026-01-10T00:00:00Z",
+      now: () => Date.parse("2026-01-10T12:00:00.500Z"),
+    });
+    expect(result.usage.totals.shows).toBe(1);
   });
 
   test("tasks, proposals, workflows and index runs come from state.db", async () => {

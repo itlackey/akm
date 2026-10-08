@@ -45,6 +45,11 @@ export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): Us
   const [refSql, refParams] = refClause("entry_ref", filter);
   const sourceSql = filter.source === undefined ? "" : " AND source = ?";
   const sourceParams = filter.source === undefined ? [] : [filter.source];
+  // `created_at` has whole-second resolution, so a row written during the
+  // bound's own second (e.g. `--until` defaulting to now) is still inside the
+  // half-open window: round a fractional bound up to the next second.
+  const untilMs = Date.parse(filter.untilIso);
+  const untilBound = new Date(Math.ceil(untilMs / 1000) * 1000).toISOString();
   return db
     .prepare(
       `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
@@ -52,19 +57,23 @@ export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): Us
        WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)${sourceSql}${refSql}
        ORDER BY datetime(created_at), id`,
     )
-    .all(filter.sinceIso, filter.untilIso, ...sourceParams, ...refParams) as UsageEventRow[];
+    .all(filter.sinceIso, untilBound, ...sourceParams, ...refParams) as UsageEventRow[];
 }
 
-/** `select` events (a show within 60 s of a search that returned the ref) in the window. */
-export function listSelectEvents(db: Database, filter: MetricsQueryFilter): Array<{ ts: string; ref: string }> {
-  const [refSql, refParams] = refClause("ref", filter);
+/**
+ * `select` events (a show within 60 s of a search that returned the ref) in the
+ * window. Unfiltered by asset: the events stream stores the ref as the user
+ * typed it (often bundle-less), so the caller resolves it to the durable ref
+ * before applying `--bundle` / `--ref`.
+ */
+export function listSelectEvents(db: Database, sinceIso: string, untilIso: string): Array<{ ts: string; ref: string }> {
   return db
     .prepare(
       `SELECT ts, ref FROM events
-       WHERE event_type = 'select' AND ref IS NOT NULL AND ts >= ? AND ts < ?${refSql}
+       WHERE event_type = 'select' AND ref IS NOT NULL AND ts >= ? AND ts < ?
        ORDER BY id`,
     )
-    .all(filter.sinceIso, filter.untilIso, ...refParams) as Array<{ ts: string; ref: string }>;
+    .all(sinceIso, untilIso) as Array<{ ts: string; ref: string }>;
 }
 
 /** `index_completed` events (one per `akm index` run) in the window, oldest first. */
