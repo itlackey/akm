@@ -20,9 +20,7 @@
  * helpers drop it from their column lists too.
  */
 
-import { describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import os from "node:os";
+import { afterEach, describe, expect, test } from "bun:test";
 import path from "node:path";
 import {
   getAllAssetOutcomes,
@@ -34,16 +32,24 @@ import {
   WARM_START_CAP,
 } from "../../../../src/commands/improve/outcome-loop";
 import { openStateDatabase } from "../../../../src/core/state-db";
+import { makeSandboxDir, type SandboxedDir } from "../../../_helpers/sandbox";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const NOW = Date.parse("2026-06-15T00:00:00.000Z");
 
+const disposers: SandboxedDir[] = [];
+
 function openTestDb() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-outcome-test-"));
-  const db = openStateDatabase(path.join(tmpDir, "state.db"));
-  return { db, tmpDir };
+  const sandbox = makeSandboxDir("akm-outcome-test");
+  disposers.push(sandbox);
+  const db = openStateDatabase(path.join(sandbox.dir, "state.db"));
+  return { db, tmpDir: sandbox.dir };
 }
+
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
+});
 
 // ── Migration 010: table exists after openStateDatabase ───────────────────────
 

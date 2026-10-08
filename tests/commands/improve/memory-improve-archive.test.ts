@@ -12,10 +12,9 @@
  * shape without the new fields).
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import {
   archiveCleanupCandidate,
@@ -25,13 +24,21 @@ import {
 } from "../../../src/commands/improve/memory/memory-improve";
 import type { MemoryPruneCandidate } from "../../../src/core/improve-types";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { makeSandboxDir, type SandboxedDir } from "../../_helpers/sandbox";
 import { overrideSeam } from "../../_helpers/seams";
 
 const MS_PER_DAY = 86_400_000;
 
+const disposers: SandboxedDir[] = [];
+
+afterEach(() => {
+  for (const d of disposers.splice(0)) d.cleanup();
+});
+
 function sandbox(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-archive-candidate-"));
-  return dir;
+  const dir = makeSandboxDir("akm-archive-candidate");
+  disposers.push(dir);
+  return dir.dir;
 }
 
 /** `isGitBackedStash` is a plain `.git`-presence check — no real repo needed. */
@@ -372,9 +379,10 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     // real binary — reproduces a broken submodule / detached worktree
     // without needing one.
     const realGit = spawnSync("which", ["git"], { encoding: "utf8" }).stdout.trim();
-    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), "akm-fakegit-"));
+    const fakeBin = makeSandboxDir("akm-fakegit");
+    disposers.push(fakeBin);
     fs.writeFileSync(
-      path.join(fakeBin, "git"),
+      path.join(fakeBin.dir, "git"),
       `#!/bin/sh\nfor a in "$@"; do [ "$a" = status ] && { echo "fatal: simulated" >&2; exit 128; }; done\nexec ${realGit} "$@"\n`,
       { mode: 0o755 },
     );
@@ -383,7 +391,7 @@ describe("purgeGracedArchive — the purge sweep (item 4, plan §5.4/§8 step 8)
     overrideSeam(_setWarnSinkForTests, (level, args) => {
       if (level === "warn") warnings.push(args.map(String).join(" "));
     });
-    process.env.PATH = `${fakeBin}:${savedPath}`;
+    process.env.PATH = `${fakeBin.dir}:${savedPath}`;
     let result: ReturnType<typeof purgeGracedArchive>;
     try {
       result = purgeGracedArchive(stashDir, daysFromNow(RETIRE_GRACE_DAYS + 1));
