@@ -28,7 +28,7 @@
  * access. There is no env var or option to opt back into an offline report.
  */
 
-import { escapeHtml } from "../../output/html-render";
+import { escapeHtml, isoTimeTag } from "../../output/html-render";
 import { pkgVersion } from "../../version";
 import {
   buildHealthReportViewModel,
@@ -46,12 +46,6 @@ import type { AkmHealthResult } from "./types";
 export type { HealthHtmlReportOptions, PendingProposalLike };
 
 const esc = escapeHtml;
-
-/** Emit a <time> element that the browser's JS will reformat to the viewer's local timezone. */
-function isoTimeTag(iso: string): string {
-  const fallback = iso.slice(0, 16).replace("T", " ");
-  return `<time data-iso="${esc(iso)}">${esc(fallback)}</time>`;
-}
 
 function trendClass(direction: TrendDirection): string {
   return direction === "up" ? "trend-up" : direction === "down" ? "trend-down" : "trend-flat";

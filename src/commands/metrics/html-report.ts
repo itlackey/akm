@@ -15,7 +15,7 @@
  * `window.until`, so identical input gives byte-identical output.
  */
 
-import { escapeHtml, renderHtml, resolveTemplatePath } from "../../output/html-render";
+import { escapeHtml, isoTimeTag, renderHtml, resolveTemplatePath } from "../../output/html-render";
 import { pkgVersion } from "../../version";
 import { buildEchartsTag } from "../health/html-report";
 import type { AkmMetricsResult, MetricsUsageRow } from "./types";
@@ -29,10 +29,6 @@ function isMetricsResult(value: unknown): value is AkmMetricsResult {
   if (value === null || typeof value !== "object") return false;
   const v = value as Partial<AkmMetricsResult>;
   return v.schemaVersion === 1 && typeof v.window === "object" && v.window !== null && typeof v.usage === "object";
-}
-
-function isoTimeTag(iso: string): string {
-  return `<time data-iso="${esc(iso)}">${esc(iso.slice(0, 16).replace("T", " "))}</time>`;
 }
 
 /**

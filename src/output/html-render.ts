@@ -107,6 +107,12 @@ export function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+/** Emit a <time> element that the browser's JS will reformat to the viewer's local timezone. */
+export function isoTimeTag(iso: string): string {
+  const fallback = iso.slice(0, 16).replace("T", " ");
+  return `<time data-iso="${escapeHtml(iso)}">${escapeHtml(fallback)}</time>`;
+}
+
 /**
  * Deliver a rendered document: write to `outputPath` when set (`--output`),
  * otherwise print to stdout.
