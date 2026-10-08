@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **An agent engine can name a default `agent`.** `engines.<name>.agent` (`opencode`, `opencode-sdk`, `claude`)
+  is the native agent the engine runs when a request names none, so an `opencode-sdk` engine, which takes no
+  `args`, can run e.g. `akm-workflow` for workflows and tasks. A request's own agent wins, a persona is kept,
+  and model work keeps its confined agent. See [Configuration](docs/reference/configuration.md) (#1049).
+
 - **`akm upgrade --next` installs the `@next` prerelease of akm and its OpenCode plugin.** The CLI target is
   the `next` dist-tag of `akm-cli` when it is newer than the latest stable release, else the stable release
   (never a downgrade); npm/Bun/pnpm installs name that exact version and binary installs take its GitHub

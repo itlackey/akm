@@ -6,7 +6,7 @@ import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
 import { MODEL_WORK_POLICY_ID, type ToolSelection } from "../../execution/source";
-import { HARNESS_MODEL_WORK_IDS } from "../harnesses/ids";
+import { HARNESS_MODEL_WORK_IDS, HARNESS_NATIVE_AGENT_IDS } from "../harnesses/ids";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
 import { composePersonaFallbackPrompt } from "./persona-fallback";
@@ -19,8 +19,6 @@ export interface AgentLowererOptions {
   readonly adapter: string;
   readonly personaChannel: "native" | "prompt";
   readonly tools: ToolTranslation;
-  /** The harness has an exact native-agent selector flag. */
-  readonly nativeAgentSelector?: boolean;
   /** Inference keys this harness's model-work dispatch carries; a dispatch of any other kind reports every key. */
   readonly inference?: readonly string[];
 }
@@ -96,7 +94,7 @@ export function createAgentRequestLowerer(
         notices.push(...composed.notices);
       }
     } else if (typeof request.agent === "string") {
-      if (!options.nativeAgentSelector) {
+      if (!HARNESS_NATIVE_AGENT_IDS.has(options.adapter)) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
           "INVALID_CONFIG_FILE",

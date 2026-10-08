@@ -129,9 +129,13 @@ value matching this JSON Schema (no prose, no code fences):` followed by the
 schema), plus the harness's own schema channel where it has one (codex
 `--output-schema`).
 
-An agent engine may set `bin`, `args`, `workspace`, `model`, and `timeoutMs`;
+An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, and `timeoutMs`;
 it takes no inference of its own (see
-[Inference on an agent engine](#inference-on-an-agent-engine)). Only `platform: "opencode-sdk"` may set `llmEngine`; it names
+[Inference on an agent engine](#inference-on-an-agent-engine)). `agent` names the
+engine's default native agent (`opencode`, `opencode-sdk` and `claude` only): it
+runs when a request names no agent, e.g. `{"kind":"agent","platform":"opencode-sdk","model":"openai/gpt-5.6-terra","agent":"akm-workflow"}`.
+A request's own agent wins, an agent asset's persona is kept, and model work keeps its confined
+agent. `opencode-sdk` takes no `args`, so `agent` is how an SDK engine names one. Only `platform: "opencode-sdk"` may set `llmEngine`; it names
 the LLM engine used as that SDK engine's fallback connection. With no
 `llmEngine`, an SDK engine has no fallback connection and opencode resolves
 provider, model and auth from its own configuration. `defaults.llmEngine` is

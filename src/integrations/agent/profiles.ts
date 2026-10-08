@@ -45,6 +45,8 @@ export interface AgentProfile {
   readonly envPassthrough: readonly string[];
   /** How the wrapper should attempt to parse stdout. */
   readonly parseOutput: AgentParseMode;
+  /** The engine's default native agent, used when a request names none. */
+  readonly agent?: string;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
   /**

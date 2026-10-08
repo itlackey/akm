@@ -181,6 +181,7 @@ function engineDefaults(name: string, engine: EngineConfig, config: AkmConfig): 
   };
   if (engine.kind === "llm") return { kind: "llm", platform: engine.provider ?? name, modelMapKey: name, values };
   if (engine.workspace !== undefined) values.workspace = engine.workspace;
+  if (engine.agent !== undefined) values.agent = engine.agent;
   if (engine.platform !== "opencode-sdk") {
     return { kind: "agent", platform: engine.platform, modelMapKey: engine.platform, values };
   }
@@ -245,6 +246,7 @@ function runnerDefaults(runner: RunnerSpec): EngineDefaults {
       ...(inference ? { inference } : {}),
       ...timeout,
       ...(runner.profile.workspace !== undefined ? { workspace: runner.profile.workspace } : {}),
+      ...(runner.profile.agent !== undefined ? { agent: runner.profile.agent } : {}),
     },
   };
 }
@@ -487,7 +489,11 @@ export function resolveExecution(input: ResolveExecutionInput): ResolvedExecutio
 
   provenance.command = { layer: command.source?.ref ?? "inline", kind: "command", via: "source" };
   let persona = input.persona;
-  const agentLayer = nearest(layers, "agent");
+  // The engine's own `agent` is only a default for a request that names none: it never replaces a
+  // persona, and model work keeps its confined agent.
+  const engineAgentApplies = !persona && input.modelWork !== true;
+  let agentLayer = nearest(layers, "agent");
+  if (agentLayer?.kind === "engine" && !engineAgentApplies) agentLayer = undefined;
   const agent = agentLayer?.values.agent;
   if (agentLayer) {
     provenance.agent = explicit(agentLayer);

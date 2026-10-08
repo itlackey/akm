@@ -48,7 +48,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: "opencode",
     personaChannel: "prompt",
-    nativeAgentSelector: true,
     tools: "none",
     inference: MODEL_WORK_AGENT_INFERENCE,
   }),
