@@ -17,6 +17,16 @@
  * 'opencode-sdk'`). It is the dispatch path for SDK runner specs; it exposes
  * no native session logs of its own (`capabilities.sessionLogs = false`).
  *
+ * ## Sessions are kept (#1100)
+ *
+ * One session is created per dispatch and is NEVER deleted: it stays in
+ * OpenCode's history (transcript for debugging, input for session capture),
+ * as it does for `opencode run`, and its id is returned as
+ * `AgentRunResult.sessionId`. A dispatch akm gives up on (timeout or caller
+ * abort) is aborted server-side so the server stops calling the model, but the
+ * session is still kept. The server process itself is closed independently
+ * (see the registry notes below).
+ *
  * ## Per-call cwd and env (redesign addendum R2, open seam decision 1)
  *
  * The plan left one decision open: per-call cwd/env forwarding vs a server
@@ -25,7 +35,7 @@
  * `@opencode-ai/sdk` 1.2.20):
  *
  *   - **cwd is PER-CALL.** `session.create` / `session.prompt` /
- *     `session.delete` all accept a `query.directory` parameter that scopes
+ *     `session.abort` all accept a `query.directory` parameter that scopes
  *     the session's working directory, so a single server can host sessions
  *     in any number of working directories. {@link RunAgentOptions.cwd} is
  *     forwarded as `query: { directory }` on every session call — no
@@ -139,8 +149,7 @@ interface SdkClient {
         parts?: { type: string; text?: string }[];
       };
     }>;
-    delete(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
-    // Optional so a fake that omits them cannot crash a dispatch; the real client has both.
+    // Optional so a fake that omits it cannot crash a dispatch; the real client has it.
     abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
   };
 }
@@ -772,7 +781,6 @@ function extractUsage(info?: {
 
 const SDK_OPERATION_TIMED_OUT = Symbol("opencode-sdk-operation-timeout");
 const SDK_OPERATION_ABORTED = Symbol("opencode-sdk-operation-aborted");
-const SDK_SESSION_DELETE_TIMEOUT_MS = 5_000;
 
 async function raceSdkOperation<T>(
   operation: Promise<T>,
@@ -781,24 +789,11 @@ async function raceSdkOperation<T>(
     setTimeoutFn: typeof setTimeout;
     clearTimeoutFn: typeof clearTimeout;
     signal?: AbortSignal;
-    onLateSettle?: (result: PromiseSettledResult<T>) => void | Promise<void>;
   },
 ): Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED> {
   let timer: ReturnType<typeof opts.setTimeoutFn> | undefined;
   let onAbort: (() => void) | undefined;
-  let raceFinished = false;
   const racers: Promise<T | typeof SDK_OPERATION_TIMED_OUT | typeof SDK_OPERATION_ABORTED>[] = [operation];
-
-  void operation.then(
-    (value) => {
-      if (raceFinished && opts.onLateSettle)
-        void Promise.resolve(opts.onLateSettle({ status: "fulfilled", value })).catch(() => {});
-    },
-    (reason) => {
-      if (raceFinished && opts.onLateSettle)
-        void Promise.resolve(opts.onLateSettle({ status: "rejected", reason })).catch(() => {});
-    },
-  );
 
   if (opts.timeoutMs !== null) {
     racers.push(
@@ -821,7 +816,6 @@ async function raceSdkOperation<T>(
   try {
     return racers.length === 1 ? await operation : await Promise.race(racers);
   } finally {
-    raceFinished = true;
     if (timer !== undefined) opts.clearTimeoutFn(timer);
     if (opts.signal && onAbort) opts.signal.removeEventListener("abort", onAbort);
   }
@@ -829,10 +823,6 @@ async function raceSdkOperation<T>(
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-function appendStderr(stderr: string, message: string): string {
-  return stderr ? `${stderr}\n${message}` : message;
 }
 
 /**
@@ -851,31 +841,6 @@ function sdkErrorFailure(error: unknown): { reason: AgentFailureReason; message:
   if (error.name === "MessageAbortedError") return { reason: "aborted", message };
   if (error.name === "MessageOutputLengthError") return { reason: "parse_error", message };
   return { reason: "non_zero_exit", message };
-}
-
-async function deleteSessionBestEffort(
-  client: SdkClient,
-  sessionId: string,
-  query: SdkDirectoryQuery | undefined,
-  setTimeoutFn: typeof setTimeout,
-  clearTimeoutFn: typeof clearTimeout,
-): Promise<string | undefined> {
-  try {
-    const deleted = await raceSdkOperation(
-      client.session.delete({ path: { id: sessionId }, ...(query ? { query } : {}) }),
-      {
-        timeoutMs: SDK_SESSION_DELETE_TIMEOUT_MS,
-        setTimeoutFn,
-        clearTimeoutFn,
-      },
-    );
-    if (deleted === SDK_OPERATION_TIMED_OUT) {
-      return `OpenCode session cleanup timed out after ${SDK_SESSION_DELETE_TIMEOUT_MS}ms`;
-    }
-    return undefined;
-  } catch (err) {
-    return `OpenCode session cleanup failed: ${errorText(err)}`;
-  }
 }
 
 /** Stop a server-side session that the dispatch has given up on, so it stops calling the model. */
@@ -972,8 +937,7 @@ export async function runOpencodeSdk(
   // Previously runOpencodeSdk() awaited SDK calls with no timeout, so a stalled
   // local-model endpoint or wedged server could block the caller indefinitely.
   // The same absolute deadline covers server startup, session creation, and
-  // prompting. null disables every dispatch timer. Session cleanup remains a
-  // separately bounded best-effort operation.
+  // prompting. null disables every dispatch timer.
 
   // Per-call working directory (module doc): forwarded as the SDK's
   // `query.directory` on every session call, so worktree-isolated units run
@@ -993,11 +957,6 @@ export async function runOpencodeSdk(
         setTimeoutFn: setTimeoutImpl,
         clearTimeoutFn: clearTimeoutImpl,
         signal: abortSignal,
-        onLateSettle: (late) => {
-          if (late.status === "fulfilled" && late.value.data?.id) {
-            void deleteSessionBestEffort(client, late.value.data.id, query, setTimeoutImpl, clearTimeoutImpl);
-          }
-        },
       },
     );
     if (created === SDK_OPERATION_ABORTED) {
@@ -1076,9 +1035,6 @@ export async function runOpencodeSdk(
         setTimeoutFn: setTimeoutImpl,
         clearTimeoutFn: clearTimeoutImpl,
         signal: abortSignal,
-        onLateSettle: () => {
-          void deleteSessionBestEffort(client, sessionId as string, query, setTimeoutImpl, clearTimeoutImpl);
-        },
       },
     );
 
@@ -1155,10 +1111,5 @@ export async function runOpencodeSdk(
       sessionId,
     };
   }
-
-  // Clean up session to prevent disk accumulation in ~/.local/share/opencode/.
-  // Failures are non-fatal to the agent result but must not be invisible.
-  const cleanupWarning = await deleteSessionBestEffort(client, sessionId, query, setTimeoutImpl, clearTimeoutImpl);
-  if (cleanupWarning) result.stderr = appendStderr(result.stderr, cleanupWarning);
   return result;
 }

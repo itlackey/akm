@@ -83,6 +83,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`opencode-sdk` runs keep their OpenCode session (#1100).** The SDK runner deleted the session after every
+  dispatch, so a workflow, task or `akm agent` run left no transcript in OpenCode's history to debug or to learn
+  from, unlike `opencode run`. The session is now kept; a dispatch akm gives up on (timeout or abort) is still
+  aborted on the server so it stops calling the model. The OpenCode session id is on the `akm agent` / command
+  result as `sessionId` and in the task log line, as workflow steps already carried it.
+
 - **Consolidate's pair pass no longer retires a knowledge note in favour of a memory (#1092).** Knowledge is the
   reviewed form and a memory is raw capture, often the very memory the note was promoted from, yet a `duplicate`,
   `supersedes` or `subsumed` verdict could retire `knowledge/...` for `memories/...` (a `.derived` memory counts as a

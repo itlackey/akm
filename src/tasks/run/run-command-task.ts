@@ -109,7 +109,7 @@ function renderPromptLog(input: {
   const lines: string[] = [];
   const dbLines: TaskLogLineInput[] = [];
   const header = `[akm task] task=${input.task.taskId} kind=prompt engine=${input.engineName}`;
-  const summary = `ok=${input.result.ok} exit_code=${input.result.exitCode ?? "null"} duration_ms=${input.result.durationMs}`;
+  const summary = `ok=${input.result.ok} exit_code=${input.result.exitCode ?? "null"} duration_ms=${input.result.durationMs}${input.result.sessionId ? ` session_id=${input.result.sessionId}` : ""}`;
   lines.push(header, summary);
   dbLines.push({ line: header }, { level: input.result.ok ? "info" : "error", line: summary });
   for (const warning of input.warnings ?? []) {

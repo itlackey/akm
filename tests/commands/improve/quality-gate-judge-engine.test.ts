@@ -169,7 +169,6 @@ describe("the judge thinks only when its own engine enables thinking", () => {
         session: {
           create: async () => ({ data: { id: "judge-session" } }),
           prompt: async () => ({ data: { info: {}, parts: [{ type: "text", text: PASSING_VERDICT }] } }) as never,
-          delete: async () => ({}),
         },
       },
       server: { close() {} },
@@ -195,7 +194,6 @@ describe("the judge thinks only when its own engine enables thinking", () => {
             sent = args.body.parts.map((p) => p.text).join("\n");
             return { data: { info: {}, parts: [{ type: "text", text: PASSING_VERDICT }] } };
           }) as never,
-          delete: async () => ({}),
         },
       },
       server: { close() {} },
