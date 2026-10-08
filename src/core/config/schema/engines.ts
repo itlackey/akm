@@ -21,6 +21,7 @@ import {
   ExtraParamsSchema,
   engineName,
   nonEmptyString,
+  nonNegativeNumber,
   positiveInt,
   symbolicOrWarnApiKey,
 } from "./primitives";
@@ -35,6 +36,19 @@ import {
  * workflow plan: invocation is invalid". Reject it where the value is written.
  */
 const timeoutMsField = z.union([positiveInt.max(WORKFLOW_MAX_TIMEOUT_MS), z.null()]).optional();
+
+/**
+ * Optional price list `akm metrics` multiplies a window's token counts by. It
+ * is read at report time only, so changing it re-prices history. Reasoning
+ * tokens are part of the completion count and are not priced separately.
+ */
+const EnginePricingSchema = z
+  .object({
+    inputPerMillion: nonNegativeNumber,
+    outputPerMillion: nonNegativeNumber,
+    currency: nonEmptyString.optional(),
+  })
+  .passthrough();
 
 // ── Connection configs (LLM) ────────────────────────────────────────────────
 
@@ -101,6 +115,7 @@ const LlmEngineSchema = z
     contextLength: positiveInt.optional(),
     enableThinking: z.boolean().optional(),
     reasoningEffort: nonEmptyString.optional(),
+    pricing: EnginePricingSchema.optional(),
   })
   .passthrough()
   .superRefine((value, ctx) => {
@@ -133,6 +148,7 @@ const AgentEngineSchema = z
     model: nonEmptyString.optional(),
     timeoutMs: timeoutMsField,
     llmEngine: engineName.optional(),
+    pricing: EnginePricingSchema.optional(),
   })
   .passthrough()
   .superRefine((value, ctx) => {
