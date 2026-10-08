@@ -1216,3 +1216,172 @@ describe("runOpencodeSdk — a session the dispatch gives up on is aborted on th
     expect(aborted).toEqual(["sess-1"]);
   });
 });
+
+describe("runOpencodeSdk — permission requests are answered, not left pending", () => {
+  /**
+   * A server whose prompt blocks until every permission request raised mid-prompt
+   * has been answered (as a real OpenCode tool call does), then settles.
+   */
+  function makePermissionServer(events: (sessionId: string) => unknown[], expectedReplies = 1) {
+    const replies: { sessionId: string; permissionID: string; response: string; directory?: string }[] = [];
+    let subscribeSignal: AbortSignal | undefined;
+    let subscribeQuery: { directory?: string } | undefined;
+    let push: (event: unknown) => void = () => {};
+    let waiters = 0;
+    let answered: () => void = () => {};
+    const allAnswered = new Promise<void>((resolve) => {
+      answered = resolve;
+    });
+    const server = {
+      client: {
+        event: {
+          subscribe: async (args: { query?: { directory?: string }; signal: AbortSignal }) => {
+            subscribeSignal = args.signal;
+            subscribeQuery = args.query;
+            const queue: unknown[] = [];
+            let wake: (() => void) | undefined;
+            push = (event) => {
+              queue.push(event);
+              wake?.();
+            };
+            async function* stream() {
+              while (!args.signal.aborted) {
+                const next = queue.shift();
+                if (next !== undefined) {
+                  yield next;
+                  continue;
+                }
+                await new Promise<void>((resolve) => {
+                  wake = resolve;
+                  args.signal.addEventListener("abort", () => resolve(), { once: true });
+                });
+              }
+            }
+            return { stream: stream() };
+          },
+        },
+        postSessionIdPermissionsPermissionId: async (args: {
+          path: { id: string; permissionID: string };
+          body: { response: string };
+          query?: { directory?: string };
+        }) => {
+          replies.push({
+            sessionId: args.path.id,
+            permissionID: args.path.permissionID,
+            response: args.body.response,
+            directory: args.query?.directory,
+          });
+          if (--waiters <= 0) answered();
+          return { data: true };
+        },
+        session: {
+          create: async () => ({ data: { id: "sess-1" } }),
+          prompt: async () => {
+            const raised = events("sess-1");
+            waiters = expectedReplies;
+            for (const event of raised) push(event);
+            if (waiters > 0) await allAnswered;
+            return { data: { parts: [{ type: "text", text: "worked around it" }] } };
+          },
+        },
+      },
+      server: { close() {} },
+    };
+    return {
+      server,
+      replies,
+      subscribeSignal: () => subscribeSignal,
+      subscribeQuery: () => subscribeQuery,
+    };
+  }
+
+  test("rejects a permission request raised mid-prompt, records it, and closes the subscription", async () => {
+    const fake = makePermissionServer((sessionID) => [
+      { type: "session.status", properties: { sessionID, status: { type: "busy" } } },
+      {
+        type: "permission.asked",
+        properties: { id: "per_1", sessionID, permission: "external_directory", patterns: ["/tmp/*"] },
+      },
+    ]);
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "read the curated file", { timeoutMs: 5_000, cwd: "/work/dir" });
+
+    expect(result.ok).toBe(true);
+    expect(result.stdout).toBe("worked around it");
+    expect(fake.replies).toEqual([
+      { sessionId: "sess-1", permissionID: "per_1", response: "reject", directory: "/work/dir" },
+    ]);
+    expect(fake.subscribeQuery()).toEqual({ directory: "/work/dir" });
+    expect(result.stderr).toBe("permission requested: external_directory (/tmp/*); auto-rejecting");
+    expect(fake.subscribeSignal()?.aborted).toBe(true);
+  });
+
+  test("answers the legacy permission.updated event, a sub-session's request, and each request once", async () => {
+    const fake = makePermissionServer(
+      (sessionID) => [
+        { type: "permission.updated", properties: { id: "per_old", sessionID, type: "bash", pattern: "rm *" } },
+        { type: "permission.asked", properties: { id: "per_other", sessionID: "someone-else", permission: "bash" } },
+        { type: "session.created", properties: { info: { id: "child-1", parentID: sessionID } } },
+        { type: "permission.asked", properties: { id: "per_child", sessionID: "child-1", permission: "edit" } },
+        { type: "permission.asked", properties: { id: "per_child", sessionID: "child-1", permission: "edit" } },
+      ],
+      2,
+    );
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "go", { timeoutMs: 5_000 });
+
+    expect(result.ok).toBe(true);
+    expect(fake.replies.map((r) => [r.sessionId, r.permissionID, r.response])).toEqual([
+      ["sess-1", "per_old", "reject"],
+      ["child-1", "per_child", "reject"],
+    ]);
+    expect(result.stderr).toBe(
+      ["permission requested: bash (rm *); auto-rejecting", "permission requested: edit (); auto-rejecting"].join("\n"),
+    );
+  });
+
+  test("closes the subscription when the dispatch times out", async () => {
+    let signal: AbortSignal | undefined;
+    __setTestServer({
+      client: {
+        event: {
+          subscribe: async (args: { signal: AbortSignal }) => {
+            signal = args.signal;
+            return { stream: (async function* () {})() };
+          },
+        },
+        postSessionIdPermissionsPermissionId: async () => ({ data: true }),
+        session: {
+          create: async () => ({ data: { id: "sess-1" } }),
+          prompt: () => new Promise<never>(() => {}),
+          abort: async () => ({}),
+        },
+      },
+      server: { close() {} },
+    } as never);
+
+    const result = await runOpencodeSdk(baseProfile, "hang", { timeoutMs: 50 });
+
+    expect(result).toMatchObject({ ok: false, reason: "timeout" });
+    expect(signal?.aborted).toBe(true);
+  });
+
+  test("a failed event subscription does not fail the dispatch and is recorded", async () => {
+    const capture: PromptCapture = {};
+    const fake = makeFakeServer(capture);
+    (fake.server.client as Record<string, unknown>).event = {
+      subscribe: async () => {
+        throw new Error("connection refused");
+      },
+    };
+    (fake.server.client as Record<string, unknown>).postSessionIdPermissionsPermissionId = async () => ({});
+    __setTestServer(fake.server as never);
+
+    const result = await runOpencodeSdk(baseProfile, "go", { timeoutMs: 5_000 });
+
+    expect(result.ok).toBe(true);
+    expect(result.stderr).toContain("event subscription failed: connection refused");
+  });
+});
