@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm metrics` result shape (schemaVersion 1). See
- * docs/plans/metrics-command.md §3. Every renderer (text, md, html) is a pure
+ * `akm metrics` result shape (schemaVersion 1). Every renderer (text, md, html) is a pure
  * function of this envelope.
  */
 

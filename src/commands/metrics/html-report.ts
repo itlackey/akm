@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm metrics --format html` — the self-contained dashboard
- * (docs/plans/metrics-command.md §5).
+ * `akm metrics --format html` — the self-contained dashboard.
  *
  * The page carries the window's data in a JSON island
  * (`<script type="application/json" id="akm-data">`) and renders every panel
