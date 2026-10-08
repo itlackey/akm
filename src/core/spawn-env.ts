@@ -76,6 +76,20 @@ export const XDG_BASE_DIR_ENV_PASSTHROUGH = [
 ] as const;
 
 /**
+ * The names an `opencode` process reads beyond the common baseline: its API key
+ * (OpenCode Go and Zen read `OPENCODE_API_KEY`), the config file it is pointed
+ * at, and the {@link XDG_BASE_DIR_ENV_PASSTHROUGH} directories. ONE list for
+ * both ways akm starts opencode: the `opencode` CLI profile's `envPassthrough`
+ * and the `opencode-sdk` server's allowlist
+ * (`opencodeSdkServerEnvironmentNames`), so the two cannot drift.
+ */
+export const OPENCODE_ENV_PASSTHROUGH = [
+  "OPENCODE_API_KEY",
+  "OPENCODE_CONFIG",
+  ...XDG_BASE_DIR_ENV_PASSTHROUGH,
+] as const;
+
+/**
  * The names Windows itself requires of ANY child, whatever the caller's
  * allowlist says. Applied at build time rather than added to
  * {@link COMMON_SPAWN_ENV_PASSTHROUGH} because profile `envPassthrough` is

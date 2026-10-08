@@ -83,6 +83,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The `opencode-sdk` server receives `OPENCODE_API_KEY` and `OPENCODE_CONFIG`.** It was started with only the
+  common baseline and the XDG names, so a provider that reads its key from the environment (OpenCode Go) failed
+  with `UnknownError: Unexpected server error` where `opencode run` worked. The `opencode` CLI profile and the
+  SDK server now share one list of OpenCode names; a different key value starts another server.
+
 - **`opencode-sdk` runs keep their OpenCode session (#1100).** The SDK runner deleted the session after every
   dispatch, so a workflow, task or `akm agent` run left no transcript in OpenCode's history to debug or to learn
   from, unlike `opencode run`. The session is now kept; a dispatch akm gives up on (timeout or abort) is still

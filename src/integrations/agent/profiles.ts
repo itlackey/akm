@@ -9,7 +9,7 @@
  * coding-agent CLI. Named engines lower canonical harness metadata into this
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
-import { COMMON_SPAWN_ENV_PASSTHROUGH, XDG_BASE_DIR_ENV_PASSTHROUGH } from "../../core/spawn-env";
+import { COMMON_SPAWN_ENV_PASSTHROUGH, OPENCODE_ENV_PASSTHROUGH } from "../../core/spawn-env";
 import type { ExecutionJsonObject } from "../../execution/json";
 
 export type AgentStdioMode = "captured" | "interactive";
@@ -78,7 +78,7 @@ const BUILTINS: Record<string, AgentProfile> = {
     bin: "opencode",
     args: ["run"],
     stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "OPENCODE_API_KEY", "OPENCODE_CONFIG", ...XDG_BASE_DIR_ENV_PASSTHROUGH],
+    envPassthrough: [...COMMON_PASSTHROUGH, ...OPENCODE_ENV_PASSTHROUGH],
     parseOutput: "text",
   },
   claude: {
