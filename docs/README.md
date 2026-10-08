@@ -12,6 +12,7 @@ Full per-directory indexes: [Guides](https://github.com/itlackey/akm/blob/main/d
 
 ## Start
 
+- [Product Surface](product-surface.md) -- Everything akm does, with a short description and the status (Stable, Evolving, Experimental) of each feature
 - [Getting Started](https://github.com/itlackey/akm/blob/main/docs/guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist in five to seven minutes
 - [Concepts](https://github.com/itlackey/akm/blob/main/docs/guides/concepts.md) -- Capabilities, bundles, adapters, asset types, and refs -- the mental model in one page
 - [Agent Install Guide](https://github.com/itlackey/akm/blob/main/docs/agents/agent-install.md) -- Step-by-step automated (non-interactive) install for agents
