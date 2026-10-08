@@ -191,3 +191,68 @@ test("managed serve startup failure: listening timeout kills a stubborn child", 
   const pid = Number(require("node:fs").readFileSync(pidFile, "utf8"));
   expect(await pollUntil(() => !pidAlive(pid), 4_000)).toBe(true);
 }, 15_000);
+
+test("a permission request on the real event stream is rejected, the dispatch completes, and the stream is closed", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "akm-fake-serve-perm-"));
+  cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+  const logFile = join(dir, "log.jsonl");
+  const script = join(dir, "serve.ts");
+  // A minimal OpenCode server: the prompt raises a permission request on the
+  // /event stream and answers only once the reply route has been called.
+  writeFileSync(
+    script,
+    `
+const fs = require("node:fs");
+const log = (o) => fs.appendFileSync(${JSON.stringify(logFile)}, JSON.stringify(o) + "\\n");
+let sse; let replied; const repliedP = new Promise((r) => { replied = r; });
+const server = Bun.serve({ port: 0, async fetch(req) {
+  const url = new URL(req.url);
+  if (url.pathname === "/event") {
+    log({ event: "subscribed", directory: url.searchParams.get("directory") });
+    req.signal.addEventListener("abort", () => log({ event: "closed" }));
+    return new Response(new ReadableStream({ start(c) { sse = c; c.enqueue(new TextEncoder().encode('data: {"type":"server.connected","properties":{}}\\n\\n')); } }), { headers: { "content-type": "text/event-stream" } });
+  }
+  if (req.method === "POST" && url.pathname === "/session") return Response.json({ id: "ses_1" });
+  if (req.method === "POST" && url.pathname === "/session/ses_1/message") {
+    sse.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ type: "permission.asked", properties: { id: "per_1", sessionID: "ses_1", permission: "external_directory", patterns: ["/tmp/*"] } }) + '\\n\\n'));
+    await repliedP;
+    return Response.json({ info: {}, parts: [{ type: "text", text: "done" }] });
+  }
+  if (req.method === "POST" && url.pathname === "/session/ses_1/permissions/per_1") {
+    log({ event: "reply", body: await req.json() });
+    replied();
+    return Response.json(true);
+  }
+  return new Response("not found", { status: 404 });
+} });
+console.log("opencode server listening on http://127.0.0.1:" + server.port);
+`,
+  );
+  __setServeCommand([process.execPath, script]);
+
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 10_000, cwd: dir });
+
+  expect(result.ok).toBe(true);
+  expect(result.stdout).toBe("done");
+  expect(result.stderr).toBe("permission requested: external_directory (/tmp/*); auto-rejecting");
+  expect(
+    await pollUntil(() => {
+      try {
+        return require("node:fs").readFileSync(logFile, "utf8").includes('"closed"');
+      } catch {
+        return false;
+      }
+    }, 3_000),
+  ).toBe(true);
+  const events = require("node:fs")
+    .readFileSync(logFile, "utf8")
+    .trim()
+    .split("\n")
+    .map((l: string) => JSON.parse(l));
+  expect(events).toEqual([
+    { event: "subscribed", directory: dir },
+    { event: "reply", body: { response: "reject" } },
+    { event: "closed" },
+  ]);
+}, 20_000);

@@ -152,6 +152,17 @@ interface SdkClient {
     // Optional so a fake that omits it cannot crash a dispatch; the real client has it.
     abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
   };
+  // Optional so a fake that omits them cannot crash a dispatch; the real client has both.
+  /** Server-sent events for the directory; the stream ends when `signal` aborts. */
+  event?: {
+    subscribe(args: { query?: SdkDirectoryQuery; signal: AbortSignal }): Promise<{ stream: AsyncIterable<unknown> }>;
+  };
+  /** Answer a pending permission request (`response`: "once" | "always" | "reject"). */
+  postSessionIdPermissionsPermissionId?(args: {
+    path: { id: string; permissionID: string };
+    body: { response: "reject" };
+    query?: SdkDirectoryQuery;
+  }): Promise<{ error?: unknown }>;
 }
 
 /** Typed server instance returned by `createOpencode`. */
@@ -642,7 +653,55 @@ async function createManagedOpencode(options: {
   proc.stderr?.destroy();
   proc.unref();
 
-  return { client: createOpencodeClient({ baseUrl: url }), server: { close: closeManaged } };
+  const client = createOpencodeClient({ baseUrl: url });
+  client.event = { subscribe: (args) => subscribeEvents(url, args) };
+  return { client, server: { close: closeManaged } };
+}
+
+/**
+ * Subscribe to the server's event stream. The SDK's own `event.subscribe`
+ * cannot be closed safely: aborting it leaves an unhandled `AbortError`
+ * rejection (from its un-awaited `reader.cancel()`), which akm's global
+ * handler turns into a process exit. This reader ends quietly on abort.
+ */
+async function subscribeEvents(
+  baseUrl: string,
+  args: { query?: SdkDirectoryQuery; signal: AbortSignal },
+): Promise<{ stream: AsyncIterable<unknown> }> {
+  const eventUrl = new URL("/event", baseUrl);
+  if (args.query?.directory) eventUrl.searchParams.set("directory", args.query.directory);
+  const response = await fetch(eventUrl, { signal: args.signal, headers: { accept: "text/event-stream" } });
+  if (!response.ok || !response.body) throw new Error(`OpenCode event stream failed: HTTP ${response.status}`);
+  const reader = response.body.getReader();
+  async function* stream(): AsyncGenerator<unknown> {
+    const decoder = new TextDecoder();
+    let buffer = "";
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) return;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() ?? "";
+        for (const frame of frames) {
+          const data = frame
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.replace(/^data:\s*/, ""))
+            .join("\n");
+          if (!data) continue;
+          try {
+            yield JSON.parse(data);
+          } catch {
+            /* not JSON: not an event we act on */
+          }
+        }
+      }
+    } catch (err) {
+      if (!args.signal.aborted) throw err;
+    }
+  }
+  return { stream: stream() };
 }
 
 async function startServer(
@@ -848,6 +907,73 @@ function abortSessionBestEffort(client: SdkClient, sessionId: string, query: Sdk
   void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
 }
 
+/**
+ * Answer every OpenCode permission request of the dispatch's session (and of
+ * the sub-sessions it spawns) with "reject", once each. This is what a
+ * non-interactive `opencode run` does ("auto-rejecting"); left unanswered, a
+ * tool call that needs permission (OpenCode's default `external_directory:
+ * ask`) stays `running` and the prompt never settles. A rejection reaches the
+ * model as a tool error it can work around. Each request and answer is
+ * appended to `notes`. `ready` (absent when the client has no event surface)
+ * settles once the subscription is open and never rejects; `stop` closes it.
+ */
+function rejectPermissionRequests(
+  client: SdkClient,
+  sessionId: string,
+  query: SdkDirectoryQuery | undefined,
+  notes: string[],
+): { ready?: Promise<void>; stop: () => void } {
+  const subscribe = client.event?.subscribe;
+  const reply = client.postSessionIdPermissionsPermissionId;
+  const controller = new AbortController();
+  const stop = (): void => controller.abort();
+  if (!subscribe || !reply) return { stop };
+  const sessions = new Set([sessionId]);
+  const answered = new Set<string>();
+  const consume = async (stream: AsyncIterable<unknown>): Promise<void> => {
+    for await (const event of stream) {
+      if (!isRecord(event) || !isRecord(event.properties)) continue;
+      const props = event.properties;
+      if (event.type === "session.created" && isRecord(props.info)) {
+        const { id, parentID } = props.info;
+        if (typeof id === "string" && typeof parentID === "string" && sessions.has(parentID)) sessions.add(id);
+        continue;
+      }
+      // `permission.asked` (OpenCode >= 1.3) / `permission.updated` (older).
+      if (event.type !== "permission.asked" && event.type !== "permission.updated") continue;
+      const { id, sessionID } = props;
+      if (typeof id !== "string" || typeof sessionID !== "string") continue;
+      if (!sessions.has(sessionID) || answered.has(id)) continue;
+      answered.add(id);
+      const patterns = Array.isArray(props.patterns) ? props.patterns : props.pattern ? [props.pattern] : [];
+      notes.push(
+        `permission requested: ${String(props.permission ?? props.type ?? "unknown")} (${patterns.join(", ")}); auto-rejecting`,
+      );
+      reply
+        .call(client, {
+          path: { id: sessionID, permissionID: id },
+          body: { response: "reject" },
+          ...(query ? { query } : {}),
+        })
+        .then((r) => {
+          if (r.error) notes.push(`permission reply for ${id} failed: ${JSON.stringify(r.error)}`);
+        })
+        .catch((err) => notes.push(`permission reply for ${id} failed: ${errorText(err)}`));
+    }
+  };
+  const ready = subscribe
+    .call(client.event, { ...(query ? { query } : {}), signal: controller.signal })
+    .then(({ stream }) => {
+      void consume(stream).catch((err) => {
+        if (!controller.signal.aborted) notes.push(`permission event stream ended: ${errorText(err)}`);
+      });
+    })
+    .catch((err) => {
+      notes.push(`permission requests will not be answered: event subscription failed: ${errorText(err)}`);
+    });
+  return { ready, stop };
+}
+
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
   return {
     ok: false,
@@ -1027,7 +1153,20 @@ export async function runOpencodeSdk(
 
   let result: AgentRunResult;
 
+  // Subscribed before the prompt so no request can be missed; closed in `finally`.
+  const permissionNotes: string[] = [];
+  const permissions = rejectPermissionRequests(client, sessionId, query, permissionNotes);
+
   try {
+    // Bounded like every other step; if it times out the prompt race below does too.
+    if (permissions.ready) {
+      await raceSdkOperation(permissions.ready, {
+        timeoutMs: remainingTimeoutMs(),
+        setTimeoutFn: setTimeoutImpl,
+        clearTimeoutFn: clearTimeoutImpl,
+        signal: abortSignal,
+      });
+    }
     const prompted = await raceSdkOperation(
       client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) }),
       {
@@ -1110,6 +1249,11 @@ export async function runOpencodeSdk(
       error: errorText(err),
       sessionId,
     };
+  } finally {
+    permissions.stop();
+  }
+  if (permissionNotes.length > 0) {
+    result.stderr = [result.stderr, ...permissionNotes].filter(Boolean).join("\n");
   }
   return result;
 }

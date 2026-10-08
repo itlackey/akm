@@ -83,6 +83,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **An `opencode-sdk` dispatch no longer hangs when OpenCode asks for a permission (#1104).** The runner never
+  answered permission requests, so a tool call that needed one (OpenCode's default `external_directory: ask`,
+  e.g. reading the plugin's `/tmp/akm-opencode/curated/<session>.md`) stayed `running` until the dispatch
+  timed out. The runner now rejects each request of its session, and of the sub-sessions it spawns, exactly as
+  a non-interactive `opencode run` does ("auto-rejecting"), so the model gets a refusal it can work around;
+  each request is recorded in the dispatch's `stderr`, and the event subscription is closed when the dispatch
+  ends. Grant access in the agent's `permission` config to allow it instead.
 - **The `opencode-sdk` server receives `OPENCODE_API_KEY` and `OPENCODE_CONFIG`.** It was started with only the
   common baseline and the XDG names, so a provider that reads its key from the environment (OpenCode Go) failed
   with `UnknownError: Unexpected server error` where `opencode run` worked. The `opencode` CLI profile and the
