@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- The distill judge scores a lesson 1–2 on non-redundancy when a listed asset
+  states most of what it says, not only when it states the same rule, and is
+  told to compare only with the listed assets, never with the source memory.
+  Before, a lesson that restated a skill the library holds scored 3 ("largely
+  redundant") and went to a reviewer. Judge-only replay of the lessons the
+  writer produced (local qwen3.8-27b, 3 repeats): of 4 public lessons for
+  memories that deserve none, 12 verdicts passed 3 before and 1 after, and of
+  12 such own lessons 33 of 36 passed before and 27 after, while the 31
+  lesson-worthy own lessons lost no verdict (2 of 93 rejected before, 0 after).
 - **The pair judge's reason no longer swaps A and B.** In a replay of 120 recorded pairs, 18 of 90 retirement
   reasons said the opposite of what the judge's claim lists decided (for example "B contains all claims from A" for a
   pair where B was retired). The lists were right, so no retirement changed, but the reason a reviewer reads was
