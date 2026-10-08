@@ -9,7 +9,7 @@
 
 import { readEvents } from "../../core/events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
-import { decodeLlmUsageRecord } from "../../llm/usage-telemetry";
+import { decodeLlmUsageRecord, type LlmUsageRecord } from "../../llm/usage-telemetry";
 import type { LlmUsageAggregate, LlmUsageCrossTabRow, LlmUsageStageAggregate } from "./types";
 
 /** Stage/process/engine/model key used for `llm_usage` events recorded with no value for that dimension. */
@@ -74,7 +74,7 @@ export function readLlmUsageAggregate(stateDbPath: string, since: string, until?
 }
 
 /**
- * Aggregate `llm_usage` events (#576) into a process x engine x model
+ * Aggregate `llm_usage` records (#576) into a process x engine x model
  * cross-tab (#944) — one row per distinct `(process, engine, model)` triple
  * seen, each carrying the same call/failure/token/duration totals as
  * {@link LlmUsageStageAggregate}. A call missing any one of the three
@@ -84,11 +84,9 @@ export function readLlmUsageAggregate(stateDbPath: string, since: string, until?
  * breakdowns — `akm health`'s existing consumers of those stay untouched.
  * Row order is insertion order (first `(process, engine, model)` triple seen).
  */
-export function summarizeLlmUsageCrossTab(events: ReturnType<typeof readEvents>["events"]): LlmUsageCrossTabRow[] {
+export function summarizeLlmUsageRecordsCrossTab(records: Iterable<LlmUsageRecord>): LlmUsageCrossTabRow[] {
   const rows = new Map<string, LlmUsageCrossTabRow>();
-  for (const event of events) {
-    const record = decodeLlmUsageRecord(event.metadata);
-    if (!record) continue;
+  for (const record of records) {
     const process = record.process ?? UNATTRIBUTED_STAGE;
     const engine = record.engine ?? UNATTRIBUTED_STAGE;
     const model = record.model ?? UNATTRIBUTED_STAGE;
@@ -107,4 +105,18 @@ export function summarizeLlmUsageCrossTab(events: ReturnType<typeof readEvents>[
     if (record.outcome === "error") row.failures += 1;
   }
   return [...rows.values()];
+}
+
+/**
+ * The events form of {@link summarizeLlmUsageRecordsCrossTab}: decode each
+ * `llm_usage` event's metadata (dropping undecodable rows) and aggregate the
+ * records. Use it when only persisted events are available.
+ */
+export function summarizeLlmUsageCrossTab(events: ReturnType<typeof readEvents>["events"]): LlmUsageCrossTabRow[] {
+  const records: LlmUsageRecord[] = [];
+  for (const event of events) {
+    const record = decodeLlmUsageRecord(event.metadata);
+    if (record) records.push(record);
+  }
+  return summarizeLlmUsageRecordsCrossTab(records);
 }

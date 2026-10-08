@@ -50,8 +50,10 @@ export interface ImproveReportResult {
 }
 
 /**
- * Recompute the cross-tab from this run's own `llm_usage` events (a pre-#944
- * row has no persisted one). `eventsCtx` threads the state.db connection
+ * Recompute the cross-tab from the `llm_usage` events in this run's wall-clock
+ * window (a pre-#944 row has no persisted one). Events carry no run id, so a
+ * recomputed cross-tab can include LLM calls that other akm processes made
+ * during the run's window. `eventsCtx` threads the state.db connection
  * `runImproveReportQuery` already holds via `withStateDb`, so a `--since`
  * window with several pre-0.9.15 or undecodable rows reads through that one
  * open connection instead of each row opening and closing its own.
