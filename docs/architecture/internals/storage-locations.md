@@ -505,7 +505,7 @@ Keys of `metadata_json`, each written only when the proposal has it:
 | `acceptedTarget` | `{ source, root, path, contentHash }`, where accepted content went |
 | `eligibilitySource` | The improve lane that planned the asset: `signal-delta` or `scope`; `proactive` and `high-salience` only on rows an older release wrote, since those lanes score assets and no longer plan them |
 | `promotionSource`, `promotionSourceHash` | A consolidate promotion's source memory and its raw body hash at mint: accept archives the memory only if the hash still matches, and once the promotion is decided the ledger holds the memory until its body changes |
-| `retirement` | A `consolidate-pair` retire proposal's verdict: `retiredRef`, `successorRef`, `cosine`, `judgeLabel`, `judgeReason`, `retiredContentHash`, `successorContentHash`, `reason`, and `continuityRisk` when the retirement continuity check flagged it |
+| `retirement` | A `consolidate-pair` retire proposal's verdict: `retiredRef`, `successorRef`, `cosine`, `judgeLabel`, `judgeReason`, `onlyInRetired` and `onlyInSuccessor` (the judge's claim lists by role, each at most 20 x 200 chars; absent before they were recorded), `retiredContentHash`, `successorContentHash`, `reason`, and `continuityRisk` when the retirement continuity check flagged it |
 | `retiredArchive` | `{ dirs }`, the archive directories of an accepted retirement, for `revert` |
 | `retireAcceptIntent` | `{ assetPath, backupContent }`, a retire accept's recorded intent, kept until the accept finishes so a crashed one resumes |
 
