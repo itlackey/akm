@@ -41,17 +41,12 @@ const MEAN_SCALE = 100;
 /** `improve.eventRetentionDays` default (`runRetentionPurgePass`); 0 disables the purge. */
 export const DEFAULT_EVENT_RETENTION_DAYS = 90;
 
-export interface MetricsFilters {
-  source: string;
-  bundles: string[];
-  ref?: string;
-}
-
 /** Everything {@link buildMetricsResult} needs, already read and window-filtered by the caller. */
 export interface MetricsInput {
   window: { since: string; until: string };
-  filters: MetricsFilters;
-  /** `--top`: the cap on every ranked list. */
+  /** The usage source the rows were limited to. */
+  source: string;
+  /** The cap on every ranked list. */
   top: number;
   /** Attach {@link AkmMetricsResult.rows}. */
   includeRows: boolean;
@@ -67,18 +62,11 @@ export interface MetricsInput {
   tasks: TaskHistoryRow[];
   proposals: AkmMetricsResult["proposals"];
   workflows: AkmMetricsResult["workflows"];
-  /** Notes the caller already gathered (missing stores, retention, filters). */
+  /** Notes the caller already gathered (missing stores, retention). */
   notes: string[];
 }
 
 // ── Filters ─────────────────────────────────────────────────────────────────
-
-/** Whether a durable ref passes the `--bundle` / `--ref` filters. */
-export function refMatchesFilters(ref: string, filters: Pick<MetricsFilters, "bundles" | "ref">): boolean {
-  if (filters.ref !== undefined) return ref === filters.ref;
-  if (filters.bundles.length === 0) return true;
-  return filters.bundles.some((bundle) => ref.startsWith(`${bundle}//`));
-}
 
 // ── Notes ───────────────────────────────────────────────────────────────────
 
@@ -231,21 +219,9 @@ function byCountThenKey<T extends { count: number }>(key: (item: T) => string): 
 // ── Sections ────────────────────────────────────────────────────────────────
 
 function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsResult["usage"] {
-  // A search or curate writes one summary row (no ref) plus one row per hit. A
-  // bundle or ref filter drops the summary rows with the refs they lack, so the
-  // hit rows are what is counted. They carry no search id, so the rows of one
-  // search (same type, query and timestamp) count once: a search that returned
-  // several matching assets is still one search.
-  const hitMode = input.filters.bundles.length > 0 || input.filters.ref !== undefined;
-  const seenHitGroups = new Set<string>();
-  const isUnit = (row: MetricsUsageRow) => {
-    if (!hitMode) return row.ref === undefined;
-    if (row.ref === undefined) return false;
-    const group = JSON.stringify([row.eventType, row.query ?? null, row.at]);
-    if (seenHitGroups.has(group)) return false;
-    seenHitGroups.add(group);
-    return true;
-  };
+  // A search or curate writes one summary row (no ref) plus one row per hit;
+  // the summary row is the unit counted.
+  const isUnit = (row: MetricsUsageRow) => row.ref === undefined;
 
   const days = new Map<string, MetricsDailyUsage>();
   const bump = (at: string, field: keyof Omit<MetricsDailyUsage, "day">) => {
@@ -289,7 +265,7 @@ function buildUsage(input: MetricsInput, rows: MetricsUsageRow[]): AkmMetricsRes
       if (!isUnit(row)) continue;
       searches += 1;
       bump(row.at, "search");
-      if (hitMode || (row.resultCount ?? 0) > 0) searchesWithHits += 1;
+      if ((row.resultCount ?? 0) > 0) searchesWithHits += 1;
       if (row.resultCount === 0) zeroResultSearches += 1;
       if (row.totalMs !== undefined) searchMs.push(row.totalMs);
       const query = row.query?.trim();
@@ -434,7 +410,6 @@ function buildUtility(input: MetricsInput): AkmMetricsResult["utility"] {
   const scored: MetricsUtilityAsset[] = [];
   let neverUsed = 0;
   for (const entry of input.utility ?? []) {
-    if (!refMatchesFilters(entry.ref, input.filters)) continue;
     if (!entry.score) {
       neverUsed += 1;
       continue;
@@ -523,11 +498,7 @@ export function buildMetricsResult(input: MetricsInput): AkmMetricsResult {
   return {
     schemaVersion: 1,
     window: input.window,
-    filters: {
-      source: input.filters.source,
-      bundles: input.filters.bundles,
-      ...(input.filters.ref !== undefined ? { ref: input.filters.ref } : {}),
-    },
+    filters: { source: input.source },
     usage: buildUsage(input, rows),
     feedback: buildFeedback(input.top, rows),
     utility: buildUtility(input),

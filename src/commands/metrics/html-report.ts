@@ -77,16 +77,11 @@ function islandJson(value: unknown): string {
 
 export function buildMetricsHtmlReplacements(result: AkmMetricsResult): Record<string, string> {
   const { filters, window: win } = result;
-  const filterParts = [
-    `source: ${esc(filters.source)}`,
-    `bundles: ${filters.bundles.length > 0 ? esc(filters.bundles.join(", ")) : "all"}`,
-    ...(filters.ref ? [`ref: ${esc(filters.ref)}`] : []),
-  ];
   return {
     "%%ECHARTS_TAG%%": buildEchartsTag(),
     "%%REPORT_TITLE%%": "akm metrics",
     "%%WINDOW_HTML%%": `${isoTimeTag(win.since)} &rarr; ${isoTimeTag(win.until)}`,
-    "%%FILTERS_HTML%%": filterParts.join(" &middot; "),
+    "%%FILTERS_HTML%%": `source: ${esc(filters.source)}`,
     "%%GENERATED_AT%%": esc(win.until),
     "%%AKM_VERSION%%": esc(pkgVersion),
     "%%DATA_JSON%%": islandJson(toPageData(result)),

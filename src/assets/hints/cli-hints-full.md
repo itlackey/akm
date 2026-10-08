@@ -417,7 +417,7 @@ akm info                                       # Capabilities, bundle dir, index
 akm health                                     # Runtime diagnostics; exit 0 ok / 4 warn / 1 fail
 akm health --report                            # Adds accept-rate metrics
 akm metrics                                    # Usage, feedback, utility, LLM tokens, tasks, workflows (last 30d, read-only)
-akm metrics --since 7d --bundle <id>           # Narrow the window or the bundle; --ref <ref> for one asset
+akm metrics --since 7d                         # Narrow the window
 akm metrics --format html --output metrics.html # Self-contained dashboard with the window's rows (filter, sort, export CSV)
 akm log                                        # Append-only event stream (mutations, feedback, indexing)
 akm log --ref <ref>                            # One asset's event trail

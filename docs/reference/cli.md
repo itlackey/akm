@@ -450,27 +450,25 @@ recorded.
 
 ```sh
 akm metrics
-akm metrics --since 7d --top 10
-akm metrics --bundle main --source all
-akm metrics --ref skills/deploy
-akm metrics --since 2026-05-01 --until 2026-06-01 --format yaml
+akm metrics --since 7d
+akm metrics --since 2026-05-01 --format yaml
 akm metrics --format html --output metrics.html
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--since` | Window start. Accepts ISO 8601, `YYYY-MM-DD`, epoch milliseconds, or shorthand like `24h` / `7d`. Default: `30d`. |
-| `--until` | Window end (exclusive), same forms. Default: now. |
-| `--bundle` | Only assets in this bundle, matched on the `<bundle>//` ref prefix. Repeatable. |
-| `--ref` | Only this asset. A short `[bundle//]conceptId` is resolved through the index; one the index cannot resolve exits 1. |
-| `--source` | Which usage rows count: `user` (default, matching utility and retrieval counts), `all`, or one of `improve` / `task` / `audit` / `unknown`. |
-| `--top` | Cap on every ranked list. Default: 20. |
+
+The window always ends now. Only `user`-source usage rows are counted (matching
+utility and retrieval counts), and every ranked list holds its top 20. For a
+narrower view, open the HTML dashboard and filter by date, bundle, source and
+event type in the browser.
 
 Result sections (`schemaVersion: 1`):
 
 | Field | Description |
 | --- | --- |
-| `window`, `filters` | The resolved window and the filters applied |
+| `window`, `filters` | The resolved window and the usage source counted |
 | `usage` | Search, show, curate and select totals, `selectRate` (selects over searches that returned a hit), `searchMedianMs`, a daily series, top assets, top and zero-result queries, and rows by source |
 | `feedback` | Positive and negative totals, per-asset valence, per-tag counts, and the most recent negatives with their reasons |
 | `utility` | A ten-bucket histogram of `utility_scores`, the lowest and highest assets, and how many indexed entries were never used |
@@ -494,12 +492,8 @@ Notes you may see:
   (`usage_events` keeps 90 days; `events`, which holds selects, LLM calls and
   index runs, keeps `improve.eventRetentionDays`, default 90) and where its data
   effectively starts, so a long window is never silently shorter than asked.
-- With `--bundle` or `--ref`, usage, feedback, utility and outcomes are limited
-  to the matching assets and `searches` counts the searches that returned one;
-  `llm`, `index`, `tasks`, the proposal accept rate and `workflows` cover
-  everything.
 - Selects are read from the events stream, which records no source, so they are
-  counted whatever `--source` says.
+  counted whatever the usage source is.
 
 ### search
 

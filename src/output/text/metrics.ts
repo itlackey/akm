@@ -4,7 +4,7 @@
 
 /**
  * `akm metrics --format text`: aligned sections with top-N tables. Lists are
- * cut to 5 at `--detail brief` and show everything `--top` kept otherwise.
+ * cut to 5 at `--detail brief` and show everything the top-20 cap kept otherwise.
  */
 
 import { buildMetricsView, isMetricsResult, type MetricsViewTable } from "../../commands/metrics/report-view";

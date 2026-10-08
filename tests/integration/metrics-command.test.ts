@@ -153,52 +153,27 @@ describe("akm metrics", () => {
       { type: "show", at: "2026-01-10 13:00:00", ref: "main//skills/inside" },
       { type: "show", at: "2026-01-11 01:00:00", ref: "main//skills/after" },
     ]);
-    const { result } = await metrics("--since", "2026-01-10T12:00:00Z", "--until", "2026-01-11T00:00:00Z");
+    const result = await akmMetrics({
+      since: "2026-01-10T12:00:00Z",
+      now: () => Date.parse("2026-01-11T00:00:00Z"),
+    });
     expect(result.usage.topAssets.map((asset) => asset.ref)).toEqual(["main//skills/inside"]);
     expect(result.window).toEqual({ since: "2026-01-10T12:00:00.000Z", until: "2026-01-11T00:00:00.000Z" });
   });
 
-  test("--source defaults to user and all removes the filter", async () => {
+  test("only user-source usage is counted", async () => {
     const at = sqliteTs(Date.now() - HOUR);
     seedUsage([
       { type: "show", at, ref: "main//skills/a", source: "user" },
       { type: "show", at, ref: "main//skills/b", source: "improve" },
     ]);
-    const user = await metrics();
-    expect(user.result.usage.totals.shows).toBe(1);
-    expect(user.result.filters.source).toBe("user");
-    const all = await metrics("--source", "all");
-    expect(all.result.usage.totals.shows).toBe(2);
-    expect(all.result.usage.bySource).toEqual({ improve: 1, user: 1 });
-    const improve = await metrics("--source", "improve");
-    expect(improve.result.usage.totals.shows).toBe(1);
+    const { result } = await metrics();
+    expect(result.usage.totals.shows).toBe(1);
+    expect(result.filters.source).toBe("user");
   });
 
-  test("--bundle and --ref narrow the usage sections", async () => {
-    const at = sqliteTs(Date.now() - HOUR);
-    seedUsage([
-      { type: "show", at, ref: "main//skills/a" },
-      { type: "show", at, ref: "other//skills/a" },
-      { type: "show", at, ref: "other//skills/b" },
-    ]);
-    const bundle = await metrics("--bundle", "other");
-    expect(bundle.result.usage.totals.shows).toBe(2);
-    expect(bundle.result.filters.bundles).toEqual(["other"]);
-    const both = await metrics("--bundle", "main", "--bundle", "other");
-    expect(both.result.usage.totals.shows).toBe(3);
-    const ref = await metrics("--ref", "other//skills/b");
-    expect(ref.result.usage.totals.shows).toBe(1);
-    expect(ref.result.filters.ref).toBe("other//skills/b");
-  });
-
-  test("an unqualified --ref the index cannot resolve is not found", async () => {
-    const { status, stderr } = await metrics("--ref", "skills/missing");
-    expect(status).toBe(1);
-    expect(JSON.parse(stderr)).toMatchObject({ ok: false, code: "ASSET_NOT_FOUND" });
-  });
-
-  test("--since later than --until is a usage error", async () => {
-    const { status, stderr } = await metrics("--since", "2026-02-01", "--until", "2026-01-01");
+  test("--since in the future is a usage error", async () => {
+    const { status, stderr } = await metrics("--since", "2999-01-01");
     expect(status).toBe(2);
     expect(JSON.parse(stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
   });
@@ -289,47 +264,6 @@ describe("akm metrics", () => {
     expect(result.notes.some((note) => note.includes("index.db"))).toBe(false);
   });
 
-  test("a short --ref resolves the way show does: default bundle first", async () => {
-    const first = makeStashDir();
-    const second = makeStashDir();
-    try {
-      for (const root of [first.dir, second.dir]) {
-        const file = path.join(root, "knowledge", "shared.md");
-        fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, "---\ndescription: shared note\n---\n\n# Shared\n", "utf8");
-      }
-      const configure = (defaultBundle: string) => {
-        writeSandboxConfig({
-          semanticSearchMode: "off",
-          bundles: { alpha: { path: first.dir }, beta: { path: second.dir } },
-          defaultBundle,
-        });
-        resetConfigCache();
-      };
-      configure("beta");
-      await akmIndex({ stashDir: storage.stashDir, full: true });
-      const at = sqliteTs(Date.now() - HOUR);
-      seedUsage([
-        { type: "show", at, ref: "alpha//knowledge/shared" },
-        { type: "show", at, ref: "beta//knowledge/shared" },
-        { type: "show", at, ref: "beta//knowledge/shared" },
-      ]);
-
-      const beta = await metrics("--ref", "knowledge/shared");
-      expect(beta.status).toBe(0);
-      expect(beta.result.filters.ref).toBe("beta//knowledge/shared");
-      expect(beta.result.usage.totals.shows).toBe(2);
-
-      configure("alpha");
-      const alpha = await metrics("--ref", "knowledge/shared");
-      expect(alpha.result.filters.ref).toBe("alpha//knowledge/shared");
-      expect(alpha.result.usage.totals.shows).toBe(1);
-    } finally {
-      first.cleanup();
-      second.cleanup();
-    }
-  });
-
   test("a select recorded under a short ref counts toward the durable asset", async () => {
     const first = makeStashDir();
     const second = makeStashDir();
@@ -354,8 +288,6 @@ describe("akm metrics", () => {
       expect(all.result.usage.topAssets.map((asset) => [asset.ref, asset.selects])).toEqual([
         ["beta//knowledge/shared", 1],
       ]);
-      expect((await metrics("--bundle", "beta")).result.usage.totals.selects).toBe(1);
-      expect((await metrics("--bundle", "alpha")).result.usage.totals.selects).toBe(0);
     } finally {
       first.cleanup();
       second.cleanup();
@@ -363,7 +295,7 @@ describe("akm metrics", () => {
   });
 
   test("a usage row written in the window end's own second is inside the window", async () => {
-    // created_at has whole-second resolution; `until` defaults to now, with milliseconds.
+    // created_at has whole-second resolution; the window ends at now, with milliseconds.
     seedUsage([{ type: "show", at: "2026-01-10 12:00:00", ref: "main//skills/now" }]);
     const result = await akmMetrics({
       since: "2026-01-10T00:00:00Z",

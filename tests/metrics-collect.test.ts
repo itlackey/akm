@@ -11,7 +11,6 @@ import {
   indexRunsFromEvents,
   llmRowsFromEvents,
   type MetricsInput,
-  refMatchesFilters,
   retentionNotes,
   toUsageRow,
   usageCreatedAtToIso,
@@ -37,7 +36,7 @@ function usage(partial: Partial<UsageEventRow> & Pick<UsageEventRow, "event_type
 function input(partial: Partial<MetricsInput> = {}): MetricsInput {
   return {
     window: { since: "2026-01-01T00:00:00.000Z", until: "2026-02-01T00:00:00.000Z" },
-    filters: { source: "user", bundles: [] },
+    source: "user",
     top: 20,
     includeRows: false,
     usage: [],
@@ -163,7 +162,7 @@ describe("usage section", () => {
     expect(result.bySource).toEqual({ user: 8 });
   });
 
-  test("--top caps every ranked list", () => {
+  test("top caps every ranked list", () => {
     const capped = buildMetricsResult(input({ usage: rows, top: 1 })).usage;
     expect(capped.topAssets).toHaveLength(1);
     expect(capped.topQueries).toHaveLength(1);
@@ -173,45 +172,6 @@ describe("usage section", () => {
     const empty = buildMetricsResult(input()).usage;
     expect(empty.selectRate).toBeNull();
     expect(empty.searchMedianMs).toBeNull();
-  });
-
-  test("under a bundle filter the per-hit rows are the searches", () => {
-    const filtered = buildMetricsResult(
-      input({ usage: [rows[1]!, rows[4]!], filters: { source: "user", bundles: ["b"] } }),
-    ).usage;
-    expect(filtered.totals.searches).toBe(1);
-    expect(filtered.totals.zeroResultSearches).toBe(0);
-    expect(filtered.topQueries.map((q) => q.query)).toEqual(["deploy"]);
-  });
-
-  test("under a bundle filter one search that wrote several per-hit rows is one search", () => {
-    const hit = (ref: string, createdAt: string, eventType: "search" | "curate" = "search") =>
-      usage({ event_type: eventType, created_at: createdAt, query: "deploy", entry_ref: ref });
-    const filtered = buildMetricsResult(
-      input({
-        usage: [
-          hit("b//skills/a", "2026-01-02 10:00:00"),
-          hit("b//skills/b", "2026-01-02 10:00:00"),
-          hit("b//skills/c", "2026-01-02 10:00:00"),
-          hit("b//skills/a", "2026-01-03 10:00:00"),
-          hit("b//skills/a", "2026-01-04 10:00:00", "curate"),
-          hit("b//skills/b", "2026-01-04 10:00:00", "curate"),
-        ],
-        selects: [{ ts: "2026-01-02T10:00:01.000Z", ref: "b//skills/a" }],
-        filters: { source: "user", bundles: ["b"] },
-      }),
-    ).usage;
-    expect(filtered.totals.searches).toBe(2);
-    expect(filtered.totals.curates).toBe(1);
-    expect(filtered.totals.distinctQueries).toBe(1);
-    expect(filtered.topQueries.map((q) => [q.query, q.count])).toEqual([["deploy", 2]]);
-    expect(filtered.daily.map((d) => [d.day, d.search, d.curate])).toEqual([
-      ["2026-01-02", 1, 0],
-      ["2026-01-03", 1, 0],
-      ["2026-01-04", 0, 1],
-    ]);
-    expect(filtered.selectRate).toBe(1 / 2);
-    expect(filtered.topAssets.find((a) => a.ref === "b//skills/a")?.searchHits).toBe(2);
   });
 });
 
@@ -274,15 +234,6 @@ describe("utility section", () => {
     expect(section.histogram[9]).toEqual({ bucket: "0.9-1.0", count: 1 });
     expect(section.lowest.map((a) => a.ref)).toEqual(["b//a", "b//b", "b//c"]);
     expect(section.highest[0]).toMatchObject({ ref: "b//c", lastUsedAt: "2026-01-02T00:00:00Z" });
-  });
-
-  test("filters apply to the utility rows", () => {
-    const section = buildMetricsResult(input({ utility, filters: { source: "user", bundles: ["other"] } })).utility;
-    expect(section.count).toBe(0);
-    expect(section.neverUsed).toBe(1);
-    expect(
-      buildMetricsResult(input({ utility, filters: { source: "user", bundles: [], ref: "b//c" } })).utility.count,
-    ).toBe(1);
   });
 
   test("a missing index gives an empty section", () => {
@@ -420,15 +371,5 @@ describe("retention notes", () => {
     expect(
       retentionNotes({ ...base, sinceIso: "2020-01-01T00:00:00.000Z", usageRetentionDays: 0, eventRetentionDays: 0 }),
     ).toEqual([]);
-  });
-});
-
-describe("refMatchesFilters", () => {
-  test("ref wins, then bundle prefix, then everything", () => {
-    expect(refMatchesFilters("b//x", { bundles: [] })).toBe(true);
-    expect(refMatchesFilters("b//x", { bundles: ["b"] })).toBe(true);
-    expect(refMatchesFilters("bb//x", { bundles: ["b"] })).toBe(false);
-    expect(refMatchesFilters("b//x", { bundles: ["z"], ref: "b//x" })).toBe(true);
-    expect(refMatchesFilters("b//y", { bundles: [], ref: "b//x" })).toBe(false);
   });
 });

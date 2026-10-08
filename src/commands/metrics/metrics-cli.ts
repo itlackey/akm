@@ -15,15 +15,14 @@
  */
 
 import fs from "node:fs";
-import { parsePositiveIntFlag } from "../../cli/parse-args";
-import { defineJsonCommand, output, parseAllFlagValues } from "../../cli/shared";
-import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { defineJsonCommand, output } from "../../cli/shared";
+import { parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
-import { lookupBundleRefReadonly, lookupBundleRefsReadonly } from "../../indexer/indexer";
+import { lookupBundleRefsReadonly } from "../../indexer/indexer";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { getOutputMode, type OutputMode } from "../../output/context";
@@ -50,27 +49,19 @@ import {
   indexRunsFromEvents,
   llmRowsFromEvents,
   type MetricsInput,
-  refMatchesFilters,
   retentionNotes,
 } from "./collect";
 import type { AkmMetricsResult } from "./types";
 
 const DEFAULT_SINCE = "30d";
-const DEFAULT_TOP = 20;
-const DEFAULT_SOURCE = "user";
-const ALL_SOURCES = "all";
+/** Cap on every ranked list. */
+const TOP = 20;
+/** Usage rows from people; improve, task and audit rows are akm's own reads. */
+const SOURCE = "user";
 
 export interface AkmMetricsOptions {
   /** Window start: `24h` / `7d` / ISO / epoch ms. Default `30d`. */
   since?: string;
-  /** Window end (exclusive), same grammar. Default now. */
-  until?: string;
-  bundles?: string[];
-  ref?: string;
-  /** `user` (default), `all`, or one source name. */
-  source?: string;
-  /** Cap on every ranked list. Default 20. */
-  top?: number;
   /** Attach the raw window rows (`--format html` and `--detail full`). */
   includeRows?: boolean;
   now?: () => number;
@@ -83,29 +74,6 @@ export interface AkmMetricsOptions {
  */
 export function metricsIncludeRows(mode: Pick<OutputMode, "format" | "detail">): boolean {
   return mode.format === "html" || mode.detail === "full";
-}
-
-/**
- * A `--ref` as the durable `bundle//conceptId` the stores key on. A short ref
- * resolves the way `akm show` resolves it (default bundle, then installation
- * priority), through the same indexer lookup.
- */
-async function resolveRefFilter(input: string): Promise<string> {
-  const parsed = parseBundleRef(input);
-  if (parsed.bundle) return makeBundleRef(parsed.bundle, parsed.conceptId);
-  let entry: Awaited<ReturnType<typeof lookupBundleRefReadonly>> = null;
-  try {
-    entry = await lookupBundleRefReadonly(parsed);
-  } catch {
-    // A missing or unreadable index resolves nothing; the error below says what to do.
-  }
-  if (!entry) {
-    throw new NotFoundError(
-      `Ref "${input}" is not in the index. Qualify it as <bundle>//<conceptId>, or run 'akm index' if it was recently added.`,
-      "ASSET_NOT_FOUND",
-    );
-  }
-  return entry.itemRef;
 }
 
 /**
@@ -172,13 +140,10 @@ function readAcceptRate(stateDb: Database, notes: string[]): AkmMetricsResult["p
 export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMetricsResult> {
   const nowMs = (options.now ?? Date.now)();
   const sinceIso = parseHealthSince(options.since ?? DEFAULT_SINCE);
-  const untilIso = options.until === undefined ? new Date(nowMs).toISOString() : parseHealthSince(options.until);
+  const untilIso = new Date(nowMs).toISOString();
   if (Date.parse(sinceIso) >= Date.parse(untilIso)) {
-    throw new UsageError(`--since (${sinceIso}) must be earlier than --until (${untilIso}).`, "INVALID_FLAG_VALUE");
+    throw new UsageError(`--since (${sinceIso}) must be earlier than now (${untilIso}).`, "INVALID_FLAG_VALUE");
   }
-  const source = options.source?.trim() || DEFAULT_SOURCE;
-  const bundles = options.bundles ?? [];
-  const top = options.top ?? DEFAULT_TOP;
   const notes: string[] = [];
 
   const config = readEventRetention();
@@ -194,27 +159,13 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
 
   const index = readUtility();
   if (index.note) notes.push(index.note);
-  const ref = options.ref === undefined ? undefined : await resolveRefFilter(options.ref);
-  const filter: MetricsQueryFilter = {
-    sinceIso,
-    untilIso,
-    ...(source === ALL_SOURCES ? {} : { source }),
-    bundles,
-    ...(ref !== undefined ? { ref } : {}),
-  };
-  if (bundles.length > 0 || ref !== undefined) {
-    notes.push(
-      "Usage, feedback, utility and outcomes are limited to the matching assets, and searches counts the searches that returned one; llm, index, tasks, proposals (accept rate) and workflows cover everything.",
-    );
-  }
-  if (source !== ALL_SOURCES) {
-    notes.push("Selects come from the events stream, which records no source, so they are counted for every source.");
-  }
+  const filter: MetricsQueryFilter = { sinceIso, untilIso, source: SOURCE };
+  notes.push("Selects come from the events stream, which records no source, so they are counted for every source.");
 
   const input: MetricsInput = {
     window: { since: sinceIso, until: untilIso },
-    filters: { source, bundles, ...(ref !== undefined ? { ref } : {}) },
-    top,
+    source: SOURCE,
+    top: TOP,
     includeRows: options.includeRows === true,
     usage: [],
     selects: [],
@@ -255,11 +206,11 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     applyReadonlyPragmas(stateDb);
     input.usage = listUsageEventRows(stateDb, filter);
     selects = listSelectEvents(stateDb, sinceIso, untilIso);
-    input.outcomes = listLowestOutcomeAssets(stateDb, filter, top);
+    input.outcomes = listLowestOutcomeAssets(stateDb, TOP);
     input.indexRuns = indexRunsFromEvents(listIndexCompletedEvents(stateDb, sinceIso, untilIso));
     input.tasks = queryTaskHistory(stateDb, { since: sinceIso, until: untilIso });
     input.proposals = {
-      byStatus: countProposalsByStatus(stateDb, sinceIso, untilIso, filter),
+      byStatus: countProposalsByStatus(stateDb, sinceIso, untilIso),
       acceptRateBySource: readAcceptRate(stateDb, notes),
     };
     input.workflows = summarizeWorkflowRuns(stateDb, sinceIso, untilIso);
@@ -271,7 +222,7 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
   } finally {
     stateDb.close();
   }
-  input.selects = (await durableSelects(selects)).filter((select) => refMatchesFilters(select.ref, filter));
+  input.selects = await durableSelects(selects);
   return buildMetricsResult(input);
 }
 
@@ -286,25 +237,12 @@ export const metricsCommand = defineJsonCommand({
       type: "string",
       description: `Window start: ISO, date, epoch ms, or 24h / 7d / 30d (default ${DEFAULT_SINCE})`,
     },
-    until: { type: "string", description: "Window end (exclusive), same forms as --since (default now)" },
-    bundle: { type: "string", description: "Only assets in this bundle (repeatable)" },
-    ref: { type: "string", description: "Only this asset ([bundle//]conceptId)" },
-    source: {
-      type: "string",
-      description: `Usage source: user (default), all, or one of improve / task / audit / unknown`,
-    },
-    top: { type: "string", description: `Cap on every ranked list (default ${DEFAULT_TOP})` },
   },
   async run({ args }) {
     output(
       "metrics",
       await akmMetrics({
         since: args.since,
-        until: args.until,
-        bundles: parseAllFlagValues("--bundle"),
-        ref: args.ref,
-        source: args.source,
-        top: parsePositiveIntFlag(args.top, "--top"),
         includeRows: metricsIncludeRows(getOutputMode()),
       }),
     );

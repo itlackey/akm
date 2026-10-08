@@ -67,7 +67,7 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
   return {
     schemaVersion: 1,
     window: { since: "2026-09-08T00:00:00.000Z", until: "2026-10-08T00:00:00.000Z" },
-    filters: { source: "user", bundles: [] },
+    filters: { source: "user" },
     usage: {
       totals: {
         searches: 2,
@@ -297,9 +297,8 @@ describe("renderMetricsHtml", () => {
   });
 
   test("replacement tokens escape header text", () => {
-    const r = buildMetricsHtmlReplacements(fixture({ filters: { source: "<b>", bundles: ["a&b"] } }));
+    const r = buildMetricsHtmlReplacements(fixture({ filters: { source: "<b>" } }));
     expect(r["%%FILTERS_HTML%%"]).toContain("&lt;b&gt;");
-    expect(r["%%FILTERS_HTML%%"]).toContain("a&amp;b");
   });
 
   test("the template is embedded so the compiled binary can render it", () => {
@@ -400,16 +399,13 @@ describe("dashboard client core", () => {
       event({ event_type: "curate", created_at: "2026-01-04 10:00:00", query: "q", entry_ref: "a//skills/y" }),
       event({ event_type: "show", created_at: "2026-01-04 12:00:00", entry_ref: "a//skills/x" }),
     ];
-    const build = (bundles: string[]) => {
+    const build = () => {
       const input: MetricsInput = {
         window: { since: "2026-01-01T00:00:00.000Z", until: "2026-02-01T00:00:00.000Z" },
-        filters: { source: "user", bundles },
+        source: "user",
         top: 20,
         includeRows: true,
-        // The SQL drops ref-less rows under a bundle filter and keeps only that bundle's refs.
-        usage: bundles.length
-          ? events.filter((e) => e.entry_ref !== null && bundles.some((b) => e.entry_ref?.startsWith(`${b}//`)))
-          : events,
+        usage: events,
         selects: [],
         utility: undefined,
         outcomes: [],
@@ -426,23 +422,14 @@ describe("dashboard client core", () => {
     const queriesOf = (list: Array<{ query: string; count: number }>) =>
       Object.fromEntries(list.map((q) => [q.query, q.count]));
 
-    for (const [label, bundles] of [
-      ["unfiltered", []],
-      ["bundle-filtered", ["a"]],
-    ] as const) {
-      test(label, () => {
-        const result = build([...bundles]);
-        const agg = core.aggregate(result.rows?.usage as MetricsUsageRow[], { hitMode: bundles.length > 0 });
-        expect(agg.totals.searches).toBe(result.usage.totals.searches);
-        expect(agg.totals.curates).toBe(result.usage.totals.curates);
-        expect(agg.totals.zeroResult).toBe(result.usage.totals.zeroResultSearches);
-        expect(queriesOf(agg.queries)).toEqual(queriesOf(result.usage.topQueries));
-        if (bundles.length) {
-          expect(agg.totals.searches).toBe(2);
-          expect(agg.totals.curates).toBe(1);
-        }
-      });
-    }
+    test("the dashboard's totals match the report's", () => {
+      const result = build();
+      const agg = core.aggregate(result.rows?.usage as MetricsUsageRow[]);
+      expect(agg.totals.searches).toBe(result.usage.totals.searches);
+      expect(agg.totals.curates).toBe(result.usage.totals.curates);
+      expect(agg.totals.zeroResult).toBe(result.usage.totals.zeroResultSearches);
+      expect(queriesOf(agg.queries)).toEqual(queriesOf(result.usage.topQueries));
+    });
   });
 
   test("hit mode ignores ref-less summary rows mixed in with hit rows", () => {

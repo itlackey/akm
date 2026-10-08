@@ -31,7 +31,7 @@ function fixture(overrides: Partial<AkmMetricsResult> = {}): AkmMetricsResult {
   return {
     schemaVersion: 1,
     window: { since: "2026-09-08T00:00:00.000Z", until: "2026-10-08T00:00:00.000Z" },
-    filters: { source: "user", bundles: [] },
+    filters: { source: "user" },
     usage: {
       totals: {
         searches: 20,

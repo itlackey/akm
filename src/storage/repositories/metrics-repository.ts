@@ -16,33 +16,19 @@
  */
 
 import type { UsageEventRow } from "../../indexer/usage/usage-events";
-import type { Database, SqlValue } from "../database";
+import type { Database } from "../database";
 import type { AssetOutcomeRow } from "./outcome-repository";
 
-/** The half-open window `[sinceIso, untilIso)` plus the asset filters every query shares. */
+/** The half-open window `[sinceIso, untilIso)` plus the source every usage query shares. */
 export interface MetricsQueryFilter {
   sinceIso: string;
   untilIso: string;
   /** `usage_events.source`; omit for every source. */
   source?: string;
-  /** Bundle ids; a row matches when its ref starts with `<bundle>//`. */
-  bundles: string[];
-  /** One durable ref; wins over `bundles`. */
-  ref?: string;
-}
-
-/** A SQL fragment (starting with ` AND`, or empty) restricting `column` to the filter's bundles / ref. */
-function refClause(column: string, filter: Pick<MetricsQueryFilter, "bundles" | "ref">): [string, SqlValue[]] {
-  if (filter.ref !== undefined) return [` AND ${column} = ?`, [filter.ref]];
-  if (filter.bundles.length === 0) return ["", []];
-  const prefixes = filter.bundles.map((bundle) => `${bundle}//`);
-  const clause = prefixes.map(() => `substr(${column}, 1, ?) = ?`).join(" OR ");
-  return [` AND (${clause})`, prefixes.flatMap((prefix) => [prefix.length, prefix])];
 }
 
 /** Usage rows (search / show / curate / feedback) in the window, oldest first. */
 export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): UsageEventRow[] {
-  const [refSql, refParams] = refClause("entry_ref", filter);
   const sourceSql = filter.source === undefined ? "" : " AND source = ?";
   const sourceParams = filter.source === undefined ? [] : [filter.source];
   // `created_at` has whole-second resolution, so a row written during the
@@ -54,17 +40,16 @@ export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): Us
     .prepare(
       `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
        FROM usage_events
-       WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)${sourceSql}${refSql}
+       WHERE datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)${sourceSql}
        ORDER BY datetime(created_at), id`,
     )
-    .all(filter.sinceIso, untilBound, ...sourceParams, ...refParams) as UsageEventRow[];
+    .all(filter.sinceIso, untilBound, ...sourceParams) as UsageEventRow[];
 }
 
 /**
  * `select` events (a show within 60 s of a search that returned the ref) in the
- * window. Unfiltered by asset: the events stream stores the ref as the user
- * typed it (often bundle-less), so the caller resolves it to the durable ref
- * before applying `--bundle` / `--ref`.
+ * window. The events stream stores the ref as the user typed it (often
+ * bundle-less), so the caller resolves it to the durable ref.
  */
 export function listSelectEvents(db: Database, sinceIso: string, untilIso: string): Array<{ ts: string; ref: string }> {
   return db
@@ -92,37 +77,26 @@ export function listIndexCompletedEvents(
 }
 
 /** The `limit` assets with the lowest `outcome_score`, ties broken by ref. */
-export function listLowestOutcomeAssets(
-  db: Database,
-  filter: Pick<MetricsQueryFilter, "bundles" | "ref">,
-  limit: number,
-): AssetOutcomeRow[] {
-  const [refSql, refParams] = refClause("asset_ref", filter);
+export function listLowestOutcomeAssets(db: Database, limit: number): AssetOutcomeRow[] {
   return db
     .prepare(
       `SELECT asset_ref, last_retrieved_at, retrieval_count, expected_retrieval_rate,
               negative_feedback_count, accepted_change_count, outcome_score, updated_at
-       FROM asset_outcome WHERE 1 = 1${refSql}
+       FROM asset_outcome
        ORDER BY outcome_score ASC, asset_ref ASC LIMIT ?`,
     )
-    .all(...refParams, limit) as AssetOutcomeRow[];
+    .all(limit) as AssetOutcomeRow[];
 }
 
 /** Proposal counts by status, for proposals last updated in the window. */
-export function countProposalsByStatus(
-  db: Database,
-  sinceIso: string,
-  untilIso: string,
-  filter: Pick<MetricsQueryFilter, "bundles" | "ref">,
-): Record<string, number> {
-  const [refSql, refParams] = refClause("ref", filter);
+export function countProposalsByStatus(db: Database, sinceIso: string, untilIso: string): Record<string, number> {
   const rows = db
     .prepare(
       `SELECT status, COUNT(*) AS n FROM proposals
-       WHERE updated_at >= ? AND updated_at < ?${refSql}
+       WHERE updated_at >= ? AND updated_at < ?
        GROUP BY status ORDER BY status`,
     )
-    .all(sinceIso, untilIso, ...refParams) as Array<{ status: string; n: number }>;
+    .all(sinceIso, untilIso) as Array<{ status: string; n: number }>;
   return Object.fromEntries(rows.map((row) => [row.status, row.n]));
 }
 

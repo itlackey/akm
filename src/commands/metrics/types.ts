@@ -124,7 +124,7 @@ export interface MetricsIndexRun {
 export interface AkmMetricsResult {
   schemaVersion: 1;
   window: { since: string; until: string };
-  filters: { source: string; bundles: string[]; ref?: string };
+  filters: { source: string };
   usage: {
     totals: {
       searches: number;
@@ -152,7 +152,7 @@ export interface AkmMetricsResult {
     recentNegative: MetricsNegativeFeedback[];
   };
   utility: {
-    /** Rows in utility_scores (after filters). 0 with a note when index.db is missing. */
+    /** Rows in utility_scores . 0 with a note when index.db is missing. */
     count: number;
     /** Ten buckets: "0.0-0.1" … "0.9-1.0". */
     histogram: Array<{ bucket: string; count: number }>;

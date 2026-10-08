@@ -15,7 +15,7 @@
 import type { DetailLevel } from "../../output/context";
 import type { AkmMetricsResult } from "./types";
 
-/** Lists are cut to this many rows at `--detail brief`; `normal`/`full` show what `--top` already capped. */
+/** Lists are cut to this many rows at `--detail brief`; `normal`/`full` show what the top-20 cap kept. */
 export const BRIEF_LIST_LIMIT = 5;
 
 export interface MetricsViewTable {
@@ -272,7 +272,7 @@ export function buildMetricsView(r: AkmMetricsResult, detail: DetailLevel): Metr
   const f = r.filters;
   return {
     window: `${r.window.since} to ${r.window.until}`,
-    filters: `source=${f.source} bundles=${f.bundles.length > 0 ? f.bundles.join(",") : "all"} ref=${f.ref ?? "-"}`,
+    filters: `source=${f.source}`,
     sections,
     notes: r.notes,
   };
