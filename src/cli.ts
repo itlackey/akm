@@ -124,6 +124,7 @@ import { DURATION_UNITS, parseDuration } from "./core/time";
 import { plainize } from "./core/tty";
 import { info, isQuiet, setQuiet, setVerbose, warn } from "./core/warn";
 import { disposeDispatchResources } from "./integrations/agent/runner-dispatch";
+import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { EMBEDDED_HINTS, EMBEDDED_HINTS_FULL } from "./output/cli-hints";
 import { getOutputMode, initOutputMode, parseDetailLevel } from "./output/context";
 import { isFormatExemptCommand } from "./output/format-exempt";
@@ -1052,7 +1053,7 @@ export function normalizeCittyCliError(error: unknown, rawArgs: readonly string[
  * and returns, every direct call site here needs its own explicit `return;`
  * to stop the rest of startup from running after a fatal early error.
  */
-async function runCli(): Promise<void> {
+export async function runCli(): Promise<void> {
   try {
     process.argv = consumeSchedulerContextArg(process.argv);
   } catch (error: unknown) {
@@ -1145,6 +1146,10 @@ async function runCli(): Promise<void> {
   })();
 
   const rawArgs = process.argv.slice(2);
+  // Persist LLM usage for every command, not only `improve` and `proposal
+  // drain`. A per-run sink installed inside a command layers over this one and
+  // restores it on dispose.
+  const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
   try {
     if (rawArgs.length === 0) {
       process.stdout.write(`${await renderSectionedRootHelp()}\n`);
@@ -1205,6 +1210,7 @@ async function runCli(): Promise<void> {
     // `emitJsonError` classifies and sets `process.exitCode` itself.
     emitJsonError(error);
   } finally {
+    disposeLlmUsageSink();
     await disposeDispatchResources();
   }
 }
