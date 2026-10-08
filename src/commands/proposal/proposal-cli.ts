@@ -459,12 +459,13 @@ const proposalDrainCommand = defineJsonCommand({
     judgment: {
       type: "boolean",
       description:
-        "Explicitly enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). No-op with a logged triage_deferred summary when no runner is configured.",
+        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). No-op with a logged triage_deferred summary when no runner is configured.",
       default: false,
     },
     strategy: {
       type: "string",
-      description: "Read the triage block (applyMode, ceilings, judgment) from this improve strategy.",
+      description:
+        "Read the triage block (applyMode, ceilings, judgment) from this improve strategy; enabled judgment runs the judge.",
     },
   },
   async run({ args, rawArgs }) {
@@ -526,13 +527,12 @@ const proposalDrainCommand = defineJsonCommand({
       );
     }
 
-    // Phase 3: --judgment is an invocation-level opt-in. It deliberately
-    // overrides judgment.enabled=false for this standalone drain while still
-    // reusing that block's execution overrides. Without the flag, configured
-    // judgment enablement is owned only by `akm improve`. A missing runner is
-    // a documented standalone no-op that leaves deferred items unresolved.
+    // Phase 3: --judgment is an invocation-level opt-in that overrides a
+    // disabled block. An explicitly selected strategy may opt in through its
+    // judgment block; the implicit default strategy keeps standalone drain's
+    // historical no-judge behavior.
     const judgmentResolution =
-      args.judgment === true
+      args.judgment === true || (args.strategy !== undefined && triageConfig?.judgment?.enabled === true)
         ? resolveImproveExecution({
             config: cfg,
             profile: selectedStrategy.config,

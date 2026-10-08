@@ -87,6 +87,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
   on the next incremental index (#1084).
 - **A proposal drain judge now sees overlapping promotions accepted earlier in the same drain (#1085).**
+- **`akm proposal drain --strategy <name>` now honors enabled triage judgment.** A named strategy with
+  `processes.triage.judgment.enabled: true` runs its configured judge without `--judgment`; the flag still
+  forces judgment for disabled strategies, and drains without `--strategy` keep their existing behavior (#1086).
 - **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
   (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
   keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching

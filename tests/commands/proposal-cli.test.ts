@@ -111,7 +111,7 @@ describe("akm proposal drain strategy selector", () => {
     });
   });
 
-  test("--judgment explicitly overrides a disabled strategy value; config alone never enables standalone drain", async () => {
+  test("an explicitly selected strategy enables its judgment tier, while the implicit default does not", async () => {
     const stashDir = makeStashDir();
     writeSandboxConfig({
       configVersion: "0.9.0",
@@ -119,23 +119,62 @@ describe("akm proposal drain strategy selector", () => {
       defaultBundle: "stash",
       defaultWriteTarget: "stash",
       engines: { reviewer: { kind: "agent", platform: "claude" } },
-      defaults: { improveStrategy: "explicit-judgment" },
+      defaults: { improveStrategy: "enabled-judgment" },
       improve: {
         strategies: {
-          "explicit-judgment": {
+          "enabled-judgment": {
+            processes: { triage: { enabled: true, judgment: { enabled: true, engine: "reviewer" } } },
+          },
+        },
+      },
+    });
+
+    const implicit = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir });
+    expect(implicit.status).toBe(0);
+    expect(JSON.parse(implicit.stdout)).toMatchObject({ judgmentEngine: null, judgmentKind: null });
+
+    const selected = await runCli(
+      ["proposal", "drain", "--strategy", "enabled-judgment", "--dry-run", "--format=json"],
+      {
+        stashDir,
+      },
+    );
+    expect(selected.status).toBe(0);
+    expect(JSON.parse(selected.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
+  });
+
+  test("--judgment overrides a disabled selected strategy", async () => {
+    const stashDir = makeStashDir();
+    writeSandboxConfig({
+      configVersion: "0.9.0",
+      bundles: { stash: { path: stashDir, writable: true } },
+      defaultBundle: "stash",
+      defaultWriteTarget: "stash",
+      engines: { reviewer: { kind: "agent", platform: "claude" } },
+      improve: {
+        strategies: {
+          "disabled-judgment": {
             processes: { triage: { enabled: true, judgment: { enabled: false, engine: "reviewer" } } },
           },
         },
       },
     });
 
-    const configuredOnly = await runCli(["proposal", "drain", "--dry-run", "--format=json"], { stashDir });
-    expect(configuredOnly.status).toBe(0);
-    expect(JSON.parse(configuredOnly.stdout)).toMatchObject({ judgmentEngine: null, judgmentKind: null });
+    const disabled = await runCli(
+      ["proposal", "drain", "--strategy", "disabled-judgment", "--dry-run", "--format=json"],
+      {
+        stashDir,
+      },
+    );
+    expect(disabled.status).toBe(0);
+    expect(JSON.parse(disabled.stdout)).toMatchObject({ judgmentEngine: null, judgmentKind: null });
 
-    const explicit = await runCli(["proposal", "drain", "--judgment", "--dry-run", "--format=json"], { stashDir });
-    expect(explicit.status).toBe(0);
-    expect(JSON.parse(explicit.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
+    const forced = await runCli(
+      ["proposal", "drain", "--strategy", "disabled-judgment", "--judgment", "--dry-run", "--format=json"],
+      { stashDir },
+    );
+    expect(forced.status).toBe(0);
+    expect(JSON.parse(forced.stdout)).toMatchObject({ judgmentEngine: "reviewer", judgmentKind: "agent" });
   });
 
   test("a stale-target refusal is auto-rejected, not left as a generic failure (STALE, R20)", async () => {
