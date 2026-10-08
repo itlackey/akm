@@ -2722,8 +2722,8 @@ precedent as the retired `canary` scope).
 Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
 field on the result (`result_json` in `improve_runs`, and in the
 `--json-to-stdout` / dry-run JSON): `{ byProcessEngineModel, noCalls }`.
-`byProcessEngineModel` is a cross-tab of this run's own `llm_usage` events
-(#576) — one row per distinct `(process, engine, model)` triple, each with
+`byProcessEngineModel` is a cross-tab of the LLM call records this run's own
+usage sink collects (#576) — one row per distinct `(process, engine, model)` triple, each with
 `calls`, `failures`, `promptTokens`, `completionTokens`, `totalTokens`,
 `reasoningTokens`, and `totalDurationMs`. `noCalls` lists every model-calling
 process (`reflect`, `distill`, `consolidate`, `memoryInference`,
@@ -2745,7 +2745,7 @@ every real run in the window (`byProcessEngineModel` rows merged by
 `(process, engine, model)`; `noCalls` lists a process only if it made zero
 calls across every included run). A run recorded before 0.9.15 has no
 persisted `usageReport` — the command recomputes `byProcessEngineModel` from
-that run's own `llm_usage` events instead of erroring, sets `noCalls` to `[]`
+that run's stored `llm_usage` events (`summarizeLlmUsageCrossTab`) instead of erroring, sets `noCalls` to `[]`
 (eligibility reasons are not reconstructable after the fact), and adds a
 `notes` entry saying so rather than fabricating precision the old row can't
 support.

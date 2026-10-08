@@ -228,11 +228,14 @@ the set of types the code actually emits at HEAD (verified against every
 
 `llm_usage` rows also carry `process`/`engine`/`stage` (each optional; a call
 made outside any attributed scope carries none of them). `akm improve`
-(#944) aggregates a run's own `llm_usage` events into a process x engine x
-model cross-tab — `summarizeLlmUsageCrossTab` in `src/commands/health/llm-usage.ts`
-— persisted on the run result as `usageReport.byProcessEngineModel` and
-queryable per-run or aggregated with `akm improve report`; see
-`docs/reference/cli.md`'s `#### improve report` section.
+(#944) builds a process x engine x model cross-tab from the LLM call records
+the run's own usage sink collects — `summarizeLlmUsageRecordsCrossTab` in
+`src/commands/health/llm-usage.ts` — persisted on the run result as
+`usageReport.byProcessEngineModel` and queryable per-run or aggregated with
+`akm improve report`; see `docs/reference/cli.md`'s `#### improve report`
+section. `summarizeLlmUsageCrossTab` is the events form of the same
+aggregation, used by `improve report` to recompute the cross-tab from stored
+`llm_usage` events when a run has no persisted `usageReport`.
 
 ### 2. Usage Events Table
 

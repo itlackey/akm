@@ -16,9 +16,10 @@ import {
   emptyLlmUsageAggregate,
   summarizeLlmUsage,
   summarizeLlmUsageCrossTab,
+  summarizeLlmUsageRecordsCrossTab,
 } from "../../../src/commands/health/llm-usage";
 import type { EventEnvelope } from "../../../src/core/events-types";
-import type { LlmUsageRecord } from "../../../src/llm/usage-telemetry";
+import { decodeLlmUsageRecord, type LlmUsageRecord } from "../../../src/llm/usage-telemetry";
 
 let nextId = 1;
 
@@ -61,6 +62,25 @@ describe("summarizeLlmUsage failures counter (#944)", () => {
     expect(Object.keys(aggregate.byStage)).toEqual(["reflect"]);
     expect(Object.keys(aggregate.byProcess)).toEqual(["reflect"]);
     expect(Object.keys(aggregate.byEngine)).toEqual(["fast"]);
+  });
+});
+
+describe("summarizeLlmUsageRecordsCrossTab", () => {
+  test("gives the same rows as the events form for the same input", () => {
+    const events = [
+      usageEvent({ durationMs: 10, process: "reflect", engine: "fast", model: "m1", totalTokens: 5 }),
+      usageEvent({ durationMs: 4, process: "reflect", engine: "fast", model: "m1", outcome: "error" }),
+      usageEvent({ durationMs: 3, process: "distill", engine: "slow", promptTokens: 2, reasoningTokens: 1 }),
+      usageEvent({ durationMs: 1 }),
+    ];
+    const records = events.flatMap((event) => {
+      const record = decodeLlmUsageRecord(event.metadata);
+      return record ? [record] : [];
+    });
+    expect(records).toHaveLength(events.length);
+    const rows = summarizeLlmUsageRecordsCrossTab(records);
+    expect(rows).toHaveLength(3);
+    expect(rows).toEqual(summarizeLlmUsageCrossTab(events));
   });
 });
 

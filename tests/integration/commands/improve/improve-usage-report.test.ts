@@ -143,6 +143,39 @@ describe("akm improve report (#944)", () => {
     expect(JSON.parse(both.stderr)).toMatchObject({ ok: false, code: "INVALID_FLAG_VALUE" });
   });
 
+  test("a foreign process's llm_usage row in state.db never lands in the run's usageReport", () => {
+    const testEnv = makeEnv(makeStashDir());
+
+    // Create and migrate state.db without starting a run.
+    const init = runCli(["improve", "report", "--since", "24h"], testEnv);
+    expect(init.status).toBe(0);
+
+    // Another akm process persists its calls into the same state.db (every
+    // process does since the process-wide usage sink). Dated an hour ahead so
+    // a wall-clock read from the run's start would always include it.
+    const db = new Database(testEnv.stateDbPath);
+    try {
+      db.prepare(`INSERT INTO events (event_type, ts, ref, metadata_json) VALUES ('llm_usage', ?, NULL, ?)`).run(
+        new Date(Date.now() + 60 * 60_000).toISOString(),
+        JSON.stringify({
+          process: "foreign",
+          engine: "other",
+          model: "x",
+          outcome: "success",
+          durationMs: 1,
+          totalTokens: 7,
+        }),
+      );
+    } finally {
+      db.close();
+    }
+
+    const live = runCli(["improve", "--json-to-stdout"], testEnv);
+    expect(live.status).toBe(0);
+    const parsed = JSON.parse(live.stdout) as { usageReport: { byProcessEngineModel: unknown[] } };
+    expect(parsed.usageReport.byProcessEngineModel).toEqual([]);
+  });
+
   test("--since aggregates multiple runs; a pre-0.9.15 row degrades to a recomputed cross-tab with a note", () => {
     const testEnv = makeEnv(makeStashDir());
 
