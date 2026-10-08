@@ -28,6 +28,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   longer than a store's retention says so in `notes`. Engines may set
   `pricing: { inputPerMillion, outputPerMillion, currency? }` to get `llm.cost`;
   the price is applied at report time, so changing it re-prices history.
+- **`akm metrics` renders as text and Markdown.** `--format text` prints aligned
+  Usage, Feedback, Utility, LLM, Index, Tasks, Proposals and Workflows sections
+  with top-N tables (cut to 5 at `--detail brief`); `--format md` prints one
+  heading per section with GFM tables.
 
 ## [0.9.27] - 2026-10-07
 
