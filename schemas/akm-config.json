@@ -130,6 +130,10 @@
                 "type": "string",
                 "minLength": 1
               },
+              "agent": {
+                "type": "string",
+                "minLength": 1
+              },
               "timeoutMs": {
                 "anyOf": [
                   {
@@ -1799,6 +1803,10 @@
                     "minLength": 1
                   },
                   "model": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "agent": {
                     "type": "string",
                     "minLength": 1
                   },

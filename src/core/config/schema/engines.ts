@@ -14,7 +14,11 @@ import { z } from "zod";
 // `config-types`, which type-derives from this barrel via
 // `typeof import("./config-schema")` — routing through config-types would mint
 // a config-schema ↔ config-types type cycle that collapses inference.
-import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../../integrations/harnesses/ids";
+import {
+  HARNESS_AGENT_DISPATCH_IDS,
+  HARNESS_NATIVE_AGENT_IDS,
+  VALID_HARNESS_IDS,
+} from "../../../integrations/harnesses/ids";
 import { WORKFLOW_MAX_TIMEOUT_MS } from "../../../workflows/resource-limits";
 import {
   chatCompletionsEndpoint,
@@ -104,7 +108,7 @@ const LlmEngineSchema = z
   })
   .passthrough()
   .superRefine((value, ctx) => {
-    for (const key of ["platform", "bin", "args", "workspace", "modelAliases", "llmEngine"]) {
+    for (const key of ["platform", "bin", "args", "workspace", "modelAliases", "llmEngine", "agent"]) {
       if (key in value)
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is not valid on an LLM engine` });
     }
@@ -131,6 +135,7 @@ const AgentEngineSchema = z
     args: z.array(z.string()).optional(),
     workspace: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
+    agent: nonEmptyString.optional(),
     timeoutMs: timeoutMsField,
     llmEngine: engineName.optional(),
   })
@@ -158,6 +163,13 @@ const AgentEngineSchema = z
         code: z.ZodIssueCode.custom,
         path: ["llmEngine"],
         message: "llmEngine is only valid on opencode-sdk",
+      });
+    }
+    if (value.agent !== undefined && !HARNESS_NATIVE_AGENT_IDS.has(value.platform)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["agent"],
+        message: `agent is not valid on ${value.platform}: it has no native agent selector`,
       });
     }
     if (value.platform === "opencode-sdk" && value.args !== undefined) {

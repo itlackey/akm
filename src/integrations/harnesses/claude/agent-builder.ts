@@ -78,7 +78,6 @@ export const claudeBuilder: AgentCommandBuilder = {
   lower: createAgentRequestLowerer({
     adapter: "claude",
     personaChannel: "native",
-    nativeAgentSelector: true,
     tools: "all",
   }),
   build(profile, req) {
