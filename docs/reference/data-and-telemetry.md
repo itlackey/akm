@@ -313,6 +313,7 @@ Contents:
 - Source (which process generated it — e.g. `reflect`, `distill`)
 - Full proposal content (Markdown text)
 - Created/updated timestamps
+- For a `consolidate-pair` retire proposal, the pair judge's verdict in its `retirement` metadata: label, reason, cosine, and the claims only the retired side holds (`onlyInRetired`) and only the kept side holds (`onlyInSuccessor`), each at most 20 entries of 200 characters
 
 Beside it, the `improve_ledger` table records what each improve stage last did
 with each asset — one row per bundle, asset ref and stage: the outcome

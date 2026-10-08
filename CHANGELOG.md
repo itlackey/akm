@@ -30,6 +30,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- A consolidate pair-pass retire proposal now records the judge's claim lists in its `retirement` metadata as `onlyInRetired` and `onlyInSuccessor`, named by role rather than by the judge's A/B, so what the judge found only on each side survives past the run. Proposals minted before this lack both fields; no row is added for a pair akm keeps.
 - A distill lesson the quality gate rejects or sends to review now keeps its text: the `distill_invoked` event and the distill result carry `rejectedContent`, cut to 2000 characters (the judge prompt's cap). Before, a rejected lesson left only its score and reason. It stays local in `state.db`.
 - **LLM usage is recorded for every command.** `akm index`, curate, workflow,
   agent dispatch and `akm command run` now persist their `llm_usage` events

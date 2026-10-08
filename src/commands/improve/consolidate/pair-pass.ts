@@ -787,6 +787,9 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     cosine: candidate.cosine,
     judgeLabel: verdict.relation,
     judgeReason: verdict.reason,
+    // The judge's A is the older side and B the newer (see orderByAge); record the lists by role.
+    onlyInRetired: retired === older ? verdict.onlyInA : verdict.onlyInB,
+    onlyInSuccessor: retired === older ? verdict.onlyInB : verdict.onlyInA,
     retiredContentHash: retiredHash,
     successorContentHash: successorHash,
     reason,
