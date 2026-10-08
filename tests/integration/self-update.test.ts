@@ -254,6 +254,82 @@ describe("checkForUpdate", () => {
     expect(result.updateAvailable).toBe(false);
   });
 
+  describe("--next channel", () => {
+    const registry = (tags: Record<string, string>) => (url: string) =>
+      url.startsWith("https://registry.npmjs.org/-/package/akm-cli/dist-tags")
+        ? Response.json(tags)
+        : fakeRelease("v0.9.26");
+
+    test("targets the next dist-tag when it is newer than the latest stable release", async () => {
+      mockFetch(registry({ latest: "0.9.26", next: "0.9.27-rc.1" }));
+      const result = await checkForUpdate("0.9.26", undefined, "next");
+      expect(result.latestVersion).toBe("0.9.27-rc.1");
+      expect(result.updateAvailable).toBe(true);
+    });
+
+    test("targets the stable release when it is newer than the last prerelease", async () => {
+      mockFetch(registry({ latest: "0.9.26", next: "0.9.26-rc.2" }));
+      const result = await checkForUpdate("0.9.25", undefined, "next");
+      expect(result.latestVersion).toBe("0.9.26");
+      expect(result.updateAvailable).toBe(true);
+    });
+
+    test("never offers a downgrade: running a newer prerelease than next is already current", async () => {
+      mockFetch(registry({ latest: "0.9.26", next: "0.9.27-rc.1" }));
+      const result = await checkForUpdate("0.9.27-rc.2", undefined, "next");
+      expect(result.updateAvailable).toBe(false);
+    });
+
+    test("falls back to the stable release when no next tag is published", async () => {
+      mockFetch(registry({ latest: "0.9.26" }));
+      const result = await checkForUpdate("0.9.25", undefined, "next");
+      expect(result.latestVersion).toBe("0.9.26");
+    });
+
+    test("an unreachable registry is an error, not a silent switch to stable", async () => {
+      mockFetch((url) =>
+        url.includes("registry.npmjs.org")
+          ? new Response("no", { status: 503, statusText: "Unavailable" })
+          : fakeRelease("v0.9.26"),
+      );
+      await expect(checkForUpdate("0.9.25", undefined, "next")).rejects.toThrow("next prerelease");
+    });
+
+    test("the default channel never asks the registry", async () => {
+      const seen: string[] = [];
+      mockFetch((url) => {
+        seen.push(url);
+        return fakeRelease("v0.9.26");
+      });
+      await checkForUpdate("0.9.25");
+      expect(seen.some((u) => u.includes("registry.npmjs.org"))).toBe(false);
+    });
+
+    test("a package manager install names the exact prerelease version", () => {
+      expect(getPackageManagerUpgradeCommand("npm", "akm-cli", "0.9.27-rc.1")?.displayCommand).toBe(
+        "npm install -g akm-cli@0.9.27-rc.1",
+      );
+    });
+
+    test("a binary install downloads the release tagged for the prerelease version", async () => {
+      const execPath = disposableBinaryPath("next-binary");
+      const urls: string[] = [];
+      const body = "new-binary";
+      const sha = createHash("sha256").update(body).digest("hex");
+      mockFetch((url) => {
+        urls.push(url);
+        return url.endsWith("checksums.txt") ? new Response(`${sha}  ${getAkmBinaryName()}\n`) : new Response(body);
+      });
+      const result = await performUpgrade(
+        { currentVersion: "0.9.26", latestVersion: "0.9.27-rc.1", updateAvailable: true, installMethod: "binary" },
+        { skipPostUpgrade: true },
+        { ...currentMigrator, execPath },
+      );
+      expect(result.upgraded).toBe(true);
+      expect(urls[0]).toBe(`https://github.com/itlackey/akm/releases/download/v0.9.27-rc.1/${getAkmBinaryName()}`);
+    });
+  });
+
   test("throws on non-OK response", async () => {
     mockFetch(() => new Response("Not Found", { status: 404, statusText: "Not Found" }));
 

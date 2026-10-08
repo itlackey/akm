@@ -64,12 +64,21 @@ export const upgradeCommand = defineJsonCommand({
       description: "Skip the post-upgrade index rebuild",
       default: false,
     },
+    next: {
+      type: "boolean",
+      description:
+        "Install the newest prerelease (the @next npm tag) of akm and, if OpenCode's config names akm-opencode@next, of its plugin",
+      default: false,
+    },
   },
   async run({ args }) {
     const run = await runUpgrade(
-      { check: args.check, force: args.force, skipPostUpgrade: args["skip-post-upgrade"] },
+      { check: args.check, force: args.force, skipPostUpgrade: args["skip-post-upgrade"], next: args.next },
       pkgVersion,
-      { checkForUpdate, performUpgrade: (check, opts) => performUpgrade(check, opts) },
+      {
+        checkForUpdate: (version, channel) => checkForUpdate(version, undefined, channel),
+        performUpgrade: (check, opts) => performUpgrade(check, opts),
+      },
     );
     if (run.mode === "check") {
       output("upgrade", run.result);

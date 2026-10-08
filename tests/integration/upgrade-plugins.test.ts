@@ -48,6 +48,8 @@ beforeEach(() => {
     env: {
       PATH: bin,
       XDG_CACHE_HOME: cache,
+      XDG_CONFIG_HOME: path.join(root, "xdg-config"),
+      OPENCODE_CONFIG: "",
       XDG_DATA_HOME: path.join(root, "xdg-data"),
       STUB_LOG: log,
       STUB_STATE: state,
@@ -110,12 +112,12 @@ esac`,
   );
 }
 
-function cacheDir(): string {
-  return path.join(world.cache, "opencode", "packages", "akm-opencode@latest");
+function cacheDir(tag = "latest"): string {
+  return path.join(world.cache, "opencode", "packages", `akm-opencode@${tag}`);
 }
 
-function writeCachedOpenCode(version: string): void {
-  const dir = path.join(cacheDir(), "node_modules", "akm-opencode");
+function writeCachedOpenCode(version: string, tag = "latest"): void {
+  const dir = path.join(cacheDir(tag), "node_modules", "akm-opencode");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "akm-opencode", version }));
 }
@@ -164,18 +166,30 @@ function mutations(): string[] {
 function fakeDeps(
   latest: string,
   current = "0.9.20",
-): UpgradeRunDependencies & { upgradeCalls: UpgradeCheckResponse[] } {
+): UpgradeRunDependencies & {
+  upgradeCalls: UpgradeCheckResponse[];
+  channels: string[];
+  targets: Array<string | undefined>;
+} {
   const upgradeCalls: UpgradeCheckResponse[] = [];
+  const channels: string[] = [];
+  const targets: Array<string | undefined> = [];
   return {
     upgradeCalls,
-    checkForUpdate: async () => ({
-      currentVersion: current,
-      latestVersion: latest,
-      updateAvailable: current !== latest,
-      installMethod: "npm",
-    }),
-    performUpgrade: async (check): Promise<UpgradeResponse> => {
+    channels,
+    targets,
+    checkForUpdate: async (_version, channel) => {
+      channels.push(channel);
+      return {
+        currentVersion: current,
+        latestVersion: latest,
+        updateAvailable: current !== latest,
+        installMethod: "npm",
+      };
+    },
+    performUpgrade: async (check, opts): Promise<UpgradeResponse> => {
       upgradeCalls.push(check);
+      targets.push(opts.targetVersion);
       return {
         currentVersion: check.currentVersion,
         newVersion: check.latestVersion,
@@ -408,6 +422,208 @@ posixOnly("akm upgrade: plugin step", () => {
       const deps = fakeDeps("0.9.28", "0.9.27");
       await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.27", deps));
       expect(deps.upgradeCalls[0]).toMatchObject({ currentVersion: "0.9.27", updateAvailable: false });
+    });
+  });
+
+  describe("--next", () => {
+    const NEXT = { check: false, force: false, skipPostUpgrade: true, next: true };
+    const NEXT_CHECK = { check: true, force: false, skipPostUpgrade: true, next: true };
+
+    function writeConfig(plugin: unknown[], file = "opencode.json"): void {
+      const dir = path.join(world.root, "xdg-config", "opencode");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, file), `// comments are fine\n${JSON.stringify({ plugin })}`);
+    }
+
+    /** `npm view akm-opencode@<tag>` answers per tag; a tag set to null fails like an unpublished one. */
+    function stubNpm(tags: { latest: [string, string?]; next: [string, string?] | null }): void {
+      const answer = (t: [string, string?] | null) =>
+        t === null
+          ? 'echo "E404 no such tag" >&2; exit 1'
+          : `printf '${JSON.stringify(t[1] ? { version: t[0], "dependencies.akm-cli": t[1] } : { version: t[0] })}\\n'`;
+      stub(
+        "npm",
+        `case "$2" in
+akm-opencode@next) ${answer(tags.next)};;
+akm-opencode@latest) ${answer(tags.latest)};;
+*) exit 2;;
+esac`,
+      );
+    }
+
+    /** `opencode debug config` re-creates the @next cache at `version`. */
+    function stubOpenCodeNext(version: string, running = false): void {
+      const pkgDir = path.join(cacheDir("next"), "node_modules", "akm-opencode");
+      stub(
+        "opencode",
+        `case "$*" in
+"--version") echo 1.0.0;;
+"debug config") /bin/mkdir -p "${pkgDir}"; printf '{"version":"${version}"}' > "${pkgDir}/package.json";;
+*) exit 2;;
+esac`,
+      );
+      stub("pgrep", running ? "echo 4242" : "exit 1");
+      stub("trash-put", `/bin/mkdir -p "$STUB_STATE/trash" && /bin/mv "$1" "$STUB_STATE/trash/"`);
+    }
+
+    test("asks for the next channel, names the exact version to the install step, and reports the channel", async () => {
+      const deps = fakeDeps("0.9.27-rc.1", "0.9.26");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.26", deps));
+      expect(deps.channels).toEqual(["next"]);
+      expect(deps.targets).toEqual(["0.9.27-rc.1"]);
+      expect(run.result.channel).toBe("next");
+    });
+
+    test("the default run asks for latest and names no version when nothing is held back", async () => {
+      const deps = fakeDeps("0.9.28", "0.9.26");
+      const run = await withEnv(world.env, () => runUpgrade(UPGRADE, "0.9.26", deps));
+      expect(deps.channels).toEqual(["latest"]);
+      expect(deps.targets).toEqual([undefined]);
+      expect(run.result.channel).toBe("latest");
+    });
+
+    test("with the config naming akm-opencode@next: lockstep and the cache refresh follow @next", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.27-rc.1", "next");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2", "0.9.27-rc.2"] });
+      stubOpenCodeNext("0.9.27-rc.2");
+      const deps = fakeDeps("0.9.27-rc.3", "0.9.27-rc.1");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.27-rc.1", deps));
+      expect(run.result.lockstep).toEqual({
+        plugin: "akm-opencode",
+        pinnedVersion: "0.9.27-rc.2",
+        newestVersion: "0.9.27-rc.3",
+        heldBack: true,
+      });
+      expect(deps.targets).toEqual(["0.9.27-rc.2"]);
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", from: "0.9.27-rc.1", to: "0.9.27-rc.2" });
+      expect(commands()).toContain(`trash-put ${cacheDir("next")}`);
+      expect(fs.existsSync(cacheDir("latest"))).toBe(false);
+    });
+
+    test("a [spec, options] plugin entry in a .jsonc config counts", async () => {
+      writeConfig([["akm-opencode@next", { x: 1 }]], "opencode.jsonc");
+      writeCachedOpenCode("0.9.27-rc.2", "next");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2", "0.9.27-rc.2"] });
+      stubOpenCodeNext("0.9.27-rc.2");
+      const run = await withEnv(world.env, () =>
+        runUpgrade(NEXT, "0.9.27-rc.2", fakeDeps("0.9.27-rc.2", "0.9.27-rc.2")),
+      );
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "current", to: "0.9.27-rc.2" });
+    });
+
+    test("a bare akm-opencode in the config: the entry is skipped with the line to add, lockstep stays on @latest", async () => {
+      writeConfig(["akm-opencode"]);
+      writeCachedOpenCode("0.9.26");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2", "0.9.27-rc.2"] });
+      stubOpenCodeNext("0.9.27-rc.2");
+      const deps = fakeDeps("0.9.27-rc.2", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(entry(run, "opencode").outcome).toBe("skipped");
+      expect(entry(run, "opencode").message).toContain('"plugin": ["akm-opencode@next"]');
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.26", heldBack: true });
+      expect(deps.targets).toEqual(["0.9.26"]);
+      expect(mutations()).toEqual([]);
+      expect(commands().some((c) => c.startsWith("npm view akm-opencode@next"))).toBe(false);
+    });
+
+    test("no OpenCode config at all behaves like a bare one", async () => {
+      writeCachedOpenCode("0.9.26");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2", "0.9.27-rc.2"] });
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.2", "0.9.25")));
+      expect(entry(run, "opencode").outcome).toBe("skipped");
+    });
+
+    test("akm-opencode@next older than @latest fails closed: CLI held, entry failed", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.26-rc.1", "next");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.26-rc.2", "0.9.26-rc.2"] });
+      stubOpenCodeNext("0.9.26-rc.2");
+      const deps = fakeDeps("0.9.27-rc.1", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
+      expect(run.result.lockstep?.reason).toContain("older than akm-opencode@latest");
+      expect(entry(run, "opencode").outcome).toBe("failed");
+      expect(run.mode === "upgrade" && run.failed).toBe(true);
+      expect(mutations()).toEqual([]);
+    });
+
+    test("a missing akm-opencode@next fails closed", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.26", "next");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: null });
+      const deps = fakeDeps("0.9.27-rc.1", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
+      expect(run.result.lockstep?.reason).toContain("akm-opencode@next");
+      expect(entry(run, "opencode").outcome).toBe("failed");
+    });
+
+    test("an akm-opencode@next with no readable akm-cli pin fails closed", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.26", "next");
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2"] });
+      const deps = fakeDeps("0.9.27-rc.1", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
+      expect(run.result.lockstep?.reason).toContain("akm-opencode@next declares no akm-cli");
+    });
+
+    test("without the OpenCode plugin the CLI goes to the --next target unheld", async () => {
+      const deps = fakeDeps("0.9.27-rc.1", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(deps.upgradeCalls[0]?.latestVersion).toBe("0.9.27-rc.1");
+      expect(run.result).not.toHaveProperty("lockstep");
+    });
+
+    test("Claude Code and Codex are refreshed as usual and carry a note", async () => {
+      stubClaude({ from: "0.9.26", to: "0.9.27" });
+      stubCodex({ from: "0.9.27", to: "0.9.27" });
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", fakeDeps("0.9.27-rc.1", "0.9.25")));
+      expect(entry(run, "claude-code")).toMatchObject({ outcome: "updated" });
+      expect(entry(run, "claude-code").message).toContain("no prerelease channel");
+      expect(entry(run, "codex")).toMatchObject({ outcome: "current" });
+      expect(entry(run, "codex").message).toContain("no prerelease channel");
+      expect(mutations()).toEqual([
+        "claude plugin marketplace update akm-plugins",
+        "claude plugin update akm@akm-plugins",
+        "codex plugin marketplace upgrade akm-plugins",
+      ]);
+    });
+
+    test("without --next those entries carry no note", async () => {
+      stubClaude({ from: "0.9.26", to: "0.9.27" });
+      const run = await upgrade();
+      expect(entry(run, "claude-code").message).toBeUndefined();
+    });
+
+    test("--check --next reports and changes nothing", async () => {
+      writeConfig(["akm-opencode@next"]);
+      writeCachedOpenCode("0.9.27-rc.1", "next");
+      stubClaude({ from: "0.9.26", to: "0.9.27" });
+      stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2", "0.9.27-rc.2"] });
+      stubOpenCodeNext("0.9.27-rc.2");
+      const deps = fakeDeps("0.9.27-rc.3", "0.9.27-rc.1");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT_CHECK, "0.9.27-rc.1", deps));
+      expect(run.mode).toBe("check");
+      expect(run.result.channel).toBe("next");
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.27-rc.2", heldBack: true });
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "pending", to: "0.9.27-rc.2" });
+      expect(deps.upgradeCalls).toHaveLength(0);
+      expect(mutations()).toEqual([]);
+      expect(fs.existsSync(cacheDir("next"))).toBe(true);
+      expect(fs.readFileSync(path.join(world.state, "claude-version"), "utf8")).toBe("0.9.26");
+    });
+
+    test("--check --next says to run `akm upgrade --next`", () => {
+      const text = formatUpgradePlain({
+        currentVersion: "0.9.25",
+        latestVersion: "0.9.27-rc.1",
+        updateAvailable: true,
+        channel: "next",
+      });
+      expect(text).toContain("run 'akm upgrade --next' to install");
     });
   });
 
