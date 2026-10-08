@@ -2895,6 +2895,8 @@ authenticates its root; it never falls back to an ambient write target.
 
 #### proposal extract
 
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): session extraction is still being measured in 0.10.
+
 Extract durable insights from native coding-agent session files (claude-code,
 codex, opencode) and queue them as proposals. This is the standalone
 entrypoint for session extraction — it replaces the legacy session-checkpoint

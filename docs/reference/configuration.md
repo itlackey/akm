@@ -440,7 +440,9 @@ An improve process's engine follows
 [the one rule](#engines-for-unattended-model-work); an explicit invalid or
 incompatible engine never falls back to another engine. Built-in strategies
 are complete presets. User-defined strategies inherit omitted fields from the
-built-in `default` strategy before applying their own overrides.
+built-in `default` strategy before applying their own overrides. The built-in
+strategies other than `default` and `consolidate` are Experimental (see
+[STABILITY.md](../../STABILITY.md)): 0.10 measures each and keeps, folds or removes it.
 
 `processes.triage.judgment` explicitly controls the optional judgment tier.
 Use `true` to enable it, `false` to disable it, or an object with `enabled`,

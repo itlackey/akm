@@ -51,6 +51,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Stability tiers for 0.10's stabilization work.** Experimental: the built-in
+  improve strategies other than `default` and `consolidate` (`quick`,
+  `reflect-distill`, `thorough`, `catchup`), the proactive-maintenance and
+  high-salience lanes, and session extraction (`akm proposal extract`).
+  Evolving and now listed: `akm command run` and `akm models`; every agent
+  harness (the `opencode` CLI path, `copilot`, `pi`, `gemini`, `aider`,
+  `amazonq`, `openhands` included) and the `okf`, `llm-wiki` and
+  `generic-files` adapters are named Evolving. `akm upgrade`'s plugin step and
+  `--next` are targeted to become Stable before the 0.9 series ends.
+
 - **Workflows are Experimental.** The `akm workflow` commands (`run`, `status`,
   `list`, `create`, `resume`, `abandon`, `plan`), the workflow asset format and
   the engine move to Experimental in STABILITY.md and the help text, for the rest
