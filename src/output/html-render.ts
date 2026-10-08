@@ -6,19 +6,20 @@
  * `--format html` rendering primitives (#582).
  *
  * Templates live in `src/assets/templates/html/` (mirrored to
- * `dist/assets/templates/html/` by `scripts/copy-assets.ts`). `akm health` is
- * the only command with a bespoke `<command>.html` template (substituted here
- * via plain `%%TOKEN%%` string replacement — no template engine, by design);
- * `src/cli/shared.ts`'s `output()` calls it directly for `command === "health"`
- * and every other command falls back to `renderGenericHtml` (`./generic-render`).
- * `--format html` therefore works for every command (D7) — this module's
- * template path is just health's opt-in bespoke rendering, not a format-wide
- * gate.
+ * `dist/assets/templates/html/` by `scripts/copy-assets.ts`). `akm health` and
+ * `akm metrics` are the only commands with a bespoke `<command>.html` template
+ * (substituted here via plain `%%TOKEN%%` string replacement — no template
+ * engine, by design); `src/cli/shared.ts`'s `output()` calls their renderers
+ * directly and every other command falls back to `renderGenericHtml`
+ * (`./generic-render`). `--format html` therefore works for every command (D7)
+ * — this module's template path is just the opt-in bespoke rendering, not a
+ * format-wide gate.
  */
 
 import fs from "node:fs";
 import path from "node:path";
 import healthTemplate from "../assets/templates/html/health.html" with { type: "text" };
+import metricsTemplate from "../assets/templates/html/metrics.html" with { type: "text" };
 import { getDirname } from "../runtime";
 import { writeStdout } from "./stdout";
 
@@ -42,6 +43,7 @@ const EMBEDDED_TEMPLATES: Record<string, string> = {
   // the file's contents as a string on every runtime. The cast reconciles the
   // ambient declaration with the actual import attribute.
   health: healthTemplate as unknown as string,
+  metrics: metricsTemplate as unknown as string,
 };
 
 /**

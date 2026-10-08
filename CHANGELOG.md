@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **`akm metrics --format html` writes a self-contained dashboard.** The page
+  carries the window's raw rows, so you can filter by date, bundle, source and
+  event type, sort the tables, open an asset to see its timeline, queries and
+  feedback, and download any table as CSV, all in the browser. Charts load
+  ECharts from the same CDN tag as `akm health --report`. A page keeps the most
+  recent 50,000 usage rows and says so when it cuts older ones.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.

@@ -12,6 +12,7 @@
 import { type ArgsDef, type CommandContext, type CommandDef, defineCommand } from "citty";
 import { stringify as yamlStringify } from "yaml";
 import { renderHealthHtml } from "../commands/health/renderers";
+import { renderMetricsHtml } from "../commands/metrics/html-report";
 import { assertNever } from "../core/assert";
 import { AkmError, UsageError } from "../core/errors";
 import { getOutputMode, type OutputMode } from "../output/context";
@@ -373,10 +374,11 @@ export function output(command: string, result: unknown): void {
       return;
     }
     case "html": {
-      // `akm health` is the only command with a bespoke HTML report, so it is
-      // called directly rather than through a registry with one possible
-      // registrant (see `output/render-registry.ts`).
-      const rendered = command === "health" ? renderHealthHtml(shaped) : null;
+      // `akm health` and `akm metrics` are the only commands with a bespoke
+      // HTML report, so they are called directly rather than through a
+      // registry with two possible registrants (see `output/render-registry.ts`).
+      const rendered =
+        command === "health" ? renderHealthHtml(shaped) : command === "metrics" ? renderMetricsHtml(shaped) : null;
       deliverRendered(rendered ?? renderGenericHtml(command, shaped), mode.outputPath);
       return;
     }

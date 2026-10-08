@@ -126,8 +126,8 @@ const badgeByStatus = {
 
 const ECHARTS_CDN = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
 
-/** Always CDN — see the module docstring's chunk-9 WI-9.4d note. */
-function buildEchartsTag(): string {
+/** Always CDN — see the module docstring's chunk-9 WI-9.4d note. Shared with the metrics dashboard. */
+export function buildEchartsTag(): string {
   return `<script src="${ECHARTS_CDN}"></script>`;
 }
 
