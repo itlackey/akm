@@ -26,10 +26,11 @@
  * `registerAll`), `akm health` is the only caller this one ever holds, and
  * only `register`/`get` are used.
  *
- * `--format html` has no such registry: `akm health` is, and has only ever
- * been, its one bespoke HTML renderer, so `cli/shared.ts` calls
- * `renderHealthHtml` (`../commands/health/renderers.ts`) directly instead of
- * looking it up through a registry with exactly one possible registrant.
+ * `--format html` has no such registry: `akm health` and `akm metrics` are its
+ * only bespoke HTML renderers, so `cli/shared.ts` calls `renderHealthHtml`
+ * (`../commands/health/renderers.ts`) and `renderMetricsHtml`
+ * (`../commands/metrics/html-report.ts`) directly instead of looking them up
+ * through a registry with two possible registrants.
  */
 
 import type { DetailLevel } from "./context";

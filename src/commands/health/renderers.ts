@@ -16,10 +16,10 @@
  *
  * The Markdown renderer registers into the shared per-command registry (D7,
  * `../../output/render-registry.ts`) alongside every other command's `--format
- * md` renderer. The HTML renderer does not: `health` was, and remains, the
- * only command with a bespoke HTML report, so `cli/shared.ts` calls
- * {@link renderHealthHtml} directly instead of going through a registry with
- * exactly one possible registrant.
+ * md` renderer. The HTML renderer does not: `health` and `metrics` are the only
+ * commands with a bespoke HTML report, so `cli/shared.ts` calls
+ * {@link renderHealthHtml} (and `renderMetricsHtml`) directly instead of going
+ * through a registry with two possible registrants.
  *
  * Returning `null` falls through to the generic renderer, so a result without
  * the report dataset still renders — generically — instead of erroring or
