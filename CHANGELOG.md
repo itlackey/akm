@@ -83,6 +83,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Skill resources that document `$ARGUMENTS` command templates no longer index as commands.** The command
+  placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
+  on the next incremental index (#1084).
+
 - **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
   (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
   keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
