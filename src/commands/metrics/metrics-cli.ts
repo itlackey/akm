@@ -8,8 +8,10 @@
  * workflow spend. This module reads the stores and hands the rows to the pure
  * aggregation in `collect.ts`; the shape is `AkmMetricsResult` (`types.ts`).
  *
- * Nothing is written. A missing `state.db` gives an empty report and a missing
- * `index.db` an empty utility section, each with a note, never an error.
+ * Nothing is written, and nothing is migrated: `state.db` is opened read-only,
+ * and one with migrations pending is skipped with a note. A missing `state.db`
+ * gives an empty report and a missing `index.db` an empty utility section, each
+ * with a note, never an error.
  */
 
 import fs from "node:fs";
@@ -20,12 +22,12 @@ import { loadConfig } from "../../core/config/config";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { readEvents } from "../../core/events";
 import { getDbPath } from "../../core/paths";
-import { getStateDbPath, openStateDatabase } from "../../core/state-db";
+import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { lookupBundleRefReadonly } from "../../indexer/indexer";
 import { USAGE_EVENT_RETENTION_DAYS } from "../../indexer/usage/usage-events";
 import { LLM_USAGE_EVENT } from "../../llm/usage-persist";
 import { getOutputMode, type OutputMode } from "../../output/context";
-import type { Database } from "../../storage/database";
+import { type Database, openDatabase } from "../../storage/database";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
 import { listUtilityWithRefs, type UtilityWithRef } from "../../storage/repositories/index-utility-repository";
 import {
@@ -38,9 +40,10 @@ import {
   summarizeWorkflowRuns,
 } from "../../storage/repositories/metrics-repository";
 import { queryTaskHistory } from "../../storage/repositories/task-history-repository";
+import { applyReadonlyPragmas } from "../../storage/sqlite-pragmas";
 import { parseHealthSince } from "../health";
 import { computeAcceptRateBySource } from "../health/accept-rate";
-import { emptyLlmUsageAggregate, readLlmUsageAggregate } from "../health/llm-usage";
+import { emptyLlmUsageAggregate, summarizeLlmUsage } from "../health/llm-usage";
 import {
   buildMetricsResult,
   DEFAULT_EVENT_RETENTION_DAYS,
@@ -165,9 +168,9 @@ function readPricing(): { pricing: Record<string, EnginePricing>; eventRetention
   }
 }
 
-function readAcceptRate(notes: string[]): AkmMetricsResult["proposals"]["acceptRateBySource"] {
+function readAcceptRate(stateDb: Database, notes: string[]): AkmMetricsResult["proposals"]["acceptRateBySource"] {
   try {
-    return computeAcceptRateBySource();
+    return computeAcceptRateBySource(undefined, { db: stateDb });
   } catch (error) {
     notes.push(`Proposal accept rate is unavailable (${error instanceof Error ? error.message : String(error)}).`);
     return [];
@@ -241,9 +244,25 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     notes.push("state.db was not found, so every section except utility is empty.");
     return buildMetricsResult(input);
   }
-  const stateDb = openStateDatabase(stateDbPath);
+  let pending: string[];
+  try {
+    pending = listPendingStateMigrations(stateDbPath);
+  } catch (error) {
+    notes.push(
+      `state.db could not be read (${error instanceof Error ? error.message : String(error)}), so every section except utility is empty.`,
+    );
+    return buildMetricsResult(input);
+  }
+  if (pending.length > 0) {
+    notes.push(
+      `state.db has ${pending.length} pending migration${pending.length === 1 ? "" : "s"}; 'akm metrics' never migrates, so every section except utility is empty. Run 'akm migrate apply'.`,
+    );
+    return buildMetricsResult(input);
+  }
+  const stateDb = openDatabase(stateDbPath, { readonly: true, create: false });
   let selects: Array<{ ts: string; ref: string }> = [];
   try {
+    applyReadonlyPragmas(stateDb);
     input.usage = listUsageEventRows(stateDb, filter);
     selects = listSelectEvents(stateDb, sinceIso, untilIso);
     input.outcomes = listLowestOutcomeAssets(stateDb, filter, top);
@@ -251,19 +270,18 @@ export async function akmMetrics(options: AkmMetricsOptions = {}): Promise<AkmMe
     input.tasks = queryTaskHistory(stateDb, { since: sinceIso, until: untilIso });
     input.proposals = {
       byStatus: countProposalsByStatus(stateDb, sinceIso, untilIso, filter),
-      acceptRateBySource: readAcceptRate(notes),
+      acceptRateBySource: readAcceptRate(stateDb, notes),
     };
     input.workflows = summarizeWorkflowRuns(stateDb, sinceIso, untilIso);
+    const untilMs = Date.parse(untilIso);
+    const llmEvents = readEvents({ since: sinceIso, type: LLM_USAGE_EVENT }, { db: stateDb, readOnly: true }).events;
+    const inWindow = llmEvents.filter((event) => Date.parse(event.ts) < untilMs);
+    input.llm = summarizeLlmUsage(inWindow);
+    if (input.includeRows) input.llmRows = llmRowsFromEvents(inWindow);
   } finally {
     stateDb.close();
   }
   input.selects = (await durableSelects(selects)).filter((select) => refMatchesFilters(select.ref, filter));
-  input.llm = readLlmUsageAggregate(stateDbPath, sinceIso, untilIso);
-  if (input.includeRows) {
-    const untilMs = Date.parse(untilIso);
-    const events = readEvents({ since: sinceIso, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events;
-    input.llmRows = llmRowsFromEvents(events.filter((event) => Date.parse(event.ts) < untilMs));
-  }
   return buildMetricsResult(input);
 }
 

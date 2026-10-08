@@ -9,6 +9,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
@@ -16,9 +17,9 @@ import type { AkmMetricsResult } from "../../src/commands/metrics/types";
 import { resetConfigCache } from "../../src/core/config/config";
 import { appendEvent } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
-import { openStateDatabase } from "../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
-import type { Database } from "../../src/storage/database";
+import { type Database, openDatabase } from "../../src/storage/database";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliStatus } from "../_helpers/cli";
 import { type IsolatedAkmStorage, makeStashDir, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -454,5 +455,49 @@ describe("akm metrics", () => {
     expect(result.index.runs).toBe(2);
     expect(result.index.medianMs).toBe(1200);
     expect(result.index.recent.map((run) => run.mode)).toEqual(["incremental", "full"]);
+  });
+
+  describe("never writes state.db", () => {
+    const sha = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+
+    test("a state.db with pending migrations is skipped with a note and left untouched", async () => {
+      seedUsage([{ type: "search", at: sqliteTs(Date.now() - HOUR), query: "deploy", metadata: { resultCount: 1 } }]);
+      const file = getStateDbPath();
+      const db = openStateDatabase();
+      db.exec(
+        "DELETE FROM schema_migrations WHERE id = (SELECT id FROM schema_migrations ORDER BY rowid DESC LIMIT 1)",
+      );
+      const ledgerBefore = (db.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get() as { n: number }).n;
+      db.close();
+      const before = sha(file);
+
+      const { result } = await metrics();
+
+      expect(result.notes.some((note) => note.includes("akm migrate apply"))).toBe(true);
+      expect(result.usage.totals.searches).toBe(0);
+      expect(sha(file)).toBe(before);
+      const reader = openDatabase(file, { readonly: true });
+      try {
+        expect((reader.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get() as { n: number }).n).toBe(
+          ledgerBefore,
+        );
+      } finally {
+        reader.close();
+      }
+    });
+
+    test("a current state.db is read without a write", async () => {
+      seedUsage([{ type: "search", at: sqliteTs(Date.now() - HOUR), query: "deploy", metadata: { resultCount: 1 } }]);
+      const file = getStateDbPath();
+      fs.chmodSync(file, 0o444);
+      const before = sha(file);
+      try {
+        const { result } = await metrics();
+        expect(result.usage.totals.searches).toBe(1);
+      } finally {
+        fs.chmodSync(file, 0o644);
+      }
+      expect(sha(file)).toBe(before);
+    });
   });
 });
