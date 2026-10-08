@@ -69,6 +69,7 @@ export const DEFAULT_AKM_READONLY_OPS: ReadonlySet<string> = new Set([
   "events",
   "config",
   "health",
+  "metrics",
 ]);
 
 /**
