@@ -153,7 +153,7 @@ export function findCoveringKnowledge(
 
 /** Knowledge docs a reviewer is shown for a promotion, nearest first. */
 export const NEIGHBOUR_NOTE_COUNT = 5;
-const NEIGHBOUR_EXCERPT_CHARS = 300;
+export const NEIGHBOUR_EXCERPT_CHARS = 300;
 
 /**
  * The knowledge notes nearest to the memory at `memoryPath`, for the drain's
