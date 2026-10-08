@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28-alpha.5] - 2026-10-08
+
+### Added
+
+- **`akm upgrade --next` installs the `@next` prerelease of akm and its OpenCode plugin.** The CLI target is
+  the `next` dist-tag of `akm-cli` when it is newer than the latest stable release, else the stable release
+  (never a downgrade); npm/Bun/pnpm installs name that exact version and binary installs take its GitHub
+  release. The OpenCode lockstep and cache refresh follow `akm-opencode@next` when the OpenCode config's
+  `plugin` list names it (akm never edits that config); with a bare `"akm-opencode"` the entry is `skipped`
+  with a message saying to set `"plugin": ["akm-opencode@next"]`, and lockstep stays on the `@latest` pin.
+  Missing, older-than-`@latest` or unpinned `@next` fails closed like the stable lockstep. Claude Code and
+  Codex are unchanged (no prerelease channel). The result gains `channel`. Works with `--check`, `--force`
+  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases-next).
+
 ## [0.9.28-alpha.4] - 2026-10-08
 
 ### Added

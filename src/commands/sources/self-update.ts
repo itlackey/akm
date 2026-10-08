@@ -17,7 +17,7 @@ import { ConfigError } from "../../core/errors";
 import { warn } from "../../core/warn";
 import { githubHeaders } from "../../integrations/github";
 import { getDirname, mainPath, semverOrder } from "../../runtime";
-import type { UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
+import type { UpgradeChannel, UpgradeCheckResponse, UpgradeResponse } from "../../sources/types";
 import { resolveNpmGlobalRoot } from "../../tasks/resolve-akm-bin";
 import { runMigrationTool } from "../migration-tool";
 
@@ -206,9 +206,28 @@ export function getAkmBinaryName(): string {
   throw new ConfigError(`Unsupported platform for binary upgrade: ${platform}/${arch}`, "UNSUPPORTED_PLATFORM");
 }
 
+/** The `next` dist-tag of this package on the npm registry, or undefined when none is published. */
+async function lookupNextVersion(fetchOptions?: { timeout?: number; retries?: number }): Promise<string | undefined> {
+  const url = `https://registry.npmjs.org/-/package/${encodeURIComponent(getInstalledPackageName())}/dist-tags`;
+  const response = await fetchWithRetry(url, { headers: { accept: "application/json" } }, fetchOptions);
+  if (!response.ok) {
+    throw new Error(`Failed to check for the next prerelease: ${response.status} ${response.statusText}`);
+  }
+  const tags = JSON.parse(await readBodyWithByteCap(response, MAX_CHECKSUM_METADATA_BYTES)) as { next?: unknown };
+  return typeof tags.next === "string" && tags.next !== "" ? tags.next : undefined;
+}
+
+/**
+ * The newest release. With `channel: "next"` that includes prereleases: the
+ * `next` dist-tag when it is newer than the latest stable release, else the
+ * stable release (a prerelease older than a stable one is never a target).
+ * A binary install downloads the GitHub release tagged `v<version>`, which a
+ * prerelease has too, so the version is all the install step needs.
+ */
 export async function checkForUpdate(
   currentVersion: string,
   fetchOptions?: { timeout?: number; retries?: number },
+  channel: UpgradeChannel = "latest",
 ): Promise<UpgradeCheckResponse> {
   const installMethod = detectInstallMethod();
   const url = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -222,7 +241,11 @@ export async function checkForUpdate(
     tag_name?: string;
   };
   const latestTag = release.tag_name ?? "";
-  const latestVersion = latestTag.replace(/^v/, "");
+  let latestVersion = latestTag.replace(/^v/, "");
+  if (channel === "next") {
+    const next = await lookupNextVersion(fetchOptions);
+    if (next && (latestVersion === "" || semverOrder(latestVersion, next) < 0)) latestVersion = next;
+  }
 
   return {
     currentVersion,
