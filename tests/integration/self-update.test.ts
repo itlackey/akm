@@ -1002,6 +1002,14 @@ describe("getPackageManagerUpgradeCommand", () => {
     });
   });
 
+  test("names an exact version when asked to, so a held-back upgrade cannot install @latest", () => {
+    expect(getPackageManagerUpgradeCommand("npm", "akm-cli", "0.9.27")?.args).toEqual([
+      "install",
+      "-g",
+      "akm-cli@0.9.27",
+    ]);
+  });
+
   test("returns bun install command", () => {
     expect(getPackageManagerUpgradeCommand("bun", "akm-cli")).toEqual({
       command: expect.stringContaining("bun"),

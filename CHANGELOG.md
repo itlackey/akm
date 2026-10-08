@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`akm upgrade` also updates the akm plugin of each installed harness (#1007).** After the CLI step
+  it refreshes Claude Code (`claude plugin marketplace update`, then `claude plugin update`) and
+  Codex (`codex plugin marketplace upgrade`) when the `akm-plugins` marketplace is configured and the
+  plugin is installed, and replaces a stale cached `akm-opencode` (moved to the trash, then re-fetched
+  by `opencode debug config`) unless OpenCode is running, in which case it is `deferred`. It only
+  updates: a missing plugin is never installed. The result gains `plugins` (one `outcome` per harness:
+  `updated`, `current`, `skipped`, `deferred`, `failed`; under `--check`, which changes nothing,
+  `pending` for OpenCode and `unknown` for Claude Code and Codex, whose check needs a fetch) and a failed plugin exits 1. With the OpenCode plugin present the CLI moves to the akm-cli
+  that `akm-opencode@latest` pins instead of the newest release, reported under `lockstep`; if the pin
+  cannot be read the CLI is held where it is rather than moved ahead of the plugin. The
+  Containers entrypoint and the Codex hook trust entries are documented under
+  [`akm upgrade`](docs/reference/cli.md#upgrade).
 - **`akm metrics` (experimental) reports what akm has recorded, in every `--format`.** One
   read-only command covers asset usage (searches, shows, curates, selects, the
   queries that returned nothing), feedback with its reasons and tags, utility
