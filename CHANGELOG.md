@@ -83,6 +83,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Skill resources that document `$ARGUMENTS` command templates no longer index as commands.** The command
+  placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
+  on the next incremental index (#1084).
 - **`akm proposal drain --strategy <name>` now honors enabled triage judgment.** A named strategy with
   `processes.triage.judgment.enabled: true` runs its configured judge without `--judgment`; the flag still
   forces judgment for disabled strategies, and drains without `--strategy` keep their existing behavior (#1086).
@@ -155,6 +158,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reasons said the opposite of what the judge's claim lists decided (for example "B contains all claims from A" for a
   pair where B was retired). The lists were right, so no retirement changed, but the reason a reviewer reads was
   wrong. The prompt now asks the reason to name the asset that can be deleted; two replays gave 0 and 1 of about 85.
+- **Five test suites no longer leak their temp folders on a direct `bun test` (#1088).** The outcome-loop,
+  outcome-invariance, memory-improve-archive, plan-flag-cli and require-engines-cli suites created `akm-*`
+  directories under the OS temp dir and never removed them; `scripts/sweep-test-tmp.ts` swept them only for
+  `test-unit.sh`/`test-integration.sh` runs, so running a file straight with `bun test` left a folder per test
+  behind. Each suite now registers its temp dirs with the shared test sandbox helper (`makeSandboxDir`, drained
+  by an `afterEach`), the pattern the other suites already use.
 
 ## [0.9.27] - 2026-10-07
 
