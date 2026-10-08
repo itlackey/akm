@@ -12,6 +12,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   those two was dropped. An improve run still keeps its own sink and the
   process-wide one resumes when it ends.
 - Search latency is recorded in the search summary usage row (`totalMs`, plus `rankMs` and `embedMs` when present), and every `akm index` run appends an `index_completed` event with its phase timings.
+- **Usage-event retention no longer deletes a day early.** The purge on `akm index`
+  compared the space-separated `created_at` against an ISO cutoff, so every row on
+  the cutoff's date was removed up to 24 hours before its 90 days were up. Both
+  sides are now normalized before the comparison.
 
 ## [0.9.27] - 2026-10-07
 
