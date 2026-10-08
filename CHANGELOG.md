@@ -6,6 +6,41 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28] - 2026-10-08
+
+The stable release of the 0.9.28 line: 0.9.28-alpha.1 to alpha.11.
+When upgrading from 0.9.27:
+
+- **`akm upgrade` updates each installed harness's akm plugin** (Claude Code,
+  Codex, OpenCode) after the CLI, and `--next` installs the `@next` prerelease
+  of akm and its OpenCode plugin. An OpenCode refresh waits while a host
+  OpenCode runs; servers inside containers no longer hold it up (alpha.4–alpha.11).
+- **OpenCode runs through the SDK (`opencode-sdk`) reliably:** the server gets
+  `OPENCODE_API_KEY` and `OPENCODE_CONFIG`, sessions are kept, permission
+  requests are rejected instead of hanging the run, a provider usage limit ends
+  the run with its reason instead of a silent stall, and an engine can name a
+  default `agent` (alpha.7–alpha.10, #1108).
+- **Knowledge is never retired in favour of a memory** by consolidate's pair
+  pass, and the drain's judge sees promotions it accepted earlier in the same
+  drain; `akm proposal drain --strategy` honours that strategy's judgment
+  setting (alpha.7, alpha.11).
+- **Indexing:** a skill's reference file with a shell `$1` or a documented
+  `$ARGUMENTS` stays a skill resource, and existing indexes re-file such entries
+  on the next `akm index` (alpha.4, alpha.6, alpha.11).
+- **Added (experimental):** `akm metrics` reports what akm has recorded, in every
+  format including a self-contained HTML dashboard; LLM usage is recorded for
+  every command (alpha.2).
+- **Changed:** stability tiers for 0.10's stabilization work; workflows are
+  Experimental (alpha.7). Distill skips deprecated or superseded memories and
+  keeps a rejected lesson's text; the pair judge's reasons no longer swap A and
+  B (alpha.1, alpha.3).
+
+### Fixed
+
+- **An `opencode-sdk` dispatch now stops promptly when a provider usage limit schedules a retry past its deadline.**
+  The retry, provider and reset time are recorded in the dispatch `stderr`, and account limits fail as provider limits
+  rather than appearing to hang until a timeout (#1108).
+
 ## [0.9.28-alpha.11] - 2026-10-08
 
 ### Fixed
