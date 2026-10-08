@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.28-alpha.6] - 2026-10-08
+
+### Fixed
+
+- **The #1063 fix now reaches files that have not changed (#1063).** An incremental `akm index` skips a
+  directory whose files are unchanged, so a reference file already filed as a command stayed
+  `commands/skills/<name>/...` until `akm index --full`. The `akm` adapter's version, which is part of each
+  directory's freshness, is bumped, so the next `akm index` after upgrading re-files those rows once (about 18
+  entries in a 18,000-entry library) and drops their old refs. Reading every directory once makes that run slower
+  (about 27 s against 2 s on that library) and re-embeds the entries whose embedding hash was written by an older
+  release (about 8,000 of them); later runs cost what they did before.
+
 ## [0.9.28-alpha.5] - 2026-10-08
 
 ### Added

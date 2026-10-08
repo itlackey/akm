@@ -480,7 +480,11 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
 
 export const akmAdapter: BundleAdapter = {
   id: "akm",
-  version: "0.9.0",
+  // Bump when a change to the matchers (or `recognize`) can retype or re-ref a
+  // file that has not changed: the version is folded into each directory's
+  // freshness, so the next incremental `akm index` re-drains it and re-files
+  // those rows (#1063). 0.9.1: a skill's resource is never retyped by a `$1`.
+  version: "0.9.1",
   // Recognized-extension HINT, derived from what the matchers accept (§6):
   // `.md` (Markdown types + workflow peer), `.yml` (task and workflow YAML),
   // `.yaml` (task near-miss diagnostics), `.env` (env files), and the 16
