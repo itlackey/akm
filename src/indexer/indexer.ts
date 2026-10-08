@@ -10,6 +10,7 @@ import { adapterForId } from "../core/adapter/registry";
 import type { BundleComponent } from "../core/adapter/types";
 import { compareCodePoints, isHttpUrl } from "../core/common";
 import type { AkmConfig } from "../core/config/config";
+import { appendEvent } from "../core/events";
 import { classifyPathAccess, describeInaccessiblePath } from "../core/path-access";
 import { getDbPath } from "../core/paths";
 import { SCRIPT_EXTENSIONS } from "../core/recognition-util";
@@ -787,6 +788,33 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
     const totalEntries = getEntryCount(db);
     const tFinalizeEnd = Date.now();
 
+    const timing = {
+      totalMs: Date.now() - t0,
+      walkMs: tWalkEnd - tWalkStart,
+      llmMs: tLlmEnd - tWalkEnd,
+      embedMs: tEmbedEnd - tLlmEnd,
+      ftsMs: tFtsEnd - tEmbedEnd,
+      finalizeMs: tFinalizeEnd - tFinalizeStart,
+      cleanMs: clean ? cleanEnd - cleanStart : 0,
+      preflightMs: t0 - requestedAt,
+      sourceCacheMs: sourceCacheEnd - sourceCacheStart,
+      endToEndMs: Date.now() - requestedAt,
+    };
+    // Persist the phase timings so `akm metrics` can report index latency
+    // after the command output is gone. Best-effort, like every appendEvent.
+    appendEvent({
+      eventType: "index_completed",
+      metadata: {
+        mode,
+        totalMs: timing.totalMs,
+        walkMs: timing.walkMs,
+        llmMs: timing.llmMs,
+        embedMs: timing.embedMs,
+        ftsMs: timing.ftsMs,
+        finalizeMs: timing.finalizeMs,
+      },
+    });
+
     return {
       stashDir,
       totalEntries,
@@ -799,18 +827,7 @@ async function akmIndexReal(options: IndexOptions): Promise<IndexResponse> {
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(Object.keys(persistedAdapters).length > 0 ? { configUpdated: { detectedAdapters: persistedAdapters } } : {}),
       verification,
-      timing: {
-        totalMs: Date.now() - t0,
-        walkMs: tWalkEnd - tWalkStart,
-        llmMs: tLlmEnd - tWalkEnd,
-        embedMs: tEmbedEnd - tLlmEnd,
-        ftsMs: tFtsEnd - tEmbedEnd,
-        finalizeMs: tFinalizeEnd - tFinalizeStart,
-        cleanMs: clean ? cleanEnd - cleanStart : 0,
-        preflightMs: t0 - requestedAt,
-        sourceCacheMs: sourceCacheEnd - sourceCacheStart,
-        endToEndMs: Date.now() - requestedAt,
-      },
+      timing,
       ...(cleanResult !== undefined ? { clean: cleanResult } : {}),
     };
   } finally {
@@ -1630,6 +1647,8 @@ type LookupDatabaseOpener = (dbPath: string) => Database | undefined;
 async function lookupBundleRefWithResolutionUsing(
   ref: BundleRef,
   openLookupDatabase: LookupDatabaseOpener,
+  /** The opener hands out a handle the caller owns and closes. */
+  borrowed = false,
 ): Promise<BundleRefLookupResolution> {
   const sources = await resolveLookupSources();
   if (sources.length === 0) return { entry: null };
@@ -1688,7 +1707,7 @@ async function lookupBundleRefWithResolutionUsing(
     }
     return resolved(null);
   } finally {
-    if (db) closeDatabase(db);
+    if (db && !borrowed) closeDatabase(db);
   }
 }
 
@@ -1715,6 +1734,34 @@ export async function lookupBundleRefReadonly(ref: BundleRef): Promise<IndexEntr
   });
   if (resolution.indexError !== undefined) throw resolution.indexError;
   return resolution.entry;
+}
+
+/**
+ * {@link lookupBundleRefReadonly} for many refs through one snapshot of the
+ * index, which is copied once rather than once per ref. A ref that does not
+ * resolve, or an index that cannot be read, gives `null` for that ref.
+ */
+export async function lookupBundleRefsReadonly(refs: readonly BundleRef[]): Promise<Array<IndexEntry | null>> {
+  if (refs.length === 0) return [];
+  let db: Database | undefined;
+  try {
+    db = openReadonlyExistingDatabase(getDbPath(), { isolatedSnapshot: true });
+  } catch {
+    // Unreadable index: every ref stays unresolved.
+  }
+  try {
+    const entries: Array<IndexEntry | null> = [];
+    for (const ref of refs) {
+      try {
+        entries.push((await lookupBundleRefWithResolutionUsing(ref, () => db, true)).entry);
+      } catch {
+        entries.push(null);
+      }
+    }
+    return entries;
+  } finally {
+    if (db) closeDatabase(db);
+  }
 }
 
 function readLookupEntry(db: Database, id: number, fallbackConceptId: string, sourceRoot: string): IndexEntry | null {

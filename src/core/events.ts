@@ -138,6 +138,8 @@ export type EventType =
    * Metadata carries `{pagesBefore, pagesAfter, freelistRatioBefore}`.
    */
   | "index_db_vacuumed"
+  /** Emitted once when an `akm index` run finishes. Metadata: `{mode, totalMs, walkMs, llmMs, embedMs, ftsMs, finalizeMs}`. */
+  | "index_completed"
   /**
    * #733 — emitted by `runOrphanStateGcPass` (the orphan-state GC maintenance
    * pass) when a run has something to report: any `asset_salience` /

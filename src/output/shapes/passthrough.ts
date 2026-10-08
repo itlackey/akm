@@ -56,6 +56,7 @@ const PASSTHROUGH_COMMANDS = [
   "info",
   "lint",
   "list",
+  "metrics",
   "models",
   "proposal-accept-batch",
   "proposal-drain",

@@ -13,7 +13,7 @@ import path from "node:path";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
 import { type AkmConfig, bundlesToSourceEntries, loadConfig } from "../../core/config/config";
 import { ConfigError, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
-import { appendEvent, type EventsContext, readEvents } from "../../core/events";
+import { appendEvent, type EventsContext } from "../../core/events";
 import type { LockOwnership } from "../../core/file-lock";
 import type {
   AkmImproveResult,
@@ -37,8 +37,8 @@ import { akmIndex } from "../../indexer/indexer";
 import { collectPendingMemories } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
-import { installLlmUsagePersistence, LLM_USAGE_EVENT } from "../../llm/usage-persist";
-import { withLlmStage } from "../../llm/usage-telemetry";
+import { installLlmUsagePersistence } from "../../llm/usage-persist";
+import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
   isGitBackedStash,
   listGitChangedPaths,
@@ -49,7 +49,7 @@ import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
-import { summarizeLlmUsageCrossTab } from "../health/llm-usage";
+import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import type { EligibilitySource } from "../proposal/proposal-types";
 import { type AutonomyLane, describeGatedLanes, isAutonomyLaneAllowed } from "./autonomy-gate";
@@ -200,6 +200,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // The usage sink resolves it per append.
   let eventsCtx: EventsContext = { dbPath: resolvedStateDbPath };
   let disposeLlmUsageSink = (): void => {};
+  // Every terminal LLM record this run's own sink sees, in call order. The
+  // usage report is built from these, not from a wall-clock read of state.db.
+  const usageRecords: LlmUsageRecord[] = [];
   const releaseRunLock = (): void => {
     const ownership = improveLockOwnership;
     if (!ownership) return;
@@ -248,7 +251,8 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       improveLockOwnership = acquisition.ownership;
       disposeLlmUsageSink = installLlmUsagePersistence(
         () => eventsCtx,
-        () => {
+        (record) => {
+          usageRecords.push(record);
           firstEngineResponseSeen = true;
           clearFirstResponseHeartbeat();
         },
@@ -316,7 +320,15 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     }
 
     const seq = await runImproveStageSequence(setup, collected, preEnsureCleanupWarnings, eventsCtx);
-    const result = finalizeImproveResult({ run: setup, seq, collected, triageDrain, ensureIndexDurationMs, eventsCtx });
+    const result = finalizeImproveResult({
+      run: setup,
+      seq,
+      collected,
+      triageDrain,
+      ensureIndexDurationMs,
+      eventsCtx,
+      usageRecords,
+    });
     // The run's write provenance goes on the envelope before the sync, so
     // `writtenPaths` is exactly the set the commit is scoped to.
     const writtenPaths = describeRunWrittenPaths(setup, journal?.writtenPaths() ?? []);
@@ -1040,8 +1052,9 @@ function finalizeImproveResult(args: {
   triageDrain?: DrainResult;
   ensureIndexDurationMs?: number;
   eventsCtx: EventsContext;
+  usageRecords: readonly LlmUsageRecord[];
 }): AkmImproveResult {
-  const { run, collected, triageDrain, ensureIndexDurationMs, eventsCtx } = args;
+  const { run, collected, triageDrain, ensureIndexDurationMs, eventsCtx, usageRecords } = args;
   const { preparation, postLoop, reflectsWithErrorContext, finalActions } = args.seq;
   const { options, startMs, resolvedPlan } = run;
   const { memoryCleanupPlan, strategyFilteredRefs } = collected;
@@ -1050,12 +1063,12 @@ function finalizeImproveResult(args: {
   const { memoryInferenceDurationMs } = postLoop;
   // The per-ref distill-skipped rows fold into a bounded aggregate before persistence (C1).
   const { actions: persistedActions, aggregate: distillSkippedAggregate } = foldDistillSkipped(finalActions);
-  // This run's LLM accounting (#944): llm_usage rows carry no run id, so the
-  // read is bounded by the run's own wall clock.
-  const usageEvents = readEvents({ since: new Date(startMs).toISOString(), type: LLM_USAGE_EVENT }, eventsCtx).events;
+  // This run's LLM accounting (#944): built from the records this run's own
+  // sink collected, so calls other akm processes persist to state.db while
+  // the run is in flight (llm_usage rows carry no run id) never count here.
   const usageReport = buildImproveUsageReport({
     resolvedPlan,
-    byProcessEngineModel: summarizeLlmUsageCrossTab(usageEvents),
+    byProcessEngineModel: summarizeLlmUsageRecordsCrossTab(usageRecords),
     strategyFilteredRefsCount: strategyFilteredRefs.length,
     loopRefs: preparation.loopRefs,
     persistedActions,

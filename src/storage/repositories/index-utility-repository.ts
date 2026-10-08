@@ -331,3 +331,46 @@ export function applyFeedbackToUtilityScore(
 
   return result;
 }
+
+/** One indexed entry with its utility score, or `undefined` scores when it has none. */
+export interface UtilityWithRef {
+  /** Durable `bundle//conceptId` (`entries.item_ref`). */
+  ref: string;
+  score?: Pick<UtilityScoreRow, "utility" | "showCount" | "searchCount" | "selectRate" | "lastUsedAt">;
+}
+
+/**
+ * Every indexed entry with its `utility_scores` row (when it has one), for
+ * `akm metrics`. `utility_scores` is keyed by the unstable `entry_id`, so the
+ * join to `entries` is what yields a durable ref.
+ */
+export function listUtilityWithRefs(db: Database): UtilityWithRef[] {
+  const rows = db
+    .prepare(
+      `SELECT e.item_ref AS ref, u.utility, u.show_count, u.search_count, u.select_rate, u.last_used_at
+       FROM entries e LEFT JOIN utility_scores u ON u.entry_id = e.id
+       ORDER BY e.item_ref`,
+    )
+    .all() as Array<{
+    ref: string;
+    utility: number | null;
+    show_count: number | null;
+    search_count: number | null;
+    select_rate: number | null;
+    last_used_at: string | null;
+  }>;
+  return rows.map((row) =>
+    row.utility === null
+      ? { ref: row.ref }
+      : {
+          ref: row.ref,
+          score: {
+            utility: row.utility,
+            showCount: row.show_count ?? 0,
+            searchCount: row.search_count ?? 0,
+            selectRate: row.select_rate ?? 0,
+            lastUsedAt: row.last_used_at ?? undefined,
+          },
+        },
+  );
+}

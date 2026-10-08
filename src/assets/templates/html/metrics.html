@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>%%REPORT_TITLE%%</title>
+  %%ECHARTS_TAG%%
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --surface2:#21262d;
+      --border:  #30363d;
+      --text:    #e6edf3;
+      --muted:   #9ea8b5;
+      --accent:  #58a6ff;
+      --green:   #3fb950;
+      --yellow:  #d29922;
+      --red:     #f85149;
+      --purple:  #bc8cff;
+      --neutral: #8b949e;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg:      #ffffff;
+        --surface: #f6f8fa;
+        --surface2:#eaeef2;
+        --border:  #d0d7de;
+        --text:    #1f2328;
+        --muted:   #57606a;
+        --accent:  #0969da;
+        --green:   #1a7f37;
+        --yellow:  #9a6700;
+        --red:     #cf222e;
+        --purple:  #8250df;
+        --neutral: #6e7781;
+      }
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+    button { font: inherit; color: var(--text); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 10px; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button:focus-visible, input:focus-visible, th:focus-visible, tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    input[type=text], input[type=date] { font: inherit; color: var(--text); background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 3px 8px; }
+
+    header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 20px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    header .logo { font-size: 20px; font-weight: 700; color: var(--accent); letter-spacing: -0.5px; display: flex; flex-direction: column; line-height: 1.1; }
+    header .logo-version { font-size: 10px; font-weight: 500; color: var(--muted); letter-spacing: 0; }
+    header .meta { color: var(--muted); font-size: 13px; min-width: 0; }
+    header .meta .title { font-weight: 600; color: var(--text); }
+
+    main { padding: 20px 32px; max-width: 1400px; margin: 0 auto; }
+    @media (max-width: 768px) { main { padding: 16px; } .filter-bar { position: static; } }
+    .section { margin-bottom: 32px; }
+    h2 { font-size: 16px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    h2 .actions { margin-left: auto; font-size: 12px; font-weight: 400; }
+    h3 { font-size: 13px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 10px; }
+    .hint { color: var(--muted); font-size: 12px; font-weight: 400; }
+
+    .notes { background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--yellow); border-radius: 8px; padding: 10px 14px; margin-bottom: 20px; font-size: 13px; }
+    .notes ul { margin-left: 18px; }
+    .notes:empty, .notes[hidden] { display: none; }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+    .kpi-card .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .kpi-card .value { font-size: 26px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+    .kpi-card .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+    .kpi-card.green { border-left: 3px solid var(--green); }
+    .kpi-card.red { border-left: 3px solid var(--red); }
+    .kpi-card.yellow { border-left: 3px solid var(--yellow); }
+    @media (max-width: 600px) { .kpi-card .value { font-size: 22px; } }
+
+    .filter-bar { position: sticky; top: 0; z-index: 5; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-bottom: 24px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+    .filter-bar .group { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+    .filter-bar .group > .name { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; }
+    .filter-bar[data-disabled] { opacity: 0.5; pointer-events: none; }
+
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; min-width: 0; }
+    .panel.full { grid-column: 1 / -1; }
+    .ec { width: 100%; height: 260px; }
+    .ec.tall { height: 320px; }
+    .ec-empty { color: var(--muted); font-size: 12px; padding: 24px 0; text-align: center; }
+
+    .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { text-align: left; padding: 8px 12px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; user-select: none; }
+    thead th[data-sort] { cursor: pointer; }
+    thead th[data-sort]:hover { color: var(--text); }
+    tbody tr { border-bottom: 1px solid var(--border); }
+    tbody tr:last-child { border-bottom: none; }
+    tbody td { padding: 7px 12px; vertical-align: top; }
+    tr.clickable { cursor: pointer; }
+    tr.clickable:hover { background: var(--surface2); }
+    .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .pos { color: var(--green); }
+    .neg { color: var(--red); }
+    .more, .empty { color: var(--muted); font-size: 12px; padding: 8px 12px; }
+    .tag { display: inline-flex; padding: 1px 7px; border-radius: 4px; font-size: 11px; background: var(--surface2); color: var(--muted); margin: 0 4px 2px 0; }
+
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+    .cards dl { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; font-size: 13px; }
+    .cards dt { color: var(--muted); }
+    .cards dd { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    #scrim { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 20; }
+    #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); background: var(--bg); border-left: 1px solid var(--border); z-index: 21; overflow-y: auto; padding: 18px 20px; }
+    #drawer[hidden], #scrim[hidden] { display: none; }
+    #drawer h2 { margin-bottom: 4px; }
+    #drawer .close { margin-left: auto; }
+    #drawer ul { margin: 0 0 14px 18px; font-size: 13px; }
+
+    footer { padding: 16px 32px; color: var(--muted); font-size: 12px; border-top: 1px solid var(--border); display: flex; gap: 12px; flex-wrap: wrap; }
+    @media (max-width: 600px) { footer { padding: 12px 16px; } }
+  </style>
+</head>
+<body>
+<header>
+  <div class="logo">akm<span class="logo-version">v%%AKM_VERSION%%</span></div>
+  <div class="meta">
+    <div class="title">Metrics</div>
+    <div>%%WINDOW_HTML%%</div>
+    <div>%%FILTERS_HTML%%</div>
+  </div>
+</header>
+
+<main>
+  <div class="notes" id="notes" role="status"></div>
+
+  <div class="kpi-grid" id="kpis"></div>
+
+  <div class="filter-bar" id="filterbar" aria-label="Filters">
+    <div class="group"><span class="name">From</span><input type="date" id="f-from" aria-label="From date"></div>
+    <div class="group"><span class="name">To</span><input type="date" id="f-to" aria-label="To date"></div>
+    <div class="group" id="f-bundles"><span class="name">Bundle</span></div>
+    <div class="group" id="f-sources"><span class="name">Source</span></div>
+    <div class="group" id="f-types"><span class="name">Events</span></div>
+    <div class="group"><input type="text" id="f-text" placeholder="Filter by ref or query" aria-label="Filter by ref or query" size="24"></div>
+    <button id="f-reset" type="button">Reset</button>
+  </div>
+
+  <div class="section">
+    <h2>Usage over time <span class="hint">drag the slider to select a date range</span></h2>
+    <div class="panel"><div class="ec tall" id="ch-timeline"></div></div>
+  </div>
+
+  <div class="section">
+    <h2>Top assets <span class="hint">click a row for details &middot; selects are window-wide</span>
+      <span class="actions"><button type="button" data-export="assets">Download CSV</button></span></h2>
+    <div class="panel"><div class="table-wrap" id="tb-assets"></div></div>
+  </div>
+
+  <div class="section">
+    <h2>Queries</h2>
+    <div class="grid2">
+      <div class="panel">
+        <h3>Top queries <button type="button" data-export="queries" style="float:right">Download CSV</button></h3>
+        <div class="table-wrap" id="tb-queries"></div>
+      </div>
+      <div class="panel">
+        <h3>Zero-result queries (content gaps) <button type="button" data-export="zero" style="float:right">Download CSV</button></h3>
+        <div class="table-wrap" id="tb-zero"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Feedback</h2>
+    <div class="grid2">
+      <div class="panel"><h3>Per day</h3><div class="ec" id="ch-feedback"></div></div>
+      <div class="panel"><h3>By tag</h3><div class="ec" id="ch-tags"></div></div>
+      <div class="panel full">
+        <h3>Recent negative feedback <button type="button" data-export="negatives" style="float:right">Download CSV</button></h3>
+        <div class="table-wrap" id="tb-negatives"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Utility <span class="hint">window-wide; not affected by filters</span></h2>
+    <div class="grid2">
+      <div class="panel"><h3>Distribution</h3><div class="ec" id="ch-utility"></div><div class="hint" id="utility-never"></div></div>
+      <div class="panel">
+        <h3>Lowest <button type="button" data-export="lowest" style="float:right">Download CSV</button></h3>
+        <div class="table-wrap" id="tb-lowest"></div>
+        <h3 style="margin-top:14px">Highest <button type="button" data-export="highest" style="float:right">Download CSV</button></h3>
+        <div class="table-wrap" id="tb-highest"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>LLM usage <span class="hint" id="llm-hint"></span></h2>
+    <div class="grid2">
+      <div class="panel"><h3>Tokens by stage</h3><div class="ec" id="ch-llm-stage"></div></div>
+      <div class="panel"><h3>Tokens by process</h3><div class="ec" id="ch-llm-process"></div></div>
+      <div class="panel"><h3>Tokens by engine</h3><div class="ec" id="ch-llm-engine"></div></div>
+      <div class="panel"><h3>Calls and mean latency per day</h3><div class="ec" id="ch-llm-time"></div></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Tasks, proposals, workflows <span class="hint">window-wide</span></h2>
+    <div class="cards" id="cards"></div>
+  </div>
+</main>
+
+<footer>
+  <span>Generated <time data-iso="%%GENERATED_AT%%">%%GENERATED_AT%%</time></span>
+  <span>akm v%%AKM_VERSION%%</span>
+</footer>
+
+<div id="scrim" hidden></div>
+<aside id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden></aside>
+
+<script type="application/json" id="akm-data">%%DATA_JSON%%</script>
+<script>
+/* CORE-BEGIN */
+// Pure data functions: no DOM access, so they can be exercised on their own.
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function bundleOf(ref) {
+  if (!ref) return '';
+  var i = ref.indexOf('//');
+  return i > 0 ? ref.slice(0, i) : '';
+}
+function dayOf(at) { return String(at).slice(0, 10); }
+function tokensOf(r) {
+  return r.totalTokens != null ? r.totalTokens : (r.promptTokens || 0) + (r.completionTokens || 0);
+}
+
+// Every day from `first` to `last` inclusive (UTC), so a chart axis has no gaps.
+function dayRange(first, last) {
+  var out = [];
+  var d = Date.parse(first + 'T00:00:00Z');
+  var end = Date.parse(last + 'T00:00:00Z');
+  if (isNaN(d) || isNaN(end)) return out;
+  while (d <= end && out.length < 3660) {
+    out.push(new Date(d).toISOString().slice(0, 10));
+    d += 86400000;
+  }
+  return out;
+}
+
+// f: { from, to ('YYYY-MM-DD', inclusive), bundles, sources, types (Sets; absent = no filter), text }
+// Rows without a ref (search/curate summary rows) belong to no bundle, so a
+// bundle filter hides them. aggregate() then counts searches from the per-hit
+// rows instead (see its hitMode option).
+function filterRows(rows, f) {
+  var q = (f.text || '').trim().toLowerCase();
+  return rows.filter(function (r) {
+    if (f.types && !f.types.has(r.eventType)) return false;
+    if (f.sources && !f.sources.has(r.source)) return false;
+    if (f.bundles && !f.bundles.has(bundleOf(r.ref))) return false;
+    var d = dayOf(r.at);
+    if (f.from && d < f.from) return false;
+    if (f.to && d > f.to) return false;
+    if (q) {
+      var hay = ((r.ref || '') + ' ' + (r.query || '')).toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+
+// Re-derive the usage and feedback sections from raw usage rows. Show and
+// feedback rows always carry a ref. Per-hit search rows count as `searchHits`
+// for the asset. A search or curate is one unit, counted two ways:
+//  - default: from its summary row (no ref);
+//  - opts.hitMode: from its per-hit rows, because a bundle or ref filter
+//    removes the summary rows. One unit per distinct (type, query, time) group
+//    of rows that carry a ref, and no zero-result (a hit means results). This
+//    is the rule collect.ts buildUsage applies server-side.
+// Only searches feed the query tables, as on the server.
+function aggregate(rows, opts) {
+  var hitMode = !!(opts && opts.hitMode), seenGroups = Object.create(null);
+  var daily = new Map(), assets = new Map(), queries = new Map(), tags = Object.create(null), sources = Object.create(null);
+  var t = { searches: 0, shows: 0, curates: 0, feedback: 0, positive: 0, negative: 0, zeroResult: 0 };
+  var negatives = [];
+  rows.forEach(function (r) {
+    var d = dayOf(r.at);
+    var day = daily.get(d);
+    if (!day) { day = { day: d, search: 0, show: 0, curate: 0, feedback: 0, positive: 0, negative: 0 }; daily.set(d, day); }
+    sources[r.source] = (sources[r.source] || 0) + 1;
+    var a = null;
+    if (r.ref) {
+      a = assets.get(r.ref);
+      if (!a) { a = { ref: r.ref, shows: 0, searchHits: 0, positive: 0, negative: 0, lastUsedAt: r.at }; assets.set(r.ref, a); }
+      if (r.at > a.lastUsedAt) a.lastUsedAt = r.at;
+    }
+    if (r.eventType === 'show') {
+      t.shows++; day.show++;
+      if (a) a.shows++;
+    } else if (r.eventType === 'feedback') {
+      t.feedback++; day.feedback++;
+      var pos = r.signal === 'positive', neg = r.signal === 'negative';
+      if (pos) { t.positive++; day.positive++; }
+      if (neg) { t.negative++; day.negative++; negatives.push({ ref: r.ref || '', at: r.at, reason: r.reason || '', tags: r.tags || [] }); }
+      if (a) { if (pos) a.positive++; if (neg) a.negative++; }
+      (r.tags || []).forEach(function (tag) {
+        var e = tags[tag] || (tags[tag] = { positive: 0, negative: 0 });
+        if (pos) e.positive++;
+        if (neg) e.negative++;
+      });
+    } else if (r.eventType === 'search' || r.eventType === 'curate') {
+      if (r.ref && r.eventType === 'search' && a) a.searchHits++;
+      var unit = !r.ref;
+      if (hitMode) {
+        unit = false;
+        if (r.ref) {
+          var group = JSON.stringify([r.eventType, r.query || null, r.at]);
+          unit = !seenGroups[group];
+          seenGroups[group] = true;
+        }
+      }
+      if (unit) {
+        var rc = hitMode ? null : r.resultCount;
+        if (r.eventType === 'search') { t.searches++; day.search++; } else { t.curates++; day.curate++; }
+        if (r.eventType === 'search' && rc === 0) t.zeroResult++;
+        if (r.eventType === 'search' && r.query) {
+          var qe = queries.get(r.query);
+          if (!qe) { qe = { query: r.query, count: 0, resultSum: 0, resultN: 0, zero: 0, lastAt: r.at }; queries.set(r.query, qe); }
+          qe.count++;
+          if (rc != null) { qe.resultSum += rc; qe.resultN++; if (rc === 0) qe.zero++; }
+          if (r.at > qe.lastAt) qe.lastAt = r.at;
+        }
+      }
+    }
+  });
+  var queryRows = Array.from(queries.values()).map(function (q) {
+    return { query: q.query, count: q.count, zero: q.zero, avgResults: q.resultN ? q.resultSum / q.resultN : null, lastAt: q.lastAt };
+  });
+  negatives.sort(function (x, y) { return x.at < y.at ? 1 : x.at > y.at ? -1 : 0; });
+  return {
+    totals: t,
+    daily: Array.from(daily.values()).sort(function (x, y) { return x.day < y.day ? -1 : 1; }),
+    assets: Array.from(assets.values()),
+    queries: queryRows,
+    zeroQueries: queryRows.filter(function (q) { return q.zero > 0; })
+      .map(function (q) { return { query: q.query, count: q.zero, avgResults: 0, lastAt: q.lastAt }; }),
+    tags: tags,
+    sources: sources,
+    negatives: negatives
+  };
+}
+
+// LLM rows are per-day sums (calls, durationMs and tokens already added up)
+// and carry no ref, source or event type, so only the date range applies.
+function aggregateLlm(rows, f) {
+  var by = { stage: Object.create(null), process: Object.create(null), engine: Object.create(null) }, daily = new Map();
+  var t = { calls: 0, tokens: 0, failures: 0, durationMs: 0 };
+  rows.forEach(function (r) {
+    var d = dayOf(r.day);
+    if (f.from && d < f.from) return;
+    if (f.to && d > f.to) return;
+    var tok = tokensOf(r), calls = r.calls || 0, failed = r.outcome === 'error' ? calls : 0;
+    t.calls += calls; t.tokens += tok; t.durationMs += r.durationMs || 0; t.failures += failed;
+    [['stage', r.stage], ['process', r.process], ['engine', r.engine]].forEach(function (p) {
+      var k = p[1] || 'unattributed';
+      var e = by[p[0]][k] || (by[p[0]][k] = { name: k, calls: 0, tokens: 0, failures: 0 });
+      e.calls += calls; e.tokens += tok; e.failures += failed;
+    });
+    var day = daily.get(d) || { day: d, calls: 0, durationMs: 0 };
+    day.calls += calls; day.durationMs += r.durationMs || 0;
+    daily.set(d, day);
+  });
+  function list(o) {
+    return Object.keys(o).map(function (k) { return o[k]; })
+      .sort(function (x, y) { return y.tokens - x.tokens || (x.name < y.name ? -1 : 1); });
+  }
+  return {
+    totals: t,
+    byStage: list(by.stage), byProcess: list(by.process), byEngine: list(by.engine),
+    daily: Array.from(daily.values()).sort(function (x, y) { return x.day < y.day ? -1 : 1; })
+      .map(function (d) { return { day: d.day, calls: d.calls, avgMs: d.calls ? Math.round(d.durationMs / d.calls) : 0 }; })
+  };
+}
+
+// Nulls and undefined sort last in either direction.
+function sortRows(rows, key, dir) {
+  var sign = dir === 'asc' ? 1 : -1;
+  return rows.slice().sort(function (a, b) {
+    var x = a[key], y = b[key];
+    var xn = x == null, yn = y == null;
+    if (xn || yn) return xn && yn ? 0 : xn ? 1 : -1;
+    if (typeof x === 'number' && typeof y === 'number') return (x - y) * sign;
+    return String(x).localeCompare(String(y)) * sign;
+  });
+}
+
+// RFC 4180 quoting. A text cell that a spreadsheet would read as a formula
+// gets a leading apostrophe.
+function csvCell(v) {
+  if (v == null) return '';
+  var s = Array.isArray(v) ? v.join('; ') : String(v);
+  if (typeof v === 'string' && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function toCsv(columns, rows) {
+  var lines = [columns.map(function (c) { return csvCell(c.label); }).join(',')];
+  rows.forEach(function (r) { lines.push(columns.map(function (c) { return csvCell(r[c.key]); }).join(',')); });
+  return lines.join('\n');
+}
+/* CORE-END */
+
+(function () {
+  'use strict';
+  var DATA = JSON.parse(document.getElementById('akm-data').textContent);
+  var QUERIES = (DATA.rows && DATA.rows.queries) || [];
+  // Per-hit rows carry their query as an index into rows.queries; put the text back.
+  var ALL = ((DATA.rows && DATA.rows.usage) || []).map(function (r) {
+    if (r.q == null) return r;
+    var row = Object.assign({}, r, { query: QUERIES[r.q] });
+    delete row.q;
+    return row;
+  });
+  var LLM = (DATA.rows && DATA.rows.llm) || [];
+  var HAS_ROWS = ALL.length > 0;
+  var $ = function (id) { return document.getElementById(id); };
+  var EVENT_TYPES = ['search', 'show', 'curate', 'feedback'];
+
+  // ── Formatting ───────────────────────────────────────────────────────────
+  function fmtN(n) { return n == null ? '—' : Number(n).toLocaleString(); }
+  function fmtPct(n) { return n == null ? '—' : (n * 100).toFixed(1) + '%'; }
+  function fmtMs(n) {
+    if (n == null) return '—';
+    if (n < 1000) return Math.round(n) + ' ms';
+    if (n < 60000) return (n / 1000).toFixed(1) + ' s';
+    return (n / 60000).toFixed(1) + ' min';
+  }
+  function fmtNum2(n) { return n == null ? '—' : Number(n).toFixed(2); }
+  function timeTag(iso) {
+    return iso ? '<time data-iso="' + esc(iso) + '">' + esc(String(iso).slice(0, 16).replace('T', ' ')) + '</time>' : '—';
+  }
+  function localize(root) {
+    var pad = function (n) { return String(n).padStart(2, '0'); };
+    root.querySelectorAll('time[data-iso]').forEach(function (el) {
+      var d = new Date(el.dataset.iso);
+      if (!isNaN(d)) el.textContent = d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    });
+  }
+  // ECharts tooltips are HTML; escape every data-derived string (category
+  // names are queries, tags and stage names). `marker` is ECharts' own markup.
+  function tipFormat(params) {
+    var list = Array.isArray(params) ? params : [params];
+    return esc(list[0].axisValueLabel || list[0].name) + '<br>' + list.map(function (p) {
+      return p.marker + esc(p.seriesName) + ': ' + esc(Array.isArray(p.value) ? p.value[p.value.length - 1] : p.value);
+    }).join('<br>');
+  }
+  function css(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
+
+  // ── State ────────────────────────────────────────────────────────────────
+  var universe = {
+    bundles: Array.from(new Set(ALL.map(function (r) { return bundleOf(r.ref); }))).sort(),
+    sources: Array.from(new Set(ALL.map(function (r) { return r.source; }))).sort()
+  };
+  var state = {
+    from: '', to: '', text: '',
+    bundles: new Set(universe.bundles),
+    sources: new Set(universe.sources),
+    types: new Set(EVENT_TYPES),
+    sorts: {}
+  };
+  var tables = {};
+  var utilityByRef = {}, outcomeByRef = {}, selectsByRef = {}, valenceByRef = {};
+  ((DATA.utility && DATA.utility.lowest) || []).concat((DATA.utility && DATA.utility.highest) || [])
+    .forEach(function (u) { utilityByRef[u.ref] = u; });
+  ((DATA.outcomes && DATA.outcomes.lowestOutcome) || []).forEach(function (o) { outcomeByRef[o.ref] = o; });
+  ((DATA.usage && DATA.usage.topAssets) || []).forEach(function (a) { selectsByRef[a.ref] = a.selects; });
+  ((DATA.feedback && DATA.feedback.byAsset) || []).forEach(function (a) { valenceByRef[a.ref] = a.valence; });
+
+  function activeFilter(withDates) {
+    var f = { text: state.text };
+    if (withDates) { f.from = state.from; f.to = state.to; }
+    if (state.bundles.size !== universe.bundles.length) f.bundles = state.bundles;
+    if (state.sources.size !== universe.sources.length) f.sources = state.sources;
+    if (state.types.size !== EVENT_TYPES.length) f.types = state.types;
+    return f;
+  }
+
+  // The server dropped the summary rows when it filtered by bundle or ref, and a
+  // bundle chip subset drops them here; either way searches are counted from hits.
+  function hitMode() {
+    var f = DATA.filters || {};
+    return !!((f.bundles && f.bundles.length > 0) || f.ref || state.bundles.size !== universe.bundles.length);
+  }
+
+  // ── Charts ───────────────────────────────────────────────────────────────
+  var charts = {};
+  function chart(id, option, onReady) {
+    var el = $(id);
+    if (!window.echarts) {
+      el.innerHTML = '<div class="ec-empty">Charts need the ECharts library from the CDN; this page could not load it.</div>';
+      return null;
+    }
+    var c = charts[id] || echarts.getInstanceByDom(el);
+    if (!c) { c = echarts.init(el, null, { renderer: 'canvas' }); charts[id] = c; if (onReady) onReady(c); }
+    c.setOption(Object.assign({
+      backgroundColor: 'transparent',
+      textStyle: { color: css('--muted') },
+      tooltip: { trigger: 'axis', formatter: tipFormat, backgroundColor: css('--surface'), borderColor: css('--border'), textStyle: { color: css('--text') } },
+      grid: { left: 48, right: 16, top: 28, bottom: 28, containLabel: false }
+    }, option), true);
+    return c;
+  }
+  function axisStyle() {
+    return { axisLine: { lineStyle: { color: css('--border') } }, axisLabel: { color: css('--muted') }, splitLine: { lineStyle: { color: css('--surface2') } } };
+  }
+  function emptyChart(id, text) {
+    var c = charts[id];
+    if (c) { c.dispose(); delete charts[id]; }
+    $(id).innerHTML = '<div class="ec-empty">' + esc(text) + '</div>';
+  }
+  function hasData(id, any, text) {
+    if (!any) { emptyChart(id, text || 'No data in the current view'); return false; }
+    if (!charts[id]) $(id).innerHTML = '';
+    return true;
+  }
+
+  var TYPE_COLORS = function () { return { search: css('--accent'), show: css('--green'), curate: css('--purple'), feedback: css('--yellow') }; };
+
+  function renderTimeline() {
+    var agg = aggregate(filterRows(ALL, activeFilter(false)), { hitMode: hitMode() });
+    if (!hasData('ch-timeline', agg.daily.length > 0)) return;
+    var days = dayRange(agg.daily[0].day, agg.daily[agg.daily.length - 1].day);
+    var byDay = {};
+    agg.daily.forEach(function (d) { byDay[d.day] = d; });
+    var colors = TYPE_COLORS();
+    // A stacked area with hidden symbols draws nothing for a single day, so
+    // one day renders as a stacked bar instead.
+    var single = days.length === 1;
+    var series = EVENT_TYPES.map(function (t) {
+      return { name: t, type: single ? 'bar' : 'line', stack: 'events', areaStyle: { opacity: 0.55 }, showSymbol: false,
+        lineStyle: { width: 1 }, itemStyle: { color: colors[t] },
+        data: days.map(function (d) { return byDay[d] ? byDay[d][t] : 0; }) };
+    });
+    var startIdx = state.from ? Math.max(0, days.findIndex(function (d) { return d >= state.from; })) : 0;
+    var endIdx = days.length - 1;
+    if (state.to) { for (var i = days.length - 1; i >= 0; i--) { if (days[i] <= state.to) { endIdx = i; break; } } }
+    chart('ch-timeline', {
+      legend: { top: 0, textStyle: { color: css('--muted') } },
+      grid: { left: 48, right: 16, top: 32, bottom: 64 },
+      xAxis: Object.assign({ type: 'category', boundaryGap: single, data: days }, axisStyle()),
+      yAxis: Object.assign({ type: 'value', minInterval: 1 }, axisStyle()),
+      dataZoom: [
+        { type: 'slider', height: 22, bottom: 8, startValue: startIdx, endValue: endIdx },
+        { type: 'inside', startValue: startIdx, endValue: endIdx }
+      ],
+      series: series
+    }, function (c) {
+      c.on('datazoom', function () {
+        var opt = c.getOption();
+        var dz = opt.dataZoom && opt.dataZoom[0];
+        var cats = opt.xAxis[0].data;
+        if (!dz || !cats.length) return;
+        var s = Math.max(0, Math.round(dz.startValue)), e = Math.min(cats.length - 1, Math.round(dz.endValue));
+        state.from = s === 0 ? '' : cats[s];
+        state.to = e === cats.length - 1 ? '' : cats[e];
+        $('f-from').value = state.from;
+        $('f-to').value = state.to;
+        render({ skipTimeline: true });
+      });
+    });
+  }
+
+  function barOption(names, series, horizontal) {
+    var cat = Object.assign({ type: 'category', data: names }, axisStyle());
+    var val = Object.assign({ type: 'value', minInterval: 1 }, axisStyle());
+    return {
+      legend: series.length > 1 ? { top: 0, textStyle: { color: css('--muted') } } : undefined,
+      grid: horizontal ? { left: 110, right: 16, top: 28, bottom: 24 } : { left: 48, right: 16, top: 28, bottom: 36 },
+      xAxis: horizontal ? val : cat,
+      yAxis: horizontal ? Object.assign({}, cat, { inverse: true }) : val,
+      series: series
+    };
+  }
+
+  function renderFeedbackCharts(agg) {
+    if (hasData('ch-feedback', agg.daily.some(function (d) { return d.feedback > 0; }), 'No feedback in the current view')) {
+      var days = agg.daily.map(function (d) { return d.day; });
+      chart('ch-feedback', barOption(days, [
+        { name: 'positive', type: 'bar', stack: 'f', itemStyle: { color: css('--green') }, data: agg.daily.map(function (d) { return d.positive; }) },
+        { name: 'negative', type: 'bar', stack: 'f', itemStyle: { color: css('--red') }, data: agg.daily.map(function (d) { return d.negative; }) }
+      ]));
+    }
+    var tagNames = Object.keys(agg.tags).sort(function (a, b) {
+      return (agg.tags[b].positive + agg.tags[b].negative) - (agg.tags[a].positive + agg.tags[a].negative) || (a < b ? -1 : 1);
+    }).slice(0, 15);
+    if (hasData('ch-tags', tagNames.length > 0, 'No tagged feedback in the current view')) {
+      chart('ch-tags', barOption(tagNames, [
+        { name: 'positive', type: 'bar', stack: 't', itemStyle: { color: css('--green') }, data: tagNames.map(function (t) { return agg.tags[t].positive; }) },
+        { name: 'negative', type: 'bar', stack: 't', itemStyle: { color: css('--red') }, data: tagNames.map(function (t) { return agg.tags[t].negative; }) }
+      ], true));
+    }
+  }
+
+  function renderUtilityChart() {
+    var h = (DATA.utility && DATA.utility.histogram) || [];
+    if (!hasData('ch-utility', h.some(function (b) { return b.count > 0; }), 'No utility scores')) return;
+    chart('ch-utility', barOption(h.map(function (b) { return b.bucket; }),
+      [{ name: 'assets', type: 'bar', itemStyle: { color: css('--accent') }, data: h.map(function (b) { return b.count; }) }]));
+  }
+
+  function renderLlm() {
+    var useRows = LLM.length > 0;
+    var agg = useRows ? aggregateLlm(LLM, { from: state.from, to: state.to }) : null;
+    $('llm-hint').textContent = useRows ? 'follows the date range only' : 'window-wide aggregate (no per-call rows)';
+    function fromAggregate(o) {
+      return Object.keys(o || {}).map(function (k) { return { name: k, tokens: o[k].totalTokens, calls: o[k].calls, failures: o[k].failures }; })
+        .sort(function (a, b) { return b.tokens - a.tokens; });
+    }
+    var dims = [
+      ['ch-llm-stage', useRows ? agg.byStage : fromAggregate(DATA.llm && DATA.llm.byStage)],
+      ['ch-llm-process', useRows ? agg.byProcess : fromAggregate(DATA.llm && DATA.llm.byProcess)],
+      ['ch-llm-engine', useRows ? agg.byEngine : fromAggregate(DATA.llm && DATA.llm.byEngine)]
+    ];
+    dims.forEach(function (d) {
+      var list = d[1].slice(0, 15);
+      if (!hasData(d[0], list.length > 0, 'No LLM calls recorded')) return;
+      chart(d[0], Object.assign(barOption(list.map(function (x) { return x.name; }),
+        [{ name: 'tokens', type: 'bar', itemStyle: { color: css('--purple') }, data: list.map(function (x) { return x.tokens; }) }], true), {}));
+    });
+    if (hasData('ch-llm-time', useRows && agg.daily.length > 0, 'No per-call rows in this report')) {
+      var days = agg.daily.map(function (d) { return d.day; });
+      chart('ch-llm-time', {
+        legend: { top: 0, textStyle: { color: css('--muted') } },
+        grid: { left: 48, right: 56, top: 32, bottom: 36 },
+        xAxis: Object.assign({ type: 'category', data: days }, axisStyle()),
+        yAxis: [Object.assign({ type: 'value', name: 'calls', minInterval: 1 }, axisStyle()),
+          Object.assign({ type: 'value', name: 'ms' }, axisStyle(), { splitLine: { show: false } })],
+        series: [
+          { name: 'calls', type: 'bar', itemStyle: { color: css('--accent') }, data: agg.daily.map(function (d) { return d.calls; }) },
+          { name: 'mean latency (ms)', type: 'line', yAxisIndex: 1, itemStyle: { color: css('--yellow') }, data: agg.daily.map(function (d) { return d.avgMs; }) }
+        ]
+      });
+    }
+    return agg;
+  }
+
+  // ── Tables ───────────────────────────────────────────────────────────────
+  var LIMIT = 50;
+  function renderTable(name, el, columns, rows, opts) {
+    opts = opts || {};
+    var st = state.sorts[name] || (state.sorts[name] = { key: opts.sortKey || columns[0].key, dir: opts.sortDir || 'desc' });
+    var sorted = sortRows(rows, st.key, st.dir);
+    tables[name] = { columns: columns, rows: sorted, file: opts.file || name };
+    if (sorted.length === 0) { el.innerHTML = '<div class="empty">' + esc(opts.empty || 'No data in the current view') + '</div>'; return; }
+    var shown = sorted.slice(0, opts.limit || LIMIT);
+    var head = columns.map(function (c) {
+      var active = c.key === st.key;
+      return '<th scope="col" tabindex="0" data-sort="' + esc(c.key) + '" class="' + (c.num ? 'num' : '') + '" aria-sort="' +
+        (active ? (st.dir === 'asc' ? 'ascending' : 'descending') : 'none') + '">' + esc(c.label) +
+        (active ? (st.dir === 'asc' ? ' ▲' : ' ▼') : '') + '</th>';
+    }).join('');
+    var body = shown.map(function (r) {
+      var attrs = opts.clickRef && r.ref ? ' class="clickable" tabindex="0" data-ref="' + esc(r.ref) + '"' : '';
+      return '<tr' + attrs + '>' + columns.map(function (c) {
+        var cell = c.html ? c.html(r) : esc(c.fmt ? c.fmt(r[c.key], r) : r[c.key]);
+        return '<td class="' + (c.num ? 'num ' : '') + (c.cls ? c.cls(r) : '') + '">' + cell + '</td>';
+      }).join('') + '</tr>';
+    }).join('');
+    el.innerHTML = '<table><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>' +
+      (sorted.length > shown.length ? '<div class="more">Showing ' + shown.length + ' of ' + sorted.length + '. Download CSV for all rows.</div>' : '');
+    localize(el);
+  }
+
+  var refCell = function (r) { return '<code>' + esc(r.ref) + '</code>'; };
+  var COLS = {
+    assets: [
+      { key: 'ref', label: 'Asset', html: refCell },
+      { key: 'shows', label: 'Shows', num: true, fmt: fmtN },
+      { key: 'searchHits', label: 'Search hits', num: true, fmt: fmtN },
+      { key: 'selects', label: 'Selects', num: true, fmt: fmtN },
+      { key: 'selectRate', label: 'Select rate', num: true, fmt: fmtPct },
+      { key: 'positive', label: 'Feedback +', num: true, fmt: fmtN, cls: function (r) { return r.positive ? 'pos' : ''; } },
+      { key: 'negative', label: 'Feedback −', num: true, fmt: fmtN, cls: function (r) { return r.negative ? 'neg' : ''; } },
+      { key: 'utility', label: 'Utility', num: true, fmt: fmtNum2 },
+      { key: 'lastUsedAt', label: 'Last used', html: function (r) { return timeTag(r.lastUsedAt); } }
+    ],
+    queries: [
+      { key: 'query', label: 'Query' },
+      { key: 'count', label: 'Count', num: true, fmt: fmtN },
+      { key: 'avgResults', label: 'Avg results', num: true, fmt: function (v) { return v == null ? '—' : v.toFixed(1); } },
+      { key: 'lastAt', label: 'Last', html: function (r) { return timeTag(r.lastAt); } }
+    ],
+    negatives: [
+      { key: 'at', label: 'When', html: function (r) { return timeTag(r.at); } },
+      { key: 'ref', label: 'Asset', html: refCell },
+      { key: 'reason', label: 'Reason' },
+      { key: 'tags', label: 'Tags', html: function (r) { return (r.tags || []).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join(''); } }
+    ],
+    utility: [
+      { key: 'ref', label: 'Asset', html: refCell },
+      { key: 'utility', label: 'Utility', num: true, fmt: fmtNum2 },
+      { key: 'showCount', label: 'Shows', num: true, fmt: fmtN },
+      { key: 'searchCount', label: 'Searches', num: true, fmt: fmtN },
+      { key: 'selectRate', label: 'Select rate', num: true, fmt: fmtPct }
+    ]
+  };
+
+  function assetRows(agg) {
+    return agg.assets.map(function (a) {
+      var selects = selectsByRef[a.ref];
+      var u = utilityByRef[a.ref];
+      return Object.assign({}, a, {
+        selects: selects == null ? null : selects,
+        selectRate: selects != null && a.searchHits > 0 ? selects / a.searchHits : null,
+        utility: u ? u.utility : null
+      });
+    });
+  }
+
+  // ── Render ───────────────────────────────────────────────────────────────
+  function fallbackAggregate() {
+    var u = DATA.usage || {};
+    var q = function (x) { return { query: x.query, count: x.count, avgResults: x.avgResults, lastAt: x.lastAt }; };
+    return {
+      totals: { searches: u.totals.searches, shows: u.totals.shows, curates: u.totals.curates, feedback: DATA.feedback.totals.positive + DATA.feedback.totals.negative,
+        positive: DATA.feedback.totals.positive, negative: DATA.feedback.totals.negative, zeroResult: u.totals.zeroResultSearches },
+      daily: (u.daily || []).map(function (d) { return Object.assign({ positive: 0, negative: 0 }, d); }),
+      assets: (u.topAssets || []).map(function (a) { return { ref: a.ref, shows: a.shows, searchHits: a.searchHits, positive: a.positive, negative: a.negative, lastUsedAt: a.lastUsedAt }; }),
+      queries: (u.topQueries || []).map(q), zeroQueries: (u.zeroResultQueries || []).map(q),
+      tags: DATA.feedback.byTag || {}, sources: u.bySource || {},
+      negatives: (DATA.feedback.recentNegative || []).map(function (n) { return { ref: n.ref, at: n.at, reason: n.reason || '', tags: n.tags || [] }; })
+    };
+  }
+
+  function renderKpis(agg, llm) {
+    var t = agg.totals;
+    var tokens = llm ? llm.totals.tokens : DATA.llm.totalTokens;
+    var calls = llm ? llm.totals.calls : DATA.llm.calls;
+    var tasks = DATA.tasks || {};
+    var cards = [
+      ['Searches', fmtN(t.searches), fmtN(t.curates) + ' curates', ''],
+      ['Shows', fmtN(t.shows), '', ''],
+      ['Select rate', fmtPct(DATA.usage.selectRate), 'window-wide', ''],
+      ['Zero-result rate', fmtPct(t.searches ? t.zeroResult / t.searches : null), fmtN(t.zeroResult) + ' searches', t.zeroResult ? 'yellow' : ''],
+      ['Feedback', '<span class="pos">+' + fmtN(t.positive) + '</span> / <span class="neg">−' + fmtN(t.negative) + '</span>',
+        'net ' + (t.positive - t.negative >= 0 ? '+' : '−') + Math.abs(t.positive - t.negative), ''],
+      ['LLM tokens', fmtN(tokens), fmtN(calls) + ' calls', ''],
+      ['Task fail rate', fmtPct(tasks.failRate), fmtN(tasks.failed) + ' of ' + fmtN(tasks.runs) + ' runs, window-wide', tasks.failed ? 'red' : '']
+    ];
+    $('kpis').innerHTML = cards.map(function (c) {
+      return '<div class="kpi-card ' + c[3] + '"><div class="label">' + esc(c[0]) + '</div><div class="value">' + c[1] + '</div><div class="sub">' + esc(c[2]) + '</div></div>';
+    }).join('');
+  }
+
+  function renderCards() {
+    function dl(pairs) {
+      return '<dl>' + pairs.map(function (p) { return '<dt>' + esc(p[0]) + '</dt><dd>' + esc(p[1]) + '</dd>'; }).join('') + '</dl>';
+    }
+    function kv(o, fmt) {
+      var keys = Object.keys(o || {}).sort();
+      return keys.length ? dl(keys.map(function (k) { return [k, (fmt || fmtN)(o[k])]; })) : '<div class="empty">none</div>';
+    }
+    var tk = DATA.tasks || {}, pr = DATA.proposals || {}, wf = DATA.workflows || {}, ix = DATA.index || {};
+    var html = '';
+    html += '<div class="panel"><h3>Tasks</h3>' + dl([['Runs', fmtN(tk.runs)], ['Failed', fmtN(tk.failed)], ['Fail rate', fmtPct(tk.failRate)]]) +
+      '<div class="table-wrap" id="tb-tasks" style="margin-top:10px"></div></div>';
+    html += '<div class="panel"><h3>Proposals</h3>' + kv(pr.byStatus) +
+      '<div class="table-wrap" id="tb-accept" style="margin-top:10px"></div></div>';
+    html += '<div class="panel"><h3>Workflows</h3>' + dl([['Runs', fmtN(wf.runs)], ['Tokens', fmtN(wf.tokens)]]) +
+      '<h3 style="margin-top:10px">By status</h3>' + kv(wf.byStatus) + '<h3 style="margin-top:10px">Tokens by model</h3>' + kv(wf.byModel) + '</div>';
+    html += '<div class="panel"><h3>Index runs</h3>' + dl([['Runs', fmtN(ix.runs)], ['Median time', fmtMs(ix.medianMs)]]) + '</div>';
+    $('cards').innerHTML = html;
+    renderTable('tasks', $('tb-tasks'), [
+      { key: 'taskId', label: 'Task' }, { key: 'runs', label: 'Runs', num: true, fmt: fmtN },
+      { key: 'failed', label: 'Failed', num: true, fmt: fmtN }, { key: 'medianMs', label: 'Median', num: true, fmt: fmtMs }
+    ], tk.byTask || [], { sortKey: 'runs', file: 'tasks' });
+    renderTable('accept', $('tb-accept'), [
+      { key: 'source', label: 'Source' }, { key: 'total', label: 'Total', num: true, fmt: fmtN },
+      { key: 'accepted', label: 'Accepted', num: true, fmt: fmtN }, { key: 'rejected', label: 'Rejected', num: true, fmt: fmtN },
+      { key: 'acceptRate', label: 'Accept rate', num: true, fmt: fmtPct }
+    ], pr.acceptRateBySource || [], { sortKey: 'total', file: 'proposals' });
+  }
+
+  function render(opts) {
+    opts = opts || {};
+    var agg = HAS_ROWS ? aggregate(filterRows(ALL, activeFilter(true)), { hitMode: hitMode() }) : fallbackAggregate();
+    var llm = renderLlm();
+    renderKpis(agg, llm);
+    if (!opts.skipTimeline) renderTimeline();
+    renderTable('assets', $('tb-assets'), COLS.assets, assetRows(agg), { sortKey: 'shows', clickRef: true, file: 'top-assets' });
+    renderTable('queries', $('tb-queries'), COLS.queries, agg.queries, { sortKey: 'count', file: 'queries' });
+    renderTable('zero', $('tb-zero'), COLS.queries.slice(0, 2).concat(COLS.queries.slice(3)), agg.zeroQueries, { sortKey: 'count', file: 'zero-result-queries', empty: 'No zero-result searches in the current view' });
+    renderTable('negatives', $('tb-negatives'), COLS.negatives, agg.negatives, { sortKey: 'at', clickRef: true, file: 'negative-feedback', empty: 'No negative feedback in the current view' });
+    renderFeedbackCharts(agg);
+  }
+
+  function renderStatic() {
+    var u = DATA.utility || {};
+    renderUtilityChart();
+    $('utility-never').textContent = fmtN(u.neverUsed) + ' indexed assets have never been used; ' + fmtN(u.count) + ' have a utility score.';
+    renderTable('lowest', $('tb-lowest'), COLS.utility, u.lowest || [], { sortKey: 'utility', sortDir: 'asc', clickRef: true, file: 'utility-lowest', empty: 'No utility scores' });
+    renderTable('highest', $('tb-highest'), COLS.utility, u.highest || [], { sortKey: 'utility', sortDir: 'desc', clickRef: true, file: 'utility-highest', empty: 'No utility scores' });
+    renderCards();
+    var notes = (DATA.notes || []).slice();
+    if (!HAS_ROWS) notes.push('This report carries no raw rows, so filters and drill-down are unavailable and the aggregates below are the command’s own.');
+    $('notes').innerHTML = notes.length ? '<ul>' + notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '';
+  }
+
+  // ── Asset drawer ─────────────────────────────────────────────────────────
+  var lastFocus = null;
+  function openDrawer(ref) {
+    lastFocus = document.activeElement;
+    var rows = ALL.filter(function (r) { return r.ref === ref; });
+    var agg = aggregate(rows, { hitMode: true });
+    var a = agg.assets[0] || { shows: 0, searchHits: 0, positive: 0, negative: 0 };
+    var u = utilityByRef[ref], o = outcomeByRef[ref];
+    var queries = {};
+    rows.forEach(function (r) { if (r.query) queries[r.query] = (queries[r.query] || 0) + 1; });
+    var qList = Object.keys(queries).sort(function (x, y) { return queries[y] - queries[x] || (x < y ? -1 : 1); }).slice(0, 15);
+    var reasons = rows.filter(function (r) { return r.eventType === 'feedback' && (r.reason || (r.tags && r.tags.length)); })
+      .sort(function (x, y) { return x.at < y.at ? 1 : -1; }).slice(0, 15);
+    var facts = [
+      ['Shows', fmtN(a.shows)], ['Search hits', fmtN(a.searchHits)], ['Selects (window-wide)', fmtN(selectsByRef[ref])],
+      ['Feedback +/−', a.positive + ' / ' + a.negative], ['Valence', valenceByRef[ref] == null ? '—' : fmtNum2(valenceByRef[ref])]
+    ];
+    if (u) facts.push(['Utility', fmtNum2(u.utility)], ['Utility select rate', fmtPct(u.selectRate)]);
+    if (o) facts.push(['Outcome score', fmtNum2(o.outcomeScore)], ['Retrievals', fmtN(o.retrievalCount)], ['Accepted changes', fmtN(o.acceptedChangeCount)]);
+    $('drawer').innerHTML =
+      '<h2><span id="drawer-title"><code>' + esc(ref) + '</code></span><button type="button" class="close" id="drawer-close">Close</button></h2>' +
+      '<div class="cards" style="grid-template-columns:1fr;margin-bottom:14px"><div class="panel"><dl>' +
+      facts.map(function (f) { return '<dt>' + esc(f[0]) + '</dt><dd>' + esc(f[1]) + '</dd>'; }).join('') + '</dl></div></div>' +
+      '<h3>Activity</h3><div class="ec" id="ch-drawer" style="height:200px"></div>' +
+      '<h3>Queries that surfaced it</h3>' + (qList.length ? '<ul>' + qList.map(function (q) { return '<li>' + esc(q) + ' <span class="hint">×' + queries[q] + '</span></li>'; }).join('') + '</ul>' : '<div class="empty">None recorded</div>') +
+      '<h3>Feedback</h3>' + (reasons.length ? '<ul>' + reasons.map(function (r) {
+        return '<li><span class="' + (r.signal === 'negative' ? 'neg' : 'pos') + '">' + (r.signal === 'negative' ? '−' : '+') + '</span> ' + timeTag(r.at) + ' ' + esc(r.reason || '') +
+          ' ' + (r.tags || []).map(function (t) { return '<span class="tag">' + esc(t) + '</span>'; }).join('') + '</li>';
+      }).join('') + '</ul>' : '<div class="empty">No feedback with a reason</div>');
+    $('drawer').hidden = false;
+    $('scrim').hidden = false;
+    localize($('drawer'));
+    var days = agg.daily.length ? dayRange(agg.daily[0].day, agg.daily[agg.daily.length - 1].day) : [];
+    var colors = TYPE_COLORS();
+    if (days.length && window.echarts) {
+      var el = $('ch-drawer');
+      var c = echarts.init(el, null, { renderer: 'canvas' });
+      charts['ch-drawer'] = c;
+      c.setOption({
+        backgroundColor: 'transparent', textStyle: { color: css('--muted') },
+        tooltip: { trigger: 'axis', formatter: tipFormat, backgroundColor: css('--surface'), borderColor: css('--border'), textStyle: { color: css('--text') } },
+        legend: { top: 0, textStyle: { color: css('--muted') } },
+        grid: { left: 36, right: 12, top: 28, bottom: 24 },
+        xAxis: Object.assign({ type: 'category', data: days }, axisStyle()),
+        yAxis: Object.assign({ type: 'value', minInterval: 1 }, axisStyle()),
+        series: ['show', 'search', 'feedback'].map(function (t) {
+          return { name: t, type: 'bar', stack: 'a', itemStyle: { color: colors[t] },
+            data: days.map(function (d) { return rowsOnDay(rows, d, t); }) };
+        })
+      });
+    } else if (days.length) {
+      $('ch-drawer').innerHTML = '<div class="ec-empty">Charts need the ECharts library from the CDN.</div>';
+    } else {
+      $('ch-drawer').innerHTML = '<div class="ec-empty">No activity</div>';
+    }
+    $('drawer-close').focus();
+  }
+  // Per-hit search rows carry the ref, so the drawer counts rows directly
+  // instead of using the daily series (which counts search summary rows).
+  function rowsOnDay(rows, day, type) {
+    return rows.filter(function (r) { return r.eventType === type && dayOf(r.at) === day; }).length;
+  }
+  function closeDrawer() {
+    if (charts['ch-drawer']) { charts['ch-drawer'].dispose(); delete charts['ch-drawer']; }
+    $('drawer').hidden = true;
+    $('scrim').hidden = true;
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
+  // ── Filter bar ───────────────────────────────────────────────────────────
+  function buildChips(containerId, values, set, label) {
+    var box = $(containerId);
+    values.forEach(function (v) {
+      var l = document.createElement('label');
+      l.className = 'chip';
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.addEventListener('change', function () {
+        if (cb.checked) set.add(v); else set.delete(v);
+        render();
+      });
+      l.appendChild(cb);
+      l.appendChild(document.createTextNode(label ? label(v) : v));
+      box.appendChild(l);
+    });
+  }
+  function resetFilters() {
+    state.from = ''; state.to = ''; state.text = '';
+    state.bundles = new Set(universe.bundles);
+    state.sources = new Set(universe.sources);
+    state.types = new Set(EVENT_TYPES);
+    $('f-from').value = ''; $('f-to').value = ''; $('f-text').value = '';
+    document.querySelectorAll('#filterbar input[type=checkbox]').forEach(function (cb) { cb.checked = true; });
+    render();
+  }
+
+  function download(name) {
+    var t = tables[name];
+    if (!t) return;
+    var blob = new Blob([toCsv(t.columns, t.rows) + '\n'], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'akm-metrics-' + t.file + '.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+  }
+
+  function init() {
+    buildChips('f-bundles', universe.bundles, state.bundles, function (b) { return b || '(no asset)'; });
+    buildChips('f-sources', universe.sources, state.sources);
+    buildChips('f-types', EVENT_TYPES, state.types);
+    if (!HAS_ROWS) $('filterbar').setAttribute('data-disabled', '');
+    $('f-from').addEventListener('change', function (e) { state.from = e.target.value; render(); });
+    $('f-to').addEventListener('change', function (e) { state.to = e.target.value; render(); });
+    $('f-text').addEventListener('input', function (e) { state.text = e.target.value; render({ skipTimeline: false }); });
+    $('f-reset').addEventListener('click', resetFilters);
+    $('scrim').addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !$('drawer').hidden) closeDrawer();
+      if ((e.key === 'Enter' || e.key === ' ') && e.target.matches && e.target.matches('tr.clickable, th[data-sort]')) { e.preventDefault(); e.target.click(); }
+    });
+    document.addEventListener('click', function (e) {
+      var t = e.target;
+      if (!t.closest) return;
+      var exp = t.closest('[data-export]');
+      if (exp) { download(exp.getAttribute('data-export')); return; }
+      if (t.closest('#drawer-close')) { closeDrawer(); return; }
+      var th = t.closest('th[data-sort]');
+      if (th) {
+        var host = th.closest('.table-wrap');
+        var name = Object.keys(tables).find(function (k) { return $('tb-' + k) === host; });
+        if (name) {
+          var st = state.sorts[name], key = th.getAttribute('data-sort');
+          state.sorts[name] = { key: key, dir: st.key === key && st.dir === 'desc' ? 'asc' : 'desc' };
+          render({ skipTimeline: true });
+          renderStatic();
+        }
+        return;
+      }
+      var row = t.closest('tr[data-ref]');
+      if (row && HAS_ROWS) openDrawer(row.getAttribute('data-ref'));
+    });
+    window.addEventListener('resize', function () { Object.keys(charts).forEach(function (k) { charts[k].resize(); }); });
+    if (window.matchMedia) {
+      var mq = window.matchMedia('(prefers-color-scheme: light)');
+      var again = function () { Object.keys(charts).forEach(function (k) { charts[k].dispose(); delete charts[k]; }); render(); renderStatic(); };
+      if (mq.addEventListener) mq.addEventListener('change', again);
+    }
+    renderStatic();
+    render();
+    localize(document);
+  }
+  init();
+})();
+</script>
+</body>
+</html>

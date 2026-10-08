@@ -6,8 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm metrics` reports what akm has recorded, in every `--format`.** One
+  read-only command covers asset usage (searches, shows, curates, selects, the
+  queries that returned nothing), feedback with its reasons and tags, utility
+  and outcome scores, LLM tokens, latency, task runs,
+  proposals and workflow token spend. `--since` (default `30d`) sets the window start; the window ends now, counts
+  `user`-source usage and keeps the top 20 of every ranked list. The
+  window rows (usage rows as recorded, LLM calls summed per day, engine, model, process and stage) ride along with
+  `--format html` and `--detail full`. A window
+  longer than a store's retention says so in `notes`.
+- **`akm metrics` renders as text and Markdown.** `--format text` prints aligned
+  Usage, Feedback, Utility, LLM, Index, Tasks, Proposals and Workflows sections
+  with top-N tables (cut to 5 at `--detail brief`); `--format md` prints one
+  heading per section with GFM tables.
+- **`akm metrics --format html` writes a self-contained dashboard.** The page
+  carries the window's raw rows, so you can filter by date, bundle, source and
+  event type, sort the tables, open an asset to see its timeline, queries and
+  feedback, and download any table as CSV, all in the browser. Charts load
+  ECharts from the same CDN tag as `akm health --report`. A page keeps the most
+  recent 50,000 usage rows and says so when it cuts older ones.
+
+### Changed
+
+- **LLM usage is recorded for every command.** `akm index`, curate, workflow,
+  agent dispatch and `akm command run` now persist their `llm_usage` events
+  like `improve` and `proposal drain` already did; before, a call made outside
+  those two was dropped. An improve run still keeps its own sink and the
+  process-wide one resumes when it ends.
+- Search latency is recorded in the search summary usage row (`totalMs`, plus `rankMs` and `embedMs` when present), and every `akm index` run appends an `index_completed` event with its phase timings.
+
 ### Fixed
 
+- **Usage-event retention no longer deletes a day early.** The purge on `akm index`
+  compared the space-separated `created_at` against an ISO cutoff, so every row on
+  the cutoff's date was removed up to 24 hours before its 90 days were up. Both
+  sides are now normalized before the comparison.
 - **Distill skips a memory marked `beliefState: deprecated` or `superseded`.** Such a note is no longer true and gave
   no lesson (26 of about 900 memories carry the state; distill ran on 17 of them). The improve loop records a
   `distill-skipped` action and an `improve_skipped` event (`distill_deprecated_or_superseded`), and the attempt goes
