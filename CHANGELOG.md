@@ -83,6 +83,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The `opencode-sdk` server receives `OPENCODE_API_KEY` and `OPENCODE_CONFIG`.** It was started with only the
+  common baseline and the XDG names, so a provider that reads its key from the environment (OpenCode Go) failed
+  with `UnknownError: Unexpected server error` where `opencode run` worked. The `opencode` CLI profile and the
+  SDK server now share one list of OpenCode names; a different key value starts another server.
 - **`akm upgrade --next` no longer fails OpenCode as "older than `@latest`" (#1089).** akm-plugins' stable
   versions concatenate a timestamp into the patch (`0.9.27202610072331`), so by semver every prerelease build
   (`0.9.28-alpha.8.202610081938`) sorted below stable and `akm-opencode@next` was always rejected. `@next` is
