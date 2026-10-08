@@ -37,7 +37,13 @@ import {
   type RunExecutionOptions,
   runExecution,
 } from "../../integrations/agent/runner-dispatch";
-import { nearestKnowledgeNotes } from "../improve/consolidate/coverage";
+import {
+  NEIGHBOUR_EXCERPT_CHARS,
+  NEIGHBOUR_NOTE_COUNT,
+  nearestKnowledgeNotes,
+  shingleContainment,
+  wordShingles,
+} from "../improve/consolidate/coverage";
 import { errMessage, noticeSet } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
@@ -357,6 +363,7 @@ async function runJudgmentTier(
   const byId = new Map(pending.map((p) => [p.id, p]));
   const notices = noticeSet();
   const stillDeferred: DrainResult["deferred"] = [];
+  const acceptedPromotions: Proposal[] = [];
   const cappedBefore = result.skippedByCap.length;
   for (const item of result.deferred) {
     const proposal = byId.get(item.id);
@@ -369,7 +376,9 @@ async function runJudgmentTier(
       liveAsset,
       siblings: pending.filter((p) => p.ref === proposal.ref && p.id !== proposal.id),
       // A create the model otherwise judges blind: the model never sees knowledge/.
-      ...(liveAsset === undefined ? { neighbours: promotionNeighbours(opts.stashDir, proposal) } : {}),
+      ...(liveAsset === undefined
+        ? { neighbours: promotionNeighbours(opts.stashDir, proposal, acceptedPromotions) }
+        : {}),
     });
     const dispatch = await dispatchJudgment(opts.judgment, prompt, seams);
     notices.add(dispatch.notices);
@@ -441,6 +450,8 @@ async function runJudgmentTier(
     );
     if (outcome === "promoted") {
       result.promoted.push(item.id);
+      if (proposal.source === "consolidate" && proposal.promotionSource !== undefined)
+        acceptedPromotions.push(proposal);
       acceptBudget -= 1;
     } else if (outcome === "rejected") {
       result.rejected.push(item.id);
@@ -460,13 +471,37 @@ async function runJudgmentTier(
 }
 
 /** The knowledge notes nearest to a consolidate promotion's source memory; none for any other proposal. */
-function promotionNeighbours(stashDir: string, proposal: Proposal): ReturnType<typeof nearestKnowledgeNotes> {
+function promotionNeighbours(
+  stashDir: string,
+  proposal: Proposal,
+  acceptedPromotions: readonly Proposal[],
+): ReturnType<typeof nearestKnowledgeNotes> {
   if (proposal.source !== "consolidate" || proposal.promotionSource === undefined) return [];
   try {
     const parsed = parseRefInput(proposal.promotionSource);
     const typeDir = stashDirFor(parsed.type);
     if (!typeDir) return [];
-    return nearestKnowledgeNotes(assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name));
+    const memoryPath = assetPathForName(parsed.type, path.join(stashDir, typeDir), parsed.name);
+    const existing = nearestKnowledgeNotes(memoryPath);
+    const source = fs.readFileSync(memoryPath, "utf8");
+    const shingles = wordShingles(source);
+    // Promotions accepted earlier in this drain are not in the index yet; the
+    // ones sharing text with this memory join its neighbours (#1085).
+    const inDrain = acceptedPromotions
+      .map((accepted) => {
+        const parsedContent = parseFrontmatter(proposalContent(accepted));
+        const body = parsedContent.content;
+        return {
+          ref: accepted.ref,
+          description: typeof parsedContent.data.description === "string" ? parsedContent.data.description : "",
+          excerpt: body.length > NEIGHBOUR_EXCERPT_CHARS ? `${body.slice(0, NEIGHBOUR_EXCERPT_CHARS)}...` : body,
+          containment: shingleContainment(shingles, body),
+        };
+      })
+      .filter((note) => note.containment > 0)
+      .sort((a, b) => b.containment - a.containment)
+      .map(({ containment: _, ...note }) => note);
+    return [...inDrain, ...existing].slice(0, NEIGHBOUR_NOTE_COUNT);
   } catch {
     return [];
   }
