@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+- **The pair judge's reason no longer swaps A and B.** In a replay of 120 recorded pairs, 18 of 90 retirement
+  reasons said the opposite of what the judge's claim lists decided (for example "B contains all claims from A" for a
+  pair where B was retired). The lists were right, so no retirement changed, but the reason a reviewer reads was
+  wrong. The prompt now asks the reason to name the asset that can be deleted; two replays gave 0 and 1 of about 85.
+
 ## [0.9.27] - 2026-10-07
 
 The stable release of the 0.9.27 line: 0.9.27-alpha.1, alpha.2 and alpha.3.
