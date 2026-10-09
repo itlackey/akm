@@ -463,7 +463,12 @@ describe("resolveImprovePlan", () => {
 
   test("proactiveMaintenance uses no engine, so enabling it alone does not keep a plan with no engine alive (#1129)", () => {
     expect(() =>
-      resolveImprovePlan("default", { configVersion: "0.9.0", semanticSearchMode: "auto" } as AkmConfig),
+      resolveImprovePlan("default", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        // default's deterministic triage (#1143) also needs no engine and would keep the plan alive.
+        improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
+      } as AkmConfig),
     ).toThrow("No improve process can run");
   });
 
