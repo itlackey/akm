@@ -63,7 +63,7 @@ akm curate "deploy a Bun app"            # get a curated shortlist
 akm show workflows/deploy                # load the best match by ref
 ```
 
-Each step, with its success check, is in [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started.html). Then tell your agent AKM exists:
+Each step, with its success check, is in [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/). Then tell your agent AKM exists:
 
 ```sh
 akm help agents >> AGENTS.md
@@ -82,23 +82,23 @@ AKM recognizes several existing directory layouts in place, each through its own
 | OKF and LLM wikis | Indexes plain-markdown (OKF) and Karpathy-style wiki (`schema.md` + `raw/` + `pages/`) content, read-only |
 | Git, npm, local dirs, and websites | Any of these can be added as a source; AKM detects the bundle format inside and indexes it (a website is crawled into a local snapshot) |
 
-See [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats.html) for current write support and detection rules, and [Wikis](https://akm.fwdslsh.dev/docs/guides/wikis.html) for using a living LLM wiki as a bundle.
+See [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats/) for current write support and detection rules, and [Wikis](https://akm.fwdslsh.dev/docs/guides/wikis/) for using a living LLM wiki as a bundle.
 
 ## Common next steps
 
-- Connect local dirs, git repos, npm packages, and websites — [Bundles](https://akm.fwdslsh.dev/docs/guides/bundles.html)
-- Capture memories, import docs, and manage wikis — [Capture Knowledge](https://akm.fwdslsh.dev/docs/guides/capture-knowledge.html)
-- Turn feedback and usage into reviewable proposals — [Improve the Library](https://akm.fwdslsh.dev/docs/guides/improve-the-library.html)
-- Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows.html)
-- Author strict scheduled automation — [Tasks](https://akm.fwdslsh.dev/docs/reference/tasks.html)
-- Upgrading from 0.9.1 — [0.9.2 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2.html)
-- Wire akm into Claude Code, OpenCode, Cursor, and other assistants — [Use AKM With Any Agent](https://akm.fwdslsh.dev/docs/guides/use-with-any-agent.html)
+- Connect local dirs, git repos, npm packages, and websites — [Bundles](https://akm.fwdslsh.dev/docs/guides/bundles/)
+- Capture memories, import docs, and manage wikis — [Capture Knowledge](https://akm.fwdslsh.dev/docs/guides/capture-knowledge/)
+- Turn feedback and usage into reviewable proposals — [Improve the Library](https://akm.fwdslsh.dev/docs/guides/improve-the-library/)
+- Run resumable, multi-step procedures — [Workflows](https://akm.fwdslsh.dev/docs/reference/workflows/)
+- Author strict scheduled automation — [Tasks](https://akm.fwdslsh.dev/docs/reference/tasks/)
+- Upgrading from 0.9.1 — [0.9.2 migration guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2/)
+- Wire akm into Claude Code, OpenCode, Cursor, and other assistants — [Use AKM With Any Agent](https://akm.fwdslsh.dev/docs/guides/use-with-any-agent/)
 
-Scheduling background tasks (like `akm improve`) involves reviewing and activating OS scheduler entries — see [Scheduling](https://akm.fwdslsh.dev/docs/guides/scheduling.html) for the full walkthrough.
+Scheduling background tasks (like `akm improve`) involves reviewing and activating OS scheduler entries — see [Scheduling](https://akm.fwdslsh.dev/docs/guides/scheduling/) for the full walkthrough.
 
 ## Local-first and privacy
 
-AKM is local-first: it stores its index and state on disk and has no telemetry. It adds no network destinations of its own: it reaches only the endpoints you configure or invoke — Git, npm, website sources, registries, your own model endpoints, and GitHub when you run `akm upgrade`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry.html) for the complete on-disk inventory and how to inspect or clear local data.
+AKM is local-first: it stores its index and state on disk and has no telemetry. It adds no network destinations of its own: it reaches only the endpoints you configure or invoke — Git, npm, website sources, registries, your own model endpoints, and GitHub when you run `akm upgrade`. See [Data & Telemetry](https://akm.fwdslsh.dev/docs/reference/data-and-telemetry/) for the complete on-disk inventory and how to inspect or clear local data.
 
 ## Documentation and project status
 
@@ -106,8 +106,8 @@ The full documentation is published at **[akm.fwdslsh.dev](https://akm.fwdslsh.d
 
 | Doc | Description |
 | --- | --- |
-| [Documentation index](https://akm.fwdslsh.dev/docs/README.html) | Full guide and reference index |
-| [Product surface](https://akm.fwdslsh.dev/docs/product-surface.html) | Every feature and its status |
+| [Documentation index](https://akm.fwdslsh.dev/docs/README/) | Full guide and reference index |
+| [Product surface](https://akm.fwdslsh.dev/docs/product-surface/) | Every feature and its status |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
 | [Changelog](CHANGELOG.md) | Per-release behavior changes |
