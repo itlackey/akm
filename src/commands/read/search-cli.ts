@@ -21,10 +21,10 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
 import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
-import { getOutputMode } from "../../output/context";
+import { getOutputMode, type OutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import type { FragmentContextMode, ShowDetailLevel } from "../../sources/types";
-import { akmCurate, type CuratePackResult, packCuratedHits } from "./curate";
+import { akmCurate, type CuratePackResult, type CurateResponse, packCuratedHits } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
@@ -157,27 +157,12 @@ export const curateCommand = defineJsonCommand({
   },
   async run({ args }) {
     rejectRetiredSourceFlag();
-    if (!args.query || !String(args.query).trim()) {
-      throw new UsageError(
-        'A curate query is required. Usage: akm curate "<task or prompt>" [--type <type>] [--limit <n>]',
-        "MISSING_REQUIRED_ARGUMENT",
-        'Describe the task you want assets for, e.g. `akm curate "deploy to prod"`.',
-      );
-    }
-    const type = args.type as string | undefined;
-    const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
-    const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
-    const source = parseSearchSource(args.from ?? "local");
-    const outputMode = getOutputMode();
     const packBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
-    const curated = await akmCurate({
-      query: args.query,
-      type,
-      limit,
-      source,
-      eventSource: resolveUsageEventSource(),
-      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
-    });
+    const outputMode = getOutputMode();
+    const curated = await runCurate(
+      { query: args.query, type: args.type as string | undefined, limit: args.limit, from: args.from },
+      outputMode,
+    );
     if (packBudget !== undefined) {
       const packed = await packCuratedHits(curated, packBudget);
       deliverRendered(
@@ -189,6 +174,35 @@ export const curateCommand = defineJsonCommand({
     output("curate", curated);
   },
 });
+
+/**
+ * Validate the curate arguments and run the curation. The one path both
+ * `akm curate` and the in-process `curate()` of `src/api.ts` go through, so
+ * argument errors and ranking cannot drift between them. Takes the output
+ * mode explicitly (it only picks the attribution projection) instead of
+ * reading the process-level singleton.
+ */
+export async function runCurate(
+  args: { query?: string; type?: string; limit?: string; from?: string },
+  outputMode: Pick<OutputMode, "detail" | "shape">,
+): Promise<CurateResponse> {
+  if (!args.query || !String(args.query).trim()) {
+    throw new UsageError(
+      'A curate query is required. Usage: akm curate "<task or prompt>" [--type <type>] [--limit <n>]',
+      "MISSING_REQUIRED_ARGUMENT",
+      'Describe the task you want assets for, e.g. `akm curate "deploy to prod"`.',
+    );
+  }
+  const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
+  return akmCurate({
+    query: args.query,
+    type: args.type,
+    limit: limitParsed && limitParsed > 0 ? limitParsed : 4,
+    source: parseSearchSource(args.from ?? "local"),
+    eventSource: resolveUsageEventSource(),
+    attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+  });
+}
 
 /** Human-readable rendering for `akm curate --pack`: concatenated content per hit under a `## <ref>` header. */
 function formatCuratePackText(packed: CuratePackResult): string {

@@ -583,6 +583,30 @@ async function testPackageAcceptance(skipBuild = false): Promise<void> {
         "Installed launcher copied model-map bytes that differ from its packaged dist/assets/models.json",
       );
     }
+    // `akm-cli/api` and `akm-cli/package.json` must resolve through the
+    // package `exports` map from the installed tarball, under Node and Bun.
+    // The probe lives inside the package so its own name self-references.
+    const probe = path.join(verified.packageDir, "api-probe.mjs");
+    fs.writeFileSync(
+      probe,
+      [
+        'import { createRequire } from "node:module";',
+        'import { curate } from "akm-cli/api";',
+        'if (typeof curate !== "function") throw new Error("akm-cli/api exports no curate()");',
+        'createRequire(import.meta.url).resolve("akm-cli/package.json");',
+        'const err = await curate("").then(() => undefined, (e) => e);',
+        'if (err?.code !== "MISSING_REQUIRED_ARGUMENT") throw new Error(`curate("") rejected with ${err?.code}`);',
+        "",
+      ].join("\n"),
+    );
+    const probeEnv = {
+      ...process.env,
+      AKM_CONFIG_DIR: modelConfigDir,
+      AKM_CACHE_DIR: path.join(workDir, "probe-cache"),
+    };
+    await runCommand(["node", probe], { cwd: verified.packageDir, env: probeEnv });
+    await runCommand(["bun", probe], { cwd: verified.packageDir, env: probeEnv });
+    fs.rmSync(probe);
     const copiedPackageDir = path.join(workDir, "copied-package");
     fs.cpSync(verified.packageDir, copiedPackageDir, { recursive: true });
     console.log(`Package acceptance passed for ${metadata.name}@${verified.version} via ${verified.launcher}`);

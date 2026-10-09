@@ -250,6 +250,7 @@ remain available across minor releases, but flag names, prompts, and
 proposal-queue shape may shift. Breaking changes will be flagged in the
 CHANGELOG with a migration note.
 
+- **Programmatic API** — `akm-cli/api` (`curate()`, for in-process recall by the akm plugins; see [`docs/reference/api.md`](docs/reference/api.md)). The export list only grows and `curate()`'s parameters and result keep their documented contract; the text it returns is `akm curate`'s agent-shaped output and changes with it. Everything else in the package remains CLI-only.
 - **Improvement loop** — `akm improve` and the proposal noun group
   `akm proposal {extract,new,list,show,diff,accept,reject,reopen,revert,drain}`
   (`extract` and `new` are the former top-level `akm extract`/`akm propose`,

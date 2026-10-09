@@ -53,6 +53,7 @@
     "docs/migration/v0.9.0-troubleshooting.md",
     "docs/migration/v0.9.1-to-v0.9.2.md",
     "docs/integration/bundling-akm.md",
+    "docs/reference/api.md",
     "docs/reference/bundle-types.md",
     "docs/reference/cli.md",
     "docs/reference/configuration.md",
@@ -63,6 +64,15 @@
     "docs/reference/workflows.md",
     "schemas"
   ],
+  "exports": {
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "bun": "./dist/api.js",
+      "default": "./dist/api-node.mjs"
+    },
+    "./package.json": "./package.json",
+    "./dist/*": "./dist/*"
+  },
   "bin": {
     "akm": "dist/akm",
     "akm-migrate": "dist/akm-migrate"

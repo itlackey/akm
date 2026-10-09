@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format, cwd })` returns
+  exactly the stdout of `akm --shape agent -q curate …`, computed in-process, and rejects with the CLI's message and
+  `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
+  `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
+  [`docs/reference/api.md`](docs/reference/api.md).
+
 ## [0.9.30] - 2026-10-09
 
 A patch release: `akm upgrade` acts only on the `akm-opencode` spec OpenCode's config names.
