@@ -1588,11 +1588,6 @@
           "properties": {
             "outcomeWeightEnabled": {
               "type": "boolean"
-            },
-            "salienceThreshold": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
             }
           },
           "additionalProperties": true
@@ -3264,11 +3259,6 @@
               "properties": {
                 "outcomeWeightEnabled": {
                   "type": "boolean"
-                },
-                "salienceThreshold": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
                 }
               },
               "additionalProperties": true
