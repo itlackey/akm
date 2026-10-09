@@ -33,11 +33,14 @@
 
 import { randomBytes } from "node:crypto";
 import { OpenCode, type OpenCodeClient, type SessionMessageAssistant, type SessionMessageInfo } from "@opencode/client";
-import { isRecord } from "../../../core/common";
+import { isRecord, toErrorMessage } from "../../../core/common";
+import { sleep } from "../../../runtime";
 import type { AgentTokenUsage } from "../../agent/spawn";
+import { parseOpencodeMajor } from "../opencode/version";
 import {
+  decodeRetryStatus,
   type OpencodeWireAdapter,
-  otherMajorRemedy,
+  OTHER_MAJOR_REMEDY,
   type WireEvent,
   type WireFailure,
   type WirePromptResult,
@@ -74,7 +77,7 @@ export function v2Turn(messages: readonly SessionMessageInfo[], userId: string):
 }
 
 /** Decode a finished turn into the answer, the usage of every step and the failure, if any. */
-export function v2PromptResult(turn: V2Turn): WirePromptResult {
+function v2PromptResult(turn: V2Turn): WirePromptResult {
   const text =
     turn.assistants
       .flatMap((a) => a.content)
@@ -125,8 +128,6 @@ function toolPermissions(tools: Record<string, boolean> | undefined) {
   }));
 }
 
-const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
 export const V2_ADAPTER: OpencodeWireAdapter = {
   major: 2,
 
@@ -135,18 +136,6 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
   authorize() {
     const password = randomBytes(24).toString("base64url");
     return { env: { OPENCODE_SERVER_PASSWORD: password, OPENCODE_PASSWORD: password }, credentials: password };
-  },
-
-  readiness(line) {
-    if (line.startsWith("server listening on")) {
-      const match = line.match(/on\s+(https?:\/\/\S+)/);
-      return match?.[1] ? { url: match[1] } : { error: `Failed to parse the OpenCode server url from: ${line}` };
-    }
-    // OpenCode 1 prints "opencode server listening on <url>".
-    if (line.startsWith("opencode server listening")) {
-      return { error: `The binary is OpenCode 1 (${line.trim()}). ${otherMajorRemedy()}` };
-    }
-    return undefined;
   },
 
   async connect(baseUrl, credentials) {
@@ -159,11 +148,12 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
       version = (await client.server.info()).version;
     } catch (err) {
       throw new Error(
-        `Could not read the OpenCode 2 server info at ${baseUrl}: ${err instanceof Error ? err.message : String(err)}. ${otherMajorRemedy()}`,
+        `Could not read the OpenCode 2 server info at ${baseUrl}: ${toErrorMessage(err)}. ${OTHER_MAJOR_REMEDY}`,
       );
     }
-    if (!version.startsWith("2.")) {
-      throw new Error(`The server is OpenCode ${version}, not OpenCode 2. ${otherMajorRemedy()}`);
+    // Only OpenCode 1 is refused: a newer major than akm knows runs on these adapters (`../opencode/version.ts`).
+    if (parseOpencodeMajor(version) === 1) {
+      throw new Error(`The server is OpenCode ${version}, not OpenCode 2. ${OTHER_MAJOR_REMEDY}`);
     }
     return client;
   },
@@ -235,20 +225,7 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
         ...(typeof data.parentID === "string" ? { parentId: data.parentID } : {}),
       };
     }
-    if (raw.type === "session.status") {
-      const { sessionID, status } = data;
-      if (typeof sessionID !== "string" || !isRecord(status) || status.type !== "retry") return undefined;
-      const action = isRecord(status.action) ? status.action : undefined;
-      return {
-        kind: "retry",
-        sessionId: sessionID,
-        ...(typeof status.attempt === "number" ? { attempt: status.attempt } : {}),
-        message: typeof status.message === "string" ? status.message : "OpenCode is retrying",
-        ...(typeof status.next === "number" ? { next: status.next } : {}),
-        ...(typeof action?.provider === "string" ? { provider: action.provider } : {}),
-        accountLimit: action?.reason === "account_rate_limit",
-      };
-    }
+    if (raw.type === "session.status") return decodeRetryStatus(data.sessionID, data.status);
     if (raw.type === "permission.asked") {
       const { id, sessionID, action, resources } = data;
       if (typeof id !== "string" || typeof sessionID !== "string") return undefined;

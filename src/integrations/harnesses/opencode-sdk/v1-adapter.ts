@@ -16,8 +16,8 @@
 import { isRecord } from "../../../core/common";
 import type { AgentTokenUsage } from "../../agent/spawn";
 import {
+  decodeRetryStatus,
   type OpencodeWireAdapter,
-  otherMajorRemedy,
   type WireEvent,
   type WireFailure,
   type WirePromptResult,
@@ -101,7 +101,7 @@ function extractUsage(info?: {
  * `parse_error`, and every other error (auth, API, unknown, an HTTP error
  * body) is `non_zero_exit`.
  */
-export function v1ErrorFailure(error: unknown): WireFailure {
+function v1ErrorFailure(error: unknown): WireFailure {
   if (!isRecord(error) || typeof error.name !== "string") {
     return { reason: "non_zero_exit", message: typeof error === "string" ? error : JSON.stringify(error) };
   }
@@ -176,18 +176,6 @@ export const V1_ADAPTER: OpencodeWireAdapter = {
   // OpenCode 1 serves unauthenticated on loopback.
   authorize: () => ({ env: {} }),
 
-  readiness(line) {
-    if (line.startsWith("opencode server listening")) {
-      const match = line.match(/on\s+(https?:\/\/\S+)/);
-      return match?.[1] ? { url: match[1] } : { error: `Failed to parse the OpenCode server url from: ${line}` };
-    }
-    // OpenCode 2 prints "server listening on <url>" with no "opencode" prefix.
-    if (line.startsWith("server listening on")) {
-      return { error: `The binary is OpenCode 2 (${line.trim()}). ${otherMajorRemedy()}` };
-    }
-    return undefined;
-  },
-
   connect: (baseUrl) => connectV1(baseUrl),
 
   async createSession(client, spec) {
@@ -239,22 +227,8 @@ export const V1_ADAPTER: OpencodeWireAdapter = {
       if (typeof id !== "string") return undefined;
       return { kind: "session", id, ...(typeof parentID === "string" ? { parentId: parentID } : {}) };
     }
-    if (raw.type === "session.status") {
-      const { sessionID, status } = props;
-      if (typeof sessionID !== "string" || !isRecord(status) || status.type !== "retry") return undefined;
-      // `action` is not present in the SDK's retry type yet, but current
-      // OpenCode servers include it for provider/account limits.
-      const action = isRecord(status.action) ? status.action : undefined;
-      return {
-        kind: "retry",
-        sessionId: sessionID,
-        ...(typeof status.attempt === "number" ? { attempt: status.attempt } : {}),
-        message: typeof status.message === "string" ? status.message : "OpenCode is retrying",
-        ...(typeof status.next === "number" ? { next: status.next } : {}),
-        ...(typeof action?.provider === "string" ? { provider: action.provider } : {}),
-        accountLimit: action?.reason === "account_rate_limit",
-      };
-    }
+    // `action` is not in the SDK's retry type yet, but current servers send it for provider/account limits.
+    if (raw.type === "session.status") return decodeRetryStatus(props.sessionID, props.status);
     // `permission.asked` (OpenCode >= 1.3) / `permission.updated` (older).
     if (raw.type !== "permission.asked" && raw.type !== "permission.updated") return undefined;
     const { id, sessionID } = props;

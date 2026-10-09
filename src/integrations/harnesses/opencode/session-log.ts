@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { toErrorMessage } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import { type Database, openDatabase } from "../../../storage/database";
 import { openSqliteReadSnapshot } from "../../../storage/sqlite-read-snapshot";
@@ -46,10 +47,6 @@ export type OpenCodeStoreStatus =
   /** Present but not openable or queryable as SQLite. */
   | { kind: "unreadable"; reason: string };
 
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function tableNames(db: Database): Set<string> {
   const rows = db.prepare<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").all();
   return new Set(rows.map((r) => r.name));
@@ -82,12 +79,12 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
     try {
       db = openDatabase(dbPath, { readonly: true, create: false });
     } catch (error) {
-      return { kind: "unreadable", reason: describeError(error) };
+      return { kind: "unreadable", reason: toErrorMessage(error) };
     }
     try {
       return classify(tableNames(db));
     } catch (error) {
-      return { kind: "unreadable", reason: describeError(error) };
+      return { kind: "unreadable", reason: toErrorMessage(error) };
     } finally {
       db.close();
     }
@@ -102,7 +99,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
         ? openSqliteReadSnapshot(dbPath)
         : openDatabase(dbPath, { readonly: true, create: false });
     } catch (error) {
-      this.#warnUnavailable(dbPath, `cannot open it (${describeError(error)})`);
+      this.#warnUnavailable(dbPath, `cannot open it (${toErrorMessage(error)})`);
       return [];
     }
     if (!db) return [];
@@ -117,7 +114,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
       }
       return this.#listFromDb(db, dbPath, input.sinceMs ?? 0, status.v1, status.v2);
     } catch (error) {
-      this.#warnUnavailable(dbPath, `cannot query it (${describeError(error)})`);
+      this.#warnUnavailable(dbPath, `cannot query it (${toErrorMessage(error)})`);
       return [];
     } finally {
       db.close();
@@ -131,7 +128,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
     try {
       db = openDatabase(ref.filePath, { readonly: true, create: false });
     } catch (error) {
-      this.#warnUnavailable(ref.filePath, `cannot open it (${describeError(error)})`);
+      this.#warnUnavailable(ref.filePath, `cannot open it (${toErrorMessage(error)})`);
       return empty;
     }
     try {
@@ -153,7 +150,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
         inlineRefs: read.inlineRefs,
       };
     } catch (error) {
-      this.#warnUnavailable(ref.filePath, `cannot read session ${ref.sessionId} (${describeError(error)})`);
+      this.#warnUnavailable(ref.filePath, `cannot read session ${ref.sessionId} (${toErrorMessage(error)})`);
       return empty;
     } finally {
       db.close();
@@ -167,7 +164,7 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
       try {
         for (const meta of list()) if (!merged.has(meta.sessionId)) merged.set(meta.sessionId, meta);
       } catch (error) {
-        this.#warnUnavailable(dbPath, `its ${label} session tables cannot be queried (${describeError(error)})`);
+        this.#warnUnavailable(dbPath, `its ${label} session tables cannot be queried (${toErrorMessage(error)})`);
       }
     };
     if (v2) attempt("OpenCode 2", () => listV2Sessions(db, sinceMs));

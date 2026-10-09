@@ -17,7 +17,7 @@ import { runManagedSubprocess } from "../core/subprocess";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
 import { getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "../integrations/agent/profiles";
 import { AGENT_DISPATCH_HARNESSES, SESSION_LOG_HARNESSES } from "../integrations/harnesses";
-import { detectOpencodeMajor, OPENCODE2_BIN } from "../integrations/harnesses/opencode/version";
+import { detectOpencodeMajor, resolveOpencodeBin } from "../integrations/harnesses/opencode/version";
 import type { HarnessLLMConfig } from "../integrations/harnesses/shared";
 import { detectHarnessConfigs } from "./harness-config-import";
 
@@ -474,7 +474,7 @@ export interface DetectedEnvironment {
 export async function detectHarness(whichFn: WhichFn = defaultWhich): Promise<DetectedHarness> {
   // Probed once; reused below so the `opencode` CLI fallback doesn't repeat
   // the identical full-PATH walk this just performed.
-  const opencodePath = whichFn(OPENCODE2_BIN) ?? whichFn(OPENCODE_SDK_SERVER_BIN);
+  const opencodePath = whichFn(resolveOpencodeBin(undefined, whichFn));
   if (opencodePath) {
     try {
       // The client package of the major the binary reports.

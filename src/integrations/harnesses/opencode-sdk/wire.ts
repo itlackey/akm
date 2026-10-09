@@ -22,6 +22,7 @@
  * protocol.
  */
 
+import { isRecord } from "../../../core/common";
 import type { AgentFailureReason, AgentTokenUsage } from "../../agent/spawn";
 
 export type OpencodeMajor = 1 | 2;
@@ -98,8 +99,6 @@ export interface OpencodeWireAdapter {
   serveArgv(bin: string, port: number): string[];
   /** Choose the credentials for one server. Called once per spawn. */
   authorize(): WireAuthorization;
-  /** Judge one output line of the child: the readiness line, a wrong-major line, or neither. */
-  readiness(line: string): WireReadiness;
   /** Build a client for a ready server (and check it is this adapter's major). */
   connect(baseUrl: string, credentials: string | undefined): Promise<unknown>;
   /** Create the session; resolves to its id, or undefined when the server returned none. */
@@ -129,6 +128,42 @@ export interface OpencodeWireAdapter {
 }
 
 /** The sentence every wrong-major failure ends with. */
-export function otherMajorRemedy(): string {
-  return `Upgrade to OpenCode 2, or set this engine's "bin" to the OpenCode binary you want to run.`;
+export const OTHER_MAJOR_REMEDY = `Upgrade to OpenCode 2, or set this engine's "bin" to the OpenCode binary you want to run.`;
+
+/** What each major's `serve` prints once it listens; the other major's line names a wrong binary. */
+const READINESS_PREFIX: Readonly<Record<OpencodeMajor, string>> = {
+  1: "opencode server listening",
+  2: "server listening on",
+};
+
+/** Judge one output line of a server started for `own`: its readiness line, the other major's, or neither. */
+export function parseReadiness(line: string, own: OpencodeMajor): WireReadiness {
+  const other: OpencodeMajor = own === 1 ? 2 : 1;
+  if (line.startsWith(READINESS_PREFIX[own])) {
+    const match = line.match(/on\s+(https?:\/\/\S+)/);
+    return match?.[1] ? { url: match[1] } : { error: `Failed to parse the OpenCode server url from: ${line}` };
+  }
+  if (line.startsWith(READINESS_PREFIX[other])) {
+    return { error: `The binary is OpenCode ${other} (${line.trim()}). ${OTHER_MAJOR_REMEDY}` };
+  }
+  return undefined;
+}
+
+/**
+ * A `session.status` payload as the runner's retry event, or undefined for any
+ * other status. Both majors carry the same fields; `action` names the provider
+ * and, for an account usage limit, `reason: "account_rate_limit"` (#1108).
+ */
+export function decodeRetryStatus(sessionID: unknown, status: unknown): WireEvent | undefined {
+  if (typeof sessionID !== "string" || !isRecord(status) || status.type !== "retry") return undefined;
+  const action = isRecord(status.action) ? status.action : undefined;
+  return {
+    kind: "retry",
+    sessionId: sessionID,
+    ...(typeof status.attempt === "number" ? { attempt: status.attempt } : {}),
+    message: typeof status.message === "string" ? status.message : "OpenCode is retrying",
+    ...(typeof status.next === "number" ? { next: status.next } : {}),
+    ...(typeof action?.provider === "string" ? { provider: action.provider } : {}),
+    accountLimit: action?.reason === "account_rate_limit",
+  };
 }

@@ -970,6 +970,24 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** The value when it is a plain object, else undefined (for `?.` chains over unknown JSON). */
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+/**
+ * Parse JSONC: comments stripped by {@link stripJsonComments}, and trailing
+ * commas (`[a, b,]`, `{"k": 1,}`) tolerated, as OpenCode's own `.jsonc` reader does.
+ */
+export function parseJsonc(text: string): unknown {
+  const stripped = stripJsonComments(text);
+  try {
+    return JSON.parse(stripped) as unknown;
+  } catch {
+    return JSON.parse(stripped.replace(/,(\s*[}\]])/g, "$1")) as unknown;
+  }
+}
+
 /** `JSON.parse` that returns `undefined` instead of throwing. */
 export function tryParseJson(raw: string): unknown {
   try {

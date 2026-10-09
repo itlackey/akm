@@ -15,28 +15,10 @@
 import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
-import type { OpenCodeSessionMeta, OpenCodeSessionRead } from "./session-log-types";
+import { type OpenCodeSessionMeta, type OpenCodeSessionRead, type SessionRow, toMeta } from "./session-log-types";
 
 /** Listing needs only `session`; reading a session needs `message` and `part`, and fails loudly without them. */
 export const V1_TABLES = ["session"] as const;
-
-type SessionRow = {
-  id: string;
-  title: string | null;
-  directory: string | null;
-  time_created: number | null;
-  time_updated: number | null;
-};
-
-function toMeta(r: Omit<SessionRow, "id"> & { id?: string }, sessionId: string): OpenCodeSessionMeta {
-  return {
-    sessionId,
-    startedAt: typeof r.time_created === "number" ? r.time_created : undefined,
-    endedAt: typeof r.time_updated === "number" ? r.time_updated : undefined,
-    projectHint: typeof r.directory === "string" && r.directory.length > 0 ? r.directory : undefined,
-    title: typeof r.title === "string" && r.title.length > 0 ? r.title : undefined,
-  };
-}
 
 /** Every V1 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
 export function listV1Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {

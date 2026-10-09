@@ -22,6 +22,11 @@ import {
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { V1_ADAPTER } from "../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { V2_ADAPTER, v2Turn } from "../src/integrations/harnesses/opencode-sdk/v2-adapter";
+import { parseReadiness } from "../src/integrations/harnesses/opencode-sdk/wire";
+
+const parseReadiness1 = (line: string) => parseReadiness(line, 1);
+const parseReadiness2 = (line: string) => parseReadiness(line, 2);
+
 import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 
 beforeEach(() => fakeOpencodeMajor(2));
@@ -472,18 +477,18 @@ describe("OpenCode 2 adapter — server selection", () => {
   });
 
   test("readiness lines: each adapter accepts its own and names the remedy for the other major's", () => {
-    expect(V2_ADAPTER.readiness("server listening on http://127.0.0.1:4999")).toEqual({ url: "http://127.0.0.1:4999" });
-    expect(V1_ADAPTER.readiness("opencode server listening on http://127.0.0.1:4999")).toEqual({
+    expect(parseReadiness2("server listening on http://127.0.0.1:4999")).toEqual({ url: "http://127.0.0.1:4999" });
+    expect(parseReadiness1("opencode server listening on http://127.0.0.1:4999")).toEqual({
       url: "http://127.0.0.1:4999",
     });
-    expect(V2_ADAPTER.readiness("some log line")).toBeUndefined();
+    expect(parseReadiness2("some log line")).toBeUndefined();
 
-    const v1Binary = V2_ADAPTER.readiness("opencode server listening on http://127.0.0.1:4999");
+    const v1Binary = parseReadiness2("opencode server listening on http://127.0.0.1:4999");
     expect(v1Binary && "error" in v1Binary ? v1Binary.error : "").toContain("OpenCode 1");
     expect(v1Binary && "error" in v1Binary ? v1Binary.error : "").toContain(
       'Upgrade to OpenCode 2, or set this engine\'s "bin"',
     );
-    const v2Binary = V1_ADAPTER.readiness("server listening on http://127.0.0.1:4999");
+    const v2Binary = parseReadiness1("server listening on http://127.0.0.1:4999");
     expect(v2Binary && "error" in v2Binary ? v2Binary.error : "").toContain("OpenCode 2");
     expect(v2Binary && "error" in v2Binary ? v2Binary.error : "").toContain('set this engine\'s "bin"');
   });

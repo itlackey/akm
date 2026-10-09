@@ -29,7 +29,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { stripJsonComments } from "../../../core/common";
+import { asNonEmptyString, asRecord, parseJsonc, toErrorMessage } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import { type HarnessConfigImporter, type HarnessLLMConfig, homeDir } from "../shared";
 
@@ -43,13 +43,8 @@ interface ProviderEntry {
   models: Map<string, string | undefined>;
 }
 
-function asObject(v: unknown): Json | undefined {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : undefined;
-}
-
-function str(v: unknown): string | undefined {
-  return typeof v === "string" && v.length > 0 ? v : undefined;
-}
+const asObject = asRecord;
+const str = asNonEmptyString;
 
 function configDir(): string {
   const xdg = process.env.XDG_CONFIG_HOME;
@@ -73,16 +68,6 @@ function candidateFiles(): string[] {
   return [...new Set(files)];
 }
 
-function parseJsonc(text: string): unknown {
-  const stripped = stripJsonComments(text);
-  try {
-    return JSON.parse(stripped);
-  } catch {
-    // JSONC allows trailing commas.
-    return JSON.parse(stripped.replace(/,(\s*[}\]])/g, "$1"));
-  }
-}
-
 /** `provider/model` or `{providerID, model}` -> the selection, or undefined when none is made. */
 function selectedModel(model: unknown): { providerId: string; modelKey: string } | undefined {
   const obj = asObject(model);
@@ -97,9 +82,11 @@ function selectedModel(model: unknown): { providerId: string; modelKey: string }
   return { providerId: text.slice(0, slash), modelKey: text.slice(slash + 1) };
 }
 
-/** One file's providers from both the V2 (`providers`/`settings`) and V1 (`provider`/`options`) keys. */
-function readProviders(raw: Json): Map<string, ProviderEntry> {
-  const out = new Map<string, ProviderEntry>();
+/**
+ * Add one file's providers, from both the V2 (`providers`/`settings`) and V1
+ * (`provider`/`options`) keys, into `out`: a later file's values win per field.
+ */
+function readProviders(raw: Json, out: Map<string, ProviderEntry>): void {
   for (const [key, settingsKey] of [
     ["provider", "options"],
     ["providers", "settings"],
@@ -121,17 +108,6 @@ function readProviders(raw: Json): Map<string, ProviderEntry> {
       out.set(id, entry);
     }
   }
-  return out;
-}
-
-function mergeProvider(base: ProviderEntry | undefined, over: ProviderEntry): ProviderEntry {
-  if (!base) return over;
-  return {
-    baseUrl: over.baseUrl ?? base.baseUrl,
-    apiKey: over.apiKey ?? base.apiKey,
-    env: over.env ?? base.env,
-    models: new Map([...base.models, ...over.models]),
-  };
 }
 
 /** The env var an apiKey reference names: `{env:NAME}`, `$NAME` or `${NAME}`. Literals and `{file:}` give undefined. */
@@ -161,14 +137,14 @@ export const openCodeImporter: HarnessConfigImporter = {
       } catch (error) {
         warnOnce(
           `opencode-config-import:${filePath}`,
-          `OpenCode config ${filePath} could not be read (${error instanceof Error ? error.message : String(error)}); skipped.`,
+          `OpenCode config ${filePath} could not be read (${toErrorMessage(error)}); skipped.`,
         );
         continue;
       }
       if (!raw) continue;
       read = true;
       if (raw.model !== undefined) model = raw.model;
-      for (const [id, entry] of readProviders(raw)) providers.set(id, mergeProvider(providers.get(id), entry));
+      readProviders(raw, providers);
     }
     if (!read) return null;
 

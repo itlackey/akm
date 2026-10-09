@@ -343,7 +343,7 @@ export function output(command: string, result: unknown): void {
 }
 
 /** An output mode with a single-document format (everything but `jsonl`, a line-streaming protocol). */
-export type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & { format: Exclude<OutputFormat, "jsonl"> };
+type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & { format: Exclude<OutputFormat, "jsonl"> };
 
 /**
  * Shape and render a command result into the document `output()` delivers.

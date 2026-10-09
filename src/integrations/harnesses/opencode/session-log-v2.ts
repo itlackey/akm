@@ -16,31 +16,14 @@
  * Reasoning, compaction, synthetic/system and bookkeeping messages are skipped.
  */
 
+import { asRecord, tryParseJson } from "../../../core/common";
 import { warnOnce } from "../../../core/warn";
 import type { Database } from "../../../storage/database";
 import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import type { InlineRefMention, SessionEvent } from "../../session-logs/types";
-import type { OpenCodeSessionMeta, OpenCodeSessionRead } from "./session-log-types";
+import { type OpenCodeSessionMeta, type OpenCodeSessionRead, type SessionRow, toMeta } from "./session-log-types";
 
 export const V2_TABLES = ["session_v2", "session_message"] as const;
-
-type SessionRow = {
-  id: string;
-  title: string | null;
-  directory: string | null;
-  time_created: number | null;
-  time_updated: number | null;
-};
-
-function toMeta(r: Partial<SessionRow>, sessionId: string): OpenCodeSessionMeta {
-  return {
-    sessionId,
-    startedAt: typeof r.time_created === "number" ? r.time_created : undefined,
-    endedAt: typeof r.time_updated === "number" ? r.time_updated : undefined,
-    projectHint: typeof r.directory === "string" && r.directory.length > 0 ? r.directory : undefined,
-    title: typeof r.title === "string" && r.title.length > 0 ? r.title : undefined,
-  };
-}
 
 /** Every V2 session updated at or after `sinceMs`, newest first. Throws on an incompatible schema. */
 export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMeta[] {
@@ -54,19 +37,16 @@ export function listV2Sessions(db: Database, sinceMs: number): OpenCodeSessionMe
 
 /** Whether `sessionId` has a `session_v2` row, and how many `session_message` rows it owns. */
 export function v2SessionState(db: Database, sessionId: string): { exists: boolean; messages: number } {
-  const row = db.prepare<{ id: string }>("SELECT id FROM session_v2 WHERE id = ?").get(sessionId);
-  if (!row) return { exists: false, messages: 0 };
-  const count = db
-    .prepare<{ n: number }>("SELECT COUNT(*) AS n FROM session_message WHERE session_id = ?")
+  const row = db
+    .prepare<{ n: number }>(
+      "SELECT (SELECT COUNT(*) FROM session_message WHERE session_id = s.id) AS n FROM session_v2 s WHERE s.id = ?",
+    )
     .get(sessionId);
-  return { exists: true, messages: count?.n ?? 0 };
+  return row ? { exists: true, messages: row.n } : { exists: false, messages: 0 };
 }
 
 type Json = Record<string, unknown>;
-
-function asObject(v: unknown): Json | undefined {
-  return v && typeof v === "object" && !Array.isArray(v) ? (v as Json) : undefined;
-}
+const asObject = asRecord;
 
 function asNumber(v: unknown): number | undefined {
   return typeof v === "number" ? v : undefined;
@@ -124,12 +104,7 @@ export function readV2Session(db: Database, harness: string, sessionId: string, 
   };
 
   for (const row of rows) {
-    let data: Json | undefined;
-    try {
-      data = asObject(JSON.parse(row.data));
-    } catch {
-      data = undefined;
-    }
+    const data = asObject(tryParseJson(row.data));
     if (!data) {
       warnOnce(
         `opencode-v2-message:${filePath}:${row.id}`,

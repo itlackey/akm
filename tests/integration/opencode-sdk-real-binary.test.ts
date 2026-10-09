@@ -32,6 +32,7 @@ import { closeServer, runOpencodeSdk } from "../../src/integrations/harnesses/op
 import { V1_ADAPTER } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { V2_ADAPTER } from "../../src/integrations/harnesses/opencode-sdk/v2-adapter";
 import type { OpencodeWireAdapter, WireEvent } from "../../src/integrations/harnesses/opencode-sdk/wire";
+import { parseReadiness } from "../../src/integrations/harnesses/opencode-sdk/wire";
 import { overrideSeam } from "../_helpers/seams";
 
 const V1_BIN = process.env.AKM_OPENCODE_V1_BIN;
@@ -143,13 +144,13 @@ async function startServer(adapter: OpencodeWireAdapter, bin: string) {
     stdio: ["ignore", "pipe", "pipe"],
   });
   children.push(proc);
-  const verdict = await new Promise<ReturnType<OpencodeWireAdapter["readiness"]>>((resolve, reject) => {
+  const verdict = await new Promise<ReturnType<typeof parseReadiness>>((resolve, reject) => {
     let output = "";
     const timer = setTimeout(() => reject(new Error(`no readiness line within 20s; output: ${output}`)), 20_000);
     const onData = (chunk: Buffer) => {
       output += chunk.toString();
       for (const line of output.split("\n")) {
-        const v = adapter.readiness(line);
+        const v = parseReadiness(line, adapter.major);
         if (v) {
           clearTimeout(timer);
           resolve(v);

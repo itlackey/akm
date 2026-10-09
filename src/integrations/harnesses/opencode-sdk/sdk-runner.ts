@@ -21,17 +21,12 @@
  *
  * This file owns what both majors share: the managed `opencode serve` child
  * (spawn, port, registry, cleanup, {@link closeServer}), the child environment,
- * per-workspace isolation, deadlines, abort handling and result shaping. What
- * differs by major (readiness line, authentication, client, session calls,
- * event and permission shapes, response and usage decoding) lives in a wire
- * adapter: `v2-adapter.ts` (`@opencode/client`) or `v1-adapter.ts`
- * (`@opencode-ai/sdk`), chosen once per dispatch from the major the engine's
- * binary reports (`../opencode/version.ts`). An adapter that meets the other
- * major's server fails naming the remedy (upgrade, or point `bin` at the binary
- * you want). The major is part of the server registry key.
- * The text below was written for OpenCode 1; the V1-only parts are now the V1
- * adapter's, and the V2 equivalent of `query.directory` is the session's
- * `location.directory`.
+ * per-workspace isolation, deadlines, abort handling and result shaping. The
+ * per-major wire protocol is an adapter behind `./wire.ts`, chosen once per
+ * dispatch from the major the engine's binary reports
+ * (`../opencode/version.ts`); the major is part of the server registry key.
+ * Where the sections below name an OpenCode 1 wire shape (`query.directory`,
+ * the prompt body), `v2-adapter.ts` has the OpenCode 2 equivalent.
  *
  * ## Sessions are kept (#1100)
  *
@@ -132,7 +127,13 @@ import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv 
 import { detectOpencodeMajor } from "../opencode/version";
 import { V1_ADAPTER } from "./v1-adapter";
 import { V2_ADAPTER } from "./v2-adapter";
-import type { OpencodeWireAdapter, WireEvent, WireSessionSpec } from "./wire";
+import {
+  type OpencodeMajor,
+  type OpencodeWireAdapter,
+  parseReadiness,
+  type WireEvent,
+  type WireSessionSpec,
+} from "./wire";
 
 /** A started server: the wire client of the selected adapter, and a way to close the child. */
 interface SdkServer {
@@ -583,7 +584,7 @@ async function createManagedOpencode(options: ServerStartOptions): Promise<SdkSe
     const onStdoutData = (chunk: Buffer): void => {
       output += chunk.toString();
       for (const line of output.split("\n")) {
-        const verdict = adapter.readiness(line);
+        const verdict = parseReadiness(line, adapter.major);
         if (!verdict) continue;
         if ("error" in verdict) fail(new Error(verdict.error));
         else succeed(verdict.url);
@@ -853,9 +854,11 @@ function rejectPermissionRequests(
   return { ready, stop };
 }
 
+const ADAPTERS: Readonly<Record<OpencodeMajor, OpencodeWireAdapter>> = { 1: V1_ADAPTER, 2: V2_ADAPTER };
+
 /** The wire adapter for the OpenCode major the engine's binary reports. */
 function adapterFor(profile: AgentProfile): OpencodeWireAdapter {
-  return detectOpencodeMajor(profile.bin).major === 1 ? V1_ADAPTER : V2_ADAPTER;
+  return ADAPTERS[detectOpencodeMajor(profile.bin).major];
 }
 
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {

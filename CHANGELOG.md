@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **OpenCode 2 is the primary OpenCode integration; OpenCode 1 keeps working (#1049).** akm detects the major from
+  the engine's binary (`<bin> --version`, once per binary per process; `opencode2` is preferred when it is on PATH)
+  and drives it through a per-major adapter for SDK dispatch (`opencode-sdk`, on `@opencode/client` 2.0.26 or
+  `@opencode-ai/sdk` 1.2.20), CLI dispatch (`opencode run`, which adds `--standalone` on OpenCode 2 so no background
+  service is left running), session history (chosen from `opencode.db`'s own tables, read-only, with retained
+  OpenCode 1 rows still readable after a native upgrade) and native config import. OpenCode 1 warns once that
+  upgrading is recommended; a binary of an unknown major is driven as OpenCode 2 with a warning, never refused.
+  `akm upgrade` and `akm health` know the `akm-opencode-v2` plugin beside `akm-opencode`.
 - **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format })` returns
   exactly the stdout of `akm --shape agent -q curate …`, computed in-process, and rejects with the CLI's message and
   `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an

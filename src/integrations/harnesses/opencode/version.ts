@@ -16,21 +16,22 @@
  *   adapters akm knows (OpenCode 2) and a one-time warning with the raw output.
  *   Detection never aborts; the dispatch reports whatever real error the binary
  *   produces.
+ *
+ * PATH lookups are memoized too: PATH does not change inside a process, and
+ * every dispatch asks for the same one or two binaries.
  */
 
 import childProcess from "node:child_process";
 import { warnOnce } from "../../../core/warn";
 import { defaultWhich } from "../../agent/detect";
+import { OPENCODE_SDK_SERVER_BIN } from "../../agent/profiles";
 import type { OpencodeMajor } from "../opencode-sdk/wire";
 
 /** OpenCode 2's own alias for its binary; it can sit next to an OpenCode 1 `opencode` on PATH. */
 export const OPENCODE2_BIN = "opencode2";
-const OPENCODE_BIN = "opencode";
 const VERSION_TIMEOUT_MS = 30_000;
 
 export interface OpencodeVersionInfo {
-  /** The binary that was probed, as resolved on PATH when possible. */
-  readonly bin: string;
   /** The adapter major to use: 1, or 2 (also for every binary whose major is not 1). */
   readonly major: OpencodeMajor;
   /** The major the binary reported, when it reported one. */
@@ -41,17 +42,17 @@ export interface OpencodeVersionInfo {
   readonly runnable: boolean;
 }
 
+type Which = (command: string) => string | null | undefined;
+
+/** Runs `<bin> --version`; the trimmed stdout, or undefined when the binary could not be run. */
+type OpencodeVersionProbe = (bin: string) => string | undefined;
+
 interface DetectOptions {
-  /** PATH lookup; defaults to `defaultWhich` (works on Bun and Node). */
+  /** PATH lookup; defaults to a memoized `defaultWhich` (works on Bun and Node). */
   which?: Which;
   /** Replaces the `--version` run for this call (health injects its own spawn). */
   probe?: OpencodeVersionProbe;
 }
-
-/** Runs `<bin> --version`; the trimmed stdout, or undefined when the binary could not be run. */
-export type OpencodeVersionProbe = (bin: string) => string | undefined;
-
-type Which = (command: string) => string | null | undefined;
 
 const defaultProbe: OpencodeVersionProbe = (bin) => {
   const result = childProcess.spawnSync(bin, ["--version"], {
@@ -66,12 +67,21 @@ const defaultProbe: OpencodeVersionProbe = (bin) => {
 };
 
 let probeOverride: OpencodeVersionProbe | undefined;
-const cache = new Map<string, OpencodeVersionInfo>();
+const detected = new Map<string, OpencodeVersionInfo>();
+const onPath = new Map<string, string | undefined>();
 
-/** TEST-ONLY. Swap the `--version` probe (and forget every cached detection); pass undefined to restore. */
+/** TEST-ONLY. Swap the `--version` probe (and forget every cached detection and PATH lookup); pass undefined to restore. */
 export function _setOpencodeVersionProbeForTests(fake?: OpencodeVersionProbe): void {
   probeOverride = fake;
-  cache.clear();
+  detected.clear();
+  onPath.clear();
+}
+
+/** `which`, memoized for the process when it is the default lookup. */
+function lookup(bin: string, which: Which | undefined): string | undefined {
+  if (which) return which(bin) ?? undefined;
+  if (!onPath.has(bin)) onPath.set(bin, defaultWhich(bin));
+  return onPath.get(bin);
 }
 
 /** The major in `opencode --version` output (`1.18.34`, `opencode v2.0.26`), or undefined when there is none. */
@@ -84,15 +94,15 @@ export function parseOpencodeMajor(versionOutput: string): number | undefined {
  * The binary an OpenCode engine runs: its own `bin` when it sets one, else the
  * most recent OpenCode on PATH (`opencode2` when present, else `opencode`).
  */
-export function resolveOpencodeBin(explicitBin?: string, which: Which = defaultWhich): string {
+export function resolveOpencodeBin(explicitBin?: string, which?: Which): string {
   if (explicitBin) return explicitBin;
-  return which(OPENCODE2_BIN) ? OPENCODE2_BIN : OPENCODE_BIN;
+  return lookup(OPENCODE2_BIN, which) ? OPENCODE2_BIN : OPENCODE_SDK_SERVER_BIN;
 }
 
 /** Detect the OpenCode major of `bin`: one `--version` run per binary per process. */
 export function detectOpencodeMajor(bin: string, options: DetectOptions = {}): OpencodeVersionInfo {
-  const path = (options.which ?? defaultWhich)(bin) ?? bin;
-  const cached = cache.get(path);
+  const path = lookup(bin, options.which) ?? bin;
+  const cached = detected.get(path);
   if (cached) return cached;
   const raw = (options.probe ?? probeOverride ?? defaultProbe)(path);
   const version = raw ?? "";
@@ -112,12 +122,11 @@ export function detectOpencodeMajor(bin: string, options: DetectOptions = {}): O
     );
   }
   const info: OpencodeVersionInfo = {
-    bin: path,
     major,
     ...(reportedMajor !== undefined ? { reportedMajor } : {}),
     version,
     runnable: raw !== undefined,
   };
-  cache.set(path, info);
+  detected.set(path, info);
   return info;
 }

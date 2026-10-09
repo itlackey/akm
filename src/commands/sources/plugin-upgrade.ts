@@ -15,12 +15,18 @@ import * as childProcess from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IS_WINDOWS, stripJsonComments } from "../../core/common";
+import { IS_WINDOWS, parseJsonc } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
-import { parseOpencodeMajor } from "../../integrations/harnesses/opencode/version";
+import { OPENCODE_SDK_SERVER_BIN } from "../../integrations/agent/profiles";
+import {
+  OPENCODE_V1,
+  OPENCODE_V2,
+  type OpenCodeFlavor,
+  readPackageVersion,
+} from "../../integrations/harnesses/opencode/plugin-layout";
+import { detectOpencodeMajor, resolveOpencodeBin } from "../../integrations/harnesses/opencode/version";
 import { semverOrder } from "../../runtime";
 import type {
-  PluginHarness,
   PluginUpgradeEntry,
   UpgradeChannel,
   UpgradeCheckResponse,
@@ -160,79 +166,6 @@ function upgradeCodex(dryRun: boolean): PluginUpgradeEntry {
 
 // ── OpenCode ────────────────────────────────────────────────────────────────
 
-/**
- * One OpenCode major's akm plugin: the npm package it installs, where that major
- * keeps its plugin cache and names plugins in its config, and how it re-fetches a
- * cache that was moved away. OpenCode 1 and OpenCode 2 share `~/.config/opencode`
- * and `~/.cache/opencode` but lay both out differently, and each major only
- * loads its own package, so a host is handled per flavor and a flavor never
- * touches the other's package, cache or config entry.
- */
-export interface OpenCodeFlavor {
-  harness: Extract<PluginHarness, "opencode" | "opencode-v2">;
-  /** The npm package (and the name OpenCode uses in its config and cache). */
-  pkg: "akm-opencode" | "akm-opencode-v2";
-  /** The OpenCode major whose binary can re-create this plugin's cache. */
-  major: 1 | 2;
-  /** Config keys that name plugins, in the order they are read. */
-  configKeys: readonly string[];
-  /**
-   * Read only the global config files. OpenCode 2's re-fetch is `opencode plugin add`, which writes
-   * the global config, so it is only run for a spec that file already names.
-   */
-  globalConfigOnly: boolean;
-  /** Where the cache of a spec (`<pkg>@<tag>`) lives under `<cacheHome>/opencode`. */
-  cacheFolder: (spec: string) => string;
-  /** The installed plugin's package.json inside a cache folder, for its version. */
-  installedManifest: (folder: string) => string | undefined;
-  /** The `opencode` arguments that make it re-create the cache of `spec`, after that cache was moved away. */
-  prefetch: (spec: string) => string[];
-}
-
-/** The newest numbered build folder (`<epoch-ms>`) under an OpenCode 2 cache folder. */
-function newestBuildDir(folder: string): string | undefined {
-  try {
-    const builds = fs.readdirSync(folder).filter((name) => /^\d+$/.test(name));
-    builds.sort((a, b) => Number(b) - Number(a));
-    return builds[0] ? path.join(folder, builds[0]) : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-export const OPENCODE_V1: OpenCodeFlavor = {
-  harness: "opencode",
-  pkg: "akm-opencode",
-  major: 1,
-  configKeys: ["plugin"],
-  globalConfigOnly: false,
-  // OpenCode 1: <cache>/opencode/packages/<spec>/node_modules/<pkg>
-  cacheFolder: (spec) => path.join("packages", spec),
-  installedManifest: (folder) => path.join(folder, "node_modules", "akm-opencode", "package.json"),
-  // Any OpenCode command that resolves the config installs the plugin again.
-  prefetch: () => ["debug", "config"],
-};
-
-export const OPENCODE_V2: OpenCodeFlavor = {
-  harness: "opencode-v2",
-  pkg: "akm-opencode-v2",
-  major: 2,
-  // OpenCode 2.0.26 reads both keys; its own `plugin add` writes `plugins`.
-  configKeys: ["plugins", "plugin"],
-  globalConfigOnly: true,
-  // OpenCode 2: <cache>/opencode/npm/<spec>/<epoch-ms>/node_modules/<pkg>
-  cacheFolder: (spec) => path.join("npm", spec),
-  installedManifest: (folder) => {
-    const build = newestBuildDir(folder);
-    return build ? path.join(build, "node_modules", "akm-opencode-v2", "package.json") : undefined;
-  },
-  // `debug config` does not resolve plugins in OpenCode 2; `plugin add` of a configured spec only reinstalls it.
-  prefetch: (spec) => ["plugin", "add", spec],
-};
-
-/** Every OpenCode plugin akm knows. V1 is always reported; V2 only on a host that has it (see `openCodeV2Present`). */
-export const OPENCODE_FLAVORS: readonly OpenCodeFlavor[] = [OPENCODE_V1, OPENCODE_V2];
-
 const nextSpec = (flavor: OpenCodeFlavor) => `${flavor.pkg}@next`;
 
 export interface OpenCodeCache {
@@ -267,7 +200,7 @@ const namesPackage = (spec: string, pkg: string) => spec === pkg || spec.startsW
  * written; project configs are not looked at (akm does not know which project
  * OpenCode runs in).
  */
-export function openCodeConfigSpec(flavor: OpenCodeFlavor = OPENCODE_V1): { spec: string; key: string } | undefined {
+export function openCodeConfigSpec(flavor: OpenCodeFlavor): { spec: string; key: string } | undefined {
   const configHome = process.env.XDG_CONFIG_HOME?.trim() || path.join(homeDir(), ".config");
   const files = [
     flavor.globalConfigOnly ? undefined : process.env.OPENCODE_CONFIG?.trim(),
@@ -277,7 +210,7 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor = OPENCODE_V1): { spec
   for (const file of files) {
     if (!file) continue;
     try {
-      const config = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8"))) as Record<string, unknown>;
+      const config = parseJsonc(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
       for (const key of flavor.configKeys) {
         const entries = config[key];
         if (!Array.isArray(entries)) continue;
@@ -293,13 +226,8 @@ export function openCodeConfigSpec(flavor: OpenCodeFlavor = OPENCODE_V1): { spec
   return undefined;
 }
 
-/**
- * Whether this host has an OpenCode 2 akm plugin: the global config names `akm-opencode-v2`, or OpenCode
- * 2 has cached it. Only then does `akm upgrade` report on it, so a host with just OpenCode 1 sees the
- * same output as before.
- */
-export function openCodeV2Present(): boolean {
-  if (openCodeConfigSpec(OPENCODE_V2)) return true;
+/** Whether OpenCode 2 has ever cached `akm-opencode-v2` on this host. */
+function openCodeV2Cached(): boolean {
   try {
     return fs
       .readdirSync(path.join(openCodeCacheHome(), OPENCODE_V2.cacheFolder("")))
@@ -314,29 +242,15 @@ export function openCodeV2Present(): boolean {
  * none. OpenCode names the folder after the spec it resolved, so a bare package
  * lands in `@latest` and `<pkg>@next` in `@next`.
  */
-export function detectOpenCodeCache(
-  tag: UpgradeChannel = "latest",
-  flavor: OpenCodeFlavor = OPENCODE_V1,
-): OpenCodeCache | undefined {
+export function detectOpenCodeCache(tag: UpgradeChannel, flavor: OpenCodeFlavor): OpenCodeCache | undefined {
   const dir = path.join(openCodeCacheHome(), flavor.cacheFolder(`${flavor.pkg}@${tag}`));
   if (!fs.existsSync(dir)) return undefined;
-  const readVersion = (file: string | undefined): string | undefined => {
-    if (!file) return undefined;
-    try {
-      const pkg = JSON.parse(fs.readFileSync(file, "utf8")) as { version?: unknown };
-      return typeof pkg.version === "string" ? pkg.version : undefined;
-    } catch {
-      return undefined;
-    }
-  };
-  return { dir, version: readVersion(flavor.installedManifest(dir)) };
+  const nodeModules = flavor.nodeModulesDir(dir);
+  return { dir, version: nodeModules && readPackageVersion(path.join(nodeModules, flavor.pkg, "package.json")) };
 }
 
 /** What npm's `<pkg>@<tag>` is, and which akm-cli it pins. */
-export function lookupOpenCodeLatest(
-  tag: UpgradeChannel = "latest",
-  flavor: OpenCodeFlavor = OPENCODE_V1,
-): OpenCodeLatest {
+export function lookupOpenCodeLatest(tag: UpgradeChannel, flavor: OpenCodeFlavor): OpenCodeLatest {
   const spec = `${flavor.pkg}@${tag}`;
   const view = runCommand(
     IS_WINDOWS ? "npm.cmd" : "npm",
@@ -362,7 +276,7 @@ export function lookupOpenCodeLatest(
  * (#1089). For the same reason plugin versions are only ever tested for
  * equality (is the cache already this build?), never ordered.
  */
-export function lookupOpenCodeNext(flavor: OpenCodeFlavor = OPENCODE_V1): OpenCodeLatest {
+export function lookupOpenCodeNext(flavor: OpenCodeFlavor): OpenCodeLatest {
   const next = lookupOpenCodeLatest("next", flavor);
   if ("error" in next) return next;
   const latest = lookupOpenCodeLatest("latest", flavor);
@@ -446,8 +360,8 @@ function otherSpecNote(flavor: OpenCodeFlavor, spec: string): string {
     : `${loads}; set "${key}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`;
 }
 
-function upgradeOpenCode(flavor: OpenCodeFlavor, dryRun: boolean, target: OpenCodeTarget): PluginUpgradeEntry {
-  const { cache, latest, tag, skip } = target;
+function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgradeEntry {
+  const { flavor, cache, latest, tag, skip } = target;
   const harness = flavor.harness;
   // Refreshing a cache OpenCode does not load would trash one it never re-creates (#1115, #1117).
   if (skip) return skipped(harness, skip);
@@ -470,15 +384,17 @@ function upgradeOpenCode(flavor: OpenCodeFlavor, dryRun: boolean, target: OpenCo
   if (dryRun) return { ...base, outcome: "pending" };
   // OpenCode must be runnable before the cache goes: it does the prefetch, and only the major
   // that owns this plugin's cache can re-create it. akm never installs or replaces the binary.
-  const probe = runCommand("opencode", ["--version"], READ_TIMEOUT_MS);
-  if (!probe.ok) return skipped(harness, probe.missing ? "opencode is not on PATH" : probe.error);
-  const major = parseOpencodeMajor(probe.stdout);
+  // OpenCode 2 may sit beside an OpenCode 1 `opencode` as `opencode2`; OpenCode 1 is only ever `opencode`.
+  const bin = flavor.major === 2 ? resolveOpencodeBin() : OPENCODE_SDK_SERVER_BIN;
+  const detected = detectOpencodeMajor(bin);
+  if (!detected.runnable) return skipped(harness, `${bin} is not on PATH or \`${bin} --version\` failed`);
+  const major = detected.reportedMajor;
   // OpenCode 1 keeps its long-standing behavior when the version cannot be read; OpenCode 2's
   // refresh needs a command only OpenCode 2 has, so it must be sure.
   if (major === undefined ? flavor.major === 2 : major !== flavor.major) {
     return skipped(
       harness,
-      `\`opencode\` on PATH is ${major === undefined ? "of an unknown version" : `OpenCode ${major}`}, ` +
+      `\`${bin}\` on PATH is ${major === undefined ? "of an unknown version" : `OpenCode ${major}`}, ` +
         `not OpenCode ${flavor.major}, so it cannot re-create the ${flavor.pkg} cache; the cache is left alone`,
     );
   }
@@ -493,7 +409,7 @@ function upgradeOpenCode(flavor: OpenCodeFlavor, dryRun: boolean, target: OpenCo
   // From a temp dir, so no project's opencode.json is read.
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-prefetch-"));
   try {
-    const prefetch = runCommand("opencode", flavor.prefetch(target.spec), PREFETCH_TIMEOUT_MS, { cwd: workDir });
+    const prefetch = runCommand(bin, flavor.prefetch(target.spec), PREFETCH_TIMEOUT_MS, { cwd: workDir });
     if (!prefetch.ok) return failed(harness, `${prefetch.error} (the old cache is in the trash)`);
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
@@ -539,7 +455,7 @@ export function upgradePlugins(opts: {
   return [
     opts.next ? withNextNote(claude) : claude,
     opts.next ? withNextNote(codex) : codex,
-    ...opts.openCode.map((target) => upgradeOpenCode(target.flavor, opts.dryRun, target)),
+    ...opts.openCode.map((target) => upgradeOpenCode(opts.dryRun, target)),
   ];
 }
 
@@ -558,8 +474,8 @@ export function upgradePlugins(opts: {
 export function applyLockstep<T extends UpgradeCheckResponse>(
   check: T,
   latest: OpenCodeLatest | undefined,
-  tag: UpgradeChannel = "latest",
-  pkg: OpenCodeFlavor["pkg"] = OPENCODE_V1.pkg,
+  tag: UpgradeChannel,
+  pkg: OpenCodeFlavor["pkg"],
 ): T & { lockstep?: UpgradeLockstep } {
   if (!latest) return check;
   // Held back only when there is a release this upgrade would otherwise install.
@@ -604,14 +520,13 @@ export function applyLockstep<T extends UpgradeCheckResponse>(
  * CLI stays put), else the one pinning the oldest akm-cli, since every plugin runs the CLI that is installed.
  */
 function lockstepSource(targets: OpenCodeTarget[]): OpenCodeTarget | undefined {
+  const readable = (t: OpenCodeTarget): t is OpenCodeTarget & { latest: { akmCli: string } } =>
+    t.latest !== undefined && !("error" in t.latest) && typeof t.latest.akmCli === "string";
   const pinned = targets.filter((t) => t.latest);
-  const unreadable = pinned.find((t) => !t.latest || "error" in t.latest || !t.latest.akmCli);
-  if (unreadable) return unreadable;
-  return pinned.sort((a, b) => {
-    const pa = (a.latest as { akmCli: string }).akmCli;
-    const pb = (b.latest as { akmCli: string }).akmCli;
-    return semverOrder(pa, pb);
-  })[0];
+  return (
+    pinned.find((t) => !readable(t)) ??
+    pinned.filter(readable).sort((a, b) => semverOrder(a.latest.akmCli, b.latest.akmCli))[0]
+  );
 }
 
 export interface UpgradeRunDependencies {
@@ -634,8 +549,11 @@ export type UpgradeRunResult =
  * naming any other spec (an exact version, or `@next` on a plain run) is left
  * alone, with no lockstep.
  */
-function resolveOpenCodeTarget(next: boolean, flavor: OpenCodeFlavor): OpenCodeTarget {
-  const configured = openCodeConfigSpec(flavor);
+function resolveOpenCodeTarget(
+  next: boolean,
+  flavor: OpenCodeFlavor,
+  configured: { spec: string; key: string } | undefined,
+): OpenCodeTarget {
   // OpenCode 1 with no config entry behaves like a bare one: it would resolve @latest. OpenCode 2's
   // re-fetch writes the config, so its plugin is only refreshed where the config already names it.
   const spec = configured?.spec ?? flavor.pkg;
@@ -671,11 +589,16 @@ function resolveOpenCodeTarget(next: boolean, flavor: OpenCodeFlavor): OpenCodeT
   return { flavor, cache, latest, tag, spec, notFollowingNext: next && !followNext };
 }
 
-/** The OpenCode plugins this host has: OpenCode 1's always, OpenCode 2's only when it is installed there. */
+/**
+ * The OpenCode plugins this host has: OpenCode 1's always, OpenCode 2's only when the global config
+ * names `akm-opencode-v2` or OpenCode 2 has cached it, so a host with just OpenCode 1 sees the same
+ * output as before.
+ */
 function resolveOpenCodeTargets(next: boolean): OpenCodeTarget[] {
-  return OPENCODE_FLAVORS.filter((flavor) => flavor === OPENCODE_V1 || openCodeV2Present()).map((flavor) =>
-    resolveOpenCodeTarget(next, flavor),
-  );
+  const targets = [resolveOpenCodeTarget(next, OPENCODE_V1, openCodeConfigSpec(OPENCODE_V1))];
+  const v2 = openCodeConfigSpec(OPENCODE_V2);
+  if (v2 || openCodeV2Cached()) targets.push(resolveOpenCodeTarget(next, OPENCODE_V2, v2));
+  return targets;
 }
 
 /** `akm upgrade`: the CLI step (held to the OpenCode plugin's akm), then the plugins. */
