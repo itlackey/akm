@@ -120,19 +120,3 @@ export function modelWorkOpencodeConfig(options?: Record<string, unknown>): Reco
     },
   };
 }
-
-/**
- * The OpenCode 2 form of {@link modelWorkOpencodeConfig}. OpenCode 2.0.26 reads
- * the same `OPENCODE_CONFIG_CONTENT` with the same `agent.<name>` keys (`mode`,
- * `description`, `prompt`, `options`, `permission`), the same permission names
- * (`read`, `edit`, `glob`, `grep`, `list`, `bash`, `task`, `external_directory`,
- * `question`, `webfetch`, `websearch`, `lsp`, `doom_loop`, `skill`, and plugin
- * tools by name) and a top-level `permission`, so the definition is the same
- * object. It is a separate entry point so a V2-only difference lands here and
- * leaves the V1 bytes alone. An agent whose definition fails V2's validation is
- * dropped silently (the run then fails with `Agent not found`), so a divergence
- * shows up in the real-binary test rather than as a changed answer.
- */
-export function modelWorkOpencodeConfigV2(options?: Record<string, unknown>): Record<string, unknown> {
-  return modelWorkOpencodeConfig(options);
-}

@@ -31,7 +31,7 @@ import { type AgentDispatchRequest, type BuiltCommand, modelFromArgs } from "../
 import type { AgentProfile } from "../../agent/profiles";
 import { ordinaryOpencodeFlags } from "./argv-common";
 import { opencodeInferenceConfig } from "./model-config";
-import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfigV2, modelWorkPluginEnv } from "./model-work-agent";
+import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "./model-work-agent";
 
 export const OPENCODE_V2_STANDALONE_FLAG = "--standalone";
 
@@ -52,7 +52,7 @@ export function buildOpencodeV2Command(profile: AgentProfile, req: AgentDispatch
       ],
       env: {
         ...modelWorkPluginEnv(),
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfigV2(agentOptions)),
+        OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)),
       },
     };
   }
