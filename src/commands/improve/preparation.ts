@@ -61,7 +61,6 @@ import {
   findAssetFilePath,
   isDistillCandidateRef,
   isLessonCandidate,
-  resolveImproveScope,
   withIndexDb,
 } from "./eligibility";
 import { akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
@@ -148,7 +147,7 @@ export function pickDefined<T extends object, K extends keyof T>(
   return out;
 }
 
-export const CONSOLIDATION_CONFIG_KEYS = ["enabled", "minPoolSize", "limit", "maxChunkSize"] as const;
+export const CONSOLIDATION_CONFIG_KEYS = ["enabled", "limit", "maxChunkSize"] as const;
 
 /** Emit an aggregate `improve_skipped` row (never one per ref). */
 export function recordImproveSkip(
@@ -170,32 +169,22 @@ export function pushRecentError(recentErrors: Record<string, string[]>, originat
 // ── Consolidation ────────────────────────────────────────────────────────────
 
 /**
- * The consolidation gates and pool, with no model call: the profile toggle,
- * `minPoolSize` (not for a named strategy or ref scope, nor once the pool is
- * over the 100-memory volume trigger), and the ledger delta (every memory
- * judged recently and unchanged since means nothing to do).
+ * The consolidation gates and pool, with no model call: the profile toggle
+ * and the ledger delta (every memory judged recently and unchanged since
+ * means nothing to do).
  */
 function planConsolidationPass(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
-  memorySummary: { eligible: number; derived: number };
   improveProfile?: ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   existingKnowledgeBodyHashes?: Set<string>;
 }): {
-  poolBelowMinSize: boolean;
-  eligiblePoolSize: number;
-  minPoolSize: number;
   plan: ImproveExecutionPlan["consolidation"];
 } {
-  const { options, primaryStashDir, memorySummary, resolvedPlan } = args;
+  const { options, primaryStashDir, resolvedPlan } = args;
   const processConfig = args.improveProfile?.processes?.consolidate;
-  const volumeTriggered = memorySummary.eligible > 100 && resolvedPlan.processes.consolidate.runner !== null;
-  const minPoolSize = typeof processConfig?.minPoolSize === "number" ? processConfig.minPoolSize : 0;
-  const eligiblePoolSize = typeof memorySummary.eligible === "number" ? memorySummary.eligible : 0;
-  const userNamed = options.strategy !== undefined || resolveImproveScope(options.scope).mode === "ref";
-  const poolBelowMinSize = !volumeTriggered && !userNamed && minPoolSize > 0 && eligiblePoolSize < minPoolSize;
   const pool: Pick<ConsolidationPoolSnapshot, "poolSize" | "candidatePoolSize" | "judgedUnchanged"> = primaryStashDir
     ? inspectConsolidationPool(
         {
@@ -224,18 +213,13 @@ function planConsolidationPass(args: {
   );
   const profilePassed = processConfig?.enabled !== false;
   const deltaPassed = pool.candidatePoolSize > 0 || pool.judgedUnchanged === 0;
-  const wouldRun = profilePassed && !poolBelowMinSize && deltaPassed && pool.candidatePoolSize > 0;
-  const belowMin = `pool ${eligiblePoolSize} is below minPoolSize ${minPoolSize}`;
+  const wouldRun = profilePassed && deltaPassed && pool.candidatePoolSize > 0;
   const unchanged = "every memory was judged recently and is unchanged since";
   return {
-    poolBelowMinSize,
-    eligiblePoolSize,
-    minPoolSize,
     plan: {
       configured: pickDefined(processConfig, CONSOLIDATION_CONFIG_KEYS),
       effective: {
         enabled: profilePassed,
-        minPoolSize,
         ...(processConfig?.limit !== undefined ? { limit: processConfig.limit } : {}),
         chunkSize,
       },
@@ -245,10 +229,6 @@ function planConsolidationPass(args: {
         profile: {
           passed: profilePassed,
           reason: profilePassed ? "consolidation enabled" : "disabled by improve profile",
-        },
-        minimumPool: {
-          passed: !poolBelowMinSize,
-          reason: poolBelowMinSize ? belowMin : `pool satisfies minPoolSize ${minPoolSize}`,
         },
         delta: {
           passed: deltaPassed,
@@ -262,13 +242,11 @@ function planConsolidationPass(args: {
       wouldRun,
       reason: !profilePassed
         ? "disabled by improve profile"
-        : poolBelowMinSize
-          ? belowMin
-          : !deltaPassed
-            ? unchanged
-            : pool.candidatePoolSize === 0
-              ? "candidate pool is empty after narrowing"
-              : "all consolidation gates pass",
+        : !deltaPassed
+          ? unchanged
+          : pool.candidatePoolSize === 0
+            ? "candidate pool is empty after narrowing"
+            : "all consolidation gates pass",
       estimatedChunks: wouldRun ? Math.ceil(pool.candidatePoolSize / chunkSize) : 0,
     },
   };
@@ -283,13 +261,6 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
   let consolidation: ConsolidateResult = makeConsolidateResult({ target: "", durationMs: 0 });
   if (!planned.plan.gates.profile.passed) {
     info("[improve] consolidation skipped (disabled by improve profile)");
-  } else if (planned.poolBelowMinSize) {
-    recordImproveSkip(eventsCtx, "memories/_consolidation", {
-      reason: "pool_below_min_size",
-      poolSize: planned.eligiblePoolSize,
-      minPoolSize: planned.minPoolSize,
-    });
-    info(`[improve] consolidation skipped (pool ${planned.eligiblePoolSize} < minPoolSize ${planned.minPoolSize})`);
   } else if (!planned.plan.gates.delta.passed) {
     recordImproveSkip(eventsCtx, "memories/_consolidation", { reason: "consolidation_no_memory_updates" });
     info("[improve] consolidation skipped (every memory was judged recently and is unchanged)");
@@ -308,7 +279,6 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
         limit: processConfig?.limit,
         maxChunkSize: processConfig?.maxChunkSize,
         signal: args.budgetSignal,
-        p90ChunkSecondsDefault: processConfig?.p90ChunkSecondsDefault,
         // Its read-only proposal lookups go through the run's own state.db handle.
         ...(eventsCtx?.db ? { proposalsCtx: { db: eventsCtx.db } } : {}),
       }),
@@ -1188,7 +1158,7 @@ function scoreSalience(
   retrievalCounts: Map<string, number>,
   persist: boolean,
 ): Map<string, Salience> {
-  const { options, eventsCtx } = args;
+  const { eventsCtx } = args;
   const utilityMap = buildUtilityMap(mergedRefs, !persist);
   const lastUseMsByRef = withIndexDb(!persist, (db) => getLastUseMsByRef(db, mergedRefs)) ?? new Map<string, number>();
   const outcomeSalience = updateOutcomeScores({
@@ -1201,7 +1171,6 @@ function scoreSalience(
     eventsCtx,
     persist,
   });
-  const outcomeWeightEnabled = (options.config ?? loadConfig()).improve?.salience?.outcomeWeightEnabled !== false;
   const storedEncoding = new Map<string, number>();
   withRunState(eventsCtx, persist, (db) => {
     for (const r of mergedRefs) {
@@ -1225,7 +1194,6 @@ function scoreSalience(
         outcomeSalience: outcomeSalience.get(r.ref),
         sizeBytes: fileSize(r.filePath),
         now,
-        outcomeWeightEnabled,
       }),
     );
   }

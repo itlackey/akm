@@ -91,6 +91,21 @@ async function waitUntil(predicate: () => boolean, timeoutMs: number, descriptio
   }
 }
 
+/** Reflect alone: a user-defined strategy, since the built-in `quick` was removed (#1130). */
+const REFLECT_ONLY_STRATEGIES = {
+  "reflect-only": {
+    processes: {
+      distill: { enabled: false },
+      consolidate: { enabled: false },
+      memoryInference: { enabled: false },
+      extract: { enabled: false },
+      triage: { enabled: false },
+      validation: { enabled: false },
+      proactiveMaintenance: { enabled: false },
+    },
+  },
+};
+
 function configureHungEngine(port: number): void {
   saveConfig({
     semanticSearchMode: "off",
@@ -98,6 +113,7 @@ function configureHungEngine(port: number): void {
       hung: { kind: "llm", endpoint: `http://localhost:${port}/v1`, model: "hung-model" },
     },
     defaults: { llmEngine: "hung" },
+    improve: { strategies: REFLECT_ONLY_STRATEGIES },
   });
 }
 
@@ -161,6 +177,7 @@ function configureSlowPrepassFastEngine(embedPort: number, chatPort: number): vo
       fast: { kind: "llm", endpoint: `http://localhost:${chatPort}/v1`, model: "fast-model" },
     },
     defaults: { llmEngine: "fast" },
+    improve: { strategies: REFLECT_ONLY_STRATEGIES },
   });
 }
 
@@ -211,7 +228,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
           "improve",
           "memories/note-a",
           "--strategy",
-          "quick",
+          "reflect-only",
           "--timeout-ms",
           "7000",
           "--json-to-stdout",
@@ -246,7 +263,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
     try {
       configureHungEngine(server.port!);
 
-      child = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-b", "--strategy", "quick"], {
+      child = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-b", "--strategy", "reflect-only"], {
         cwd: repoRoot,
         env: { ...process.env },
         stdout: "pipe",
@@ -282,7 +299,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
       configureHungEngine(server.port!);
       const { launcherPath, pidFile } = stageRealCliLauncher(sandbox.dir);
 
-      launcherProc = Bun.spawn(["bun", launcherPath, "improve", "memories/note-c", "--strategy", "quick"], {
+      launcherProc = Bun.spawn(["bun", launcherPath, "improve", "memories/note-c", "--strategy", "reflect-only"], {
         cwd: repoRoot,
         env: { ...process.env },
         stdout: "pipe",
@@ -336,7 +353,7 @@ describe("akm improve — real reflect dispatch against a dead endpoint (#957)",
 
       const startedAt = Date.now();
       launcherProc = Bun.spawn(
-        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "quick", "--timeout-ms", "2000"],
+        ["bun", launcherPath, "improve", "memories/note-d", "--strategy", "reflect-only", "--timeout-ms", "2000"],
         { cwd: repoRoot, env: { ...process.env }, stdout: "pipe", stderr: "pipe" },
       );
 
@@ -378,7 +395,7 @@ describe("akm improve — a slow prepass must not trip the first-response heartb
       configureSlowPrepassFastEngine(embedServer.port!, chatServer.port!);
 
       const startedAt = Date.now();
-      const spawned = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-c", "--strategy", "quick"], {
+      const spawned = Bun.spawn(["bun", "src/cli.ts", "improve", "memories/note-c", "--strategy", "reflect-only"], {
         cwd: repoRoot,
         env: { ...process.env },
         stdout: "pipe",

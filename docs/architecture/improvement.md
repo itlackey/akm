@@ -147,9 +147,8 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `consolidate`, `catchup`,
-and `reflect-distill`
-(`src/assets/improve-strategies/*.json`). Selection
+set: `default` and `consolidate` (`src/assets/improve-strategies/*.json`). The removed `quick`, `thorough`,
+`catchup`, `reflect-distill` and `proactive-maintenance` still work as user-defined strategies. Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
@@ -159,7 +158,7 @@ config) is merged on top. So a strategy — built-in or user-defined — that
 omits a field, or an entire process block, inherits it from `default`; an
 explicit `enabled: true`/`false` in the more specific layer always wins. This
 is why, for example, `proactiveMaintenance` is on in `default` and off in
-`reflect-distill`, and a preset that doesn't mention it at all inherits the
+`consolidate`, and a preset that doesn't mention it at all inherits the
 `default` value. A user-defined strategy named `proactive-maintenance` (the name
 of the retired built-in) resolves the same way, merged onto `default`.
 
@@ -218,7 +217,10 @@ both stay on the proposal when the drain accepts it, so a later audit can read
 why it passed (`akm proposal show --format json`). A distill pass is not staged:
 the lesson or promotion is minted `deferred` for a person (reason
 `distill-review`, same gate) with the same `scores` and `judgeReason`, and the
-triage drain and its judgment tier leave it alone. On 2026-10-05 the gate had
+triage drain and its judgment tier leave it alone. A lesson that repeats an existing
+lesson may instead be proposed as an update of that lesson (reason
+`distill-update`, same gate), with only what the memory adds; the drain leaves
+it for a person too. On 2026-10-05 the gate had
 staged 12 lessons and 10 were bad (they restated the memory, claimed what it
 does not say, or filed a dated status as a lesson), and no score separated them
 from the two good ones. Reflect revises only an asset's
@@ -373,8 +375,7 @@ explicit promote surface independent of this gate.
 For git-backed bundles (detected by a `.git` directory), `akm improve`
 automatically commits its changes as a single batch at the end of the run —
 the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. The `reflect-distill`
-strategy skips sync entirely, so an interrupted run
+the active strategy's `sync` setting. A user-defined strategy can turn sync off, so an interrupted run
 does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.

@@ -10,10 +10,38 @@ import {
   resolveImproveStrategy,
   shouldSkipRef,
 } from "../src/commands/improve/improve-strategies";
-import type { AkmConfig } from "../src/core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../src/core/config/config";
+import { deepMergeConfig } from "../src/core/config/deep-merge";
 import { ConfigError } from "../src/core/errors";
 import { asLlmRunner } from "./_helpers/llm-runner";
 import { withEnvSync } from "./_helpers/sandbox";
+
+// The built-in `quick` and `reflect-distill` strategies were removed (#1130).
+// These are their old definitions as user-defined strategies, so the tests
+// below keep exercising the same process shapes through `improve.strategies`.
+const QUICK = {
+  processes: {
+    reflect: { enabled: true },
+    extract: { enabled: false },
+    distill: { enabled: false },
+    consolidate: { enabled: false },
+    memoryInference: { enabled: false },
+    triage: { enabled: false },
+    validation: { enabled: false },
+    proactiveMaintenance: { enabled: false },
+  },
+};
+const REFLECT_DISTILL = {
+  processes: {
+    consolidate: { enabled: false },
+    validation: { enabled: false },
+    triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 15, judgment: true },
+  },
+};
+/** `base` with `overrides` deep-merged on top, typed as an `improve.strategies` entry. */
+function strategy(base: object, overrides: object = {}): ImproveProfileConfig {
+  return deepMergeConfig(base as never, overrides as never) as ImproveProfileConfig;
+}
 
 describe("resolveImproveStrategy", () => {
   test("deep-merges the default baseline, selected built-in, and user override in order", () => {
@@ -22,9 +50,7 @@ describe("resolveImproveStrategy", () => {
       semanticSearchMode: "auto",
       improve: {
         strategies: {
-          quick: {
-            processes: { reflect: { enabled: false, allowedTypes: ["memory"] } },
-          },
+          quick: strategy(QUICK, { processes: { reflect: { enabled: false, allowedTypes: ["memory"] } } }),
         },
       },
     });
@@ -53,14 +79,14 @@ describe("resolveImproveStrategy", () => {
     const quick = resolveImproveStrategy("quick", {
       semanticSearchMode: "off",
       improve: {
-        strategies: { quick: { processes: { extract: { enabled: true } } } },
+        strategies: { quick: strategy(QUICK, { processes: { extract: { enabled: true } } }) },
       },
     });
     const reflectDistill = resolveImproveStrategy("reflect-distill", {
       semanticSearchMode: "off",
       improve: {
         strategies: {
-          "reflect-distill": { processes: { proactiveMaintenance: { enabled: true } } },
+          "reflect-distill": strategy(REFLECT_DISTILL, { processes: { proactiveMaintenance: { enabled: true } } }),
         },
       },
     });
@@ -76,6 +102,7 @@ describe("resolveImproveStrategy", () => {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
       defaults: { improveStrategy: "quick" },
+      improve: { strategies: { quick: strategy(QUICK) } },
     });
     expect(selected.name).toBe("quick");
   });
@@ -197,7 +224,9 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       engines: { default: llm, validation: { ...llm, model: "repair" } },
       defaults: { llmEngine: "default" },
-      improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "validation" } } } } },
+      improve: {
+        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true, engine: "validation" } } }) },
+      },
     });
 
     expect(plan.strategy.name).toBe("quick");
@@ -266,6 +295,7 @@ describe("resolveImprovePlan", () => {
           },
         },
         defaults: { llmEngine: "default" },
+        improve: { strategies: { quick: strategy(QUICK) } },
       });
 
       expect(asLlmRunner(plan.processes.reflect.runner).credential).toEqual({
@@ -288,7 +318,9 @@ describe("resolveImprovePlan", () => {
       defaults: { llmEngine: "default" },
       improve: {
         strategies: {
-          "reflect-distill": { processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } } },
+          "reflect-distill": strategy(REFLECT_DISTILL, {
+            processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } },
+          }),
         },
       },
     });
@@ -391,7 +423,9 @@ describe("resolveImprovePlan", () => {
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
+        improve: {
+          strategies: { quick: strategy(QUICK, { processes: { reflect: { model: "model-without-engine" } } }) },
+        },
       }),
     ).toThrow('"reflect" requires an engine that is not configured');
     expect(() =>
@@ -400,6 +434,7 @@ describe("resolveImprovePlan", () => {
         semanticSearchMode: "auto",
         engines: { wrong: { kind: "agent", platform: "pi" } },
         defaults: { llmEngine: "wrong" },
+        improve: { strategies: { quick: strategy(QUICK) } },
       }),
     ).toThrow("The pi transport cannot enforce the model-work tool policy.");
   });
@@ -410,6 +445,7 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       engines: { agent: { kind: "agent", platform: "claude" } },
       defaults: { llmEngine: "agent" },
+      improve: { strategies: { quick: strategy(QUICK) } },
     });
     expect(plan.processes.reflect.runner).toMatchObject({ kind: "agent", engine: "agent" });
     expect(plan.engineUnavailable).toEqual([]);
@@ -420,6 +456,7 @@ describe("resolveImprovePlan", () => {
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
+        improve: { strategies: { quick: strategy(QUICK) } },
       }),
     ).toThrow('"reflect" requires an engine that is not configured');
   });
@@ -581,9 +618,9 @@ describe("resolveImprovePlan", () => {
       defaults: { llmEngine: "llm" },
       improve: {
         strategies: {
-          "reflect-distill": {
+          "reflect-distill": strategy(REFLECT_DISTILL, {
             processes: { triage: { judgment: { engine: "reviewer", llm: { temperature: 0 } } } },
-          },
+          }),
         },
       },
     });
@@ -603,7 +640,9 @@ describe("projectResolvedProcessRouting (#947)", () => {
       semanticSearchMode: "auto",
       engines: { default: llm, validation: { ...llm, model: "repair" } },
       defaults: { llmEngine: "default" },
-      improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "validation" } } } } },
+      improve: {
+        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true, engine: "validation" } } }) },
+      },
     });
 
     const rows = projectResolvedProcessRouting(plan);
@@ -680,7 +719,9 @@ describe("projectResolvedProcessRouting (#947)", () => {
         defaults: { llmEngine: "default" },
         improve: {
           strategies: {
-            "reflect-distill": { processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } } },
+            "reflect-distill": strategy(REFLECT_DISTILL, {
+              processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } },
+            }),
           },
         },
       }),

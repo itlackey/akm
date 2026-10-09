@@ -56,12 +56,11 @@ describe("selectEffectiveImproveRefs", () => {
       processes: [],
       consolidation: {
         configured: {},
-        effective: { enabled: false, minPoolSize: 2, chunkSize: 2 },
+        effective: { enabled: false, chunkSize: 2 },
         poolSize: 0,
         candidatePoolSize: 0,
         gates: {
           profile: { passed: false, reason: "disabled" },
-          minimumPool: { passed: false, reason: "disabled" },
           delta: { passed: false, reason: "disabled" },
         },
         wouldRun: false,
@@ -100,12 +99,11 @@ describe("selectEffectiveImproveRefs", () => {
       processes,
       consolidation: {
         configured: {},
-        effective: { enabled: false, minPoolSize: 2, chunkSize: 2 },
+        effective: { enabled: false, chunkSize: 2 },
         poolSize: 0,
         candidatePoolSize: 0,
         gates: {
           profile: { passed: false, reason: "disabled" },
-          minimumPool: { passed: false, reason: "disabled" },
           delta: { passed: false, reason: "disabled" },
         },
         wouldRun: false,

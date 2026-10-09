@@ -219,16 +219,14 @@ export interface ImproveExecutionPlan {
   consolidation: {
     configured: {
       enabled?: boolean;
-      minPoolSize?: number;
       limit?: number;
       maxChunkSize?: number;
     };
-    effective: { enabled: boolean; minPoolSize: number; limit?: number; chunkSize: number };
+    effective: { enabled: boolean; limit?: number; chunkSize: number };
     poolSize: number;
     candidatePoolSize: number;
     gates: {
       profile: { passed: boolean; reason: string };
-      minimumPool: { passed: boolean; reason: string };
       delta: { passed: boolean; reason: string };
     };
     wouldRun: boolean;
@@ -554,6 +552,8 @@ export interface AkmDistillResult {
    * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
    */
   proposalId?: string;
+  /** True when `outcome === "queued"` and the proposal extends an existing lesson (`proposalRef`) instead of adding one. */
+  updatesExisting?: true;
   /** Human-readable hint surfaced when the call was skipped. */
   message?: string;
   /** Machine-readable reason when `outcome === "skipped"`. */

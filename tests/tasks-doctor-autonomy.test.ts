@@ -44,6 +44,10 @@ afterEach(() => {
   resetConfigCache();
 });
 
+const PROMOTING = {
+  strategies: { promoting: { processes: { triage: { enabled: true, applyMode: "promote" as const } } } },
+};
+
 describe("tasks doctor autonomy reporting", () => {
   test("reports autonomy off and names the gated lanes and the config key", async () => {
     saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "consolidate" } });
@@ -100,9 +104,9 @@ describe("tasks doctor autonomy reporting", () => {
   });
 
   test("improveTriage.applyMode reports the effective mode, not the strategy's raw value", async () => {
-    // `reflect-distill` enables triage in promote mode. With autonomy off the run
+    // A strategy that enables triage in promote mode. With autonomy off the run
     // uses queue, so doctor must say queue.
-    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "reflect-distill" } });
+    saveConfig({ semanticSearchMode: "off", defaults: { improveStrategy: "promoting" }, improve: PROMOTING });
     resetConfigCache();
 
     const result = await akmTasksDoctor();
@@ -113,7 +117,8 @@ describe("tasks doctor autonomy reporting", () => {
   test("improveTriage.applyMode reports promote once autonomy is opted into", async () => {
     saveConfig({
       semanticSearchMode: "off",
-      defaults: { improveStrategy: "reflect-distill" },
+      defaults: { improveStrategy: "promoting" },
+      improve: PROMOTING,
       experimental: { improveAutonomy: true },
     });
     resetConfigCache();

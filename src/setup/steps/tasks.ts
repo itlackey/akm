@@ -29,13 +29,12 @@ import { parseTaskSource } from "../../tasks/source/parse-task-source";
 import { prompt } from "../prompt";
 
 /**
- * A scheduled server-only nightly full sweep exists among the embedded
- * improve-schedule templates (folded in from the retired
- * `registerDefaultTasks`/`akm tasks init` path in 0.9, S6). This id is
- * preselected in the review multiselect on a detected server install — the
- * "battery heuristic" {@link detectServerDefault} preserved from that path.
+ * The nightly improve template (`core/improve`). This id is preselected in the
+ * review multiselect on a detected server install — the "battery heuristic"
+ * {@link detectServerDefault} preserved from the retired
+ * `registerDefaultTasks`/`akm tasks init` path (0.9, S6).
  */
-const SERVER_SUGGESTED_TASK_ID = "akm-improve-nightly";
+const SERVER_SUGGESTED_TASK_ID = "improve";
 
 // ── Test seam ────────────────────────────────────────────────────────────────
 // Swap-and-restore override for the two environment probes below. Inert in
@@ -84,7 +83,7 @@ export function detectServerDefault(): boolean {
     return !hasBattery;
   } catch {
     // If we cannot read power-supply info, prefer the safe server default on
-    // Linux (the nightly sweep is low-impact and re-runnable).
+    // Linux (the nightly improve run is low-impact and re-runnable).
     return true;
   }
 }
@@ -268,11 +267,11 @@ export async function stepScheduledTasks(
     return;
   }
 
-  // ALL templates are offered, including ships-disabled ones (e.g. the
-  // manual-recovery catchup task): an unselected template is still PREPARED,
-  // so its YAML exists for `akm task run <id>` while its ref remains absent
-  // from local scheduler activation. Filtering on `task.enabled`
-  // here would make ships-disabled templates invisible and unpreparable.
+  // ALL templates are offered, including ships-disabled ones: an unselected
+  // template is still PREPARED, so its YAML exists for `akm task run <id>`
+  // while its ref remains absent from local scheduler activation. Filtering on
+  // `task.enabled` here would make ships-disabled templates invisible and
+  // unpreparable.
   const embedded = listEmbeddedTasks();
   if (embedded.length === 0) return;
 
@@ -296,7 +295,7 @@ export async function stepScheduledTasks(
 
   const preChecked = embedded.filter((task) => byId.get(task.id)?.enabled === true).map((task) => task.id);
   // Battery heuristic preserved from the retired `registerDefaultTasks` path
-  // (S6): suggest the nightly full sweep on a detected server install, same
+  // (S6): suggest the nightly improve task on a detected server install, same
   // as every other embedded template, still gated behind the confirmation
   // below.
   if (

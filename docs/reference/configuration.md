@@ -454,11 +454,21 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
 
 An improve process's engine follows
 [the one rule](#engines-for-unattended-model-work); an explicit invalid or
-incompatible engine never falls back to another engine. Built-in strategies
-are complete presets. User-defined strategies inherit omitted fields from the
-built-in `default` strategy before applying their own overrides. The built-in
-strategies other than `default` and `consolidate` are Experimental (see
-[STABILITY.md](../../STABILITY.md)): 0.10 measures each and keeps, folds or removes it.
+incompatible engine never falls back to another engine. The built-in strategies
+are `default` and `consolidate`. `consolidate` is a patch that
+is deep-merged onto `default`, and a user-defined strategy of the same name is
+merged on top of that; so every strategy, built-in or user-defined, inherits
+omitted fields from `default`. `quick`, `reflect-distill`, `thorough`,
+`catchup` were removed in 0.10 (#1130): measured, none beat `default` (`thorough`
+and `catchup` added only a judged triage drain, and `catchup` was identical to
+`consolidate`). `proactive-maintenance` was removed too (#1129): its lane now
+lives in `default`. A `improve.strategies.<name>` block with one of those names is
+now an ordinary user-defined strategy that inherits `default`, so it no longer
+carries the old built-in's settings; `--strategy` or `defaults.improveStrategy`
+naming one with no such block fails with an error that names `default`. To keep
+the old judged drain, set `processes.triage` (`enabled`, `applyMode: "promote"`,
+`judgment: true`) in your own strategy. The built-in strategies other than
+`default` and `consolidate` are Experimental (see [STABILITY.md](../../STABILITY.md)).
 
 `processes.triage.judgment` explicitly controls the optional judgment tier.
 Use `true` to enable it, `false` to disable it, or an object with `enabled`,

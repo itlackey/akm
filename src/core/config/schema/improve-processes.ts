@@ -100,21 +100,6 @@ const clsField = z
   .optional();
 
 /**
- * WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
- * check it against its cited source memories; a contradiction flag forces
- * human review. Default OFF. Distill process only.
- */
-const fidelityCheckField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
-
-/**
- * #639 — semantic value-floor filter for the `reflect` process. When
- * enabled, proposals classified as "low-value" by the deterministic noise
- * gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
- * byte-identical behaviour). Reflect process only.
- */
-const lowValueFilterField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
-
-/**
  * The wording lists of reflect's pre-judge defect filter (`findReflectDefect`).
  * Each list is optional: one that is set replaces that rule's default list, and
  * an empty one turns the rule off. Phrases (`placeholders`, `metaCommentary`)
@@ -171,29 +156,11 @@ const triageJudgmentField = z
   )
   .optional();
 
-/**
- * WS-3b: Anti-collapse guard (step 8), consolidate process only: a small
- * random (non-similarity-driven) fraction of the pool is mixed into the
- * clustered order so consolidation is not purely rich-get-richer. Default ON
- * (opt out via `enabled: false`); `randomClusterFraction` defaults to 0.05.
- * The retired merge guards (`maxGeneration`, `lexicalDiversityCheck`,
- * `mergeInformationFloor`, `minSpecificityRetention`) never refused a merge
- * and are tolerated as unknown keys.
- */
-const antiCollapseField = z
-  .object({
-    enabled: z.boolean().optional(),
-    randomClusterFraction: z.number().min(0).max(1).optional(),
-  })
-  .passthrough()
-  .optional();
-
 const REFLECT_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   excludeRefPrefixes: excludeRefPrefixesField,
   limit: processLimitField,
   qualityGate: qualityGateField,
-  lowValueFilter: lowValueFilterField,
   defectFilter: defectFilterField,
 };
 
@@ -204,22 +171,12 @@ const DISTILL_PROCESS_FIELDS = {
   // Skip distill entirely when reflect produced zero planned refs.
   requirePlannedRefs: z.boolean().optional(),
   cls: clsField,
-  fidelityCheck: fidelityCheckField,
 };
 
 const CONSOLIDATE_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   limit: processLimitField,
-  // Minimum eligible-memory pool size below which the consolidation pass skips
-  // entirely (emits `pool_below_min_size`). 0 disables the guard. Default 500.
-  minPoolSize: z.number().int().min(0).optional(),
   maxChunkSize: z.number().int().min(1).max(50).optional(),
-  // Fallback p90 wall-clock time per consolidation chunk in seconds, used for
-  // cold-start budget estimation when no telemetry history exists. The actual
-  // p90 is derived from observed run durations once sufficient history
-  // accumulates; this value is only used on the very first run. Default 30s.
-  p90ChunkSecondsDefault: z.number().finite().positive().optional(),
-  antiCollapse: antiCollapseField,
 };
 
 const MEMORY_INFERENCE_PROCESS_FIELDS = {

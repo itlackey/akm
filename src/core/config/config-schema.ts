@@ -41,7 +41,11 @@
  */
 import { z } from "zod";
 import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses/ids";
-import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_ENGINE_PROCESSES } from "./engine-semantics";
+import {
+  BUILTIN_IMPROVE_STRATEGY_NAMES,
+  IMPROVE_ENGINE_PROCESSES,
+  REMOVED_IMPROVE_STRATEGY_NAMES,
+} from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
 import { ExecutionPolicyConfigSchema } from "./schema/execution";
@@ -290,10 +294,9 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
     // (src/commands/improve/improve-strategies.ts) refuses it lazily, at
     // improve-invocation time, with the same message either way.
     defaultStrategy !== "graph-refresh" &&
-    // proactive-maintenance was a built-in strategy until 0.10 (its lane now
-    // lives in `default`): a config that still names it must keep loading, and
-    // resolves as the user strategy of that name, or is refused when run.
-    defaultStrategy !== "proactive-maintenance" &&
+    // The strategies removed in 0.10 (#1130) are exempt for the same reason:
+    // `resolveImproveStrategy` refuses them lazily, naming `default`.
+    !REMOVED_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof REMOVED_IMPROVE_STRATEGY_NAMES)[number]) &&
     !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
     !config.improve?.strategies?.[defaultStrategy]
   ) {

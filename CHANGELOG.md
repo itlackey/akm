@@ -21,6 +21,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
+- **Distill extends an existing lesson that a memory repeats (#1090).** When the writer's lesson repeats one the library
+  holds (the judge scores its non-redundancy 2 or below), or the writer answers `NONE` with a lesson nearby, distill
+  asks for that lesson's body again with the lines the memory adds. If every existing line is kept, and the judge
+  passes the added lines against the lesson and the memory, the update is a pending proposal on the lesson's own
+  ref (reason `distill-update`, with the lesson's before-hash), left for a person: the triage drain does not accept
+  it. Otherwise nothing is proposed and the outcome is what it was. The result and the `distill_invoked` event carry
+  `updatesExisting: true`. No new setting; it needs the quality gate.
+
+### Removed
+
+- **The `quick`, `reflect-distill`, `thorough` and `catchup` built-in improve strategies, and the `akm-improve-frequent`
+  and `akm-improve-catchup` task templates (#1130).** Measured (nightly eval, n=3, `gpt-5.6-terra` and `qwen3.8-27b`):
+  `quick` solved 0.76 / 0.75 items against `default`'s 0.92 / 0.89, `reflect-distill` 0.78 / 0.77, and `thorough` (the
+  judged triage drain) 0.67 / 0.70 with harmed items at 9 / 6.3 (unsafe retirements accepted, an exact fix applied
+  unreviewed); `catchup` was identical to `consolidate` on the pool (it differed only in the judged triage drain, `maxChunkSize` 50 instead of 25, and `minPoolSize: 0`, which is already the default). An `improve.strategies.<name>` block with one of
+  these names stays valid as an ordinary user-defined strategy, but it now inherits `default` and no longer carries the
+  old built-in's settings (for example the triage drain). `--strategy` or `defaults.improveStrategy` naming one with no
+  such block fails at resolution with an error that names `default`; config load still succeeds. The shipped
+  `akm-improve-nightly` task would now run `default` at 02:15, the same as the `core/improve` task at 02:00, and the
+  hourly `akm-improve-frequent` task would only repeat that pass; `akm-improve-catchup` ran the same `consolidate` as
+  `akm-improve-consolidate`. All three are gone, and setup's server-install preselection now suggests `core/improve`. A task copied from
+  any of them into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
+- **The high-salience improve lane and `improve.salience.salienceThreshold` (#1129).** The lane admitted nothing in
+  the measurement and was reachable only by back-dating feedback. The key still loads from an old config with a
+  warning and does nothing; `akm migrate apply` drops it. The `high-salience` lane name stays valid on rows older releases wrote.
+- **The `proactive-maintenance` built-in improve strategy (#1129).** The lane now lives in `default`. A
+  `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
+  onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block still loads and fails
+  when improve runs, with the same "removed in 0.10" error as `quick` and the other removed strategies (#1130).
 
 ### Changed
 
@@ -31,7 +60,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   run, `dueDays` (30) admits only an asset not reflected or distilled for 30 days, and reflect's `limit` (25) bounds
   the run. The code fallback for `maxPerRun` is 15, the shipped value, where it was 25. No new setting.
   `--require-feedback-signal` turns the lane off for a run.
-
 - **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
   nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
   (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
@@ -40,16 +68,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   revision) is left for a person with reason `judgment-not-promotion`, whatever the strategy says. `thorough`, `catchup`,
   `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
   unchanged. (#1132)
+- **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
+  said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`
+  and `consolidate`. (#1130)
 
 ### Removed
 
-- **The high-salience improve lane and `improve.salience.salienceThreshold` (#1129).** The lane admitted nothing in
-  the measurement and was reachable only by back-dating feedback. The key is still read without error from an old
-  config; it does nothing. The `high-salience` lane name stays valid on rows older releases wrote.
-- **The `proactive-maintenance` built-in improve strategy (#1129).** The lane now lives in `default`. A
-  `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
-  onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block now fails when improve
-  runs, as any unknown strategy does.
+- **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
+  that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
+  - `processes.consolidate.antiCollapse`: the random cluster-member injection. Identical results with it off on an
+    80-memory pool.
+  - `processes.consolidate.p90ChunkSecondsDefault`: the up-front budget cap on the consolidation pool keeps its
+    behaviour with a fixed 30 s per chunk. Identical at 10, 30 and 90 s under a 180 s budget.
+  - `processes.consolidate.minPoolSize`: the minimum-pool skip, its `pool_below_min_size` `improve_skipped` reason and
+    the `minPoolSize` / `gates.minimumPool` fields of the consolidation plan. It was bypassed by `--strategy`, and the
+    documented default (500) differed from the code's (0). `improve_runs` rows that carry the plan fields still read.
+  - `processes.distill.fidelityCheck`: the negation-pattern contradiction check. No difference at n=3.
+  - `processes.reflect.lowValueFilter`: the low-value tier of the reflect noise classifier. Reflect edits only
+    frontmatter, which the filter always passes. No-op and cosmetic edits are still refused.
+  - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
+    (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
+
+## [0.9.31] - 2026-10-09
+
+A patch release: concurrent config writes no longer lose a change, OpenAI's reasoning models work as `llm`
+engines, `akm improve --require-engines` probes send API keys, and the npm package's docs links resolve.
 
 ### Fixed
 
@@ -69,6 +112,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the user-facing `docs/` folders (`agents`, `architecture`, `guides`, `integration`, `maintainers`, `migration`,
   `posts`, `reference`), `docs/product-surface.md`, the one plan they link to, and `ROADMAP.md`. `docs/plans` stays
   out. The link check skips link syntax inside code, which is an example, not a link.
+- **Concurrent `akm config set` runs no longer lose each other's changes.** A lock file was created empty and its
+  owner's PID written a moment later; a process that looked in that gap read no PID, took the live lock for an
+  abandoned one and removed it, so two writers ran at once and one change was lost. A lock now appears with its
+  owner's PID already in it. Every akm lock file (config, index writer, scheduler, `akm.lock`, run, extract, secret)
+  is created this way.
 
 ## [0.9.30] - 2026-10-09
 
@@ -91,6 +139,10 @@ plugin on a host that follows `akm-opencode@next`.
 
 - **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
   failure-path runs on 0.9.28 (#1099).
+- **`akm proposal extract` and the improve `extract` process move from Experimental to Evolving.** The extract eval
+  (akm-eval `evals/extract`, n=3) measured insights saved 1.00 (terra) / 0.97 (qwen), routine sessions left empty
+  1.00, and planted instructions saved 0. Evolving rather than Stable because 0.10 is still settling the improve
+  defaults; the eval stays its gate (#1133).
 
 ### Fixed
 
