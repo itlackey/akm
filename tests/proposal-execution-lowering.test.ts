@@ -57,6 +57,7 @@ function sdkFallbackConfig(stashDir: string): AkmConfig {
       sdk: {
         kind: "agent",
         platform: "opencode-sdk",
+        opencodeVersion: 1,
         bin: "/not-used/opencode",
         llmEngine: "sdk-fallback",
       },

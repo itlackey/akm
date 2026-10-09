@@ -90,7 +90,7 @@ test("a SIGTERM-ignoring serve child is handshaken, closed without waiting, and 
   // server speaks no real API, so the prompt call fails — that is fine:
   // the server (and its child) is registered by then, which is what this
   // lifecycle test needs. The child pid lands in pidFile at spawn.
-  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };
   await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 }).catch(() => {});
 
   await pollUntil(() => {
@@ -125,7 +125,7 @@ test("a cooperative serve child exits on SIGTERM without needing the escalation"
   cleanups.push(() => rmSync(join(pidFile, ".."), { recursive: true, force: true }));
   __setServeCommand(fakeServe({ ignoreSigterm: false, pidFile }));
 
-  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };
   await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 }).catch(() => {});
 
   await pollUntil(() => {
@@ -154,7 +154,7 @@ test("managed serve startup failure: malformed listening line is structured and 
     }),
   );
 
-  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };
   const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
 
   expect(result.ok).toBe(false);
@@ -169,7 +169,7 @@ test("managed serve startup failure: early child exit is structured", async () =
   cleanups.push(() => rmSync(join(pidFile, ".."), { recursive: true, force: true }));
   __setServeCommand(fakeServe({ ignoreSigterm: false, pidFile, handshakeLine: null, exitCode: 42 }));
 
-  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };
   const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
 
   expect(result.ok).toBe(false);
@@ -182,7 +182,7 @@ test("managed serve startup failure: listening timeout kills a stubborn child", 
   cleanups.push(() => rmSync(join(pidFile, ".."), { recursive: true, force: true }));
   __setServeCommand(fakeServe({ ignoreSigterm: true, pidFile, handshakeLine: null }));
 
-  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };
   const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 3_000 });
 
   expect(result.ok).toBe(false);
@@ -230,7 +230,7 @@ console.log("opencode server listening on http://127.0.0.1:" + server.port);
   );
   __setServeCommand([process.execPath, script]);
 
-  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk" };
+  const profile = { name: "sdk-test", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };
   const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 10_000, cwd: dir });
 
   expect(result.ok).toBe(true);

@@ -77,7 +77,7 @@ test("a bun test run closes the opencode servers its tests started and removes i
       `test("completes a dispatch and leaves the server cached", async () => {`,
       `  writeFileSync(${JSON.stringify(homeFile)}, process.env.HOME as string);`,
       `  __setServeCommand([process.execPath, ${JSON.stringify(serve)}]);`,
-      `  const profile = { name: "sdk-teardown", bin: "unused", args: [], platform: "opencode-sdk" };`,
+      `  const profile = { name: "sdk-teardown", bin: "unused", args: [], platform: "opencode-sdk", opencodeVersion: 1 };`,
       `  const result = await runOpencodeSdk(profile as never, "ping", { timeoutMs: 10_000 });`,
       `  expect(result.ok).toBe(true);`,
       `});`,

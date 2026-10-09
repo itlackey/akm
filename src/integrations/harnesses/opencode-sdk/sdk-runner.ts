@@ -17,6 +17,22 @@
  * 'opencode-sdk'`). It is the dispatch path for SDK runner specs; it exposes
  * no native session logs of its own (`capabilities.sessionLogs = false`).
  *
+ * ## Two OpenCode majors, one runner (#1049)
+ *
+ * This file owns what both majors share: the managed `opencode serve` child
+ * (spawn, port, registry, cleanup, {@link closeServer}), the child environment,
+ * per-workspace isolation, deadlines, abort handling and result shaping. What
+ * differs by major (readiness line, authentication, client, session calls,
+ * event and permission shapes, response and usage decoding) lives in a wire
+ * adapter: `v2-adapter.ts` (`@opencode/client`, the default) or `v1-adapter.ts`
+ * (`@opencode-ai/sdk`, `opencodeVersion: 1`), chosen once per dispatch from
+ * `profile.opencodeVersion ?? DEFAULT_OPENCODE_VERSION`. akm never probes
+ * `opencode --version`: an adapter that meets the other major's binary fails
+ * naming `opencodeVersion`. The major is part of the server registry key.
+ * The text below was written for OpenCode 1; the V1-only parts are now the V1
+ * adapter's, and the V2 equivalent of `query.directory` is the session's
+ * `location.directory`.
+ *
  * ## Sessions are kept (#1100)
  *
  * One session is created per dispatch and is NEVER deleted: it stays in
@@ -85,7 +101,7 @@
  * until the child ACTUALLY exits — and a real `opencode serve` (a live HTTP
  * server with provider children) can outlive SIGTERM long enough to hang the
  * caller indefinitely. {@link createManagedOpencode} therefore owns the spawn
- * (the SDK package is used only for `createOpencodeClient`).
+ * (the SDK package is used only for its client).
  *
  * Owning the spawn changes the LIFECYCLE, not the REQUIREMENT: the SDK's
  * `createOpencodeServer` is itself a `spawn("opencode", ["serve", ...])`, and
@@ -104,81 +120,37 @@
 
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { isRecord } from "../../../core/common";
 import type { LlmConnectionConfig } from "../../../core/config/config";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, OPENCODE_ENV_PASSTHROUGH, spawnEnvNamesFor } from "../../../core/spawn-env";
 import type { ExecutionJsonObject } from "../../../execution/json";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
-import type { AgentProfile } from "../../agent/profiles";
-import type { AgentFailureReason, AgentRunResult, AgentTokenUsage, RunAgentOptions } from "../../agent/spawn";
+import { type AgentProfile, DEFAULT_OPENCODE_VERSION } from "../../agent/profiles";
+import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../agent/spawn";
 import { opencodeInferenceConfig } from "../opencode/model-config";
 import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "../opencode/model-work-agent";
+import { V1_ADAPTER } from "./v1-adapter";
+import { V2_ADAPTER } from "./v2-adapter";
+import type { OpencodeWireAdapter, WireEvent, WireSessionSpec } from "./wire";
 
-/** Per-call working-directory scope (see module doc — SDK `query.directory`). */
-interface SdkDirectoryQuery {
-  directory?: string;
-}
-
-/** Minimal surface of the OpenCode SDK client used by this runner. */
-interface SdkClient {
-  session: {
-    create(args: { body: { title: string }; query?: SdkDirectoryQuery }): Promise<{ data?: { id?: string } }>;
-    prompt(args: {
-      path: { id: string };
-      // `system` and `tools` are forwarded when present — see the #564 bug
-      // fixes in runOpencodeSdk(). They mirror @opencode-ai/sdk's
-      // SessionPromptData.body shape (agent?: string; system?: string; tools?: Record<string, boolean>).
-      body: {
-        parts: { type: string; text: string }[];
-        agent?: string;
-        system?: string;
-        tools?: Record<string, boolean>;
-      };
-      query?: SdkDirectoryQuery;
-    }): Promise<{
-      // The client is created without `throwOnError`, so an HTTP error
-      // resolves to `{ error }` (the parsed response body) instead of throwing.
-      error?: unknown;
-      data?: {
-        // AssistantMessage projection (SDK 1.2.20 types.gen.d.ts): token
-        // accounting lives on info.tokens, and a provider failure on
-        // info.error. Fields optional here so a fake or an older server that
-        // omits them cannot crash extraction.
-        info?: { tokens?: { input?: number; output?: number; reasoning?: number }; error?: unknown };
-        parts?: { type: string; text?: string }[];
-      };
-    }>;
-    // Optional so a fake that omits it cannot crash a dispatch; the real client has it.
-    abort?(args: { path: { id: string }; query?: SdkDirectoryQuery }): Promise<unknown>;
-  };
-  // Optional so a fake that omits them cannot crash a dispatch; the real client has both.
-  /** Server-sent events for the directory; the stream ends when `signal` aborts. */
-  event?: {
-    subscribe(args: { query?: SdkDirectoryQuery; signal: AbortSignal }): Promise<{ stream: AsyncIterable<unknown> }>;
-  };
-  /** Answer a pending permission request (`response`: "once" | "always" | "reject"). */
-  postSessionIdPermissionsPermissionId?(args: {
-    path: { id: string; permissionID: string };
-    body: { response: "reject" };
-    query?: SdkDirectoryQuery;
-  }): Promise<{ error?: unknown }>;
-}
-
-/** Typed server instance returned by `createOpencode`. */
+/** A started server: the wire client of the selected adapter, and a way to close the child. */
 interface SdkServer {
-  client: SdkClient;
+  client: unknown;
   server: { close(): void | Promise<void> };
 }
 
-/** The `createOpencode` surface this runner needs (real SDK or test fake). */
-type SdkServerFactory = (options: {
+/** The server factory this runner needs (the managed spawn, or a test fake). */
+type SdkServerFactory = (options: ServerStartOptions) => Promise<SdkServer>;
+
+interface ServerStartOptions {
   bin?: string;
   config?: Record<string, unknown>;
   port?: number;
   env: Record<string, string>;
   startupSignal: AbortSignal;
-}) => Promise<SdkServer>;
+  /** The wire adapter of the selected OpenCode major. */
+  adapter: OpencodeWireAdapter;
+}
 
 interface SharedServerStart {
   promise: Promise<SdkServer>;
@@ -388,9 +360,10 @@ export function buildSdkConfig(
   return modelWork ? { ...sdkConfig, ...modelWorkOpencodeConfig(agentOptions) } : sdkConfig;
 }
 
-/** Digest the executable and exact environment received by the child. */
-function serverRegistryKey(profile: AgentProfile, env: Record<string, string>): string {
-  const material = { bin: profile.bin, env };
+/** Digest the OpenCode major, the executable and the exact environment received by the child. */
+function serverRegistryKey(adapter: OpencodeWireAdapter, profile: AgentProfile, env: Record<string, string>): string {
+  // The major is part of the identity: a v1 and a v2 server never share an entry.
+  const material = { major: adapter.major, bin: profile.bin, env };
   return createHash("sha256")
     .update(JSON.stringify(canonicalize(material)))
     .digest("hex");
@@ -521,21 +494,14 @@ export function __setServeCommand(argv: string[] | null): void {
  *   - `close()` → SIGTERM now, SIGKILL after an unref'ed grace timer;
  *   - handshake failure → the child is killed and unref'ed before rejecting.
  */
-async function createManagedOpencode(options: {
-  bin?: string;
-  config?: Record<string, unknown>;
-  port?: number;
-  env: Record<string, string>;
-  startupSignal: AbortSignal;
-}): Promise<SdkServer> {
-  const { createOpencodeClient } = (await import("@opencode-ai/sdk").catch(() => {
-    throw new Error("OpenCode SDK not available. Install @opencode-ai/sdk or configure a CLI agent instead.");
-  })) as { createOpencodeClient: (options: { baseUrl: string }) => SdkClient };
-
+async function createManagedOpencode(options: ServerStartOptions): Promise<SdkServer> {
+  const { adapter } = options;
   const port = options.port ?? DEFAULT_SDK_PORT;
-  const argv = _serveCommand ?? [options.bin ?? "opencode", "serve", "--hostname=127.0.0.1", `--port=${port}`];
+  const argv = _serveCommand ?? adapter.serveArgv(options.bin ?? "opencode", port);
+  // The adapter may add to the child's environment (V2: the server password akm chose).
+  const authorization = adapter.authorize();
   const proc = spawn(argv[0] as string, argv.slice(1), {
-    env: options.env,
+    env: { ...options.env, ...authorization.env },
     stdio: ["ignore", "pipe", "pipe"],
   });
 
@@ -616,15 +582,11 @@ async function createManagedOpencode(options: {
     const onStdoutData = (chunk: Buffer): void => {
       output += chunk.toString();
       for (const line of output.split("\n")) {
-        if (line.startsWith("opencode server listening")) {
-          const match = line.match(/on\s+(https?:\/\/\S+)/);
-          if (!match?.[1]) {
-            fail(new Error(`Failed to parse the OpenCode server url from: ${line}`));
-            return;
-          }
-          succeed(match[1]);
-          return;
-        }
+        const verdict = adapter.readiness(line);
+        if (!verdict) continue;
+        if ("error" in verdict) fail(new Error(verdict.error));
+        else succeed(verdict.url);
+        return;
       }
     };
     const onStderrData = (chunk: Buffer): void => {
@@ -653,58 +615,16 @@ async function createManagedOpencode(options: {
   proc.stderr?.destroy();
   proc.unref();
 
-  const client = createOpencodeClient({ baseUrl: url });
-  client.event = { subscribe: (args) => subscribeEvents(url, args) };
-  return { client, server: { close: closeManaged } };
-}
-
-/**
- * Subscribe to the server's event stream. The SDK's own `event.subscribe`
- * cannot be closed safely: aborting it leaves an unhandled `AbortError`
- * rejection (from its un-awaited `reader.cancel()`), which akm's global
- * handler turns into a process exit. This reader ends quietly on abort.
- */
-async function subscribeEvents(
-  baseUrl: string,
-  args: { query?: SdkDirectoryQuery; signal: AbortSignal },
-): Promise<{ stream: AsyncIterable<unknown> }> {
-  const eventUrl = new URL("/event", baseUrl);
-  if (args.query?.directory) eventUrl.searchParams.set("directory", args.query.directory);
-  const response = await fetch(eventUrl, { signal: args.signal, headers: { accept: "text/event-stream" } });
-  if (!response.ok || !response.body) throw new Error(`OpenCode event stream failed: HTTP ${response.status}`);
-  const reader = response.body.getReader();
-  async function* stream(): AsyncGenerator<unknown> {
-    const decoder = new TextDecoder();
-    let buffer = "";
-    try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        buffer += decoder.decode(value, { stream: true });
-        const frames = buffer.split("\n\n");
-        buffer = frames.pop() ?? "";
-        for (const frame of frames) {
-          const data = frame
-            .split("\n")
-            .filter((line) => line.startsWith("data:"))
-            .map((line) => line.replace(/^data:\s*/, ""))
-            .join("\n");
-          if (!data) continue;
-          try {
-            yield JSON.parse(data);
-          } catch {
-            /* not JSON: not an event we act on */
-          }
-        }
-      }
-    } catch (err) {
-      if (!args.signal.aborted) throw err;
-    }
+  try {
+    return { client: await adapter.connect(url, authorization.credentials), server: { close: closeManaged } };
+  } catch (err) {
+    closeManaged();
+    throw err;
   }
-  return { stream: stream() };
 }
 
 async function startServer(
+  adapter: OpencodeWireAdapter,
   profile: AgentProfile,
   sdkConfig: Record<string, unknown>,
   env: Record<string, string>,
@@ -713,13 +633,8 @@ async function startServer(
 ): Promise<SdkServer> {
   const factory: SdkServerFactory = _serverFactory ?? createManagedOpencode;
 
-  const options: {
-    bin?: string;
-    config?: Record<string, unknown>;
-    port?: number;
-    env: Record<string, string>;
-    startupSignal: AbortSignal;
-  } = {
+  const options: ServerStartOptions = {
+    adapter,
     bin: profile.bin,
     ...(Object.keys(sdkConfig).length > 0 ? { config: sdkConfig } : {}),
     env,
@@ -764,6 +679,7 @@ async function startServer(
  * evicted so the next call can retry instead of caching the error forever.
  */
 function getOrStartServer(
+  adapter: OpencodeWireAdapter,
   profile: AgentProfile,
   llmConfig?: LlmConnectionConfig,
   env?: Record<string, string>,
@@ -774,12 +690,12 @@ function getOrStartServer(
   if (_testServer) return { promise: Promise.resolve(_testServer), release() {} };
   const sdkConfig = buildSdkConfig(profile, llmConfig, modelWork, inference);
   const serverEnv = buildServerEnv(profile, sdkConfig, env, envSource, modelWork);
-  const key = serverRegistryKey(profile, serverEnv);
+  const key = serverRegistryKey(adapter, profile, serverEnv);
   let entry = _servers.get(key);
   if (!entry) {
     const controller = new AbortController();
     entry = {
-      promise: startServer(profile, sdkConfig, serverEnv, key, controller.signal),
+      promise: startServer(adapter, profile, sdkConfig, serverEnv, key, controller.signal),
       controller,
       waiters: 0,
     };
@@ -817,25 +733,6 @@ function getOrStartServer(
       }
     },
   };
-}
-
-/**
- * Extract best-effort token usage from a prompt response. Only numeric
- * fields the server actually reported are copied; returns undefined when
- * nothing usable is present (older servers, test fakes).
- */
-function extractUsage(info?: {
-  tokens?: { input?: number; output?: number; reasoning?: number };
-}): AgentTokenUsage | undefined {
-  const tokens = info?.tokens;
-  if (!tokens) return undefined;
-  const usage: AgentTokenUsage = {};
-  if (typeof tokens.input === "number" && Number.isFinite(tokens.input)) usage.inputTokens = tokens.input;
-  if (typeof tokens.output === "number" && Number.isFinite(tokens.output)) usage.outputTokens = tokens.output;
-  if (typeof tokens.reasoning === "number" && Number.isFinite(tokens.reasoning)) {
-    usage.reasoningTokens = tokens.reasoning;
-  }
-  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 const SDK_OPERATION_TIMED_OUT = Symbol("opencode-sdk-operation-timeout");
@@ -885,29 +782,6 @@ function errorText(err: unknown): string {
 }
 
 /**
- * Map an SDK `{ error }` result or a reply's `info.error` onto a failure
- * (#1015). Both are opencode NamedErrors, `{ name, data: { message } }`. An
- * aborted message is `aborted`, a reply cut off at the output limit is
- * `parse_error`, and every other error (auth, API, unknown, an HTTP error
- * body) is `non_zero_exit`.
- */
-function sdkErrorFailure(error: unknown): { reason: AgentFailureReason; message: string } {
-  if (!isRecord(error) || typeof error.name !== "string") {
-    return { reason: "non_zero_exit", message: typeof error === "string" ? error : JSON.stringify(error) };
-  }
-  const detail = isRecord(error.data) ? error.data.message : undefined;
-  const message = typeof detail === "string" ? `${error.name}: ${detail}` : error.name;
-  if (error.name === "MessageAbortedError") return { reason: "aborted", message };
-  if (error.name === "MessageOutputLengthError") return { reason: "parse_error", message };
-  return { reason: "non_zero_exit", message };
-}
-
-/** Stop a server-side session that the dispatch has given up on, so it stops calling the model. */
-function abortSessionBestEffort(client: SdkClient, sessionId: string, query: SdkDirectoryQuery | undefined): void {
-  void client.session.abort?.({ path: { id: sessionId }, ...(query ? { query } : {}) }).catch(() => {});
-}
-
-/**
  * Answer every OpenCode permission request of the dispatch's session (and of
  * the sub-sessions it spawns) with "reject", once each. This is what a
  * non-interactive `opencode run` does ("auto-rejecting"); left unanswered, a
@@ -916,83 +790,58 @@ function abortSessionBestEffort(client: SdkClient, sessionId: string, query: Sdk
  * model as a tool error it can work around. Each request and answer is
  * appended to `notes`. The same stream reports OpenCode's retries (#1108):
  * each is noted, and one caused by a usage limit, or due after `deadline`,
- * ends the run through `stopForRetry` instead of a silent wait. `ready` (absent when the client has no event surface)
+ * ends the run through `stopForRetry` instead of a silent wait. `ready`
  * settles once the subscription is open and never rejects; `stop` closes it.
+ * The wire format (event shapes, the reject call) is the adapter's.
  */
 function rejectPermissionRequests(
-  client: SdkClient,
+  adapter: OpencodeWireAdapter,
+  client: unknown,
   sessionId: string,
-  query: SdkDirectoryQuery | undefined,
+  spec: WireSessionSpec,
   notes: string[],
   deadline: number | null,
   stopForRetry: (failure: string) => void,
 ): { ready?: Promise<void>; stop: () => void } {
-  const subscribe = client.event?.subscribe;
-  const reply = client.postSessionIdPermissionsPermissionId;
   const controller = new AbortController();
   const stop = (): void => controller.abort();
-  if (!subscribe || !reply) return { stop };
+  if (adapter.canWatch?.(client) === false) return { stop };
   const sessions = new Set([sessionId]);
   const answered = new Set<string>();
   const consume = async (stream: AsyncIterable<unknown>): Promise<void> => {
-    for await (const event of stream) {
-      if (!isRecord(event) || !isRecord(event.properties)) continue;
-      const props = event.properties;
-      if (event.type === "session.created" && isRecord(props.info)) {
-        const { id, parentID } = props.info;
-        if (typeof id === "string" && typeof parentID === "string" && sessions.has(parentID)) sessions.add(id);
+    for await (const raw of stream) {
+      const event: WireEvent | undefined = adapter.decodeEvent(raw);
+      if (!event) continue;
+      if (event.kind === "session") {
+        if (event.parentId !== undefined && sessions.has(event.parentId)) sessions.add(event.id);
         continue;
       }
-      if (event.type === "session.status") {
-        const { sessionID, status } = props;
-        if (typeof sessionID !== "string" || !sessions.has(sessionID) || !isRecord(status) || status.type !== "retry") {
-          continue;
-        }
-        const attempt = typeof status.attempt === "number" ? status.attempt : "unknown";
-        const message = typeof status.message === "string" ? status.message : "OpenCode is retrying";
-        const next = typeof status.next === "number" ? status.next : undefined;
-        const retryAt = next === undefined ? "unknown time" : new Date(next).toISOString();
-        // `action` is not present in the SDK's retry type yet, but current
-        // OpenCode servers include it for provider/account limits.
-        const action = isRecord(status.action) ? status.action : undefined;
-        const provider = typeof action?.provider === "string" ? action.provider : undefined;
+      if (!sessions.has(event.sessionId)) continue;
+      if (event.kind === "retry") {
+        const retryAt = event.next === undefined ? "unknown time" : new Date(event.next).toISOString();
         notes.push(
-          `OpenCode retry attempt ${attempt}${provider ? ` (${provider})` : ""}: ${message}; retrying at ${retryAt}`,
+          `OpenCode retry attempt ${event.attempt ?? "unknown"}${event.provider ? ` (${event.provider})` : ""}: ${event.message}; retrying at ${retryAt}`,
         );
-        if (action?.reason === "account_rate_limit") {
+        if (event.accountLimit) {
           stopForRetry(
-            `OpenCode provider limit stopped this run${provider ? ` (${provider})` : ""}: ${message}; reset at ${retryAt}`,
+            `OpenCode provider limit stopped this run${event.provider ? ` (${event.provider})` : ""}: ${event.message}; reset at ${retryAt}`,
           );
-        } else if (next !== undefined && deadline !== null && next > deadline) {
-          stopForRetry(`OpenCode's next retry (${retryAt}) is after this run's deadline: ${message}`);
+        } else if (event.next !== undefined && deadline !== null && event.next > deadline) {
+          stopForRetry(`OpenCode's next retry (${retryAt}) is after this run's deadline: ${event.message}`);
         }
         continue;
       }
-      // `permission.asked` (OpenCode >= 1.3) / `permission.updated` (older).
-      if (event.type !== "permission.asked" && event.type !== "permission.updated") continue;
-      const { id, sessionID } = props;
-      if (typeof id !== "string" || typeof sessionID !== "string") continue;
-      if (!sessions.has(sessionID) || answered.has(id)) continue;
-      answered.add(id);
-      const patterns = Array.isArray(props.patterns) ? props.patterns : props.pattern ? [props.pattern] : [];
-      notes.push(
-        `permission requested: ${String(props.permission ?? props.type ?? "unknown")} (${patterns.join(", ")}); auto-rejecting`,
-      );
-      reply
-        .call(client, {
-          path: { id: sessionID, permissionID: id },
-          body: { response: "reject" },
-          ...(query ? { query } : {}),
-        })
-        .then((r) => {
-          if (r.error) notes.push(`permission reply for ${id} failed: ${JSON.stringify(r.error)}`);
-        })
-        .catch((err) => notes.push(`permission reply for ${id} failed: ${errorText(err)}`));
+      if (answered.has(event.requestId)) continue;
+      answered.add(event.requestId);
+      notes.push(`permission requested: ${event.description}; auto-rejecting`);
+      adapter.rejectPermission(client, event, spec).catch((err) => {
+        notes.push(`permission reply for ${event.requestId} failed: ${errorText(err)}`);
+      });
     }
   };
-  const ready = subscribe
-    .call(client.event, { ...(query ? { query } : {}), signal: controller.signal })
-    .then(({ stream }) => {
+  const ready = adapter
+    .subscribe(client, spec, controller.signal)
+    .then((stream) => {
       void consume(stream).catch((err) => {
         if (!controller.signal.aborted) notes.push(`permission event stream ended: ${errorText(err)}`);
       });
@@ -1001,6 +850,11 @@ function rejectPermissionRequests(
       notes.push(`permission requests will not be answered: event subscription failed: ${errorText(err)}`);
     });
   return { ready, stop };
+}
+
+/** The wire adapter for the OpenCode major the engine selected (explicit; never probed). */
+function adapterFor(profile: AgentProfile): OpencodeWireAdapter {
+  return (profile.opencodeVersion ?? DEFAULT_OPENCODE_VERSION) === 1 ? V1_ADAPTER : V2_ADAPTER;
 }
 
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
@@ -1030,12 +884,14 @@ export async function runOpencodeSdk(
 
   if (opts.signal?.aborted) return abortedBeforeSdkStart(profile);
   const modelWork = opts.dispatch?.modelWork === true;
+  const adapter = adapterFor(profile);
 
-  let client: SdkClient;
+  let client: unknown;
   if (_testServer) {
     client = _testServer.client;
   } else {
     const startupHandle = getOrStartServer(
+      adapter,
       profile,
       llmConfig,
       opts.env,
@@ -1094,10 +950,24 @@ export async function runOpencodeSdk(
   // The same absolute deadline covers server startup, session creation, and
   // prompting. null disables every dispatch timer.
 
-  // Per-call working directory (module doc): forwarded as the SDK's
-  // `query.directory` on every session call, so worktree-isolated units run
-  // in their own checkout without a per-cwd server.
-  const query: SdkDirectoryQuery | undefined = opts.cwd ? { directory: opts.cwd } : undefined;
+  // Per-call working directory (module doc): the adapter scopes the session to
+  // it, so worktree-isolated units run in their own checkout without a
+  // per-cwd server.
+
+  // Forward the exact native agent selector, systemPrompt, and tools from the abstract
+  // dispatch request. Both were once accepted on AgentDispatchRequest but silently dropped
+  // on the SDK path (#564). Model work runs the confined agent its server config defines;
+  // its tools are that agent's.
+  const dispatch = opts.dispatch;
+  const agent = modelWork ? MODEL_WORK_OPENCODE_AGENT : dispatch?.agent;
+  const system = dispatch?.systemPrompt;
+  const tools = toolsToSdkAllowlist(dispatch?.tools);
+  const spec: WireSessionSpec = {
+    ...(opts.cwd ? { directory: opts.cwd } : {}),
+    ...(agent ? { agent } : {}),
+    ...(system ? { system } : {}),
+    ...(tools ? { tools } : {}),
+  };
 
   // One session per call — do NOT reuse (history accumulates, token costs grow).
   // Session creation is startup plumbing, so failures map to spawn_failed rather
@@ -1110,15 +980,12 @@ export async function runOpencodeSdk(
   const abortSignal = runController.signal;
   let sessionId: string | undefined;
   try {
-    const created = await raceSdkOperation(
-      client.session.create({ body: { title: "akm" }, ...(query ? { query } : {}) }),
-      {
-        timeoutMs: remainingTimeoutMs(),
-        setTimeoutFn: setTimeoutImpl,
-        clearTimeoutFn: clearTimeoutImpl,
-        signal: abortSignal,
-      },
-    );
+    const created = await raceSdkOperation(adapter.createSession(client, spec), {
+      timeoutMs: remainingTimeoutMs(),
+      setTimeoutFn: setTimeoutImpl,
+      clearTimeoutFn: clearTimeoutImpl,
+      signal: abortSignal,
+    });
     if (created === SDK_OPERATION_ABORTED) {
       return {
         ok: false,
@@ -1141,7 +1008,7 @@ export async function runOpencodeSdk(
         error: `opencode-sdk agent "${profile.name}" timed out creating a session after ${timeoutMs}ms`,
       };
     }
-    sessionId = created.data?.id;
+    sessionId = created;
   } catch (err) {
     return {
       ok: false,
@@ -1166,34 +1033,23 @@ export async function runOpencodeSdk(
     };
   }
 
-  // Forward the exact native agent selector, systemPrompt, and tools from the abstract
-  // dispatch request. Both were previously accepted on AgentDispatchRequest but
-  // silently dropped on the SDK path, so SDK-mode dispatch ignored agent-asset
-  // system prompts and tool policies entirely (the CLI path honours both).
-  // Model work runs the confined agent its server config defines; its tools are that agent's.
-  const dispatch = opts.dispatch;
-  const agent = modelWork ? MODEL_WORK_OPENCODE_AGENT : dispatch?.agent;
-  const system = dispatch?.systemPrompt;
-  const tools = toolsToSdkAllowlist(dispatch?.tools);
-  const body: {
-    parts: { type: string; text: string }[];
-    agent?: string;
-    system?: string;
-    tools?: Record<string, boolean>;
-  } = { parts: [{ type: "text", text: prompt }] };
-  if (agent) body.agent = agent;
-  if (system) body.system = system;
-  if (tools) body.tools = tools;
-
   let result: AgentRunResult;
 
   // Subscribed before the prompt so no request can be missed; closed in `finally`.
   const permissionNotes: string[] = [];
   let retryFailure: string | undefined;
-  const permissions = rejectPermissionRequests(client, sessionId, query, permissionNotes, deadline, (failure) => {
-    retryFailure ??= failure;
-    runController.abort();
-  });
+  const permissions = rejectPermissionRequests(
+    adapter,
+    client,
+    sessionId,
+    spec,
+    permissionNotes,
+    deadline,
+    (failure) => {
+      retryFailure ??= failure;
+      runController.abort();
+    },
+  );
 
   try {
     // Bounded like every other step; if it times out the prompt race below does too.
@@ -1205,19 +1061,16 @@ export async function runOpencodeSdk(
         signal: abortSignal,
       });
     }
-    const prompted = await raceSdkOperation(
-      client.session.prompt({ path: { id: sessionId }, body, ...(query ? { query } : {}) }),
-      {
-        timeoutMs: remainingTimeoutMs(),
-        setTimeoutFn: setTimeoutImpl,
-        clearTimeoutFn: clearTimeoutImpl,
-        signal: abortSignal,
-      },
-    );
+    const prompted = await raceSdkOperation(adapter.prompt(client, sessionId, prompt, spec, abortSignal), {
+      timeoutMs: remainingTimeoutMs(),
+      setTimeoutFn: setTimeoutImpl,
+      clearTimeoutFn: clearTimeoutImpl,
+      signal: abortSignal,
+    });
 
     // A session the dispatch stops early is aborted on the server too.
     if (prompted === SDK_OPERATION_ABORTED || prompted === SDK_OPERATION_TIMED_OUT) {
-      abortSessionBestEffort(client, sessionId, query);
+      adapter.abort(client, sessionId, spec);
     }
     if (prompted === SDK_OPERATION_ABORTED && retryFailure) {
       result = {
@@ -1253,17 +1106,8 @@ export async function runOpencodeSdk(
         sessionId,
       };
     } else {
-      const parts = prompted.data?.parts ?? [];
-      // The last text part is the answer; earlier ones narrate the steps before it.
-      const stdout = parts.filter((p) => p.type === "text").at(-1)?.text ?? "";
-      // Token accounting from the AssistantMessage (previously discarded) —
-      // the seam that makes workflow budget.maxTokens meterable on the
-      // default sdk runner.
-      const usage = extractUsage(prompted.data?.info);
-      const sdkError = prompted.error ?? prompted.data?.info?.error;
-
-      if (sdkError) {
-        const failure = sdkErrorFailure(sdkError);
+      const { text: stdout, usage, failure } = prompted;
+      if (failure) {
         result = {
           ok: false,
           stdout,
@@ -1301,6 +1145,8 @@ export async function runOpencodeSdk(
   } finally {
     permissions.stop();
     callerSignal?.removeEventListener("abort", abortForCaller);
+    // The dispatch is over: cancel any request still in flight.
+    runController.abort();
   }
   if (permissionNotes.length > 0) {
     result.stderr = [result.stderr, ...permissionNotes].filter(Boolean).join("\n");

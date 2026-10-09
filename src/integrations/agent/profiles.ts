@@ -161,11 +161,14 @@ const BUILTINS: Record<string, AgentProfile> = {
 /**
  * Binary the `opencode-sdk` harness needs on PATH.
  *
- * The embedded SDK is not self-contained, and that is the SDK's own design
- * rather than a consequence of how akm drives it: `@opencode-ai/sdk` ships
- * with `"dependencies": {}` and its `createOpencodeServer` is itself a
- * `spawn("opencode", ["serve", ...])`. akm's runner spawns the same binary
- * directly and talks HTTP to it (see `harnesses/opencode-sdk/sdk-runner.ts`),
+ * The embedded client is not self-contained, and that is the SDK's own design
+ * rather than a consequence of how akm drives it: `@opencode-ai/sdk` (OpenCode 1)
+ * ships with `"dependencies": {}` and its `createOpencodeServer` is itself a
+ * `spawn("opencode", ["serve", ...])`; `@opencode/client` (OpenCode 2, the
+ * default) is an HTTP client only and starts nothing. akm's runner spawns a
+ * private `opencode serve` of the engine's selected major (`opencodeVersion`,
+ * never the v2 background service) and talks HTTP to it through that major's
+ * adapter (see `harnesses/opencode-sdk/sdk-runner.ts`, `v1-adapter.ts`, `v2-adapter.ts`),
  * so the `opencode` binary gates the SDK path exactly as it gates the CLI
  * path — a host with the npm package but no binary can dispatch neither.
  * `opencode-sdk` deliberately has no {@link BUILTINS} entry — it dispatches

@@ -15,7 +15,12 @@ import path from "node:path";
 import type { HarnessId } from "../core/config/config";
 import { runManagedSubprocess } from "../core/subprocess";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
-import { getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "../integrations/agent/profiles";
+import {
+  DEFAULT_OPENCODE_VERSION,
+  getBuiltinAgentProfile,
+  OPENCODE_SDK_SERVER_BIN,
+  type OpencodeVersion,
+} from "../integrations/agent/profiles";
 import { AGENT_DISPATCH_HARNESSES, SESSION_LOG_HARNESSES } from "../integrations/harnesses";
 import type { HarnessLLMConfig } from "../integrations/harnesses/shared";
 import { detectHarnessConfigs } from "./harness-config-import";
@@ -459,7 +464,8 @@ export interface DetectedEnvironment {
  *   3. none.
  *
  * The SDK import resolving is NOT evidence the SDK path can run: `@opencode-ai/sdk`
- * is a hard dependency of akm-cli itself, so `import()` always succeeds and an
+ * (OpenCode 1) and `@opencode/client` (OpenCode 2, the default; `opencodeVersion`
+ * selects) are hard dependencies of akm-cli itself, so `import()` always succeeds and an
  * import-only check would report `opencode-sdk` on every machine — including
  * ones where the first agentic command then dies with spawn ENOENT. The SDK
  * runner spawns `opencode serve` (see `harnesses/opencode-sdk/sdk-runner.ts`),
@@ -469,13 +475,18 @@ export interface DetectedEnvironment {
  *
  * Pure aside from the dynamic import resolution (which performs no network).
  */
-export async function detectHarness(whichFn: WhichFn = defaultWhich): Promise<DetectedHarness> {
+export async function detectHarness(
+  whichFn: WhichFn = defaultWhich,
+  opencodeVersion: OpencodeVersion = DEFAULT_OPENCODE_VERSION,
+): Promise<DetectedHarness> {
   // Probed once; reused below so the `opencode` CLI fallback doesn't repeat
   // the identical full-PATH walk this just performed.
   const opencodePath = whichFn(OPENCODE_SDK_SERVER_BIN);
   if (opencodePath) {
     try {
-      await import("@opencode-ai/sdk");
+      // The client package of the selected major (default 2). No fallback to the other major's package.
+      if (opencodeVersion === 1) await import("@opencode-ai/sdk");
+      else await import("@opencode/client");
       return "opencode-sdk";
     } catch {
       // SDK genuinely unavailable (e.g. externalized in a standalone build).
