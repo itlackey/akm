@@ -186,7 +186,8 @@ visible wins:
 - **New commands.** `akm graph entity <name>` inverts the entities view (every
   asset that mentions a given entity, by confidence). `akm graph orphans`
   surfaces assets that produced zero entities — quality-triage candidates.
-  Both are documented in the 0.8.0 CLI reference.
+  See the 0.8.0 migration guide's
+  [graph extraction section](../migration/v0.7-to-v0.8.md#memory-inference-and-graph-extraction-moved-out-of-index).
 - **Better output.** `akm graph relations` and `akm graph entities` now show
   per-row confidence. Search hits annotate the graph-boost contribution in
   `whyMatched`. Related results end with a `Next: akm show '<ref>'` hint

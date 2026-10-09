@@ -183,7 +183,7 @@ The agent doesn't know or care whether a skill came from the team source, a pers
 If you're a team lead looking to set up shared skills:
 
 1. Pick your approach — shared filesystem for co-located teams, Git repo for distributed teams, registry for large organizations
-2. Create the shared source with a standard [Getting Started guide](../guides/getting-started.md)
+2. Create the shared source — see the [Getting Started guide](../guides/getting-started.md) for the standard stash structure
 3. Have each developer run `akm add` to register the source
 4. Start with 3-5 high-value skills that everyone uses (deploy, test, review, etc.)
 5. Iterate from there
