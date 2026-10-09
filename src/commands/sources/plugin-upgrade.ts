@@ -321,13 +321,20 @@ const NOT_FOLLOWING_NEXT =
   `--next: OpenCode resolves a bare "${OPENCODE_PACKAGE}" to @latest, so it is not updated to a prerelease; ` +
   `set "plugin": ["${OPENCODE_NEXT_SPEC}"] in your OpenCode config to follow prereleases`;
 
+const FOLLOWING_NEXT =
+  `OpenCode loads "${OPENCODE_NEXT_SPEC}" (your OpenCode config), so a plain upgrade leaves it alone; ` +
+  `run \`akm upgrade --next\` to update it, or set "plugin": ["${OPENCODE_PACKAGE}"] to follow stable releases`;
+
 function upgradeOpenCode(
   dryRun: boolean,
   cache: OpenCodeCache | undefined,
   latest: OpenCodeLatest | undefined,
   tag: UpgradeChannel,
   notFollowingNext: boolean,
+  followingNext: boolean,
 ): PluginUpgradeEntry {
+  // Refreshing @latest would trash a cache OpenCode never re-creates (#1115).
+  if (followingNext) return skipped("opencode", FOLLOWING_NEXT);
   if (!cache || !latest) return skipped("opencode", `no cached ${OPENCODE_PACKAGE}@${tag} plugin`);
   if ("error" in latest) return failed("opencode", latest.error);
   if (notFollowingNext) return skipped("opencode", NOT_FOLLOWING_NEXT);
@@ -390,6 +397,8 @@ export interface OpenCodeTarget {
   tag: UpgradeChannel;
   /** `--next` was asked for but the OpenCode config names the bare package, so it keeps resolving `@latest`. */
   notFollowingNext: boolean;
+  /** A plain run, but the OpenCode config names `akm-opencode@next`, so OpenCode does not load `@latest`. */
+  followingNext: boolean;
 }
 
 export function upgradePlugins(opts: {
@@ -397,13 +406,13 @@ export function upgradePlugins(opts: {
   next: boolean;
   openCode: OpenCodeTarget;
 }): PluginUpgradeEntry[] {
-  const { cache, latest, tag, notFollowingNext } = opts.openCode;
+  const { cache, latest, tag, notFollowingNext, followingNext } = opts.openCode;
   const claude = upgradeClaudeCode(opts.dryRun);
   const codex = upgradeCodex(opts.dryRun);
   return [
     opts.next ? withNextNote(claude) : claude,
     opts.next ? withNextNote(codex) : codex,
-    upgradeOpenCode(opts.dryRun, cache, latest, tag, notFollowingNext),
+    upgradeOpenCode(opts.dryRun, cache, latest, tag, notFollowingNext, followingNext),
   ];
 }
 
@@ -481,11 +490,12 @@ export type UpgradeRunResult =
  * lockstep stays against the `@latest` pin and the entry is reported as skipped.
  */
 function resolveOpenCodeTarget(next: boolean): OpenCodeTarget {
-  const followNext = next && openCodeConfigRequestsNext();
+  const requestsNext = openCodeConfigRequestsNext();
+  const followNext = next && requestsNext;
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag);
   const latest = cache ? (followNext ? lookupOpenCodeNext() : lookupOpenCodeLatest()) : undefined;
-  return { cache, latest, tag, notFollowingNext: next && !followNext };
+  return { cache, latest, tag, notFollowingNext: next && !followNext, followingNext: !next && requestsNext };
 }
 
 /** `akm upgrade`: the CLI step (held to the OpenCode plugin's akm), then the plugins. */

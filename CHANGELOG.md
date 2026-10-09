@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
+  failure-path runs on 0.9.28 (#1099).
+
+### Fixed
+
+- **A plain `akm upgrade` no longer breaks OpenCode's plugin on a host whose OpenCode config follows
+  `akm-opencode@next` (#1115).** It refreshed the `@latest` cache, which such a host never loads: the cache went to
+  the trash, OpenCode did not re-create it, and the run exited 1. The OpenCode entry is now skipped with a note to
+  run `akm upgrade --next` (or switch the config to the bare `akm-opencode`), and neither cache is touched.
+
 ## [0.9.28] - 2026-10-08
 
 The stable release of the 0.9.28 line: 0.9.28-alpha.1 to alpha.11.
@@ -112,8 +124,6 @@ When upgrading from 0.9.27:
 
 ### Changed
 
-- **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
-  failure-path runs on 0.9.28 (#1099).
 - **Stability tiers for 0.10's stabilization work.** Experimental: the built-in
   improve strategies other than `default` and `consolidate` (`quick`,
   `reflect-distill`, `thorough`, `catchup`), the proactive-maintenance and
