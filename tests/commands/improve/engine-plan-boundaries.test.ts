@@ -41,7 +41,7 @@ describe("improve engine-plan boundaries", () => {
     const ensureIndexFn = mock(async () => undefined);
     await expect(
       akmImprove({
-        strategy: "quick",
+        strategy: "default",
         config: {
           configVersion: "0.9.0",
           semanticSearchMode: "off",
