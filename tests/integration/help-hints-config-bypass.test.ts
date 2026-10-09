@@ -110,7 +110,7 @@ describe("akm help / akm hints against a config akm 0.9 cannot load", () => {
   test("akm help migrate 0.9.0 — the documented recovery command — actually runs", async () => {
     const { code, stdout, stderr } = await runCliCapture(["help", "migrate", "0.9.0"]);
     expect(code, stderr).toBe(0);
-    expect(stdout).toContain("Migration notes for akm v0.9.0");
+    expect(stdout).toContain("# akm v0.9.0 migration notes");
     expect(stdout).toContain("akm migrate status");
   });
 
