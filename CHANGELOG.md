@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.29] - 2026-10-09
+
+A patch release on the 0.9.28 line: `akm upgrade` is Stable, and a plain upgrade no longer breaks OpenCode's
+plugin on a host that follows `akm-opencode@next`.
+
 ### Changed
 
 - **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
