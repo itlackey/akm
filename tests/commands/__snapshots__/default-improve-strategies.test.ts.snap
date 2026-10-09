@@ -179,7 +179,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": true,
         "judgment": {
-          "enabled": true,
+          "enabled": false,
         },
         "maxAcceptsPerRun": 100,
         "maxDiffLines": 200,

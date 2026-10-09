@@ -478,6 +478,17 @@ the retired `mode` and `profile` keys continue to report their engine migration
 guidance. When enabled, engine selection is judgment → triage → strategy →
 `defaults.llmEngine`, and resolution fails closed if none is available.
 
+Judgment is off in every built-in strategy, and the judgment tier may accept
+only a consolidate promotion. Retirements, exact fixes and reflect revisions it
+would accept are left for a person. This is measured, not cautious by habit
+(#1132, #1094): with `experimental.improveAutonomy` and judgment over every
+proposal kind, the nightly eval solved 0.49 (gpt-5.6-terra) and 0.53
+(qwen3.8-27b) of its items while harming 14 and 11, and changed 18 and 21 notes
+outside the planted set; the judge accepted unsafe retirements and applied exact
+fixes unreviewed. Judging promotions alone was reasonable: on qwen3.8-27b it
+had precision 0.87 and recall 0.78 and accepted 4.8% of bad promotions; on
+gpt-5.6-terra it was very cautious (precision 1.0, recall 0.17).
+
 ```jsonc
 {
   "improve": {

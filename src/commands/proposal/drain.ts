@@ -13,6 +13,11 @@
  *   - everything else needs a judge: the judgment tier decides it when a runner
  *     is configured, and whatever stays undecided is left for review
  *     (`review_needed` in the improve ledger).
+ * The judgment tier may accept only a consolidate promotion (a memory proposed
+ * as a new knowledge note). Judged over every kind, it accepted unsafe
+ * retirements, applied exact fixes unreviewed and changed notes no one had
+ * touched (6 to 14 harmed items a night on two models, #1132); a promotion it
+ * judges well. Any other kind it would accept is left for a person.
  * `maxAccepts` caps promotions across both tiers; `applyMode: "queue"` never
  * promotes; `excludeIds` keeps this run's fresh proposals out; a proposal that
  * a generating stage routed to a person is left for that person.
@@ -114,6 +119,11 @@ export interface JudgmentSeams {
   ) => Promise<string>;
   runAgentFn?: NonNullable<RunExecutionOptions["runAgent"]>;
   runSdkFn?: NonNullable<RunExecutionOptions["runSdk"]>;
+}
+
+/** A consolidate promotion: a memory proposed as a new knowledge note. The only kind the judgment tier may accept. */
+export function isPromotionProposal(proposal: Proposal): boolean {
+  return proposal.source === "consolidate" && proposal.promotionSource !== undefined;
 }
 
 /** An empty diff: no non-blank body line outside the frontmatter. */
@@ -306,7 +316,7 @@ export function parseJudgmentVerdict(raw: string): JudgmentVerdict | null {
 
 /** Why a judged item is still deferred: a stable token and, for a model defer, its words. */
 interface DeferNote {
-  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error";
+  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error" | "judgment-not-promotion";
   judgeReason?: string;
 }
 
@@ -414,6 +424,15 @@ async function runJudgmentTier(
       }
       continue;
     }
+    // Only a promotion may be accepted on a judgment (#1132): anything else waits for a person.
+    if (!isPromotionProposal(proposal)) {
+      deferNotes.set(item.id, {
+        reason: "judgment-not-promotion",
+        ...(verdict.reason ? { judgeReason: verdict.reason } : {}),
+      });
+      stillDeferred.push(item);
+      continue;
+    }
     // Queue mode never writes the asset: the verdict is staged for a later promote run.
     if (opts.applyMode !== "promote") {
       if (opts.dryRun) {
@@ -450,8 +469,7 @@ async function runJudgmentTier(
     );
     if (outcome === "promoted") {
       result.promoted.push(item.id);
-      if (proposal.source === "consolidate" && proposal.promotionSource !== undefined)
-        acceptedPromotions.push(proposal);
+      acceptedPromotions.push(proposal);
       acceptBudget -= 1;
     } else if (outcome === "rejected") {
       result.rejected.push(item.id);
@@ -476,7 +494,7 @@ function promotionNeighbours(
   proposal: Proposal,
   acceptedPromotions: readonly Proposal[],
 ): ReturnType<typeof nearestKnowledgeNotes> {
-  if (proposal.source !== "consolidate" || proposal.promotionSource === undefined) return [];
+  if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
     const parsed = parseRefInput(proposal.promotionSource);
     const typeDir = stashDirFor(parsed.type);
@@ -565,6 +583,11 @@ export async function drainProposals(
     if (isEmptyDiff(proposal)) {
       empties.push(proposal.id);
     } else if (decision?.outcome === "staged" && decision.contentHash === proposalContentHash(proposal)) {
+      // A judgment accept staged by an earlier drain obeys the same rule: only a promotion.
+      if (decision.gate === DRAIN_GATE && !isPromotionProposal(proposal)) {
+        result.deferred.push({ id: proposal.id, reason: "needs-judgment" });
+        continue;
+      }
       accepts.push({ id: proposal.id, reason: decision.gate === "quality-gate" ? "judge-passed" : "judgment-accept" });
     } else {
       result.deferred.push({ id: proposal.id, reason: "needs-judgment" });

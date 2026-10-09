@@ -38,6 +38,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
+  nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
+  (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
+  accepted unsafe retirements and applied exact fixes unreviewed. Judging promotions alone was reasonable. The judgment
+  tier now accepts only a consolidate promotion; any other kind it would accept (a retirement, an exact fix, a reflect
+  revision) is left for a person with reason `judgment-not-promotion`, whatever the strategy says. `thorough`, `catchup`,
+  `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
+  unchanged. (#1132)
 - **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
   said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`,
   `consolidate` and `proactive-maintenance`. (#1130)

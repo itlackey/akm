@@ -37,8 +37,12 @@ describe("default improve strategies (#552)", () => {
     ).toBe(true);
   });
 
-  test("judgment-enabled shipped strategies use durable boolean opt-in", () => {
-    expect(profileProactiveMaintenance.processes.triage.judgment).toBe(true);
+  test("no shipped strategy turns triage judgment on (#1132)", () => {
+    expect(profileProactiveMaintenance.processes.triage.judgment).toBe(false);
+    for (const name of BUILTIN_STRATEGIES) {
+      const judgment = resolveImproveStrategy(name, MINIMAL_CONFIG).config.processes?.triage?.judgment;
+      expect(typeof judgment === "object" ? judgment?.enabled : judgment, name).not.toBe(true);
+    }
   });
 
   test("consolidate: validates against the live schema", () => {

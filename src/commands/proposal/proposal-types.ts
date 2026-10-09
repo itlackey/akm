@@ -121,7 +121,9 @@ export interface ProposalGateDecision {
   /**
    * Stable reason token. The drain (`triage` gate): `empty-diff`,
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
-   * `no-judge-configured`, `judgment-deferred`, `judgment-parse-failure`
+   * `no-judge-configured`, `judgment-deferred`, `judgment-not-promotion` (the judge
+   * would accept, but only a consolidate promotion may be accepted on a
+   * judgment), `judgment-parse-failure`
    * (the judge answered, but not with a verdict), `judgment-error` (the runner
    * failed), `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
