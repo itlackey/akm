@@ -52,6 +52,12 @@ afterEach(() => {
 
 type Db = ReturnType<typeof openDatabase>;
 
+function firstSession(provider: OpenCodeProvider, location: string) {
+  const summary = provider.listSessions({ location })[0];
+  if (!summary) throw new Error("fixture lists no session");
+  return summary;
+}
+
 function v1Session(db: Db, id: string, directory: string, created: number, texts: Array<[string, string]>): void {
   db.run("INSERT INTO session VALUES (?, 'p', ?, ?, ?, ?)", id, `v1 ${id}`, directory, created, created + 100);
   texts.forEach(([role, text], i) => {
@@ -113,7 +119,7 @@ describe("OpenCode V1 store", () => {
     );
     const provider = new OpenCodeProvider();
     expect(provider.inspectStore(base)).toEqual({ kind: "ok", v1: true, v2: false });
-    const [summary] = provider.listSessions({ location: base });
+    const summary = firstSession(provider, base);
     expect(summary).toMatchObject({ sessionId: "ses_v1", projectHint: "/work/a", title: "v1 ses_v1" });
     expect(provider.readSession(summary).events.map((e) => [e.role, e.text])).toEqual([
       ["user", "hi"],
@@ -168,7 +174,7 @@ describe("OpenCode V2 store", () => {
     });
     const provider = new OpenCodeProvider();
     expect(provider.inspectStore(base)).toEqual({ kind: "ok", v1: false, v2: true });
-    const [summary] = provider.listSessions({ location: base });
+    const summary = firstSession(provider, base);
     expect(summary).toMatchObject({ sessionId: "ses_v2", projectHint: "/work/b" });
     const data = provider.readSession(summary);
     expect(data.events.map((e) => [e.role, e.text])).toEqual([
@@ -196,7 +202,7 @@ describe("OpenCode V2 store", () => {
       v2Message(writer, "ses_wal", 1, "user", { time: { created: 1001 }, text: "only in the wal" });
       expect(fs.statSync(`${dbPath}-wal`).size).toBeGreaterThan(0);
       const provider = new OpenCodeProvider();
-      const [summary] = provider.listSessions({ location: base });
+      const summary = firstSession(provider, base);
       expect(provider.readSession(summary).events.map((e) => e.text)).toEqual(["only in the wal"]);
     } finally {
       writer.close();
@@ -298,7 +304,7 @@ describe("real OpenCode binaries", () => {
       const dir = realBinaryStore(v1, []);
       const provider = new OpenCodeProvider();
       expect(provider.inspectStore(dir)).toMatchObject({ kind: "ok", v1: true, v2: false });
-      const [summary] = provider.listSessions({ location: dir });
+      const summary = firstSession(provider, dir);
       expect(provider.readSession(summary).events[0]?.text).toContain("hello from akm");
     },
     120_000,
@@ -310,7 +316,7 @@ describe("real OpenCode binaries", () => {
       const dir = realBinaryStore(v2, ["--standalone"]);
       const provider = new OpenCodeProvider();
       expect(provider.inspectStore(dir)).toMatchObject({ kind: "ok", v1: false, v2: true });
-      const [summary] = provider.listSessions({ location: dir });
+      const summary = firstSession(provider, dir);
       expect(provider.readSession(summary).events[0]?.text).toContain("hello from akm");
     },
     120_000,
