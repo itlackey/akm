@@ -26,8 +26,12 @@ import {
   resolveModelMapAlias,
   userModelMapPath,
 } from "../../integrations/agent/model-map";
-import { DEFAULT_OPENCODE_VERSION } from "../../integrations/agent/profiles";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import {
+  detectOpencodeMajor,
+  type OpencodeVersionInfo,
+  resolveOpencodeBin,
+} from "../../integrations/harnesses/opencode/version";
 import { OPENCODE_CLIENT_PACKAGE } from "../../integrations/harnesses/opencode-sdk/wire";
 import { probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
@@ -345,21 +349,15 @@ async function runConfiguredEngineProbe(
   const env = deps.env ?? process.env;
   const configuredEngine = config.engines?.[engineName];
   if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
-    // The client package of the OpenCode major the engine selects (default 2); never the other major's.
-    const clientPackage = OPENCODE_CLIENT_PACKAGE[configuredEngine.opencodeVersion ?? DEFAULT_OPENCODE_VERSION];
-    let packageAvailable = false;
+    const binary = resolveOpencodeBin(configuredEngine.bin);
+    let detected: OpencodeVersionInfo;
     try {
-      const resolvePackage = deps.resolvePackage ?? ((name: string) => import.meta.resolve(name));
-      resolvePackage(clientPackage);
-      packageAvailable = true;
-    } catch {
-      packageAvailable = false;
-    }
-    const binary = configuredEngine.bin ?? "opencode";
-    let binaryAvailable: boolean;
-    try {
-      const version = (deps.spawnSync ?? spawnSync)(binary, ["--version"], { encoding: "utf8", timeout: 5_000 });
-      binaryAvailable = (version.status ?? 1) === 0;
+      detected = detectOpencodeMajor(binary, {
+        probe: (bin) => {
+          const run = (deps.spawnSync ?? spawnSync)(bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
+          return (run.status ?? 1) === 0 ? String(run.stdout ?? "").trim() : undefined;
+        },
+      });
     } catch {
       return {
         name: checkName,
@@ -369,6 +367,17 @@ async function runConfiguredEngineProbe(
         message: `SDK engine "${engineName}" executable availability could not be checked.`,
         evidence: { engine: engineName, runtimeKind: "sdk", binaryAvailable: false },
       };
+    }
+    const binaryAvailable = detected.runnable;
+    // The client package of the OpenCode major the binary reports; never the other major's.
+    const clientPackage = OPENCODE_CLIENT_PACKAGE[detected.major];
+    let packageAvailable = false;
+    try {
+      const resolvePackage = deps.resolvePackage ?? ((name: string) => import.meta.resolve(name));
+      resolvePackage(clientPackage);
+      packageAvailable = true;
+    } catch {
+      packageAvailable = false;
     }
     const fallbackEngine = configuredEngine.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
@@ -429,7 +438,8 @@ async function runConfiguredEngineProbe(
       binary,
       binaryAvailable,
       package: clientPackage,
-      opencodeVersion: configuredEngine.opencodeVersion ?? DEFAULT_OPENCODE_VERSION,
+      detectedVersion: detected.version || null,
+      detectedMajor: detected.major,
       packageAvailable,
       model: effectiveModel ?? null,
       configuredModel: configuredModel ?? null,

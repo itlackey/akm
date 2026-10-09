@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 2 argv adapter (`@opencode/cli` 2.x, checked against 2.0.26). The
- * default; `opencodeVersion: 1` selects the OpenCode 1 adapter instead.
+ * OpenCode 2 argv adapter (`@opencode/cli` 2.x, checked against 2.0.26). Used
+ * for OpenCode 2, and for any binary whose major cannot be told.
  *
  * Differences from OpenCode 1 that matter here:
  *   - `opencode run` 2.x attaches to a shared BACKGROUND SERVICE by default,

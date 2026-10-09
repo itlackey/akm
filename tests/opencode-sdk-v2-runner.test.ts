@@ -5,12 +5,12 @@
 /**
  * The OpenCode 2 adapter (`v2-adapter.ts`) driven through `runOpencodeSdk`
  * with a fake `@opencode/client`, mirroring the V1 fakes in
- * `opencode-sdk-runner.test.ts`. A profile with no `opencodeVersion` selects
- * V2 (`DEFAULT_OPENCODE_VERSION`). The real 2.0.26 binary is exercised by
+ * `opencode-sdk-runner.test.ts`. A binary that reports 2.x (a fake `--version` here)
+ * selects V2. The real 2.0.26 binary is exercised by
  * `tests/integration/opencode-sdk-real-binary.test.ts` (gated).
  */
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../src/core/config/config";
 import { buildExecution, resolveExecution } from "../src/integrations/agent/execution";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
@@ -22,6 +22,9 @@ import {
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { V1_ADAPTER } from "../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { V2_ADAPTER, v2Turn } from "../src/integrations/harnesses/opencode-sdk/v2-adapter";
+import { fakeOpencodeMajor } from "./_helpers/opencode-version";
+
+beforeEach(() => fakeOpencodeMajor(2));
 
 const profile: AgentProfile = {
   name: "opencode-sdk",
@@ -144,7 +147,7 @@ afterEach(() => {
 });
 
 describe("OpenCode 2 adapter — session and result", () => {
-  test("a profile with no opencodeVersion runs on V2: session scoped by location, prompt carries the text", async () => {
+  test("a binary reporting OpenCode 2 runs on V2: session scoped by location, prompt carries the text", async () => {
     const fake = makeFakeV2({
       contexts: [
         [
@@ -219,8 +222,6 @@ describe("OpenCode 2 adapter — session and result", () => {
     const built = buildExecution(resolved.request, resolved.runner);
     expect(resolved.runner.kind).toBe("sdk");
     const sdkProfile = (resolved.runner as { profile: AgentProfile }).profile;
-    // No opencodeVersion configured: the default major, V2.
-    expect(sdkProfile.opencodeVersion).toBeUndefined();
 
     const fake = makeFakeV2();
     __setTestServer(fake.server as never);
@@ -451,8 +452,10 @@ describe("OpenCode 2 adapter — server selection", () => {
       majors.push(options.adapter.major);
       return makeFakeV2().server;
     }) as never);
-    await runOpencodeSdk({ ...profile, opencodeVersion: 2 }, "p", { timeoutMs: 2_000 });
-    await runOpencodeSdk({ ...profile, opencodeVersion: 1 }, "p", { timeoutMs: 2_000 }).catch(() => {});
+    fakeOpencodeMajor(2);
+    await runOpencodeSdk(profile, "p", { timeoutMs: 2_000 });
+    fakeOpencodeMajor(1);
+    await runOpencodeSdk(profile, "p", { timeoutMs: 2_000 }).catch(() => {});
     // Same bin, env and config: only the major tells the two servers apart.
     expect(majors).toEqual([2, 1]);
   });
@@ -468,7 +471,7 @@ describe("OpenCode 2 adapter — server selection", () => {
     expect(V1_ADAPTER.authorize().env).toEqual({});
   });
 
-  test("readiness lines: each adapter accepts its own and names opencodeVersion for the other major's", () => {
+  test("readiness lines: each adapter accepts its own and names the remedy for the other major's", () => {
     expect(V2_ADAPTER.readiness("server listening on http://127.0.0.1:4999")).toEqual({ url: "http://127.0.0.1:4999" });
     expect(V1_ADAPTER.readiness("opencode server listening on http://127.0.0.1:4999")).toEqual({
       url: "http://127.0.0.1:4999",
@@ -476,10 +479,13 @@ describe("OpenCode 2 adapter — server selection", () => {
     expect(V2_ADAPTER.readiness("some log line")).toBeUndefined();
 
     const v1Binary = V2_ADAPTER.readiness("opencode server listening on http://127.0.0.1:4999");
-    expect(v1Binary && "error" in v1Binary ? v1Binary.error : "").toContain('"opencodeVersion": 1');
+    expect(v1Binary && "error" in v1Binary ? v1Binary.error : "").toContain("OpenCode 1");
+    expect(v1Binary && "error" in v1Binary ? v1Binary.error : "").toContain(
+      'Upgrade to OpenCode 2, or set this engine\'s "bin"',
+    );
     const v2Binary = V1_ADAPTER.readiness("server listening on http://127.0.0.1:4999");
     expect(v2Binary && "error" in v2Binary ? v2Binary.error : "").toContain("OpenCode 2");
-    expect(v2Binary && "error" in v2Binary ? v2Binary.error : "").toContain("opencodeVersion");
+    expect(v2Binary && "error" in v2Binary ? v2Binary.error : "").toContain('set this engine\'s "bin"');
   });
 
   test("decodeEvent ignores events the runner does not act on", () => {

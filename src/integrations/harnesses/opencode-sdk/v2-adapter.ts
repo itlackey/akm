@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 2 wire adapter (the default, `opencodeVersion: 2`), on
+ * OpenCode 2 wire adapter, on
  * `@opencode/client` 2.0.26 (the promise client, generated types).
  *
  * akm owns a private `opencode serve` child (never the v2 background
@@ -144,7 +144,7 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
     }
     // OpenCode 1 prints "opencode server listening on <url>".
     if (line.startsWith("opencode server listening")) {
-      return { error: `The binary is OpenCode 1 (${line.trim()}). ${otherMajorRemedy(2)}` };
+      return { error: `The binary is OpenCode 1 (${line.trim()}). ${otherMajorRemedy()}` };
     }
     return undefined;
   },
@@ -159,11 +159,11 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
       version = (await client.server.info()).version;
     } catch (err) {
       throw new Error(
-        `Could not read the OpenCode 2 server info at ${baseUrl}: ${err instanceof Error ? err.message : String(err)}. ${otherMajorRemedy(2)}`,
+        `Could not read the OpenCode 2 server info at ${baseUrl}: ${err instanceof Error ? err.message : String(err)}. ${otherMajorRemedy()}`,
       );
     }
     if (!version.startsWith("2.")) {
-      throw new Error(`The server is OpenCode ${version}, not OpenCode 2. ${otherMajorRemedy(2)}`);
+      throw new Error(`The server is OpenCode ${version}, not OpenCode 2. ${otherMajorRemedy()}`);
     }
     return client;
   },

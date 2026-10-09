@@ -1376,8 +1376,8 @@ for in OpenCode 1's cache and `plugin` key, `akm-opencode-v2` only in OpenCode
 major, since only the matching major can re-create that cache; akm never
 installs or replaces `opencode`. A spec that appears only under the legacy
 `plugin` key for OpenCode 2 is skipped with a note (`opencode plugin add`
-would write a `plugins` entry). Which OpenCode major akm itself drives is the
-engine's [`opencodeVersion`](configuration.md#engines), independent of this
+would write a `plugins` entry). Which OpenCode major akm itself drives is
+[detected from the engine's binary](configuration.md#engines), independent of this
 step.
 
 Claude Code does not update third-party marketplaces on its own (the Claude

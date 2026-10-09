@@ -16,10 +16,10 @@
  * `@opencode-ai/sdk`; `v2-adapter.ts` speaks OpenCode 2 through
  * `@opencode/client`.
  *
- * Selection is explicit (`AgentProfile.opencodeVersion`, default
- * `DEFAULT_OPENCODE_VERSION`). akm never probes `opencode --version`, and an
- * adapter that meets a server of the other major fails and names the remedy
- * ({@link otherMajorRemedy}); it never falls back to the other protocol.
+ * Selection is by detection (`../opencode/version.ts` runs `<bin> --version`
+ * once per binary). An adapter that meets a server of the other major fails and
+ * names the remedy ({@link otherMajorRemedy}); it never falls back to the other
+ * protocol.
  */
 
 import type { AgentFailureReason, AgentTokenUsage } from "../../agent/spawn";
@@ -129,8 +129,6 @@ export interface OpencodeWireAdapter {
 }
 
 /** The sentence every wrong-major failure ends with. */
-export function otherMajorRemedy(selected: OpencodeMajor): string {
-  return selected === 2
-    ? `This engine targets OpenCode 2. For an OpenCode 1 binary set "opencodeVersion": 1 on the engine, or upgrade OpenCode to 2.`
-    : `This engine targets OpenCode 1 ("opencodeVersion": 1). For an OpenCode 2 binary remove "opencodeVersion" (or set it to 2), or install OpenCode 1.`;
+export function otherMajorRemedy(): string {
+  return `Upgrade to OpenCode 2, or set this engine's "bin" to the OpenCode binary you want to run.`;
 }

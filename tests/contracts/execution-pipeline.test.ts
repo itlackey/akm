@@ -8,7 +8,7 @@
  * request/runner a workflow journals.
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +24,10 @@ import {
 } from "../../src/integrations/agent/execution";
 import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { withEnv } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 function exitedWith(stdout: string): SpawnedSubprocess {
   const stream = (text: string) =>
@@ -100,7 +103,7 @@ describe("agent engines: config engine → argv", () => {
     const { argv } = await spawnedFor({
       content: "Review the diff.",
       config: config({
-        engines: { oc: { kind: "agent", platform: "opencode", opencodeVersion: 1 } },
+        engines: { oc: { kind: "agent", platform: "opencode" } },
         defaults: { engine: "oc" },
       }),
       persona: reviewer(),
@@ -113,7 +116,8 @@ describe("agent engines: config engine → argv", () => {
     ]);
   });
 
-  test("opencode 2 (the default) runs standalone, with the persona composed into its prompt", async () => {
+  test("opencode 2 runs standalone, with the persona composed into its prompt", async () => {
+    fakeOpencodeMajor(2);
     const { argv } = await spawnedFor({
       content: "Review the diff.",
       config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
@@ -132,7 +136,7 @@ describe("agent engines: config engine → argv", () => {
     const { argv } = await spawnedFor({
       content: "Summarise.",
       config: config({
-        engines: { oc: { kind: "agent", platform: "opencode", model: "balanced", opencodeVersion: 1 } },
+        engines: { oc: { kind: "agent", platform: "opencode", model: "balanced" } },
         defaults: { engine: "oc" },
       }),
     });
@@ -140,6 +144,7 @@ describe("agent engines: config engine → argv", () => {
   });
 
   test("opencode 2 replaces its profile model flag with the resolved one and runs standalone", async () => {
+    fakeOpencodeMajor(2);
     const { argv } = await spawnedFor({
       content: "Summarise.",
       config: config({
@@ -509,7 +514,6 @@ describe("resume from the journaled wire form", () => {
           platform: "opencode",
           model: "provider/frozen",
           bin: "opencode-frozen",
-          opencodeVersion: 1,
         },
       },
       defaults: { engine: "oc" },
@@ -627,17 +631,17 @@ describe("an engine's default agent", () => {
   });
 
   test("the opencode (both majors) and claude CLIs pass it as --agent", async () => {
-    for (const [platform, bin, opencodeVersion] of [
-      ["opencode", "opencode", undefined],
+    for (const [platform, bin, major] of [
       ["opencode", "opencode", 1],
       ["opencode", "opencode", 2],
-      ["claude", "claude", undefined],
+      ["claude", "claude", 2],
     ] as const) {
+      fakeOpencodeMajor(major);
       const { argv } = await spawnedFor({
         content: "Hi.",
         config: config({
           engines: {
-            e: { kind: "agent", platform, agent: "akm-workflow", ...(opencodeVersion ? { opencodeVersion } : {}) },
+            e: { kind: "agent", platform, agent: "akm-workflow" },
           },
           defaults: { engine: "e" },
         }),

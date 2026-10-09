@@ -24,11 +24,11 @@
  * per-workspace isolation, deadlines, abort handling and result shaping. What
  * differs by major (readiness line, authentication, client, session calls,
  * event and permission shapes, response and usage decoding) lives in a wire
- * adapter: `v2-adapter.ts` (`@opencode/client`, the default) or `v1-adapter.ts`
- * (`@opencode-ai/sdk`, `opencodeVersion: 1`), chosen once per dispatch from
- * `profile.opencodeVersion ?? DEFAULT_OPENCODE_VERSION`. akm never probes
- * `opencode --version`: an adapter that meets the other major's binary fails
- * naming `opencodeVersion`. The major is part of the server registry key.
+ * adapter: `v2-adapter.ts` (`@opencode/client`) or `v1-adapter.ts`
+ * (`@opencode-ai/sdk`), chosen once per dispatch from the major the engine's
+ * binary reports (`../opencode/version.ts`). An adapter that meets the other
+ * major's server fails naming the remedy (upgrade, or point `bin` at the binary
+ * you want). The major is part of the server registry key.
  * The text below was written for OpenCode 1; the V1-only parts are now the V1
  * adapter's, and the V2 equivalent of `query.directory` is the session's
  * `location.directory`.
@@ -125,10 +125,11 @@ import { COMMON_SPAWN_ENV_PASSTHROUGH, OPENCODE_ENV_PASSTHROUGH, spawnEnvNamesFo
 import type { ExecutionJsonObject } from "../../../execution/json";
 import type { ShowResponse } from "../../../sources/types";
 import { DEFAULT_AGENT_TIMEOUT_MS } from "../../agent/config";
-import { type AgentProfile, DEFAULT_OPENCODE_VERSION } from "../../agent/profiles";
+import type { AgentProfile } from "../../agent/profiles";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../agent/spawn";
 import { opencodeInferenceConfig } from "../opencode/model-config";
 import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "../opencode/model-work-agent";
+import { detectOpencodeMajor } from "../opencode/version";
 import { V1_ADAPTER } from "./v1-adapter";
 import { V2_ADAPTER } from "./v2-adapter";
 import type { OpencodeWireAdapter, WireEvent, WireSessionSpec } from "./wire";
@@ -852,9 +853,9 @@ function rejectPermissionRequests(
   return { ready, stop };
 }
 
-/** The wire adapter for the OpenCode major the engine selected (explicit; never probed). */
+/** The wire adapter for the OpenCode major the engine's binary reports. */
 function adapterFor(profile: AgentProfile): OpencodeWireAdapter {
-  return (profile.opencodeVersion ?? DEFAULT_OPENCODE_VERSION) === 1 ? V1_ADAPTER : V2_ADAPTER;
+  return detectOpencodeMajor(profile.bin).major === 1 ? V1_ADAPTER : V2_ADAPTER;
 }
 
 function abortedBeforeSdkStart(profile: AgentProfile): AgentRunResult {
