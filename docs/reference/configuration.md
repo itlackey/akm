@@ -129,7 +129,7 @@ value matching this JSON Schema (no prose, no code fences):` followed by the
 schema), plus the harness's own schema channel where it has one (codex
 `--output-schema`).
 
-An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, and `timeoutMs`;
+An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, `opencodeVersion`, and `timeoutMs`;
 it takes no inference of its own (see
 [Inference on an agent engine](#inference-on-an-agent-engine)). `agent` names the
 engine's default native agent (`opencode`, `opencode-sdk` and `claude` only): it
@@ -140,6 +140,11 @@ the LLM engine used as that SDK engine's fallback connection. With no
 `llmEngine`, an SDK engine has no fallback connection and opencode resolves
 provider, model and auth from its own configuration. `defaults.llmEngine` is
 not a substitute.
+
+`opencodeVersion` (`opencode` and `opencode-sdk` only) is the OpenCode major the
+engine's binary speaks: `2` (the default) or `1`. akm does not probe the binary;
+an engine whose `opencode` is still OpenCode 1 sets `"opencodeVersion": 1`, e.g.
+`{"kind":"agent","platform":"opencode-sdk","opencodeVersion":1}`.
 
 On an engine without `timeoutMs`, model work (an improve process, a quality or
 triage judge, or an index pass) stops after 600 seconds, whatever the engine's

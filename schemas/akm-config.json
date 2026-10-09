@@ -134,6 +134,13 @@
                 "type": "string",
                 "minLength": 1
               },
+              "opencodeVersion": {
+                "type": "number",
+                "enum": [
+                  1,
+                  2
+                ]
+              },
               "timeoutMs": {
                 "anyOf": [
                   {
@@ -1809,6 +1816,13 @@
                   "agent": {
                     "type": "string",
                     "minLength": 1
+                  },
+                  "opencodeVersion": {
+                    "type": "number",
+                    "enum": [
+                      1,
+                      2
+                    ]
                   },
                   "timeoutMs": {
                     "anyOf": [

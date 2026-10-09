@@ -19,6 +19,11 @@ export type AgentParseMode = "text" | "json";
  * Concrete profile used by the spawn wrapper. Built-ins are immutable;
  * resolved profiles (after merging user overrides) are also `Readonly`.
  */
+export type OpencodeVersion = 1 | 2;
+
+/** OpenCode major an engine targets when its config sets no `opencodeVersion`. */
+export const DEFAULT_OPENCODE_VERSION: OpencodeVersion = 2;
+
 export interface AgentProfile {
   /** Profile name (key in `agent.profiles`). */
   readonly name: string;
@@ -47,6 +52,11 @@ export interface AgentProfile {
   readonly parseOutput: AgentParseMode;
   /** The engine's default native agent, used when a request names none. */
   readonly agent?: string;
+  /**
+   * OpenCode major the engine's native binary speaks (`opencode` and `opencode-sdk` only).
+   * Unset means {@link DEFAULT_OPENCODE_VERSION}; `1` selects the OpenCode 1 adapter.
+   */
+  readonly opencodeVersion?: OpencodeVersion;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
   /**
