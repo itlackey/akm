@@ -163,7 +163,9 @@ describe("the judge thinks only when its own engine enables thinking", () => {
   });
 
   test("a judge on an opencode-sdk runner runs; its thinking comes from the provider fallback", async () => {
-    const cfg = config({ "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" } });
+    const cfg = config({
+      "sdk-judge": { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1, llmEngine: "judge" },
+    });
     __setTestServer({
       client: {
         session: {
@@ -184,7 +186,9 @@ describe("the judge thinks only when its own engine enables thinking", () => {
   });
 
   test("a judge on an agent engine gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
-    const cfg = config({ "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" } });
+    const cfg = config({
+      "sdk-judge": { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1, llmEngine: "judge" },
+    });
     let sent = "";
     __setTestServer({
       client: {

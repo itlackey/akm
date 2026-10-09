@@ -261,7 +261,7 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
       });
     }) as never);
 
-    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
+    const profile = { name: "mysdk", bin: "opencode", args: [], opencodeVersion: 1 } as never;
     // Populate the registry: the default (no-env) server plus an env-keyed one
     // on its own OS-allocated port.
     await runOpencodeSdk(profile, "p", { timeoutMs: null });
@@ -291,7 +291,7 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
         resolveFactory = resolve;
       });
     }) as never);
-    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
+    const profile = { name: "mysdk", bin: "opencode", args: [], opencodeVersion: 1 } as never;
     const running = runOpencodeSdk(profile, "p", { timeoutMs: null });
     await started;
 
@@ -345,12 +345,19 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
     __setServerFactory((() =>
       Promise.resolve({
         client: {
+          // The implicit opencode-sdk engine targets the default OpenCode major (2).
           session: {
-            create: async () => ({ data: { id: "sess-e2e" } }),
+            create: async () => ({ id: "sess-e2e" }),
             prompt: async () => {
               prompted++;
-              return { data: { parts: [{ type: "text", text: "sdk-done" }] } };
+              return { id: "msg-user" };
             },
+            wait: async () => {},
+            context: async () => [
+              { id: "msg-user", type: "user", text: "p" },
+              { id: "msg-a", type: "assistant", content: [{ type: "text", text: "sdk-done" }] },
+              { id: "msg-idle", type: "idle", outcome: "succeeded" },
+            ],
           },
         },
         server: {

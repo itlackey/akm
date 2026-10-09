@@ -47,6 +47,7 @@ import {
   __setTestServer,
   closeServer,
 } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import type { V1Client } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
 import { makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
@@ -191,14 +192,14 @@ const CLI_HARNESSES: Transport[] = HARNESS_ID_TABLE.filter((entry) => entry.id !
 
 const OPENCODE_SDK: Transport = {
   name: "opencode-sdk",
-  engine: () => ({ kind: "agent", platform: "opencode-sdk" }),
+  engine: () => ({ kind: "agent", platform: "opencode-sdk", opencodeVersion: 1 }),
   arrange: (scenario) => {
     const reply = SDK_REPLIES[scenario];
     __setTestServer({
       client: {
         session: {
           create: async () => ({ data: { id: "contract-session" } }),
-          prompt: async (args) => {
+          prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
             sdkBodies.push(args.body as Record<string, unknown>);
             if (reply === SDK_HANG) return new Promise<never>(() => {});
             return (typeof reply === "function" ? reply(sdkBodies.length) : reply) as never;
@@ -444,11 +445,11 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       return {
         client: {
           session: {
-            create: async (args) => {
+            create: async (args: Parameters<V1Client["session"]["create"]>[0]) => {
               queries.push(args.query);
               return { data: { id: "contract-session" } };
             },
-            prompt: async (args) => {
+            prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
               sdkBodies.push(args.body as Record<string, unknown>);
               return sdkText(REPLY) as never;
             },
@@ -641,7 +642,7 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
       };
     });
     const engines = {
-      contract: { kind: "agent", platform: "opencode-sdk", llmEngine: "backing" },
+      contract: { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1, llmEngine: "backing" },
       backing: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "stub-model" },
     };
     // Not the arranged transport: its fake client bypasses the server config.

@@ -24,6 +24,7 @@ import {
 const baseProfile: AgentProfile = {
   name: "opencode-sdk",
   bin: "opencode",
+  opencodeVersion: 1,
   args: [],
   stdio: "captured",
   envPassthrough: [],
@@ -435,6 +436,7 @@ describe("buildSdkConfig — exact model selection", () => {
   const baseProfile: AgentProfile = {
     name: "opencode-sdk",
     bin: "",
+    opencodeVersion: 1,
     args: [],
     stdio: "captured",
     envPassthrough: [],
@@ -516,6 +518,7 @@ describe("buildSdkConfig — inference", () => {
   const baseProfile: AgentProfile = {
     name: "opencode-sdk",
     bin: "",
+    opencodeVersion: 1,
     args: [],
     stdio: "captured",
     envPassthrough: [],
@@ -682,6 +685,7 @@ describe("runOpencodeSdk — usage/sessionId seams (P0.5)", () => {
   const profile: AgentProfile = {
     name: "opencode-sdk",
     bin: "",
+    opencodeVersion: 1,
     args: [],
     stdio: "captured",
     envPassthrough: [],

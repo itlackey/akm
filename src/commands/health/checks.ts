@@ -26,7 +26,9 @@ import {
   resolveModelMapAlias,
   userModelMapPath,
 } from "../../integrations/agent/model-map";
+import { DEFAULT_OPENCODE_VERSION } from "../../integrations/agent/profiles";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import { OPENCODE_CLIENT_PACKAGE } from "../../integrations/harnesses/opencode-sdk/wire";
 import { probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
 import {
@@ -343,10 +345,12 @@ async function runConfiguredEngineProbe(
   const env = deps.env ?? process.env;
   const configuredEngine = config.engines?.[engineName];
   if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
+    // The client package of the OpenCode major the engine selects (default 2); never the other major's.
+    const clientPackage = OPENCODE_CLIENT_PACKAGE[configuredEngine.opencodeVersion ?? DEFAULT_OPENCODE_VERSION];
     let packageAvailable = false;
     try {
       const resolvePackage = deps.resolvePackage ?? ((name: string) => import.meta.resolve(name));
-      resolvePackage("@opencode-ai/sdk");
+      resolvePackage(clientPackage);
       packageAvailable = true;
     } catch {
       packageAvailable = false;
@@ -409,7 +413,7 @@ async function runConfiguredEngineProbe(
       ? findSuppliedByEnvAsset(fallbackCredential, deps)
       : null;
     const missing = [
-      !packageAvailable ? "@opencode-ai/sdk package" : undefined,
+      !packageAvailable ? `${clientPackage} package` : undefined,
       !binaryAvailable ? `${binary} binary` : undefined,
       fallbackEngine && !fallback ? "configured fallback LLM connection" : undefined,
       !fallbackCredentialAvailable
@@ -424,7 +428,8 @@ async function runConfiguredEngineProbe(
       runtimeKind: "sdk",
       binary,
       binaryAvailable,
-      package: "@opencode-ai/sdk",
+      package: clientPackage,
+      opencodeVersion: configuredEngine.opencodeVersion ?? DEFAULT_OPENCODE_VERSION,
       packageAvailable,
       model: effectiveModel ?? null,
       configuredModel: configuredModel ?? null,

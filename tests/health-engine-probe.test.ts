@@ -239,8 +239,39 @@ describe("health engine probes", () => {
       spawnSync: (() => ({ status: 1 })) as never,
     });
     expect(result.status).toBe("warn");
-    expect(result.message).toContain("@opencode-ai/sdk package");
+    // No opencodeVersion: the default major (2), whose client package is @opencode/client.
+    expect(result.message).toContain("@opencode/client package");
+    expect(result.message).not.toContain("@opencode-ai/sdk");
     expect(result.message).toContain("opencode binary");
+  });
+
+  test("checks the client package of the OpenCode major the engine selects", async () => {
+    const resolved: string[] = [];
+    for (const [opencodeVersion, pkg] of [
+      [1, "@opencode-ai/sdk"],
+      [2, "@opencode/client"],
+    ] as const) {
+      const config: AkmConfig = {
+        configVersion: "0.9.0",
+        semanticSearchMode: "off",
+        engines: { sdk: { kind: "agent", platform: "opencode-sdk", opencodeVersion, model: "sdk-model" } },
+        defaults: { engine: "sdk" },
+      };
+      // Only the selected major's package is missing: the other major's package must not count.
+      const result = await runDefaultEngineProbe({
+        loadConfig: () => config,
+        resolvePackage: (name: string) => {
+          resolved.push(name);
+          if (name === pkg) throw new Error("missing");
+          return "/sdk/package.json";
+        },
+        spawnSync: (() => ({ status: 0 })) as never,
+      });
+      expect(result.status).toBe("warn");
+      expect(result.message).toContain(`${pkg} package`);
+      expect(result.evidence).toMatchObject({ package: pkg, packageAvailable: false, opencodeVersion });
+    }
+    expect(resolved).toEqual(["@opencode-ai/sdk", "@opencode/client"]);
   });
 
   test("accepts native OpenCode SDK configuration without an AKM LLM fallback", async () => {
