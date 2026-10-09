@@ -131,7 +131,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: thorough 1`] = `
 {
   "config": {
-    "description": "Everything default runs, plus a judged triage drain of the pending-proposal backlog (up to 25 accepts per run). Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review. Identical tuning to default; improve-stage extract and proactive maintenance stay off.",
+    "description": "Everything default runs, plus a triage drain of the pending-proposal backlog (up to 25 accepts per run). Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review. Identical tuning to default; improve-stage extract and proactive maintenance stay off.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -178,7 +178,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": true,
         "judgment": {
-          "enabled": true,
+          "enabled": false,
         },
         "maxAcceptsPerRun": 25,
         "maxDiffLines": 200,
@@ -265,7 +265,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: catchup 1`] = `
 {
   "config": {
-    "description": "Manual catch-up — consolidation plus a judged triage drain (up to 100 accepts) with no interval minimum. Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review.",
+    "description": "Manual catch-up — consolidation plus a triage drain (up to 100 accepts) with no interval minimum. Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -314,7 +314,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": true,
         "judgment": {
-          "enabled": true,
+          "enabled": false,
         },
         "maxAcceptsPerRun": 100,
         "maxDiffLines": 200,
@@ -385,7 +385,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": true,
         "judgment": {
-          "enabled": true,
+          "enabled": false,
         },
         "maxAcceptsPerRun": 15,
         "maxDiffLines": 200,
@@ -454,7 +454,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": true,
         "judgment": {
-          "enabled": true,
+          "enabled": false,
         },
         "maxAcceptsPerRun": 100,
         "maxDiffLines": 200,
