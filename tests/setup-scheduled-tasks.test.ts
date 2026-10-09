@@ -133,17 +133,17 @@ describe("stepScheduledTasks", () => {
     await stepScheduledTasks(deps);
 
     const options = state.multiselectConfig?.options ?? [];
-    expect(options).toHaveLength(9);
+    expect(options).toHaveLength(7);
     expect(options.find((option) => option.value === "backup")).toBeUndefined();
     expect(options.find((option) => option.value === "improve")?.hint).toContain("0 2 * * *");
     expect(options.find((option) => option.value === "improve")?.hint).toContain("not prepared");
-    expect(options.find((option) => option.value === "akm-improve-frequent")?.hint).toContain("40 * * * *");
+    expect(options.find((option) => option.value === "akm-improve-nightly")?.hint).toContain("15 2 * * *");
     expect(state.notes).toHaveLength(1);
     expect(state.notes[0]?.title).toBe("Task Schedule Review");
-    expect(state.notes[0]?.message.split("\n")).toHaveLength(9);
+    expect(state.notes[0]?.message.split("\n")).toHaveLength(7);
     expect(state.notes[0]?.message).toContain("core/improve: disabled | 0 2 * * *");
-    expect(state.notes[0]?.message).toContain("improve/akm-improve-frequent: disabled | 40 * * * *");
-    expect(calls.prepared[0]).toHaveLength(9);
+    expect(state.notes[0]?.message).toContain("improve/akm-improve-nightly: disabled | 15 2 * * *");
+    expect(calls.prepared[0]).toHaveLength(7);
     expect(calls.prepared[0]?.every((task) => task.enabled === false)).toBe(true);
   });
 

@@ -360,7 +360,9 @@ describe("0.9 config contract", () => {
       },
     };
     expect(validateConfigShape({ ...base, defaults: { improveStrategy: "missing" } }).ok).toBe(false);
-    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "quick" } }).ok).toBe(true);
+    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "consolidate" } }).ok).toBe(true);
+    // Removed in 0.10 (#1130): config load must not fail; resolution refuses it, naming `default`.
+    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "thorough" } }).ok).toBe(true);
     expect(validateConfigShape({ ...base, improve: { strategies: { custom: { engine: "agent" } } } }).ok).toBe(false);
     // A triage judgment is unattended model work: an agent that cannot confine the policy is refused.
     expect(

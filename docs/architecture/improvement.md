@@ -146,8 +146,7 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `consolidate`, `catchup`,
-`reflect-distill`, and `proactive-maintenance`
+set: `default`, `consolidate`, and `proactive-maintenance`
 (`src/assets/improve-strategies/*.json`). Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
 
@@ -158,7 +157,7 @@ config) is merged on top. So a strategy — built-in or user-defined — that
 omits a field, or an entire process block, inherits it from `default`; an
 explicit `enabled: true`/`false` in the more specific layer always wins. This
 is why, for example, `proactiveMaintenance` stays off in `default` and
-`reflect-distill`, but a preset that doesn't mention it at all still inherits
+`consolidate`, but a preset that doesn't mention it at all still inherits
 that "off" rather than defaulting to on.
 
 ### Retrieval scope
@@ -361,8 +360,8 @@ explicit promote surface independent of this gate.
 For git-backed bundles (detected by a `.git` directory), `akm improve`
 automatically commits its changes as a single batch at the end of the run —
 the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. The `reflect-distill` and
-`proactive-maintenance` strategies skip sync entirely, so an interrupted run
+the active strategy's `sync` setting. The
+`proactive-maintenance` strategy skips sync entirely, so an interrupted run
 does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.

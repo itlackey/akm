@@ -22,6 +22,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
 
+### Removed
+
+- **The `quick`, `reflect-distill`, `thorough` and `catchup` built-in improve strategies, and the `akm-improve-frequent`
+  and `akm-improve-catchup` task templates (#1130).** Measured (nightly eval, n=3, `gpt-5.6-terra` and `qwen3.8-27b`):
+  `quick` solved 0.76 / 0.75 items against `default`'s 0.92 / 0.89, `reflect-distill` 0.78 / 0.77, and `thorough` (the
+  judged triage drain) 0.67 / 0.70 with harmed items at 9 / 6.3 (unsafe retirements accepted, an exact fix applied
+  unreviewed); `catchup` was identical to `consolidate` on the pool (it differed only in the judged triage drain, `maxChunkSize` 50 instead of 25, and `minPoolSize: 0`, which is already the default). An `improve.strategies.<name>` block with one of
+  these names stays valid as an ordinary user-defined strategy, but it now inherits `default` and no longer carries the
+  old built-in's settings (for example the triage drain). `--strategy` or `defaults.improveStrategy` naming one with no
+  such block fails at resolution with an error that names `default`; config load still succeeds. The shipped
+  `akm-improve-nightly` task now runs `default`; the hourly `akm-improve-frequent` task would only repeat that pass, and
+  `akm-improve-catchup` ran the same `consolidate` as `akm-improve-consolidate`, so both are gone. A task copied from
+  either into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
+
+### Changed
+
+- **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
+  said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`,
+  `consolidate` and `proactive-maintenance`. (#1130)
+
 ### Fixed
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
