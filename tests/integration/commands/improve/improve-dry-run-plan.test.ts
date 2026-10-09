@@ -875,7 +875,7 @@ describe("#800 effective dry-run planner", () => {
     const { stashDir } = storage;
     const config = plannerConfig({
       proactive: { enabled: true, dueDays: 0, maxPerRun: 2 },
-      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7 },
+      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7, judgment: { enabled: true } },
     });
     await indexSkills(stashDir, 3, config);
     appendEvent({ eventType: "feedback", ref: "skills/skill-0", metadata: { signal: "positive" } });

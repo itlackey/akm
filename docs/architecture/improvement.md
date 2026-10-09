@@ -39,8 +39,9 @@ everything else routes through `akm proposal accept`.
   `src/assets/improve-strategies/*.json`) — named presets that decide which
   improve processes run and with what engine/model/limits.
 - **Autonomy gate** (`src/commands/improve/autonomy-gate.ts`) — downgrades
-  the handful of processes that would otherwise mutate assets without review,
-  unless `experimental.improveAutonomy` is explicitly set.
+  the handful of processes that would otherwise mutate assets without review
+  (memory inference, memory cleanup, and a judged triage promote), unless
+  `experimental.improveAutonomy` is explicitly set.
 - **Reflect / distill / consolidate subprocesses** — the improve pipeline's
   proposal generators, invoked per asset (reflect, distill) or across the
   whole memory corpus (consolidate). See
@@ -351,13 +352,20 @@ equals `effective`. When the run is unbounded, `totalCeiling` is omitted.
 candidates, validation, and proactive-maintenance selection are proposal-only
 and never write assets directly regardless of this gate.
 Three specific lanes *would* mutate assets without review and are downgraded
-unless `experimental.improveAutonomy` is explicitly set to `true`:
+unless `experimental.improveAutonomy` is explicitly set to `true` (the triage
+lane only when its judgment tier is on; see below):
 
 | Lane | What it does when enabled | With autonomy off |
 | --- | --- | --- |
 | `memoryInference` | Writes `.derived.md` children and rewrites parent frontmatter | disabled |
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
-| `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+| `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+
+A deterministic-only `promote` (triage with judgment off) is not gated (#1143):
+the `default` strategy drains the queue through the deterministic gates, up to
+`maxAcceptsPerRun` (25) per run, with no opt-in. The nightly eval's baseline is
+exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) and
+0.89 (qwen) of items solved, 0 to 1 harmed.
 
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in

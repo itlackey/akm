@@ -36,6 +36,15 @@ const DEFAULT_STRATEGY = {
   sync: { enabled: true, push: true },
 };
 
+/** The same strategy with the triage judgment tier on — the only gated triage promote (#1143). */
+const JUDGED_STRATEGY = {
+  ...DEFAULT_STRATEGY,
+  processes: {
+    ...DEFAULT_STRATEGY.processes,
+    triage: { ...DEFAULT_STRATEGY.processes.triage, judgment: { enabled: true } },
+  },
+};
+
 describe("applyAutonomyGate with autonomy OFF", () => {
   test("keeps review-only consolidate planning enabled and disables memoryInference", () => {
     const { config } = applyAutonomyGate(DEFAULT_STRATEGY, REVIEW_FIRST);
@@ -44,14 +53,34 @@ describe("applyAutonomyGate with autonomy OFF", () => {
     expect(config.processes?.memoryInference?.enabled).toBe(false);
   });
 
-  test("downgrades triage promote to queue instead of disabling triage", () => {
+  test("downgrades a judged triage promote to queue instead of disabling triage", () => {
     // Triage still runs — queued proposals are still triaged, they just are not
     // auto-accepted into the stash. Disabling triage outright would remove
     // review work the user asked for.
-    const { config } = applyAutonomyGate(DEFAULT_STRATEGY, REVIEW_FIRST);
+    const { config, gated } = applyAutonomyGate(JUDGED_STRATEGY, REVIEW_FIRST);
 
     expect(config.processes?.triage?.enabled).toBe(true);
     expect(config.processes?.triage?.applyMode).toBe("queue");
+    expect(gated.map((g) => g.lane)).toContain("triagePromote");
+  });
+
+  test("leaves a deterministic-only triage promote alone and does not report it (#1143)", () => {
+    for (const judgment of [undefined, { enabled: false }] as const) {
+      const strategy =
+        judgment === undefined
+          ? DEFAULT_STRATEGY
+          : {
+              ...DEFAULT_STRATEGY,
+              processes: { ...DEFAULT_STRATEGY.processes, triage: { ...DEFAULT_STRATEGY.processes.triage, judgment } },
+            };
+      const { config, gated } = applyAutonomyGate(strategy, REVIEW_FIRST);
+
+      expect(config.processes?.triage?.applyMode).toBe("promote");
+      expect(gated.map((g) => g.lane)).not.toContain("triagePromote");
+      // memoryInference is still gated and still reported.
+      expect(config.processes?.memoryInference?.enabled).toBe(false);
+      expect(gated.map((g) => g.lane)).toContain("memoryInference");
+    }
   });
 
   test("leaves review-first lanes and sync.push untouched", () => {
@@ -65,7 +94,7 @@ describe("applyAutonomyGate with autonomy OFF", () => {
   });
 
   test("reports every downgraded lane, each naming the config key", () => {
-    const { gated } = applyAutonomyGate(DEFAULT_STRATEGY, REVIEW_FIRST);
+    const { gated } = applyAutonomyGate(JUDGED_STRATEGY, REVIEW_FIRST);
     const lanes = gated.map((g) => g.lane);
 
     expect(lanes).not.toContain("consolidate");

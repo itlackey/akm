@@ -479,6 +479,11 @@ the retired `mode` and `profile` keys continue to report their engine migration
 guidance. When enabled, engine selection is judgment → triage → strategy →
 `defaults.llmEngine`, and resolution fails closed if none is available.
 
+The `default` strategy runs triage in `promote` mode with judgment off and
+`maxAcceptsPerRun: 25` (#1143), so the proposal backlog drains through the
+deterministic gates without `experimental.improveAutonomy`. Turning judgment on
+in a promote strategy is what that opt-in gates.
+
 Judgment is off in every built-in strategy, and the judgment tier may accept
 only a consolidate promotion. Retirements, exact fixes and reflect revisions it
 would accept are left for a person. This is measured, not cautious by habit
@@ -894,7 +899,8 @@ section, an absent key, and an explicit `false` all read identically as off.
 ```
 
 - **`experimental.improveAutonomy`** — gates only the autonomous
-  `memoryInference`, `triagePromote`, and `memoryCleanup` lanes. `akm improve`
+  `memoryInference`, `triagePromote` (a promote with triage judgment on; a
+  deterministic-only promote runs without it), and `memoryCleanup` lanes. `akm improve`
   itself always runs; this only gates mutations without a human in the loop.
   Consolidation is not gated: it remains advisory and emits reviewable
   proposals. `sync.push` is deliberately **not** gated by this key.

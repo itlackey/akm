@@ -86,9 +86,12 @@ describe("default improve strategies (#552)", () => {
     expect(p.sync?.push).toBe(true);
   });
 
-  test("default leaves the judged triage drain off", () => {
-    const p = resolveImproveStrategy("default", MINIMAL_CONFIG).config;
-    expect(p.processes?.triage?.enabled).toBe(false);
+  test("default drains the queue through the deterministic gates, bounded, with no judgment (#1143)", () => {
+    const triage = resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.triage;
+    expect(triage?.enabled).toBe(true);
+    expect(triage?.applyMode).toBe("promote");
+    expect(triage?.maxAcceptsPerRun).toBe(25);
+    expect(triage?.judgment?.enabled).not.toBe(true);
   });
 
   // #1130, #1129: quick, reflect-distill, thorough, catchup and proactive-maintenance were removed.

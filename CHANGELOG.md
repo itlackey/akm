@@ -53,6 +53,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`default` drains the proposal queue through the deterministic gates (#1143).** The `default` strategy now runs
+  triage in `promote` mode with judgment off, up to `maxAcceptsPerRun: 25` accepts per run, so the backlog drains
+  without `experimental.improveAutonomy`. The nightly eval's baseline is exactly this path (`proposal drain --promote`
+  without judgment): 0.91 (terra) and 0.89 (qwen) of items solved, 0 to 1 harmed; the judged drain is what caused
+  harm (#1132). The autonomy gate's `triagePromote` lane is now gated only when the triage stage has judgment on: a
+  promote with judgment on and no opt-in is still downgraded to `queue` and reported (`improve_skipped`,
+  `akm task doctor`). Memory inference and memory cleanup stay gated. No new setting. (#1143)
 - **`akm improve` plans the proactive-maintenance lane's picks again, and the lane is on in `default` (#1129).**
   Measured on assets with silent defects and no feedback (8 planted): 0 fixed with the picks scored only, 6 to 7 with
   them planned, no harm, about five times the model calls. The picks carry the `proactive` lane on their
