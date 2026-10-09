@@ -63,13 +63,12 @@ describe("decodeImproveResult", () => {
       selectedRefs: ["skills/a"],
     },
     consolidation: {
-      configured: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
-      effective: { enabled: true, minPoolSize: 3, limit: 4, chunkSize: 2 },
+      configured: { enabled: true, limit: 4, maxChunkSize: 2 },
+      effective: { enabled: true, limit: 4, chunkSize: 2 },
       poolSize: 5,
       candidatePoolSize: 4,
       gates: {
         profile: { passed: true, reason: "enabled" },
-        minimumPool: { passed: true, reason: "large enough" },
         delta: { passed: true, reason: "changed" },
       },
       wouldRun: true,
@@ -169,6 +168,27 @@ describe("decodeImproveResult", () => {
         plan: { ...plan, candidates: { ...plan.candidates, effective: 2 } },
       }),
     ).toThrow(/limit removal.*selected.*effective|effectiveRefs.length/);
+  });
+
+  test("decodes a consolidation plan an older release stored with minPoolSize and the minimumPool gate (#1131)", () => {
+    const old = {
+      ...plan,
+      consolidation: {
+        ...plan.consolidation,
+        configured: { ...plan.consolidation.configured, minPoolSize: 3 },
+        effective: { ...plan.consolidation.effective, minPoolSize: 3 },
+        gates: { ...plan.consolidation.gates, minimumPool: { passed: true, reason: "large enough" } },
+      },
+    };
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan: old,
+    };
+    expect(decodeImproveResult(envelope).envelope.plan).toEqual(old);
   });
 
   test("decodes a plan with the retrieval gate and one written before it existed (#986)", () => {

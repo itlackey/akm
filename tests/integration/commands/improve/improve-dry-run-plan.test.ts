@@ -647,7 +647,7 @@ describe("#800 effective dry-run planner", () => {
   test("consolidation preview reports the real pool, gates, and chunk estimate without dispatch", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig({
-      consolidate: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
+      consolidate: { enabled: true, limit: 4, maxChunkSize: 2 },
     });
     for (let i = 0; i < 5; i++) writeMemory(stashDir, `memory-${i}`);
     saveConfig(config);
@@ -664,13 +664,12 @@ describe("#800 effective dry-run planner", () => {
 
     expect(modelCalls).toBe(0);
     expect(result.plan?.consolidation).toMatchObject({
-      configured: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
-      effective: { enabled: true, minPoolSize: 3, limit: 4, chunkSize: 2 },
+      configured: { enabled: true, limit: 4, maxChunkSize: 2 },
+      effective: { enabled: true, limit: 4, chunkSize: 2 },
       poolSize: 5,
       candidatePoolSize: 4,
       gates: {
         profile: { passed: true },
-        minimumPool: { passed: true },
         delta: { passed: true },
       },
       wouldRun: true,
@@ -701,7 +700,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("nothing judged recently → the pool is open", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
@@ -713,7 +712,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("some memories judged recently and unchanged → they are skipped, the rest are judged", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       writeMemory(stashDir, "memory-1");
       saveConfig(config);
@@ -731,7 +730,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("every memory judged recently and unchanged → the delta gate holds", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
@@ -762,7 +761,7 @@ describe("#800 effective dry-run planner", () => {
     const credentialName = "AKM_800_CONSOLIDATION_PLAN_KEY";
     const config = plannerConfig({
       reflect: { enabled: false },
-      consolidate: { enabled: true, minPoolSize: 2, maxChunkSize: 50 },
+      consolidate: { enabled: true, maxChunkSize: 50 },
     });
     config.engines = {
       planner: {

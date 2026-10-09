@@ -386,7 +386,7 @@ for scripted use.
   what it extracts, its quality gates and its output may change while 0.10
   measures it (#1094).
 - **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
-  engines, limits, gates, and the anti-collapse / CLS / fidelity knobs) and
+  engines, limits, gates, and the CLS knobs) and
   the `index.*` per-pass config. The 0.9.x series is explicitly still settling
   the design of the improve processes, so **keys in these two families may be
   added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm

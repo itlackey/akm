@@ -658,10 +658,10 @@ describe("LLM engine config", () => {
 // not re-resolve defaults or fall back to another strategy.
 describe("getImproveProcessConfig", () => {
   test("returns the named process section from the selected improve strategy", () => {
-    const selected = { processes: { consolidate: { enabled: true, minPoolSize: 42 } } };
+    const selected = { processes: { consolidate: { enabled: true, limit: 42 } } };
     expect(getImproveProcessConfig("consolidate", selected)).toEqual({
       enabled: true,
-      minPoolSize: 42,
+      limit: 42,
     });
   });
 
