@@ -8,11 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format, cwd })` returns
+- **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format })` returns
   exactly the stdout of `akm --shape agent -q curate …`, computed in-process, and rejects with the CLI's message and
   `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
+
+### Fixed
+
+- **Every relative link in the npm package's docs resolves again.** #1118 made `docs/README.md`,
+  `docs/migration/README.md` and `docs/reference/cli.md` link by relative path to guides and pages the package did
+  not ship. npm always ships a folder's `README.md`, so those links were dead for npm users. The package now ships
+  the user-facing `docs/` folders (`agents`, `architecture`, `guides`, `integration`, `maintainers`, `migration`,
+  `posts`, `reference`), `docs/product-surface.md`, the one plan they link to, and `ROADMAP.md`. `docs/plans` stays
+  out. The link check skips link syntax inside code, which is an example, not a link.
 
 ## [0.9.30] - 2026-10-09
 
