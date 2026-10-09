@@ -95,11 +95,19 @@ function releaseLockRaw(lockPath: string): void {
 
 /** Create the lock file atomically; `undefined` when another holder already has it. */
 export function tryAcquireLockSync(lockPath: string, payload: string): LockOwnership | undefined {
+  // Write the payload under a private name, then hard-link it into place: the
+  // link is the exclusive step and the lock never exists without its payload.
+  // A `wx` write creates the file empty and fills it in afterwards; a contender
+  // probing in that gap reads no pid, calls the live lock stale and reclaims it.
+  const tmpPath = `${lockPath}.tmp-${process.pid}-${randomUUID()}`;
+  fs.writeFileSync(tmpPath, payload, { flag: "wx" });
   try {
-    fs.writeFileSync(lockPath, payload, { flag: "wx" });
+    fs.linkSync(tmpPath, lockPath);
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === "EEXIST") return undefined;
     throw err;
+  } finally {
+    releaseLockRaw(tmpPath);
   }
   let snapshot: ReturnType<typeof readLockSnapshot>;
   try {

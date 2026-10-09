@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the user-facing `docs/` folders (`agents`, `architecture`, `guides`, `integration`, `maintainers`, `migration`,
   `posts`, `reference`), `docs/product-surface.md`, the one plan they link to, and `ROADMAP.md`. `docs/plans` stays
   out. The link check skips link syntax inside code, which is an example, not a link.
+- **Concurrent `akm config set` runs no longer lose each other's changes.** A lock file was created empty and its
+  owner's PID written a moment later; a process that looked in that gap read no PID, took the live lock for an
+  abandoned one and removed it, so two writers ran at once and one change was lost. A lock now appears with its
+  owner's PID already in it. Every akm lock file (config, index writer, scheduler, `akm.lock`, run, extract, secret)
+  is created this way.
 
 ## [0.9.30] - 2026-10-09
 
