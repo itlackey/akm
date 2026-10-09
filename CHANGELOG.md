@@ -6,6 +6,141 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every relative link in the npm package's docs resolves again.** #1118 made `docs/README.md`,
+  `docs/migration/README.md` and `docs/reference/cli.md` link by relative path to guides and pages the package did
+  not ship. npm always ships a folder's `README.md`, so those links were dead for npm users. The package now ships
+  the user-facing `docs/` folders (`agents`, `architecture`, `guides`, `integration`, `maintainers`, `migration`,
+  `posts`, `reference`), `docs/product-surface.md`, the one plan they link to, and `ROADMAP.md`. `docs/plans` stays
+  out. The link check skips link syntax inside code, which is an example, not a link.
+
+## [0.9.30] - 2026-10-09
+
+A patch release: `akm upgrade` acts only on the `akm-opencode` spec OpenCode's config names.
+
+### Fixed
+
+- **`akm upgrade` leaves alone an OpenCode whose config pins another `akm-opencode` spec (#1117).** A config naming
+  an exact version (seen: `akm-opencode@0.8.0`) loads that version's cache, but the plugin step refreshed `@latest`:
+  the cache went to the trash, OpenCode did not re-create it, and the run exited 1. The step now acts only on the
+  spec the config names: bare or `@latest` on a plain run, `@next` under `--next`; any other spec is skipped with a
+  note, no cache is touched and the CLI is not held to a pin OpenCode does not load. This generalizes #1115.
+
+## [0.9.29] - 2026-10-09
+
+A patch release on the 0.9.28 line: `akm upgrade` is Stable, and a plain upgrade no longer breaks OpenCode's
+plugin on a host that follows `akm-opencode@next`.
+
+### Changed
+
+- **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
+  failure-path runs on 0.9.28 (#1099).
+
+### Fixed
+
+- **A plain `akm upgrade` no longer breaks OpenCode's plugin on a host whose OpenCode config follows
+  `akm-opencode@next` (#1115).** It refreshed the `@latest` cache, which such a host never loads: the cache went to
+  the trash, OpenCode did not re-create it, and the run exited 1. The OpenCode entry is now skipped with a note to
+  run `akm upgrade --next` (or switch the config to the bare `akm-opencode`), and neither cache is touched.
+
+## [0.9.28] - 2026-10-08
+
+The stable release of the 0.9.28 line: 0.9.28-alpha.1 to alpha.11.
+When upgrading from 0.9.27:
+
+- **`akm upgrade` updates each installed harness's akm plugin** (Claude Code,
+  Codex, OpenCode) after the CLI, and `--next` installs the `@next` prerelease
+  of akm and its OpenCode plugin. An OpenCode refresh waits while a host
+  OpenCode runs; servers inside containers no longer hold it up (alpha.4–alpha.11).
+- **OpenCode runs through the SDK (`opencode-sdk`) reliably:** the server gets
+  `OPENCODE_API_KEY` and `OPENCODE_CONFIG`, sessions are kept, permission
+  requests are rejected instead of hanging the run, a provider usage limit ends
+  the run with its reason instead of a silent stall, and an engine can name a
+  default `agent` (alpha.7–alpha.10, #1108).
+- **Knowledge is never retired in favour of a memory** by consolidate's pair
+  pass, and the drain's judge sees promotions it accepted earlier in the same
+  drain; `akm proposal drain --strategy` honours that strategy's judgment
+  setting (alpha.7, alpha.11).
+- **Indexing:** a skill's reference file with a shell `$1` or a documented
+  `$ARGUMENTS` stays a skill resource, and existing indexes re-file such entries
+  on the next `akm index` (alpha.4, alpha.6, alpha.11).
+- **Added (experimental):** `akm metrics` reports what akm has recorded, in every
+  format including a self-contained HTML dashboard; LLM usage is recorded for
+  every command (alpha.2).
+- **Changed:** stability tiers for 0.10's stabilization work; workflows are
+  Experimental (alpha.7). Distill skips deprecated or superseded memories and
+  keeps a rejected lesson's text; the pair judge's reasons no longer swap A and
+  B (alpha.1, alpha.3).
+
+### Fixed
+
+- **An `opencode-sdk` dispatch now stops promptly when a provider usage limit schedules a retry past its deadline.**
+  The retry, provider and reset time are recorded in the dispatch `stderr`, and account limits fail as provider limits
+  rather than appearing to hang until a timeout (#1108).
+
+## [0.9.28-alpha.11] - 2026-10-08
+
+### Fixed
+
+- **Skill resources that document `$ARGUMENTS` command templates no longer index as commands.** The command
+  placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
+  on the next incremental index (#1084).
+- **A proposal drain judge now sees overlapping promotions accepted earlier in the same drain (#1085).**
+- **`akm proposal drain --strategy <name>` now honors enabled triage judgment.** A named strategy with
+  `processes.triage.judgment.enabled: true` runs its configured judge without `--judgment`; the flag still
+  forces judgment for disabled strategies, and drains without `--strategy` keep their existing behavior (#1086).
+- **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
+  (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
+  keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
+  process now counts only when it shares akm's mount namespace (or, where that is unreadable, when its cgroup
+  is not a docker/containerd/podman/lxc scope); a process that cannot be inspected still defers.
+- **Five test suites no longer leak their temp folders on a direct `bun test` (#1088).** The outcome-loop,
+  outcome-invariance, memory-improve-archive, plan-flag-cli and require-engines-cli suites created `akm-*`
+  directories under the OS temp dir and never removed them; `scripts/sweep-test-tmp.ts` swept them only for
+  `test-unit.sh`/`test-integration.sh` runs, so running a file straight with `bun test` left a folder per test
+  behind. Each suite now registers its temp dirs with the shared test sandbox helper (`makeSandboxDir`, drained
+  by an `afterEach`), the pattern the other suites already use.
+
+## [0.9.28-alpha.10] - 2026-10-08
+
+### Fixed
+
+- **An `opencode-sdk` dispatch no longer hangs when OpenCode asks for a permission (#1104).** The runner never
+  answered permission requests, so a tool call that needed one (OpenCode's default `external_directory: ask`,
+  e.g. reading the plugin's `/tmp/akm-opencode/curated/<session>.md`) stayed `running` until the dispatch
+  timed out. The runner now rejects each request of its session, and of the sub-sessions it spawns, exactly as
+  a non-interactive `opencode run` does ("auto-rejecting"), so the model gets a refusal it can work around;
+  each request is recorded in the dispatch's `stderr`, and the event subscription is closed when the dispatch
+  ends. Grant access in the agent's `permission` config to allow it instead.
+
+## [0.9.28-alpha.9] - 2026-10-08
+
+### Fixed
+
+- **The `opencode-sdk` server receives `OPENCODE_API_KEY` and `OPENCODE_CONFIG`.** It was started with only the
+  common baseline and the XDG names, so a provider that reads its key from the environment (OpenCode Go) failed
+  with `UnknownError: Unexpected server error` where `opencode run` worked. The `opencode` CLI profile and the
+  SDK server now share one list of OpenCode names; a different key value starts another server.
+
+- **`akm upgrade --next` no longer fails OpenCode as "older than `@latest`" (#1089).** akm-plugins' stable
+  versions concatenate a timestamp into the patch (`0.9.27202610072331`), so by semver every prerelease build
+  (`0.9.28-alpha.8.202610081938`) sorted below stable and `akm-opencode@next` was always rejected. `@next` is
+  now judged by the `akm-cli` it pins against the one `@latest` pins; plugin versions are only compared for
+  equality (is the cache already this build?).
+
+## [0.9.28-alpha.8] - 2026-10-08
+
+### Fixed
+
+- **`opencode-sdk` runs keep their OpenCode session (#1100).** The SDK runner deleted the session after every
+  dispatch, so a workflow, task or `akm agent` run left no transcript in OpenCode's history to debug or to learn
+  from, unlike `opencode run`. The session is now kept; a dispatch akm gives up on (timeout or abort) is still
+  aborted on the server so it stops calling the model. The OpenCode session id is on the `akm agent` / command
+  result as `sessionId` and in the task log line, as workflow steps already carried it.
+
+## [0.9.28-alpha.7] - 2026-10-08
+
 ### Added
 
 - **An agent engine can name a default `agent`.** `engines.<name>.agent` (`opencode`, `opencode-sdk`, `claude`)
@@ -13,51 +148,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `args`, can run e.g. `akm-workflow` for workflows and tasks. A request's own agent wins, a persona is kept,
   and model work keeps its confined agent. See [Configuration](docs/reference/configuration.md) (#1049).
 
-- **`akm upgrade --next` installs the `@next` prerelease of akm and its OpenCode plugin.** The CLI target is
-  the `next` dist-tag of `akm-cli` when it is newer than the latest stable release, else the stable release
-  (never a downgrade); npm/Bun/pnpm installs name that exact version and binary installs take its GitHub
-  release. The OpenCode lockstep and cache refresh follow `akm-opencode@next` when the OpenCode config's
-  `plugin` list names it (akm never edits that config); with a bare `"akm-opencode"` the entry is `skipped`
-  with a message saying to set `"plugin": ["akm-opencode@next"]`, and lockstep stays on the `@latest` pin.
-  Missing, older-than-`@latest` or unpinned `@next` fails closed like the stable lockstep. Claude Code and
-  Codex are unchanged (no prerelease channel). The result gains `channel`. Works with `--check`, `--force`
-  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases-next).
-- **`akm upgrade` also updates the akm plugin of each installed harness (#1007).** After the CLI step
-  it refreshes Claude Code (`claude plugin marketplace update`, then `claude plugin update`) and
-  Codex (`codex plugin marketplace upgrade`) when the `akm-plugins` marketplace is configured and the
-  plugin is installed, and replaces a stale cached `akm-opencode` (moved to the trash, then re-fetched
-  by `opencode debug config`) unless OpenCode is running, in which case it is `deferred`. It only
-  updates: a missing plugin is never installed. The result gains `plugins` (one `outcome` per harness:
-  `updated`, `current`, `skipped`, `deferred`, `failed`; under `--check`, which changes nothing,
-  `pending` for OpenCode and `unknown` for Claude Code and Codex, whose check needs a fetch) and a failed plugin exits 1. With the OpenCode plugin present the CLI moves to the akm-cli
-  that `akm-opencode@latest` pins instead of the newest release, reported under `lockstep`; if the pin
-  cannot be read the CLI is held where it is rather than moved ahead of the plugin. The
-  Containers entrypoint and the Codex hook trust entries are documented under
-  [`akm upgrade`](docs/reference/cli.md#upgrade).
-- **`akm metrics` (experimental) reports what akm has recorded, in every `--format`.** One
-  read-only command covers asset usage (searches, shows, curates, selects, the
-  queries that returned nothing), feedback with its reasons and tags, utility
-  and outcome scores, LLM tokens, latency, task runs,
-  proposals and workflow token spend. `--since` (default `30d`) sets the window start; the window ends now, counts
-  `user`-source usage and keeps the top 20 of every ranked list. The
-  window rows (usage rows as recorded, LLM calls summed per day, engine, model, process and stage) ride along with
-  `--format html` and `--detail full`. A window
-  longer than a store's retention says so in `notes`.
-- **`akm metrics` renders as text and Markdown.** `--format text` prints aligned
-  Usage, Feedback, Utility, LLM, Index, Tasks, Proposals and Workflows sections
-  with top-N tables (cut to 5 at `--detail brief`); `--format md` prints one
-  heading per section with GFM tables.
-- **`akm metrics --format html` writes a self-contained dashboard.** The page
-  carries the window's raw rows, so you can filter by date, bundle, source and
-  event type, sort the tables, open an asset to see its timeline, queries and
-  feedback, and download any table as CSV, all in the browser. Charts load
-  ECharts from the same CDN tag as `akm health --report`. A page keeps the most
-  recent 50,000 usage rows and says so when it cuts older ones.
-
 ### Changed
 
-- **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
-  failure-path runs on 0.9.28 (#1099).
 - **Stability tiers for 0.10's stabilization work.** Experimental: the built-in
   improve strategies other than `default` and `consolidate` (`quick`,
   `reflect-distill`, `thorough`, `catchup`), the proactive-maintenance and
@@ -74,55 +166,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   of 0.9 and all of 0.10, which stabilizes the feature and then promotes it or
   removes it. Nothing changes in how they run.
 
-- A consolidate pair-pass retire proposal now records the judge's claim lists in its `retirement` metadata as `onlyInRetired` and `onlyInSuccessor`, named by role rather than by the judge's A/B, so what the judge found only on each side survives past the run. Proposals minted before this lack both fields; no row is added for a pair akm keeps.
-- A distill lesson the quality gate rejects or sends to review now keeps its text: the `distill_invoked` event and the distill result carry `rejectedContent`, cut to 2000 characters (the judge prompt's cap). Before, a rejected lesson left only its score and reason. It stays local in `state.db`.
-- **LLM usage is recorded for every command.** `akm index`, curate, workflow,
-  agent dispatch and `akm command run` now persist their `llm_usage` events
-  like `improve` and `proposal drain` already did; before, a call made outside
-  those two was dropped. An improve run still keeps its own sink and the
-  process-wide one resumes when it ends.
-- Search latency is recorded in the search summary usage row (`totalMs`, plus `rankMs` and `embedMs` when present), and every `akm index` run appends an `index_completed` event with its phase timings.
-
 ### Fixed
-
-- **An `opencode-sdk` dispatch now stops promptly when a provider usage limit schedules a retry past its deadline.**
-  The retry, provider and reset time are recorded in the dispatch `stderr`, and account limits fail as provider limits
-  rather than appearing to hang until a timeout (#1108).
-- **Skill resources that document `$ARGUMENTS` command templates no longer index as commands.** The command
-  placeholder matcher now respects a skill folder as declared context, and the indexer re-files existing entries
-  on the next incremental index (#1084).
-- **A proposal drain judge now sees overlapping promotions accepted earlier in the same drain (#1085).**
-- **`akm proposal drain --strategy <name>` now honors enabled triage judgment.** A named strategy with
-  `processes.triage.judgment.enabled: true` runs its configured judge without `--judgment`; the flag still
-  forces judgment for disabled strategies, and drains without `--strategy` keep their existing behavior (#1086).
-- **`akm upgrade` no longer defers the OpenCode plugin refresh for OpenCode servers running in containers
-  (#1099).** The "is OpenCode running" check counted an `opencode serve` inside a Docker container, which
-  keeps its own cache, so the host's refresh was deferred for as long as the container ran. On Linux a matching
-  process now counts only when it shares akm's mount namespace (or, where that is unreadable, when its cgroup
-  is not a docker/containerd/podman/lxc scope); a process that cannot be inspected still defers.
-
-- **An `opencode-sdk` dispatch no longer hangs when OpenCode asks for a permission (#1104).** The runner never
-  answered permission requests, so a tool call that needed one (OpenCode's default `external_directory: ask`,
-  e.g. reading the plugin's `/tmp/akm-opencode/curated/<session>.md`) stayed `running` until the dispatch
-  timed out. The runner now rejects each request of its session, and of the sub-sessions it spawns, exactly as
-  a non-interactive `opencode run` does ("auto-rejecting"), so the model gets a refusal it can work around;
-  each request is recorded in the dispatch's `stderr`, and the event subscription is closed when the dispatch
-  ends. Grant access in the agent's `permission` config to allow it instead.
-- **The `opencode-sdk` server receives `OPENCODE_API_KEY` and `OPENCODE_CONFIG`.** It was started with only the
-  common baseline and the XDG names, so a provider that reads its key from the environment (OpenCode Go) failed
-  with `UnknownError: Unexpected server error` where `opencode run` worked. The `opencode` CLI profile and the
-  SDK server now share one list of OpenCode names; a different key value starts another server.
-- **`akm upgrade --next` no longer fails OpenCode as "older than `@latest`" (#1089).** akm-plugins' stable
-  versions concatenate a timestamp into the patch (`0.9.27202610072331`), so by semver every prerelease build
-  (`0.9.28-alpha.8.202610081938`) sorted below stable and `akm-opencode@next` was always rejected. `@next` is
-  now judged by the `akm-cli` it pins against the one `@latest` pins; plugin versions are only compared for
-  equality (is the cache already this build?).
-
-- **`opencode-sdk` runs keep their OpenCode session (#1100).** The SDK runner deleted the session after every
-  dispatch, so a workflow, task or `akm agent` run left no transcript in OpenCode's history to debug or to learn
-  from, unlike `opencode run`. The session is now kept; a dispatch akm gives up on (timeout or abort) is still
-  aborted on the server so it stops calling the model. The OpenCode session id is on the `akm agent` / command
-  result as `sessionId` and in the task log line, as workflow steps already carried it.
 
 - **Consolidate's pair pass no longer retires a knowledge note in favour of a memory (#1092).** Knowledge is the
   reviewed form and a memory is raw capture, often the very memory the note was promoted from, yet a `duplicate`,
@@ -131,11 +175,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   in favour of the note instead, through the same guards and staging as any memory retirement; when the memory holds
   a claim of its own, nothing is minted and the pair is counted as a no-action verdict. A memory is still retired in
   favour of a knowledge note, and knowledge against knowledge is unchanged.
-- **A skill's reference file with a shell `$1` is no longer indexed as a command (#1063).** A file under
-  `skills/**` other than `SKILL.md` that showed `local var="$1"` in a code block was retyped to
-  `commands/skills/<name>/...`. A skill's folder now counts as a declared context, as `memories/` and the other typed
-  directories already did, so the file stays a skill resource (`knowledge/skills/<name>/...`). A `$1` under
-  `commands/` or in a loose file is still a command.
+
+## [0.9.28-alpha.6] - 2026-10-08
+
+### Fixed
+
 - **The #1063 fix now reaches files that have not changed (#1063).** An incremental `akm index` skips a
   directory whose files are unchanged, so a reference file already filed as a command stayed
   `commands/skills/<name>/...` until `akm index --full`. The `akm` adapter's version, which is part of each
@@ -143,10 +187,101 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   entries in a 18,000-entry library) and drops their old refs. Reading every directory once makes that run slower
   (about 27 s against 2 s on that library) and re-embeds the entries whose embedding hash was written by an older
   release (about 8,000 of them); later runs cost what they did before.
+
+## [0.9.28-alpha.5] - 2026-10-08
+
+### Added
+
+- **`akm upgrade --next` installs the `@next` prerelease of akm and its OpenCode plugin.** The CLI target is
+  the `next` dist-tag of `akm-cli` when it is newer than the latest stable release, else the stable release
+  (never a downgrade); npm/Bun/pnpm installs name that exact version and binary installs take its GitHub
+  release. The OpenCode lockstep and cache refresh follow `akm-opencode@next` when the OpenCode config's
+  `plugin` list names it (akm never edits that config); with a bare `"akm-opencode"` the entry is `skipped`
+  with a message saying to set `"plugin": ["akm-opencode@next"]`, and lockstep stays on the `@latest` pin.
+  Missing, older-than-`@latest` or unpinned `@next` fails closed like the stable lockstep. Claude Code and
+  Codex are unchanged (no prerelease channel). The result gains `channel`. Works with `--check`, `--force`
+  and `-q`. See [`akm upgrade`](docs/reference/cli.md#prereleases-next).
+
+## [0.9.28-alpha.4] - 2026-10-08
+
+### Added
+
+- **`akm upgrade` also updates the akm plugin of each installed harness (#1007).** After the CLI step
+  it refreshes Claude Code (`claude plugin marketplace update`, then `claude plugin update`) and
+  Codex (`codex plugin marketplace upgrade`) when the `akm-plugins` marketplace is configured and the
+  plugin is installed, and replaces a stale cached `akm-opencode` (moved to the trash, then re-fetched
+  by `opencode debug config`) unless OpenCode is running, in which case it is `deferred`. It only
+  updates: a missing plugin is never installed. The result gains `plugins` (one `outcome` per harness:
+  `updated`, `current`, `skipped`, `deferred`, `failed`; under `--check`, which changes nothing,
+  `pending` for OpenCode and `unknown` for Claude Code and Codex, whose check needs a fetch) and a failed plugin exits 1. With the OpenCode plugin present the CLI moves to the akm-cli
+  that `akm-opencode@latest` pins instead of the newest release, reported under `lockstep`; if the pin
+  cannot be read the CLI is held where it is rather than moved ahead of the plugin. The
+  Containers entrypoint and the Codex hook trust entries are documented under
+  [`akm upgrade`](docs/reference/cli.md#upgrade).
+
+### Fixed
+
+- **A skill's reference file with a shell `$1` is no longer indexed as a command (#1063).** A file under
+  `skills/**` other than `SKILL.md` that showed `local var="$1"` in a code block was retyped to
+  `commands/skills/<name>/...`. A skill's folder now counts as a declared context, as `memories/` and the other typed
+  directories already did, so the file stays a skill resource (`knowledge/skills/<name>/...`). A `$1` under
+  `commands/` or in a loose file is still a command.
+
+## [0.9.28-alpha.3] - 2026-10-08
+
+### Changed
+
+- A consolidate pair-pass retire proposal now records the judge's claim lists in its `retirement` metadata as `onlyInRetired` and `onlyInSuccessor`, named by role rather than by the judge's A/B, so what the judge found only on each side survives past the run. Proposals minted before this lack both fields; no row is added for a pair akm keeps.
+
+- A distill lesson the quality gate rejects or sends to review now keeps its text: the `distill_invoked` event and the distill result carry `rejectedContent`, cut to 2000 characters (the judge prompt's cap). Before, a rejected lesson left only its score and reason. It stays local in `state.db`.
+
+## [0.9.28-alpha.2] - 2026-10-08
+
+### Added
+
+- **`akm metrics` (experimental) reports what akm has recorded, in every `--format`.** One
+  read-only command covers asset usage (searches, shows, curates, selects, the
+  queries that returned nothing), feedback with its reasons and tags, utility
+  and outcome scores, LLM tokens, latency, task runs,
+  proposals and workflow token spend. `--since` (default `30d`) sets the window start; the window ends now, counts
+  `user`-source usage and keeps the top 20 of every ranked list. The
+  window rows (usage rows as recorded, LLM calls summed per day, engine, model, process and stage) ride along with
+  `--format html` and `--detail full`. A window
+  longer than a store's retention says so in `notes`.
+
+- **`akm metrics` renders as text and Markdown.** `--format text` prints aligned
+  Usage, Feedback, Utility, LLM, Index, Tasks, Proposals and Workflows sections
+  with top-N tables (cut to 5 at `--detail brief`); `--format md` prints one
+  heading per section with GFM tables.
+
+- **`akm metrics --format html` writes a self-contained dashboard.** The page
+  carries the window's raw rows, so you can filter by date, bundle, source and
+  event type, sort the tables, open an asset to see its timeline, queries and
+  feedback, and download any table as CSV, all in the browser. Charts load
+  ECharts from the same CDN tag as `akm health --report`. A page keeps the most
+  recent 50,000 usage rows and says so when it cuts older ones.
+
+### Changed
+
+- **LLM usage is recorded for every command.** `akm index`, curate, workflow,
+  agent dispatch and `akm command run` now persist their `llm_usage` events
+  like `improve` and `proposal drain` already did; before, a call made outside
+  those two was dropped. An improve run still keeps its own sink and the
+  process-wide one resumes when it ends.
+
+- Search latency is recorded in the search summary usage row (`totalMs`, plus `rankMs` and `embedMs` when present), and every `akm index` run appends an `index_completed` event with its phase timings.
+
+### Fixed
+
 - **Usage-event retention no longer deletes a day early.** The purge on `akm index`
   compared the space-separated `created_at` against an ISO cutoff, so every row on
   the cutoff's date was removed up to 24 hours before its 90 days were up. Both
   sides are now normalized before the comparison.
+
+## [0.9.28-alpha.1] - 2026-10-08
+
+### Fixed
+
 - **Distill skips a memory marked `beliefState: deprecated` or `superseded`.** Such a note is no longer true and gave
   no lesson (26 of about 900 memories carry the state; distill ran on 17 of them). The improve loop records a
   `distill-skipped` action and an `improve_skipped` event (`distill_deprecated_or_superseded`), and the attempt goes
@@ -164,12 +299,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   reasons said the opposite of what the judge's claim lists decided (for example "B contains all claims from A" for a
   pair where B was retired). The lists were right, so no retirement changed, but the reason a reviewer reads was
   wrong. The prompt now asks the reason to name the asset that can be deleted; two replays gave 0 and 1 of about 85.
-- **Five test suites no longer leak their temp folders on a direct `bun test` (#1088).** The outcome-loop,
-  outcome-invariance, memory-improve-archive, plan-flag-cli and require-engines-cli suites created `akm-*`
-  directories under the OS temp dir and never removed them; `scripts/sweep-test-tmp.ts` swept them only for
-  `test-unit.sh`/`test-integration.sh` runs, so running a file straight with `bun test` left a folder per test
-  behind. Each suite now registers its temp dirs with the shared test sandbox helper (`makeSandboxDir`, drained
-  by an `afterEach`), the pattern the other suites already use.
 
 ## [0.9.27] - 2026-10-07
 

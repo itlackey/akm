@@ -10,13 +10,13 @@ const RELEASE_NOTES_DIR = path.join(PROJECT_ROOT, "docs", "migration", "release-
 describe("migration help", () => {
   test("renders bundled migration guidance when changelog is unavailable", () => {
     const result = renderMigrationHelp("0.5.0", undefined);
-    expect(result).toContain("Migration notes for akm v0.5.0");
+    expect(result).toContain("# akm v0.5.0 migration notes");
     expect(result).toContain("akm wiki");
   });
 
   test("normalizes v-prefixed prerelease versions to the stable release notes", () => {
     const result = renderMigrationHelp("v0.5.0-rc1");
-    expect(result).toContain("Migration notes for akm v0.5.0");
+    expect(result).toContain("# akm v0.5.0 migration notes");
     expect(result).toContain("## [0.5.0]");
   });
 
@@ -28,10 +28,16 @@ describe("migration help", () => {
     const staticFiles = (packageJson.files ?? []).filter((entry) => entry !== "dist");
     // CHANGELOG.md and LICENSE are auto-published by npm from the package root
     // and intentionally NOT listed in files[] to avoid duplicate shipment.
-    expect(staticFiles).toContain("docs/migration/release-notes");
-    expect(staticFiles).toContain("docs/migration/v0.7-to-v0.8.md");
-    expect(staticFiles).toContain("docs/migration/v0.9.1-to-v0.9.2.md");
-    expect(staticFiles).toContain("docs/reference/tasks.md");
+    // An entry ships its path, or every path under it when it names a folder.
+    const published = (file: string) => staticFiles.some((entry) => file === entry || file.startsWith(`${entry}/`));
+    for (const file of [
+      "docs/migration/release-notes",
+      "docs/migration/v0.7-to-v0.8.md",
+      "docs/migration/v0.9.1-to-v0.9.2.md",
+      "docs/reference/tasks.md",
+    ]) {
+      expect(published(file)).toBe(true);
+    }
     for (const entry of staticFiles) {
       expect(fs.existsSync(path.join(PROJECT_ROOT, entry))).toBe(true);
     }
@@ -47,13 +53,13 @@ describe("migration help", () => {
     for (const version of ["0.0.13", "0.1.0", "0.2.0", "0.3.0", "0.5.0", "0.6.0", "0.7.5", "0.9.0", "0.9.2"]) {
       expect(bundled).toContain(version);
       const result = renderMigrationHelp(version, undefined);
-      expect(result).toContain(`Migration notes for akm v${version}`);
+      expect(result).toContain(`# akm v${version} migration notes`);
     }
   });
 
   test("the 0.9.2 terminal note points task-v2 users at the fail-closed migration", () => {
     const result = renderMigrationHelp("v0.9.2", undefined);
-    expect(result).toContain("Migration notes for akm v0.9.2");
+    expect(result).toContain("# akm v0.9.2 migration notes");
     // P4 (docs/plans/specs/p4-deletions-closeout.md §4.7, F-A2.28) rewrote
     // the 0.9.2 release notes off the capitalized "Task v3" proper-noun
     // wording onto "task source v4" (the destination) / "task-v3" (the
