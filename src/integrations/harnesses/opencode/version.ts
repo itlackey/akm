@@ -20,6 +20,7 @@
 
 import childProcess from "node:child_process";
 import { warnOnce } from "../../../core/warn";
+import { defaultWhich } from "../../agent/detect";
 import type { OpencodeMajor } from "../opencode-sdk/wire";
 
 /** OpenCode 2's own alias for its binary; it can sit next to an OpenCode 1 `opencode` on PATH. */
@@ -41,7 +42,7 @@ export interface OpencodeVersionInfo {
 }
 
 interface DetectOptions {
-  /** PATH lookup; defaults to `Bun.which`. */
+  /** PATH lookup; defaults to `defaultWhich` (works on Bun and Node). */
   which?: Which;
   /** Replaces the `--version` run for this call (health injects its own spawn). */
   probe?: OpencodeVersionProbe;
@@ -83,14 +84,14 @@ export function parseOpencodeMajor(versionOutput: string): number | undefined {
  * The binary an OpenCode engine runs: its own `bin` when it sets one, else the
  * most recent OpenCode on PATH (`opencode2` when present, else `opencode`).
  */
-export function resolveOpencodeBin(explicitBin?: string, which: Which = Bun.which): string {
+export function resolveOpencodeBin(explicitBin?: string, which: Which = defaultWhich): string {
   if (explicitBin) return explicitBin;
   return which(OPENCODE2_BIN) ? OPENCODE2_BIN : OPENCODE_BIN;
 }
 
 /** Detect the OpenCode major of `bin`: one `--version` run per binary per process. */
 export function detectOpencodeMajor(bin: string, options: DetectOptions = {}): OpencodeVersionInfo {
-  const path = (options.which ?? Bun.which)(bin) ?? bin;
+  const path = (options.which ?? defaultWhich)(bin) ?? bin;
   const cached = cache.get(path);
   if (cached) return cached;
   const raw = (options.probe ?? probeOverride ?? defaultProbe)(path);
