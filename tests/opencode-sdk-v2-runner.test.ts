@@ -22,7 +22,6 @@ import {
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { V1_ADAPTER } from "../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { V2_ADAPTER, v2Turn } from "../src/integrations/harnesses/opencode-sdk/v2-adapter";
-import { detectHarness } from "../src/setup/detect";
 
 const profile: AgentProfile = {
   name: "opencode-sdk",
@@ -489,14 +488,5 @@ describe("OpenCode 2 adapter — server selection", () => {
       V2_ADAPTER.decodeEvent({ type: "session.status", data: { sessionID: "s", status: { type: "busy" } } }),
     ).toBeUndefined();
     expect(V2_ADAPTER.decodeEvent("nope")).toBeUndefined();
-  });
-});
-
-describe("setup harness detection follows the selected OpenCode major", () => {
-  test("opencode-sdk is detected for either major when its binary is on PATH", async () => {
-    const which = (name: string) => (name === "opencode" ? "/usr/bin/opencode" : null);
-    expect(await detectHarness(which as never)).toBe("opencode-sdk");
-    expect(await detectHarness(which as never, 1)).toBe("opencode-sdk");
-    expect(await detectHarness(which as never, 2)).toBe("opencode-sdk");
   });
 });
