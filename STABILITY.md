@@ -54,7 +54,7 @@ enumeration of the whole `proposal` noun group.
 | `akm bundle show` | Evolving | See note above. |
 | `akm bundle remove` | Stable | |
 | `akm bundle update` | Stable | |
-| `akm upgrade` | Evolving | The plugin step and `--next` (0.9.28) are being verified on real hosts to become Stable before the 0.9 series ends. |
+| `akm upgrade` | Stable | Including the plugin step and `--next` (0.9.28), verified on real hosts, in empty containers and on failure paths (#1099). |
 | `akm search` | Stable | |
 | `akm curate` | Stable | |
 | `akm show` | Stable | |
