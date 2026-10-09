@@ -242,7 +242,7 @@ key, the engine and its platform. Other engine keys, `defaults.engine` and
   later), which akm does not load: put it in your opencode config
   (`"plugin": ["akm-opencode"]` for OpenCode 1; for OpenCode 2 install
   `akm-opencode-v2` with `opencode plugin add akm-opencode-v2`, see
-  [Use AKM With Any Agent](../guides/use-with-any-agent.md#opencode-plugins-one-package-per-opencode-major)). akm turns off the plugin's curation, learning
+  [Use AKM With Any Agent](https://github.com/itlackey/akm/blob/main/docs/guides/use-with-any-agent.md#opencode-plugins-one-package-per-opencode-major)). akm turns off the plugin's curation, learning
   and write gate for these dispatches and keeps its state in akm's state
   directory. The stash is protected from edits only while the temporary
   directory is outside a git repository.
