@@ -28,7 +28,6 @@ live one level up in `docs/migration/`.
 
 ## Adding notes for a new release
 
-
 1. Create `<version>.md` in this directory (e.g. `0.7.0.md`).
 2. Start the file with `# akm v<version> migration notes`, then list the
    automatic migrations, manual actions, publisher changes, and any longform
