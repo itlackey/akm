@@ -429,7 +429,7 @@ const proposalDrainCommand = defineJsonCommand({
   meta: {
     name: "drain",
     description:
-      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review",
+      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review. The judgment tier accepts only consolidate promotions; it accepted unsafe retirements and unreviewed fixes in testing (#1132), so every other kind waits for a person",
   },
   args: {
     "dry-run": {
@@ -459,7 +459,7 @@ const proposalDrainCommand = defineJsonCommand({
     judgment: {
       type: "boolean",
       description:
-        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). No-op with a logged triage_deferred summary when no runner is configured.",
+        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). It accepts only consolidate promotions; every other kind it would accept is left for review. No-op with a logged triage_deferred summary when no runner is configured.",
       default: false,
     },
     strategy: {

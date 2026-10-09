@@ -226,6 +226,18 @@ from the two good ones. Reflect revises only an asset's
 those that fixed a frontmatter defect and left the body alone were good 24
 times in 26, and those that also rewrote the body were bad 175 times in 224.
 
+### Judgment tier: promotions only
+
+The triage drain's judgment tier (`processes.triage.judgment`, off in every
+built-in strategy) may accept only a consolidate promotion, a memory proposed as
+a new knowledge note. A retirement, an exact fix or a reflect revision it would
+accept is left for a person (`judgment-not-promotion`); it may still reject.
+Measured on the nightly eval with `experimental.improveAutonomy` (#1132, #1094),
+judging every kind solved 0.49 (gpt-5.6-terra) and 0.53 (qwen3.8-27b) of the
+items, harmed 14 and 11, and changed 18 and 21 notes outside the planted set.
+Judging promotions alone: precision 0.87, recall 0.78 and 4.8% of bad promotions
+accepted on qwen3.8-27b; precision 1.0, recall 0.17 on gpt-5.6-terra.
+
 ### Retrieval regression gate
 
 Reflect refuses a revision of an existing asset that grades lower on the

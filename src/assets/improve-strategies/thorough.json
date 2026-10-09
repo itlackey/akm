@@ -1,5 +1,5 @@
 {
-  "description": "Everything default runs, plus a judged triage drain of the pending-proposal backlog (up to 25 accepts per run). Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review. Identical tuning to default; improve-stage extract stays off.",
+  "description": "Everything default runs, plus a triage drain of the pending-proposal backlog (up to 25 accepts per run). Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review. Identical tuning to default; improve-stage extract stays off.",
   "processes": {
     "reflect": {
       "enabled": true,
@@ -39,7 +39,7 @@
       "policy": "personal-stash",
       "maxAcceptsPerRun": 25,
       "maxDiffLines": 200,
-      "judgment": true
+      "judgment": false
     }
   },
   "sync": {
