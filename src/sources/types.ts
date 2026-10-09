@@ -508,7 +508,7 @@ export interface ShowResponse extends FragmentProvenance {
 }
 
 /** An agent harness whose akm plugin `akm upgrade` keeps current. */
-export type PluginHarness = "claude-code" | "codex" | "opencode";
+export type PluginHarness = "claude-code" | "codex" | "opencode" | "opencode-v2";
 
 /**
  * What `akm upgrade` did (or, under `--check`, would do) for one harness's akm
@@ -529,7 +529,7 @@ export interface PluginUpgradeEntry {
  * below `newestVersion`.
  */
 export interface UpgradeLockstep {
-  plugin: "akm-opencode";
+  plugin: "akm-opencode" | "akm-opencode-v2";
   /** `null` when the pin could not be read; the CLI is then held where it is. */
   pinnedVersion: string | null;
   newestVersion: string;

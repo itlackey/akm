@@ -71,7 +71,8 @@ function claudePluginsDir(): string {
 /**
  * Root of OpenCode's package cache, same override pattern as
  * {@link claudePluginsDir} (`AKM_OPENCODE_CACHE_DIR` for tests).
- * The OpenCode plugin (`akm-opencode`) bundles its own `akm-cli` under
+ * The OpenCode plugins (`akm-opencode`, and `akm-opencode-v2` for OpenCode 2) bundle their own `akm-cli`; see
+ * `OPENCODE_PLUGIN_LOCATIONS`. For OpenCode 1 it sits under
  * `packages/akm-opencode/node_modules/akm-cli` and runs it in-process,
  * sharing the host's databases with every other akm install — its version
  * lag matters the same way a stale Claude plugin's does.
@@ -86,27 +87,100 @@ function opencodeCacheDir(): string {
  * {@link detectInstalledPlugins}'s manifest read. `undefined` when the
  * OpenCode plugin, or its bundled akm-cli, is not installed.
  */
-function detectOpencodeBundledAkmVersion(cacheRoot: string): string | undefined {
-  const pkgPath = path.join(cacheRoot, "packages", "akm-opencode", "node_modules", "akm-cli", "package.json");
+function readAkmCliVersion(nodeModulesDir: string): string | undefined {
   try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8")) as Record<string, unknown>;
+    const pkg = JSON.parse(fs.readFileSync(path.join(nodeModulesDir, "akm-cli", "package.json"), "utf8")) as Record<
+      string,
+      unknown
+    >;
     return typeof pkg.version === "string" ? pkg.version : undefined;
   } catch {
     return undefined;
   }
 }
 
-function buildOpencodeBundledAdvisory(bundledVersion: string, cliVersion: string): HealthCheckResult {
+/** One cached copy of an OpenCode plugin's bundled `akm-cli`. */
+interface BundledAkm {
+  /** The plugin spec OpenCode cached it under, for a layout that has one folder per spec. */
+  spec?: string;
+  version: string;
+}
+
+/**
+ * An OpenCode plugin package akm knows, and how its major lays out the plugin cache. Add a major here
+ * and it is checked; the advisory name, wording and evidence follow from the entry.
+ */
+interface OpencodePluginLocation {
+  /** The `name` of the advisory this plugin produces. */
+  advisory: string;
+  /** How the advisory words the plugin: `OpenCode's` / `OpenCode 2's`. */
+  label: string;
+  /** The update remedy the warning names. */
+  remedy: string;
+  /** The bundled akm-cli of each cached copy under the OpenCode cache root. */
+  find: (cacheRoot: string) => BundledAkm[];
+}
+
+const OPENCODE_PLUGIN_LOCATIONS: readonly OpencodePluginLocation[] = [
+  {
+    // OpenCode 1: <cache>/packages/akm-opencode/node_modules/akm-cli
+    advisory: "opencode-plugin-version",
+    label: "OpenCode's",
+    remedy: "update the OpenCode plugin",
+    find: (cacheRoot) => {
+      const version = readAkmCliVersion(path.join(cacheRoot, "packages", "akm-opencode", "node_modules"));
+      return version === undefined ? [] : [{ version }];
+    },
+  },
+  {
+    // OpenCode 2: <cache>/npm/akm-opencode-v2@<spec>/<epoch-ms>/node_modules/akm-cli, newest build per spec.
+    advisory: "opencode-v2-plugin-version",
+    label: "OpenCode 2's akm-opencode-v2",
+    remedy: "update the akm-opencode-v2 plugin",
+    find: (cacheRoot) => {
+      const npmDir = path.join(cacheRoot, "npm");
+      let specs: string[];
+      try {
+        specs = fs.readdirSync(npmDir).filter((name) => name.startsWith("akm-opencode-v2@"));
+      } catch {
+        return [];
+      }
+      const found: BundledAkm[] = [];
+      for (const spec of specs.sort()) {
+        let builds: string[];
+        try {
+          builds = fs.readdirSync(path.join(npmDir, spec)).filter((name) => /^\d+$/.test(name));
+        } catch {
+          continue;
+        }
+        builds.sort((a, b) => Number(b) - Number(a));
+        const newest = builds[0];
+        if (!newest) continue;
+        const version = readAkmCliVersion(path.join(npmDir, spec, newest, "node_modules"));
+        if (version !== undefined) found.push({ spec, version });
+      }
+      return found;
+    },
+  },
+];
+
+function buildOpencodeBundledAdvisory(
+  plugin: OpencodePluginLocation,
+  bundled: BundledAkm,
+  cliVersion: string,
+): HealthCheckResult {
+  const bundledVersion = bundled.version;
   const stale = bundledVersion !== cliVersion;
+  const where = bundled.spec ? ` (${bundled.spec})` : "";
   return {
-    name: "opencode-plugin-version",
+    name: plugin.advisory,
     kind: "deterministic",
     status: stale ? "warn" : "pass",
     confidence: "high",
     message: stale
-      ? `OpenCode's bundled akm-cli is v${bundledVersion}, but the running CLI is v${cliVersion} — it shares the same databases in-process; update the OpenCode plugin.`
-      : `OpenCode's bundled akm-cli matches the running v${cliVersion}.`,
-    evidence: { bundledVersion, cliVersion },
+      ? `${plugin.label} bundled akm-cli${where} is v${bundledVersion}, but the running CLI is v${cliVersion} — it shares the same databases in-process; ${plugin.remedy}.`
+      : `${plugin.label} bundled akm-cli${where} matches the running v${cliVersion}.`,
+    evidence: bundled.spec ? { bundledVersion, cliVersion, spec: bundled.spec } : { bundledVersion, cliVersion },
   };
 }
 
@@ -247,9 +321,10 @@ export function collectPluginStalenessAdvisories(options: PluginStalenessOptions
   const results = plugins.map((plugin) => buildAdvisory(plugin, options.cliVersion, pluginsRoot, listRemoteTags));
 
   const opencodeCacheRoot = options.opencodeCacheRoot ?? opencodeCacheDir();
-  const bundledVersion = detectOpencodeBundledAkmVersion(opencodeCacheRoot);
-  if (bundledVersion !== undefined) {
-    results.push(buildOpencodeBundledAdvisory(bundledVersion, options.cliVersion));
+  for (const plugin of OPENCODE_PLUGIN_LOCATIONS) {
+    for (const bundled of plugin.find(opencodeCacheRoot)) {
+      results.push(buildOpencodeBundledAdvisory(plugin, bundled, options.cliVersion));
+    }
   }
 
   return results;
