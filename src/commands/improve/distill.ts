@@ -47,7 +47,6 @@ import type { EligibilitySource } from "../proposal/proposal-types";
 import { listProposals, type Proposal, type ProposalsContext } from "../proposal/repository";
 import { detectDoubleFrontmatter, isValidDescription } from "../proposal/validators/proposal-quality-validators";
 import { akmSearch } from "../read/search";
-import { stripFrontmatterBody } from "./content-hash";
 import {
   autoRepairLessonFrontmatter,
   autoSwapDescriptionWhenToUse,
@@ -55,7 +54,7 @@ import {
   type DistillValidationFinding,
   repairLessonDescriptionTruncation,
 } from "./distill/content-repair";
-import { buildClsContext, checkDistillFidelity, DEFAULT_CLS_ADJACENT_COUNT } from "./distill-guards";
+import { buildClsContext, DEFAULT_CLS_ADJACENT_COUNT } from "./distill-guards";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
 import { resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
@@ -392,7 +391,6 @@ interface DistillRun {
   exclusion?: { filteredFeedbackCount: number; feedbackFullyFiltered: boolean };
   asset: { path: string | null; content: string | null };
   vocabulary: Set<string>;
-  outcomeWeightEnabled: boolean;
   related: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
   lookup: (ref: string) => Promise<string | null>;
 }
@@ -496,7 +494,6 @@ export async function akmDistill(options: AkmDistillOptions): Promise<AkmDistill
     eligMeta,
     asset,
     vocabulary: loadRefVocabulary(),
-    outcomeWeightEnabled: config.improve?.salience?.outcomeWeightEnabled !== false,
     related: options.fetchRelatedFn ?? fetchRelatedAssets,
     lookup,
   };
@@ -700,7 +697,7 @@ async function judgeAndQueue(
     descriptionSwapped?: number;
     /** The feedback lines the writer saw, for the judge. */
     feedback?: string[];
-    /** Knowledge promotions keep their own frontmatter and skip the fidelity check. */
+    /** Knowledge promotions keep their own frontmatter. */
     promotion?: boolean;
   },
 ): Promise<AkmDistillResult> {
@@ -733,29 +730,6 @@ async function judgeAndQueue(
     const data = parseFrontmatter(content).data;
     if (Object.keys(data).length > 0) frontmatter = data;
   } else {
-    // Optional check against the cited source; a contradiction goes to a human.
-    const fidelity = (getImproveProcessConfig("distill", run.profile)?.fidelityCheck as { enabled?: boolean }) ?? {};
-    if (fidelity.enabled && out.source) {
-      try {
-        const verdict = checkDistillFidelity(
-          stripFrontmatterBody(content),
-          [stripFrontmatterBody(out.source)],
-          fidelity,
-        );
-        if (verdict.contradictionDetected) {
-          return rejectDistilled(
-            run,
-            out.ref,
-            content,
-            2.0,
-            verdict.reason ?? "Proposal may contradict cited source memories.",
-            { reviewNeeded: true, fidelityContradiction: true },
-          );
-        }
-      } catch {
-        // The fidelity check is supplemental.
-      }
-    }
     // Canonical provenance goes into the content promotion writes.
     const parsed = parseFrontmatter(content);
     const xrefs = Array.isArray(parsed.data.xrefs) ? parsed.data.xrefs.map(String) : [];
@@ -1106,7 +1080,6 @@ function stampInputSalience(run: DistillRun): void {
             type,
             retrievalFreq: 0,
             encodingSalience: scored.score,
-            outcomeWeightEnabled: run.outcomeWeightEnabled,
           }),
         ),
       );
@@ -1135,7 +1108,6 @@ function persistOutputEncodingSalience(run: DistillRun, ref: string, body: strin
           type,
           retrievalFreq: 0,
           encodingSalience: scored.score,
-          outcomeWeightEnabled: run.outcomeWeightEnabled,
         }),
       ),
     );

@@ -10,8 +10,7 @@
     "consolidate": {
       "enabled": true,
       "allowedTypes": ["memory"],
-      "maxChunkSize": 50,
-      "minPoolSize": 0
+      "maxChunkSize": 50
     },
     "memoryInference": {
       "enabled": false

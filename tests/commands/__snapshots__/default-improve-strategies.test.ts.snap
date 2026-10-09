@@ -273,7 +273,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         ],
         "enabled": true,
         "maxChunkSize": 50,
-        "minPoolSize": 0,
       },
       "distill": {
         "allowedTypes": [

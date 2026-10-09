@@ -388,7 +388,7 @@ for scripted use.
   `catchup`) and the proactive-maintenance and high-salience lanes. 0.10
   measures each and keeps, folds or removes it (#1094).
 - **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
-  engines, limits, gates, and the anti-collapse / CLS / fidelity knobs) and
+  engines, limits, gates, and the CLS knobs) and
   the `index.*` per-pass config. The 0.9.x series is explicitly still settling
   the design of the improve processes, so **keys in these two families may be
   added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm
