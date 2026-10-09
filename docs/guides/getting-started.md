@@ -70,6 +70,25 @@ subdirectories for each asset type: `scripts/`, `skills/`, `commands/`,
 [Filesystem Layout](../architecture/internals/storage-locations.md) for
 platform-specific paths and environment variable overrides.
 
+## Isolated sandbox workflow
+
+Need a throwaway install for agent tests, CI repros, or docs verification? Run
+akm inside a temporary HOME/XDG sandbox so nothing touches your normal local
+state:
+
+```sh
+export AKM_SANDBOX="$(mktemp -d /tmp/akm-sandbox.XXXXXX)"
+export HOME="$AKM_SANDBOX/home"
+export XDG_CONFIG_HOME="$HOME/.config"
+export XDG_DATA_HOME="$HOME/.local/share"
+export XDG_CACHE_HOME="$HOME/.cache"
+export XDG_STATE_HOME="$HOME/.local/state"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME" "$XDG_CACHE_HOME" "$XDG_STATE_HOME"
+akm setup --yes --dir "$AKM_SANDBOX/bundle"
+```
+
+Delete `$AKM_SANDBOX` when you're done to remove the whole throwaway install.
+
 ## 3. Connect a capability source
 
 Add something to search. Point akm at a directory you already have, or

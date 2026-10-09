@@ -109,4 +109,4 @@ Without the queue, you are choosing between running the improve pipeline (accept
 
 ---
 
-The proposal queue is available as of akm 0.7.0. The 0.8.0 additions — confidence scores, expiration, `akm proposal revert`, and generator-scoped bulk accept — require 0.8.0 or later. Full reference at [docs/cli.md](https://github.com/itlackey/akm/blob/main/docs/cli.md#proposal) and the [configuration reference](https://github.com/itlackey/akm/blob/main/docs/configuration.md).
+The proposal queue is available as of akm 0.7.0. The 0.8.0 additions — confidence scores, expiration, `akm proposal revert`, and generator-scoped bulk accept — require 0.8.0 or later. Full reference at [CLI reference](../reference/cli.md#proposal) and the [configuration reference](../reference/configuration.md).

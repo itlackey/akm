@@ -6,7 +6,6 @@ Task-oriented guides and command tours for using akm.
 
 - [Getting Started](getting-started.md) -- Quick setup guide
 - [Concepts](concepts.md) -- Bundles, adapters, asset types, and refs
-- [Local Development](../maintainers/local-development.md) -- Dogfooding akm while editing its own source
 
 ## Command tours
 

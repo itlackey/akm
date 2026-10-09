@@ -142,7 +142,7 @@ The smallest config that gets you a fully functional 0.8.0 installation with a c
 }
 ```
 
-This is a trimmed example focused on the core profiles and defaults. The full minimal config in [docs/configuration.md](https://github.com/itlackey/akm/blob/main/docs/configuration.md) also includes `feedbackDistillation`, `index`, and `search` top-level blocks with their defaults. If you omit those blocks, akm uses compiled-in defaults for them.
+This is a trimmed example focused on the core profiles and defaults. The full minimal config in [configuration reference](../reference/configuration.md) also includes `feedbackDistillation`, `index`, and `search` top-level blocks with their defaults. If you omit those blocks, akm uses compiled-in defaults for them.
 
 For local models, swap `openai-mini` for an Ollama or LM Studio profile and drop the `apiKey` field. The `supportsJsonSchema` flag tells akm to use structured JSON output for providers that support it — set it to `true` for OpenAI-compatible endpoints that honor `response_format: {type: "json_schema"}`, leave it off for local models that do not.
 
@@ -186,6 +186,6 @@ The cost of that improvement is worth making concrete: the schema file is 641 LO
 
 ---
 
-Config v2 is in akm 0.8.0. The full configuration reference is in [docs/configuration.md](https://github.com/itlackey/akm/blob/main/docs/configuration.md). The [0.8.0 release notes](https://dev.to/itlackey/akm-080-cli-redesign-task-assets-and-belief-aware-memory-335a) cover the broader storage and pipeline changes that landed alongside the config rewrite. If you are running the improve pipeline and want to see how the `profiles.improve` config behaves in practice, [Your Agent Has a Memory That Runs While You Sleep](https://dev.to/itlackey/your-agent-has-a-memory-that-runs-while-you-sleep-20oh) covers 24 hours of autonomous operation with the full process config in place.
+Config v2 is in akm 0.8.0. The full configuration reference is in [configuration reference](../reference/configuration.md). The [0.8.0 release notes](https://dev.to/itlackey/akm-080-cli-redesign-task-assets-and-belief-aware-memory-335a) cover the broader storage and pipeline changes that landed alongside the config rewrite. If you are running the improve pipeline and want to see how the `profiles.improve` config behaves in practice, [Your Agent Has a Memory That Runs While You Sleep](https://dev.to/itlackey/your-agent-has-a-memory-that-runs-while-you-sleep-20oh) covers 24 hours of autonomous operation with the full process config in place.
 
 If you are upgrading, start with `akm config migrate --dry-run` and check that the output matches your expectations before applying.

@@ -161,6 +161,6 @@ The next improve run after that shows reflect calls completing in the 6–10 sec
 
 ---
 
-LLM mode reflect is available in akm 0.8.0. The full configuration reference is in [docs/configuration.md](https://github.com/itlackey/akm/blob/main/docs/configuration.md). The Config v2 key mapping is in the [v0.7 to v0.8 migration guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md#config-v2-migration-reflect-multi-mode).
+LLM mode reflect is available in akm 0.8.0. The full configuration reference is in [configuration reference](../reference/configuration.md). The Config v2 key mapping is in the [v0.7 to v0.8 migration guide](../migration/v0.7-to-v0.8.md#config-080-migration-unified-profiles).
 
 For a broader view of the improve pipeline — all five phases, scheduling, and how reflect feeds the downstream consolidation and distill passes — see [The Improvement Loop: How akm Keeps Your Agent Sharp](https://dev.to/itlackey/the-improvement-loop-how-akm-keeps-your-agent-sharp-2d4d). For debugging improve runs when something goes wrong (stale DB entries, hallucinated merge plans, pre-flight filters), see [Your Agent Has a Memory That Runs While You Sleep](https://dev.to/itlackey/your-agent-has-a-memory-that-runs-while-you-sleep-20oh).

@@ -14,7 +14,7 @@ task↔workflow seam.
 `release/0.9.2`). Every expected result marked "verified live" below was
 captured by actually running that exact command against that exact commit
 during authoring/review of this document, via `bun src/cli.ts` in an
-isolated sandbox (see [Setup](#setup-one-sandbox-for-every-non-destructive-test)
+isolated sandbox (see [Setup](#setup--one-sandbox-for-every-non-destructive-test)
 below) — not inferred from source or docs. Anything not run live is marked
 `UNVERIFIED` in bold, inline, at the point it applies. **Re-verify the exact
 JSON field names, error strings, and exit codes here before relying on them
@@ -1500,7 +1500,7 @@ before running any of it.** Mandatory for every test below:
 `add` writes only its own binding (narrower blast radius); `sync` does a
 full reconcile and can attempt to remove unrelated real entries.
 
-### DT-1 — `task add` happy path installs a real scheduler entry [Linux: cron]
+### DT-1 — `task add` happy path installs a real cron entry [Linux: cron]
 
 **Setup:** `export TID="akm-manual-test-$(date +%s)"`; back up crontab per
 above.

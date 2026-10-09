@@ -2,7 +2,7 @@
 
 Authoritative reference documentation for the akm CLI and its data.
 
-- [Bundle Types](bundle-types.md) -- Pointer page: where the bundle-format compatibility table and adapter internals now live
+- [Bundle Types](bundle-types.md) -- Supported bundle formats and compatibility
 - [CLI](cli.md) -- All `akm` commands and flags
 - [Configuration](configuration.md) -- Engines, strategies, bundles, and settings
 - [Supported Formats](supported-formats.md) -- Formats akm can index, from its own bundle layout to other tools' existing asset directories
@@ -17,4 +17,3 @@ Authoritative reference documentation for the akm CLI and its data.
 - [Website Sources](https://github.com/itlackey/akm/blob/main/docs/reference/website-sources.md) -- The pluggable fetcher API behind `akm import <url>` and other URL-based knowledge reads
 - [Data & Telemetry](data-and-telemetry.md) -- Exactly what akm reads and writes on your machine (no remote telemetry)
 
-See also: [akm-eval](https://github.com/itlackey/akm-eval) -- the evals and benchmarks for measuring whether `akm improve` is working, and the repo-root [Roadmap](https://github.com/itlackey/akm/blob/main/ROADMAP.md) -- high-level focus for upcoming releases.
