@@ -78,6 +78,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
   said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`
   and `consolidate`. (#1130)
+- **A proposal from the proactive lane waits for a person (#1147).** With the lane on in `default` and the default
+  drain promoting through the deterministic gates, a reflect edit on an asset with no feedback was accepted unattended
+  once reflect's judge passed it (the nightly eval showed `when_to_use`, `type` and provenance stamps and a title
+  heading added to assets no one had asked about). `proposal drain` now never accepts a proposal whose
+  `eligibilitySource` is `proactive`, through a deterministic gate, the judgment tier or an earlier staged accept: it is
+  left for review with reason `proactive-needs-review` (and is not sent to the judgment tier). Feedback-driven
+  proposals (`signal-delta`, `scope`) are unchanged. No new setting. (#1147)
 
 ### Removed
 

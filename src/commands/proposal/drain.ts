@@ -10,6 +10,10 @@
  *     gate decision carrying its content hash) is accepted, unless its target
  *     changed since mint — then it is auto-rejected as `stale-target`, never
  *     overwritten;
+ *   - a proposal planned by the proactive lane (`eligibilitySource: "proactive"`,
+ *     no feedback behind it) is never accepted, by a gate or by the judgment tier,
+ *     and a staged accept does not carry it: it is left for a person with reason
+ *     `proactive-needs-review` (#1147);
  *   - everything else needs a judge: the judgment tier decides it when a runner
  *     is configured, and whatever stays undecided is left for review
  *     (`review_needed` in the improve ledger).
@@ -63,7 +67,7 @@ import {
   recordGateDecision,
 } from "./repository";
 
-export type DrainDeferReason = "needs-judgment";
+export type DrainDeferReason = "needs-judgment" | "proactive-needs-review";
 
 /** The gate label on every decision the drain records. */
 const DRAIN_GATE = "triage";
@@ -377,7 +381,7 @@ async function runJudgmentTier(
   const cappedBefore = result.skippedByCap.length;
   for (const item of result.deferred) {
     const proposal = byId.get(item.id);
-    if (!proposal) {
+    if (!proposal || item.reason === "proactive-needs-review") {
       stillDeferred.push(item);
       continue;
     }
@@ -582,6 +586,10 @@ export async function drainProposals(
     if (decision?.outcome === "deferred" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
     if (isEmptyDiff(proposal)) {
       empties.push(proposal.id);
+    } else if (proposal.eligibilitySource === "proactive") {
+      // Planned by the proactive lane (no feedback behind it): never accepted
+      // here, whatever a judge or an earlier drain staged. A person decides (#1147).
+      result.deferred.push({ id: proposal.id, reason: "proactive-needs-review" });
     } else if (decision?.outcome === "staged" && decision.contentHash === proposalContentHash(proposal)) {
       // A judgment accept staged by an earlier drain obeys the same rule: only a promotion.
       if (decision.gate === DRAIN_GATE && !isPromotionProposal(proposal)) {
@@ -594,7 +602,7 @@ export async function drainProposals(
     }
   }
 
-  if (opts.judgment && result.deferred.length > 0) {
+  if (opts.judgment && result.deferred.some((d) => d.reason === "needs-judgment")) {
     // Symbolic credentials, and the runner's model-work tool policy, are checked before any gate, reject or promote.
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
@@ -661,7 +669,10 @@ export async function drainProposals(
   if (!opts.dryRun) {
     for (const item of result.deferred) {
       const note = deferNotes.get(item.id);
-      const reviewReason = note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured");
+      const reviewReason =
+        item.reason === "proactive-needs-review"
+          ? item.reason
+          : (note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured"));
       try {
         recordGateDecision(opts.stashDir, item.id, {
           outcome: "deferred",

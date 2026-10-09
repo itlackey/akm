@@ -3295,7 +3295,9 @@ one at a time. One rule decides each proposal: a proposal whose quality judge
 passed on its current content is accepted (unless its target changed since it
 was minted — that one is auto-rejected as `stale-target`); an empty diff is
 rejected; a proposal that reflect or distill deferred for review is left for a
-person; everything else goes to the judgment tier when one is enabled, and
+person; a proposal from the proactive-maintenance lane (no feedback behind it)
+is left for a person too (reason `proactive-needs-review`), even when its judge
+passed it; everything else goes to the judgment tier when one is enabled, and
 is otherwise left for review. The judgment tier may accept only a consolidate
 promotion (a memory proposed as a new knowledge note); any other kind it would
 accept, such as a retirement, an exact fix or a reflect revision, is left for a
