@@ -55,7 +55,7 @@ akm show scripts/deploy.sh         # View details and run command
 - **One library for every agent** -- Use the same capability library from Claude Code, OpenCode, Cursor, Aider, Windsurf, or any assistant that can run shell commands.
 - **Load only what the task needs** -- Search or curate a shortlist, then load full content by ref. No giant startup prompt is required.
 - **Package complete capabilities** -- Install and share bundles containing skills, scripts, workflows, agents, instructions, memories, and knowledge -- not just prompt snippets.
-- **Improve through evidence, with review** -- Feedback influences retrieval and produces diffable proposals. Changes remain reviewable and target only writable bundles.
+- **Improve through evidence, with review** -- Feedback re-ranks assets right away. A negative report can carry an exact text fix, and `akm improve` repairs metadata; every edit lands as a diffable proposal you accept, reject or revert, and only writable bundles are changed.
 - **Turn knowledge into repeatable work** -- Run persisted workflows with dispatch, gates, retries, budgets, and resume instead of reconstructing a process from prose every session.
 
 akm retrieves every supported capability type. It directly orchestrates
@@ -80,16 +80,16 @@ Or generate it directly: `akm help agents >> AGENTS.md`
 
 ## Documentation
 
-Full docs, CLI reference, and guides are available on [GitHub](https://github.com/itlackey/akm):
+Full docs, CLI reference, and guides are at **[akm.fwdslsh.dev](https://akm.fwdslsh.dev/)**:
 
-- [Getting Started](https://github.com/itlackey/akm/blob/main/docs/guides/getting-started.md)
-- [Supported Formats](https://github.com/itlackey/akm/blob/main/docs/reference/supported-formats.md)
-- [CLI Reference](https://github.com/itlackey/akm/blob/main/docs/reference/cli.md)
-- [Task v3 Reference](https://github.com/itlackey/akm/blob/main/docs/reference/tasks.md)
-- [0.9.2 Migration Guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.9.1-to-v0.9.2.md)
-- [Configuration](https://github.com/itlackey/akm/blob/main/docs/reference/configuration.md)
-- [Bundle Authoring Guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-bundles.md)
-- [Registry](https://github.com/itlackey/akm/blob/main/docs/reference/registry.md)
+- [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started.html)
+- [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats.html)
+- [CLI Reference](https://akm.fwdslsh.dev/docs/reference/cli.html)
+- [Task v3 Reference](https://akm.fwdslsh.dev/docs/reference/tasks.html)
+- [0.9.2 Migration Guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2.html)
+- [Configuration](https://akm.fwdslsh.dev/docs/reference/configuration.html)
+- [Bundle Authoring Guide](https://akm.fwdslsh.dev/docs/guides/author-bundles.html)
+- [Registry](https://akm.fwdslsh.dev/docs/reference/registry.html)
 
 ## License
 
