@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **OpenAI's reasoning models (gpt-5.x) work as `llm` engines.** They answer 400 to any `temperature` but the
+  default and to `max_tokens`, so every akm model call failed on them. Like the existing fallback for the
+  thinking-control fields, a 400 that names `temperature` is retried once without it, and one that asks for
+  `max_completion_tokens` is retried with the cap under that name; the connection keeps the working shape for
+  the rest of the process.
 - **Every relative link in the npm package's docs resolves again.** #1118 made `docs/README.md`,
   `docs/migration/README.md` and `docs/reference/cli.md` link by relative path to guides and pages the package did
   not ship. npm always ships a folder's `README.md`, so those links were dead for npm users. The package now ships
