@@ -144,11 +144,16 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     // candidate is installed OVER in place below (the same prefix a real
     // `npm i -g akm-cli@…`/`bun add -g` upgrade replaces), and an untouched
     // `previous-readback` copy that step 11 drives against the
-    // candidate-written home.
-    const [liveInstall, previousReadbackInstall] = await Promise.all([
-      installAkmTarball(previousTarball, prefixRoot, "live", previousVersion),
-      installAkmTarball(previousTarball, prefixRoot, "previous-readback", previousVersion),
-    ]);
+    // candidate-written home. One after the other: onnxruntime-node's
+    // postinstall extracts into a tmpdir named only by `Date.now()`, so two
+    // concurrent installs can share it and one deletes the other's files.
+    const liveInstall = await installAkmTarball(previousTarball, prefixRoot, "live", previousVersion);
+    const previousReadbackInstall = await installAkmTarball(
+      previousTarball,
+      prefixRoot,
+      "previous-readback",
+      previousVersion,
+    );
     previousLauncher = previousReadbackInstall.launcher;
 
     home = await buildHome(liveInstall.launcher, liveInstall.version, path.join(workRoot, "home"));

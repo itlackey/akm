@@ -348,6 +348,13 @@ const jsonSchemaUnsupportedConnections = new Set<string>();
  */
 const thinkingControlRejectedConnections = new Set<string>();
 
+/**
+ * And for OpenAI's reasoning models: they answer 400 to any `temperature` but
+ * the default, and to `max_tokens`, naming `max_completion_tokens` instead.
+ */
+const temperatureRejectedConnections = new Set<string>();
+const maxCompletionTokensConnections = new Set<string>();
+
 function connectionKey(config: LlmConnectionConfig): string {
   return `${config.endpoint}|${config.model}`;
 }
@@ -356,6 +363,8 @@ function connectionKey(config: LlmConnectionConfig): string {
 export function _resetEndpointSupportTrackersForTests(): void {
   jsonSchemaUnsupportedConnections.clear();
   thinkingControlRejectedConnections.clear();
+  temperatureRejectedConnections.clear();
+  maxCompletionTokensConnections.clear();
 }
 
 /**
@@ -391,6 +400,10 @@ function isRejectedRequest(err: unknown): err is LlmCallError {
 
 /** A strict API names the field it does not know: `Unknown parameter: 'chat_template_kwargs'.` */
 const THINKING_FIELD_NAMED = /chat_template_kwargs|enable_thinking/;
+/** `Unsupported value: 'temperature' does not support 0 with this model. Only the default (1) value is supported.` */
+const TEMPERATURE_NAMED = /'temperature'/;
+/** `Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.` */
+const MAX_TOKENS_REPLACED = /max_completion_tokens/;
 
 /**
  * A single chat-completion attempt: one HTTP request/response cycle, with an
@@ -404,7 +417,10 @@ const THINKING_FIELD_NAMED = /chat_template_kwargs|enable_thinking/;
  *
  * The thinking-control fields get the same treatment (#1045): a 4xx that
  * names `chat_template_kwargs` or `enable_thinking` is answered by one retry
- * without them, which may in turn fall back without the schema.
+ * without them, which may in turn fall back without the schema. A 4xx that
+ * names `temperature`, or asks for `max_completion_tokens`, is answered the
+ * same way: the connection stops sending `temperature`, or sends the token cap
+ * as `max_completion_tokens`, for the rest of the process.
  */
 async function chatCompletionAttempt(
   config: ChatCompletionConfig,
@@ -420,6 +436,19 @@ async function chatCompletionAttempt(
     return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema, includeThinking);
   } catch (err) {
     if (!isRejectedRequest(err)) throw err;
+    const key = connectionKey(config);
+    if (TEMPERATURE_NAMED.test(err.message) && !temperatureRejectedConnections.has(key)) {
+      warnVerbose(`[akm] LLM rejected temperature (${err.statusCode}); retrying once without it: ${err.message}`);
+      temperatureRejectedConnections.add(key);
+      return chatCompletionAttempt(config, messages, options, timeoutMs, includeThinking);
+    }
+    if (MAX_TOKENS_REPLACED.test(err.message) && !maxCompletionTokensConnections.has(key)) {
+      warnVerbose(
+        `[akm] LLM rejected max_tokens (${err.statusCode}); retrying once with max_completion_tokens: ${err.message}`,
+      );
+      maxCompletionTokensConnections.add(key);
+      return chatCompletionAttempt(config, messages, options, timeoutMs, includeThinking);
+    }
     if (includeThinking && THINKING_FIELD_NAMED.test(err.message)) {
       warnVerbose(
         `[akm] LLM rejected chat_template_kwargs/enable_thinking (${err.statusCode}); retrying once without them: ${err.message}`,
@@ -493,11 +522,15 @@ async function chatCompletionAttemptOnce(
   const reasoningEffortParams =
     config.reasoningEffort === undefined ? {} : { reasoning_effort: config.reasoningEffort };
 
+  const key = connectionKey(config);
+  const maxTokensField = maxCompletionTokensConnections.has(key) ? "max_completion_tokens" : "max_tokens";
   const requestBody = JSON.stringify({
     model: config.model,
     messages,
-    temperature: options?.temperature ?? config.temperature ?? 0.3,
-    ...(resolvedMaxTokens !== undefined ? { max_tokens: resolvedMaxTokens } : {}),
+    ...(temperatureRejectedConnections.has(key)
+      ? {}
+      : { temperature: options?.temperature ?? config.temperature ?? 0.3 }),
+    ...(resolvedMaxTokens !== undefined ? { [maxTokensField]: resolvedMaxTokens } : {}),
     ...config.extraParams,
     ...responseFormat,
     ...thinkingParams,
