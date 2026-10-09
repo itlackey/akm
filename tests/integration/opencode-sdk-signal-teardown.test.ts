@@ -96,7 +96,7 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
         mode: 0o755,
       });
       writeSandboxConfig({
-        engines: { fake: { kind: "agent", platform: "opencode-sdk", bin } },
+        engines: { fake: { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1, bin } },
         defaults: { engine: "fake" },
       });
 
