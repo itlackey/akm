@@ -18,7 +18,12 @@ import { clearLogFile, setLogFile, warn } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { defaultWhich } from "../../integrations/agent/detect";
-import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
+import {
+  collectEngineCredentialValues,
+  materializeLlmConnection,
+  type ResolvedLlmUse,
+} from "../../integrations/agent/engine-resolution";
+import { llmUseFromRunner, sdkFallbackUseFromRunner } from "../../integrations/agent/runner";
 import { probeLlmReachable } from "../../llm/client";
 import { getOutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
@@ -115,6 +120,8 @@ interface RequiredEngineTarget {
   engine: string;
   connection?: LlmConnectionConfig;
   bin?: string;
+  /** Why the connection could not be built: its credential is required and missing. */
+  error?: string;
 }
 
 /** Every engine the plan would dispatch to, triage's judgment engine included. */
@@ -122,19 +129,39 @@ function collectRequiredEngineTargets(plan: ResolvedImprovePlan): RequiredEngine
   const runners = (Object.entries(plan.processes) as [EngineUnavailableProcessName, ResolvedImproveProcess][])
     .flatMap(([processName, process]) => (process.runner ? [[processName, process.runner] as const] : []))
     .concat(plan.triageJudgment ? [["triage.judgment", plan.triageJudgment] as const] : []);
-  return runners.map(([processName, runner]) => ({
-    process: processName,
-    engine: runner.engine,
-    ...(runner.kind === "llm" ? { connection: probeConnection(runner) } : { bin: runner.profile.bin }),
-    ...(runner.kind === "sdk" && runner.fallbackConnection
-      ? { connection: probeConnection({ connection: runner.fallbackConnection, timeoutMs: runner.fallbackTimeoutMs }) }
-      : {}),
-  }));
+  return runners.map(([processName, runner]) => {
+    // The runner's own timeout, else the connection's (sdkFallbackUseFromRunner already does this).
+    const use =
+      runner.kind === "llm"
+        ? {
+            ...llmUseFromRunner(runner),
+            timeoutMs: runner.timeoutMs !== undefined ? runner.timeoutMs : (runner.connection.timeoutMs ?? null),
+          }
+        : runner.kind === "sdk"
+          ? sdkFallbackUseFromRunner(runner)
+          : undefined;
+    return {
+      process: processName,
+      engine: runner.engine,
+      ...(runner.kind === "llm" ? {} : { bin: runner.profile.bin }),
+      ...(use ? probeConnection(use) : {}),
+    };
+  });
 }
 
-/** The resolved engine keeps its request timeout beside the connection (the runtime merges it in); the probe needs it on the connection. */
-function probeConnection(runner: { connection: LlmConnectionConfig; timeoutMs?: number | null }): LlmConnectionConfig {
-  return runner.timeoutMs !== undefined ? { ...runner.connection, timeoutMs: runner.timeoutMs } : runner.connection;
+/**
+ * The connection the probe sends, built as a dispatch builds it: the runner
+ * keeps its credential symbolic, so the key is read and injected here, or the
+ * probe would go out without one.
+ */
+function probeConnection(
+  use: ResolvedLlmUse,
+): { connection: LlmConnectionConfig } | { connection: LlmConnectionConfig; error: string } {
+  try {
+    return { connection: materializeLlmConnection(use) };
+  } catch (err) {
+    return { connection: use.connection, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 /**
@@ -185,6 +212,7 @@ export async function assertRequiredEnginesReachable(
         return { ...target, reach: { reachable: false, error: `${target.bin} is not on PATH` }, latencyMs: 0 };
       }
       if (!target.connection) return { ...target, reach: { reachable: true }, latencyMs: 0 };
+      if (target.error) return { ...target, reach: { reachable: false, error: target.error }, latencyMs: 0 };
       return { ...target, ...(await probeConnectionOnce(target.connection)) };
     }),
   );

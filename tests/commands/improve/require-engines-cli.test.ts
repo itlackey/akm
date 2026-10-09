@@ -157,6 +157,35 @@ describe("assertRequiredEnginesReachable — R17 engineProbe", () => {
     expect(outcomes.map((o) => o.process).sort()).toEqual(["distill", "reflect"]);
   });
 
+  test("the probe carries the engine's credential, read as a dispatch reads it", async () => {
+    const plan = {
+      processes: {
+        reflect: {
+          enabled: true,
+          config: {},
+          runner: {
+            kind: "llm",
+            engine: "keyed",
+            connection: { endpoint: "https://keyed.example.test/v1", model: "keyed-model" },
+            credential: { names: ["AKM_PROBE_KEY_TEST"], required: true },
+          },
+        },
+      },
+    } as unknown as ResolvedImprovePlan;
+    const seen: (string | undefined)[] = [];
+    const probeReachable = mock(async (connection: { apiKey?: string }) => {
+      seen.push(connection.apiKey);
+      return { reachable: true };
+    });
+    process.env.AKM_PROBE_KEY_TEST = "probe-secret";
+    try {
+      await assertRequiredEnginesReachable(plan, probeReachable);
+    } finally {
+      delete process.env.AKM_PROBE_KEY_TEST;
+    }
+    expect(seen).toEqual(["probe-secret"]);
+  });
+
   test("dedupes the network probe by endpoint+model, but still returns one outcome per target", async () => {
     const plan: ResolvedImprovePlan = {
       processes: {
