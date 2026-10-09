@@ -550,6 +550,24 @@ esac`,
       expect(fs.existsSync(cacheDir("next"))).toBe(true);
     });
 
+    test("a config pinning an exact akm-opencode version is left alone on any run, with no lockstep (#1117)", async () => {
+      writeConfig(["akm-opencode@0.8.0"]);
+      writeCachedOpenCode("0.9.26");
+      writeCachedOpenCode("0.9.27-rc.2", "next");
+      stubNpm({ latest: ["0.9.27", "0.9.27"], next: ["0.9.28-rc.1", "0.9.28-rc.1"] });
+      stubOpenCodeNext("0.9.28-rc.1");
+      for (const args of [UPGRADE, NEXT]) {
+        const run = await withEnv(world.env, () => runUpgrade(args, "0.9.27", fakeDeps("0.9.28", "0.9.27")));
+        expect(entry(run, "opencode").outcome).toBe("skipped");
+        expect(entry(run, "opencode").message).toContain('OpenCode loads "akm-opencode@0.8.0"');
+        expect(run.result.lockstep).toBeUndefined();
+      }
+      expect(mutations()).toEqual([]);
+      expect(commands().some((c) => c.startsWith("npm view akm-opencode"))).toBe(false);
+      expect(fs.existsSync(cacheDir("latest"))).toBe(true);
+      expect(fs.existsSync(cacheDir("next"))).toBe(true);
+    });
+
     test("no OpenCode config at all behaves like a bare one", async () => {
       writeCachedOpenCode("0.9.26");
       stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.27-rc.2", "0.9.27-rc.2"] });

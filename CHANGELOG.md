@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm upgrade` leaves alone an OpenCode whose config pins another `akm-opencode` spec (#1117).** A config naming
+  an exact version (seen: `akm-opencode@0.8.0`) loads that version's cache, but the plugin step refreshed `@latest`:
+  the cache went to the trash, OpenCode did not re-create it, and the run exited 1. The step now acts only on the
+  spec the config names: bare or `@latest` on a plain run, `@next` under `--next`; any other spec is skipped with a
+  note, no cache is touched and the CLI is not held to a pin OpenCode does not load. This generalizes #1115.
+
 ## [0.9.29] - 2026-10-09
 
 A patch release on the 0.9.28 line: `akm upgrade` is Stable, and a plain upgrade no longer breaks OpenCode's

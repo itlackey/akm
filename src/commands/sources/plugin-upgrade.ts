@@ -172,13 +172,13 @@ function homeDir(): string {
 }
 
 /**
- * Whether the user's global OpenCode config asks for `akm-opencode@next`.
- * A bare `akm-opencode` resolves to `@latest` when OpenCode prefetches it, so
- * only a config that names the tag can follow prereleases. The config is only
- * read, never written; project configs are not looked at (akm does not know
- * which project OpenCode runs in).
+ * The `akm-opencode` spec the user's global OpenCode config names (bare,
+ * `@latest`, `@next`, an exact version, ...), or undefined when none does.
+ * OpenCode caches each spec in its own folder, so this says which cache it
+ * loads. The config is only read, never written; project configs are not
+ * looked at (akm does not know which project OpenCode runs in).
  */
-export function openCodeConfigRequestsNext(): boolean {
+export function openCodeConfigSpec(): string | undefined {
   const configHome = process.env.XDG_CONFIG_HOME?.trim() || path.join(homeDir(), ".config");
   const files = [
     process.env.OPENCODE_CONFIG?.trim(),
@@ -191,12 +191,17 @@ export function openCodeConfigRequestsNext(): boolean {
       const config = JSON.parse(stripJsonComments(fs.readFileSync(file, "utf8"))) as { plugin?: unknown };
       if (!Array.isArray(config.plugin)) continue;
       // An entry is a spec string or a `[spec, options]` pair.
-      if (config.plugin.some((entry) => (Array.isArray(entry) ? entry[0] : entry) === OPENCODE_NEXT_SPEC)) return true;
+      for (const entry of config.plugin) {
+        const spec = Array.isArray(entry) ? entry[0] : entry;
+        if (typeof spec === "string" && (spec === OPENCODE_PACKAGE || spec.startsWith(`${OPENCODE_PACKAGE}@`))) {
+          return spec;
+        }
+      }
     } catch {
-      // Missing or unparseable: this file does not request it.
+      // Missing or unparseable: this file names no spec.
     }
   }
-  return false;
+  return undefined;
 }
 
 /**
@@ -321,9 +326,13 @@ const NOT_FOLLOWING_NEXT =
   `--next: OpenCode resolves a bare "${OPENCODE_PACKAGE}" to @latest, so it is not updated to a prerelease; ` +
   `set "plugin": ["${OPENCODE_NEXT_SPEC}"] in your OpenCode config to follow prereleases`;
 
-const FOLLOWING_NEXT =
-  `OpenCode loads "${OPENCODE_NEXT_SPEC}" (your OpenCode config), so a plain upgrade leaves it alone; ` +
-  `run \`akm upgrade --next\` to update it, or set "plugin": ["${OPENCODE_PACKAGE}"] to follow stable releases`;
+/** Why a run leaves alone an OpenCode whose config names a spec this run does not refresh (#1115, #1117). */
+function otherSpecNote(spec: string): string {
+  const loads = `OpenCode loads "${spec}" (your OpenCode config), so this upgrade leaves it alone`;
+  return spec === OPENCODE_NEXT_SPEC
+    ? `${loads}; run \`akm upgrade --next\` to update it, or set "plugin": ["${OPENCODE_PACKAGE}"] to follow stable releases`
+    : `${loads}; set "plugin": ["${OPENCODE_PACKAGE}"] to have \`akm upgrade\` keep it current`;
+}
 
 function upgradeOpenCode(
   dryRun: boolean,
@@ -331,10 +340,10 @@ function upgradeOpenCode(
   latest: OpenCodeLatest | undefined,
   tag: UpgradeChannel,
   notFollowingNext: boolean,
-  followingNext: boolean,
+  otherSpec: string | undefined,
 ): PluginUpgradeEntry {
-  // Refreshing @latest would trash a cache OpenCode never re-creates (#1115).
-  if (followingNext) return skipped("opencode", FOLLOWING_NEXT);
+  // Refreshing a cache OpenCode does not load would trash one it never re-creates (#1115, #1117).
+  if (otherSpec) return skipped("opencode", otherSpecNote(otherSpec));
   if (!cache || !latest) return skipped("opencode", `no cached ${OPENCODE_PACKAGE}@${tag} plugin`);
   if ("error" in latest) return failed("opencode", latest.error);
   if (notFollowingNext) return skipped("opencode", NOT_FOLLOWING_NEXT);
@@ -397,8 +406,8 @@ export interface OpenCodeTarget {
   tag: UpgradeChannel;
   /** `--next` was asked for but the OpenCode config names the bare package, so it keeps resolving `@latest`. */
   notFollowingNext: boolean;
-  /** A plain run, but the OpenCode config names `akm-opencode@next`, so OpenCode does not load `@latest`. */
-  followingNext: boolean;
+  /** The config names a spec this run does not refresh (an exact version, or `@next` on a plain run): left alone. */
+  otherSpec?: string;
 }
 
 export function upgradePlugins(opts: {
@@ -406,13 +415,13 @@ export function upgradePlugins(opts: {
   next: boolean;
   openCode: OpenCodeTarget;
 }): PluginUpgradeEntry[] {
-  const { cache, latest, tag, notFollowingNext, followingNext } = opts.openCode;
+  const { cache, latest, tag, notFollowingNext, otherSpec } = opts.openCode;
   const claude = upgradeClaudeCode(opts.dryRun);
   const codex = upgradeCodex(opts.dryRun);
   return [
     opts.next ? withNextNote(claude) : claude,
     opts.next ? withNextNote(codex) : codex,
-    upgradeOpenCode(opts.dryRun, cache, latest, tag, notFollowingNext, followingNext),
+    upgradeOpenCode(opts.dryRun, cache, latest, tag, notFollowingNext, otherSpec),
   ];
 }
 
@@ -486,16 +495,30 @@ export type UpgradeRunResult =
 /**
  * Which OpenCode plugin build the CLI is held to, and which cache refreshes.
  * Under `--next` that is `akm-opencode@next`, but only when the user's OpenCode
- * config names that tag: otherwise OpenCode keeps resolving `@latest`, so the
- * lockstep stays against the `@latest` pin and the entry is reported as skipped.
+ * config names that tag: a bare one keeps resolving `@latest`, so the lockstep
+ * stays against the `@latest` pin and the entry is reported as skipped. A config
+ * naming any other spec (an exact version, or `@next` on a plain run) is left
+ * alone, with no lockstep.
  */
 function resolveOpenCodeTarget(next: boolean): OpenCodeTarget {
-  const requestsNext = openCodeConfigRequestsNext();
-  const followNext = next && requestsNext;
+  // No config entry behaves like a bare one: OpenCode would resolve @latest.
+  const spec = openCodeConfigSpec() ?? OPENCODE_PACKAGE;
+  const followsLatest = spec === OPENCODE_PACKAGE || spec === `${OPENCODE_PACKAGE}@latest`;
+  const followNext = next && spec === OPENCODE_NEXT_SPEC;
+  // Any other spec loads a cache this run does not refresh, and pins no akm-cli it should be held to.
+  if (!followsLatest && !followNext) {
+    return {
+      cache: undefined,
+      latest: undefined,
+      tag: next ? "next" : "latest",
+      notFollowingNext: false,
+      otherSpec: spec,
+    };
+  }
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag);
   const latest = cache ? (followNext ? lookupOpenCodeNext() : lookupOpenCodeLatest()) : undefined;
-  return { cache, latest, tag, notFollowingNext: next && !followNext, followingNext: !next && requestsNext };
+  return { cache, latest, tag, notFollowingNext: next && !followNext };
 }
 
 /** `akm upgrade`: the CLI step (held to the OpenCode plugin's akm), then the plugins. */
