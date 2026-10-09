@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.31] - 2026-10-09
+
+A patch release: concurrent config writes no longer lose a change, OpenAI's reasoning models work as `llm`
+engines, `akm improve --require-engines` probes send API keys, and the npm package's docs links resolve.
+
 ### Fixed
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
