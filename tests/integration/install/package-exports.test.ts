@@ -54,7 +54,11 @@ describe("package.json exports", () => {
   test("bin and the docs page are still shipped", () => {
     expect(pkg.bin).toEqual({ akm: "dist/akm", "akm-migrate": "dist/akm-migrate" });
     expect(pkg.files).toContain("dist");
-    expect(pkg.files).toContain("docs/reference/api.md");
+    // `files` may name the page or a folder that holds it.
+    const shipsApiPage = (pkg.files as string[]).some(
+      (entry) => entry === "docs/reference/api.md" || "docs/reference/api.md".startsWith(`${entry}/`),
+    );
+    expect(shipsApiPage).toBe(true);
   });
 
   test("the build inputs for the ./api targets exist", () => {
