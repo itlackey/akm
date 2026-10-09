@@ -4,7 +4,7 @@
 
 /**
  * Top-level `improve` config section (salience, state GC, strategies). Retired
- * keys (`salience.replayBudget`, `collapseDetector`, `utilityDecay`) are
+ * keys (`salience.replayBudget`, `salienceThreshold`, `collapseDetector`, `utilityDecay`) are
  * tolerated as unknown keys.
  */
 import { z } from "zod";
@@ -25,12 +25,6 @@ const ImproveSalienceSchema = z
      * and stored for observability in that mode.
      */
     outcomeWeightEnabled: z.boolean().optional(),
-    /**
-     * Minimum encoding salience score [0, 1] for a zero-feedback asset to be
-     * admitted to the high-salience improve lane (#608).
-     * Default 0.75. Set to 1.0 to disable the lane entirely.
-     */
-    salienceThreshold: z.number().min(0).max(1).optional(),
   })
   .passthrough();
 

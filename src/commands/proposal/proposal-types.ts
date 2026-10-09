@@ -13,11 +13,11 @@ import type { FileChange } from "../../core/file-change";
 /**
  * The eligibility lane that selected an asset for an improve run, carried on
  * the invoked/promoted events and the proposal so outcomes can be sliced by
- * lane. When several lanes qualify, the most specific reactive one wins:
- * `scope` > `signal-delta`. `unknown` is only for a lane that genuinely cannot
- * be attributed; `proactive` and `high-salience` (those lanes only score now),
- * `forgetting-safety` and `replay` are retired — none is assigned by anything
- * any more, all appear on rows older releases wrote.
+ * lane. When several lanes qualify, the most specific one wins:
+ * `scope` > `signal-delta` > `proactive`. `unknown` is only for a lane that
+ * genuinely cannot be attributed; `high-salience`, `forgetting-safety` and
+ * `replay` are retired — none is assigned by anything any more, all appear on
+ * rows older releases wrote.
  */
 export type EligibilitySource =
   | "signal-delta"

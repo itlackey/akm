@@ -11,7 +11,6 @@ export const BUILTIN_IMPROVE_STRATEGY_NAMES = [
   "consolidate",
   "catchup",
   "reflect-distill",
-  "proactive-maintenance",
 ] as const;
 
 /**

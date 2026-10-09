@@ -152,7 +152,7 @@ describe("selectProactiveMaintenanceRefs — priority ordering", () => {
 
   test("defaults are exported with the documented values", () => {
     expect(DEFAULT_DUE_DAYS).toBe(30);
-    expect(DEFAULT_MAX_PER_RUN).toBe(25);
+    expect(DEFAULT_MAX_PER_RUN).toBe(15);
   });
 });
 
@@ -174,6 +174,20 @@ describe("selectProactiveMaintenanceRefs — top-N bound", () => {
     // The 25 highest-frequency refs (s49..s25) should win.
     expect(res.selected[0]!.ref).toBe("skills/s49");
     expect(res.selected.some((s) => s.ref === "skills/s0")).toBe(false);
+  });
+
+  test("with no maxPerRun the cap is DEFAULT_MAX_PER_RUN, the shipped 15 (#1129)", () => {
+    const candidates = Array.from({ length: 40 }, (_, i) => ref(`skills/s${i}`));
+    const res = selectProactiveMaintenanceRefs({
+      candidates,
+      lastReflectTs: new Map(),
+      lastDistillTs: new Map(),
+      retrievalCounts: new Map(candidates.map((c, i) => [c.ref, i + 1])),
+      sizeBytesOf: () => 1000,
+      now: NOW,
+    });
+    expect(res.dueTotal).toBe(40);
+    expect(res.selected.length).toBe(15);
   });
 
   test("maxPerRun of 0 selects nothing but still reports dueTotal", () => {
@@ -266,7 +280,7 @@ describe("selectProactiveMaintenanceRefs — rankScore pinning regression", () =
         now: NOW,
       });
 
-      // Both must be selected (both DUE, maxPerRun default = 25).
+      // Both must be selected (both DUE, maxPerRun default = 15).
       expect(res.selected.map((s) => s.ref)).toEqual(["memories/hot", "memories/cold"]);
 
       // Cross-check: the selector order must match the computeSalience rankScore order.

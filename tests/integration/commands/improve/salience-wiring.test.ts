@@ -15,10 +15,7 @@
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
-import path from "node:path";
 import { akmImprove } from "../../../../src/commands/improve/improve";
-import type { AkmReflectOptions } from "../../../../src/commands/improve/reflect";
 import { getAssetSalience, getConsecutiveNoOps, upsertAssetSalience } from "../../../../src/commands/improve/salience";
 import { saveConfig } from "../../../../src/core/config/config";
 import { appendEvent } from "../../../../src/core/events";
@@ -68,18 +65,6 @@ function complain(bundle: string, ...names: string[]): void {
       ref: durableRef(`skills/${name}`, bundle),
       metadata: { signal: "negative", reason: "names a removed flag" },
     });
-  }
-}
-
-/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
-function scoredRefs(): string[] {
-  const db = openStateDatabase();
-  try {
-    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
-      (row) => row.asset_ref,
-    );
-  } finally {
-    db.close();
   }
 }
 
@@ -140,8 +125,7 @@ const qualityRejectedDistill = (ref: string): AkmDistillResult => ({
 /**
  * Minimal config: disable noisy passes, but keep proactiveMaintenance enabled
  * so never-reflected, zero-feedback assets are selected into the salience map.
- * The lane only scores them: a test that needs a reflect or a distill plans the
- * ref with `complain`.
+ * The lane plans them with the feedback-bearing refs.
  */
 const minimalConfig = () =>
   withTestImproveLlm({
@@ -446,243 +430,5 @@ describe("WS-1 wiring — dampener consumption (consecutive_no_ops >= threshold 
     } finally {
       dbCheck.close();
     }
-  });
-});
-
-/** Build an AkmConfig with an arbitrary `improve.salience` block (incl. not-yet-typed keys). */
-function configWithSalience(
-  salience: Record<string, unknown>,
-  opts?: { proactive?: boolean },
-): import("../../../../src/core/config/config").AkmConfig {
-  const base = minimalConfig() as unknown as Record<string, unknown>;
-  return {
-    ...base,
-    improve: {
-      strategies: {
-        default: {
-          processes: {
-            consolidate: { enabled: false },
-            memoryInference: { enabled: false },
-            extract: { enabled: false },
-            // Default OFF so only the lane under test can rescue zero-feedback
-            // refs, unless a test explicitly opts proactive back in.
-            proactiveMaintenance: { enabled: opts?.proactive ?? false },
-          },
-        },
-      },
-      salience,
-    },
-  } as unknown as import("../../../../src/core/config/config").AkmConfig;
-}
-
-/**
- * Run akmImprove and capture every ref that entered the loop along with the
- * eligibilitySource the loop dispatched it under (via reflect OR distill spy).
- * Refs are processed with no_change reflect + quality_rejected distill so the
- * run does no real work but still exercises the full selection path.
- */
-async function runAndCaptureLanes(opts: {
-  stash: string;
-  config: import("../../../../src/core/config/config").AkmConfig;
-  limit?: number;
-  scope?: string;
-  requireFeedbackSignal?: boolean;
-  target?: string;
-}): Promise<Map<string, string | undefined>> {
-  const lanes = new Map<string, string | undefined>();
-  await akmImprove({
-    scope: (opts.scope ?? "skill") as never,
-    stashDir: opts.stash,
-    config: withPrimaryStashBundle(opts.config, opts.stash),
-    ...(opts.target ? { target: opts.target } : {}),
-    ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
-    ...(opts.requireFeedbackSignal !== undefined ? { requireFeedbackSignal: opts.requireFeedbackSignal } : {}),
-    ...noopIndexFns,
-    reflectFn: async (o: AkmReflectOptions) => {
-      lanes.set(o.ref ?? "", o.eligibilitySource);
-      return noChangeReflect(o.ref ?? "");
-    },
-    distillFn: async (o) => {
-      // distill-only refs never hit reflect — record their lane too, but never
-      // overwrite a reflect-recorded lane for the same ref.
-      if (!lanes.has(o.ref ?? "")) lanes.set(o.ref ?? "", o.eligibilitySource);
-      return qualityRejectedDistill(o.ref ?? "");
-    },
-  });
-  return lanes;
-}
-
-// ── Test 6: high-salience admission gate (#608) ────────────────────────────────
-//
-// Scenario:
-//   1. Write a zero-feedback skill and build the index.
-//   2. Pre-seed asset_salience with encoding_salience >= salienceThreshold.
-//   3. Run akmImprove with salienceThreshold set explicitly.
-//   4. Assert the ref is scored (the lane admitted it) and never reflected.
-//   5. Repeat with salienceThreshold=1.0 — the same ref must NOT be admitted
-//      (score < 1.0), so it is not scored either.
-
-describe("#608 high-salience admission gate", () => {
-  // Durable improve state is keyed by item_ref, so sources do not share state
-  // merely because they contain the same conceptId.
-  test("itemRef-keyed salience drives the high-salience lane per concept, not cross-source", async () => {
-    const localStash = isolatedStash();
-    const teamStash = fs.mkdtempSync(path.join(path.dirname(localStash), "akm-team-source-"));
-    cleanups.push(() => fs.rmSync(teamStash, { recursive: true, force: true }));
-    writeSkill(localStash, "legacy-local", "Legacy local salience should survive the cutover.");
-    writeSkill(teamStash, "legacy-team", "Another source must not inherit local salience.");
-    await buildIndex(localStash, "local");
-    const stateDb = openStateDatabase();
-    try {
-      // Seed ONLY the local concept; the team concept is deliberately unseeded.
-      upsertAssetSalience(stateDb, durableRef("skills/legacy-local", "local"), {
-        encoding: 0.82,
-        outcome: 0,
-        retrieval: 0,
-        rankScore: 0.2,
-        encodingSource: "content",
-      });
-    } finally {
-      stateDb.close();
-    }
-
-    const localConfig = configWithSalience({ salienceThreshold: 0.75 });
-    localConfig.bundles = { local: { path: localStash, writable: true } };
-    localConfig.defaultBundle = "local";
-    localConfig.defaultWriteTarget = "local";
-    const localLanes = await runAndCaptureLanes({ stash: localStash, config: localConfig, target: "local" });
-    // The lane admits the local concept into scoring; it plans nothing.
-    expect(scoredRefs()).toContain(durableRef("skills/legacy-local", "local"));
-    expect(localLanes.size).toBe(0);
-
-    await buildIndex(teamStash, "team");
-    const teamConfig = configWithSalience({ salienceThreshold: 0.75 });
-    // The historical local stash stays the primary bundle; "team" is a distinct
-    // named source at another root that must NOT inherit local's bare salience.
-    teamConfig.bundles = {
-      local: { path: localStash, writable: true },
-      team: { path: teamStash, writable: true },
-    };
-    teamConfig.defaultBundle = "local";
-    teamConfig.defaultWriteTarget = "team";
-    const teamLanes = await runAndCaptureLanes({ stash: teamStash, config: teamConfig, target: "team" });
-    expect(scoredRefs()).not.toContain(durableRef("skills/legacy-team", "team"));
-    expect(teamLanes.size).toBe(0);
-  });
-
-  test("zero-feedback ref with encoding_salience >= threshold is scored and never reflected", async () => {
-    const stash = isolatedStash();
-    writeSkill(stash, "novel-skill", "A genuinely novel skill with critical error handling.");
-    await buildIndex(stash);
-
-    // Pre-seed a CONTENT-derived encoding_salience above the default threshold
-    // (0.75). #655: the high-salience lane requires content provenance — a
-    // type-stub row no longer qualifies (that was the lore-writer footgun) — and
-    // this case models a genuinely content-scored novel skill, the lane's real
-    // target.
-    const dbSetup = openStateDatabase();
-    try {
-      upsertAssetSalience(dbSetup, durableRef("skills/novel-skill"), {
-        encoding: 0.82,
-        outcome: 0,
-        retrieval: 0,
-        rankScore: 0.2,
-        encodingSource: "content",
-      });
-    } finally {
-      dbSetup.close();
-    }
-
-    const capturedEligibility = new Map<string, string | undefined>();
-
-    await akmImprove({
-      scope: "skill",
-      stashDir: stash,
-      // Disable proactive maintenance so only the high-salience gate can select this ref.
-      config: {
-        ...minimalConfig(),
-        improve: {
-          ...minimalConfig().improve,
-          strategies: {
-            default: {
-              processes: {
-                consolidate: { enabled: false },
-                memoryInference: { enabled: false },
-                extract: { enabled: false },
-                proactiveMaintenance: { enabled: false },
-              },
-            },
-          },
-          salience: { salienceThreshold: 0.75 },
-        },
-      } as import("../../../../src/core/config/config").AkmConfig,
-      ...noopIndexFns,
-      reflectFn: async (opts: AkmReflectOptions) => {
-        capturedEligibility.set(opts.ref ?? "", opts.eligibilitySource);
-        return noChangeReflect(opts.ref ?? "");
-      },
-      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
-    });
-
-    // The lane admits it into scoring; only negative feedback (or an explicit scope) plans a reflect.
-    expect(scoredRefs()).toContain(durableRef("skills/novel-skill"));
-    expect(capturedEligibility.size).toBe(0);
-  });
-
-  test("salienceThreshold=1.0 disables the gate — ref with score=0.82 is NOT selected via high-salience", async () => {
-    const stash = isolatedStash();
-    writeSkill(stash, "gated-skill", "A skill that should not pass a threshold of 1.0.");
-    await buildIndex(stash);
-
-    const dbSetup = openStateDatabase();
-    try {
-      // Content-provenance so the ONLY thing keeping this ref out of the lane is
-      // the threshold (1.0 > 0.82), not the #655 content gate — this test pins
-      // the threshold knob specifically.
-      upsertAssetSalience(dbSetup, durableRef("skills/gated-skill"), {
-        encoding: 0.82,
-        outcome: 0,
-        retrieval: 0,
-        rankScore: 0.2,
-        encodingSource: "content",
-      });
-    } finally {
-      dbSetup.close();
-    }
-
-    const capturedEligibility = new Map<string, string | undefined>();
-
-    await akmImprove({
-      scope: "skill",
-      stashDir: stash,
-      config: {
-        ...minimalConfig(),
-        improve: {
-          ...minimalConfig().improve,
-          strategies: {
-            default: {
-              processes: {
-                consolidate: { enabled: false },
-                memoryInference: { enabled: false },
-                extract: { enabled: false },
-                proactiveMaintenance: { enabled: false },
-              },
-            },
-          },
-          // salienceThreshold=1.0 means only a score of exactly 1.0 would qualify — effectively disabled.
-          salience: { salienceThreshold: 1.0 },
-        },
-      } as import("../../../../src/core/config/config").AkmConfig,
-      ...noopIndexFns,
-      reflectFn: async (opts: AkmReflectOptions) => {
-        capturedEligibility.set(opts.ref ?? "", opts.eligibilitySource);
-        return noChangeReflect(opts.ref ?? "");
-      },
-      distillFn: async ({ ref }) => qualityRejectedDistill(ref ?? ""),
-    });
-
-    // With threshold=1.0, the lane does not admit the ref: it is not even scored.
-    expect(scoredRefs()).not.toContain(durableRef("skills/gated-skill"));
-    expect(capturedEligibility.size).toBe(0);
   });
 });

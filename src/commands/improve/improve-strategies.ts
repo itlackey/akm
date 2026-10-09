@@ -5,7 +5,6 @@
 import catchup from "../../assets/improve-strategies/catchup.json" with { type: "json" };
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
 import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
 import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
 import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
@@ -110,7 +109,6 @@ const BUILTIN_STRATEGIES: Record<string, Record<string, unknown>> = {
   consolidate,
   catchup,
   "reflect-distill": reflectDistill,
-  "proactive-maintenance": proactiveMaintenance,
 };
 
 if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))) {
@@ -481,7 +479,8 @@ function buildImprovePlan(
 
   if (
     engineUnavailable.length > 0 &&
-    !Object.values(processes).some((process) => process.enabled) &&
+    // proactiveMaintenance uses no engine: it is a selector, so it alone does not keep a run alive.
+    !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled) &&
     (!options.allowAllDisabled || anyEngineNotConfigured)
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");

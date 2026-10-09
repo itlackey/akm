@@ -12,22 +12,13 @@
 import { describe, expect, test } from "bun:test";
 import profileCatchup from "../../src/assets/improve-strategies/catchup.json";
 import profileConsolidate from "../../src/assets/improve-strategies/consolidate.json";
-import profileProactiveMaintenance from "../../src/assets/improve-strategies/proactive-maintenance.json";
 import profileReflectDistill from "../../src/assets/improve-strategies/reflect-distill.json";
 import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 
 const MINIMAL_CONFIG: AkmConfig = { semanticSearchMode: "off" };
-const BUILTIN_STRATEGIES = [
-  "default",
-  "quick",
-  "thorough",
-  "consolidate",
-  "catchup",
-  "reflect-distill",
-  "proactive-maintenance",
-] as const;
+const BUILTIN_STRATEGIES = ["default", "quick", "thorough", "consolidate", "catchup", "reflect-distill"] as const;
 
 describe("default improve strategies (#552)", () => {
   test("complete resolved trees are pinned for all built-ins", () => {
@@ -35,21 +26,41 @@ describe("default improve strategies (#552)", () => {
       expect(resolveImproveStrategy(name, MINIMAL_CONFIG)).toMatchSnapshot(name);
     }
   });
-  test("proactive maintenance is opt-in", () => {
-    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled).toBe(
-      false,
-    );
-    expect(
-      resolveImproveStrategy("reflect-distill", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
-    ).toBe(false);
-    expect(
-      resolveImproveStrategy("proactive-maintenance", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
-    ).toBe(true);
+  test("proactive maintenance is on in default, with the shipped cap, and off in the narrow strategies, and thorough matches default (#1129)", () => {
+    const def = resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.proactiveMaintenance;
+    expect(def).toMatchObject({ enabled: true, dueDays: 30, maxPerRun: 15 });
+    expect(resolveImproveStrategy("thorough", MINIMAL_CONFIG).config.processes?.proactiveMaintenance).toEqual(def);
+    for (const name of ["quick", "consolidate", "catchup", "reflect-distill"]) {
+      expect(resolveImproveStrategy(name, MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled, name).toBe(
+        false,
+      );
+    }
+  });
+
+  test("proactive-maintenance is no longer built in, but a user block of that name still resolves (#1129)", () => {
+    expect(() => resolveImproveStrategy("proactive-maintenance", MINIMAL_CONFIG)).toThrow(/not found/);
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          "proactive-maintenance": {
+            processes: { consolidate: { enabled: false }, proactiveMaintenance: { enabled: true, maxPerRun: 100 } },
+            sync: { enabled: false },
+          },
+        },
+      },
+    };
+    const selected = resolveImproveStrategy("proactive-maintenance", config);
+    expect(selected.name).toBe("proactive-maintenance");
+    expect(selected.config.processes?.proactiveMaintenance).toMatchObject({ enabled: true, maxPerRun: 100 });
+    expect(selected.config.processes?.consolidate?.enabled).toBe(false);
+    expect(selected.config.sync?.enabled).toBe(false);
+    // Reflect and distill come from `default`, as for any user-defined strategy.
+    expect(selected.config.processes?.reflect?.enabled).toBe(true);
   });
 
   test("judgment-enabled shipped strategies use durable boolean opt-in", () => {
     expect(profileReflectDistill.processes.triage.judgment).toBe(true);
-    expect(profileProactiveMaintenance.processes.triage.judgment).toBe(true);
   });
 
   test("consolidate: validates against the live schema", () => {

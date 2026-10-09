@@ -290,6 +290,10 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
     // (src/commands/improve/improve-strategies.ts) refuses it lazily, at
     // improve-invocation time, with the same message either way.
     defaultStrategy !== "graph-refresh" &&
+    // proactive-maintenance was a built-in strategy until 0.10 (its lane now
+    // lives in `default`): a config that still names it must keep loading, and
+    // resolves as the user strategy of that name, or is refused when run.
+    defaultStrategy !== "proactive-maintenance" &&
     !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
     !config.improve?.strategies?.[defaultStrategy]
   ) {

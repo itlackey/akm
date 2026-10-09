@@ -918,6 +918,26 @@ describe("0.9 config shape parsing", () => {
     expect(loaded.defaults?.improveStrategy).toBe("graph-refresh");
   });
 
+  test("defaults.improveStrategy: proactive-maintenance (a built-in until 0.10) still loads, with or without a strategy block (#1129)", () => {
+    writeCurrentConfig({ defaults: { improveStrategy: "proactive-maintenance" } });
+    expect(loadConfig().defaults?.improveStrategy).toBe("proactive-maintenance");
+    writeCurrentConfig({
+      defaults: { improveStrategy: "proactive-maintenance" },
+      improve: {
+        strategies: {
+          "proactive-maintenance": { processes: { proactiveMaintenance: { enabled: true, maxPerRun: 100 } } },
+        },
+      },
+    });
+    const loaded = loadConfig();
+    expect(loaded.improve?.strategies?.["proactive-maintenance"]?.processes?.proactiveMaintenance?.maxPerRun).toBe(100);
+  });
+
+  test("a leftover improve.salience.salienceThreshold (the removed high-salience lane's key) still loads (#1129)", () => {
+    writeCurrentConfig({ improve: { salience: { salienceThreshold: 0.5 } } });
+    expect(() => loadConfig()).not.toThrow();
+  });
+
   test("ignores legacy features.improve instead of failing config load", () => {
     writeCurrentConfig({
       features: {

@@ -359,7 +359,7 @@ export const improveCommand = defineCommand({
     "require-feedback-signal": {
       type: "boolean",
       description:
-        "Turn the proactive/high-salience fallback lanes off (they only select and score assets; a rewrite needs negative feedback)",
+        "Turn the proactive-maintenance lane off for this run, so only assets with recent feedback are planned",
       default: false,
     },
     "json-to-stdout": {
@@ -398,7 +398,7 @@ export const improveCommand = defineCommand({
     strategy: {
       type: "string",
       description:
-        "Named improve strategy from improve.strategies or built-in strategies (catchup, consolidate, default, proactive-maintenance, quick, reflect-distill, thorough). Controls which sub-processes run and which asset types are processed.",
+        "Named improve strategy from improve.strategies or built-in strategies (catchup, consolidate, default, quick, reflect-distill, thorough). Controls which sub-processes run and which asset types are processed.",
     },
     sync: {
       type: "boolean",

@@ -22,6 +22,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
 
+### Changed
+
+- **`akm improve` plans the proactive-maintenance lane's picks again, and the lane is on in `default` (#1129).**
+  Measured on assets with silent defects and no feedback (8 planted): 0 fixed with the picks scored only, 6 to 7 with
+  them planned, no harm, about five times the model calls. The picks carry the `proactive` lane on their
+  proposals. The cap against a proposal flood already existed and is now consistent: `maxPerRun` limits the picks per
+  run, `dueDays` (30) admits only an asset not reflected or distilled for 30 days, and reflect's `limit` (25) bounds
+  the run. The code fallback for `maxPerRun` is 15, the shipped value, where it was 25. No new setting.
+  `--require-feedback-signal` turns the lane off for a run.
+
+### Removed
+
+- **The high-salience improve lane and `improve.salience.salienceThreshold` (#1129).** The lane admitted nothing in
+  the measurement and was reachable only by back-dating feedback. The key is still read without error from an old
+  config; it does nothing. The `high-salience` lane name stays valid on rows older releases wrote.
+- **The `proactive-maintenance` built-in improve strategy (#1129).** The lane now lives in `default`. A
+  `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
+  onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block now fails when improve
+  runs, as any unknown strategy does.
+
 ### Fixed
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's

@@ -255,15 +255,14 @@ akm sync my-skills -m "Update patterns"      # Sync named bundle with message
 The `--sync` / `--no-sync` and `--push` / `--no-push` flags control this:
 
 ```sh
-akm improve                                   # auto-sync per strategy default (most strategies: on; proactive-maintenance/reflect-distill: off)
+akm improve                                   # auto-sync per strategy default (most strategies: on; reflect-distill: off)
 akm improve --no-sync                         # skip the end-of-run commit
 akm improve --no-push                         # commit but skip push for this run
 akm improve --sync                            # force sync even on strategies that disable it
 ```
 
 Strategy sync defaults: `catchup`, `consolidate`, `default`, `quick`, and
-`thorough` auto-commit + push; `proactive-maintenance` and `reflect-distill`
-skip sync entirely. Override with `--sync` / `--no-sync` flags.
+`thorough` auto-commit + push; `reflect-distill` skips sync entirely. Override with `--sync` / `--no-sync` flags.
 
 The `--writable` flag on `akm bundle add` opts a remote git bundle into push-on-sync:
 

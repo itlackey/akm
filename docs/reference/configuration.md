@@ -569,10 +569,14 @@ off too. Every entry must be a non-empty string, or the config does not load.
 ```
 
 No shipped strategy turns improve-stage session extraction on.
-`proactiveMaintenance` is on only in the `proactive-maintenance` preset; run
-`akm improve --strategy proactive-maintenance` to use that opt-in preset.
-Because strategies inherit from `default`, a preset that omits either process
-also inherits the off value. User strategy overrides
+`proactiveMaintenance` is on in `default` (and in the strategies that inherit
+from it), and off in `quick`, `consolidate`, `catchup` and
+`reflect-distill`. It plans stable assets that have had no feedback: at most
+`maxPerRun` (default 15) per run, only assets not reflected or distilled for
+`dueDays` (default 30), so each comes up at most once a month, and reflect's
+`limit` (25) still bounds the run. A preset that omits either process
+inherits the `default` value; set `processes.proactiveMaintenance.enabled: false` in the
+selected strategy to turn the lane off. User strategy overrides
 are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 

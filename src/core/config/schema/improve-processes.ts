@@ -267,7 +267,7 @@ const TRIAGE_PROCESS_FIELDS = {
 const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   // Staleness gate + rotation cooldown in days (default 30).
   dueDays: z.number().int().min(0).optional(),
-  // Top-N bound per run (default 25). Alias for `limit`; `maxPerRun` wins
+  // Top-N bound per run (default 15). Alias for `limit`; `maxPerRun` wins
   // when both are set.
   maxPerRun: positiveInt.optional(),
   limit: processLimitField,

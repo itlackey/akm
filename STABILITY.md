@@ -380,7 +380,7 @@ for scripted use.
   the algorithm that writes them is tuning across patch releases.
 - **Improve built-in strategies and lanes** — the built-in strategies other
   than `default` and `consolidate` (`quick`, `reflect-distill`, `thorough`,
-  `catchup`) and the proactive-maintenance and high-salience lanes. 0.10
+  `catchup`) and the proactive-maintenance lane. 0.10
   measures each and keeps, folds or removes it (#1094).
 - **Session extraction** — `akm proposal extract` and the `extract` process:
   what it extracts, its quality gates and its output may change while 0.10
