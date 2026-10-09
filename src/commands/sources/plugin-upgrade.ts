@@ -17,6 +17,7 @@ import os from "node:os";
 import path from "node:path";
 import { IS_WINDOWS, stripJsonComments } from "../../core/common";
 import { moveToTrash } from "../../core/trash";
+import { parseOpencodeMajor } from "../../integrations/harnesses/opencode/version";
 import { semverOrder } from "../../runtime";
 import type {
   PluginHarness,
@@ -445,12 +446,6 @@ function otherSpecNote(flavor: OpenCodeFlavor, spec: string): string {
     : `${loads}; set "${key}": ["${flavor.pkg}"] to have \`akm upgrade\` keep it current`;
 }
 
-/** The major in `opencode --version` output (`1.18.34`, `opencode v2.0.26`), or undefined when there is none. */
-function binaryMajor(versionOutput: string): number | undefined {
-  const match = versionOutput.match(/(\d+)\.\d+/);
-  return match ? Number(match[1]) : undefined;
-}
-
 function upgradeOpenCode(flavor: OpenCodeFlavor, dryRun: boolean, target: OpenCodeTarget): PluginUpgradeEntry {
   const { cache, latest, tag, skip } = target;
   const harness = flavor.harness;
@@ -477,7 +472,7 @@ function upgradeOpenCode(flavor: OpenCodeFlavor, dryRun: boolean, target: OpenCo
   // that owns this plugin's cache can re-create it. akm never installs or replaces the binary.
   const probe = runCommand("opencode", ["--version"], READ_TIMEOUT_MS);
   if (!probe.ok) return skipped(harness, probe.missing ? "opencode is not on PATH" : probe.error);
-  const major = binaryMajor(probe.stdout);
+  const major = parseOpencodeMajor(probe.stdout);
   // OpenCode 1 keeps its long-standing behavior when the version cannot be read; OpenCode 2's
   // refresh needs a command only OpenCode 2 has, so it must be sure.
   if (major === undefined ? flavor.major === 2 : major !== flavor.major) {

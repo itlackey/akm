@@ -19,11 +19,6 @@ export type AgentParseMode = "text" | "json";
  * Concrete profile used by the spawn wrapper. Built-ins are immutable;
  * resolved profiles (after merging user overrides) are also `Readonly`.
  */
-export type OpencodeVersion = 1 | 2;
-
-/** OpenCode major an engine targets when its config sets no `opencodeVersion`. */
-export const DEFAULT_OPENCODE_VERSION: OpencodeVersion = 2;
-
 export interface AgentProfile {
   /** Profile name (key in `agent.profiles`). */
   readonly name: string;
@@ -52,11 +47,6 @@ export interface AgentProfile {
   readonly parseOutput: AgentParseMode;
   /** The engine's default native agent, used when a request names none. */
   readonly agent?: string;
-  /**
-   * OpenCode major the engine's native binary speaks (`opencode` and `opencode-sdk` only).
-   * Unset means {@link DEFAULT_OPENCODE_VERSION}; `1` selects the OpenCode 1 adapter.
-   */
-  readonly opencodeVersion?: OpencodeVersion;
   /** Exact model selected for this dispatch. */
   readonly model?: string;
   /**
@@ -166,7 +156,7 @@ const BUILTINS: Record<string, AgentProfile> = {
  * ships with `"dependencies": {}` and its `createOpencodeServer` is itself a
  * `spawn("opencode", ["serve", ...])`; `@opencode/client` (OpenCode 2, the
  * default) is an HTTP client only and starts nothing. akm's runner spawns a
- * private `opencode serve` of the engine's selected major (`opencodeVersion`,
+ * private `opencode serve` of the engine's detected major (
  * never the v2 background service) and talks HTTP to it through that major's
  * adapter (see `harnesses/opencode-sdk/sdk-runner.ts`, `v1-adapter.ts`, `v2-adapter.ts`),
  * so the `opencode` binary gates the SDK path exactly as it gates the CLI

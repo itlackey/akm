@@ -15,8 +15,11 @@ import {
   getWorkflowStatus,
   type SummaryValidationFailure,
 } from "../../../src/workflows/runtime/runs";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { type Cleanup, sandboxEnvDir, sandboxXdgConfigHome, withEnv } from "../../_helpers/sandbox";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 /**
  * In-process tests for summary capture + the completion-criteria validation
@@ -162,7 +165,7 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
         engines: {
-          reviewer: { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1, llmEngine: "fallback" },
+          reviewer: { kind: "agent", platform: "opencode-sdk", llmEngine: "fallback" },
           fallback: {
             kind: "llm",
             endpoint: "https://frozen.invalid/v1/chat/completions",
@@ -213,7 +216,7 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       manualJudgePlan({
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: { reviewer: { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1 } },
+        engines: { reviewer: { kind: "agent", platform: "opencode-sdk" } },
         defaults: { engine: "reviewer" },
         workflow: { judgeEngine: "reviewer" },
       }),

@@ -16,6 +16,7 @@ import {
 } from "../src/commands/health/checks";
 import type { AkmConfig } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
+import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { withIsolatedAkmStorage } from "./_helpers/sandbox";
 
 const llm = {
@@ -239,22 +240,23 @@ describe("health engine probes", () => {
       spawnSync: (() => ({ status: 1 })) as never,
     });
     expect(result.status).toBe("warn");
-    // No opencodeVersion: the default major (2), whose client package is @opencode/client.
+    // The binary cannot be run, so its major is unknown: the newest (2), whose client package is @opencode/client.
     expect(result.message).toContain("@opencode/client package");
     expect(result.message).not.toContain("@opencode-ai/sdk");
     expect(result.message).toContain("opencode binary");
   });
 
-  test("checks the client package of the OpenCode major the engine selects", async () => {
+  test("checks the client package of the OpenCode major the binary reports", async () => {
     const resolved: string[] = [];
-    for (const [opencodeVersion, pkg] of [
-      [1, "@opencode-ai/sdk"],
-      [2, "@opencode/client"],
+    for (const [version, major, pkg] of [
+      ["1.18.34", 1, "@opencode-ai/sdk"],
+      ["opencode v2.0.26", 2, "@opencode/client"],
     ] as const) {
+      _setOpencodeVersionProbeForTests(undefined); // a detection is cached per binary
       const config: AkmConfig = {
         configVersion: "0.9.0",
         semanticSearchMode: "off",
-        engines: { sdk: { kind: "agent", platform: "opencode-sdk", opencodeVersion, model: "sdk-model" } },
+        engines: { sdk: { kind: "agent", platform: "opencode-sdk", model: "sdk-model" } },
         defaults: { engine: "sdk" },
       };
       // Only the selected major's package is missing: the other major's package must not count.
@@ -265,11 +267,16 @@ describe("health engine probes", () => {
           if (name === pkg) throw new Error("missing");
           return "/sdk/package.json";
         },
-        spawnSync: (() => ({ status: 0 })) as never,
+        spawnSync: (() => ({ status: 0, stdout: `${version}\n` })) as never,
       });
       expect(result.status).toBe("warn");
       expect(result.message).toContain(`${pkg} package`);
-      expect(result.evidence).toMatchObject({ package: pkg, packageAvailable: false, opencodeVersion });
+      expect(result.evidence).toMatchObject({
+        package: pkg,
+        packageAvailable: false,
+        detectedVersion: version,
+        detectedMajor: major,
+      });
     }
     expect(resolved).toEqual(["@opencode-ai/sdk", "@opencode/client"]);
   });

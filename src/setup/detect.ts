@@ -17,6 +17,7 @@ import { runManagedSubprocess } from "../core/subprocess";
 import { defaultWhich, type WhichFn } from "../integrations/agent/detect";
 import { getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "../integrations/agent/profiles";
 import { AGENT_DISPATCH_HARNESSES, SESSION_LOG_HARNESSES } from "../integrations/harnesses";
+import { detectOpencodeMajor, OPENCODE2_BIN } from "../integrations/harnesses/opencode/version";
 import type { HarnessLLMConfig } from "../integrations/harnesses/shared";
 import { detectHarnessConfigs } from "./harness-config-import";
 
@@ -459,7 +460,7 @@ export interface DetectedEnvironment {
  *   3. none.
  *
  * The SDK import resolving is NOT evidence the SDK path can run: `@opencode-ai/sdk`
- * (OpenCode 1) and `@opencode/client` (OpenCode 2, the default; `opencodeVersion`
+ * (OpenCode 1) and `@opencode/client` (OpenCode 2; the binary's detected major
  * selects) are hard dependencies of akm-cli itself, so `import()` always succeeds and an
  * import-only check would report `opencode-sdk` on every machine — including
  * ones where the first agentic command then dies with spawn ENOENT. The SDK
@@ -473,11 +474,12 @@ export interface DetectedEnvironment {
 export async function detectHarness(whichFn: WhichFn = defaultWhich): Promise<DetectedHarness> {
   // Probed once; reused below so the `opencode` CLI fallback doesn't repeat
   // the identical full-PATH walk this just performed.
-  const opencodePath = whichFn(OPENCODE_SDK_SERVER_BIN);
+  const opencodePath = whichFn(OPENCODE2_BIN) ?? whichFn(OPENCODE_SDK_SERVER_BIN);
   if (opencodePath) {
     try {
-      // The default major's client package (setup writes no opencodeVersion).
-      await import("@opencode/client");
+      // The client package of the major the binary reports.
+      if (detectOpencodeMajor(opencodePath).major === 1) await import("@opencode-ai/sdk");
+      else await import("@opencode/client");
       return "opencode-sdk";
     } catch {
       // SDK genuinely unavailable (e.g. externalized in a standalone build).

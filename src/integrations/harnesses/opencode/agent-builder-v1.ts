@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 1 argv adapter (`opencode-ai` 1.x). Selected by
- * `opencodeVersion: 1` on the engine.
+ * OpenCode 1 argv adapter (`opencode-ai` 1.x). Selected when
+ * the engine's binary reports OpenCode 1.
  *
  * `opencode run` 1.x runs in-process (it starts its own server for the run),
  * so no service flag is needed. Command shape:

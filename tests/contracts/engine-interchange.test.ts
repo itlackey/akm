@@ -50,7 +50,10 @@ import {
 import type { V1Client } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
@@ -192,7 +195,7 @@ const CLI_HARNESSES: Transport[] = HARNESS_ID_TABLE.filter((entry) => entry.id !
 
 const OPENCODE_SDK: Transport = {
   name: "opencode-sdk",
-  engine: () => ({ kind: "agent", platform: "opencode-sdk", opencodeVersion: 1 }),
+  engine: () => ({ kind: "agent", platform: "opencode-sdk" }),
   arrange: (scenario) => {
     const reply = SDK_REPLIES[scenario];
     __setTestServer({
@@ -642,7 +645,7 @@ describe("C7: inference reaches the transport, or is reported as untranslated", 
       };
     });
     const engines = {
-      contract: { kind: "agent", platform: "opencode-sdk", opencodeVersion: 1, llmEngine: "backing" },
+      contract: { kind: "agent", platform: "opencode-sdk", llmEngine: "backing" },
       backing: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "stub-model" },
     };
     // Not the arranged transport: its fake client bypasses the server config.

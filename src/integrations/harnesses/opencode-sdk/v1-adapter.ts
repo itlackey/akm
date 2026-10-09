@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode 1 wire adapter (`opencodeVersion: 1`), on `@opencode-ai/sdk` 1.2.20.
+ * OpenCode 1 wire adapter, on `@opencode-ai/sdk` 1.2.20.
  *
  * Everything here is the V1 protocol and nothing else: the readiness line
  * (`opencode server listening on <url>`), the SDK client, `session.create` /
@@ -183,7 +183,7 @@ export const V1_ADAPTER: OpencodeWireAdapter = {
     }
     // OpenCode 2 prints "server listening on <url>" with no "opencode" prefix.
     if (line.startsWith("server listening on")) {
-      return { error: `The binary is OpenCode 2 (${line.trim()}). ${otherMajorRemedy(1)}` };
+      return { error: `The binary is OpenCode 2 (${line.trim()}). ${otherMajorRemedy()}` };
     }
     return undefined;
   },

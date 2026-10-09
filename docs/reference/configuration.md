@@ -129,7 +129,7 @@ value matching this JSON Schema (no prose, no code fences):` followed by the
 schema), plus the harness's own schema channel where it has one (codex
 `--output-schema`).
 
-An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, `opencodeVersion`, and `timeoutMs`;
+An agent engine may set `bin`, `args`, `workspace`, `model`, `agent`, and `timeoutMs`;
 it takes no inference of its own (see
 [Inference on an agent engine](#inference-on-an-agent-engine)). `agent` names the
 engine's default native agent (`opencode`, `opencode-sdk` and `claude` only): it
@@ -141,10 +141,15 @@ the LLM engine used as that SDK engine's fallback connection. With no
 provider, model and auth from its own configuration. `defaults.llmEngine` is
 not a substitute.
 
-`opencodeVersion` (`opencode` and `opencode-sdk` only) is the OpenCode major the
-engine's binary speaks: `2` (the default) or `1`. akm does not probe the binary;
-an engine whose `opencode` is still OpenCode 1 sets `"opencodeVersion": 1`, e.g.
-`{"kind":"agent","platform":"opencode-sdk","opencodeVersion":1}`.
+An `opencode` or `opencode-sdk` engine has no setting for the OpenCode major: akm
+detects it. With no `bin`, the engine runs the most recent OpenCode on `PATH`
+(`opencode2`, OpenCode 2's own alias, when present, else `opencode`); with a
+`bin`, it runs that binary. akm runs `<bin> --version` once per binary per
+process and uses the OpenCode 2 or OpenCode 1 adapters to match. OpenCode 1 keeps
+working and logs a warning recommending OpenCode 2. A `--version` akm cannot read
+(or a major it does not know) uses the OpenCode 2 adapters and logs a warning
+with the raw output. To run a particular OpenCode, set the engine's `bin`, e.g.
+`{"kind":"agent","platform":"opencode-sdk","bin":"/opt/opencode1/bin/opencode"}`.
 
 On an engine without `timeoutMs`, model work (an improve process, a quality or
 triage judge, or an index pass) stops after 600 seconds, whatever the engine's

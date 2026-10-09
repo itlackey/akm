@@ -108,16 +108,7 @@ const LlmEngineSchema = z
   })
   .passthrough()
   .superRefine((value, ctx) => {
-    for (const key of [
-      "platform",
-      "bin",
-      "args",
-      "workspace",
-      "modelAliases",
-      "llmEngine",
-      "agent",
-      "opencodeVersion",
-    ]) {
+    for (const key of ["platform", "bin", "args", "workspace", "modelAliases", "llmEngine", "agent"]) {
       if (key in value)
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} is not valid on an LLM engine` });
     }
@@ -145,7 +136,6 @@ const AgentEngineSchema = z
     workspace: nonEmptyString.optional(),
     model: nonEmptyString.optional(),
     agent: nonEmptyString.optional(),
-    opencodeVersion: z.union([z.literal(1), z.literal(2)]).optional(),
     timeoutMs: timeoutMsField,
     llmEngine: engineName.optional(),
   })
@@ -180,13 +170,6 @@ const AgentEngineSchema = z
         code: z.ZodIssueCode.custom,
         path: ["agent"],
         message: `agent is not valid on ${value.platform}: it has no native agent selector`,
-      });
-    }
-    if (value.opencodeVersion !== undefined && value.platform !== "opencode" && value.platform !== "opencode-sdk") {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["opencodeVersion"],
-        message: "opencodeVersion is only valid on opencode and opencode-sdk",
       });
     }
     if (value.platform === "opencode-sdk" && value.args !== undefined) {

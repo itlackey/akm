@@ -65,30 +65,3 @@ describe("an agent engine's default agent", () => {
     ]);
   });
 });
-
-// `opencodeVersion` picks the OpenCode adapter; only the two OpenCode harnesses have one.
-describe("an agent engine's opencodeVersion", () => {
-  const errorsFor = (engine: Record<string, unknown>) => {
-    const result = validateConfigShape({ configVersion: "0.9.0", engines: { e: { kind: "agent", ...engine } } });
-    return result.ok ? [] : result.errors;
-  };
-
-  test.each([
-    ["opencode", 1],
-    ["opencode", 2],
-    ["opencode-sdk", 1],
-    ["opencode-sdk", 2],
-  ])("is accepted on %s as %d", (platform, opencodeVersion) => {
-    expect(errorsFor({ platform, opencodeVersion })).toEqual([]);
-  });
-
-  test("rejects a major akm has no adapter for", () => {
-    expect(errorsFor({ platform: "opencode-sdk", opencodeVersion: 3 })).not.toEqual([]);
-  });
-
-  test("is rejected on a non-OpenCode harness", () => {
-    expect(errorsFor({ platform: "claude", opencodeVersion: 1 })).toEqual([
-      { path: "engines.e.opencodeVersion", message: "opencodeVersion is only valid on opencode and opencode-sdk" },
-    ]);
-  });
-});

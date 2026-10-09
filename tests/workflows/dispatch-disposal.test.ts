@@ -15,7 +15,10 @@ import {
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 /**
  * Process-lifecycle disposal (owner finding 4 — a successful engine-driven run
@@ -261,7 +264,7 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
       });
     }) as never);
 
-    const profile = { name: "mysdk", bin: "opencode", args: [], opencodeVersion: 1 } as never;
+    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
     // Populate the registry: the default (no-env) server plus an env-keyed one
     // on its own OS-allocated port.
     await runOpencodeSdk(profile, "p", { timeoutMs: null });
@@ -291,7 +294,7 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
         resolveFactory = resolve;
       });
     }) as never);
-    const profile = { name: "mysdk", bin: "opencode", args: [], opencodeVersion: 1 } as never;
+    const profile = { name: "mysdk", bin: "opencode", args: [] } as never;
     const running = runOpencodeSdk(profile, "p", { timeoutMs: null });
     await started;
 
@@ -331,6 +334,8 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
 // it the moment the run resolves — the exact hang the owner observed, headless.
 
 describe("engine run via the SDK runner closes its server on completion (end-to-end)", () => {
+  // The implicit opencode-sdk engine runs a binary reporting OpenCode 2.
+  beforeEach(() => fakeOpencodeMajor(2));
   afterEach(() => {
     __setServerFactory(null);
     __setTestServer(null);
@@ -345,7 +350,6 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
     __setServerFactory((() =>
       Promise.resolve({
         client: {
-          // The implicit opencode-sdk engine targets the default OpenCode major (2).
           session: {
             create: async () => ({ id: "sess-e2e" }),
             prompt: async () => {

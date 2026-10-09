@@ -47,9 +47,8 @@ const USAGE_BANNER = /run opencode with a message|Run OpenCode with a message/i;
 
 async function dispatch(
   bin: string,
-  opencodeVersion: 1 | 2,
   request: Parameters<typeof opencodeBuilder.build>[1],
-): Promise<{ output: string; leaked: number[] }> {
+): Promise<{ output: string; leaked: number[]; argv: readonly string[] }> {
   const sandbox = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "akm-oc-argv-")));
   sandboxes.push(sandbox);
   const cwd = path.join(sandbox, "work");
@@ -61,7 +60,6 @@ async function dispatch(
     stdio: "captured",
     envPassthrough: [],
     parseOutput: "text",
-    opencodeVersion,
   };
   const cmd = opencodeBuilder.build(profile, request);
   const proc = Bun.spawn([...cmd.argv], {
@@ -86,7 +84,7 @@ async function dispatch(
   clearTimeout(timer);
   // Give a straggling child a moment to exit before counting survivors.
   await Bun.sleep(1500);
-  return { output: `${stdout}\n${stderr}`, leaked: processesIn(sandbox) };
+  return { output: `${stdout}\n${stderr}`, leaked: processesIn(sandbox), argv: cmd.argv };
 }
 
 for (const [label, envVar, major] of [
@@ -96,18 +94,20 @@ for (const [label, envVar, major] of [
   const bin = process.env[envVar];
   describe.skipIf(!bin)(`${label} CLI accepts the argv akm builds (${envVar})`, () => {
     test("an ordinary dispatch with an agent and a model gets past the flag parser and leaves nothing running", async () => {
-      const { output, leaked } = await dispatch(bin as string, major, {
+      const { output, leaked, argv } = await dispatch(bin as string, {
         prompt: "hello",
         agent: "build",
         model: "no-such-provider/no-such-model",
       });
+      // The adapter was chosen by running `<bin> --version`: only OpenCode 2 gets --standalone.
+      expect(argv.includes("--standalone")).toBe(major === 2);
       expect(output).not.toMatch(USAGE_ERROR);
       expect(output).not.toMatch(USAGE_BANNER);
       expect(leaked).toEqual([]);
     }, 120_000);
 
     test("a model-work dispatch finds its injected agent and leaves nothing running", async () => {
-      const { output, leaked } = await dispatch(bin as string, major, {
+      const { output, leaked } = await dispatch(bin as string, {
         prompt: "hello",
         modelWork: true,
         model: "no-such-provider/no-such-model",

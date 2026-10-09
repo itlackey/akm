@@ -20,7 +20,10 @@ import { akmReflect } from "../../../src/commands/improve/reflect";
 import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/core/subprocess";
 import { reflectReply } from "../../_helpers/factories";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 let storage: IsolatedAkmStorage;
 
@@ -62,7 +65,7 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
     defaults: { llmEngine: "pin-target", engine: "fake-agent", improveStrategy: "default" },
     engines: {
       "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent", opencodeVersion: 1 },
+      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
     },
     improve: {
       strategies: {

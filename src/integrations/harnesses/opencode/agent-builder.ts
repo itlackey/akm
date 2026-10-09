@@ -12,19 +12,18 @@
  * `agent/builders.ts`, which imports this builder back into `BUILTIN_BUILDERS`.
  *
  * The builder's `platform` stays `'opencode'` (the canonical harness id). The
- * argv comes from one of two small adapters, chosen only by the engine's
- * `opencodeVersion` (unset means `DEFAULT_OPENCODE_VERSION`); akm never probes
- * the binary: `./agent-builder-v1.ts` (OpenCode 1, byte-identical to the
+ * argv comes from one of two small adapters, chosen by the major the
+ * engine's binary reports (`./version.ts`, one cached `--version` run per binary): `./agent-builder-v1.ts` (OpenCode 1, byte-identical to the
  * pre-OpenCode-2 builder) and `./agent-builder-v2.ts` (OpenCode 2, adds
  * `--standalone` so no background service is started or left running).
  */
 
 import type { AgentCommandBuilder } from "../../agent/builder-shared";
-import { DEFAULT_OPENCODE_VERSION } from "../../agent/profiles";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
 import { buildOpencodeV1Command } from "./agent-builder-v1";
 import { buildOpencodeV2Command } from "./agent-builder-v2";
 import { MODEL_WORK_AGENT_INFERENCE } from "./model-config";
+import { detectOpencodeMajor } from "./version";
 
 /**
  * OpenCode builder: `opencode run [--standalone] [--agent <name>] [--model <m>] -- "<prompt>"`
@@ -56,7 +55,8 @@ export const opencodeBuilder: AgentCommandBuilder = {
     inference: MODEL_WORK_AGENT_INFERENCE,
   }),
   build(profile, req) {
-    const major = profile.opencodeVersion ?? DEFAULT_OPENCODE_VERSION;
-    return major === 1 ? buildOpencodeV1Command(profile, req) : buildOpencodeV2Command(profile, req);
+    return detectOpencodeMajor(profile.bin).major === 1
+      ? buildOpencodeV1Command(profile, req)
+      : buildOpencodeV2Command(profile, req);
   },
 };

@@ -26,24 +26,35 @@ import { type ChildProcess, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../../src/core/warn";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
 import { closeServer, runOpencodeSdk } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { V1_ADAPTER } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { V2_ADAPTER } from "../../src/integrations/harnesses/opencode-sdk/v2-adapter";
 import type { OpencodeWireAdapter, WireEvent } from "../../src/integrations/harnesses/opencode-sdk/wire";
+import { overrideSeam } from "../_helpers/seams";
 
 const V1_BIN = process.env.AKM_OPENCODE_V1_BIN;
 const V2_BIN = process.env.AKM_OPENCODE_V2_BIN;
 
-const profileFor = (bin: string, opencodeVersion: 1 | 2): AgentProfile => ({
+const profileFor = (bin: string): AgentProfile => ({
   name: "opencode-sdk",
   bin,
   args: [],
   stdio: "captured",
   envPassthrough: [],
   parseOutput: "text",
-  opencodeVersion,
 });
+
+/** Capture the warnings a test body emits. */
+function captureWarnings(): string[] {
+  _resetWarnOnceForTests();
+  const warnings: string[] = [];
+  overrideSeam(_setWarnSinkForTests, (level, args) => {
+    if (level === "warn") warnings.push(args.map(String).join(" "));
+  });
+  return warnings;
+}
 
 const children: ChildProcess[] = [];
 const dirs: string[] = [];
@@ -238,7 +249,7 @@ describe.skipIf(!V2_BIN)("OpenCode 2 adapter on the real binary (AKM_OPENCODE_V2
   test("a dispatch ends with a kept session and no leaked server", async () => {
     const before = new Set(childPids() ?? []);
     const controller = new AbortController();
-    const running = runOpencodeSdk(profileFor(V2_BIN as string, 2), "Reply with the word ok.", {
+    const running = runOpencodeSdk(profileFor(V2_BIN as string), "Reply with the word ok.", {
       cwd: tempDir("akm-oc2-run-"),
       signal: controller.signal,
       timeoutMs: 20_000,
@@ -260,20 +271,26 @@ describe.skipIf(!V2_BIN)("OpenCode 2 adapter on the real binary (AKM_OPENCODE_V2
     }
   }, 60_000);
 
-  test("a V1 binary under the V2 adapter fails clearly and names opencodeVersion", async () => {
+  test("a V1 server under the V2 adapter is refused with the remedy (upgrade, or point bin at the binary you want)", async () => {
     if (!V1_BIN) return;
-    const res = await runOpencodeSdk(profileFor(V1_BIN, 2), "p", { timeoutMs: 20_000, env: isolatedHome() });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("spawn_failed");
-    expect(res.error).toContain('"opencodeVersion": 1');
+    const { verdict } = await startServer(V2_ADAPTER, V1_BIN);
+    expect(verdict && "error" in verdict ? verdict.error : "").toContain("OpenCode 1");
+    expect(verdict && "error" in verdict ? verdict.error : "").toContain(
+      'Upgrade to OpenCode 2, or set this engine\'s "bin"',
+    );
   }, 40_000);
 
-  test("a V2 binary under the V1 adapter fails clearly and names opencodeVersion", async () => {
-    const res = await runOpencodeSdk(profileFor(V2_BIN as string, 1), "p", { timeoutMs: 20_000, env: isolatedHome() });
-    expect(res.ok).toBe(false);
-    expect(res.reason).toBe("spawn_failed");
-    expect(res.error).toContain("OpenCode 2");
-    expect(res.error).toContain("opencodeVersion");
+  test("a V2 server under the V1 adapter is refused with the remedy", async () => {
+    const { verdict } = await startServer(V1_ADAPTER, V2_BIN as string);
+    expect(verdict && "error" in verdict ? verdict.error : "").toContain("OpenCode 2");
+    expect(verdict && "error" in verdict ? verdict.error : "").toContain('set this engine\'s "bin"');
+  }, 40_000);
+
+  test("detection picks the V2 adapter for the OpenCode 2 binary, with no version warning", async () => {
+    const warnings = captureWarnings();
+    const res = await runOpencodeSdk(profileFor(V2_BIN as string), "p", { timeoutMs: 3_000, env: isolatedHome() });
+    expect(res.reason).not.toBe("spawn_failed");
+    expect(warnings.filter((w) => w.includes("OpenCode 1"))).toEqual([]);
   }, 40_000);
 });
 
@@ -302,9 +319,10 @@ describe.skipIf(!V1_BIN)("OpenCode 1 adapter on the real binary (AKM_OPENCODE_V1
   }, 60_000);
 
   test("a dispatch ends with a kept session and no leaked server", async () => {
+    const warnings = captureWarnings();
     const before = new Set(childPids() ?? []);
     const controller = new AbortController();
-    const running = runOpencodeSdk(profileFor(V1_BIN as string, 1), "Reply with the word ok.", {
+    const running = runOpencodeSdk(profileFor(V1_BIN as string), "Reply with the word ok.", {
       cwd: tempDir("akm-oc1-run-"),
       signal: controller.signal,
       timeoutMs: 20_000,
@@ -314,8 +332,14 @@ describe.skipIf(!V1_BIN)("OpenCode 1 adapter on the real binary (AKM_OPENCODE_V1
     const res = await running;
     clearTimeout(timer);
 
+    // Detection (`<bin> --version`) picked the V1 adapter: the dispatch ran, and the V1 warning was logged once.
     expect(res.reason).not.toBe("spawn_failed");
     expect(res.sessionId).toMatch(/^ses_/);
+    const v1Warnings = warnings.filter((w) => w.includes("OpenCode 1"));
+    expect(v1Warnings).toHaveLength(1);
+    expect(v1Warnings[0]).toContain("1.18.34");
+    expect(v1Warnings[0]).toContain(V1_BIN as string);
+    expect(v1Warnings[0]).toContain("upgrading to OpenCode 2 is recommended");
 
     await closeServer();
     if (childPids()) {
