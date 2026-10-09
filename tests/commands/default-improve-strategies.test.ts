@@ -47,9 +47,13 @@ describe("default improve strategies (#552)", () => {
     ).toBe(true);
   });
 
-  test("judgment-enabled shipped strategies use durable boolean opt-in", () => {
-    expect(profileReflectDistill.processes.triage.judgment).toBe(true);
-    expect(profileProactiveMaintenance.processes.triage.judgment).toBe(true);
+  test("no shipped strategy turns triage judgment on (#1132)", () => {
+    expect(profileReflectDistill.processes.triage.judgment).toBe(false);
+    expect(profileProactiveMaintenance.processes.triage.judgment).toBe(false);
+    for (const name of BUILTIN_STRATEGIES) {
+      const judgment = resolveImproveStrategy(name, MINIMAL_CONFIG).config.processes?.triage?.judgment;
+      expect(typeof judgment === "object" ? judgment?.enabled : judgment, name).not.toBe(true);
+    }
   });
 
   test("consolidate: validates against the live schema", () => {
@@ -60,7 +64,7 @@ describe("default improve strategies (#552)", () => {
     expect(() => ImproveProfileConfigSchema.parse(profileCatchup)).not.toThrow();
   });
 
-  test("thorough is exactly default plus a judged triage drain (#878)", () => {
+  test("thorough is exactly default plus a promoting triage drain (#878)", () => {
     // The 0.9.6-era thorough.json omitted `validation`, `extract`, and
     // `proactiveMaintenance`; absent keys resolve to DISABLED, so "like
     // default, plus triage" was silently default-minus-validation. Pin the
@@ -78,9 +82,9 @@ describe("default improve strategies (#552)", () => {
     expect(thor.processes?.validation?.enabled).toBe(true);
     expect(thor.processes?.triage?.enabled).toBe(true);
     expect(thor.processes?.triage?.applyMode).toBe("promote");
-    // The resolver normalizes `judgment: true` to `{ enabled: true }`.
+    // Judgment is off (#1132): the judged drain harmed items in the nightly eval.
     const judgment = thor.processes?.triage?.judgment;
-    expect(typeof judgment === "object" ? judgment?.enabled : judgment).toBe(true);
+    expect(typeof judgment === "object" ? judgment?.enabled : judgment).not.toBe(true);
     expect(def.processes?.triage?.enabled).toBe(false);
   });
 

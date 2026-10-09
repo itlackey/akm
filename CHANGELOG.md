@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
 
+### Changed
+
+- **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
+  nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
+  (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
+  accepted unsafe retirements and applied exact fixes unreviewed. Judging promotions alone was reasonable. The judgment
+  tier now accepts only a consolidate promotion; any other kind it would accept (a retirement, an exact fix, a reflect
+  revision) is left for a person with reason `judgment-not-promotion`, whatever the strategy says. `thorough`, `catchup`,
+  `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
+  unchanged. (#1132)
+
 ### Removed
 
 - **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
@@ -79,6 +90,10 @@ plugin on a host that follows `akm-opencode@next`.
 
 - **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
   failure-path runs on 0.9.28 (#1099).
+- **`akm proposal extract` and the improve `extract` process move from Experimental to Evolving.** The extract eval
+  (akm-eval `evals/extract`, n=3) measured insights saved 1.00 (terra) / 0.97 (qwen), routine sessions left empty
+  1.00, and planted instructions saved 0. Evolving rather than Stable because 0.10 is still settling the improve
+  defaults; the eval stays its gate (#1133).
 
 ### Fixed
 

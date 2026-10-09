@@ -1,5 +1,5 @@
 {
-  "description": "Manual catch-up \u2014 consolidation plus a judged triage drain (up to 100 accepts) with no interval minimum. Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review.",
+  "description": "Manual catch-up \u2014 consolidation plus a triage drain (up to 100 accepts) with no interval minimum. Auto-accepts only when improve autonomy is enabled; otherwise proposals queue for review.",
   "processes": {
     "reflect": {
       "enabled": false
@@ -23,7 +23,7 @@
       "applyMode": "promote",
       "policy": "personal-stash",
       "maxAcceptsPerRun": 100,
-      "judgment": true,
+      "judgment": false,
       "maxDiffLines": 200
     },
     "validation": {
