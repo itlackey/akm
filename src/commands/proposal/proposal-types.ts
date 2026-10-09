@@ -126,7 +126,7 @@ export interface ProposalGateDecision {
    * failed), `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
    * `quality-review` for a human, `distill-review` for a human on a distill
-   * pass, `judge-error` for a human when reflect's
+   * pass, `distill-update` for a human on a distill update of an existing lesson, `judge-error` for a human when reflect's
    * judge gave no verdict. Reflect (`reflect`), for a human:
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,

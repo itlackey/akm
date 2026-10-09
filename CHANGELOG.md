@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
+- **Distill extends an existing lesson that a memory repeats (#1090).** When the writer's lesson repeats one the library
+  holds (the judge scores its non-redundancy 2 or below), or the writer answers `NONE` with a lesson nearby, distill
+  asks for that lesson's body again with the lines the memory adds. If every existing line is kept, and the judge
+  passes the added lines against the lesson and the memory, the update is a pending proposal on the lesson's own
+  ref (reason `distill-update`, with the lesson's before-hash), left for a person: the triage drain does not accept
+  it. Otherwise nothing is proposed and the outcome is what it was. The result and the `distill_invoked` event carry
+  `updatesExisting: true`. No new setting; it needs the quality gate.
 
 ### Fixed
 

@@ -507,7 +507,7 @@ export function buildReflectJudgePrompt(
  * human (`judgeAndQueue` in distill.ts).
  */
 const GROUNDING_CRITERION = "grounding";
-const LESSON_REJECT_MAX_SCORE = 2;
+export const LESSON_REJECT_MAX_SCORE = 2;
 
 const LESSON_JUDGE_CRITERIA = ["reusable", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;

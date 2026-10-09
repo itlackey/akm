@@ -217,7 +217,10 @@ both stay on the proposal when the drain accepts it, so a later audit can read
 why it passed (`akm proposal show --format json`). A distill pass is not staged:
 the lesson or promotion is minted `deferred` for a person (reason
 `distill-review`, same gate) with the same `scores` and `judgeReason`, and the
-triage drain and its judgment tier leave it alone. On 2026-10-05 the gate had
+triage drain and its judgment tier leave it alone. A lesson that repeats an existing
+lesson may instead be proposed as an update of that lesson (reason
+`distill-update`, same gate), with only what the memory adds; the drain leaves
+it for a person too. On 2026-10-05 the gate had
 staged 12 lessons and 10 were bad (they restated the memory, claimed what it
 does not say, or filed a dated status as a lesson), and no score separated them
 from the two good ones. Reflect revises only an asset's
