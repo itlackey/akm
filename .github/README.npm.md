@@ -82,14 +82,14 @@ Or generate it directly: `akm help agents >> AGENTS.md`
 
 Full docs, CLI reference, and guides are at **[akm.fwdslsh.dev](https://akm.fwdslsh.dev/)**:
 
-- [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started.html)
-- [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats.html)
-- [CLI Reference](https://akm.fwdslsh.dev/docs/reference/cli.html)
-- [Task v3 Reference](https://akm.fwdslsh.dev/docs/reference/tasks.html)
-- [0.9.2 Migration Guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2.html)
-- [Configuration](https://akm.fwdslsh.dev/docs/reference/configuration.html)
-- [Bundle Authoring Guide](https://akm.fwdslsh.dev/docs/guides/author-bundles.html)
-- [Registry](https://akm.fwdslsh.dev/docs/reference/registry.html)
+- [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/)
+- [Supported Formats](https://akm.fwdslsh.dev/docs/reference/supported-formats/)
+- [CLI Reference](https://akm.fwdslsh.dev/docs/reference/cli/)
+- [Task v3 Reference](https://akm.fwdslsh.dev/docs/reference/tasks/)
+- [0.9.2 Migration Guide](https://akm.fwdslsh.dev/docs/migration/v0.9.1-to-v0.9.2/)
+- [Configuration](https://akm.fwdslsh.dev/docs/reference/configuration/)
+- [Bundle Authoring Guide](https://akm.fwdslsh.dev/docs/guides/author-bundles/)
+- [Registry](https://akm.fwdslsh.dev/docs/reference/registry/)
 
 ## License
 
