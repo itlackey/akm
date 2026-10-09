@@ -241,6 +241,16 @@ items, harmed 14 and 11, and changed 18 and 21 notes outside the planted set.
 Judging promotions alone: precision 0.87, recall 0.78 and 4.8% of bad promotions
 accepted on qwen3.8-27b; precision 1.0, recall 0.17 on gpt-5.6-terra.
 
+### Proactive-lane proposals wait for a person
+
+A proposal planned by the proactive-maintenance lane (`eligibilitySource:
+"proactive"`, an asset with no feedback behind it) is never accepted by the
+drain, whether a deterministic gate (a staged quality-judge pass), the judgment
+tier or an accept staged by an earlier drain would take it. It is left for a
+person with reason `proactive-needs-review`, and the judgment tier does not see
+it. An empty diff is still rejected. Proposals driven by feedback (`signal-delta`,
+`scope`) follow the one rule unchanged (#1147).
+
 ### Retrieval regression gate
 
 Reflect refuses a revision of an existing asset that grades lower on the

@@ -602,7 +602,9 @@ from it), and off in `quick`, `consolidate`, `catchup` and
 `dueDays` (default 30), so each comes up at most once a month, and reflect's
 `limit` (25) still bounds the run. A preset that omits either process
 inherits the `default` value; set `processes.proactiveMaintenance.enabled: false` in the
-selected strategy to turn the lane off. User strategy overrides
+selected strategy to turn the lane off. A proposal from this lane is never
+accepted by `proposal drain`: it waits for a person (reason
+`proactive-needs-review`, #1147). User strategy overrides
 are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 
