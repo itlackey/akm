@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
+  connection as resolved, where the key is still a symbolic reference that a dispatch reads only when it sends a
+  request, so every keyed endpoint (OpenAI, a gateway that enforces auth) answered 401 and the run stopped with
+  "engine completion path is not reachable". The probe now builds the connection as a dispatch does; a required key
+  that is missing is reported as that engine's failure.
 - **OpenAI's reasoning models (gpt-5.x) work as `llm` engines.** They answer 400 to any `temperature` but the
   default and to `max_tokens`, so every akm model call failed on them. Like the existing fallback for the
   thinking-control fields, a 400 that names `temperature` is retried once without it, and one that asks for
