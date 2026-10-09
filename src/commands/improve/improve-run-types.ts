@@ -58,7 +58,7 @@ export interface AkmImproveOptions {
   strategy?: string;
   /** Attempt LLM schema repair after structural validation (default true). */
   repairValidationFailures?: boolean;
-  /** Only refs with recent feedback; disables the fallback lanes. */
+  /** Only refs with recent feedback; disables the proactive-maintenance lane. */
   requireFeedbackSignal?: boolean;
   /** End-of-run auto-sync override (`--no-sync` / `--no-push`). */
   sync?: { enabled?: boolean; push?: boolean };

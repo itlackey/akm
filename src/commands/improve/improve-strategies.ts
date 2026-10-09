@@ -4,7 +4,6 @@
 
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
@@ -103,7 +102,6 @@ export function isStrategyFilteredForAllPasses(ref: string, strategy: ImprovePro
 const BUILTIN_STRATEGIES: Record<string, Record<string, unknown>> = {
   default: defaultStrategy,
   consolidate,
-  "proactive-maintenance": proactiveMaintenance,
 };
 
 if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))) {
@@ -485,7 +483,8 @@ function buildImprovePlan(
 
   if (
     engineUnavailable.length > 0 &&
-    !Object.values(processes).some((process) => process.enabled) &&
+    // proactiveMaintenance uses no engine: it is a selector, so it alone does not keep a run alive.
+    !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled) &&
     (!options.allowAllDisabled || anyEngineNotConfigured)
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");

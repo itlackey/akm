@@ -1545,13 +1545,7 @@
         },
         "salience": {
           "type": "object",
-          "properties": {
-            "salienceThreshold": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
+          "properties": {},
           "additionalProperties": true
         },
         "stateGc": {
@@ -3178,13 +3172,7 @@
             },
             "salience": {
               "type": "object",
-              "properties": {
-                "salienceThreshold": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                }
-              },
+              "properties": {},
               "additionalProperties": true
             },
             "stateGc": {

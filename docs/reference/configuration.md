@@ -455,13 +455,14 @@ can select `engine`, `model`, `timeoutMs`, and LLM request overrides:
 An improve process's engine follows
 [the one rule](#engines-for-unattended-model-work); an explicit invalid or
 incompatible engine never falls back to another engine. The built-in strategies
-are `default`, `consolidate` and `proactive-maintenance`. Each is a patch that
+are `default` and `consolidate`. `consolidate` is a patch that
 is deep-merged onto `default`, and a user-defined strategy of the same name is
 merged on top of that; so every strategy, built-in or user-defined, inherits
-omitted fields from `default`. `quick`, `reflect-distill`, `thorough` and
+omitted fields from `default`. `quick`, `reflect-distill`, `thorough`,
 `catchup` were removed in 0.10 (#1130): measured, none beat `default` (`thorough`
 and `catchup` added only a judged triage drain, and `catchup` was identical to
-`consolidate`). A `improve.strategies.<name>` block with one of those names is
+`consolidate`). `proactive-maintenance` was removed too (#1129): its lane now
+lives in `default`. A `improve.strategies.<name>` block with one of those names is
 now an ordinary user-defined strategy that inherits `default`, so it no longer
 carries the old built-in's settings; `--strategy` or `defaults.improveStrategy`
 naming one with no such block fails with an error that names `default`. To keep
@@ -589,10 +590,14 @@ off too. Every entry must be a non-empty string, or the config does not load.
 ```
 
 No shipped strategy turns improve-stage session extraction on.
-`proactiveMaintenance` is on only in the `proactive-maintenance` preset; run
-`akm improve --strategy proactive-maintenance` to use that opt-in preset.
-Because strategies inherit from `default`, a preset that omits either process
-also inherits the off value. User strategy overrides
+`proactiveMaintenance` is on in `default` (and in the strategies that inherit
+from it), and off in `quick`, `consolidate`, `catchup` and
+`reflect-distill`. It plans stable assets that have had no feedback: at most
+`maxPerRun` (default 15) per run, only assets not reflected or distilled for
+`dueDays` (default 30), so each comes up at most once a month, and reflect's
+`limit` (25) still bounds the run. A preset that omits either process
+inherits the `default` value; set `processes.proactiveMaintenance.enabled: false` in the
+selected strategy to turn the lane off. User strategy overrides
 are applied last, so an explicit `enabled: true` still opts the selected
 strategy in.
 

@@ -384,10 +384,9 @@ for scripted use.
   contradiction edges, and the consolidate journal are observable but
   the algorithm that writes them is tuning across patch releases.
 - **Improve built-in strategies and lanes** — the built-in strategies other
-  than `default` and `consolidate` and the proactive-maintenance and
-  high-salience lanes. 0.10 measures each and keeps, folds or removes it
+  than `default` and `consolidate` and the proactive-maintenance lane. 0.10 measures each and keeps, folds or removes it
   (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
-  in 0.10 (#1130); a user-defined strategy of the same name keeps working.
+  in 0.10 (#1130), as were `proactive-maintenance` and the high-salience lane (#1129); a user-defined strategy of the same name keeps working.
 - **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
   engines, limits, gates, and the CLS knobs) and
   the `index.*` per-pass config. The 0.9.x series is explicitly still settling

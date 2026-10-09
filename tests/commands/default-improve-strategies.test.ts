@@ -11,13 +11,12 @@
 
 import { describe, expect, test } from "bun:test";
 import profileConsolidate from "../../src/assets/improve-strategies/consolidate.json";
-import profileProactiveMaintenance from "../../src/assets/improve-strategies/proactive-maintenance.json";
 import { resolveImproveStrategy } from "../../src/commands/improve/improve-strategies";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 
 const MINIMAL_CONFIG: AkmConfig = { semanticSearchMode: "off" };
-const BUILTIN_STRATEGIES = ["default", "consolidate", "proactive-maintenance"] as const;
+const BUILTIN_STRATEGIES = ["default", "consolidate"] as const;
 
 describe("default improve strategies (#552)", () => {
   test("complete resolved trees are pinned for all built-ins", () => {
@@ -25,20 +24,41 @@ describe("default improve strategies (#552)", () => {
       expect(resolveImproveStrategy(name, MINIMAL_CONFIG)).toMatchSnapshot(name);
     }
   });
-  test("proactive maintenance is opt-in", () => {
-    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled).toBe(
-      false,
-    );
+
+  test("proactive maintenance is on in default, with the shipped cap, and off in consolidate (#1129)", () => {
+    expect(resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.proactiveMaintenance).toMatchObject({
+      enabled: true,
+      dueDays: 30,
+      maxPerRun: 15,
+    });
     expect(resolveImproveStrategy("consolidate", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled).toBe(
       false,
     );
-    expect(
-      resolveImproveStrategy("proactive-maintenance", MINIMAL_CONFIG).config.processes?.proactiveMaintenance?.enabled,
-    ).toBe(true);
+  });
+
+  test("proactive-maintenance was removed as a built-in, but a user block of that name still resolves (#1129)", () => {
+    expect(() => resolveImproveStrategy("proactive-maintenance", MINIMAL_CONFIG)).toThrow(/removed in 0\.10/);
+    const config: AkmConfig = {
+      semanticSearchMode: "off",
+      improve: {
+        strategies: {
+          "proactive-maintenance": {
+            processes: { consolidate: { enabled: false }, proactiveMaintenance: { enabled: true, maxPerRun: 100 } },
+            sync: { enabled: false },
+          },
+        },
+      },
+    };
+    const selected = resolveImproveStrategy("proactive-maintenance", config);
+    expect(selected.name).toBe("proactive-maintenance");
+    expect(selected.config.processes?.proactiveMaintenance).toMatchObject({ enabled: true, maxPerRun: 100 });
+    expect(selected.config.processes?.consolidate?.enabled).toBe(false);
+    expect(selected.config.sync?.enabled).toBe(false);
+    // Reflect and distill come from `default`, as for any user-defined strategy.
+    expect(selected.config.processes?.reflect?.enabled).toBe(true);
   });
 
   test("no shipped strategy turns triage judgment on (#1132)", () => {
-    expect(profileProactiveMaintenance.processes.triage.judgment).toBe(false);
     for (const name of BUILTIN_STRATEGIES) {
       const judgment = resolveImproveStrategy(name, MINIMAL_CONFIG).config.processes?.triage?.judgment;
       expect(typeof judgment === "object" ? judgment?.enabled : judgment, name).not.toBe(true);
@@ -71,8 +91,14 @@ describe("default improve strategies (#552)", () => {
     expect(p.processes?.triage?.enabled).toBe(false);
   });
 
-  // #1130: quick, reflect-distill, thorough and catchup were removed.
-  describe.each(["quick", "reflect-distill", "thorough", "catchup"])("removed built-in %s (#1130)", (name) => {
+  // #1130, #1129: quick, reflect-distill, thorough, catchup and proactive-maintenance were removed.
+  describe.each([
+    "quick",
+    "reflect-distill",
+    "thorough",
+    "catchup",
+    "proactive-maintenance",
+  ])("removed built-in %s (#1130)", (name) => {
     test("with no user block, resolution fails with an error that names default", () => {
       expect(() => resolveImproveStrategy(name, MINIMAL_CONFIG)).toThrow(/removed in 0\.10.*"default"/);
     });
