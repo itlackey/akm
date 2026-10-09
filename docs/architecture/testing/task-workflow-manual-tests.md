@@ -14,7 +14,7 @@ task↔workflow seam.
 `release/0.9.2`). Every expected result marked "verified live" below was
 captured by actually running that exact command against that exact commit
 during authoring/review of this document, via `bun src/cli.ts` in an
-isolated sandbox (see [Setup](#setup-one-sandbox-for-every-non-destructive-test)
+isolated sandbox (see [Setup](#setup--one-sandbox-for-every-non-destructive-test)
 below) — not inferred from source or docs. Anything not run live is marked
 `UNVERIFIED` in bold, inline, at the point it applies. **Re-verify the exact
 JSON field names, error strings, and exit codes here before relying on them
@@ -62,7 +62,7 @@ Practical rule for every test below that touches `add`/`sync`:
 regardless of `AKM_*_DIR` isolation — seeing your host's real cron entries
 in `doctor` output during an "isolated" test is expected, not a bug.
 
-## Setup one sandbox for every non-destructive test
+## Setup — one sandbox for every non-destructive test
 
 ```sh
 export AKM_SANDBOX="$(mktemp -d /tmp/akm-task-workflow-qa.XXXXXX)"
