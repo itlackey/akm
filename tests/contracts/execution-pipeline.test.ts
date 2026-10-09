@@ -99,7 +99,10 @@ describe("agent engines: config engine → argv", () => {
   test("opencode gets the persona composed into its prompt, since `opencode run` has no --system-prompt", async () => {
     const { argv } = await spawnedFor({
       content: "Review the diff.",
-      config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
+      config: config({
+        engines: { oc: { kind: "agent", platform: "opencode", opencodeVersion: 1 } },
+        defaults: { engine: "oc" },
+      }),
       persona: reviewer(),
     });
     expect(argv).toEqual([
@@ -110,7 +113,33 @@ describe("agent engines: config engine → argv", () => {
     ]);
   });
 
+  test("opencode 2 (the default) runs standalone, with the persona composed into its prompt", async () => {
+    const { argv } = await spawnedFor({
+      content: "Review the diff.",
+      config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
+      persona: reviewer(),
+    });
+    expect(argv).toEqual([
+      "opencode",
+      "run",
+      "--standalone",
+      "--",
+      "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
+    ]);
+  });
+
   test("opencode replaces its profile model flag with the resolved one", async () => {
+    const { argv } = await spawnedFor({
+      content: "Summarise.",
+      config: config({
+        engines: { oc: { kind: "agent", platform: "opencode", model: "balanced", opencodeVersion: 1 } },
+        defaults: { engine: "oc" },
+      }),
+    });
+    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--", "Summarise."]);
+  });
+
+  test("opencode 2 replaces its profile model flag with the resolved one and runs standalone", async () => {
     const { argv } = await spawnedFor({
       content: "Summarise.",
       config: config({
@@ -118,7 +147,15 @@ describe("agent engines: config engine → argv", () => {
         defaults: { engine: "oc" },
       }),
     });
-    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--", "Summarise."]);
+    expect(argv).toEqual([
+      "opencode",
+      "run",
+      "--model",
+      "opencode/claude-sonnet-4-6",
+      "--standalone",
+      "--",
+      "Summarise.",
+    ]);
   });
 
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
@@ -466,7 +503,15 @@ describe("provenance and notices", () => {
 describe("resume from the journaled wire form", () => {
   test("a config edit after the freeze does not change what a resumed unit runs", async () => {
     const live = config({
-      engines: { oc: { kind: "agent", platform: "opencode", model: "provider/frozen", bin: "opencode-frozen" } },
+      engines: {
+        oc: {
+          kind: "agent",
+          platform: "opencode",
+          model: "provider/frozen",
+          bin: "opencode-frozen",
+          opencodeVersion: 1,
+        },
+      },
       defaults: { engine: "oc" },
     });
     const resolved = resolveExecution({ content: "Resume me.", config: live });
@@ -581,15 +626,19 @@ describe("an engine's default agent", () => {
     expect(resolveExecution({ content: "y", runner }).request.agent).toBe("akm-workflow");
   });
 
-  test("the opencode and claude CLIs pass it as --agent", async () => {
-    for (const [platform, bin] of [
-      ["opencode", "opencode"],
-      ["claude", "claude"],
+  test("the opencode (both majors) and claude CLIs pass it as --agent", async () => {
+    for (const [platform, bin, opencodeVersion] of [
+      ["opencode", "opencode", undefined],
+      ["opencode", "opencode", 1],
+      ["opencode", "opencode", 2],
+      ["claude", "claude", undefined],
     ] as const) {
       const { argv } = await spawnedFor({
         content: "Hi.",
         config: config({
-          engines: { e: { kind: "agent", platform, agent: "akm-workflow" } },
+          engines: {
+            e: { kind: "agent", platform, agent: "akm-workflow", ...(opencodeVersion ? { opencodeVersion } : {}) },
+          },
           defaults: { engine: "e" },
         }),
       });

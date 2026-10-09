@@ -62,7 +62,7 @@ function agentModeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
     defaults: { llmEngine: "pin-target", engine: "fake-agent", improveStrategy: "default" },
     engines: {
       "pin-target": { kind: "llm", endpoint: "http://127.0.0.1:9", model: "pin-model" },
-      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent" },
+      "fake-agent": { kind: "agent", platform: "opencode", bin: "fake-agent", opencodeVersion: 1 },
     },
     improve: {
       strategies: {
