@@ -176,6 +176,82 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
   });
 });
 
+describe("chatCompletion against an OpenAI reasoning model (temperature and max_tokens rejected)", () => {
+  const messages = [{ role: "user" as const, content: "Return a result" }];
+  const ok = () => Response.json({ choices: [{ message: { content: "ok" } }] });
+  // What the OpenAI API answers gpt-5.x for a non-default temperature and for max_tokens.
+  const strict = (body: Record<string, unknown>) => {
+    if ("max_tokens" in body) {
+      return Response.json(
+        {
+          error: {
+            message:
+              "Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.",
+            type: "invalid_request_error",
+            param: "max_tokens",
+            code: "unsupported_parameter",
+          },
+        },
+        { status: 400 },
+      );
+    }
+    if ("temperature" in body && body.temperature !== 1) {
+      return Response.json(
+        {
+          error: {
+            message: `Unsupported value: 'temperature' does not support ${body.temperature} with this model. Only the default (1) value is supported.`,
+            type: "invalid_request_error",
+            param: "temperature",
+            code: "unsupported_value",
+          },
+        },
+        { status: 400 },
+      );
+    }
+    return undefined;
+  };
+
+  beforeEach(() => {
+    _resetEndpointSupportTrackersForTests();
+  });
+
+  test("one call falls back past both, and the connection keeps the working shape", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      return strict(body) ?? ok();
+    });
+    const config: LlmConnectionConfig = { endpoint: url, model: "gpt-test" };
+    try {
+      expect(await chatCompletion(config, messages, { maxTokens: 64, temperature: 0 })).toBe("ok");
+      expect(requestBodies).toHaveLength(3);
+      expect(requestBodies[2]).not.toHaveProperty("temperature");
+      expect(requestBodies[2]).not.toHaveProperty("max_tokens");
+      expect(requestBodies[2]).toMatchObject({ max_completion_tokens: 64 });
+
+      requestBodies.length = 0;
+      expect(await chatCompletion(config, messages, { maxTokens: 64 })).toBe("ok");
+      expect(requestBodies).toHaveLength(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("an unrelated 400 is not retried", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      return Response.json({ error: { message: "Invalid 'messages': empty." } }, { status: 400 });
+    });
+    try {
+      await expect(chatCompletion({ endpoint: url, model: "gpt-test" }, messages)).rejects.toThrow(LlmCallError);
+      expect(requestBodies).toHaveLength(1);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
 describe("chatCompletion against an API that rejects the thinking-control fields (#1045)", () => {
   const messages = [{ role: "user" as const, content: "Return a result" }];
   const responseSchema = {
