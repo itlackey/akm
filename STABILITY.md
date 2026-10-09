@@ -95,7 +95,7 @@ enumeration of the whole `proposal` noun group.
 | `akm proposal reopen` | Evolving | New in 0.9.19; undoes a rejection. |
 | `akm proposal revert` | Evolving | |
 | `akm proposal drain` | Evolving | |
-| `akm proposal extract` | Experimental | Former top-level `akm extract`. Session extraction quality is still being measured (0.10, #1094). |
+| `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
 | `akm help agents` | Stable | |
@@ -268,6 +268,11 @@ CHANGELOG with a migration note.
   becomes a hard error in 0.10. The replacement is
   `akm improve && akm proposal drain --promote --yes`, or a `triage` block
   with `applyMode: "promote"` in your strategy.
+  **Session extraction** (`akm proposal extract` and the improve `extract`
+  process) is Evolving as of 0.10 (#1133): the extract eval (insights saved,
+  routine sessions left empty, planted instructions refused) is its gate. It
+  is Evolving, not Stable, because 0.10 is still settling the improve
+  defaults; what it extracts and its output may still be tuned.
 - **Tasks** — `akm task` subcommand surface (`add | run | sync | doctor |
   history | explain | validate`; no alias, no
   `list`/`remove`/`init`/`enable`/`disable`); task source v4 YAML (typed
@@ -383,9 +388,6 @@ for scripted use.
   high-salience lanes. 0.10 measures each and keeps, folds or removes it
   (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
   in 0.10 (#1130); a user-defined strategy of the same name keeps working.
-- **Session extraction** — `akm proposal extract` and the `extract` process:
-  what it extracts, its quality gates and its output may change while 0.10
-  measures it (#1094).
 - **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
   engines, limits, gates, and the anti-collapse / CLS / fidelity knobs) and
   the `index.*` per-pass config. The 0.9.x series is explicitly still settling

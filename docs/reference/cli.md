@@ -2914,7 +2914,7 @@ authenticates its root; it never falls back to an ambient write target.
 
 #### proposal extract
 
-**Experimental** (see [STABILITY.md](../../STABILITY.md)): session extraction is still being measured in 0.10.
+**Evolving** (see [STABILITY.md](../../STABILITY.md)): measured by the extract eval; 0.10 is still settling the improve defaults, so it is not yet Stable.
 
 Extract durable insights from native coding-agent session files (claude-code,
 codex, opencode) and queue them as proposals. This is the standalone
