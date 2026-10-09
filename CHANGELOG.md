@@ -51,6 +51,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`,
   `consolidate` and `proactive-maintenance`. (#1130)
 
+### Removed
+
+- **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
+  that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
+  - `processes.consolidate.antiCollapse`: the random cluster-member injection. Identical results with it off on an
+    80-memory pool.
+  - `processes.consolidate.p90ChunkSecondsDefault`: the up-front budget cap on the consolidation pool keeps its
+    behaviour with a fixed 30 s per chunk. Identical at 10, 30 and 90 s under a 180 s budget.
+  - `processes.consolidate.minPoolSize`: the minimum-pool skip, its `pool_below_min_size` `improve_skipped` reason and
+    the `minPoolSize` / `gates.minimumPool` fields of the consolidation plan. It was bypassed by `--strategy`, and the
+    documented default (500) differed from the code's (0). `improve_runs` rows that carry the plan fields still read.
+  - `processes.distill.fidelityCheck`: the negation-pattern contradiction check. No difference at n=3.
+  - `processes.reflect.lowValueFilter`: the low-value tier of the reflect noise classifier. Reflect edits only
+    frontmatter, which the filter always passes. No-op and cosmetic edits are still refused.
+  - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
+    (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
+
 ### Fixed
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's

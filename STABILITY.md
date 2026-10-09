@@ -389,7 +389,7 @@ for scripted use.
   (#1094). `quick`, `reflect-distill`, `thorough` and `catchup` were removed
   in 0.10 (#1130); a user-defined strategy of the same name keeps working.
 - **Improve tuning config** — `improve.strategies.*.processes.*` (per-process
-  engines, limits, gates, and the anti-collapse / CLS / fidelity knobs) and
+  engines, limits, gates, and the CLS knobs) and
   the `index.*` per-pass config. The 0.9.x series is explicitly still settling
   the design of the improve processes, so **keys in these two families may be
   added, renamed, or dropped in any 0.9.x or 0.10.x release**. The `akm

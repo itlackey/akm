@@ -3,24 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * #553 — consolidate `minPoolSize` guard.
- *
- * The consolidation pass skips entirely (zero LLM calls) when the eligible
- * memory pool is below `processes.consolidate.minPoolSize`. The skip is emitted
- * as an `improve_skipped` event with `reason: "pool_below_min_size"` (reusing
- * the #551 emission path), which the health command's dynamic skip-reason
- * aggregation surfaces. `minPoolSize: 0` disables the guard; the default is 500.
- *
- * These tests pin: skip-below-threshold (+event, +zero LLM), runs-at-threshold
- * (guard does not preempt the run), disable-with-0, and health visibility. They
- * use small sandboxed pools and a tiny `minPoolSize` so the guard boundary is
- * exercised deterministically without seeding 500 memories.
+ * Consolidate judged-memory ledger: a pass records every memory it judged, and
+ * a memory judged recently and unchanged is not judged again.
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
-import { akmHealth } from "../../../../src/commands/health";
 import { akmConsolidate } from "../../../../src/commands/improve/consolidate";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
@@ -34,8 +23,6 @@ import { withImproveAutonomy, withTestImproveLlm } from "../../../_helpers/impro
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 import { overrideSeam } from "../../../_helpers/seams";
 
-const TIMEOUT_MS = 20_000;
-
 let cleanup: Cleanup = () => {};
 let stashDir = "";
 
@@ -45,15 +32,15 @@ function writeMemory(name: string, body: string): void {
   fs.writeFileSync(filePath, `---\ndescription: ${name}\n---\n\n${body}\n`, "utf8");
 }
 
-/** Config with the consolidate process enabled and a specific minPoolSize. */
-function configWithMinPoolSize(minPoolSize: number): AkmConfig {
+/** Config with the consolidate process enabled. */
+function consolidateConfig(): AkmConfig {
   return withImproveAutonomy(
     withTestImproveLlm({
       semanticSearchMode: "off",
       improve: {
         strategies: {
           default: {
-            processes: { consolidate: { enabled: true, minPoolSize }, extract: { enabled: false } },
+            processes: { consolidate: { enabled: true }, extract: { enabled: false } },
           },
         },
       },
@@ -85,12 +72,6 @@ function consolidateLedgerRows() {
   }
 }
 
-function poolBelowMinSizeEvents() {
-  return readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
-    (e) => e.metadata?.reason === "pool_below_min_size",
-  );
-}
-
 beforeEach(() => {
   const storage = withIsolatedAkmStorage();
   stashDir = storage.stashDir;
@@ -104,89 +85,7 @@ afterEach(() => {
   stashDir = "";
 });
 
-describe("#553 consolidate minPoolSize guard", () => {
-  test(
-    "eligible pool BELOW minPoolSize → skip + pool_below_min_size event + ZERO consolidate run",
-    async () => {
-      writeMemory("only-mem", "A single memory — well below the guard.");
-      await akmIndex({ stashDir, full: true });
-
-      // The #553 pool guard preempts the pass: pool size 1 < minPoolSize 3.
-      await runImprove(configWithMinPoolSize(3));
-
-      const skips = poolBelowMinSizeEvents();
-      expect(skips.length).toBe(1);
-      expect(skips[0]?.metadata?.poolSize).toBe(1);
-      expect(skips[0]?.metadata?.minPoolSize).toBe(3);
-
-      // Zero LLM work: consolidation never entered, and no
-      // `consolidation_no_memory_updates` (ledger delta) event fired either —
-      // the pool guard short-circuited first.
-      expect(consolidateLedgerRows()).toEqual([]);
-      const mtimeSkips = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
-        (e) => e.metadata?.reason === "consolidation_no_memory_updates",
-      );
-      expect(mtimeSkips.length).toBe(0);
-    },
-    TIMEOUT_MS,
-  );
-
-  test(
-    "eligible pool AT/ABOVE minPoolSize → guard does NOT skip (no pool_below_min_size event)",
-    async () => {
-      for (let i = 0; i < 5; i += 1) {
-        writeMemory(`mem-${i}`, `Memory number ${i}.`);
-      }
-      await akmIndex({ stashDir, full: true });
-
-      // Pool size 5 >= minPoolSize 3 → the pool guard is inert; crucially, NO
-      // pool_below_min_size event.
-      await runImprove(configWithMinPoolSize(3));
-
-      expect(poolBelowMinSizeEvents().length).toBe(0);
-    },
-    TIMEOUT_MS,
-  );
-
-  test(
-    "minPoolSize: 0 disables the guard → never skips on size even for a tiny pool",
-    async () => {
-      writeMemory("only-mem", "A single memory; guard disabled.");
-      await akmIndex({ stashDir, full: true });
-
-      await runImprove(configWithMinPoolSize(0));
-
-      expect(poolBelowMinSizeEvents().length).toBe(0);
-    },
-    TIMEOUT_MS,
-  );
-
-  test(
-    "an explicitly named --strategy bypasses the guard even below minPoolSize",
-    async () => {
-      writeMemory("only-mem", "A single memory — well below the guard.");
-      await akmIndex({ stashDir, full: true });
-
-      await runImprove(configWithMinPoolSize(3), { strategy: "default" });
-
-      expect(poolBelowMinSizeEvents().length).toBe(0);
-    },
-    TIMEOUT_MS,
-  );
-
-  test(
-    "an explicit ref --scope bypasses the guard even below minPoolSize",
-    async () => {
-      writeMemory("only-mem", "A single memory — well below the guard.");
-      await akmIndex({ stashDir, full: true });
-
-      await runImprove(configWithMinPoolSize(3), { scope: "memories/only-mem" });
-
-      expect(poolBelowMinSizeEvents().length).toBe(0);
-    },
-    TIMEOUT_MS,
-  );
-
+describe("consolidate ledger", () => {
   test("completes the pass despite a retired advisory op in the response, and records every judged memory (R4 + R12a)", async () => {
     writeMemory(
       "primary",
@@ -221,7 +120,7 @@ describe("#553 consolidate minPoolSize guard", () => {
       }),
     );
 
-    const result = await runImprove(configWithMinPoolSize(0));
+    const result = await runImprove(consolidateConfig());
 
     expect(result.consolidation?.promoted).toHaveLength(1);
     expect(result.consolidation?.warnings.some((w) => w.includes("skipping invalid operation"))).toBe(true);
@@ -238,11 +137,11 @@ describe("#553 consolidate minPoolSize guard", () => {
     await akmIndex({ stashDir, full: true });
     overrideSeam(_setChatCompletionForTests, async () => JSON.stringify({ operations: [] }));
 
-    const first = await runImprove(configWithMinPoolSize(0));
+    const first = await runImprove(consolidateConfig());
     expect(first.consolidation?.processed).toBe(2);
     expect(consolidateLedgerRows().map((row) => row.outcome)).toEqual(["judged_no_action", "judged_no_action"]);
 
-    const second = await runImprove(configWithMinPoolSize(0));
+    const second = await runImprove(consolidateConfig());
     expect(second.consolidation?.processed ?? 0).toBe(0);
     const deltaSkips = readEvents({ type: "improve_skipped", ref: "memories/_consolidation" }).events.filter(
       (e) => e.metadata?.reason === "consolidation_no_memory_updates",
@@ -256,7 +155,7 @@ describe("#553 consolidate minPoolSize guard", () => {
 
     // #986: the edit lifts the ledger window, but improve already judged this
     // memory and retrieval never returned it, so it stays out of the pool.
-    const third = await runImprove(configWithMinPoolSize(0));
+    const third = await runImprove(consolidateConfig());
     expect(third.consolidation?.processed ?? 0).toBe(0);
 
     const db = openStateDatabase();
@@ -267,7 +166,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     } finally {
       db.close();
     }
-    const fourth = await runImprove(configWithMinPoolSize(0));
+    const fourth = await runImprove(consolidateConfig());
     expect(fourth.consolidation?.processed).toBe(1);
   });
 
@@ -294,7 +193,7 @@ describe("#553 consolidate minPoolSize guard", () => {
     fs.mkdirSync(unusableDbPath);
 
     const result = await akmConsolidate({
-      config: configWithMinPoolSize(0),
+      config: consolidateConfig(),
       stashDir,
       proposalsCtx: { dbPath: unusableDbPath },
     });
@@ -302,19 +201,4 @@ describe("#553 consolidate minPoolSize guard", () => {
     expect(result.failedPromotions).toBe(1);
     expect(consolidateLedgerRows()).toEqual([]);
   });
-
-  test(
-    "health surfaces pool_below_min_size in improve skip-reason aggregation",
-    async () => {
-      writeMemory("only-mem", "A single memory — below the guard.");
-      await akmIndex({ stashDir, full: true });
-
-      await runImprove(configWithMinPoolSize(3));
-      expect(poolBelowMinSizeEvents().length).toBe(1);
-
-      const health = await akmHealth({ since: "30d" });
-      expect(health.improve?.skipReasons?.pool_below_min_size).toBe(1);
-    },
-    TIMEOUT_MS,
-  );
 });

@@ -58,11 +58,6 @@ describe("default improve strategies (#552)", () => {
     expect(p.processes?.consolidate?.enabled).toBe(true);
     expect(p.processes?.consolidate?.allowedTypes).toEqual(["memory"]);
     expect(p.processes?.consolidate?.maxChunkSize).toBe(25);
-    // The built-in strategies no longer ship a minPoolSize floor: a shipped
-    // 500 meant `akm improve --strategy consolidate`, typed by a human,
-    // silently did nothing on almost every real install. Unset resolves to
-    // the runtime default of 0 (disabled) in preparation.ts.
-    expect(p.processes?.consolidate?.minPoolSize).toBeUndefined();
     expect(p.processes?.reflect?.enabled).toBe(false);
     expect(p.processes?.distill?.enabled).toBe(false);
     expect(p.processes?.memoryInference?.enabled).toBe(false);
@@ -96,8 +91,9 @@ describe("default improve strategies (#552)", () => {
     });
   });
 
-  test("minPoolSize is no longer shipped on consolidate.json now that 0 is the runtime default", () => {
-    // #553 added `minPoolSize` to consolidate.json (500) and catchup.json (0); catchup is gone (#1130).
-    expect(JSON.stringify(profileConsolidate)).not.toContain("minPoolSize");
+  test("no shipped strategy sets a removed improve knob (#1131)", () => {
+    for (const key of ["antiCollapse", "p90ChunkSecondsDefault", "minPoolSize", "fidelityCheck", "lowValueFilter"]) {
+      expect(JSON.stringify(profileConsolidate)).not.toContain(key);
+    }
   });
 });
