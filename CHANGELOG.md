@@ -103,6 +103,16 @@ engines, `akm improve --require-engines` probes send API keys, and the npm packa
 
 ### Fixed
 
+- **consolidate's pair judge no longer reads two same-age notes with different values as an update (#1134).** On the
+  60 labelled pairs `gpt-5.6-terra` retired 10 notes that held a claim the kept note lacked, in every run, always
+  from the ten `contradicts` pairs: it labelled them `supersedes`, because the prompt called B "newer" although both
+  notes had the same file time, and listed no claim for the old value because "updates" were left out of the lists.
+  The judge now sees "A (same age as B)" / "B (same age as A)" when the dates tie, and a different value counts as a
+  replacement only when B says so or is created later; otherwise both values are listed and the pair is
+  `contradicts`. Measured with akm-eval `evals/consolidate`, n=3 per-case: terra unsafe retirements 10 of 60 ->
+  1 to 3 (first prompt) and 0 on the final build's first run; qwen3.8-27b stays at 0 unsafe, recall 0.69 -> 0.71.
+  Pool (80 memories): terra 2 unsafe per run -> 0 to 2; qwen 0, recall 0.77 -> 0.79.
+
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
   connection as resolved, where the key is still a symbolic reference that a dispatch reads only when it sends a
   request, so every keyed endpoint (OpenAI, a gateway that enforces auth) answered 401 and the run stopped with
