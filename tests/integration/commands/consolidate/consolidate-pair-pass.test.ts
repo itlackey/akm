@@ -579,6 +579,63 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(claimAContent).not.toContain("beliefState");
   });
 
+  test("#1134: the judge is told a different value is a replacement only when B says so or is newer, and a tie in dates is not called newer", async () => {
+    const aPath = writeAsset("memories/lease-a.md", "description: lease a");
+    dateAsset(aPath, 2);
+    const bPath = writeAsset("memories/lease-b.md", "description: lease b");
+    dateAsset(bPath, 2);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "lease-a", aPath, 0);
+      indexAsset(db, "memory", "lease-b", bPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+
+    const judgeCalls: Array<{ system: string; user: string }> = [];
+    const chat: PairJudgeChat = async (_connection, messages) => {
+      if (isJudgeCall(messages)) judgeCalls.push({ system: messages[0]!.content, user: messages[1]!.content });
+      return fixedChat({ relation: "contradicts", redundant: null })(_connection, messages);
+    };
+    await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], { chat });
+
+    expect(judgeCalls.length).toBeGreaterThanOrEqual(1);
+    const { system, user } = judgeCalls[0]!;
+    expect(system).toContain("B replaces a claim of A only when");
+    expect(system).toContain("is a conflict, not a replacement");
+    expect(system).toContain("B does not say it replaces the claim and was not created later");
+    expect(user.match(/^Created: /gm)).toHaveLength(2);
+    // Both notes carry one date: neither is "older" or "newer", so the prompt must not say so.
+    expect(user).toContain("Asset A (same age as B):");
+    expect(user).toContain("Asset B (same age as A):");
+    expect(user).not.toContain("(newer)");
+  });
+
+  test("#1134: notes with different dates are still labelled A (older) and B (newer)", async () => {
+    const aPath = writeAsset("memories/ttl-a.md", "description: ttl a");
+    dateAsset(aPath, 60);
+    const bPath = writeAsset("memories/ttl-b.md", "description: ttl b");
+    dateAsset(bPath, 1);
+    const db = openIndexDatabase(getDbPath());
+    try {
+      indexAsset(db, "memory", "ttl-a", aPath, 0);
+      indexAsset(db, "memory", "ttl-b", bPath, angleForCosine(0.96));
+    } finally {
+      closeDatabase(db);
+    }
+
+    const users: string[] = [];
+    const chat: PairJudgeChat = async (_connection, messages) => {
+      if (isJudgeCall(messages)) users.push(messages[1]!.content);
+      return fixedChat({ relation: "contradicts", redundant: null })(_connection, messages);
+    };
+    await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", [], { chat });
+
+    expect(users.length).toBeGreaterThanOrEqual(1);
+    expect(users[0]).toContain("Asset A (older):");
+    expect(users[0]).toContain("Asset B (newer):");
+  });
+
   test("subsumed: retires the side the judge names redundant", async () => {
     const smallPath = writeAsset("memories/small-note.md", "description: small");
     dateAsset(smallPath, 60);
