@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **Every relative link in the npm package's docs resolves again.** #1118 made `docs/README.md`,
+  `docs/migration/README.md` and `docs/reference/cli.md` link by relative path to guides and pages the package did
+  not ship. npm always ships a folder's `README.md`, so those links were dead for npm users. The package now ships
+  the user-facing `docs/` folders (`agents`, `architecture`, `guides`, `integration`, `maintainers`, `migration`,
+  `posts`, `reference`), `docs/product-surface.md`, the one plan they link to, and `ROADMAP.md`. `docs/plans` stays
+  out. The link check skips link syntax inside code, which is an example, not a link.
+
 ## [0.9.30] - 2026-10-09
 
 A patch release: `akm upgrade` acts only on the `akm-opencode` spec OpenCode's config names.

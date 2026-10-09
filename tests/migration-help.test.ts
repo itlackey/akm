@@ -28,10 +28,16 @@ describe("migration help", () => {
     const staticFiles = (packageJson.files ?? []).filter((entry) => entry !== "dist");
     // CHANGELOG.md and LICENSE are auto-published by npm from the package root
     // and intentionally NOT listed in files[] to avoid duplicate shipment.
-    expect(staticFiles).toContain("docs/migration/release-notes");
-    expect(staticFiles).toContain("docs/migration/v0.7-to-v0.8.md");
-    expect(staticFiles).toContain("docs/migration/v0.9.1-to-v0.9.2.md");
-    expect(staticFiles).toContain("docs/reference/tasks.md");
+    // An entry ships its path, or every path under it when it names a folder.
+    const published = (file: string) => staticFiles.some((entry) => file === entry || file.startsWith(`${entry}/`));
+    for (const file of [
+      "docs/migration/release-notes",
+      "docs/migration/v0.7-to-v0.8.md",
+      "docs/migration/v0.9.1-to-v0.9.2.md",
+      "docs/reference/tasks.md",
+    ]) {
+      expect(published(file)).toBe(true);
+    }
     for (const entry of staticFiles) {
       expect(fs.existsSync(path.join(PROJECT_ROOT, entry))).toBe(true);
     }

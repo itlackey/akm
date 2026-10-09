@@ -111,7 +111,11 @@ describe("npm pack contents", () => {
       if (!md.endsWith(".md") || md === "README.md") continue;
       const onDisk = path.join(PROJECT_ROOT, md);
       if (!fs.existsSync(onDisk)) continue;
-      const text = fs.readFileSync(onDisk, "utf8");
+      // Link syntax inside fenced or inline code is an example, not a link.
+      const text = fs
+        .readFileSync(onDisk, "utf8")
+        .replace(/^(```|~~~)[\s\S]*?^\1/gm, "")
+        .replace(/`[^`\n]*`/g, "");
       for (const m of text.matchAll(/\]\(([^)\s]+)\)/g)) {
         const target = m[1] ?? "";
         if (/^(https?:\/\/|#|mailto:)/.test(target)) continue;
