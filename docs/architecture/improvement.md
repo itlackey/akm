@@ -2,7 +2,7 @@
 
 ## Purpose and boundary
 
-AKM learns from outcomes, but changes remain reviewable. This page is the
+The improvement loop turns outcomes into ranking changes and reviewable proposals. This page is the
 architecture-level reference for that loop — how a feedback signal becomes a
 ranking change, how ranking and usage evidence become a proposal, and the
 boundary around what AKM is allowed to write without a human or policy

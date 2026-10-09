@@ -614,9 +614,8 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, bundle metadata) | full hit object |
 | `--shape agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys` | no local access fields |
 
-`--shape summary` is **not valid on `search`** — see
-[`--shape summary`](#--shape-summary) above; it is a usage error (exit 2)
-everywhere except `akm show`.
+`--shape summary` is **not valid on `search`** — see the `--shape summary`
+section above; it is a usage error (exit 2) everywhere except `akm show`.
 
 There is no registry `curated` boolean. Renderers surface an optional
 `warnings: string[]` field on hits when a provider has non-fatal issues to
@@ -720,8 +719,8 @@ akm show memories/retro --filter user=alice --filter agent=claude
 human-authored orientation doc from a bundle's optional `.meta/` directory
 (`<name>` defaults to `index`; `.meta/<name>.md` is tried before an
 extensionless `.meta/<name>`). These files are never indexed, so they do not
-appear in `akm search`. See [concepts.md](https://github.com/itlackey/akm/blob/main/docs/guides/concepts.md#bundle-orientation-the-meta-convention)
-for the full convention.
+appear in `akm search`. See [Concepts](../guides/concepts.md) for the full
+convention.
 
 `--filter` accepts the same `<key>=<value>` shape as `akm search --filter` — one
 spelling for the scope-narrowing axis on both commands (`--scope` was removed
@@ -1350,7 +1349,7 @@ akm upgrade --next       # Install the newest prerelease (@next) instead of the 
 | `--check` | Report pending updates (CLI and per-harness plugins) without changing anything |
 | `--force` | Force upgrade even if on latest version |
 | `--skip-post-upgrade` | Skip the post-upgrade index rebuild |
-| `--next` | Follow the `next` prerelease channel: install the newest prerelease of akm (and of the OpenCode plugin, see [Prereleases](#prereleases-next)). Works with `--check`, `--force` and `-q` |
+| `--next` | Follow the `next` prerelease channel: install the newest prerelease of akm (and of the OpenCode plugin, see the Prereleases section below). Works with `--check`, `--force` and `-q` |
 
 Offline, or to migrate without a release check, run `akm migrate apply`
 directly: it is the same step.

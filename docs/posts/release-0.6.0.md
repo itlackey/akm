@@ -78,7 +78,7 @@ A few additive improvements rode along with the cleanup.
 - **Workflow resume reclassifies blocked steps** — `akm workflow resume <id>` now re-opens the currently-blocked step so you can mark it `completed`, `failed`, or `skipped` after resolving the blocker. Issue [#156](https://github.com/itlackey/akm/issues/156).
 - **Workflow create works in clean stashes** — `akm workflow create <name>` (and `--from <file>`) no longer false-positive on a path escape when any ancestor of the stash is a symlink. Issue [#157](https://github.com/itlackey/akm/issues/157).
 - **Registry search drops empty hit objects** — providers returning partial records no longer surface as `{}` in JSON output; dropped counts appear in `warnings` so the upstream bug stays visible. Issue [#159](https://github.com/itlackey/akm/issues/159).
-- **Isolated sandbox recipe** — [`getting-started.md`](https://github.com/itlackey/akm/blob/main/docs/guides/getting-started.md#isolated-sandbox-workflow) now includes the one-terminal recipe for a throwaway `HOME` + `XDG_*` + `AKM_STASH_DIR` sandbox. Handy for agent testing, CI, and issue reproduction. Issue [#160](https://github.com/itlackey/akm/issues/160).
+- **Isolated sandbox recipe** — [Getting Started](../guides/getting-started.md#isolated-sandbox-workflow) now includes the one-terminal recipe for a throwaway `HOME` + `XDG_*` + `AKM_STASH_DIR` sandbox. Handy for agent testing, CI, and issue reproduction. Issue [#160](https://github.com/itlackey/akm/issues/160).
 
 None of these require migration action; they are upgrades-by-default once you install 0.6.0.
 
