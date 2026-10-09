@@ -32,6 +32,7 @@ import path from "node:path";
 import { CONSOLIDATE_PLAN_JSON_SCHEMA } from "../../src/commands/improve/consolidate";
 import { PAIR_CHECK_JSON_SCHEMA, PAIR_JUDGE_JSON_SCHEMA } from "../../src/commands/improve/consolidate/pair-pass";
 import { DISTILL_KNOWLEDGE_JSON_SCHEMA, DISTILL_LESSON_JSON_SCHEMA } from "../../src/commands/improve/distill";
+import { DISTILL_LESSON_UPDATE_JSON_SCHEMA } from "../../src/commands/improve/distill/lesson-update";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
 import { REFLECT_JSON_SCHEMA, REFLECT_UNSCOPED_JSON_SCHEMA } from "../../src/commands/improve/reflect";
 import { GRADE_SCHEMA } from "../../src/commands/improve/retrieval-gate";
@@ -46,6 +47,7 @@ const RESPONSE_SCHEMAS: Record<string, unknown> = {
   DERIVED_MEMORY_JSON_SCHEMA,
   DISTILL_KNOWLEDGE_JSON_SCHEMA,
   DISTILL_LESSON_JSON_SCHEMA,
+  DISTILL_LESSON_UPDATE_JSON_SCHEMA,
   EXTRACT_JSON_SCHEMA,
   GRADE_SCHEMA,
   PAIR_CHECK_JSON_SCHEMA,

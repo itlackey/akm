@@ -54,6 +54,13 @@ import {
   type DistillValidationFinding,
   repairLessonDescriptionTruncation,
 } from "./distill/content-repair";
+import {
+  buildLessonUpdatePrompt,
+  DISTILL_LESSON_UPDATE_JSON_SCHEMA,
+  diffLessonBody,
+  parseLessonUpdate,
+  type UpdateCandidate,
+} from "./distill/lesson-update";
 import { buildClsContext, DEFAULT_CLS_ADJACENT_COUNT } from "./distill-guards";
 import { assessMemoryKnowledgePromotionCandidate, deriveKnowledgeRef } from "./distill-promotion-policy";
 import { buildRefVocabulary, scoreEncodingSalience } from "./encoding-salience";
@@ -62,6 +69,7 @@ import { recordLedgerAttempt } from "./ledger";
 import { computeSalience, upsertAssetSalience } from "./salience";
 import {
   callStage,
+  LESSON_REJECT_MAX_SCORE,
   mintProposal,
   type NoticeSet,
   noticeSet,
@@ -113,11 +121,18 @@ export interface AkmDistillOptions {
   excludeTags?: string[];
   includeTags?: string[];
   /** Test seam: the top-N lessons, knowledge notes and skills related to a query, for the writer and the judge. */
-  fetchRelatedFn?: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+  fetchRelatedFn?: (query: string, n: number) => Promise<RelatedAsset[]>;
   /** The improve lane that selected the asset, stamped on the event and proposal. */
   eligibilitySource?: EligibilitySource;
   /** The input's durable `item_ref`; direct invocations key by the conceptId. */
   itemRef?: string;
+}
+
+/** An asset near a query; `path` is its file when the search knows it. */
+interface RelatedAsset {
+  ref: string;
+  content: string;
+  path?: string;
 }
 
 /** Derive the proposed lesson ref from the input ref. */
@@ -391,7 +406,7 @@ interface DistillRun {
   exclusion?: { filteredFeedbackCount: number; feedbackFullyFiltered: boolean };
   asset: { path: string | null; content: string | null };
   vocabulary: Set<string>;
-  related: (query: string, n: number) => Promise<Array<{ ref: string; content: string }>>;
+  related: (query: string, n: number) => Promise<RelatedAsset[]>;
   lookup: (ref: string) => Promise<string | null>;
 }
 
@@ -581,6 +596,11 @@ async function distill(
 
   const none = answeredNone(call.raw);
   if (none) {
+    // The writer may have answered NONE because a lesson already states the rule (the related list says to).
+    if (kind === "lesson") {
+      const update = await proposeLessonUpdate(run, feedbackLines(feedback));
+      if (update) return update;
+    }
     return skipDistill(
       run,
       outputRef,
@@ -716,6 +736,14 @@ async function judgeAndQueue(
       onNotices: run.notices.add,
     });
     if (!verdict.pass) {
+      if (
+        out.kind === "lesson" &&
+        !out.promotion &&
+        (verdict.criteria?.nonRedundancy ?? 5) <= LESSON_REJECT_MAX_SCORE
+      ) {
+        const update = await proposeLessonUpdate(run, out.feedback ?? [], related);
+        if (update) return update;
+      }
       return rejectDistilled(run, out.ref, content, verdict.score, verdict.reason, {
         ...(verdict.reviewNeeded ? { reviewNeeded: true } : {}),
         ...(verdict.criteria ? { criteria: verdict.criteria } : {}),
@@ -789,6 +817,133 @@ async function judgeAndQueue(
     proposal,
     ...exclusionMeta(run, true),
     ...swapped,
+  };
+}
+
+/**
+ * A memory whose lesson repeats a lesson the library holds extends that lesson instead (#1090): the writer returns
+ * the lesson's body with the memory's new lines added, and the update is proposed on the lesson's own ref, for a
+ * person to review (never staged for the drain). Nothing is proposed, and `undefined` returned, when no related
+ * lesson lies in this bundle, the writer finds the memory adds nothing or contradicts the lesson, the body drops or
+ * rewords a line, the judge does not pass the added lines (against the lesson and the memory), or the lesson
+ * changed meanwhile. Needs the quality gate: the judge is what holds the added lines to the memory.
+ */
+async function proposeLessonUpdate(
+  run: DistillRun,
+  feedback: string[],
+  related?: RelatedAsset[],
+): Promise<AkmDistillResult | undefined> {
+  const memory = run.asset.content ? parseFrontmatter(run.asset.content).content.trim() : "";
+  if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
+  const candidates: Array<UpdateCandidate & { path: string; content: string }> = [];
+  for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
+    const parsed = parseRefInput(asset.ref);
+    if (parsed.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
+    try {
+      const content = fs.readFileSync(asset.path, "utf8");
+      candidates.push({
+        ref: conceptIdFromTypeName("lesson", parsed.name),
+        path: asset.path,
+        content,
+        body: parseFrontmatter(content).content.trim(),
+      });
+    } catch {
+      // A lesson that cannot be read cannot be extended.
+    }
+  }
+  if (candidates.length === 0) return undefined;
+
+  const call = await callStage({
+    feature: "distill",
+    runner: run.runner,
+    system: "Return only valid JSON. No prose.",
+    prompt: buildLessonUpdatePrompt(memory, feedback, candidates),
+    gate: { config: run.config, enabled: true },
+    request: {
+      ...(run.options.chat === undefined
+        ? { responseSchema: DISTILL_LESSON_UPDATE_JSON_SCHEMA }
+        : { chat: run.options.chat }),
+      ...(run.options.signal ? { signal: run.options.signal } : {}),
+    },
+    onNotices: run.notices.add,
+  });
+  const update = call.ok ? parseLessonUpdate(call.raw, candidates) : null;
+  if (!update) return undefined;
+  const target = update.candidate;
+  const { dropped, added } = diffLessonBody(target.body, update.body);
+  if (dropped.length > 0) {
+    warnVerbose(`[akm] distill update of ${target.ref} dropped or reworded ${dropped.length} line(s); not proposed`);
+    return undefined;
+  }
+  if (added.length === 0) return undefined;
+
+  // The added lines are the "lesson" the judge reads: against the lesson (non-redundancy) and the memory (grounding).
+  const verdict = await runLessonQualityJudge(run.config, added.join("\n"), memory, run.options.chat, {
+    related: [{ ref: target.ref, content: target.content }],
+    ...(feedback.length > 0 ? { feedback } : {}),
+    ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
+    ...(run.options.signal ? { signal: run.options.signal } : {}),
+    onNotices: run.notices.add,
+  });
+  if (!verdict.pass) {
+    warnVerbose(`[akm] distill update of ${target.ref} not proposed: ${verdict.reason}`);
+    return undefined;
+  }
+
+  // The proposal's before-hash is taken at mint: a lesson edited since it was read is not what the writer extended.
+  let proposal: Proposal;
+  try {
+    if (fs.readFileSync(target.path, "utf8") !== target.content) return undefined;
+    const existing = parseFrontmatter(target.content);
+    const xrefs = Array.isArray(existing.data.xrefs) ? existing.data.xrefs.map(String) : [];
+    const frontmatter = { ...existing.data, xrefs: [...new Set([...xrefs, run.inputRef])] };
+    proposal = mintProposal(
+      run.stash,
+      run.options.ctx,
+      {
+        ref: target.ref,
+        source: "distill",
+        ...(run.options.sourceRun !== undefined ? { sourceRun: run.options.sourceRun } : {}),
+        payload: { content: assembleAsset(frontmatter, update.body), frontmatter },
+        ...(verdict.score > 0 ? { confidence: verdict.score / 5 } : {}),
+        ...(run.options.eligibilitySource ? { eligibilitySource: run.options.eligibilitySource } : {}),
+        attemptedRefs: [run.ledgerRef],
+      },
+      {
+        review: {
+          reason: "distill-update",
+          gate: "quality-gate",
+          ...(verdict.criteria ? { scores: verdict.criteria } : {}),
+          judgeReason: verdict.reason,
+        },
+      },
+    );
+  } catch (error) {
+    warnVerbose(
+      `[akm] distill update of ${target.ref} not proposed: ${error instanceof Error ? error.message : error}`,
+    );
+    return undefined;
+  }
+  emitDistill(run, {
+    outcome: "queued",
+    proposalRef: target.ref,
+    proposalKind: "lesson",
+    proposalId: proposal.id,
+    updatesExisting: true,
+    ...(run.options.sourceRun !== undefined ? { sourceRun: run.options.sourceRun } : {}),
+    ...exclusionMeta(run, false),
+  });
+  return {
+    schemaVersion: 1,
+    ok: true,
+    outcome: "queued",
+    inputRef: run.inputRef,
+    proposalRef: target.ref,
+    proposalKind: "lesson",
+    proposalId: proposal.id,
+    proposal,
+    updatesExisting: true,
+    ...exclusionMeta(run, true),
   };
 }
 
@@ -1189,7 +1344,7 @@ const RELATED_TYPES = ["lesson", "knowledge", "skill"] as const;
 const RELATED_COUNT = 3;
 
 /** The top-N lessons, knowledge notes and skills related to `query`, best first (empty when search is unavailable). */
-async function fetchRelatedAssets(query: string, n: number): Promise<Array<{ ref: string; content: string }>> {
+async function fetchRelatedAssets(query: string, n: number): Promise<RelatedAsset[]> {
   try {
     // One search per type: memories outnumber the rest and would fill an untyped list.
     const results = await Promise.all(
@@ -1207,7 +1362,7 @@ async function fetchRelatedAssets(query: string, n: number): Promise<Array<{ ref
         } catch {
           // best-effort
         }
-        return { ref: h.ref, content };
+        return { ref: h.ref, content, ...(h.path ? { path: h.path } : {}) };
       });
   } catch {
     return [];

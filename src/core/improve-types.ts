@@ -552,6 +552,8 @@ export interface AkmDistillResult {
    * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
    */
   proposalId?: string;
+  /** True when `outcome === "queued"` and the proposal extends an existing lesson (`proposalRef`) instead of adding one. */
+  updatesExisting?: true;
   /** Human-readable hint surfaced when the call was skipped. */
   message?: string;
   /** Machine-readable reason when `outcome === "skipped"`. */

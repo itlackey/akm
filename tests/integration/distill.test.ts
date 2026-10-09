@@ -2821,3 +2821,259 @@ describe("akmDistill — the writer sees what the library already holds", () => 
     expect(user).not.toContain("Related assets already in the library");
   });
 });
+
+// ── Update an existing lesson instead of rejecting a repeat (#1090) ──────────
+
+describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090)", () => {
+  const EXISTING_BODY = "Retry a failed deploy at most three times.\n\n- Wait twice as long after each failed try.";
+  const EXISTING = `---\ndescription: Bound the retries of a deploy\nwhen_to_use: A deploy fails and a retry is next\nxrefs:\n  - memories/older-deploy\n---\n\n${EXISTING_BODY}\n`;
+  const NEW_FACT = "- Stop retrying at once when the error is a 4xx: the request is wrong, not the network.";
+  const MEMORY_REF = "memories/deploy-retries";
+
+  interface Fixture {
+    stash: string;
+    lessonPath: string;
+    related: Array<{ ref: string; content: string; path?: string }>;
+  }
+
+  function setup(): Fixture {
+    const stash = makeStashDir();
+    const lessonPath = path.join(stash, "lessons", "deploy-retries.md");
+    fs.mkdirSync(path.dirname(lessonPath), { recursive: true });
+    fs.writeFileSync(lessonPath, EXISTING);
+    const memory = path.join(stash, "memories", "deploy-retries.md");
+    fs.mkdirSync(path.dirname(memory), { recursive: true });
+    fs.writeFileSync(
+      memory,
+      `---\ndescription: deploy retries\n---\n\nRetry a deploy at most three times with doubling waits. Never retry a 4xx: the request is wrong.\n`,
+    );
+    return { stash, lessonPath, related: [{ ref: "lessons/deploy-retries", content: EXISTING, path: lessonPath }] };
+  }
+
+  /**
+   * Distill the memory. The writer answers `writer`; the update call answers `update`; the judge answers each
+   * call from `judge`, in order (the writer's own lesson first, then the added lines).
+   */
+  async function run(
+    fixture: Fixture,
+    replies: { writer: string; update?: Record<string, unknown>; judge?: Array<Record<string, number>> },
+  ) {
+    const prompts: string[] = [];
+    let judged = 0;
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        prompts.push(joined);
+        if (joined.includes("Score this lesson")) {
+          const scores = replies.judge?.[judged++] ?? { reusable: 5, nonRedundancy: 5, grounding: 5 };
+          return JSON.stringify({ scores, reason: "judged" });
+        }
+        if (joined.includes("Extend the existing one")) return JSON.stringify(replies.update ?? { decision: "none" });
+        return replies.writer;
+      },
+    });
+    return { result, prompts };
+  }
+
+  const REPEAT = { reusable: 4, nonRedundancy: 2, grounding: 5 };
+  const ADDITION_OK = { reusable: 4, nonRedundancy: 5, grounding: 5 };
+  const updateWith = (body: string) => ({
+    reason: "adds the 4xx stop",
+    decision: "update",
+    ref: "lessons/deploy-retries",
+    body,
+  });
+
+  test("a repeat with a new fact becomes a pending update of the existing lesson: old lines kept, new line added", async () => {
+    const fixture = setup();
+    const { result, prompts } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+    const proposals = listProposals(fixture.stash);
+    expect(proposals).toHaveLength(1);
+    const [proposal] = proposals;
+    expect(proposal).toMatchObject({
+      status: "pending",
+      source: "distill",
+      ref: durableRef(fixture.stash, "lesson", "deploy-retries"),
+    });
+    const content = proposal!.payload.content;
+    expect(content).toContain("Retry a failed deploy at most three times.");
+    expect(content).toContain("- Wait twice as long after each failed try.");
+    expect(content).toContain(NEW_FACT);
+    const merged = parseFrontmatter(content);
+    expect(merged.data.description).toBe("Bound the retries of a deploy");
+    expect(merged.data.when_to_use).toBe("A deploy fails and a retry is next");
+    expect(merged.data.xrefs).toEqual(["memories/older-deploy", MEMORY_REF]);
+    // Reviewed like any distill pass, never staged for the drain, and tied to the lesson it was read from.
+    expect(proposal?.gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "distill-update",
+      gate: "quality-gate",
+    });
+    expect(proposal?.beforeHash).toBeDefined();
+    expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(EXISTING);
+    // The judge read only the added line, against the existing lesson and the memory.
+    const additionJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
+    expect(additionJudge).toContain("Existing asset ref: lessons/deploy-retries");
+    expect(additionJudge).toMatch(/Proposed lesson:\n```\n- Stop retrying at once/);
+    const { events } = readEvents({ type: "distill_invoked" });
+    expect(events.at(-1)).toMatchObject({
+      ref: MEMORY_REF,
+      metadata: { outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true },
+    });
+  });
+
+  test("the triage drain leaves the update for a person", async () => {
+    const fixture = setup();
+    await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+    const accept = mock(async () => {
+      throw new Error("the drain accepted a distill update unattended");
+    });
+    const judgment = mock(async () => {
+      throw new Error("a distill update reached the judgment tier");
+    });
+    await drainProposals(
+      { stashDir: fixture.stash, applyMode: "promote", maxAccepts: 5, dryRun: false, judgment: JUDGMENT_RUNNER },
+      accept as unknown as typeof akmProposalAccept,
+      undefined,
+      { chat: judgment },
+    );
+
+    expect(accept).not.toHaveBeenCalled();
+    expect(judgment).not.toHaveBeenCalled();
+    expect(listProposals(fixture.stash)).toHaveLength(1);
+  });
+
+  test("a repeat that adds nothing proposes nothing: today's rejection stands", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: { reason: "nothing new", decision: "none", ref: "", body: "" },
+      judge: [REPEAT],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(result.updatesExisting).toBeUndefined();
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("an update that only rewords the lesson adds no line and proposes nothing", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY.toUpperCase()}\n`),
+      judge: [REPEAT],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("an update that drops an existing claim is rejected, whatever it adds", async () => {
+    const fixture = setup();
+    const { result, prompts } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`Retry a failed deploy at most three times.\n${NEW_FACT}`),
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+    // Rejected before the judge: only the writer's own lesson was judged.
+    expect(prompts.filter((p) => p.includes("Score this lesson"))).toHaveLength(1);
+  });
+
+  test("an addition the judge does not pass is rejected", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, { reusable: 4, nonRedundancy: 5, grounding: 1 }],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("a lesson of another bundle, or none related, is not extended", async () => {
+    const fixture = setup();
+    const other = makeStashDir();
+    const foreign = path.join(other, "lessons", "deploy-retries.md");
+    fs.mkdirSync(path.dirname(foreign), { recursive: true });
+    fs.writeFileSync(foreign, EXISTING);
+    fixture.related = [{ ref: "lessons/deploy-retries", content: EXISTING, path: foreign }];
+    const { result, prompts } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("a lesson edited while the update was written is not overwritten", async () => {
+    const fixture = setup();
+    const edited = `${EXISTING}\nAn edit made meanwhile.\n`;
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        if (joined.includes("Score this lesson")) {
+          return JSON.stringify({ scores: joined.includes("Stop retrying") ? ADDITION_OK : REPEAT, reason: "judged" });
+        }
+        if (joined.includes("Extend the existing one")) {
+          fs.writeFileSync(fixture.lessonPath, edited);
+          return JSON.stringify(updateWith(`${EXISTING_BODY}\n${NEW_FACT}`));
+        }
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+    expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(edited);
+  });
+
+  test("a writer that answers NONE because the lesson exists still yields the update", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: "NONE",
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+    expect(listProposals(fixture.stash)).toHaveLength(1);
+  });
+
+  test("a NONE with no related lesson stays a skip and makes no update call", async () => {
+    const fixture = setup();
+    fixture.related = [];
+    const { result, prompts } = await run(fixture, { writer: "NONE" });
+
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+});

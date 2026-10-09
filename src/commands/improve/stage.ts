@@ -505,7 +505,7 @@ export function buildReflectJudgePrompt(
  * the feedback the writer saw, so a statement it supports is not an invention.
  */
 const GROUNDING_CRITERION = "grounding";
-const LESSON_REJECT_MAX_SCORE = 2;
+export const LESSON_REJECT_MAX_SCORE = 2;
 
 const LESSON_JUDGE_CRITERIA = ["reusable", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
