@@ -50,7 +50,7 @@ export const upgradeCommand = defineJsonCommand({
     name: "upgrade",
     description:
       "Upgrade akm to the latest release, then update the akm plugin of each installed harness " +
-      "(Claude Code, Codex, OpenCode). With the OpenCode plugin installed, akm moves to the version that plugin pins.",
+      "(Claude Code, Codex, OpenCode 1 and 2). With an OpenCode plugin installed, akm moves to the version that plugin pins.",
   },
   args: {
     check: {

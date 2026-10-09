@@ -47,9 +47,13 @@ import {
   __setTestServer,
   closeServer,
 } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import type { V1Client } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
@@ -198,7 +202,7 @@ const OPENCODE_SDK: Transport = {
       client: {
         session: {
           create: async () => ({ data: { id: "contract-session" } }),
-          prompt: async (args) => {
+          prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
             sdkBodies.push(args.body as Record<string, unknown>);
             if (reply === SDK_HANG) return new Promise<never>(() => {});
             return (typeof reply === "function" ? reply(sdkBodies.length) : reply) as never;
@@ -444,11 +448,11 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       return {
         client: {
           session: {
-            create: async (args) => {
+            create: async (args: Parameters<V1Client["session"]["create"]>[0]) => {
               queries.push(args.query);
               return { data: { id: "contract-session" } };
             },
-            prompt: async (args) => {
+            prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
               sdkBodies.push(args.body as Record<string, unknown>);
               return sdkText(REPLY) as never;
             },

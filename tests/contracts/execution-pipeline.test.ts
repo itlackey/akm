@@ -8,7 +8,7 @@
  * request/runner a workflow journals.
  */
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +24,10 @@ import {
 } from "../../src/integrations/agent/execution";
 import { userModelMapPath } from "../../src/integrations/agent/model-map";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { withEnv } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 function exitedWith(stdout: string): SpawnedSubprocess {
   const stream = (text: string) =>
@@ -99,12 +102,31 @@ describe("agent engines: config engine → argv", () => {
   test("opencode gets the persona composed into its prompt, since `opencode run` has no --system-prompt", async () => {
     const { argv } = await spawnedFor({
       content: "Review the diff.",
+      config: config({
+        engines: { oc: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "oc" },
+      }),
+      persona: reviewer(),
+    });
+    expect(argv).toEqual([
+      "opencode",
+      "run",
+      "--",
+      "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
+    ]);
+  });
+
+  test("opencode 2 runs standalone, with the persona composed into its prompt", async () => {
+    fakeOpencodeMajor(2);
+    const { argv } = await spawnedFor({
+      content: "Review the diff.",
       config: config({ engines: { oc: { kind: "agent", platform: "opencode" } }, defaults: { engine: "oc" } }),
       persona: reviewer(),
     });
     expect(argv).toEqual([
       "opencode",
       "run",
+      "--standalone",
       "--",
       "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
     ]);
@@ -119,6 +141,26 @@ describe("agent engines: config engine → argv", () => {
       }),
     });
     expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--", "Summarise."]);
+  });
+
+  test("opencode 2 replaces its profile model flag with the resolved one and runs standalone", async () => {
+    fakeOpencodeMajor(2);
+    const { argv } = await spawnedFor({
+      content: "Summarise.",
+      config: config({
+        engines: { oc: { kind: "agent", platform: "opencode", model: "balanced" } },
+        defaults: { engine: "oc" },
+      }),
+    });
+    expect(argv).toEqual([
+      "opencode",
+      "run",
+      "--model",
+      "opencode/claude-sonnet-4-6",
+      "--standalone",
+      "--",
+      "Summarise.",
+    ]);
   });
 
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
@@ -466,7 +508,14 @@ describe("provenance and notices", () => {
 describe("resume from the journaled wire form", () => {
   test("a config edit after the freeze does not change what a resumed unit runs", async () => {
     const live = config({
-      engines: { oc: { kind: "agent", platform: "opencode", model: "provider/frozen", bin: "opencode-frozen" } },
+      engines: {
+        oc: {
+          kind: "agent",
+          platform: "opencode",
+          model: "provider/frozen",
+          bin: "opencode-frozen",
+        },
+      },
       defaults: { engine: "oc" },
     });
     const resolved = resolveExecution({ content: "Resume me.", config: live });
@@ -581,15 +630,19 @@ describe("an engine's default agent", () => {
     expect(resolveExecution({ content: "y", runner }).request.agent).toBe("akm-workflow");
   });
 
-  test("the opencode and claude CLIs pass it as --agent", async () => {
-    for (const [platform, bin] of [
-      ["opencode", "opencode"],
-      ["claude", "claude"],
+  test("the opencode (both majors) and claude CLIs pass it as --agent", async () => {
+    for (const [platform, bin, major] of [
+      ["opencode", "opencode", 1],
+      ["opencode", "opencode", 2],
+      ["claude", "claude", 2],
     ] as const) {
+      fakeOpencodeMajor(major);
       const { argv } = await spawnedFor({
         content: "Hi.",
         config: config({
-          engines: { e: { kind: "agent", platform, agent: "akm-workflow" } },
+          engines: {
+            e: { kind: "agent", platform, agent: "akm-workflow" },
+          },
           defaults: { engine: "e" },
         }),
       });

@@ -118,6 +118,51 @@ than replacing either.
   browsing, automatic context injection — but the core `akm` CLI works
   without them.
 
+## OpenCode plugins: one package per OpenCode major
+
+OpenCode 1 and OpenCode 2 load different plugin APIs, so akm ships one plugin
+package for each. Install only the one that matches the `opencode` you run; akm
+never installs or replaces the `opencode` binary, and `akm upgrade` never adds
+one plugin to the other major's config.
+
+| OpenCode | Plugin package | Config key | Plugin cache |
+| --- | --- | --- | --- |
+| 1 | `akm-opencode` | `"plugin"` | `~/.cache/opencode/packages/akm-opencode@<tag>/` |
+| 2 | `akm-opencode-v2` | `"plugins"` (the key `opencode plugin add` writes) | `~/.cache/opencode/npm/akm-opencode-v2@<tag>/<build>/` |
+
+(`$XDG_CACHE_HOME` and `$XDG_CONFIG_HOME` move both.) Both packages declare the
+same `akm-cli` dependency.
+
+**OpenCode 1.** Add `akm-opencode` to the global config
+(`~/.config/opencode/opencode.json`):
+
+```json
+{ "plugin": ["akm-opencode"] }
+```
+
+**OpenCode 2.**
+
+```sh
+opencode plugin add akm-opencode-v2
+```
+
+This installs the package and adds it to `plugins` in the global config.
+
+**Updating.** `akm upgrade` refreshes the cached plugin of each major it finds,
+holds the CLI to the `akm-cli` those plugins pin, and leaves a plugin alone
+whose config pins another spec such as `akm-opencode@0.8.0`. Use
+`akm upgrade --next` with `akm-opencode@next` / `akm-opencode-v2@next` in the
+config to follow prereleases. The exact rules are in the
+[`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm health`
+warns when either plugin's bundled `akm-cli` differs from the running CLI.
+
+**Which OpenCode akm drives** is detected, not configured: an `opencode` or
+`opencode-sdk` agent engine runs the most recent OpenCode on `PATH` (or its own
+`bin`) and uses the adapters for the major that binary reports; OpenCode 1 logs a
+warning recommending OpenCode 2 (see
+[Configuration](../reference/configuration.md#engines)). It does not change
+which plugin you install, and the plugin choice does not change it.
+
 ## See also
 
 - [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases

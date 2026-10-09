@@ -21,5 +21,10 @@
  * `tests/integration/output-baseline.test.ts` pins the bytes either way.
  */
 export function writeStdout(document: string): void {
-  process.stdout.write(`${document}\n`);
+  process.stdout.write(stdoutText(document));
+}
+
+/** The exact bytes {@link writeStdout} writes for `document`; in-process callers return this instead of writing. */
+export function stdoutText(document: string): string {
+  return `${document}\n`;
 }

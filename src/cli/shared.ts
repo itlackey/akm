@@ -15,7 +15,7 @@ import { renderHealthHtml } from "../commands/health/renderers";
 import { renderMetricsHtml } from "../commands/metrics/html-report";
 import { assertNever } from "../core/assert";
 import { AkmError, UsageError } from "../core/errors";
-import { getOutputMode, type OutputMode } from "../output/context";
+import { getOutputMode, type OutputFormat, type OutputMode } from "../output/context";
 import { renderGenericHtml, renderGenericMarkdown, renderGenericText } from "../output/generic-render";
 import { deliverRendered } from "../output/html-render";
 import { getMdRendererHandler } from "../output/render-registry";
@@ -334,54 +334,51 @@ export function outputWithExitCode(command: string, result: object, exitCode: nu
 
 export function output(command: string, result: unknown): void {
   const mode: OutputMode = getOutputMode();
-  const shaped = shapeForCommand(command, result, mode.detail, mode.shape);
-
-  if (mode.format === "jsonl") {
-    outputJsonl(command, shaped);
+  const { format } = mode;
+  if (format === "jsonl") {
+    outputJsonl(command, shapeForCommand(command, result, mode.detail, mode.shape));
     return;
   }
+  deliverRendered(renderOutput(command, result, { ...mode, format }), mode.outputPath);
+}
 
+/** An output mode with a single-document format (everything but `jsonl`, a line-streaming protocol). */
+type DocumentOutputMode = Pick<OutputMode, "detail" | "shape"> & { format: Exclude<OutputFormat, "jsonl"> };
+
+/**
+ * Shape and render a command result into the document `output()` delivers.
+ * Pure: reads no process-level output mode and writes nothing, so in-process
+ * callers (`src/api.ts`) get text byte-identical to the CLI's stdout from an
+ * explicit `mode`.
+ */
+export function renderOutput(command: string, result: unknown, mode: DocumentOutputMode): string {
+  const shaped = shapeForCommand(command, result, mode.detail, mode.shape);
   switch (mode.format) {
     case "json":
-      deliverRendered(JSON.stringify(shaped, null, 2), mode.outputPath);
-      return;
+      return JSON.stringify(shaped, null, 2);
     case "yaml":
-      deliverRendered(yamlStringify(shaped), mode.outputPath);
-      return;
-    case "text": {
+      return yamlStringify(shaped);
+    case "text":
       // D7 — registry first, generic rendering of the shaped envelope second.
-      // Mirrors the md/html fallback immediately below: a command with no
-      // registered text formatter used to fall through to
+      // A command with no registered text formatter used to fall through to
       // `JSON.stringify(shaped, null, 2)`, i.e. silently hand back JSON while
-      // claiming `--format text` — the same "wrong format wearing the right
-      // flag" bug D7 already closed for md/html. `renderGenericText` (a
-      // DISTINCT function from `renderGenericMarkdown` — see its doc comment
-      // in src/output/generic-render.ts for why reusing the md renderer here
-      // was itself a version of the same bug) renders flat `key=value` text
-      // matching the house style already established by registered text
-      // formatters like `config list`.
-      const plain = formatPlain(command, shaped, mode.detail);
-      deliverRendered(plain ?? renderGenericText(command, shaped), mode.outputPath);
-      return;
-    }
-    case "md": {
-      // D7 — registry first, generic rendering of the shaped envelope second.
-      // No command emits JSON under `--format md` any more: silently handing
-      // back the wrong format was the worst of the three behaviours this
-      // replaced.
-      const rendered = getMdRendererHandler(command)?.(shaped, mode.detail);
-      deliverRendered(rendered ?? renderGenericMarkdown(command, shaped), mode.outputPath);
-      return;
-    }
-    case "html": {
+      // claiming `--format text`. `renderGenericText` renders flat
+      // `key=value` text matching the house style of registered formatters
+      // like `config list`; it is a DISTINCT function from
+      // `renderGenericMarkdown` (see src/output/generic-render.ts).
+      return formatPlain(command, shaped, mode.detail) ?? renderGenericText(command, shaped);
+    case "md":
+      // D7 — registry first, generic rendering second; no command emits JSON
+      // under `--format md`.
+      return getMdRendererHandler(command)?.(shaped, mode.detail) ?? renderGenericMarkdown(command, shaped);
+    case "html":
       // `akm health` and `akm metrics` are the only commands with a bespoke
       // HTML report, so they are called directly rather than through a
       // registry with two possible registrants (see `output/render-registry.ts`).
-      const rendered =
-        command === "health" ? renderHealthHtml(shaped) : command === "metrics" ? renderMetricsHtml(shaped) : null;
-      deliverRendered(rendered ?? renderGenericHtml(command, shaped), mode.outputPath);
-      return;
-    }
+      return (
+        (command === "health" ? renderHealthHtml(shaped) : command === "metrics" ? renderMetricsHtml(shaped) : null) ??
+        renderGenericHtml(command, shaped)
+      );
   }
 }
 

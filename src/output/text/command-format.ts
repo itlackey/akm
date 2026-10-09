@@ -661,7 +661,12 @@ export function formatUpdatePlain(r: Record<string, unknown>): string {
   return lines.length > 0 ? lines.join("\n") : `update: nothing to update`;
 }
 
-const HARNESS_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", opencode: "OpenCode" };
+const HARNESS_LABELS: Record<string, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  opencode: "OpenCode",
+  "opencode-v2": "OpenCode 2",
+};
 
 /** The plugin lines worth printing: nothing for a plugin that is current or has no plugin to update. */
 function formatUpgradePluginLines(r: Record<string, unknown>): string[] {
