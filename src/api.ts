@@ -28,12 +28,6 @@ export interface CurateOptions {
   type?: string;
   /** Output format, same as `--format`. Default `"json"`, as in the CLI. */
   format?: "text" | "json";
-  /**
-   * The caller's project directory. Accepted for the plugins' call shape;
-   * curate does not rank by project context at this version, so it has no
-   * effect on the result. Never used to change the process working directory.
-   */
-  cwd?: string;
 }
 
 /**

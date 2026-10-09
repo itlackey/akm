@@ -10,7 +10,7 @@ other command.
 ```ts
 import { curate } from "akm-cli/api";
 
-const text = await curate("deploy to prod", { limit: 4, type: "skill", format: "text", cwd: projectDir });
+const text = await curate("deploy to prod", { limit: 4, type: "skill", format: "text" });
 ```
 
 ## `curate(query, options?)`
@@ -18,7 +18,7 @@ const text = await curate("deploy to prod", { limit: 4, type: "skill", format: "
 ```ts
 function curate(
   query: string,
-  options?: { limit?: number; type?: string; format?: "text" | "json"; cwd?: string },
+  options?: { limit?: number; type?: string; format?: "text" | "json" },
 ): Promise<string>;
 ```
 
@@ -38,9 +38,6 @@ function curate(
   `process.argv` are not modified; the host's quiet and verbose state is
   unchanged afterwards. As with `akm curate`, the call records its usage
   event in `state.db`.
-- **`cwd`.** The caller's project directory. It is accepted so callers can pass
-  their project today, but curate does not rank by project context at this
-  version, so it has no effect on the result.
 - **Repeated calls.** Config is re-validated against `config.json` on every
   call (its path, size and modification time), so an edit on disk is seen by
   the next call exactly as a separate CLI run would see it. Database handles are

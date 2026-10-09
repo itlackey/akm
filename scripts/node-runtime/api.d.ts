@@ -12,8 +12,6 @@ export interface CurateOptions {
   type?: string;
   /** Output format, same as `--format`. Default `"json"`, as in the CLI. */
   format?: "text" | "json";
-  /** The caller's project directory. Accepted; has no effect on curate at this version. */
-  cwd?: string;
 }
 
 /**
