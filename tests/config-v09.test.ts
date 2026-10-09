@@ -492,9 +492,10 @@ describe("0.9 config contract", () => {
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback).toEqual({ requireReason: false });
   });
 
-  test("the improve knobs removed in 0.10 (#1131) still load, with one warning apiece, and only akm migrate apply drops them", () => {
+  test("the improve knobs removed in 0.10 (#1131, #1129) still load, with one warning apiece, and only akm migrate apply drops them", () => {
     const removed = [
       "improve.salience.outcomeWeightEnabled",
+      "improve.salience.salienceThreshold",
       "improve.strategies.default.processes.consolidate.antiCollapse",
       "improve.strategies.default.processes.consolidate.p90ChunkSecondsDefault",
       "improve.strategies.default.processes.consolidate.minPoolSize",
@@ -524,7 +525,6 @@ describe("0.9 config contract", () => {
 
     const warnings = captureWarnings(() => {
       const config = loadUserConfig();
-      expect(config.improve?.salience?.salienceThreshold).toBe(0.8);
       expect(config.improve?.strategies?.default?.processes?.consolidate?.limit).toBe(7);
     });
     for (const dotted of removed) {
@@ -539,7 +539,7 @@ describe("0.9 config contract", () => {
 
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
     const after = read();
-    expect(after.salience).toEqual({ salienceThreshold: 0.8 });
+    expect(after.salience).toEqual({});
     expect(after.strategies.default.processes.consolidate).toEqual({ limit: 7 });
     expect(after.strategies.default.processes.distill).toEqual({});
     expect(after.strategies.default.processes.reflect).toEqual({});

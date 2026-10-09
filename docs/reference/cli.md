@@ -2653,7 +2653,7 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
-| `--require-feedback-signal` | Turn the fallback lanes (high salience, proactive maintenance) off for the run: they only select and score assets, and a rewrite needs negative feedback |
+| `--require-feedback-signal` | Turn the proactive-maintenance lane off for the run, so only assets with recent feedback are planned |
 | `--strategy <name>` | Override the active improve strategy (a built-in or entry under `improve.strategies`) |
 | `--json-to-stdout` | Also emit the full persisted JSON result on stdout for a live run. Without this flag, stdout stays empty. Dry-runs always emit their result and are never persisted. |
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
@@ -2704,10 +2704,10 @@ covering doc that ranks lower than the 20th nearest goes unseen. With no stored
 vector (semantic search off, or the memory not indexed yet) that check does
 nothing and the exact slug and whole-body checks still apply.
 
-No built-in strategy turns the improve-stage extract process on, and only
-`proactive-maintenance` turns proactive maintenance on, which selects and
-scores due assets but plans no rewrite. Use that strategy or
-set the selected strategy's process `enabled: true` to opt in. The stage toggle does not disable a direct
+No built-in strategy turns the improve-stage extract process on. Set the
+selected strategy's process `enabled: true` to opt in. Proactive maintenance is
+on in `default`; set `processes.proactiveMaintenance.enabled: false` to turn it
+off. The stage toggle does not disable a direct
 `akm proposal extract --type <harness>` or `akm proposal extract --auto`
 invocation.
 
@@ -2736,18 +2736,16 @@ newer than distill's last attempt. It skips a memory flagged wrong and not
 edited since (a negative feedback in that window judged the body it still has,
 or, recorded without that body's hash, is newer than the file's last write),
 and a memory whose only feedback in that window is positive with no reason or
-note, unless the ref is explicit. Two fallback lanes pick refs
-with no such feedback: high salience (content-scored refs at or above
-`improve.salience.salienceThreshold`, default `0.75`, that were never reflected,
-capped at 10% of the limit, at least one ref) and, in a strategy that enables
-`proactiveMaintenance`, refs due for a revisit. They only select and score refs
-(salience and outcome) and plan nothing, so improve does not rewrite on a
-proactive cadence; they pick only refs in the
+note, unless the ref is explicit. In a strategy that enables
+`proactiveMaintenance` (`default` does), a further lane plans refs with no such
+feedback that are due for a revisit: at most `maxPerRun` (default 15) per run,
+only refs not reflected or distilled for `dueDays` (default 30), so each comes up
+at most once a month. It picks only refs in the
 [retrieval scope](https://github.com/itlackey/akm/blob/main/docs/architecture/improvement.md#retrieval-scope): returned by
 `search`, `curate` or `show`, or named by feedback, in the last 90 days, or new
 material no improve stage has processed. The planned refs are ranked by salience
 and cut to the limit; an explicit ref scope bypasses every gate. Use
-`--require-feedback-signal` to turn the fallback lanes off for the run.
+`--require-feedback-signal` to turn that lane off for the run.
 
 When the active strategy enables a process (or the triage judgment engine)
 whose engine or credential cannot be resolved in this process's environment,

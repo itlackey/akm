@@ -81,10 +81,11 @@ everything else routes through `akm proposal accept`.
    reason or note, which gives the writer nothing to distil (10 of the 11
    lessons made from such memories were rejected). Unless
    `--require-feedback-signal` is set, the
-   fallback lanes (high salience, and proactive maintenance where the strategy
-   enables it) pick what the retrieval scope below admits, for scoring only:
-   they plan nothing, so improve does not rewrite assets on a proactive
-   cadence. It ranks the selected assets by salience, applies the limit, then
+   proactive-maintenance lane (where the strategy enables it, as `default`
+   does) adds the stable assets due for a revisit that the retrieval scope below
+   admits, and plans them with the feedback-bearing ones. At most `maxPerRun`
+   (15) assets are picked per run, an asset is due only if not reflected or
+   distilled for `dueDays` (30), and reflect's `limit` (25) bounds the run. It ranks the selected assets by salience, applies the limit, then
    runs whichever processes the selected strategy enables against each one (see
    [Improve Workflow](internals/improve-workflow.md#ledger-pre-filter-signal-delta)).
 4. Reflect and distill each emit at most one proposal per asset per run;
@@ -147,8 +148,8 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `consolidate`, and `proactive-maintenance`
-(`src/assets/improve-strategies/*.json`). Selection
+set: `default` and `consolidate` (`src/assets/improve-strategies/*.json`). The removed `quick`, `thorough`,
+`catchup`, `reflect-distill` and `proactive-maintenance` still work as user-defined strategies. Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
@@ -157,16 +158,16 @@ any user-defined override for that same name (under `improve.strategies` in
 config) is merged on top. So a strategy — built-in or user-defined — that
 omits a field, or an entire process block, inherits it from `default`; an
 explicit `enabled: true`/`false` in the more specific layer always wins. This
-is why, for example, `proactiveMaintenance` stays off in `default` and
-`consolidate`, but a preset that doesn't mention it at all still inherits
-that "off" rather than defaulting to on.
+is why, for example, `proactiveMaintenance` is on in `default` and off in
+`consolidate`, and a preset that doesn't mention it at all inherits the
+`default` value. A user-defined strategy named `proactive-maintenance` (the name
+of the retired built-in) resolves the same way, merged onto `default`.
 
 ### Retrieval scope
 
 Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
 scope (`akm improve skills/x`) are usage evidence of their own. Every other
-pick — the proactive-maintenance and high-salience lanes (which only score what
-they pick), and the memories consolidation judges — must be in the retrieval
+pick — the proactive-maintenance lane, and the memories consolidation judges — must be in the retrieval
 scope (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
@@ -312,8 +313,7 @@ but nothing assigns or emits it any more.
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
-the fallback lanes (proactive maintenance and high salience, which score and
-plan nothing), the retrieval scope, salience ranking, disk presence, and the
+the proactive-maintenance lane, the retrieval scope, salience ranking, disk presence, and the
 final cap, and resolve the bundle they plan the same way: `--bundle`, else
 `defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
 `defaultBundle`). Each invocation reports a best-effort observation assembled
@@ -383,8 +383,7 @@ explicit promote surface independent of this gate.
 For git-backed bundles (detected by a `.git` directory), `akm improve`
 automatically commits its changes as a single batch at the end of the run —
 the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. The
-`proactive-maintenance` strategy skips sync entirely, so an interrupted run
+the active strategy's `sync` setting. A user-defined strategy can turn sync off, so an interrupted run
 does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.

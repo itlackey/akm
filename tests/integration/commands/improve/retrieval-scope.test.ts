@@ -196,7 +196,7 @@ function proactiveConfig(stashDir: string): AkmConfig {
   } as AkmConfig);
 }
 
-describe("fallback lanes pick only from the retrieval scope", () => {
+describe("the proactive lane picks only from the retrieval scope", () => {
   test("proactive maintenance skips an asset improve processed that retrieval never returned", async () => {
     const stash = storage.stashDir;
     writeSkill(stash, "read", "Read by agents.");
@@ -223,9 +223,9 @@ describe("fallback lanes pick only from the retrieval scope", () => {
       distillFn: async ({ ref }) => okDistill(ref ?? ""),
     });
 
-    // The lane selects (and scores) only what retrieval returned or is new; it never plans a reflect.
+    // The lane selects, scores and plans only what retrieval returned or is new.
     expect(result.proactiveMaintenance?.selectedRefs.sort()).toEqual(["skills/fresh", "skills/read"]);
-    expect(reflected).toEqual([]);
+    expect(reflected.sort()).toEqual(["skills/fresh", "skills/read"]);
     expect(result.plan?.gates.find((gate) => gate.name === "retrieval")?.removed).toBe(1);
     expect(result.proactiveMaintenance?.dueTotal).toBe(2);
   });

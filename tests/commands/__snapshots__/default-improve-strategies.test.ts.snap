@@ -3,7 +3,7 @@
 exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: default 1`] = `
 {
   "config": {
-    "description": "Standard improve pass — reflect (rewrites only from negative feedback), distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract and proactive maintenance off.",
+    "description": "Standard improve pass — reflect (rewrites only from negative feedback), distill, consolidation (promotion plus the reviewed pair-pass retire/supersede proposals), and validation. Memory inference is listed below but only runs when experimental.improveAutonomy is set; improve-stage extract off. Proactive maintenance plans up to 15 assets not reflected or distilled for 30 days.",
     "processes": {
       "consolidate": {
         "allowedTypes": [
@@ -30,7 +30,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       },
       "proactiveMaintenance": {
         "dueDays": 30,
-        "enabled": false,
+        "enabled": true,
         "maxPerRun": 15,
       },
       "reflect": {
@@ -128,74 +128,5 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
     },
   },
   "name": "consolidate",
-}
-`;
-
-exports[`default improve strategies (#552) complete resolved trees are pinned for all built-ins: proactive-maintenance 1`] = `
-{
-  "config": {
-    "description": "Opt-in proactive-maintenance pass — reflect (on negative feedback), distill, proposal triage (promote, high budget), and the proactive-maintenance lane (maxPerRun 100), which picks due assets for scoring but plans no rewrite; consolidate/memoryInference/extract off. Sync disabled: an interrupted run would otherwise leave an uncommitted backlog.",
-    "processes": {
-      "consolidate": {
-        "allowedTypes": [
-          "memory",
-        ],
-        "enabled": false,
-      },
-      "distill": {
-        "allowedTypes": [
-          "memory",
-        ],
-        "enabled": true,
-        "requirePlannedRefs": false,
-      },
-      "extract": {
-        "enabled": false,
-        "triage": {
-          "enabled": true,
-          "minScore": 2,
-        },
-      },
-      "memoryInference": {
-        "enabled": false,
-      },
-      "proactiveMaintenance": {
-        "dueDays": 30,
-        "enabled": true,
-        "maxPerRun": 100,
-      },
-      "reflect": {
-        "allowedTypes": [
-          "agent",
-          "command",
-          "knowledge",
-          "lesson",
-          "memory",
-          "skill",
-          "workflow",
-        ],
-        "enabled": true,
-        "limit": 25,
-      },
-      "triage": {
-        "applyMode": "promote",
-        "enabled": true,
-        "judgment": {
-          "enabled": false,
-        },
-        "maxAcceptsPerRun": 100,
-        "maxDiffLines": 200,
-        "policy": "personal-stash",
-      },
-      "validation": {
-        "enabled": false,
-      },
-    },
-    "sync": {
-      "enabled": false,
-      "push": true,
-    },
-  },
-  "name": "proactive-maintenance",
 }
 `;

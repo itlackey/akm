@@ -43,6 +43,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   hourly `akm-improve-frequent` task would only repeat that pass; `akm-improve-catchup` ran the same `consolidate` as
   `akm-improve-consolidate`. All three are gone, and setup's server-install preselection now suggests `core/improve`. A task copied from
   any of them into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
+- **The high-salience improve lane and `improve.salience.salienceThreshold` (#1129).** The lane admitted nothing in
+  the measurement and was reachable only by back-dating feedback. The key still loads from an old config with a
+  warning and does nothing; `akm migrate apply` drops it. The `high-salience` lane name stays valid on rows older releases wrote.
+- **The `proactive-maintenance` built-in improve strategy (#1129).** The lane now lives in `default`. A
+  `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
+  onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block still loads and fails
+  when improve runs, with the same "removed in 0.10" error as `quick` and the other removed strategies (#1130).
 
 ### Changed
 
@@ -53,6 +60,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   harm (#1132). The autonomy gate's `triagePromote` lane is now gated only when the triage stage has judgment on: a
   promote with judgment on and no opt-in is still downgraded to `queue` and reported (`improve_skipped`,
   `akm task doctor`). Memory inference and memory cleanup stay gated. No new setting. (#1143)
+- **`akm improve` plans the proactive-maintenance lane's picks again, and the lane is on in `default` (#1129).**
+  Measured on assets with silent defects and no feedback (8 planted): 0 fixed with the picks scored only, 6 to 7 with
+  them planned, no harm, about five times the model calls. The picks carry the `proactive` lane on their
+  proposals. The cap against a proposal flood already existed and is now consistent: `maxPerRun` limits the picks per
+  run, `dueDays` (30) admits only an asset not reflected or distilled for 30 days, and reflect's `limit` (25) bounds
+  the run. The code fallback for `maxPerRun` is 15, the shipped value, where it was 25. No new setting.
+  `--require-feedback-signal` turns the lane off for a run.
 - **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
   nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
   (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
@@ -62,8 +76,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
   unchanged. (#1132)
 - **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
-  said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`,
-  `consolidate` and `proactive-maintenance`. (#1130)
+  said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`
+  and `consolidate`. (#1130)
 
 ### Removed
 

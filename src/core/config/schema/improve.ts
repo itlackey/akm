@@ -4,7 +4,7 @@
 
 /**
  * Top-level `improve` config section (salience, state GC, strategies). Retired
- * keys (`salience.replayBudget`, `collapseDetector`, `utilityDecay`) are
+ * keys (`salience.replayBudget`, `salienceThreshold`, `collapseDetector`, `utilityDecay`) are
  * tolerated as unknown keys.
  */
 import { z } from "zod";
@@ -13,16 +13,7 @@ import { engineName, nonNegativeNumber } from "./primitives";
 
 // ── Improve top-level (event retention, salience, state GC) ────────────────
 
-const ImproveSalienceSchema = z
-  .object({
-    /**
-     * Minimum encoding salience score [0, 1] for a zero-feedback asset to be
-     * admitted to the high-salience improve lane (#608).
-     * Default 0.75. Set to 1.0 to disable the lane entirely.
-     */
-    salienceThreshold: z.number().min(0).max(1).optional(),
-  })
-  .passthrough();
+const ImproveSalienceSchema = z.object({}).passthrough();
 
 // #733 — orphan-GC pass (Workstream C, lean by design: one config gate).
 // The pass ALWAYS runs and ALWAYS reports counts (via the `asset_state_gc`

@@ -461,6 +461,12 @@ describe("resolveImprovePlan", () => {
     ).toThrow('"reflect" requires an engine that is not configured');
   });
 
+  test("proactiveMaintenance uses no engine, so enabling it alone does not keep a plan with no engine alive (#1129)", () => {
+    expect(() =>
+      resolveImprovePlan("default", { configVersion: "0.9.0", semanticSearchMode: "auto" } as AkmConfig),
+    ).toThrow("No improve process can run");
+  });
+
   test("disables just the processes with no usable LLM engine, instead of aborting the whole plan", () => {
     const plan = resolveImprovePlan("default", {
       configVersion: "0.9.0",
@@ -470,7 +476,8 @@ describe("resolveImprovePlan", () => {
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
-          default: { processes: { proactiveMaintenance: { enabled: true } } },
+          // A process that needs no engine keeps the plan alive; proactiveMaintenance alone would not.
+          default: { processes: { triage: { enabled: true } } },
         },
       },
     } as AkmConfig);
@@ -480,7 +487,7 @@ describe("resolveImprovePlan", () => {
       expect(plan.processes[name].runner).toBeNull();
       expect(plan.strategy.config.processes?.[name]?.enabled).toBe(false);
     }
-    expect(plan.processes.proactiveMaintenance.enabled).toBe(true);
+    expect(plan.processes.triage.enabled).toBe(true);
 
     const disabledNames: string[] = plan.engineUnavailable.map((item) => item.process).sort();
     expect(disabledNames).toEqual(
@@ -579,7 +586,9 @@ describe("resolveImprovePlan", () => {
       { env: {}, allowAllDisabled: true },
     );
 
-    expect(Object.values(plan.processes).some((process) => process.enabled)).toBe(false);
+    // Every process that uses an engine is off; proactiveMaintenance (on in `default`) uses none.
+    const { proactiveMaintenance: _selector, ...engineProcesses } = plan.processes;
+    expect(Object.values(engineProcesses).some((process) => process.enabled)).toBe(false);
     const disabledNames = plan.engineUnavailable.map((item) => item.process).sort();
     expect(disabledNames).toEqual(["consolidate", "distill", "reflect", "validation"]);
     for (const item of plan.engineUnavailable) {
@@ -679,7 +688,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
-          default: { processes: { proactiveMaintenance: { enabled: true } } },
+          default: { processes: { triage: { enabled: true } } },
         },
       },
     } as AkmConfig);

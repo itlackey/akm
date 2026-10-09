@@ -112,12 +112,12 @@ It also skips a memory whose only feedback in that window is a positive with no
 reason or note: say what helped (`--reason`), or the lesson has nothing to
 distil.
 Unless `--require-feedback-signal` is set,
-two fallback lanes pick assets with no such feedback: high-salience assets that
-were never reflected, and, in a strategy that enables proactive maintenance,
-assets due for a revisit. They only select and score assets and plan nothing,
-so improve does not rewrite on a proactive cadence. The planned assets are
-ranked by salience and cut to `--limit`.
-Improve reworks only what gets read: without fresh feedback, a fallback lane
+the proactive-maintenance lane (on in `default`) also plans assets with no such
+feedback that are due for a revisit: at most 15 per run
+(`processes.proactiveMaintenance.maxPerRun`), and only assets not reflected or
+distilled for 30 days (`dueDays`), so each comes up at most once a month. The
+planned assets are ranked by salience and cut to `--limit`.
+Improve reworks only what gets read: without fresh feedback, the lane
 picks an asset (and a memory is judged for consolidation) only if `search`,
 `curate` or `show` returned it, or feedback named it, in the last 90 days — the
 usage log's retention — or if it is new material no improve stage has processed
