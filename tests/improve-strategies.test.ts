@@ -549,6 +549,9 @@ describe("resolveImprovePlan", () => {
             },
           },
           defaults: { llmEngine: "private" },
+          // The default strategy's deterministic triage needs no engine, so it
+          // is switched off here: the case is every engine-backed process gone.
+          improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
         } as AkmConfig,
         { env: {} },
       ),
@@ -570,6 +573,8 @@ describe("resolveImprovePlan", () => {
           },
         },
         defaults: { llmEngine: "private" },
+        // Deterministic triage needs no engine; switched off (see the case above).
+        improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
       } as AkmConfig,
       { env: {}, allowAllDisabled: true },
     );

@@ -857,7 +857,23 @@ export function probeActiveImproveStrategy(
     );
     const availableModelProcessNames = modelProcessNames.filter((name) => plan.processes[name].enabled);
     const allRequiredUnavailable = requiredModelProcessNames.length > 0 && availableModelProcessNames.length === 0;
-    const status = unavailableProcesses.length === 0 ? "pass" : allRequiredUnavailable ? "fail" : "warn";
+    // No engine configured at all (no unavailable item carries a resolved engine)
+    // is "not set up yet", not a broken credential: it keeps the unknown/warn
+    // result it had when the plan threw for it. Engine-free deterministic triage
+    // (#1143) now lets such a plan resolve, so this has to be explicit.
+    const noEngineConfigured = plan.engineUnavailable.length > 0 && plan.engineUnavailable.every((i) => !i.engine);
+    const explicitlyConfigured =
+      config.defaults?.improveStrategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
+    const status =
+      unavailableProcesses.length === 0
+        ? "pass"
+        : allRequiredUnavailable
+          ? noEngineConfigured
+            ? explicitlyConfigured
+              ? "warn"
+              : "unknown"
+            : "fail"
+          : "warn";
     return {
       check: {
         name: "active-improve-strategy",

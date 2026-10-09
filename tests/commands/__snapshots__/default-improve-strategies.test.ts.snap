@@ -47,8 +47,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "limit": 25,
       },
       "triage": {
-        "applyMode": "queue",
-        "enabled": false,
+        "applyMode": "promote",
+        "enabled": true,
+        "maxAcceptsPerRun": 25,
         "policy": "personal-stash",
       },
       "validation": {
@@ -112,8 +113,9 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "limit": 25,
       },
       "triage": {
-        "applyMode": "queue",
+        "applyMode": "promote",
         "enabled": false,
+        "maxAcceptsPerRun": 25,
         "policy": "personal-stash",
       },
       "validation": {

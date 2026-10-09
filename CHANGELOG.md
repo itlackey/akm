@@ -46,6 +46,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`default` drains the proposal queue through the deterministic gates (#1143).** The `default` strategy now runs
+  triage in `promote` mode with judgment off, up to `maxAcceptsPerRun: 25` accepts per run, so the backlog drains
+  without `experimental.improveAutonomy`. The nightly eval's baseline is exactly this path (`proposal drain --promote`
+  without judgment): 0.91 (terra) and 0.89 (qwen) of items solved, 0 to 1 harmed; the judged drain is what caused
+  harm (#1132). The autonomy gate's `triagePromote` lane is now gated only when the triage stage has judgment on: a
+  promote with judgment on and no opt-in is still downgraded to `queue` and reported (`improve_skipped`,
+  `akm task doctor`). Memory inference and memory cleanup stay gated. No new setting. (#1143)
 - **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
   nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
   (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it

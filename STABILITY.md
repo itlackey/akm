@@ -405,7 +405,8 @@ mutate assets *without* review require an explicit opt-in:
 akm config set experimental.improveAutonomy true
 ```
 
-Without it, these three lanes are downgraded, and each downgrade is **reported,
+Without it, these three lanes are downgraded (the triage lane only when its
+judgment tier is on), and each downgrade is **reported,
 not silent**: it warns on stderr naming the lane and the key, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, is counted in
 `akm health`'s improve skip-reason summary, and is listed by `akm task doctor`
@@ -418,7 +419,13 @@ review-first config correctly shows `queue`.
 | --- | --- | --- |
 | `memoryInference` | Writes `.derived.md` children and rewrites parent frontmatter | disabled |
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
-| `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+| `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+
+A deterministic-only `promote` (triage with judgment off) is **not** a gated
+lane (#1143): the `default` strategy runs it without the opt-in, bounded by
+`maxAcceptsPerRun` (25), through the same deterministic gates as
+`akm proposal drain --promote`. Only a promote that turns the judgment tier on
+needs `experimental.improveAutonomy`.
 
 Consolidation remains enabled with autonomy off: both its passes (promotion,
 and the pair pass's duplicate/subsumed/supersedes judging) only ever emit a
