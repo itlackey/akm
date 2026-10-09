@@ -101,9 +101,11 @@ AKM is local-first: it stores its index and state on disk and has no remote tele
 
 ## Documentation and project status
 
+The full documentation is published at **[akm.fwdslsh.dev](https://akm.fwdslsh.dev/)**, built from [`docs/`](docs/).
+
 | Doc | Description |
 | --- | --- |
-| [Documentation index](docs/README.md) | Full guide and reference index |
+| [Documentation index](https://akm.fwdslsh.dev/docs/README.html) | Full guide and reference index |
 | [Product surface](https://github.com/itlackey/akm/blob/main/docs/product-surface.md) | Every feature and its status |
 | [Stability policy](STABILITY.md) | Which CLI surfaces are stable, evolving, or experimental |
 | [Security policy](SECURITY.md) | Threat model and how to report vulnerabilities |
