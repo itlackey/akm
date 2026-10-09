@@ -1,4 +1,0 @@
-version: 4
-run: akm improve --strategy default --skip-if-locked --require-engines
-description: Full nightly improve pass (daily 2:15am; suggested for server installs)
-schedule: "15 2 * * *"

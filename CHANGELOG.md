@@ -32,9 +32,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   these names stays valid as an ordinary user-defined strategy, but it now inherits `default` and no longer carries the
   old built-in's settings (for example the triage drain). `--strategy` or `defaults.improveStrategy` naming one with no
   such block fails at resolution with an error that names `default`; config load still succeeds. The shipped
-  `akm-improve-nightly` task now runs `default`; the hourly `akm-improve-frequent` task would only repeat that pass, and
-  `akm-improve-catchup` ran the same `consolidate` as `akm-improve-consolidate`, so both are gone. A task copied from
-  either into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
+  `akm-improve-nightly` task would now run `default` at 02:15, the same as the `core/improve` task at 02:00, and the
+  hourly `akm-improve-frequent` task would only repeat that pass; `akm-improve-catchup` ran the same `consolidate` as
+  `akm-improve-consolidate`. All three are gone, and setup's server-install preselection now suggests `core/improve`. A task copied from
+  any of them into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
 
 ### Changed
 
