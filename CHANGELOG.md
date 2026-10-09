@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.9.30] - 2026-10-09
+
+A patch release: `akm upgrade` acts only on the `akm-opencode` spec OpenCode's config names.
+
 ### Fixed
 
 - **`akm upgrade` leaves alone an OpenCode whose config pins another `akm-opencode` spec (#1117).** A config naming
