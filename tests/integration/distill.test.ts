@@ -2872,7 +2872,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
         prompts.push(joined);
         if (joined.includes("Score this lesson")) {
           const scores = replies.judge?.[judged++] ?? { reusable: 5, nonRedundancy: 5, grounding: 5 };
-          return JSON.stringify({ scores, reason: "judged" });
+          return JSON.stringify({ scores, reason: "lessons/deploy-retries already states this rule." });
         }
         if (joined.includes("Extend the existing one")) return JSON.stringify(replies.update ?? { decision: "none" });
         return replies.writer;
@@ -2881,6 +2881,15 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     return { result, prompts };
   }
 
+  const noneNaming = (text: string) =>
+    JSON.stringify({
+      reason: `${text} already states the rule.`,
+      decision: "none",
+      description: "",
+      when_to_use: "",
+      body: "",
+      tags: [],
+    });
   const REPEAT = { reusable: 4, nonRedundancy: 2, grounding: 5 };
   const ADDITION_OK = { reusable: 4, nonRedundancy: 5, grounding: 5 };
   const updateWith = (body: string) => ({
@@ -2923,10 +2932,14 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     });
     expect(proposal?.beforeHash).toBeDefined();
     expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(EXISTING);
-    // The judge read only the added line, against the existing lesson and the memory.
-    const additionJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
-    expect(additionJudge).toContain("Existing asset ref: lessons/deploy-retries");
-    expect(additionJudge).toMatch(/Proposed lesson:\n```\n- Stop retrying at once/);
+    // The judge read the extended lesson as one lesson, against the memory and the lesson it extends, and was not
+    // shown that lesson as an asset the new one might repeat.
+    const updateJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
+    expect(updateJudge).not.toContain("Existing assets nearest the new lesson (they may");
+    expect(updateJudge).toContain("The lesson being extended");
+    const proposed = updateJudge.slice(updateJudge.indexOf("Proposed lesson:"));
+    expect(proposed).toContain("Retry a failed deploy at most three times.");
+    expect(proposed).toContain("Stop retrying at once");
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)).toMatchObject({
       ref: MEMORY_REF,
@@ -3041,7 +3054,10 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
         if (joined.includes("Score this lesson")) {
-          return JSON.stringify({ scores: joined.includes("Stop retrying") ? ADDITION_OK : REPEAT, reason: "judged" });
+          return JSON.stringify({
+            scores: joined.includes("Stop retrying") ? ADDITION_OK : REPEAT,
+            reason: "lessons/deploy-retries already states this rule.",
+          });
         }
         if (joined.includes("Extend the existing one")) {
           fs.writeFileSync(fixture.lessonPath, edited);
@@ -3059,7 +3075,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
   test("a writer that answers NONE because the lesson exists still yields the update", async () => {
     const fixture = setup();
     const { result } = await run(fixture, {
-      writer: "NONE",
+      writer: noneNaming("lessons/deploy-retries"),
       update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
       judge: [ADDITION_OK],
     });
@@ -3074,6 +3090,39 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     const { result, prompts } = await run(fixture, { writer: "NONE" });
 
     expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+  test("a NONE whose reason names no lesson makes no update call, however near a lesson is", async () => {
+    const fixture = setup();
+    const { result, prompts } = await run(fixture, {
+      writer: noneNaming("a skill"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+    });
+
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+
+  test("a judge that rejects a repeat without naming a lesson makes no update call", async () => {
+    const fixture = setup();
+    const prompts: string[] = [];
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        prompts.push(joined);
+        if (joined.includes("Score this lesson"))
+          return JSON.stringify({ scores: REPEAT, reason: "An existing asset states it." });
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
     expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
   });
 });

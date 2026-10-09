@@ -96,6 +96,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
     (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
 
+### Fixed
+
+- **Distill's lesson update (#1139) is judged as the lesson it makes, and costs a call only for a lesson that is named.**
+  The judge read only the added lines as a standalone lesson, so a single added fact failed `reusable` and no update
+  passed (0 of 8 on the akm-eval `lesson-update` class, on two models). It now reads the extended lesson (old body plus
+  added lines) against the memory and the lesson being extended, and no longer lists that lesson as an asset the new one
+  might repeat. An update is also tried only when the writer's NONE reason, or the judge's non-redundancy finding, names
+  a related lesson, not for any lesson among the nearest three. (#1090)
+
 ## [0.9.31] - 2026-10-09
 
 A patch release: concurrent config writes no longer lose a change, OpenAI's reasoning models work as `llm`
