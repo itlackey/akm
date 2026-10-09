@@ -2894,6 +2894,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
   const ADDITION_OK = { reusable: 4, nonRedundancy: 5, grounding: 5 };
   const updateWith = (body: string) => ({
     reason: "adds the 4xx stop",
+    new_facts: ["stop at a 4xx"],
     decision: "update",
     ref: "lessons/deploy-retries",
     body,
@@ -2982,6 +2983,18 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
 
     expect(result.outcome).toBe("quality_rejected");
     expect(result.updatesExisting).toBeUndefined();
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("an update that lists no new fact is not proposed", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: { ...updateWith(`${EXISTING_BODY}\n${NEW_FACT}`), new_facts: [] },
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
     expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
   });
 
