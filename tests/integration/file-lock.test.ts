@@ -269,3 +269,45 @@ describe("probeLock: launcherPid (#956)", () => {
     }
   });
 });
+
+// A lock must carry its owner's payload from the moment it exists. It used to be created empty (`wx`)
+// and filled in afterwards; a contender probing in that gap read no pid, called the live lock stale
+// (`invalid_pid`) and reclaimed it, so two `akm config set` processes wrote at once and one was lost.
+describe("tryAcquireLockSync: no empty window", () => {
+  let dir: string;
+  let cleanup: Cleanup;
+  beforeEach(() => {
+    const r = sandboxXdgDataHome();
+    dir = r.dir;
+    cleanup = r.cleanup;
+  });
+  afterEach(() => cleanup());
+
+  test("a live holder's lock never probes as stale", async () => {
+    const lock = path.join(dir, "busy.lock");
+    const script = path.join(dir, "acquire-release.ts");
+    fs.writeFileSync(
+      script,
+      [
+        `import { createLockPayload, releaseLock, tryAcquireLockSync } from ${JSON.stringify(FILE_LOCK_MODULE)};`,
+        `for (let i = 0; i < 2000; i++) {`,
+        `  const ownership = tryAcquireLockSync(process.argv[2], createLockPayload());`,
+        `  if (ownership) releaseLock(ownership);`,
+        `}`,
+      ].join("\n"),
+      "utf8",
+    );
+    const child = spawn("bun", [script, lock], { stdio: ["ignore", "ignore", "inherit"] });
+    const exited = waitForExit(child);
+    const staleReasons: string[] = [];
+    let probes = 0;
+    while (child.exitCode === null && child.signalCode === null) {
+      const probe = probeLock(lock);
+      if (probe.state === "stale") staleReasons.push(probe.reason);
+      // Yield now and then so the child's exit is observed.
+      if (++probes % 200 === 0) await new Promise((resolve) => setImmediate(resolve));
+    }
+    await exited;
+    expect(staleReasons).toEqual([]);
+  }, 30_000);
+});
