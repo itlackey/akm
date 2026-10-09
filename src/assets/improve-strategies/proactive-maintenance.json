@@ -16,7 +16,7 @@
       "policy": "personal-stash",
       "maxAcceptsPerRun": 100,
       "maxDiffLines": 200,
-      "judgment": true
+      "judgment": false
     },
     "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 100 }
   },

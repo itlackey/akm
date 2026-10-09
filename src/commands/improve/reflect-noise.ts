@@ -19,23 +19,17 @@
 import { parse as yamlParse } from "yaml";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 
-export type ReflectChangeKind = "noop" | "cosmetic" | "low-value" | "substantive";
+export type ReflectChangeKind = "noop" | "cosmetic" | "substantive";
 
 /**
  * `noop` (identical up to trailing whitespace) and `cosmetic` (identical after
  * normalizing frontmatter as parsed YAML and prose as unwrapped text) never
- * become proposals. `low-value` (#639) is a small prose rewrite — few changed
- * words, nothing structural; the caller decides (off by default).
+ * become proposals.
  */
 export function classifyReflectChange(sourceContent: string, candidateContent: string): ReflectChangeKind {
   if (normalizeTrailingWhitespace(sourceContent) === normalizeTrailingWhitespace(candidateContent)) return "noop";
   try {
     if (cosmeticNormalForm(sourceContent) === cosmeticNormalForm(candidateContent)) return "cosmetic";
-  } catch {
-    // unprovable → substantive
-  }
-  try {
-    if (isLowValueChange(sourceContent, candidateContent)) return "low-value";
   } catch {
     // unprovable → substantive
   }
@@ -162,7 +156,7 @@ function gainsPhrases(phrases: readonly string[], source: string, candidate: str
 function frontmatterCopiedIntoBody(source: string, candidate: string, keys: readonly string[]): boolean {
   if (keys.length === 0) return false;
   const keyLine = new RegExp(`^(?:${keys.map(escapeRegExp).join("|")}):(?:[ \\t].*)?$`);
-  const keyLines = (text: string) => parseLowValueSections(text).proseLines.filter((line) => keyLine.test(line)).length;
+  const keyLines = (text: string) => parseSections(text).proseLines.filter((line) => keyLine.test(line)).length;
   if (keyLines(candidate) > keyLines(source)) return true;
   const sourceBody = lettersAndDigits(splitFrontmatter(source).body);
   const candidateBody = lettersAndDigits(splitFrontmatter(candidate).body);
@@ -195,44 +189,8 @@ export function splitFrontmatter(raw: string): { fmText: string | null; body: st
   return m ? { fmText: m[1] ?? "", body: m[2] ?? "" } : { fmText: null, body: raw };
 }
 
-/** At most this many changed words (and at least 2 — one word may be a flag flip) is low-value. */
-const LOW_VALUE_TOKEN_THRESHOLD = 4;
-/** A change to any of these is never low-value. */
-const NEGATION_WORDS = new Set(["never", "not", "no", "don't", "avoid", "cannot", "can't"]);
-/** Lines recording a decision or outcome are always significant; their words are not counted. */
-const DECISION_MARKER_RE = /\b(decision|outcome)\b/i;
-const STRUCTURAL_LINE_RE = /^\s*(#{1,6}\s|[-*+]\s|\d{1,9}[.)]\s|---+|===+|\|\s)/;
-
-function isLowValueChange(source: string, candidate: string): boolean {
-  const src = parseLowValueSections(source);
-  const cnd = parseLowValueSections(candidate);
-  // Code and frontmatter changes are always substantive.
-  if (src.codeFences.join("\n") !== cnd.codeFences.join("\n") || src.frontmatter !== cnd.frontmatter) return false;
-  if (Math.abs(src.proseLines.length - cnd.proseLines.length) > 2) return false;
-  let changedTokens = 0;
-  for (let i = 0; i < Math.max(src.proseLines.length, cnd.proseLines.length); i++) {
-    const srcLine = src.proseLines[i] ?? "";
-    const cndLine = cnd.proseLines[i] ?? "";
-    if (srcLine === cndLine || DECISION_MARKER_RE.test(srcLine) || DECISION_MARKER_RE.test(cndLine)) continue;
-    if (STRUCTURAL_LINE_RE.test(cndLine) || STRUCTURAL_LINE_RE.test(srcLine)) return false;
-    const srcTokens = tokenize(srcLine);
-    const cndTokens = tokenize(cndLine);
-    const srcNeg = new Set(srcTokens.filter((t) => NEGATION_WORDS.has(t)));
-    const cndNeg = new Set(cndTokens.filter((t) => NEGATION_WORDS.has(t)));
-    if (srcNeg.size !== cndNeg.size || [...srcNeg].some((t) => !cndNeg.has(t))) return false;
-    // max(added, removed) approximates substitutions: "is→runs" counts once.
-    const srcSet = new Set(srcTokens);
-    const cndSet = new Set(cndTokens);
-    changedTokens += Math.max(
-      cndTokens.filter((t) => !srcSet.has(t)).length,
-      srcTokens.filter((t) => !cndSet.has(t)).length,
-    );
-  }
-  return changedTokens >= 2 && changedTokens < LOW_VALUE_TOKEN_THRESHOLD;
-}
-
 /** Frontmatter text, fenced code blocks, and prose lines (an unclosed fence counts as prose). */
-function parseLowValueSections(text: string): { frontmatter: string; codeFences: string[]; proseLines: string[] } {
+function parseSections(text: string): { frontmatter: string; codeFences: string[]; proseLines: string[] } {
   const { fmText, body } = splitFrontmatter(normalizeTrailingWhitespace(text));
   const codeFences: string[] = [];
   const proseLines: string[] = [];
@@ -254,15 +212,6 @@ function parseLowValueSections(text: string): { frontmatter: string; codeFences:
   }
   if (fence) proseLines.push(...fence.lines);
   return { frontmatter: fmText ?? "", codeFences, proseLines };
-}
-
-function tokenize(line: string): string[] {
-  return line
-    .toLowerCase()
-    .replace(/’/g, "'") // curly apostrophes still match "don't"
-    .replace(/[^a-z0-9'-]/g, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 0);
 }
 
 /** CRLF → LF, no trailing spaces per line, no trailing newlines. */

@@ -219,16 +219,14 @@ export interface ImproveExecutionPlan {
   consolidation: {
     configured: {
       enabled?: boolean;
-      minPoolSize?: number;
       limit?: number;
       maxChunkSize?: number;
     };
-    effective: { enabled: boolean; minPoolSize: number; limit?: number; chunkSize: number };
+    effective: { enabled: boolean; limit?: number; chunkSize: number };
     poolSize: number;
     candidatePoolSize: number;
     gates: {
       profile: { passed: boolean; reason: string };
-      minimumPool: { passed: boolean; reason: string };
       delta: { passed: boolean; reason: string };
     };
     wouldRun: boolean;

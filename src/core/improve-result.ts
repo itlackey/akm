@@ -138,6 +138,8 @@ function validateConsolidationPlan(value: unknown): void {
     ]),
   );
   if (!isRecord(value.configured)) fail("plan.consolidation.configured must be an object");
+  // `minPoolSize` is no longer written (the minimum-pool guard was removed in 0.10, #1131); runs an
+  // older release persisted still carry it, ignored — AGENTS.md "Reading persisted data".
   requireExactFields(value.configured, new Set(["enabled", "minPoolSize", "limit", "maxChunkSize"]));
   if (value.configured.enabled !== undefined && typeof value.configured.enabled !== "boolean") {
     fail("plan.consolidation.configured.enabled must be a boolean");
@@ -150,7 +152,8 @@ function validateConsolidationPlan(value: unknown): void {
   if (!isRecord(value.effective)) fail("plan.consolidation.effective must be an object");
   requireExactFields(value.effective, new Set(["enabled", "minPoolSize", "limit", "chunkSize"]));
   if (typeof value.effective.enabled !== "boolean") fail("plan.consolidation.effective.enabled must be a boolean");
-  requireCount(value.effective, "minPoolSize", "plan.consolidation.effective");
+  if (value.effective.minPoolSize !== undefined)
+    requireCount(value.effective, "minPoolSize", "plan.consolidation.effective");
   requireCount(value.effective, "chunkSize", "plan.consolidation.effective");
   if (value.effective.limit !== undefined && typeof value.effective.limit !== "number") {
     fail("plan.consolidation.effective.limit must be a number");
@@ -164,6 +167,8 @@ function validateConsolidationPlan(value: unknown): void {
   requireExactFields(value.gates, new Set(["profile", "minimumPool", "delta"]));
   for (const gateName of ["profile", "minimumPool", "delta"] as const) {
     const gate = value.gates[gateName];
+    // `minimumPool` is no longer written; only an older release's persisted plan has it.
+    if (gate === undefined && gateName === "minimumPool") continue;
     if (!isRecord(gate)) fail(`plan.consolidation.gates.${gateName} must be an object`);
     requireExactFields(gate, new Set(["passed", "reason"]));
     if (typeof gate.passed !== "boolean" || typeof gate.reason !== "string") {

@@ -2914,7 +2914,7 @@ authenticates its root; it never falls back to an ambient write target.
 
 #### proposal extract
 
-**Experimental** (see [STABILITY.md](../../STABILITY.md)): session extraction is still being measured in 0.10.
+**Evolving** (see [STABILITY.md](../../STABILITY.md)): measured by the extract eval; 0.10 is still settling the improve defaults, so it is not yet Stable.
 
 Extract durable insights from native coding-agent session files (claude-code,
 codex, opencode) and queue them as proposals. This is the standalone
@@ -3298,7 +3298,12 @@ passed on its current content is accepted (unless its target changed since it
 was minted — that one is auto-rejected as `stale-target`); an empty diff is
 rejected; a proposal that reflect or distill deferred for review is left for a
 person; everything else goes to the judgment tier when one is enabled, and
-is otherwise left for review. A reflect revision that changes the body, and
+is otherwise left for review. The judgment tier may accept only a consolidate
+promotion (a memory proposed as a new knowledge note); any other kind it would
+accept, such as a retirement, an exact fix or a reflect revision, is left for a
+person (reason `judgment-not-promotion`). Judged over every kind, the tier
+accepted unsafe retirements, applied exact fixes unreviewed and changed notes
+nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and
 every distill lesson or knowledge promotion, is deferred for review even when
 its judge passes it. Default mode stages decisions (queue mode); pass
 `--promote` to actually accept.
@@ -3317,7 +3322,7 @@ akm proposal drain --strategy default --promote -y  # Read the triage block from
 | `--dry-run` | List what would be accepted/rejected/deferred, without writing |
 | `--max-accepts` | Hard per-run accept ceiling; accepts beyond this are reported as `skippedByCap` |
 | `--older-than` | Only consider proposals created (or last reopened) more than this many days ago |
-| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
+| `--judgment` | Explicitly enable the judgment tier for this standalone drain, including when the selected strategy says `judgment.enabled: false`; it accepts only consolidate promotions (#1132); execution overrides still come from that strategy. Without this flag, strategy judgment config does not enable standalone drain judgment. A missing runner remains a no-op with a logged `triage_deferred` summary. |
 | `-y`, `--yes` | Skip the confirmation prompt (required in non-interactive mode for promotion) |
 
 ### feedback (`--reason`)

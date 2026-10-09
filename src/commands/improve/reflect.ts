@@ -110,8 +110,6 @@ export interface AkmReflectOptions {
   config?: AkmConfig;
   /** `"improve"` tags agent subprocess events so they stay out of user history. */
   eventSource?: "user" | "improve";
-  /** Defer "low-value" micro-rewrites like no-op/cosmetic ones (`processes.reflect.lowValueFilter`). */
-  lowValueFilter?: boolean;
   /** The wording lists of the pre-judge defect rules (`processes.reflect.defectFilter`); a list left out takes its default. */
   defectFilter?: ReflectDefectFilter;
   /** Self-refine passes (default 1; each later pass critiques the prior draft). */
@@ -1007,11 +1005,10 @@ async function runReflectRefineIterations(args: {
 const NOISE_SUBREASONS = {
   noop: "reflect_skipped_noop",
   cosmetic: "reflect_skipped_cosmetic",
-  "low-value": "reflect_skipped_low_value",
 } as const;
 
 /**
- * Apply the patch, drop a no-op/cosmetic (and optionally low-value) change,
+ * Apply the patch, drop a no-op/cosmetic change,
  * judge the exact content that would be persisted, then mint. A revision with a
  * deterministic defect is refused before the judge runs, whether or not the
  * gate is on.
@@ -1032,18 +1029,12 @@ async function finalizeReflectProposal(args: {
   const content = patched?.content ?? assetContent;
 
   const changeKind = classifyReflectChange(assetContent, content);
-  if (
-    changeKind === "noop" ||
-    changeKind === "cosmetic" ||
-    (changeKind === "low-value" && options.lowValueFilter === true)
-  ) {
+  if (changeKind === "noop" || changeKind === "cosmetic") {
     run.emitFailed("no_change", NOISE_SUBREASONS[changeKind], options.ref, { changeKind, ...telemetry });
     const what =
       changeKind === "noop"
         ? "identical to the current asset (empty diff)"
-        : changeKind === "low-value"
-          ? "a low-value prose micro-rewrite (few changed tokens, no structural changes)"
-          : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
+        : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
     return reflectFailure(
       run,
       result,

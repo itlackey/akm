@@ -29,6 +29,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   it. Otherwise nothing is proposed and the outcome is what it was. The result and the `distill_invoked` event carry
   `updatesExisting: true`. No new setting; it needs the quality gate.
 
+### Changed
+
+- **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
+  nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
+  (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
+  accepted unsafe retirements and applied exact fixes unreviewed. Judging promotions alone was reasonable. The judgment
+  tier now accepts only a consolidate promotion; any other kind it would accept (a retirement, an exact fix, a reflect
+  revision) is left for a person with reason `judgment-not-promotion`, whatever the strategy says. `thorough`, `catchup`,
+  `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
+  unchanged. (#1132)
+
+### Removed
+
+- **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
+  that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
+  - `processes.consolidate.antiCollapse`: the random cluster-member injection. Identical results with it off on an
+    80-memory pool.
+  - `processes.consolidate.p90ChunkSecondsDefault`: the up-front budget cap on the consolidation pool keeps its
+    behaviour with a fixed 30 s per chunk. Identical at 10, 30 and 90 s under a 180 s budget.
+  - `processes.consolidate.minPoolSize`: the minimum-pool skip, its `pool_below_min_size` `improve_skipped` reason and
+    the `minPoolSize` / `gates.minimumPool` fields of the consolidation plan. It was bypassed by `--strategy`, and the
+    documented default (500) differed from the code's (0). `improve_runs` rows that carry the plan fields still read.
+  - `processes.distill.fidelityCheck`: the negation-pattern contradiction check. No difference at n=3.
+  - `processes.reflect.lowValueFilter`: the low-value tier of the reflect noise classifier. Reflect edits only
+    frontmatter, which the filter always passes. No-op and cosmetic edits are still refused.
+  - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
+    (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
+
 ### Fixed
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
@@ -69,6 +97,10 @@ plugin on a host that follows `akm-opencode@next`.
 
 - **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
   failure-path runs on 0.9.28 (#1099).
+- **`akm proposal extract` and the improve `extract` process move from Experimental to Evolving.** The extract eval
+  (akm-eval `evals/extract`, n=3) measured insights saved 1.00 (terra) / 0.97 (qwen), routine sessions left empty
+  1.00, and planted instructions saved 0. Evolving rather than Stable because 0.10 is still settling the improve
+  defaults; the eval stays its gate (#1133).
 
 ### Fixed
 

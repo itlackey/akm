@@ -2538,41 +2538,6 @@ Bind the gateway to port 8081. Port 8080 conflicts with another service on the h
       expect(judgePrompt).toContain("LATE_BODY_MARKER");
       expect(judgePrompt).not.toContain("FFFFFFFFFF");
     });
-
-    test("a lesson that contradicts its source is left to the fidelity check, which sends it to a human", async () => {
-      const fixture = setup(
-        "gateway-restart",
-        "Never restart the gateway while a deploy is running.",
-        "The gateway kept serving stale routes after the last deploy.",
-      );
-      const lesson = `---
-description: Restart the gateway once a deploy has finished so it serves the new routes.
-when_to_use: When a deploy has finished and the gateway still serves routes from before it.
----
-
-Always restart the gateway once the deploy finishes. A running gateway keeps serving the old routes.
-`;
-      const { result } = await distillWithJudge(
-        fixture,
-        { reusable: 4, nonRedundancy: 4, grounding: 3 },
-        "Same subject, and it goes beyond the source.",
-        {
-          lesson,
-          config: distillConfig(fixture.stash, {
-            enabled: true,
-            qualityGate: { enabled: true },
-            fidelityCheck: { enabled: true },
-          }),
-        },
-      );
-
-      expect(result.outcome).toBe("review_needed");
-      const proposals = listProposals(fixture.stash);
-      expect(proposals).toHaveLength(1);
-      expect(proposals[0]?.gateDecision).toMatchObject({ outcome: "deferred", gate: "quality-gate" });
-      const { events } = readEvents({ type: "distill_invoked" });
-      expect(events.at(-1)?.metadata).toMatchObject({ outcome: "review_needed", fidelityContradiction: true });
-    });
   });
 });
 

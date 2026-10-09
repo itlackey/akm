@@ -136,18 +136,12 @@ function recordAttempt(
   }
 }
 
-// #553: these pool-delta / #551-gate tests use single-memory sandboxed pools.
-// The default consolidate minPoolSize guard (500) would otherwise short-circuit
-// the consolidation pass before the mtime-delta gate runs. Disable the pool-size
-// guard (minPoolSize: 0) so these tests exercise the gate they pin, not the new
-// guard. (A dedicated suite covers the minPoolSize guard itself.)
-//
-// proactiveMaintenance is ALSO disabled explicitly because these tests pin the
+// proactiveMaintenance is disabled explicitly because these tests pin the
 // signal-delta / high-salience SELECTION gates in isolation. The opt-in lane
 // deliberately selects never-reflected refs regardless of signal. That separate
 // behaviour is covered by proactive-maintenance-flow.test.ts; leaving it on here
 // would mask the gate each test is asserting.
-function configWithoutPoolGuard(stashDir: string): import("../../../../src/core/config/config").AkmConfig {
+function configWithoutProactiveLane(stashDir: string): import("../../../../src/core/config/config").AkmConfig {
   return withImproveAutonomy(
     withTestImproveLlm({
       semanticSearchMode: "off",
@@ -156,7 +150,7 @@ function configWithoutPoolGuard(stashDir: string): import("../../../../src/core/
       defaultWriteTarget: "stash",
       improve: {
         strategies: {
-          default: { processes: { consolidate: { minPoolSize: 0 }, proactiveMaintenance: { enabled: false } } },
+          default: { processes: { proactiveMaintenance: { enabled: false } } },
         },
       },
     } as import("../../../../src/core/config/config").AkmConfig),
@@ -389,7 +383,7 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -461,7 +455,7 @@ describe("reflect signal-delta eligibility", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(stash), // isolate the signal-delta gate from proactive selection
+      config: configWithoutProactiveLane(stash), // isolate the signal-delta gate from proactive selection
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
@@ -769,7 +763,7 @@ describe("consolidate ledger eligibility", () => {
 
     const result = await akmImprove({
       scope: "memory",
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -806,7 +800,7 @@ describe("consolidate ledger eligibility", () => {
 
     const result = await akmImprove({
       scope: "memory",
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -833,7 +827,7 @@ describe("consolidate ledger eligibility", () => {
 
     await akmImprove({
       scope: "memory",
-      config: configWithoutPoolGuard(stash),
+      config: configWithoutProactiveLane(stash),
       stashDir: stash,
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -966,7 +960,7 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(stash), // isolate the high-salience gate from proactive selection
+      config: configWithoutProactiveLane(stash), // isolate the high-salience gate from proactive selection
       limit: 10, // cap = floor(10 × 0.1) = 1 → exactly one high-salience slot
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
@@ -1000,7 +994,7 @@ describe("high-salience admission gate (#608)", () => {
     await akmImprove({
       scope: "memory",
       stashDir: stash,
-      config: configWithoutPoolGuard(stash), // isolate the high-salience gate from proactive selection
+      config: configWithoutProactiveLane(stash), // isolate the high-salience gate from proactive selection
       ensureIndexFn: async () => false,
       reindexFn: async () => ({ schemaVersion: 1, ok: true, indexed: 0, warnings: [], errors: [], durationMs: 0 }),
       reflectFn: async ({ ref }) => {
