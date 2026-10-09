@@ -4,15 +4,14 @@
 
 export const ENGINE_NAME_PATTERN_SOURCE = "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$";
 
-export const BUILTIN_IMPROVE_STRATEGY_NAMES = [
-  "default",
-  "quick",
-  "thorough",
-  "consolidate",
-  "catchup",
-  "reflect-distill",
-  "proactive-maintenance",
-] as const;
+export const BUILTIN_IMPROVE_STRATEGY_NAMES = ["default", "consolidate", "proactive-maintenance"] as const;
+
+/**
+ * Built-in strategies removed in 0.10 (#1130). A user-defined strategy of the
+ * same name still resolves (it inherits `default`); naming one with no such
+ * block fails at resolution, not at config load.
+ */
+export const REMOVED_IMPROVE_STRATEGY_NAMES = ["quick", "thorough", "catchup", "reflect-distill"] as const;
 
 /**
  * The improve processes that use an engine. Triage's engine is its judgment's;

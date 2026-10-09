@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Embedded task registry — asserts the 5 bundled `core/` templates and the 4
- * bundled `improve/` templates are present with the exact ids and default
+ * Embedded task registry — asserts the 5 bundled `core/` templates and the 1
+ * bundled `improve/` template are present with the exact ids and default
  * schedules, and that they are read from the bundled assets dir (not any
  * user stash).
  *
@@ -30,16 +30,13 @@ const EXPECTED = [
   { id: "index-refresh", category: "core", schedule: "0 4 * * *", enabled: true },
   { id: "extract", category: "core", schedule: "*/30 * * * *", enabled: true },
   { id: "sync", category: "core", schedule: "*/15 * * * *", enabled: true },
-  { id: "akm-improve-frequent", category: "improve", schedule: "40 * * * *", enabled: true },
   { id: "akm-improve-consolidate", category: "improve", schedule: "20 */4 * * *", enabled: true },
-  { id: "akm-improve-nightly", category: "improve", schedule: "15 2 * * *", enabled: true },
-  { id: "akm-improve-catchup", category: "improve", schedule: "0 4 * * *", enabled: false },
 ] as const;
 
 describe("embedded task registry", () => {
-  test("enumerates all 9 templates", () => {
+  test("enumerates all 6 templates", () => {
     const tasks = listEmbeddedTasks();
-    expect(tasks.length).toBe(9);
+    expect(tasks.length).toBe(6);
   });
 
   test("each template has the exact id, default schedule, and enablement", () => {
@@ -57,7 +54,7 @@ describe("embedded task registry", () => {
 
   test("every improve/ template guards against overlapping runs", () => {
     const improveTasks = listEmbeddedTasks().filter((t) => t.label.startsWith("improve/"));
-    expect(improveTasks.length).toBe(4);
+    expect(improveTasks.length).toBe(1);
     for (const task of improveTasks) expect(task.command).toContain("--skip-if-locked");
   });
 
@@ -68,7 +65,7 @@ describe("embedded task registry", () => {
     const scheduledImproveTasks = listEmbeddedTasks().filter(
       (t) => t.label === "core/improve" || t.label.startsWith("improve/"),
     );
-    expect(scheduledImproveTasks.length).toBe(5);
+    expect(scheduledImproveTasks.length).toBe(2);
     for (const task of scheduledImproveTasks) expect(task.command).toContain("--require-engines");
   });
 

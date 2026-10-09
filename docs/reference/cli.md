@@ -2635,7 +2635,7 @@ akm improve --skip-if-locked           # for high-frequency scheduled runs: skip
 akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
 akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
-akm improve --plan --strategy thorough # preview thorough's resolved engine/model routing; nothing is dispatched
+akm improve --plan --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
 akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id

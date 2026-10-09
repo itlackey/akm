@@ -580,7 +580,7 @@ describe("runTask — workflow target", () => {
 
 describe("runTask — command target", () => {
   test("resolves a bare akm run task to the current installation when PATH omits it", async () => {
-    const command = ["akm", "improve", "--strategy", "quick"];
+    const command = ["akm", "improve", "--strategy", "consolidate"];
     writeTask("literal-command", shellTask(command));
     let spawned: string[] | undefined;
     const spawnFn: SpawnFn = (cmd) => {

@@ -1425,10 +1425,10 @@ examples of tasks that drive akm's own workflows." Testing only synthetic
 fixtures never catches a real schema drift between what `akm task add`
 authors and what these shipped files contain.
 
-**Finding that reshapes this test:** none of the five shipped
+**Finding that reshapes this test:** none of the shipped
 `src/assets/tasks/improve/*.yml` (or `src/assets/tasks/core/*.yml`) files
 actually target an `akm workflow` asset. Every one is `run: akm <command>
-...` — a shell target. Verified live for `akm-improve-catchup.yml`:
+...` — a shell target. Verified live for `akm-improve-consolidate.yml`:
 `.target == {"kind":"shell"}`. So the literal task→workflow seam (INT-1)
 has **no shipped real-world example** as of alpha.5 — "workflow" in the
 PR/brief is used in the English sense (the `improve` pipeline is a
@@ -1440,11 +1440,11 @@ workflow step wrapping a real task via `uses: tasks/`.
 
 **Setup:**
 ```sh
-cp /home/founder3/code/github/itlackey/akm/src/assets/tasks/improve/akm-improve-catchup.yml \
-   "$AKM_BUNDLE_DIR/tasks/akm-improve-catchup.yml"
+cp /home/founder3/code/github/itlackey/akm/src/assets/tasks/improve/akm-improve-consolidate.yml \
+   "$AKM_BUNDLE_DIR/tasks/akm-improve-consolidate.yml"
 
 cat > "$AKM_BUNDLE_DIR/workflows/wrap-real-improve-task.yml" <<'EOF'
-name: Manual test workflow wrapping the real shipped improve-catchup task
+name: Manual test workflow wrapping the real shipped improve-consolidate task
 on:
   workflow_dispatch:
 jobs:
@@ -1452,25 +1452,24 @@ jobs:
     runs-on: [self-hosted]
     steps:
       - id: dispatch
-        uses: tasks/akm-improve-catchup
+        uses: tasks/akm-improve-consolidate
 EOF
 akm index
 ```
 
 **Steps and expected results (verified live):**
-1. `akm task explain akm-improve-catchup --format json` → exit `0`,
-   `.target.kind == "shell"`, `.description == "Manual recovery —
-   consolidation + triage drain (run on demand via \`akm task run
-   akm-improve-catchup\`)"`, `.schedule[0] == {"ordinal":0,"cron":"0 4 * * *","enabled":false,"source":"schedule[0].cron","inputs":{}}`
+1. `akm task explain akm-improve-consolidate --format json` → exit `0`,
+   `.target.kind == "shell"`, `.description == "Consolidation-only
+   pass (every 4h at :20)"`, `.schedule[0] == {"ordinal":0,"cron":"20 */4 * * *","enabled":false,"source":"schedule[0].cron","inputs":{}}`
    — the real shipped file describes a schedule but cannot activate itself;
    this host's `scheduler.enabled` list does not name it.
 2. `akm workflow plan workflows/wrap-real-improve-task --format json` →
    `.steps[0].targetKind == "shell"`, `.steps[0].expansion ==
-   {"via":"task","taskRef":"tasks/akm-improve-catchup"}`.
+   {"via":"task","taskRef":"tasks/akm-improve-consolidate"}`.
 
 **Do not** `workflow run` this composed workflow, and do not `task run
-akm-improve-catchup` directly — both would invoke the real `akm improve
---strategy catchup` pipeline against a live agent engine, which is slow,
+akm-improve-consolidate` directly — both would invoke the real `akm improve
+--strategy consolidate` pipeline against a live agent engine, which is slow,
 may require credentials, and is out of scope for a seam test. `workflow
 plan` already proves the seam without executing anything.
 

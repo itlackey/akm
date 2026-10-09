@@ -41,14 +41,14 @@ describe("improve engine-plan boundaries", () => {
     const ensureIndexFn = mock(async () => undefined);
     await expect(
       akmImprove({
-        strategy: "quick",
+        strategy: "default",
         config: {
           configVersion: "0.9.0",
           semanticSearchMode: "off",
         },
         ensureIndexFn,
       }),
-    ).rejects.toThrow('"reflect" requires an engine that is not configured');
+    ).rejects.toThrow("require an engine that is not configured");
     expect(ensureIndexFn).not.toHaveBeenCalled();
   });
 
