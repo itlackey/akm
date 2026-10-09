@@ -218,6 +218,6 @@ akm wiki create research  # doclint:ignore (historical — akm multi-wiki era po
 akm wiki list  # doclint:ignore (historical — akm multi-wiki era post; `wiki` family removed in 0.9.0)
 ```
 
-The [Getting Started guide](https://github.com/itlackey/akm/blob/main/docs/getting-started.md) covers initial setup if you're new to akm. The wiki commands are available immediately once you have a stash configured.
+The [Getting Started guide](../guides/getting-started.md) covers initial setup if you're new to akm. The wiki commands are available immediately once you have a stash configured.
 
 If you're working in a domain where knowledge accumulates — research, security analysis, architecture decisions, competitive analysis — give it a run and see if the structure helps. The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). Questions and feedback in the issues.

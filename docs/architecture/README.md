@@ -1,4 +1,4 @@
-# Architecture
+# Architecture Index
 
 How akm is built: system overview, normative specs, decision history, and
 subsystem internals.

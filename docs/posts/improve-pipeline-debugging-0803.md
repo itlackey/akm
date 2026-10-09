@@ -176,4 +176,4 @@ The value is in what compounds. Each run makes the stash slightly more accurate,
 
 ---
 
-`akm improve` is part of akm 0.8.x. The full pipeline configuration and local model setup docs are in the [configuration reference](https://github.com/itlackey/akm/blob/main/docs/configuration.md). Hardware requirements and LM Studio setup are covered in the [getting started guide](https://github.com/itlackey/akm/blob/main/docs/getting-started.md).
+`akm improve` is part of akm 0.8.x. The full pipeline configuration and local model setup docs are in the [configuration reference](../reference/configuration.md). Hardware requirements and LM Studio setup are covered in the [getting started guide](../guides/getting-started.md).

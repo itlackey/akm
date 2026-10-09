@@ -62,7 +62,7 @@ Practical rule for every test below that touches `add`/`sync`:
 regardless of `AKM_*_DIR` isolation — seeing your host's real cron entries
 in `doctor` output during an "isolated" test is expected, not a bug.
 
-## Setup — one sandbox for every non-destructive test
+## Setup one sandbox for every non-destructive test
 
 ```sh
 export AKM_SANDBOX="$(mktemp -d /tmp/akm-task-workflow-qa.XXXXXX)"
@@ -1500,7 +1500,7 @@ before running any of it.** Mandatory for every test below:
 `add` writes only its own binding (narrower blast radius); `sync` does a
 full reconcile and can attempt to remove unrelated real entries.
 
-### DT-1 — `task add` happy path installs a real scheduler entry [Linux: cron]
+### DT-1 — `task add` happy path installs a real cron entry [Linux: cron]
 
 **Setup:** `export TID="akm-manual-test-$(date +%s)"`; back up crontab per
 above.

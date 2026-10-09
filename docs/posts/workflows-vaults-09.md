@@ -281,7 +281,7 @@ execution when the vault is loaded via `akm vault run`. `akm add` and
 `akm lint` both scan for these names. During install, `akm add` pauses and
 asks for confirmation when dangerous keys are found (non-interactive mode fails
 unless `--allow-dangerous-env-keys` is passed). The full list of 23 flagged key names is
-documented in the [CLI reference](https://github.com/itlackey/akm/blob/main/docs/cli.md#dangerous-vault-key-audit).
+documented in the [CLI reference](../reference/cli.md#dangerous-env-key-audit).
 
 **When to use `--allow-dangerous-env-keys`.** Pass it to `akm bundle add` when
 you have reviewed a bundle manually and confirmed that a dangerous environment
@@ -316,6 +316,6 @@ To add a vault, drop a `.env` file in `vaults/` in your stash. The format is sta
 
 To make your default stash writable, add a remote to the git repo in `~/.akm/stash` and update your stash config with `--writable`. Run `akm save -m "Initial commit"` to verify it pushes.
 
-The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). The [Getting Started guide](https://github.com/itlackey/akm/blob/main/docs/getting-started.md) covers initial setup if you're coming in new.
+The repo is at [github.com/itlackey/akm](https://github.com/itlackey/akm). The [Getting Started guide](../guides/getting-started.md) covers initial setup if you're coming in new.
 
 Agents are most useful when they can handle real work end-to-end. Real work usually involves multiple steps, sensitive configuration, and sessions that get interrupted. Workflows, vaults, and a writable stash close those gaps. Give them a try on the next multi-step task you'd normally hand off with a checklist.

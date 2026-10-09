@@ -219,4 +219,4 @@ The task YAML is the contract between what you want to happen and when it happen
 
 ---
 
-Task assets are available in akm 0.8.0. The full command reference is in [docs/cli.md](https://github.com/itlackey/akm/blob/main/docs/cli.md#tasks). The environment vault documentation is in [docs/cli.md](https://github.com/itlackey/akm/blob/main/docs/cli.md#env). If you're upgrading from 0.7.x, task `.md` files from the old format are not auto-discovered — check the migration guide for the conversion path.
+Task assets are available in akm 0.8.0. The full command reference is in [Tasks](../reference/tasks.md). The environment vault documentation is in [Environment & Secrets](../reference/env-and-secrets.md). If you're upgrading from 0.7.x, task `.md` files from the old format are not auto-discovered — check the migration guide for the conversion path.

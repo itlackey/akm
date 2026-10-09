@@ -186,7 +186,7 @@ visible wins:
 - **New commands.** `akm graph entity <name>` inverts the entities view (every
   asset that mentions a given entity, by confidence). `akm graph orphans`
   surfaces assets that produced zero entities — quality-triage candidates.
-  Both are documented in [docs/cli.md](https://github.com/itlackey/akm/blob/main/docs/cli.md#graph).
+  Both are documented in the 0.8.0 CLI reference.
 - **Better output.** `akm graph relations` and `akm graph entities` now show
   per-row confidence. Search hits annotate the graph-boost contribution in
   `whyMatched`. Related results end with a `Next: akm show '<ref>'` hint
@@ -201,7 +201,7 @@ the next `akm improve` cycle, which makes LLM calls. The first improve cycle
 after upgrade is slower than steady state, but the Phase 1 / Phase 2
 improvements above make it dramatically faster than equivalent re-extraction
 on 0.7.x. See the migration guide section
-[Graph extraction will re-run after upgrade](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
+[Graph extraction will re-run after upgrade](../migration/v0.7-to-v0.8.md#graph-extraction-will-re-run-after-upgrade).
 
 ## Config v2 and reflect LLM mode
 
@@ -267,8 +267,8 @@ akm config migrate --dry-run  # doclint:ignore (historical — akm 0.8.0 release
 akm config migrate  # doclint:ignore (historical — akm 0.8.0 release announcement; config-schema migration command not present in 0.9.0)
 ```
 
-Full reference: [docs/configuration.md](https://github.com/itlackey/akm/blob/main/docs/configuration.md).
-Full key mapping: [docs/migration/v0.7-to-v0.8.md — Config v2 migration](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md#config-v2-migration-reflect-multi-mode).
+Full reference: [configuration reference](../reference/configuration.md).
+Full key mapping: [v0.7 to v0.8 migration guide — Config 0.8.0 migration](../migration/v0.7-to-v0.8.md#config-080-migration-unified-profiles).
 
 ## Migration Guidance
 
@@ -326,6 +326,6 @@ akm task list              # shows your defined tasks — doclint:ignore (histor
 akm config get configVersion  # "0.8.0" after akm config migrate
 ```
 
-Full details in the [v0.7 to v0.8 migration guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.7-to-v0.8.md) and the [configuration reference](https://github.com/itlackey/akm/blob/main/docs/configuration.md).
+Full details in the [v0.7 to v0.8 migration guide](../migration/v0.7-to-v0.8.md) and the [configuration reference](../reference/configuration.md).
 
 Full changelog at [CHANGELOG.md](https://github.com/itlackey/akm/blob/main/CHANGELOG.md).

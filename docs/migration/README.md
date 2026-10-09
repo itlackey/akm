@@ -9,5 +9,5 @@ Upgrade guides and per-release migration notes.
 - [v0.9.19 release note](release-notes/0.9.19.md) -- `akm improve` scoped to the bundle it writes to (scheduled runs need one `--bundle` run per other bundle), `akm proposal reopen` and the retire-proposal diff, and fewer repeat consolidate promotions
 - [v0.8 -> current v0.9 migration guide](v0.8-to-v0.9.md) -- Package upgrade with fresh current config/state and explicit task conversion
 - [v0.7 -> v0.8 migration guide](v0.7-to-v0.8.md) -- Task schema and 0.8-era changes
-- [v0.5 -> v0.6 migration guide](https://github.com/itlackey/akm/blob/main/docs/migration/v0.5-to-v0.6.md) -- Terminology cut, registry schema v3, publisher changes
-- [Release notes](release-notes/) -- The short per-release notes `akm help migrate <version>` prints (bundled with the npm package)
+- [v0.5 -> v0.6 migration guide](v0.5-to-v0.6.md) -- Terminology cut, registry schema v3, publisher changes
+- [Release notes index](release-notes/README.md) -- The short per-release notes `akm help migrate <version>` prints, with links to every bundled note
