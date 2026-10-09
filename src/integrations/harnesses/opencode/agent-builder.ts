@@ -11,32 +11,36 @@
  * `getCommandBuilder`, the default builder, flag/tool helpers) stays in
  * `agent/builders.ts`, which imports this builder back into `BUILTIN_BUILDERS`.
  *
- * Behaviour-preserving relocation: the produced argv is byte-identical to the
- * pre-migration `opencodeBuilder`. The builder's `platform` stays `'opencode'`
- * (the canonical harness id).
+ * The builder's `platform` stays `'opencode'` (the canonical harness id). The
+ * argv comes from one of two small adapters, chosen only by the engine's
+ * `opencodeVersion` (unset means `DEFAULT_OPENCODE_VERSION`); akm never probes
+ * the binary: `./agent-builder-v1.ts` (OpenCode 1, byte-identical to the
+ * pre-OpenCode-2 builder) and `./agent-builder-v2.ts` (OpenCode 2, adds
+ * `--standalone` so no background service is started or left running).
  */
 
-import { type AgentCommandBuilder, modelFromArgs, resolveDispatchModel } from "../../agent/builder-shared";
+import type { AgentCommandBuilder } from "../../agent/builder-shared";
+import { DEFAULT_OPENCODE_VERSION } from "../../agent/profiles";
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
-import { MODEL_WORK_AGENT_INFERENCE, opencodeInferenceConfig } from "./model-config";
-import { MODEL_WORK_OPENCODE_AGENT, modelWorkOpencodeConfig, modelWorkPluginEnv } from "./model-work-agent";
+import { buildOpencodeV1Command } from "./agent-builder-v1";
+import { buildOpencodeV2Command } from "./agent-builder-v2";
+import { MODEL_WORK_AGENT_INFERENCE } from "./model-config";
 
 /**
- * OpenCode builder.
- * Command shape: opencode run [--agent <name>] [--model <m>] -- "<prompt>"
+ * OpenCode builder: `opencode run [--standalone] [--agent <name>] [--model <m>] -- "<prompt>"`
+ * (`--standalone` on OpenCode 2 only).
  *
  * `opencode run` has no system-prompt option (1.18.25 prints its usage and
  * exits 1 on `--system-prompt`), so the shared lowerer composes a persona
  * into the prompt.
  *
- * Tool policy is omitted — opencode manages tool access through its own agent
+ * Tool policy is omitted: opencode manages tool access through its own agent
  * config files, not via CLI flags. The one exception is the model-work tool
  * policy: the builder injects its confined agent through
  * `OPENCODE_CONFIG_CONTENT` and selects it with `--agent`. That command is
- * akm's own (`opencode run --agent akm-model-work`): the engine's `args` are
- * left out, because one such as `--attach` or `--dir` would move the run out
- * of the injected config or the scratch working directory. Only the model they
- * name is kept.
+ * akm's own: the engine's `args` are left out, because one such as `--attach`
+ * or `--dir` would move the run out of the injected config or the scratch
+ * working directory. Only the model they name is kept.
  *
  * Model work's agent carries the request's inference options
  * (`./model-config.ts`). Any other dispatch injects nothing and carries none, so
@@ -52,46 +56,7 @@ export const opencodeBuilder: AgentCommandBuilder = {
     inference: MODEL_WORK_AGENT_INFERENCE,
   }),
   build(profile, req) {
-    if (req.modelWork) {
-      const model = req.model ?? modelFromArgs(profile.args);
-      const { agentOptions } = opencodeInferenceConfig(req.inference, true);
-      return {
-        argv: [
-          profile.bin,
-          "run",
-          "--agent",
-          MODEL_WORK_OPENCODE_AGENT,
-          ...(model ? ["--model", model] : []),
-          "--",
-          req.prompt,
-        ],
-        env: {
-          ...modelWorkPluginEnv(),
-          OPENCODE_CONFIG_CONTENT: JSON.stringify(modelWorkOpencodeConfig(agentOptions)),
-        },
-      };
-    }
-    const args: string[] = req.model ? [] : [...profile.args];
-    if (req.model) {
-      for (let index = 0; index < profile.args.length; index += 1) {
-        const arg = profile.args[index];
-        if (arg === undefined) continue;
-        if (arg === "--model") {
-          index += 1;
-        } else if (!arg.startsWith("--model=")) {
-          args.push(arg);
-        }
-      }
-    }
-    if (req.agent) {
-      args.push("--agent", req.agent);
-    }
-    if (req.model) {
-      const resolved = resolveDispatchModel(req, profile, "opencode") as string;
-      args.push("--model", resolved);
-    }
-    args.push("--");
-    args.push(req.prompt);
-    return { argv: [profile.bin, ...args] };
+    const major = profile.opencodeVersion ?? DEFAULT_OPENCODE_VERSION;
+    return major === 1 ? buildOpencodeV1Command(profile, req) : buildOpencodeV2Command(profile, req);
   },
 };

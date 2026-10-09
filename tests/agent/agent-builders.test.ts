@@ -33,6 +33,7 @@ function makeOpencodeProfile(overrides: Partial<AgentProfile> = {}): AgentProfil
     name: "opencode",
     bin: "opencode",
     args: ["run"],
+    opencodeVersion: 1,
     ...overrides,
   });
 }
