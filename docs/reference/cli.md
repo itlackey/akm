@@ -2631,7 +2631,7 @@ akm improve --skip-if-locked           # for high-frequency scheduled runs: skip
 akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
 akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
-akm improve --plan --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
+akm improve --dry-run --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
 akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
@@ -2645,7 +2645,6 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--since <window>` | `report` scope only (#944): aggregate the usage report over every real (non-dry-run) run started since `<window>` (a duration like `24h`/`7d`, or an ISO timestamp) instead of one run. Mutually exclusive with `--run`. Rejected with any other scope, or no scope. |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
-| `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
@@ -2669,9 +2668,9 @@ bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves
 inside the write target only. To improve another bundle, name it
 (`akm improve --bundle team`, or `akm improve team//skills/code-review`). A
 scheduled `akm improve` therefore covers only its write target: schedule one
-`akm improve --bundle <name>` run per other bundle. `--dry-run` and `--plan`
-resolve the bundle the way a live run does (the working bundle starts from
-`AKM_BUNDLE_DIR`, then `defaultBundle`), so they preview the bundle a live run
+`akm improve --bundle <name>` run per other bundle. `--dry-run`
+resolves the bundle the way a live run does (the working bundle starts from
+`AKM_BUNDLE_DIR`, then `defaultBundle`), so it previews the bundle a live run
 improves.
 
 Every stage records what it did with each asset in the improve ledger
@@ -2756,7 +2755,7 @@ itself. `ok` and the exit code are unchanged either way, matching `extract`'s
 `skippedProcesses` (or pass `--require-engines` to abort instead of
 degrading). `reason` names which engine and which credential reference (an env
 var, `apiKeyFile` path, or `secret://` reference — never its value) is
-missing. A `--dry-run`/`--plan` preview never dispatches, so it never aborts
+missing. A `--dry-run` preview never dispatches, so it never aborts
 on an unavailable credential either — even a strategy left with every process
 disabled this way still returns its plan, with the affected processes in
 `skippedProcesses`.
@@ -2807,11 +2806,11 @@ still carries that engine's `engine`/`model`/`engineKind` alongside
 `unavailable`, rather than omitting them the way a never-configured process
 does — so a preview can show what would have run. This table is
 resolved before any dispatch on every invocation (dry or live), so
-`akm improve --dry-run --strategy <name>` (or `--plan`) previews an ad-hoc
+`akm improve --dry-run --strategy <name>` previews an ad-hoc
 strategy override without changing config first; `akm health`'s
 `active-improve-strategy` check performs the equivalent resolution but only
 for the configured default strategy (`defaults.improveStrategy`), and reports
-no model or per-process notices. Neither `--dry-run` nor `--plan` probes
+no model or per-process notices. `--dry-run` does not probe
 engine reachability over the network — pair with `akm health --probe` (or the
 default probe-on behavior) to check whether a named engine actually answers.
 

@@ -398,8 +398,8 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(result.stdout).not.toContain("migrate apply");
   });
 
-  test("10. improve --plan runs without an engine, or fails with the documented no-engine error (never exit 70)", async () => {
-    const result = await runLauncher(candidateLauncher, ["improve", "--plan"], home.env);
+  test("10. improve --dry-run runs without an engine, or fails with the documented no-engine error (never exit 70)", async () => {
+    const result = await runLauncher(candidateLauncher, ["improve", "--dry-run"], home.env);
     expect(result.status).not.toBe(70);
     if (result.status === 0) return;
     // Failures render to stderr as {ok:false, error, code} (AGENTS.md's CLI Contract).

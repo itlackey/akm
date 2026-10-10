@@ -124,6 +124,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **`akm workflow create --reset` (#1091).** Declared since 0.9.12 as a deprecated alias of `--force`, never read.
   `--force` alone replaces a workflow with a fresh template; `--force --from <file>` replaces it from the file.
+- **`akm improve --plan` (#1091).** An exact alias of `--dry-run` with no other callers. Use `--dry-run`; it prints the
+  same `plan.processes` routing table.
 
 ### Fixed
 
