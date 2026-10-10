@@ -89,7 +89,7 @@ export function freezeWorkflow(
   const defaults = compiled.plan.defaults;
   const steps: WorkflowPlanStep[] = compiled.plan.steps.map((step) => {
     const { spec, ...base } = step;
-    const root = step.route || !spec ? undefined : freezeRoot(step, config, defaults);
+    const root = spec ? freezeRoot(step, config, defaults) : undefined;
     const frozenJudge =
       step.gate.criteria.length > 0
         ? freezeCommandTarget(step.gate.criteria.join("\n"), { engine: config.workflow?.judgeEngine }, config)

@@ -131,11 +131,6 @@ steps:
   - id: verdict
     inputs: [steps.implement.output]
     output: { type: object }
-  - id: pick-outcome
-    route:
-      input: steps.verdict.output.status
-      when: [{ match: clean, step: announce }]
-      default: escalate       # both targets are LATER steps — routes are forward-only
   - id: escalate
     inputs: [steps.verdict.output]
   - id: announce

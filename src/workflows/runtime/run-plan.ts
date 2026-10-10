@@ -38,7 +38,6 @@ import {
   type WorkflowMapNode,
   type WorkflowPlan,
   type WorkflowPlanStep,
-  type WorkflowRoute,
   type WorkflowUnitNode,
 } from "../plan";
 
@@ -99,18 +98,10 @@ export function frozenStepRows(plan: WorkflowPlan): FrozenStepRowDefinition[] {
       ? step.root.kind === "map"
         ? step.root.template.instructions
         : step.root.instructions
-      : routeInstructions(step.route as WorkflowRoute),
+      : "",
     completionJson: step.gate.criteria.length > 0 ? JSON.stringify(step.gate.criteria) : null,
     sequenceIndex: step.sequenceIndex,
   }));
-}
-
-function routeInstructions(route: WorkflowRoute): string {
-  const branches = Object.entries(route.when)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([match, stepId]) => `"${match}" -> ${stepId}`);
-  if (route.defaultStepId !== undefined) branches.push(`default -> ${route.defaultStepId}`);
-  return `Route on ${route.input}: ${branches.join(", ")}.`;
 }
 
 export interface DecodeWorkflowPlanOptions {
@@ -152,26 +143,16 @@ function legacySourceHash(readSet: unknown, workflowRef: string | undefined): st
 function decodeStep(value: unknown, index: number): WorkflowPlanStep {
   const step = record(value, `step ${index}`);
   const stepId = string(step.stepId, `step ${index} stepId`);
-  const route = step.route === undefined ? undefined : decodeRoute(step.route, stepId);
-  const root = step.root === undefined ? undefined : decodeNode(step.root, stepId);
-  if (!root && !route) fail(`step ${stepId} has neither a frozen root nor a route`);
+  if (step.root === undefined) fail(`step ${stepId} has no frozen root`);
+  const root = decodeNode(step.root, stepId);
   return {
     ...step,
     stepId,
     title: typeof step.title === "string" ? step.title : stepId,
     sequenceIndex: index,
-    ...(root ? { root } : {}),
-    ...(route ? { route } : {}),
+    root,
     gate: decodeGate(step.gate, stepId),
   } as WorkflowPlanStep;
-}
-
-function decodeRoute(value: unknown, stepId: string): WorkflowRoute {
-  const route = record(value, `step ${stepId} route`);
-  string(route.input, `step ${stepId} route.input`);
-  const when = record(route.when, `step ${stepId} route.when`);
-  for (const target of Object.values(when)) string(target, `step ${stepId} route target`);
-  return route as unknown as WorkflowRoute;
 }
 
 function decodeNode(value: unknown, stepId: string): WorkflowExecNode {

@@ -82,7 +82,7 @@ export interface WorkflowExec {
 /**
  * What the author wrote for one step, as compiled. Exactly one of `exec` and
  * `uses` on a unit/map step (a Markdown prose step is `uses: akm/command`
- * with its body as literal content); neither on a route step. Compile-only:
+ * with its body as literal content). Compile-only:
  * freeze consumes it and a stored plan never carries it.
  */
 export interface WorkflowStepSpec {
@@ -95,7 +95,7 @@ export interface WorkflowStepSpec {
   unit?: WorkflowUnitSettings;
   map?: { over: string; concurrency?: number; reducer?: WorkflowReducer };
   inputs?: string[];
-  /** Authored prose: the Markdown section of an exec or route step, or a YAML `run:` summary. */
+  /** Authored prose: the Markdown section of an exec step, or a YAML `run:` summary. */
   instructions?: string;
   source: SourceRef;
 }
@@ -227,12 +227,6 @@ export interface WorkflowGateNode {
   readonly frozenJudge: FrozenWorkflowCommandTarget | null;
 }
 
-export interface WorkflowRoute {
-  readonly input: string;
-  readonly when: Record<string, string>;
-  readonly defaultStepId?: string;
-}
-
 export interface WorkflowPlanStep {
   readonly stepId: string;
   /** Always the step id — a step has no separate title. */
@@ -240,9 +234,8 @@ export interface WorkflowPlanStep {
   readonly sequenceIndex: number;
   /** Compile-only: the authored step. */
   readonly spec?: WorkflowStepSpec;
-  /** Frozen dispatch subgraph; absent on a route step and on a not-yet-frozen plan. */
+  /** Frozen dispatch subgraph; absent on a not-yet-frozen plan. */
   readonly root?: WorkflowExecNode;
-  readonly route?: WorkflowRoute;
   /** JSON Schema the promoted step artifact must satisfy. */
   readonly outputSchema?: Record<string, unknown>;
   readonly gate: WorkflowGateNode;

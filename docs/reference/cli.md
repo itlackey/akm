@@ -907,9 +907,8 @@ has nothing left to abort and nothing left to resume.
 
 **What `--max-steps` counts.** The budget is spent by the **steps that
 finish** — completed, failed, or gate-rejected with the loop budget spent — not
-by entries in the `executed` report, which gains one per gate-loop iteration
-and one per route-skip. So a step's whole bounded `gate.max_loops` loop costs
-one, a route-skipped step costs nothing (no work was dispatched for it), and a
+by entries in the `executed` report, which gains one per gate-loop iteration.
+So a step's whole bounded `gate.max_loops` loop costs one, and a
 step the invocation left unfinished — an abort, a verification-judge outage —
 costs nothing either, because the next invocation still owes that work.
 `--max-retries` subtracts the same way: a reopened run's remaining budget is
@@ -1060,7 +1059,7 @@ Workflow markdown contract:
 - Frontmatter carries the asset envelope and orchestration graph (`params`,
   `steps`, `defaults`, and `budget`).
 - Every `## <step-id>` heading must name a declared step exactly. Unit and map
-  steps require a section; route-only steps may omit one.
+  steps require a section.
 - An optional `### gate` inside a step section carries its gate rubric. Omitted
   or empty rubric text skips validation.
 

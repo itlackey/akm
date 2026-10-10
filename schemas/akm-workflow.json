@@ -355,43 +355,6 @@
         }
       }
     },
-    "routeBranch": {
-      "type": "object",
-      "required": ["match", "step"],
-      "additionalProperties": false,
-      "properties": {
-        "match": {
-          "type": ["string", "number", "boolean"],
-          "minLength": 1,
-          "description": "Branch key. An empty string is rejected: the frozen-plan decoder requires every `when` key to be non-empty."
-        },
-        "step": {
-          "$ref": "#/definitions/identifier"
-        }
-      }
-    },
-    "route": {
-      "type": "object",
-      "description": "Route on an explicit reference input to a LATER step. Targets must come after the routing step.",
-      "required": ["input", "when"],
-      "additionalProperties": false,
-      "properties": {
-        "input": {
-          "$ref": "#/definitions/reference",
-          "description": "Reference naming the value to route on."
-        },
-        "when": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/definitions/routeBranch"
-          }
-        },
-        "default": {
-          "$ref": "#/definitions/identifier"
-        }
-      }
-    },
     "gate": {
       "type": "object",
       "description": "Optional validation-loop configuration. The rubric itself lives in the body under a `### gate` sub-heading inside the step's section; omitted or empty rubric text skips validation.",
@@ -415,7 +378,7 @@
     },
     "step": {
       "type": "object",
-      "description": "One step of the gated spine. A step with no map/route is a unit step (bare `{id: ...}` is the complete minimal declaration). At most one of map/route.",
+      "description": "One step of the gated spine. A step with no map is a unit step (bare `{id: ...}` is the complete minimal declaration).",
       "required": ["id"],
       "additionalProperties": false,
       "properties": {
@@ -428,9 +391,6 @@
         "map": {
           "$ref": "#/definitions/map"
         },
-        "route": {
-          "$ref": "#/definitions/route"
-        },
         "inputs": {
           "$ref": "#/definitions/inputs"
         },
@@ -442,13 +402,6 @@
         }
       },
       "allOf": [
-        {
-          "not": { "required": ["map", "route"] }
-        },
-        {
-          "if": { "required": ["route"] },
-          "then": { "not": { "anyOf": [{ "required": ["unit"] }, { "required": ["map"] }, { "required": ["inputs"] }] } }
-        },
         {
           "if": { "required": ["map"] },
           "then": { "not": { "required": ["unit"] } }

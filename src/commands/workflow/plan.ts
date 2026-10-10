@@ -36,7 +36,7 @@ import type {
 } from "../../workflows/plan";
 import { loadWorkflowAsset } from "../../workflows/runtime/workflow-asset-loader";
 
-/** The step's dispatch unit — the map template for a fan-out, else the root unit. Undefined for a route step. */
+/** The step's dispatch unit — the map template for a fan-out, else the root unit. Undefined for a step not yet frozen. */
 function stepUnit(step: WorkflowPlanStep): WorkflowUnitNode | undefined {
   const root = step.root;
   if (!root) return undefined;
@@ -100,7 +100,7 @@ function projectStep(
 ): Record<string, unknown> {
   const unit = stepUnit(step);
   const frozenTarget = unit?.frozenTarget;
-  const kind = step.route ? "route" : step.root?.kind === "map" ? "map" : "unit";
+  const kind = step.root?.kind === "map" ? "map" : "unit";
   const inputBindings = frozenTarget?.inputBindings;
   return {
     stepId: step.stepId,

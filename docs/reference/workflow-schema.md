@@ -30,7 +30,7 @@ the source-IR decoder and semantic authorities.
 A Markdown workflow is an ordinary AKM asset — the same envelope as every
 other Markdown type, OKF-conformant frontmatter plus a body — whose
 frontmatter carries the orchestration graph (params, and how each step
-dispatches, fans out, routes, and gates). Its body carries each step's
+dispatches, fans out, and gates). Its body carries each step's
 instructions and gate rubric under plain headings, joined to the frontmatter
 by step id. The remainder of this page's frontmatter/body sections document
 that Markdown authoring format.
@@ -311,8 +311,8 @@ families) plus the orchestration keys:
 - `budget` — run-lifetime ceilings (`max_units`, `max_tokens`; see
   [Budget ceilings](#budget-ceilings) below).
 - `steps` — an ordered list. Each step has an `id`
-  (`[A-Za-z_][A-Za-z0-9_-]*` — no dots) and **at most one** of `unit`, `map`,
-  or `route`. A step with neither is **still a unit step** — bare
+  (`[A-Za-z_][A-Za-z0-9_-]*` — no dots) and **at most one** of `unit` or `map`.
+  A step with neither is **still a unit step** — bare
   `- id: validate` is the complete minimal declaration. `unit:` is the
   optional dispatch-override bag (`exec`, `engine`, `model`, `llm`, `timeout`,
   `retry`, `on_error`, `env`; see
@@ -344,10 +344,9 @@ Checked by `akm lint --type workflows`:
    frontmatter, exactly — no titles, no `Step:`/`Step ID:` lines, no
    `# Workflow:` prefix on the H1. (Fenced code blocks are skipped when
    scanning for headings.)
-2. A `unit` or `map` step **must** have a body section — its instructions,
+2. Every step **must** have a body section — its instructions,
    or its per-item template for a map step, byte-exact to the next H2 or
-   EOF. A `route` step **may** have one (documentation, plus a gate rubric
-   if it is gated). Everything before the first H2 is free preamble —
+   EOF. Everything before the first H2 is free preamble —
    indexed for search, shown in `akm show`, never dispatched.
 3. Inside a step's section, an optional `### gate` sub-heading starts that
    step's gate rubric, running to the section end — the format's **single
@@ -394,12 +393,12 @@ attached to this unit as input. Fix any failures before proceeding.
 
 ## Richer example
 
-Fan-out, routing, retries, gates, and a run budget:
+Fan-out, retries, gates, and a run budget:
 
 ```markdown
 ---
 type: workflow
-description: Review changed files and route the outcome
+description: Review changed files and triage the outcome
 params:
   changed_files: { type: array, description: Files to review }
 defaults: { engine: reviewer, model: balanced, timeout: 10m, on_error: fail }
@@ -426,10 +425,7 @@ steps:
     inputs: [steps.review.output]
     output: { type: object, properties: { verdict: { type: string } }, required: [verdict] }
   - id: triage
-    route:
-      input: steps.aggregate.output.verdict
-      when: [{ match: pass, step: ship }, { match: fail, step: rework }]
-      default: manual-triage
+    inputs: [steps.aggregate.output]
   - id: ship
   - id: rework
   - id: manual-triage
@@ -465,8 +461,9 @@ Combine the per-file review verdicts — attached to this unit as input via
 
 ## triage
 
-Routes on the verdict `aggregate` reported: `pass` proceeds to `ship`, `fail`
-proceeds to `rework`, anything else goes to `manual-triage`.
+Read the verdict `aggregate` reported (attached as input) and decide whether
+the change should ship, be reworked, or go to manual triage; later steps act on
+that decision.
 
 ## ship
 
@@ -475,7 +472,7 @@ Ship the change.
 ## rework
 
 Address the review findings. Confirming the fix is a fresh `akm workflow run`
-of this workflow, not a step this run routes back to.
+of this workflow, not a step this run goes back to.
 
 ## manual-triage
 
@@ -488,13 +485,12 @@ Workflow prose is **never templated** — there is no `${{ … }}`/`{{ … }}`
 interpolation anywhere in a workflow's body, and no escape syntax to learn,
 because there are no delimiters in prose to escape.
 
-Bare reference strings appear in exactly three frontmatter positions, each an
+Bare reference strings appear in exactly two frontmatter positions, each an
 unquoted-style YAML string:
 
 | Position | What it names |
 | --- | --- |
 | `map.over` | The list a map step fans out over. |
-| `route.input` | The value a route step matches on. |
 | `inputs` (each entry) | A prior step's artifact this step consumes. |
 
 Every reference resolves against exactly two roots:
@@ -1057,7 +1053,7 @@ The historical `inherit_env` spelling is unsupported.
 and **no `engine`/`model`** — an exec unit names no engine, so reporting the
 workflow's `defaults.engine` there would describe a dispatch that never
 happens. Field presence is the discriminator, the same way `fanOut` marks a
-`map` step and `route` marks a route step:
+`map` step:
 
 ```json
 {
@@ -1223,30 +1219,14 @@ changing the defaults above never alters a run that is already in flight or
 being resumed — it keeps the widths it froze. The new defaults apply only to
 runs started after the upgrade.
 
-## Routing
+## Going back
 
-A `route` step makes classify-and-dispatch first-class: the engine resolves
-the explicit `input:` expression, selects the matching `when:` branch (or
-`default:`), and auto-skips the unselected branch targets as the spine
-reaches them. **Routes are forward-only**: every target (each `when.step`
-and `default`) must be a step declared *later* in the workflow than the
-routing step, and a step never routes to itself — this keeps the plan a DAG,
-so termination is structural rather than a runtime budget's job. A
-`default:` that names an earlier step is a lint error, not a loop. An
-unroutable value with no `default` fails the step rather than letting every
-branch run.
-
-**"Go back and fix it" is a gate, not a backward route.** A failed gate
+**"Go back and fix it" is a gate.** A failed gate
 re-runs its *own* step with the judge's feedback, bounded by `gate.max_loops`
 — and a declared `output:` schema the promoted artifact fails is specifically
-the error a gate loop retries through. A workflow that used to describe "loop
-back to an earlier step until this passes" expresses that as a bounded gate
-on the step doing the work, not as routing.
-
-Route decisions are journaled, so a resumed run replays the same choice.
-Skips cascade: when a route step is itself skipped (it was the unselected
-target of an earlier route), its own branch targets are skipped too — a
-router that never decided selects nothing.
+the error a gate loop retries through. A workflow that wants to "loop back to an
+earlier step until this passes" expresses that as a bounded gate on the step
+doing the work.
 
 ## Failure policy
 

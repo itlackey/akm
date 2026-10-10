@@ -20,8 +20,8 @@
  *
  *   1. Every level-2 heading must be `## <step-id>` for a DECLARED step,
  *      exactly (fenced code blocks are skipped when scanning for headings).
- *   2. A unit/map step MUST have a section (its instructions, byte-exact to
- *      the next H2 or EOF); a route step MAY. Everything before the first H2
+ *   2. A step MUST have a section (its instructions, byte-exact to
+ *      the next H2 or EOF). Everything before the first H2
  *      is free preamble.
  *   3. Inside a step section, an optional `### gate` sub-heading starts the
  *      step's gate rubric (to the section end) — the format's single
@@ -29,8 +29,8 @@
  *
  * Prose (instructions, gate rubrics, preamble) is NEVER templated or scanned
  * for reference syntax — it reaches the dispatched unit byte-exact. Only
- * three whole-value frontmatter positions carry the closed reference grammar
- * (`program/expressions.ts`): `map.over`, `route.input`, `inputs[]`.
+ * two whole-value frontmatter positions carry the closed reference grammar
+ * (`program/expressions.ts`): `map.over`, `inputs[]`.
  */
 
 import { LineCounter, parseDocument } from "yaml";
@@ -116,12 +116,10 @@ type ProgramUnit = WorkflowUnitSettings & { exec?: WorkflowExec; source: SourceR
 type ProgramDefaults = NonNullable<WorkflowPlan["defaults"]>;
 type ProgramGate = { maxLoops?: number };
 type ProgramMap = { over: string; concurrency?: number; reducer?: WorkflowReducer; unit?: ProgramUnit };
-type ProgramRoute = { input: string; branches: { match: string; stepId: string }[]; defaultStepId?: string };
 interface ProgramStep {
   id: string;
   unit?: ProgramUnit;
   map?: ProgramMap;
-  route?: ProgramRoute;
   inputs?: string[];
   output?: Record<string, unknown>;
   gate?: ProgramGate;
@@ -149,16 +147,14 @@ const WORKFLOW_KEYS = ["params", "outputs", "defaults", "budget", "steps"];
 const TOP_LEVEL_KEYS = [...ENVELOPE_KEYS, ...WORKFLOW_KEYS];
 const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
-const STEP_KEYS = ["id", "unit", "map", "route", "inputs", "output", "gate"];
+const STEP_KEYS = ["id", "unit", "map", "inputs", "output", "gate"];
 const UNIT_KEYS = ["exec", "engine", "model", "llm", "timeout", "retry", "on_error", "output", "env"];
 const EXEC_KEYS = ["command", "cwd", "pass_env"];
 /** Unit keys that name an ENGINE dispatch and therefore cannot appear beside `exec:`. */
 const UNIT_ENGINE_KEYS = ["engine", "model", "llm"] as const;
 const MAP_KEYS = ["over", "concurrency", "reducer", "unit"];
-const ROUTE_KEYS = ["input", "when", "default"];
 const RETRY_KEYS = ["max", "on"];
 const GATE_KEYS = ["max_loops"];
-const ROUTE_BRANCH_KEYS = ["match", "step"];
 /** Closed key set of one `outputs:` entry — mirrors `params:`'s bare-schema shape, plus `from`. */
 const OUTPUT_ENTRY_KEYS = ["from", "schema"];
 const ACTOR_STAMP_KEYS = ["by", "at"];
@@ -196,14 +192,6 @@ export interface WorkflowParseOptions {
   title?: string;
   /** Optional physical-containment check for `exec.cwd` (see `compile.ts`). */
   validateExecCwd?: (value: string) => WorkflowExecCwdValidationResult;
-}
-
-/** Route branch bookkeeping for the post-pass (targets need all step ids). */
-interface RouteCheck {
-  stepIndex: number;
-  stepLabel: string;
-  branches: Array<{ match: string; stepId: string; line: number }>;
-  defaultTarget?: { stepId: string; line: number };
 }
 
 export function parseWorkflow(markdown: string, source: WorkflowParseOptions): WorkflowParseResult {
@@ -333,13 +321,11 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   const steps = parsedSteps.map((step, index): WorkflowPlanStep => {
     const section = sections.get(step.id);
     if (!section) {
-      if (step.route === undefined) {
-        errors.push({
-          line: step.source.start,
-          message: `Step "${step.id}" is a unit/map step and must have a "## ${step.id}" body section with its instructions.`,
-        });
-      }
-    } else if (step.route === undefined && !section.instructions) {
+      errors.push({
+        line: step.source.start,
+        message: `Step "${step.id}" must have a "## ${step.id}" body section with its instructions.`,
+      });
+    } else if (!section.instructions) {
       errors.push({
         line: section.headingLine,
         message: `Step "${step.id}" section ("## ${step.id}") is empty. Add the step's instructions below the heading.`,
@@ -359,15 +345,6 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
       title: step.id,
       sequenceIndex: index,
       spec: stepSpec(step, section),
-      ...(step.route
-        ? {
-            route: {
-              input: step.route.input,
-              when: Object.fromEntries(step.route.branches.map((branch) => [branch.match, branch.stepId])),
-              ...(step.route.defaultStepId !== undefined ? { defaultStepId: step.route.defaultStepId } : {}),
-            },
-          }
-        : {}),
       ...(step.output !== undefined ? { outputSchema: step.output } : {}),
       gate: {
         kind: "gate",
@@ -400,7 +377,6 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
 /** The authored step as the plan carries it. A prose step is inline `akm/command` literal content. */
 function stepSpec(step: ProgramStep, section: StepSection | undefined): WorkflowStepSpec {
   const prose = section?.instructions?.text;
-  if (step.route) return { ...(prose?.trim() ? { instructions: prose } : {}), source: step.source };
   const dispatchUnit = step.map?.unit ?? step.unit;
   const { exec, source: _unitSource, ...unit } = dispatchUnit ?? { source: step.source };
   return {
@@ -689,7 +665,7 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
  * projects a step artifact, never a param, B-07). Whether the named step is
  * actually DECLARED in this document is a semantic, cross-step check left to
  * `compile.ts`'s `checkWorkflowPlan`, mirroring how `inputs[]` /
- * `map.over` / `route.input` already split "syntax here, semantics there".
+ * `map.over` already splits "syntax here, semantics there".
  */
 function parseOutputs(ctx: Ctx, raw: unknown): Record<string, WorkflowOutput> | undefined {
   if (raw === undefined) return undefined;
@@ -808,18 +784,8 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
     return [];
   }
 
-  // First pass: collect ids so route targets can be checked against ALL steps
-  // (including ones that fail their own validation).
-  const idIndex = new Map<string, number>();
-  raw.forEach((rawStep, index) => {
-    if (isRecord(rawStep) && typeof rawStep.id === "string" && !idIndex.has(rawStep.id)) {
-      idIndex.set(rawStep.id, index);
-    }
-  });
-
   const steps: ProgramStep[] = [];
   const seenIds = new Map<string, number>();
-  const routeChecks: RouteCheck[] = [];
 
   raw.forEach((rawStep, index) => {
     const path: Path = ["steps", index];
@@ -853,32 +819,18 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
       }
     }
 
-    const declaredKinds = (["map", "route"] as const).filter((kind) => rawStep[kind] !== undefined);
-    if (declaredKinds.length > 1) {
-      ctx.err(path, `${label} must declare at most one of "map" or "route" (found ${declaredKinds.join(" + ")}).`);
-    }
-    const isRoute = rawStep.route !== undefined;
     const isMapStep = rawStep.map !== undefined;
-    if (isRoute && rawStep.unit !== undefined) {
-      ctx.err(path, `${label} is a route step and cannot also declare "unit" (route steps dispatch no unit).`);
-    }
     if (isMapStep && rawStep.unit !== undefined) {
       ctx.err(
         path,
         `${label} is a map step; the per-item dispatch-override bag belongs at "map.unit", not top-level "unit".`,
       );
     }
-    if (isRoute && rawStep.inputs !== undefined) {
-      ctx.err(path, `${label} is a route step and cannot declare "inputs" (route steps dispatch no unit).`);
-    }
 
     const unit =
-      rawStep.unit !== undefined && !isRoute && !isMapStep
-        ? parseUnit(ctx, rawStep.unit, [...path, "unit"], label)
-        : undefined;
+      rawStep.unit !== undefined && !isMapStep ? parseUnit(ctx, rawStep.unit, [...path, "unit"], label) : undefined;
     const map = isMapStep ? parseMap(ctx, rawStep.map, [...path, "map"], label) : undefined;
-    const route = isRoute ? parseRoute(ctx, rawStep.route, [...path, "route"], label, index, routeChecks) : undefined;
-    const inputs = !isRoute ? parseInputs(ctx, rawStep.inputs, [...path, "inputs"], label) : undefined;
+    const inputs = parseInputs(ctx, rawStep.inputs, [...path, "inputs"], label);
 
     const output = parseSchemaObject(ctx, rawStep.output, [...path, "output"], `${label} "output"`);
     const gate = rawStep.gate !== undefined ? parseGate(ctx, rawStep.gate, [...path, "gate"], label) : undefined;
@@ -886,35 +838,11 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
     const step: ProgramStep = { id, source: ctx.refAt(path) };
     if (unit) step.unit = unit;
     if (map) step.map = map;
-    if (route) step.route = route;
     if (inputs) step.inputs = inputs;
     if (output !== undefined) step.output = output;
     if (gate !== undefined) step.gate = gate;
     steps.push(step);
   });
-
-  // Route target post-pass: targets exist, come after the routing step, and
-  // never point back at it.
-  for (const check of routeChecks) {
-    const targets = [...check.branches.map((b) => ({ stepId: b.stepId, line: b.line }))];
-    if (check.defaultTarget) targets.push(check.defaultTarget);
-    for (const target of targets) {
-      const targetIndex = idIndex.get(target.stepId);
-      if (targetIndex === undefined) {
-        ctx.errAtLine(
-          target.line,
-          `${check.stepLabel} routes to unknown step "${target.stepId}". Route targets must name a step id in this workflow.`,
-        );
-      } else if (targetIndex === check.stepIndex) {
-        ctx.errAtLine(target.line, `${check.stepLabel} must not route to itself.`);
-      } else if (targetIndex < check.stepIndex) {
-        ctx.errAtLine(
-          target.line,
-          `${check.stepLabel} routes backward to "${target.stepId}" (step ${targetIndex + 1}). Route targets must come after the routing step.`,
-        );
-      }
-    }
-  }
 
   return steps;
 }
@@ -1146,97 +1074,6 @@ function parseMap(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progra
   if (reducer !== undefined) map.reducer = reducer as WorkflowReducer;
   if (unit !== undefined) map.unit = unit;
   return map;
-}
-
-function parseRoute(
-  ctx: Ctx,
-  raw: unknown,
-  path: Path,
-  stepLabel: string,
-  stepIndex: number,
-  routeChecks: RouteCheck[],
-): ProgramRoute | undefined {
-  if (!isRecord(raw)) {
-    ctx.err(path, `${stepLabel} "route" must be a mapping with "input" and "when" keys.`);
-    return undefined;
-  }
-  checkUnknownKeys(ctx, raw, path, ROUTE_KEYS, `${stepLabel} "route"`);
-
-  let input = "";
-  if (typeof raw.input === "string" && raw.input.trim() !== "") {
-    input = raw.input.trim();
-    checkReferenceSyntax(ctx, input, [...path, "input"], `${stepLabel} "route.input"`);
-  } else {
-    ctx.err([...path, "input"], `${stepLabel} "route" requires "input": a reference naming the value to route on.`);
-  }
-
-  const check: RouteCheck = { stepIndex, stepLabel, branches: [] };
-  const whenPath: Path = [...path, "when"];
-
-  if (!Array.isArray(raw.when) || raw.when.length === 0) {
-    ctx.err(
-      whenPath,
-      `${stepLabel} "route" requires "when": a non-empty list of { match, step } branches (e.g. when: [{ match: pass, step: ship }]).`,
-    );
-  } else {
-    const seenMatches = new Map<string, number>();
-    raw.when.forEach((branch: unknown, i: number) => {
-      const branchPath: Path = [...whenPath, i];
-      if (!isRecord(branch)) {
-        ctx.err(branchPath, `${stepLabel} "when[${i}]" must be a mapping: { match, step }.`);
-        return;
-      }
-      checkUnknownKeys(ctx, branch, branchPath, ROUTE_BRANCH_KEYS, `${stepLabel} "when[${i}]"`);
-      const matchLine = ctx.lineAt([...branchPath, "match"]);
-      if (
-        branch.match === undefined ||
-        (typeof branch.match !== "string" && typeof branch.match !== "number" && typeof branch.match !== "boolean")
-      ) {
-        ctx.err([...branchPath, "match"], `${stepLabel} "when[${i}].match" must be a string, number, or boolean.`);
-        return;
-      }
-      const match = String(branch.match);
-      // The frozen-plan decoder requires every `when` key to be non-empty, so an
-      // empty match parsed and linted clean and then failed the run with an
-      // unlocated "Invalid frozen workflow plan". Reject it here, at the line.
-      if (match === "") {
-        ctx.errAtLine(matchLine, `${stepLabel} "when[${i}].match" must not be empty.`);
-        return;
-      }
-      if (typeof branch.step !== "string" || branch.step.trim() === "") {
-        ctx.err([...branchPath, "step"], `${stepLabel} "when[${i}].step" must be a step id string.`);
-        return;
-      }
-      const stepId = branch.step.trim();
-      const stepLine = ctx.lineAt([...branchPath, "step"]);
-      const firstLine = seenMatches.get(match);
-      if (firstLine !== undefined) {
-        ctx.errAtLine(
-          matchLine,
-          `${stepLabel} has a duplicate "when" match "${match}" (first declared on line ${firstLine}). Matches must be unique.`,
-        );
-        return;
-      }
-      seenMatches.set(match, matchLine);
-      check.branches.push({ match, stepId, line: stepLine });
-    });
-  }
-
-  let defaultStepId: string | undefined;
-  if (raw.default !== undefined) {
-    if (typeof raw.default === "string" && raw.default.trim() !== "") {
-      defaultStepId = raw.default.trim();
-      check.defaultTarget = { stepId: defaultStepId, line: ctx.lineAt([...path, "default"]) };
-    } else {
-      ctx.err([...path, "default"], `${stepLabel} "route.default" must be a step id string.`);
-    }
-  }
-
-  routeChecks.push(check);
-
-  const route: ProgramRoute = { input, branches: check.branches.map(({ match, stepId }) => ({ match, stepId })) };
-  if (defaultStepId !== undefined) route.defaultStepId = defaultStepId;
-  return route;
 }
 
 function parseInputs(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): string[] | undefined {

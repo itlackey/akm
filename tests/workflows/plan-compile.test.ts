@@ -123,12 +123,12 @@ describe("compiled plan — structural golden", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Full-vocabulary golden (defaults merging, map/vote, route shape, typed artifacts)
+// Full-vocabulary golden (defaults merging, map/vote, typed artifacts)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const FULL_WF = `---
 type: workflow
-description: Review changed files and route the outcome
+description: Review changed files and triage the outcome
 params:
   changed_files: { type: array, items: { type: string } }
 defaults: { engine: default-agent, model: balanced, timeout: 10m, on_error: continue }
@@ -145,10 +145,6 @@ steps:
     output: { type: object, properties: { verdict: { type: string } } }
     gate: { max_loops: 2 }
   - id: triage
-    route:
-      input: steps.review.output.verdict
-      when: [{ match: pass, step: ship }, { match: fail, step: rework }]
-      default: rework
   - id: ship
   - id: rework
 ---
@@ -188,10 +184,10 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
     const spec = fs.readFileSync(specPath, "utf8");
     const example = spec.match(/### 2\.2 The format\n\n````markdown\n([\s\S]*?)\n````/);
     if (!example?.[1]) throw new Error("canonical workflow example not found");
-    expect(compileOk(example[1], "github-issues", specPath).steps).toHaveLength(6);
+    expect(compileOk(example[1], "github-issues", specPath).steps).toHaveLength(5);
   });
 
-  test("defaults, unit overrides, map, route, and schemas land where freeze reads them", () => {
+  test("defaults, unit overrides, map, and schemas land where freeze reads them", () => {
     const plan = compileOk(FULL_WF, "review-changes", "workflows/test.md");
     expect(plan.title).toBe("review-changes");
     expect(plan.params).toEqual(["changed_files"]);
@@ -219,9 +215,6 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
       outputSchema: { type: "object", properties: { verdict: { type: "string" } } },
       gate: { criteria: ["every changed file has a verdict"], maxLoops: 2 },
     });
-    expect(plan.steps[2]).toMatchObject({
-      route: { input: "steps.review.output.verdict", when: { pass: "ship", fail: "rework" }, defaultStepId: "rework" },
-    });
   });
 
   test("freeze turns each step into its frozen node: unit ids, map template, defaults applied", () => {
@@ -248,7 +241,7 @@ describe("compiled and frozen plan — full-vocabulary golden", () => {
         onError: "fail",
       },
     });
-    expect(triage?.root).toBeUndefined();
+    expect(triage?.root).toMatchObject({ kind: "unit", id: "triage" });
     expect(ship?.root).toMatchObject({ kind: "unit", onError: "continue" });
     const ids = plan.steps.flatMap((step) => [
       step.gate.id,
@@ -299,17 +292,17 @@ Do the thing.
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reference validation (map.over / route.input / inputs[])
+// Reference validation (map.over / inputs[])
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // SEMANTIC CHANGE (workflow-format-unification, spec §2.3): the closed
-// reference grammar now lives in exactly three frontmatter positions
-// (`map.over`, `route.input`, `inputs[]`) — prose is NEVER scanned for it.
+// reference grammar now lives in exactly two frontmatter positions
+// (`map.over`, `inputs[]`) — prose is NEVER scanned for it.
 // The pre-unification tests that exercised references INSIDE instructions
 // (`${{ steps.b.output.x }}` in prose) are ported onto `inputs:` — the new
 // declared-input surface that replaced prose splicing as how a step names an
 // upstream artifact — since that is the closest surviving equivalent
-// (a step-level, non-map/route reference to a prior step's output). Tests
+// (a step-level, non-map reference to a prior step's output). Tests
 // about `item` / `item_index` in prose are DELETED outright below; there is
 // no equivalent — those roots no longer exist in the language at all (they
 // are not merely restricted to map units, per spec §2.3).
@@ -373,28 +366,20 @@ Use it.
   // "params.<name> outside the declared block compiles — presence is a
   // run-scope concern" case was tested against an INSTRUCTIONS reference.
   // Prose is never scanned for references any more, so that specific surface
-  // is gone; the identical run-scope-concern property for the two whole-value
-  // positions that still carry the grammar (`map.over`/`route.input`) is
+  // is gone; the identical run-scope-concern property for the whole-value
+  // position that still carries the grammar (`map.over`) is
   // covered by the next test.
 
-  test("undeclared params.<name> in map.over and route.input compiles too (run-scope concern)", () => {
+  test("undeclared params.<name> in map.over compiles too (run-scope concern)", () => {
     const plan = compileOk(`---
 type: workflow
 params:
   files: { type: array }
 steps:
-  - id: route
-    route:
-      input: params.mode
-      when: [{ match: a, step: fan }]
   - id: fan
     map:
       over: params.filez
 ---
-
-## route
-
-r
 
 ## fan
 
@@ -428,19 +413,13 @@ Review the assigned item.
 type: workflow
 steps:
   - id: a
-    route:
-      input: params.anything
-      when: [{ match: x, step: b }]
-  - id: b
+    map:
+      over: params.anything
 ---
 
 ## a
 
 r
-
-## b
-
-d
 `);
     expect(plan.params).toBeUndefined();
   });
@@ -509,7 +488,7 @@ z
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Whole-value reference enforcement (map.over, route.input)
+// Whole-value reference enforcement (map.over)
 // ─────────────────────────────────────────────────────────────────────────────
 //
 // SEMANTIC CHANGE: with the `${{ … }}` delimiter gone, "surrounded by literal
@@ -555,58 +534,6 @@ Do the assigned item.
 `);
     expect(errors).toHaveLength(1);
     expect(errors[0]!.message).toContain("Unknown root");
-  });
-
-  test("route.input with surrounding literal text is rejected", () => {
-    const errors = errorsFrom(`---
-type: workflow
-steps:
-  - id: a
-  - id: r
-    route:
-      input: "verdict is steps.a.output.verdict"
-      when: [{ match: pass, step: done }]
-  - id: done
----
-
-## a
-
-Classify.
-
-## r
-
-Route.
-
-## done
-
-Done.
-`);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]!.message).toContain("route.input");
-    expect(errors[0]!.message).toContain("Unknown root");
-  });
-
-  test("route.input referencing a later step is rejected", () => {
-    const errors = compileErrors(`---
-type: workflow
-steps:
-  - id: r
-    route:
-      input: steps.done.output.verdict
-      when: [{ match: pass, step: done }]
-  - id: done
----
-
-## r
-
-Route.
-
-## done
-
-Done.
-`);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]!.message).toContain("does not come before this step");
   });
 });
 

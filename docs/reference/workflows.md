@@ -29,7 +29,7 @@ split by what you're doing:
   models, and engine-selection troubleshooting.
 - **[Workflow Schema](../reference/workflow-schema.md)** — the exhaustive,
   authoritative reference: every frontmatter key, the bare-reference grammar,
-  routing, failure policy, gates, and budget ceilings, with exact syntax.
+  failure policy, gates, and budget ceilings, with exact syntax.
 - **[Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md)**
   — how a frozen plan actually executes: persistence, the run lease, dispatch,
   concurrency limits, and resume-without-replay.
@@ -41,7 +41,7 @@ For task- or schedule-driven workflow runs — an `akm task` bound to
 ## Source formats and execution versions
 
 Markdown `.md` and GitHub-shaped YAML `.yml` are peer source formats. The
-Markdown adapter preserves AKM's full prose, gates, maps, routes, typed
+Markdown adapter preserves AKM's full prose, gates, maps, typed
 artifacts, and exec vocabulary. The YAML adapter accepts the documented local
 `name`/`on`/`jobs` subset. `.yaml` is not a workflow source.
 

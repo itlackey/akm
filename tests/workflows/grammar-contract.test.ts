@@ -156,7 +156,7 @@ Run the direct command.
     });
   });
 
-  test("carries direct argv, cwd, map, route, inputs, schemas, and gates", () => {
+  test("carries direct argv, cwd, map, inputs, schemas, and gates", () => {
     const compiled = plan(
       `---
 type: workflow
@@ -178,12 +178,6 @@ steps:
         on_error: continue
     inputs: [steps.discover.output]
     gate: { max_loops: 2 }
-  - id: choose
-    route:
-      input: steps.review.output
-      when:
-        - { match: pass, step: ship }
-      default: repair
   - id: ship
   - id: repair
 ---
@@ -202,10 +196,6 @@ Review each item.
 ### gate
 
 Every item passes.
-
-## choose
-
-Routing documentation.
 
 ## ship
 
@@ -234,10 +224,6 @@ Repair.
         instructions: "Review each item.",
       },
       gate: { maxLoops: 2, criteria: ["Every item passes."], frozenJudge: null },
-    });
-    expect(compiled.steps[2]).toMatchObject({
-      route: { input: "steps.review.output", when: { pass: "ship" }, defaultStepId: "repair" },
-      spec: { instructions: "Routing documentation." },
     });
   });
 });

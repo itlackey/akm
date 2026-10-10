@@ -27,13 +27,7 @@ import type { WorkflowParameterFlag } from "../ir/params";
 import { computePlanHash } from "../ir/plan-hash";
 import type { WorkflowPlan, WorkflowPlanStep } from "../plan";
 import { decodeWorkflowPlan, readRunPlan } from "../runtime/run-plan";
-import {
-  abandonWorkflowRun,
-  completeWorkflowStep,
-  getNextWorkflowStep,
-  resumeWorkflowRun,
-  type WorkflowNextResult,
-} from "../runtime/runs";
+import { abandonWorkflowRun, getNextWorkflowStep, resumeWorkflowRun, type WorkflowNextResult } from "../runtime/runs";
 import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
 import { frozenSummaryJudge } from "./frozen-judge";
@@ -44,21 +38,17 @@ import {
   type StepExecutionResult,
   type UnitDispatcher,
 } from "./native-executor";
-// Shared step semantics — route evaluation + cascaded-skip bookkeeping,
-// gate-evaluation journaling, and the whole step-completion path
+// Shared step semantics — gate-evaluation journaling, and the whole step-completion path
 // (`finalizeExecutedStep`) live in step-work.ts as ONE implementation, so the
 // fresh-execution and resume paths cannot drift from each other.
 import {
   activeGateLoop,
   blockStepForJudgeFailure,
-  cascadeSkippedRouter,
   effectiveGateMaxLoops,
   finalizeExecutedStep,
   type GateFeedback,
-  type RouteSkipInfo,
   recoverGateFeedback,
   referencedStepIds,
-  seedJournaledRouteDecisions,
 } from "./step-work";
 
 export interface RunWorkflowOptions {
@@ -126,9 +116,8 @@ export interface RunWorkflowResult {
   /**
    * Distinct spine steps that FINISHED processing (completed, failed, or
    * gate-exhausted) across this call. This — not `executed.length`, which
-   * gains one entry per gate-loop iteration and per route-skip — is what
-   * `maxSteps` bounds: gate loops of one step count once, and route-skipped
-   * steps consume nothing.
+   * gains one entry per gate-loop iteration — is what `maxSteps` bounds: gate
+   * loops of one step count once.
    */
   stepsProcessed: number;
   /** Present when the run reached completed state during this invocation. */
@@ -216,8 +205,8 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     }
     if (remainingSteps !== undefined) {
       // The step budget is DISTINCT PROCESSED STEPS, not `executed` entries:
-      // gate loops of one step and route-skips must not shrink a retry's
-      // remaining budget (they never counted against maxSteps either).
+      // gate loops of one step must not shrink a retry's remaining budget
+      // (they never counted against maxSteps either).
       remainingSteps -= result.stepsProcessed;
       if (remainingSteps <= 0) return aggregate;
     }
@@ -435,37 +424,6 @@ async function loadAuthoritativeRunPlan(
 }
 
 /**
- * Complete a branch target no completed router selected as `skipped` — no
- * dispatch, no gate loop, and (per the `maxSteps` contract) no step consumed.
- * Returns the re-read spine state so the caller can continue its walk.
- */
-async function skipUnselectedRouteTarget(input: {
-  runId: string;
-  stepId: string;
-  stepPlan: WorkflowPlanStep;
-  skipInfo: RouteSkipInfo;
-  routeUnselected: Map<string, RouteSkipInfo>;
-  executed: ExecutedStepReport[];
-}): Promise<WorkflowNextResult> {
-  const { runId, stepId, stepPlan, skipInfo, routeUnselected, executed } = input;
-  // Cascade: a skipped step that is ITSELF a router
-  // never evaluates its route, so none of its declared targets were
-  // selected — mark them all skip-on-reach too (a target another
-  // completed router selects stays protected via routeSelected). Without
-  // this, every branch of the skipped router would run unconditionally.
-  if (stepPlan.route) {
-    cascadeSkippedRouter(stepPlan.route, stepId, routeUnselected);
-  }
-  const notes =
-    skipInfo.selected === null
-      ? `Skipped by route: step "${skipInfo.router}" was itself skipped, so none of its branch targets run.`
-      : `Skipped by route: step "${skipInfo.router}" selected "${skipInfo.selected}".`;
-  executed.push({ stepId, ok: true, unitCount: 0, failedUnits: 0, summary: notes });
-  await completeWorkflowStep({ runId, stepId, status: "skipped", notes });
-  return getNextWorkflowStep(runId);
-}
-
-/**
  * Seed a step's starting gate loop and feedback from its journaled gate rows,
  * so a run interrupted after a rejection resumes at the next loop with the
  * stored feedback instead of re-judging loop 1. Reads only this step's rows.
@@ -503,12 +461,10 @@ interface StepDriveContext {
    * is not enough.
    */
   liveEvidence: Map<string, Record<string, unknown>>;
-  /** Step ids some other step's `inputs[]` / `map.over` / `route.input` names. */
+  /** Step ids some other step's `inputs[]` / `map.over` names. */
   liveEvidenceConsumers: ReadonlySet<string>;
   /** The run-wide report list — appended in place, one entry per loop iteration. */
   executed: ExecutedStepReport[];
-  routeSelected: Set<string>;
-  routeUnselected: Map<string, RouteSkipInfo>;
   summaryJudge: SummaryJudge | null;
 }
 
@@ -538,47 +494,34 @@ interface StepGateLoopOutcome {
 const STEP_FINISHED_KINDS: ReadonlySet<StepGateLoopOutcome["kind"]> = new Set(["advanced", "failed", "gate-exhausted"]);
 
 /**
- * One attempt at a step's work. Route-only steps (YAML `route:` — no execution
- * subgraph) dispatch no units; they only decide the spine's path in
- * `finalizeExecutedStep`. Everything else executes its subgraph through the
- * native executor.
+ * One attempt at a step's work: execute its subgraph through the native
+ * executor.
  */
 async function executeStepSubgraph(
   ctx: StepDriveContext,
   loop: { gateLoop: number; gateFeedback: GateFeedback | undefined; unitsDispatched: number; tokensUsed: number },
 ): Promise<StepExecutionResult> {
-  const { options, next, plan, stepPlan, step, evidence } = ctx;
+  const { options, next, plan, stepPlan, evidence } = ctx;
   const { gateLoop, gateFeedback, unitsDispatched, tokensUsed } = loop;
-  return !stepPlan.root && stepPlan.route
-    ? {
-        ok: true,
-        units: [],
-        evidence: {},
-        summary: `Step "${step.id}" is a route step — no units dispatched.`,
-        unitsDispatched,
-      }
-    : await executeStepPlan(stepPlan, {
-        runId: next.run.id,
-        workflowRef: next.run.workflowRef,
-        params: next.run.params ?? {},
-        evidence,
-        unitsDispatched,
-        tokensUsed,
-        // Budget ceilings ride the FROZEN plan: a mid-run
-        // asset edit can never loosen or tighten a run's budget.
-        ...(plan.budget ? { budget: plan.budget } : {}),
-        gateLoop,
-        ...(gateFeedback ? { gateFeedback } : {}),
-        // F-1: threaded to an exec unit's child env;
-        // undefined for every non-task caller (byte-identical, RunWorkflowOptions doc).
-        ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
-        ...(options.signal ? { signal: options.signal } : {}),
-        ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
-        maxConcurrency: Math.min(
-          options.maxConcurrency ?? Number.POSITIVE_INFINITY,
-          plan.execution?.maxConcurrency ?? 1,
-        ),
-      });
+  return await executeStepPlan(stepPlan, {
+    runId: next.run.id,
+    workflowRef: next.run.workflowRef,
+    params: next.run.params ?? {},
+    evidence,
+    unitsDispatched,
+    tokensUsed,
+    // Budget ceilings ride the FROZEN plan: a mid-run
+    // asset edit can never loosen or tighten a run's budget.
+    ...(plan.budget ? { budget: plan.budget } : {}),
+    gateLoop,
+    ...(gateFeedback ? { gateFeedback } : {}),
+    // F-1: threaded to an exec unit's child env;
+    // undefined for every non-task caller (byte-identical, RunWorkflowOptions doc).
+    ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+    maxConcurrency: Math.min(options.maxConcurrency ?? Number.POSITIVE_INFINITY, plan.execution?.maxConcurrency ?? 1),
+  });
 }
 
 /**
@@ -591,7 +534,7 @@ async function runStepGateLoop(
   gate: { startLoop: number; maxLoops: number; seededFeedback: GateFeedback | undefined },
   totals: { unitsDispatched: number; tokensUsed: number },
 ): Promise<StepGateLoopOutcome> {
-  const { options, next, stepPlan, step, evidence, executed, routeSelected, routeUnselected } = ctx;
+  const { options, next, stepPlan, step, executed } = ctx;
   const { summaryJudge } = ctx;
   const { startLoop, maxLoops } = gate;
   let { unitsDispatched, tokensUsed } = totals;
@@ -619,7 +562,7 @@ async function runStepGateLoop(
       ...(result.notices ? { notices: result.notices } : {}),
     });
 
-    // Route, gate, and advance: the shared completion path, live or resumed.
+    // Gate and advance: the shared completion path, live or resumed.
     let finalize: Awaited<ReturnType<typeof finalizeExecutedStep>>;
     try {
       finalize = await finalizeExecutedStep({
@@ -631,10 +574,6 @@ async function runStepGateLoop(
         gateLoop,
         loopsRemaining: gateLoop < maxLoops,
         result,
-        priorEvidence: evidence,
-        params: next.run.params ?? {},
-        routeSelected,
-        routeUnselected,
         summaryJudge,
         signal: options.signal,
       });
@@ -654,10 +593,6 @@ async function runStepGateLoop(
       // Keep the complete artifact for later steps of this invocation, but only
       // when some later reference can read it (`referencedStepIds`).
       if (ctx.liveEvidenceConsumers.has(step.id)) ctx.liveEvidence.set(step.id, result.evidence);
-      // A route-only step's summary IS its decision (finalize surfaces it).
-      if (finalize.summaryOverride !== undefined) {
-        executed[executed.length - 1] = { ...executed[executed.length - 1]!, summary: finalize.summaryOverride };
-      }
       return outcome({ kind: "advanced" });
     }
     if (finalize.kind === "judge-failed") {
@@ -692,11 +627,6 @@ async function runStepGateLoop(
       });
     }
     if (finalize.kind === "failed") {
-      // A route-failure was pushed as ok:true (the units succeeded); reflect
-      // the deterministic route failure in the executed report.
-      if (finalize.routeFailure) {
-        executed[executed.length - 1] = { ...executed[executed.length - 1]!, ok: false, summary: finalize.summary };
-      }
       return outcome({ kind: "failed" });
     }
     // gate-exhausted: rejected with no loop budget left — stop with feedback.
@@ -734,9 +664,8 @@ async function driveRun(
   let aborted = false;
   const maxSteps = options.maxSteps ?? Number.POSITIVE_INFINITY;
   // The `maxSteps` budget counts DISTINCT spine steps that finished processing
-  // — never `executed.length`, which grows once per gate-loop iteration and
-  // once per route-skip. A step's whole bounded gate loop consumes ONE step;
-  // a route-skipped step consumes NOTHING (no work was dispatched for it).
+  // — never `executed.length`, which grows once per gate-loop iteration. A
+  // step's whole bounded gate loop consumes ONE step.
   let stepsProcessed = 0;
 
   let { unitsDispatched, tokensUsed } = await seedRunAccountingFromJournal(next.run.id);
@@ -749,18 +678,6 @@ async function driveRun(
   // and holding every step's for the whole invocation is pure ballast when
   // nothing downstream names it.
   const liveEvidenceConsumers = referencedStepIds(plan);
-
-  // Route bookkeeping: targets a completed router did NOT select are skipped
-  // when the spine reaches them; a target ANY router selected is protected
-  // (two routers may share a target).
-  const routeSelected = new Set<string>();
-  const routeUnselected = new Map<string, RouteSkipInfo>();
-
-  // Replay journaled route decisions before the spine advances, so a
-  // re-invoked run skips the unselected branches. A done run skips this.
-  if (!next.done) {
-    seedJournaledRouteDecisions(plan, next, routeSelected, routeUnselected);
-  }
 
   while (!next.done && next.step && next.run.status === "active" && stepsProcessed < maxSteps) {
     // A caller abort (options.signal) is a graceful break.
@@ -775,20 +692,6 @@ async function driveRun(
         `Step "${step.id}" of run ${next.run.id} is not present in its frozen workflow plan (${next.run.workflowRef}). ` +
           "The run journal is inconsistent; abandon this run and start a new one.",
       );
-    }
-
-    // A branch target no completed router selected → auto-skip, no dispatch.
-    const skipInfo = routeUnselected.get(step.id);
-    if (skipInfo && !routeSelected.has(step.id)) {
-      next = await skipUnselectedRouteTarget({
-        runId: next.run.id,
-        stepId: step.id,
-        stepPlan,
-        skipInfo,
-        routeUnselected,
-        executed,
-      });
-      continue;
     }
 
     const evidence: Record<string, Record<string, unknown> | undefined> = {};
@@ -851,8 +754,6 @@ async function driveRun(
         liveEvidence,
         liveEvidenceConsumers,
         executed,
-        routeSelected,
-        routeUnselected,
         summaryJudge,
       },
       { startLoop, maxLoops, seededFeedback },

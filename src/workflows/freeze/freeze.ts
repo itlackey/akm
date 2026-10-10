@@ -73,12 +73,9 @@ export async function freezeWorkflow(
   for (const step of compiled.steps) {
     const { spec, ...frozenStep } = step;
     const source: FreezeStep = { ...(spec ?? { source: { path: asset.path, start: 1, end: 1 } }), id: step.stepId };
-    let root: WorkflowExecNode | undefined;
-    if (!step.route) {
-      const resolved = await resolveStep(source, context);
-      engineAnnouncement ??= resolved.engineAnnouncement;
-      root = frozenRoot(step.stepId, source, resolved, compiled, config);
-    }
+    const resolved = await resolveStep(source, context);
+    engineAnnouncement ??= resolved.engineAnnouncement;
+    const root = frozenRoot(step.stepId, source, resolved, compiled, config);
     let frozenJudge: FrozenWorkflowCommandTarget | null = null;
     if (step.gate.criteria.length > 0) {
       const judge = resolveJudge(source, step.gate.criteria[0] ?? "", context);
@@ -93,7 +90,7 @@ export async function freezeWorkflow(
         );
       }
     }
-    steps.push({ ...frozenStep, ...(root ? { root } : {}), gate: { ...step.gate, frozenJudge } });
+    steps.push({ ...frozenStep, root, gate: { ...step.gate, frozenJudge } });
   }
   assertChildOutputReferences(steps);
   const plan: WorkflowPlan = {

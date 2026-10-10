@@ -370,7 +370,7 @@ Copy this only after exact ranking assertions:
 cp -R "$REPO/tests/fixtures/manual-qa/bundle/." "$AKM_BUNDLE_DIR/"
 akm index
 akm show knowledge/qa-guide | jq -e '.name == "qa-guide"'
-akm show workflows/typed-route | jq -e '.type == "workflow"'
+akm show workflows/typed-params | jq -e '.type == "workflow"'
 akm show tasks/manual-success | jq -e '.type == "task"'
 ```
 
@@ -1618,7 +1618,7 @@ akm lint --type workflows --fail-on-flagged
 
 - [ ] **CORE** Create-print emits raw valid Markdown and writes nothing.
 - [ ] **CORE** Create-from writes/indexes valid workflow with preamble and exact sections.
-- [ ] **LOCAL** Flat name plus safe path creates hierarchy; slash/traversal/duplicate step/missing section/unknown route/invalid params fail before write.
+- [ ] **LOCAL** Flat name plus safe path creates hierarchy; slash/traversal/duplicate step/missing section/invalid params fail before write.
 - [ ] **LOCAL** Existing workflow requires force plus from/reset; force alone fails.
 - [ ] **LOCAL** Lint catches structure without rewriting valid prose.
 - [ ] **CORE** A schema keyword outside the enforced subset (`format`, `pattern`,
@@ -1638,11 +1638,11 @@ akm lint --type workflows --fail-on-flagged
 
 ### 14.2 Typed params and partial run without an engine call
 
-The `typed-route` fixture executes a route-only first step. `--max-steps 1`
+The `typed-params` fixture's first step is an exec unit (no engine). `--max-steps 1`
 tests parameter parsing and durable run creation without agent/LLM dispatch.
 
 ```sh
-akm workflow run workflows/typed-route \
+akm workflow run workflows/typed-params \
   --include_processes=true --count 2 \
   --labels api --labels worker --max-steps 1 \
   > "$AKM_SANDBOX/typed-run.json"
@@ -1664,7 +1664,7 @@ jq -e '
 - [ ] **LOCAL** Params supplied to active run fail because creation-only.
 - [ ] **LOCAL** Invalid max-steps values fail; bounded partial exits `0`, remains active.
 - [ ] **LOCAL** `--max-steps` counts **finished spine steps**: a step's whole
-      bounded gate loop counts as one, and a route-skipped step consumes none.
+      bounded gate loop counts as one.
       It does not bound the dispatches inside a single step's gate loop — pair
       it with `budget.max_units` when that is what you need capped.
 
@@ -1672,8 +1672,8 @@ jq -e '
 
 ```sh
 akm workflow status "$QA_RUN_ID"
-akm workflow status workflows/typed-route
-akm workflow list --active --ref workflows/typed-route
+akm workflow status workflows/typed-params
+akm workflow list --active --ref workflows/typed-params
 akm workflow status "$QA_RUN_ID" --units
 akm workflow abandon "$QA_RUN_ID"
 akm workflow resume "$QA_RUN_ID"

@@ -28,13 +28,12 @@ function stepFrozenTarget(step: WorkflowPlanStep | undefined): FrozenWorkflowTar
   return unit.frozenTarget;
 }
 
-/** Every reference string a step's `inputs[]`, `map.over`, `route.input`, and reference-kind `inputBindings[].from` carry. */
+/** Every reference string a step's `inputs[]`, `map.over`, and reference-kind `inputBindings[].from` carry. */
 function collectReferenceSites(step: WorkflowPlanStep): ReferenceSite[] {
   const sites: ReferenceSite[] = [];
   const push = (reference: string): void => {
     sites.push({ stepId: step.stepId, reference });
   };
-  if (step.route) push(step.route.input);
   const root = step.root;
   if (root) {
     const unit: WorkflowUnitNode = root.kind === "map" ? root.template : root;

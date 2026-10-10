@@ -94,8 +94,7 @@ export function compileWorkflowSource(source: string, options: CompileWorkflowSo
 
 /**
  * The display text a step contributes to `show`, search hints, and the run
- * spine: its authored prose, else what its target does. Empty for a route
- * step with no section.
+ * spine: its authored prose, else what its target does.
  */
 export function workflowStepInstructions(step: WorkflowPlanStep): string {
   const spec = step.spec;
@@ -111,13 +110,6 @@ export function workflowStepInstructions(step: WorkflowPlanStep): string {
   }
   if (spec.uses !== undefined) return `Invoke local target ${spec.uses}.`;
   return "";
-}
-
-/** A route step's deterministic one-line description of its branch table. */
-export function routeDescription(route: NonNullable<WorkflowPlanStep["route"]>): string {
-  const branches = Object.entries(route.when).map(([match, stepId]) => `"${match}" -> ${stepId}`);
-  if (route.defaultStepId !== undefined) branches.push(`default -> ${route.defaultStepId}`);
-  return `Route on ${route.input}: ${branches.join(", ")}.`;
 }
 
 export type WorkflowPlanCheck = { ok: true; warnings: WorkflowError[] } | { ok: false; errors: WorkflowError[] };
@@ -155,7 +147,6 @@ export function checkWorkflowPlan(plan: WorkflowPlan): WorkflowPlanCheck {
   for (const step of plan.steps) {
     const line = step.spec?.source.start ?? 1;
     if (step.spec?.map) check(step.spec.map.over, line, `Step "${step.stepId}" map.over`, true);
-    if (step.route) check(step.route.input, line, `Step "${step.stepId}" route.input`, true);
     for (const [index, reference] of (step.spec?.inputs ?? []).entries()) {
       check(reference, line, `Step "${step.stepId}" inputs[${index}]`, false);
     }
@@ -188,7 +179,7 @@ export function checkWorkflowPlan(plan: WorkflowPlan): WorkflowPlanCheck {
 
 /**
  * Advisories that never fail compilation or change the plan:
- *   A. a `params.<name>` reference (in `map.over`/`route.input`) to a param the
+ *   A. a `params.<name>` reference (in `map.over`) to a param the
  *      document's `params:` block does not declare — a likely typo;
  *   B. `gate.max_loops` above 1 on an exec step, which is judged but never
  *      looped (a frozen argv cannot read the judge's feedback).
@@ -223,7 +214,6 @@ function workflowWarnings(plan: WorkflowPlan): WorkflowError[] {
       });
     };
     scan(step.spec?.map?.over, `Step "${step.stepId}" map.over`);
-    scan(step.route?.input, `Step "${step.stepId}" route.input`);
   }
   return warnings;
 }

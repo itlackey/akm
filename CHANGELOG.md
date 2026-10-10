@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Workflow `route` steps (#1096).** A step can no longer declare `route:` (branch on a value to a later step). It was
+  unused by any workflow found, and its cost was the replay journal for route decisions and cascaded skips. Branching is
+  an `exec` step or an agent step that reads its inputs, plus a gate for "go back and fix it". `route` is now an
+  unknown-key lint error; a stored plan that still has a route step cannot be decoded, so that run is abandoned.
 - **`unit.isolation: worktree` (#1096).** A workflow unit can no longer declare per-attempt git-worktree isolation
   (`exec/worktree.ts` and the attempt prepare/cleanup in the native executor). It was unused by any workflow found, and
   the largest standalone block in the engine. `unit.isolation` is now an unknown-key lint error; a stored plan that
