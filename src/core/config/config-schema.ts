@@ -40,7 +40,7 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses/ids";
+import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses";
 import {
   BUILTIN_IMPROVE_STRATEGY_NAMES,
   IMPROVE_ENGINE_PROCESSES,

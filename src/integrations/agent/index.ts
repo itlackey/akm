@@ -9,7 +9,7 @@
  *
  * Surface:
  *   • Types: AgentProfile, AgentRunResult, AgentFailureReason.
- *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles, BUILTIN_AGENT_PROFILE_NAMES.
+ *   • Profiles: getBuiltinAgentProfile, listBuiltinAgentProfiles.
  *   • Engine lowering lives in engine-resolution.ts; public config has no profile aliases.
  *   • Builder contract types: AgentCommandBuilder, AgentDispatchRequest.
  *     The concrete builder lookup stays private to the spawn authority.
@@ -30,7 +30,6 @@ export type {
   AgentStdioMode,
 } from "./profiles";
 export {
-  BUILTIN_AGENT_PROFILE_NAMES,
   getBuiltinAgentProfile,
   listBuiltinAgentProfiles,
 } from "./profiles";

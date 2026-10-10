@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { resolveEngine } from "../../src/integrations/agent/engine-resolution";
-import { BUILTIN_AGENT_PROFILE_NAMES, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
+import { getBuiltinAgentProfile, listBuiltinAgentProfiles } from "../../src/integrations/agent/profiles";
+import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 
 function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
   return { configVersion: "0.9.0", semanticSearchMode: "auto", ...overrides };
@@ -9,18 +10,13 @@ function makeConfig(overrides: Partial<AkmConfig> = {}): AkmConfig {
 
 describe("built-in agent harness profiles", () => {
   test("all built-in agent CLIs remain available to engine lowering", () => {
-    expect(BUILTIN_AGENT_PROFILE_NAMES).toEqual([
-      "aider",
-      "amazonq",
-      "claude",
-      "codex",
-      "copilot",
-      "gemini",
-      "opencode",
-      "openhands",
-      "pi",
-    ]);
-    for (const name of BUILTIN_AGENT_PROFILE_NAMES) {
+    const expected = HARNESS_REGISTRY.filter((h) => h.profile)
+      .map((h) => h.id as string)
+      .sort();
+    expect(Object.keys(listBuiltinAgentProfiles()).sort()).toEqual(expected);
+    expect(expected).toContain("opencode");
+    expect(expected).not.toContain("opencode-sdk");
+    for (const name of expected) {
       const profile = getBuiltinAgentProfile(name);
       expect(profile?.bin).toBeTruthy();
       expect(profile?.envPassthrough).toContain("PATH");

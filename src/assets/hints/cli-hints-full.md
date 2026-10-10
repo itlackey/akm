@@ -234,7 +234,6 @@ rename instead of starting fresh, run `bun scripts/rekey-asset-ref.ts <old-ref>
 ## Sync
 
 Commit local changes in a git-backed bundle. Behaviour adapts automatically.
-(`akm save` was the pre-0.8 spelling; it was removed in 0.9.0 — use `akm sync`.)
 
 - **No `.git` directory** — no-op (silent skip)
 - **Git repo, no remote** — stage and commit only (the default bundle always falls here)
@@ -359,11 +358,6 @@ akm proposal extract --auto                             # Mine native session fi
 akm proposal extract --type claude                 # Restrict extraction to one harness
 ```
 
-The flat verbs `akm proposals` / `akm show proposal` / `akm accept` /
-`akm reject` / `akm diff` / `akm revert` were removed in 0.9.0 — use the
-`akm proposal <verb>` forms above. `akm extract` and `akm propose` moved
-here as `proposal extract` / `proposal new`.
-
 ## Scheduled Tasks
 
 Tasks are pure-YAML assets at `<bundle>/tasks/<id>.yml`, bound to the OS
@@ -382,7 +376,7 @@ akm task doctor                                # Scheduler binding + runtime eli
 akm task history                               # Recent run rows (status, timing)
 akm task run <id>                              # Run one task immediately (works when disabled)
 akm task explain <ref>                         # Read-only: declared inputs, target, schedule — spawns nothing
-akm search --type task                         # Enumerate task assets (there is no `task list`)
+akm search --type task                         # Enumerate task assets
 ```
 
 Task files use task source v4 (`version: 4`). There is no `akm:` options bag

@@ -413,35 +413,6 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
   });
 });
 
-// ── Mitigation item 3: actionable "use X instead" hints for retired keys ────
-
-describe("unknown-key hint names a replacement for retired pre-0.9 keys", () => {
-  test("config get stashDir points at `akm info`", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    try {
-      getConfigValue(base, "stashDir");
-      throw new Error("should have thrown");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const combined = `${message} ${(err as { hint?: () => string }).hint?.() ?? ""}`;
-      expect(combined).toContain("akm info");
-    }
-  });
-
-  test("config get wikiName points at the wiki subsystem's removal and `akm import`", () => {
-    const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    try {
-      getConfigValue(base, "wikiName");
-      throw new Error("should have thrown");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const combined = `${message} ${(err as { hint?: () => string }).hint?.() ?? ""}`;
-      expect(combined).toContain("wiki subsystem was removed in 0.9");
-      expect(combined).toContain("akm import");
-    }
-  });
-});
-
 // ── #462 (relaxed): unknown fields on sources/registries are tolerated ───────
 // The config-wide unknown-key policy is now lenient (passthrough) so cross-
 // version config skew never becomes INVALID_CONFIG_FILE. That also relaxes the

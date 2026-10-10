@@ -25,25 +25,13 @@ import {
   VALID_HARNESS_IDS,
 } from "../src/integrations/harnesses";
 
-// The full registry membership, in registration order: the pre-unification
-// trio first (pinned prefix — the generated JSON-schema enum must not reorder),
-// then the seven P2 harness adapters (plan §"Capability matrix").
-const ALL_HARNESS_IDS = [
-  "opencode",
-  "claude",
-  "opencode-sdk",
-  "codex",
-  "copilot",
-  "pi",
-  "gemini",
-  "aider",
-  "amazonq",
-  "openhands",
-];
+// The pre-unification trio leads the registry: the generated JSON-schema enum
+// order must not change. Everything after is appended.
+const LEGACY_PREFIX = ["opencode", "claude", "opencode-sdk"];
 
 describe("HARNESS_REGISTRY membership", () => {
-  it("contains every known harness with canonical ids, legacy trio first", () => {
-    expect(HARNESS_REGISTRY.map((h) => h.id as string)).toEqual(ALL_HARNESS_IDS);
+  it("keeps the legacy trio first so the schema enum order is stable", () => {
+    expect(HARNESS_REGISTRY.slice(0, LEGACY_PREFIX.length).map((h) => h.id as string)).toEqual(LEGACY_PREFIX);
   });
 
   it("HARNESS_BY_ID resolves every canonical id", () => {
@@ -74,8 +62,10 @@ describe("capability-derived sublists", () => {
     expect(SESSION_LOG_HARNESSES.map((h) => h.id)).toEqual(["opencode", "claude", "codex"]);
   });
 
-  it("AGENT_DISPATCH_HARNESSES = every harness", () => {
-    expect(AGENT_DISPATCH_HARNESSES.map((h) => h.id as string)).toEqual(ALL_HARNESS_IDS);
+  it("AGENT_DISPATCH_HARNESSES = every harness that declares agentDispatch", () => {
+    expect(AGENT_DISPATCH_HARNESSES.map((h) => h.id)).toEqual(
+      HARNESS_REGISTRY.filter((h) => h.capabilities.agentDispatch).map((h) => h.id),
+    );
   });
 
   // #567 — only session-log-capable harnesses may be offered as setup stash
@@ -165,8 +155,9 @@ describe("defaultProfileName — registry-derived headless default (#566)", () =
 
 // #915: harness ids are persisted keys (`extract_sessions_seen.harness`,
 // `workflow_runs.agent_harness`). This literal is deliberately NOT derived from
-// the registry: renaming or removing an id must fail here until a state
+// the registry: removing or renaming an id must fail here until a state
 // migration ships for the old key (see 027-extract-sessions-seen-harness-rename).
+// Adding a harness needs no edit here.
 const PERSISTED_HARNESS_IDS = [
   "opencode",
   "claude",
@@ -181,14 +172,8 @@ const PERSISTED_HARNESS_IDS = [
 ];
 
 describe("harness ids are persisted keys (#915)", () => {
-  it("HARNESS_REGISTRY matches the persisted-id list exactly; a rename needs a state migration", () => {
-    expect(HARNESS_REGISTRY.map((h) => h.id as string).sort()).toEqual([...PERSISTED_HARNESS_IDS].sort());
-  });
-});
-
-describe("every currently-valid platform/harness id is present", () => {
-  for (const id of ALL_HARNESS_IDS) {
-    it(`"${id}" resolves to a registered harness`, () => {
+  for (const id of PERSISTED_HARNESS_IDS) {
+    it(`"${id}" is still registered; removing or renaming it needs a state migration`, () => {
       expect(getHarness(id)).toBeDefined();
     });
   }

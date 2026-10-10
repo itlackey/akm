@@ -967,7 +967,7 @@ function findUnknownCommandAttempt(
 
 /** Closest command within a length-scaled distance threshold (shared DP in cli/unknown-flags.ts). */
 function closestCommandMatch(attempted: string, candidates: readonly string[]): string | undefined {
-  return closestMatch(attempted, candidates, Math.max(2, Math.ceil(attempted.length / 2)));
+  return closestMatch(attempted, candidates, Math.floor(attempted.length / 3));
 }
 
 const CLI_HELP_POINTER = "Run `akm --help` for usage.";

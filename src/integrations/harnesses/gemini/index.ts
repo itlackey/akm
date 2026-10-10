@@ -31,6 +31,7 @@ export class GeminiHarness extends BaseHarness {
   readonly id = "gemini" as const;
   readonly displayName = "Gemini CLI";
   readonly agentBuilder = geminiBuilder;
+  readonly profile = { bin: "gemini", args: [], envPassthrough: ["GEMINI_API_KEY", "GOOGLE_API_KEY"] };
   readonly resultExtractor = geminiResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // The matrix's identity marker: Gemini CLI stamps GEMINI_CLI=1 only on
