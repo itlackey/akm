@@ -128,30 +128,25 @@ describe("stands down when the command itself is the problem", () => {
     expect(() => check(["proposal", "--status=reverted"])).not.toThrow();
   });
 
-  test("retired flags reach the handler that diagnoses them by name", () => {
-    // e.g. `--scope` is answered with "removed in 0.9.0, use --filter" and
-    // `--source` with "renamed to --generator" — better than "unknown flag".
-    expect(() => check(["show", "knowledge/a", "--scope", "user=x"])).not.toThrow();
-    expect(() => check(["index", "--enrich"])).not.toThrow();
-    expect(() => check(["proposal", "accept", "p-1", "--source", "distill"])).not.toThrow();
-    expect(() => check(["search", "foo", "--source", "local"])).not.toThrow();
-    expect(() => check(["curate", "foo", "--source", "local"])).not.toThrow();
-    expect(() => check(["remember", "note", "--target", "team"])).not.toThrow();
-    expect(() => check(["clone", "skills/a", "--target", "team"])).not.toThrow();
-    expect(() => check(["improve", "--target", "team"])).not.toThrow();
-    expect(() => check(["task", "add", "nightly", "--schedule", "@daily", "--target", "team"])).not.toThrow();
-    expect(() => check(["task", "run", "nightly", "--target", "team"])).not.toThrow();
-    expect(() => check(["task", "history", "--target", "team"])).not.toThrow();
-    expect(() => check(["task", "sync", "--target", "team"])).not.toThrow();
+  test("a spelling an earlier release retired is a plain unknown flag, not a pass-through", () => {
+    expect(errorFor(["show", "knowledge/a", "--scope", "user=x"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["index", "--enrich"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["proposal", "accept", "p-1", "--source", "distill"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["search", "foo", "--source", "local"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["curate", "foo", "--source", "local"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["remember", "note", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["clone", "skills/a", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["improve", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["task", "add", "nightly", "--schedule", "@daily", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["task", "history", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["task", "sync", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["index", "--background"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["proposal", "extract", "--watch"]).code).toBe("UNKNOWN_FLAG");
   });
 
-  test("a retired flag is exempt ONLY on the command that diagnoses it", () => {
-    // The passthrough is keyed by command path. On any other command the same
-    // spelling is a genuine typo — silently dropping `--dry-run` there could
-    // run a real mutation the user believed was a rehearsal.
-    expect(errorFor(["registry", "remove", "x", "--dry-run"]).code).toBe("UNKNOWN_FLAG");
-    expect(errorFor(["search", "foo", "--scope", "user=x"]).code).toBe("UNKNOWN_FLAG");
-    expect(errorFor(["show", "knowledge/a", "--enrich"]).code).toBe("UNKNOWN_FLAG");
+  test("an unknown flag carries no migration hint, only a did-you-mean when one is close", () => {
+    expect(errorFor(["index", "--background"]).hint()).not.toContain("akm help migrate");
+    expect(errorFor(["search", "foo", "--watch"]).hint()).not.toContain("proposal extract --auto");
   });
 });
 
@@ -159,31 +154,5 @@ describe("improve --auto-accept (removed in 0.9, a hard error since 0.10)", () =
   test("is an unknown flag, with or without a value", () => {
     expect(errorFor(["improve", "--auto-accept"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["improve", "--auto-accept", "90"]).code).toBe("UNKNOWN_FLAG");
-  });
-});
-
-describe("retired flags get their replacement, not a generic unknown-flag hint", () => {
-  // Unlike SELF_DIAGNOSED_FLAGS above (a rename the OWNING command answers
-  // itself), these flags were removed outright with no successor flag on the
-  // same command — `retiredFlagHint` (src/cli/retired-commands.ts) supplies
-  // the migration hint the generic edit-distance suggestion can't.
-  test.each([
-    [["index", "--background"], "--quiet"],
-    [["setup", "--detect-only"], "akm setup"],
-    [["setup", "--reset-recommended"], "recommended defaults"],
-    [["proposal", "extract", "--watch"], "proposal extract --auto"],
-    [["proposal", "extract", "--debounce-ms"], "proposal extract --auto"],
-  ] as const)("%s hints its replacement", (args, expected) => {
-    const err = errorFor([...args]);
-    expect(err.code).toBe("UNKNOWN_FLAG");
-    expect(err.hint()).toContain(expected);
-    expect(err.hint()).toContain("akm help migrate 0.9.0");
-    expect(err.hint()).not.toContain("Did you mean");
-  });
-
-  test("the same spelling on an unrelated command path is a plain unknown flag", () => {
-    // `--watch` is only retired on `proposal extract` — `search` never had it
-    // and shouldn't get a misleading migration hint for it.
-    expect(errorFor(["search", "foo", "--watch"]).hint()).not.toContain("proposal extract --auto");
   });
 });

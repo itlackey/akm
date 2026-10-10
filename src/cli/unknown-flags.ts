@@ -35,7 +35,6 @@ import {
   findCittyTopLevelCommandIndex,
   toAliasArray,
 } from "./invocation";
-import { retiredFlagHint } from "./retired-commands";
 
 /**
  * Commands that must never refuse on an unrecognized flag — `akm info` warns
@@ -54,38 +53,6 @@ export interface FlagScanCommand {
 
 /** Flags citty implements itself, which no command declares. */
 const IMPLICIT_FLAGS = ["help", "h", "version", "v"];
-
-/**
- * Retired flags whose commands still diagnose them THEMSELVES, with a message
- * that names the replacement ("`--scope` was removed, use `--filter`",
- * "`--source` was renamed to `--generator`"). A generic "unknown flag" would
- * preempt the better diagnosis, so these are passed through — but ONLY on the
- * command path that owns the diagnostic, keyed by the resolved path. On every
- * other command the same spelling is a genuine typo and still fails fast
- * A retired flag is rejected everywhere else, where silently dropping it could
- * run a real mutation.
- *
- * Shrink-only: when a command drops its bespoke diagnostic, drop the entry and
- * the generic error takes over.
- */
-const SELF_DIAGNOSED_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
-  Object.entries({
-    show: ["akmView", "scope"], // removed view grammar; --scope points at --filter
-    index: ["enrich", "re-enrich"], // removed index-time enrichment flags
-    "proposal accept": ["source"], // renamed to --generator
-    "proposal reject": ["source"], // renamed to --generator
-    "proposal drain": ["profile"], // retired, points at --strategy
-    search: ["source"], // renamed to --from
-    curate: ["source"], // renamed to --from
-    remember: ["target"], // renamed to --bundle
-    clone: ["target"], // renamed to --bundle
-    improve: ["target"], // renamed to --bundle
-    "task add": ["target"], // renamed to --bundle
-    "task run": ["target"], // renamed to --bundle
-    "task history": ["target"], // renamed to --bundle
-    "task sync": ["target"], // renamed to --bundle
-  }).map(([path, flags]) => [path, new Set(flags.map(cittyComparableName))]),
-);
 
 interface KnownArgs {
   /** Every accepted flag spelling, in comparable form. */
@@ -203,15 +170,6 @@ export function closestMatch(attempted: string, candidates: readonly string[], t
  * @param attempted  The spelling to edit-distance against `--long` candidates.
  */
 function throwUnknownFlag(shown: string, attempted: string, known: KnownArgs): never {
-  // Flags the 0.9 overhaul removed outright get their retirement note, not a
-  // did-you-mean — same reasoning as `retiredCommandHint` in src/cli.ts:
-  // edit distance can point at an unrelated survivor rather than the real
-  // replacement procedure (e.g. `index --background` is closer to no other
-  // `index` flag than it is to any useful suggestion).
-  const retired = retiredFlagHint(known.path, attempted);
-  if (retired) {
-    throw new UsageError(`Unknown flag "${shown}".`, "UNKNOWN_FLAG", retired);
-  }
   const threshold = Math.max(2, Math.ceil(attempted.length / 3));
   const suggestion = closestMatch(attempted, known.displayNames, threshold);
   throw new UsageError(
@@ -249,7 +207,6 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
   // scanner, so it needs the identical exemption).
   const dynamicNamedFlagCommands = new Set(["workflow run", "task run", "task explain"]);
   const dynamicWorkflowParams = dynamicNamedFlagCommands.has(known.path.join(" "));
-  const selfDiagnosed = SELF_DIAGNOSED_FLAGS.get(known.path.join(" "));
   const tolerant = UNKNOWN_FLAG_TOLERANT_COMMANDS.has(known.path.join(" "));
 
   for (let i = 0; i < ownArgs.length; i += 1) {
@@ -295,7 +252,6 @@ export function assertKnownFlags(root: FlagScanCommand, rawArgs: readonly string
         : undefined;
 
     const candidates = [cittyComparableName(rawName), ...(negated ? [cittyComparableName(negated)] : [])];
-    if (selfDiagnosed !== undefined && candidates.some((name) => selfDiagnosed.has(name))) continue;
     if (!candidates.some((name) => known.names.has(name))) {
       // `workflow run` owns one deliberately dynamic namespace: long options
       // become exact-name workflow parameters and are checked against the

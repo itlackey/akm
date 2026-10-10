@@ -437,35 +437,12 @@ describe("akm task run — end to end (B-26, §0: a valid flag set is byte-ident
 // ── recorded against docs/plans/specs/p2a-task-source-v4.md:526): neither ───
 // ── B-32 nor B-33 nor F-5's isTaskRunWithId test existed anywhere. ──────────
 
-describe("akm task run <id> --target x — the retired-flag usage error is unchanged (B-32, PRESERVE)", () => {
-  test("still rejects with the retired-flag INVALID_FLAG_VALUE usage error, exit 2 — --target is NEVER treated as an input", async () => {
-    // rejectRetiredTaskTargetFlag() (src/commands/tasks/tasks-cli.ts) runs
-    // BEFORE any task lookup, so the id need not exist for this to fire —
-    // this is ALREADY-REAL, ALREADY-GREEN production behavior today; grep for
-    // "was renamed to `--bundle`" in tests/ returns nothing anywhere in the
-    // repo before this test.
-    const result = await runCliCapture(["task", "run", "anything", "--target", "x"]);
-
-    expect(result.code).toBe(2);
-    const envelope = JSON.parse(result.stderr.trim()) as { ok: boolean; error: string; code: string };
-    expect(envelope.ok).toBe(false);
-    expect(envelope.code).toBe("INVALID_FLAG_VALUE");
-    expect(envelope.error).toBe("`akm task --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.");
-  });
-
-  // Review round 1: the rejecter tested `hasFlag("--target")`, which compares
-  // WHOLE tokens against `--target` and `--target=true` only — so the inline
-  // `=` spellings slipped past it. Nothing else caught them either: the
-  // generic pre-dispatch gate exempts `target` on every `task` subcommand by
-  // NAME (`src/cli/unknown-flags.ts`'s `SELF_DIAGNOSED_FLAGS`) precisely so
-  // this handler can answer with the rename hint, so an unrejected
-  // `--target=team` was absorbed silently by citty's non-strict parser and the
-  // user's chosen bundle was quietly ignored.
-  test("the inline `--target=<value>` spelling gets the SAME rename error, on every task subcommand that declares --bundle", async () => {
+describe("akm task run <id> --target x — the retired flag is an unknown input, never a rename hint", () => {
+  test("both spellings are rejected as unknown input flags, exit 2", async () => {
+    writeTask("deploy", ["version: 4", 'run: "true"', "shell: sh", ""].join("\n"));
     for (const argv of [
-      ["task", "run", "anything", "--target=x"],
-      ["task", "history", "--target=x"],
-      ["task", "sync", "--target=x"],
+      ["task", "run", "deploy", "--target", "x"],
+      ["task", "run", "deploy", "--target=x"],
     ]) {
       const label = argv.join(" ");
       const result = await runCliCapture(argv);
@@ -473,52 +450,8 @@ describe("akm task run <id> --target x — the retired-flag usage error is uncha
       expect(result.code, label).toBe(2);
       const envelope = JSON.parse(result.stderr.trim()) as { ok: boolean; error: string; code: string };
       expect(envelope.ok, label).toBe(false);
-      expect(envelope.code, label).toBe("INVALID_FLAG_VALUE");
-      expect(envelope.error, label).toBe(
-        "`akm task --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-      );
-    }
-  });
-
-  // Review round 2, the other half of that widening: rejecting `--target` by
-  // NAME also swallowed `--target=<value>`, which was the last working way to
-  // supply a legally-declared task input NAMED `target` — `target` sits in
-  // neither TASK_RUN_VALUE_FLAGS nor TASK_RUN_BOOLEAN_FLAGS, so
-  // parseTaskInputFlags captured it as an ordinary input flag, and the bare
-  // `--target x` spelling was already rejected at whole-token level before
-  // round 1. The fix is NOT to narrow the rejecter back (that reopens the
-  // silently-ignored `--target=team` above): `target` is reserved at
-  // DECLARATION time instead (TASK_RUN_SELF_DIAGNOSED_FLAGS,
-  // src/tasks/task-run-reserved-flags.ts), so the unusable declaration cannot
-  // be authored and the rename hint stays the only thing `--target` can mean.
-  test("a task that DECLARES an input named `target` is rejected at parse time, so no run can ever need the flag the rename hint eats", async () => {
-    writeTask(
-      "deploy",
-      [
-        "version: 4",
-        "inputs:",
-        "  target:",
-        "    type: string",
-        "    default: staging",
-        'run: "true"',
-        "shell: sh",
-        "",
-      ].join("\n"),
-    );
-
-    for (const argv of [
-      ["task", "run", "deploy"],
-      ["task", "explain", "deploy"],
-    ]) {
-      const label = argv.join(" ");
-      const result = await runCliCapture(argv);
-
-      expect(result.code, label).toBe(2);
-      const envelope = JSON.parse(result.stderr.trim()) as { ok: boolean; error: string; code: string };
-      expect(envelope.ok, label).toBe(false);
-      expect(envelope.code, label).toBe("TASK_SOURCE_INVALID");
-      expect(envelope.error, label).toContain("inputs.target collides with the retired `akm task --target` spelling");
-      expect(envelope.error, label).toContain("declare the input under a different name.");
+      expect(envelope.error, label).toContain("target");
+      expect(envelope.error, label).not.toContain("renamed");
     }
   });
 });

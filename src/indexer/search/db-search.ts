@@ -12,7 +12,6 @@
  */
 
 import path from "node:path";
-import { stashDirFor } from "../../core/asset/asset-placement";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
@@ -49,7 +48,7 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
-import { ftsQueryTokens, parseRefPrefixQuery, parseRetiredTypePrefixQuery } from "./fts-query";
+import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
 import { type FusedCandidate, type RankedRef, reciprocalRankFusion } from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
@@ -179,7 +178,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   /** Actual ranking mode, including a failed semantic attempt. */
   mode: SearchExecutionMode;
 }> {
-  const { query, stashDir, config } = input;
+  const { stashDir, config } = input;
   const warnings: string[] = [];
   // Semantic search is attempted fresh on every query (see `startVectorChannel`);
   // there is no cached readiness verdict to consult here. The only thing
@@ -231,7 +230,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     if (semanticWarning) warnings.push(semanticWarning);
     return {
       hits,
-      tip: hits.length === 0 ? emptyResultTip(query) : undefined,
+      tip: hits.length === 0 ? EMPTY_RESULT_TIP : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
@@ -419,19 +418,7 @@ function describeRanks(candidate: FusedCandidate): string[] {
   ];
 }
 
-/**
- * The no-hits tip. A query in the retired `<type>:` / `<type>:<prefix>/` browse
- * grammar gets the conceptId spelling that replaces it: without this it comes
- * back empty and silent, which is the failure D4 removed the grammar to avoid.
- */
-function emptyResultTip(query: string): string {
-  const generic = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
-  const retired = parseRetiredTypePrefixQuery(query);
-  if (!retired) return generic;
-  const root = stashDirFor(retired.type);
-  if (!root) return generic;
-  return `No matching stash assets were found. The '<type>:' browse grammar was removed in 0.9.0 — use the conceptId spelling: 'akm search "${root}/${retired.rest}"'.`;
-}
+const EMPTY_RESULT_TIP = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────
 

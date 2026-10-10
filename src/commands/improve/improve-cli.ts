@@ -4,7 +4,6 @@
 
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
@@ -54,24 +53,6 @@ let akmImproveForRun: typeof akmImprove = akmImprove;
 /** Swap the CLI's improve work implementation in deterministic subprocess tests. */
 export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
   akmImproveForRun = fake ?? akmImprove;
-}
-
-/** `akm improve canary` (removed in 0.9) would otherwise be a type scope matching nothing, exiting 0. */
-function rejectRetiredCanaryScope(scopeArg: string | undefined): void {
-  if (scopeArg !== "canary") return;
-  throw new UsageError(
-    '"akm improve canary" was removed in 0.9; the collapse-detector canary set it managed no longer exists.',
-    "INVALID_FLAG_VALUE",
-  );
-}
-
-/** `--target` (renamed `--bundle` in 0.9) would otherwise be absorbed and write to the default bundle. */
-function rejectRetiredImproveTargetFlag(): void {
-  if (!getParsedInvocation().hasFlag("--target")) return;
-  throw new UsageError(
-    "`akm improve --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
 }
 
 /**
@@ -395,7 +376,6 @@ export const improveCommand = defineCommand({
         await runImproveJudgeCli(getStringArg(args, "strategy"));
         return;
       }
-      rejectRetiredImproveTargetFlag();
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
@@ -408,7 +388,6 @@ export const improveCommand = defineCommand({
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
       const scopeArg = getStringArg(args, "scope");
-      rejectRetiredCanaryScope(scopeArg);
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
       const writeTarget = dryRun
         ? undefined

@@ -684,17 +684,17 @@ describe("accept/reject --generator flag (WS3)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  test("proposal accept rejects the retired --source flag (renamed to --generator in 0.9)", async () => {
+  test("proposal accept rejects the retired --source flag as unknown", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
     const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).code).toBe("INVALID_FLAG_VALUE");
+    expect(result.stderr).toContain('Unknown flag "--source"');
   });
 
-  test("proposal reject rejects the retired --source flag (renamed to --generator in 0.9)", async () => {
+  test("proposal reject rejects the retired --source flag as unknown", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
     const result = await runCli(
@@ -702,7 +702,7 @@ describe("accept/reject --generator flag (WS3)", () => {
       { stashDir: stash },
     );
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).code).toBe("INVALID_FLAG_VALUE");
+    expect(result.stderr).toContain('Unknown flag "--source"');
   });
 });
 

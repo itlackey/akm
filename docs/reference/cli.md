@@ -847,8 +847,8 @@ workflow ref is never mistaken for one.
 The public `workflow start`, `next`, and `complete` lifecycle was removed in
 0.9, along with the experimental `brief`/`report` external-driver protocol.
 Use `workflow run` for execution and `workflow status` for inspection. The
-removed commands fail with an `UNKNOWN_COMMAND` envelope and a migration hint;
-there are no compatibility aliases.
+removed commands fail with an `UNKNOWN_COMMAND` envelope; there are no
+compatibility aliases.
 
 There is also no `akm workflow template`, `validate`, or `watch`.
 `workflow create --print` prints a starter, `akm lint --type workflows`

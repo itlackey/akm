@@ -145,6 +145,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`akm improve --auto-accept` is a hard error (#1091).** It was removed in 0.9.0 and has been accepted-and-warned
   since; it is now an unknown flag like any other (exit 2), and `--auto-accept 90` no longer reaches the scope. Use
   `akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`.
+- **The hint tables for the 0.9.0 renames (#1091).** `RETIRED_COMMAND_HINTS` (39 entries), `RETIRED_FLAG_HINTS` (5) and
+  `SELF_DIAGNOSED_FLAGS` (`src/cli/retired-commands.ts` is gone), the per-command `--target`, `--source`, `--scope`,
+  `--enrich`/`--re-enrich` and `proposal drain --profile` rejections, the `akm improve canary` scope rejection, the
+  `akm show` colon-ref tip and the `<type>:` search tip. A retired command is now an ordinary `UNKNOWN_COMMAND` (with a
+  did-you-mean when one is close) and a retired flag an ordinary `UNKNOWN_FLAG` (exit 2), with no migration pointer.
+  `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
+  `akm improve canary` is now an asset-type scope that matches nothing.
 
 ### Fixed
 

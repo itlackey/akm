@@ -88,34 +88,6 @@ function hasFlagNamed(name: string): boolean {
 }
 
 /**
- * `--target` was renamed to `--bundle` on `task` in 0.9 (S8.4). citty is
- * non-strict, so the retired spelling is silently absorbed rather than
- * rejected — reject it explicitly instead (mirrors improve-cli.ts /
- * remember-cli.ts). The generic pre-dispatch gate cannot catch it either: it
- * exempts `target` on every `task` subcommand precisely so this handler can
- * answer with the rename (`../../cli/unknown-flags`'s `SELF_DIAGNOSED_FLAGS`),
- * and that exemption is keyed on the flag NAME — so `--target=team` must be
- * rejected here by name too, or nothing rejects it at all.
- *
- * Rejecting by NAME means `--target=<value>` can no longer carry a declared
- * task input named `target` either (0.9.2 review round 2). That is settled on
- * the DECLARATION side, not by narrowing this rejecter back to whole-token
- * matching: `target` is listed in `TASK_RUN_SELF_DIAGNOSED_FLAGS`
- * (`../../tasks/task-run-reserved-flags.ts`), so `parseInputDeclarations`
- * refuses `inputs: {target: …}` with TASK_SOURCE_INVALID at authoring time and
- * no task can reach `akm task run` needing the flag this throws on. Do not
- * re-narrow the match here — the silently-ignored `--target=team` that round 1
- * closed would come straight back.
- */
-function rejectRetiredTaskTargetFlag(): void {
-  if (!hasFlagNamed("target")) return;
-  throw new UsageError(
-    "`akm task --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
-}
-
-/**
  * `--scheduled` is `akm task run`'s own declared flag (an internal marker for
  * scheduler-generated runs) — `task explain` declares no such flag. Because
  * `explain` reuses `parseTaskInputFlags` (the same exact-name scanner `task
@@ -151,9 +123,7 @@ function rejectExplainScheduledFlag(): void {
 // that knows the task's declared contract (Stage 2, src/tasks/run/load-task.ts)
 // — coercion happens once, there. `akm task run`'s own declared flags
 // (GLOBAL_OUTPUT_ARGS, --bundle, --scheduled) are excluded so they are never
-// mistaken for inputs (B-33); `--target` is excluded too, but only because
-// `rejectRetiredTaskTargetFlag()` above always runs first and throws before
-// this is ever reached (B-32) — it is not itself special-cased below.
+// mistaken for inputs (B-33).
 
 // `TASK_RUN_VALUE_FLAGS` / `TASK_RUN_BOOLEAN_FLAGS` are re-exported here
 // (unchanged in name, location, and value) from a dependency-free leaf module
@@ -254,7 +224,6 @@ const tasksAddCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const result = await akmTasksAdd({
       id: args.id,
       schedule: args.schedule,
@@ -298,7 +267,6 @@ const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      rejectRetiredTaskTargetFlag();
       const inputFlags = parseTaskInputFlags(rawArgs, args.id);
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
@@ -323,7 +291,6 @@ const tasksEnableCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     output("task-enable", await akmTasksEnable(args.ref, { target: args.bundle }));
   },
 });
@@ -335,7 +302,6 @@ const tasksDisableCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     output("task-disable", await akmTasksDisable(args.ref, { target: args.bundle }));
   },
 });
@@ -366,7 +332,6 @@ const tasksHistoryCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
     const id = resolveTaskHistoryId(args.task, args.id);
     const result = await akmTasksHistory({ id, limit, target: args.bundle });
@@ -412,7 +377,6 @@ const tasksSyncCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const rebind = args.rebind === true;
     if (args["dry-run"] === true) {
       const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
@@ -444,7 +408,6 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    rejectRetiredTaskTargetFlag();
     // `--scheduled` must be rejected BEFORE the shared scanner below ever
     // sees it — the scanner treats it as `task run`'s own reserved flag
     // (silently skipped, never surfaced as unknown) rather than explain's,

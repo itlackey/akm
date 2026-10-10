@@ -176,7 +176,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.hint).toContain("--all-scopes");
   });
 
-  test("retired workflow next returns an unknown-command envelope with a migration hint", async () => {
+  test("retired workflow next returns an unknown-command envelope", async () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);
     const { stderr, status } = await runCli(["workflow", "next", "workflows/release-flow", "--dry-run"], stash);
@@ -184,7 +184,6 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     const env = JSON.parse(stderr);
     expect(env.ok).toBe(false);
     expect(env.code).toBe("UNKNOWN_COMMAND");
-    expect(env.hint).toContain("workflow run");
   });
 
   // P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §4.6, §6 F-B2):
