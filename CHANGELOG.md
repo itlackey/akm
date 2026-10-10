@@ -101,8 +101,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Distill's lesson update (#1139) is judged as the lesson it makes, and costs a call only for a lesson that is named.**
   The judge read only the added lines as a standalone lesson, so a single added fact failed `reusable` and no update
   passed (0 of 8 on the akm-eval `lesson-update` class, on two models). It now reads the extended lesson (old body plus
-  added lines) against the memory and the lesson being extended, and no longer lists that lesson as an asset the new one
-  might repeat. An update is also tried only for a related lesson that the writer's NONE reason, or the judge's
+  added lines) as one lesson, in the same single call: reusable and grounded as a whole (a line is grounded when the
+  memory or the lesson states it), and each added line must state something the lesson does not already hold. An update is also tried only for a related lesson that the writer's NONE reason, or the judge's
   non-redundancy finding, names, or for the only related lesson, not for every lesson among the nearest three. The
   update writer lists the memory's new facts before the body, and an update that lists none is not proposed. (#1090)
 
