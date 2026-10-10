@@ -55,7 +55,7 @@
 import path from "node:path";
 import { isDangerousEnvKey } from "../../../commands/lint/env-key-rules";
 import { backendNameForPlatform } from "../../../tasks/backends";
-import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/scheduler-sync";
+import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
