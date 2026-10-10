@@ -159,6 +159,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A workflow param's `default:` is now applied (#1096).** An omitted param was absent from the run and the unit
+  prompt said `Run parameters: {}`, so workflows restated their defaults in prose. A run now starts with each declared
+  default for the params it was not given; explicit values still win.
 - **A call recovered by the retry without the schema is one successful call in the usage rows.** The failed schema
   attempt (`format_ignored` or a 4xx schema rejection) was recorded as a failed call with 0 tokens next to the retry's
   success, so `akm improve` usage showed e.g. `distill freellm/gpt-oss:120b calls 1 failures 1` beside 17 successes. Only
