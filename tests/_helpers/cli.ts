@@ -60,6 +60,7 @@
 
 import { renderUsage, runCommand } from "citty";
 import { isInfoCommand, main, normalizeCittyCliError, shouldBypassConfigStartup } from "../../src/cli";
+import { _resetParsedInvocationForTests } from "../../src/cli/invocation";
 import { emitJsonError } from "../../src/cli/shared";
 import { assertKnownFlags, type FlagScanCommand } from "../../src/cli/unknown-flags";
 import { DEFAULT_CONFIG, loadConfig, resetConfigCache } from "../../src/core/config/config";
@@ -92,6 +93,7 @@ import { withEnv } from "./sandbox";
  * closes that hole at the source.
  */
 export function resetAllProcessState(): void {
+  _resetParsedInvocationForTests();
   resetConfigCache();
   resetOutputMode();
   resetLocalEmbedder();

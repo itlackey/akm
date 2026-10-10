@@ -204,11 +204,11 @@ export interface ImproveExecutionPlan {
    * projection, not a dispatch report; #944's post-run cost/routing report is
    * a separate, additional field. Sourced from `ResolvedImprovePlan`, which
    * is resolved before any side effect on every invocation (dry or live), so
-   * `--dry-run`/`--plan` shows a `--strategy` override for free.
+   * `--dry-run` shows a `--strategy` override for free.
    */
   processes: ProcessRoutingRow[];
   proactive?: {
-    configured: { dueDays?: number; maxPerRun?: number; limit?: number };
+    configured: { dueDays?: number; maxPerRun?: number };
     effective: { dueDays: number; maxPerRun: number };
     candidatePool: number;
     dueTotal: number;
@@ -219,16 +219,14 @@ export interface ImproveExecutionPlan {
   consolidation: {
     configured: {
       enabled?: boolean;
-      minPoolSize?: number;
       limit?: number;
       maxChunkSize?: number;
     };
-    effective: { enabled: boolean; minPoolSize: number; limit?: number; chunkSize: number };
+    effective: { enabled: boolean; limit?: number; chunkSize: number };
     poolSize: number;
     candidatePoolSize: number;
     gates: {
       profile: { passed: boolean; reason: string };
-      minimumPool: { passed: boolean; reason: string };
       delta: { passed: boolean; reason: string };
     };
     wouldRun: boolean;
@@ -247,7 +245,6 @@ export interface ImproveExecutionPlan {
     /** Effective mode the live pre-pass will execute. */
     mode: "queue" | "promote";
     maxAcceptsPerRun: number;
-    maxDiffLines?: number;
   };
 }
 
@@ -554,6 +551,8 @@ export interface AkmDistillResult {
    * was minted for `outcome === "quality_rejected"` / `"review_needed"`.
    */
   proposalId?: string;
+  /** True when `outcome === "queued"` and the proposal extends an existing lesson (`proposalRef`) instead of adding one. */
+  updatesExisting?: true;
   /** Human-readable hint surfaced when the call was skipped. */
   message?: string;
   /** Machine-readable reason when `outcome === "skipped"`. */

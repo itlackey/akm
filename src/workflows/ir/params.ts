@@ -10,6 +10,7 @@
 
 import { UsageError } from "../../core/errors";
 import {
+  applyInputDefaults,
   type InputContract,
   type InputDeclaration,
   type InputFlag,
@@ -31,7 +32,10 @@ function contractFromPlan(plan: WorkflowParameterPlan): InputContract {
   const names = plan.params ?? Object.keys(plan.paramSchemas ?? {});
   const contract: Record<string, InputDeclaration> = {};
   for (const name of names) {
-    contract[name] = { schema: plan.paramSchemas?.[name] ?? {}, required: false };
+    const schema = plan.paramSchemas?.[name] ?? {};
+    contract[name] = Object.hasOwn(schema, "default")
+      ? { schema, default: schema.default, required: false }
+      : { schema, required: false };
   }
   return contract;
 }
@@ -76,6 +80,17 @@ export function materializeWorkflowParameterFlags(
 ): Record<string, unknown> {
   if (flags.length === 0) return {};
   return materializeInputFlags(contractFromPlan(plan), flags, WORKFLOW_PARAMETER_DIAGNOSTICS);
+}
+
+/**
+ * Fill each declared param the run did not supply with its `default:`. An
+ * explicit value always wins; params without a default stay absent.
+ */
+export function applyWorkflowParamDefaults(
+  plan: WorkflowParameterPlan,
+  params: Record<string, unknown>,
+): Record<string, unknown> {
+  return applyInputDefaults(contractFromPlan(plan), params);
 }
 
 /**

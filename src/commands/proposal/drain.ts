@@ -10,9 +10,18 @@
  *     gate decision carrying its content hash) is accepted, unless its target
  *     changed since mint — then it is auto-rejected as `stale-target`, never
  *     overwritten;
+ *   - a proposal planned by the proactive lane (`eligibilitySource: "proactive"`,
+ *     no feedback behind it) is never accepted, by a gate or by the judgment tier,
+ *     and a staged accept does not carry it: it is left for a person with reason
+ *     `proactive-needs-review` (#1147);
  *   - everything else needs a judge: the judgment tier decides it when a runner
  *     is configured, and whatever stays undecided is left for review
  *     (`review_needed` in the improve ledger).
+ * The judgment tier may accept only a consolidate promotion (a memory proposed
+ * as a new knowledge note). Judged over every kind, it accepted unsafe
+ * retirements, applied exact fixes unreviewed and changed notes no one had
+ * touched (6 to 14 harmed items a night on two models, #1132); a promotion it
+ * judges well. Any other kind it would accept is left for a person.
  * `maxAccepts` caps promotions across both tiers; `applyMode: "queue"` never
  * promotes; `excludeIds` keeps this run's fresh proposals out; a proposal that
  * a generating stage routed to a person is left for that person.
@@ -58,7 +67,7 @@ import {
   recordGateDecision,
 } from "./repository";
 
-export type DrainDeferReason = "needs-judgment";
+export type DrainDeferReason = "needs-judgment" | "proactive-needs-review";
 
 /** The gate label on every decision the drain records. */
 const DRAIN_GATE = "triage";
@@ -114,6 +123,11 @@ export interface JudgmentSeams {
   ) => Promise<string>;
   runAgentFn?: NonNullable<RunExecutionOptions["runAgent"]>;
   runSdkFn?: NonNullable<RunExecutionOptions["runSdk"]>;
+}
+
+/** A consolidate promotion: a memory proposed as a new knowledge note. The only kind the judgment tier may accept. */
+export function isPromotionProposal(proposal: Proposal): boolean {
+  return proposal.source === "consolidate" && proposal.promotionSource !== undefined;
 }
 
 /** An empty diff: no non-blank body line outside the frontmatter. */
@@ -306,7 +320,7 @@ export function parseJudgmentVerdict(raw: string): JudgmentVerdict | null {
 
 /** Why a judged item is still deferred: a stable token and, for a model defer, its words. */
 interface DeferNote {
-  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error";
+  reason: "judgment-deferred" | "judgment-parse-failure" | "judgment-error" | "judgment-not-promotion";
   judgeReason?: string;
 }
 
@@ -367,7 +381,7 @@ async function runJudgmentTier(
   const cappedBefore = result.skippedByCap.length;
   for (const item of result.deferred) {
     const proposal = byId.get(item.id);
-    if (!proposal) {
+    if (!proposal || item.reason === "proactive-needs-review") {
       stillDeferred.push(item);
       continue;
     }
@@ -414,6 +428,15 @@ async function runJudgmentTier(
       }
       continue;
     }
+    // Only a promotion may be accepted on a judgment (#1132): anything else waits for a person.
+    if (!isPromotionProposal(proposal)) {
+      deferNotes.set(item.id, {
+        reason: "judgment-not-promotion",
+        ...(verdict.reason ? { judgeReason: verdict.reason } : {}),
+      });
+      stillDeferred.push(item);
+      continue;
+    }
     // Queue mode never writes the asset: the verdict is staged for a later promote run.
     if (opts.applyMode !== "promote") {
       if (opts.dryRun) {
@@ -450,8 +473,7 @@ async function runJudgmentTier(
     );
     if (outcome === "promoted") {
       result.promoted.push(item.id);
-      if (proposal.source === "consolidate" && proposal.promotionSource !== undefined)
-        acceptedPromotions.push(proposal);
+      acceptedPromotions.push(proposal);
       acceptBudget -= 1;
     } else if (outcome === "rejected") {
       result.rejected.push(item.id);
@@ -476,7 +498,7 @@ function promotionNeighbours(
   proposal: Proposal,
   acceptedPromotions: readonly Proposal[],
 ): ReturnType<typeof nearestKnowledgeNotes> {
-  if (proposal.source !== "consolidate" || proposal.promotionSource === undefined) return [];
+  if (!isPromotionProposal(proposal) || proposal.promotionSource === undefined) return [];
   try {
     const parsed = parseRefInput(proposal.promotionSource);
     const typeDir = stashDirFor(parsed.type);
@@ -564,14 +586,23 @@ export async function drainProposals(
     if (decision?.outcome === "deferred" && !decision.gate?.startsWith(DRAIN_GATE)) continue;
     if (isEmptyDiff(proposal)) {
       empties.push(proposal.id);
+    } else if (proposal.eligibilitySource === "proactive") {
+      // Planned by the proactive lane (no feedback behind it): never accepted
+      // here, whatever a judge or an earlier drain staged. A person decides (#1147).
+      result.deferred.push({ id: proposal.id, reason: "proactive-needs-review" });
     } else if (decision?.outcome === "staged" && decision.contentHash === proposalContentHash(proposal)) {
+      // A judgment accept staged by an earlier drain obeys the same rule: only a promotion.
+      if (decision.gate === DRAIN_GATE && !isPromotionProposal(proposal)) {
+        result.deferred.push({ id: proposal.id, reason: "needs-judgment" });
+        continue;
+      }
       accepts.push({ id: proposal.id, reason: decision.gate === "quality-gate" ? "judge-passed" : "judgment-accept" });
     } else {
       result.deferred.push({ id: proposal.id, reason: "needs-judgment" });
     }
   }
 
-  if (opts.judgment && result.deferred.length > 0) {
+  if (opts.judgment && result.deferred.some((d) => d.reason === "needs-judgment")) {
     // Symbolic credentials, and the runner's model-work tool policy, are checked before any gate, reject or promote.
     const prepared = resolveExecution({
       content: "Validate the selected proposal judgment runner before mutation.",
@@ -638,7 +669,10 @@ export async function drainProposals(
   if (!opts.dryRun) {
     for (const item of result.deferred) {
       const note = deferNotes.get(item.id);
-      const reviewReason = note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured");
+      const reviewReason =
+        item.reason === "proactive-needs-review"
+          ? item.reason
+          : (note?.reason ?? (opts.judgment ? "judgment-deferred" : "no-judge-configured"));
       try {
         recordGateDecision(opts.stashDir, item.id, {
           outcome: "deferred",

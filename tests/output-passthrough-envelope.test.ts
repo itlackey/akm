@@ -8,7 +8,7 @@
 // pin a schema version and dispatch on the response shape.
 //
 // NOTE: `curate` is no longer a passthrough — WS2 (0.8) gave it a dedicated
-// shape that honors --detail/--shape. Its envelope still carries
+// shape that honors --detail. Its envelope still carries
 // `schemaVersion`/`shape: "curate"`; the generic passthrough cases below use
 // `clone` (still a passthrough) as the representative command.
 

@@ -54,6 +54,8 @@
 
 import path from "node:path";
 import { isDangerousEnvKey } from "../../../commands/lint/env-key-rules";
+import { backendNameForPlatform } from "../../../tasks/backends";
+import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "../../../tasks/schedule-gates";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { taskSourceErrorDetail } from "../../../tasks/source-v3";
 import { checkWorkflowPlan, compileWorkflowSource } from "../../../workflows/compile";
@@ -251,7 +253,6 @@ export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Dia
     case "task":
       return taskDiagnostics(relPath, raw, workspaceRoot);
     case "workflow":
-      // Markdown lint handles `.md`; peer GitHub-shaped `.yml` sources enter through the workflow source adapter.
       return ext === ".md" ? workflowDiagnostics(relPath, raw, body) : [];
     case "memory":
       return memoryDiagnostics(relPath, data, body, ctx);
@@ -296,14 +297,21 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
  * through the strict task-v3 grammar, `version: 4` through task source v4.
  * Keeping raw YAML at this boundary preserves duplicate-key, alias/tag,
  * source-location, descriptor, resource-bound, and migration-hint behavior.
+ *
+ * A file that parses must also pass the two per-source gates `akm task sync`
+ * runs before it installs a schedule (the schedule inputs satisfy the declared
+ * contract; the cron suits the local scheduler backend), so `akm lint --type
+ * tasks` never reports clean a task that sync would refuse.
  */
 export function taskDiagnostics(relPath: string, raw: string, workspaceRoot?: string): Diagnostic[] {
   try {
-    parseTaskSource({
+    const parsed = parseTaskSource({
       filePath: relPath,
       yaml: raw,
       ...(workspaceRoot ? { workspaceRoot } : {}),
     });
+    assertTaskScheduleInputsSatisfyContract(parsed.v4, relPath);
+    assertTaskScheduleCronValid(parsed.v4, backendNameForPlatform());
     return [];
   } catch (cause) {
     return [
@@ -367,34 +375,6 @@ export type WorkflowFrontendDiagnostic = Diagnostic & {
 export interface WorkflowFrontendDiagnostics {
   errors: WorkflowFrontendDiagnostic[];
   warnings: WorkflowFrontendDiagnostic[];
-}
-
-/**
- * Compile one peer GitHub-shaped `.yml` source through the shared source-IR
- * frontend. YAML has no Markdown frontmatter/base/stub pass and currently
- * emits fatal source diagnostics only; keeping the same two-channel result
- * shape lets the ordinary sweep and both workflow adapters route it exactly
- * like the established Markdown frontend without inventing another parser.
- */
-export function workflowYamlSourceDiagnostics(
-  relPath: string,
-  raw: string,
-  parsePath: string,
-  workspaceRoot: string,
-): WorkflowFrontendDiagnostics {
-  if (isAkmRegistryCachePath(parsePath)) return { errors: [], warnings: [] };
-  const compiled = compileWorkflowSource(raw, { path: parsePath, workspaceRoot });
-  if (compiled.ok) return { errors: [], warnings: [] };
-  return {
-    errors: compiled.errors.map((error) => ({
-      file: relPath,
-      issue: "invalid-workflow-structure",
-      detail: error.message,
-      fixed: false,
-      ...lineOf(error),
-    })),
-    warnings: [],
-  };
 }
 
 /**

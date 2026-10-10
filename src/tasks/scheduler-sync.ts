@@ -4,7 +4,7 @@
 
 /**
  * Scheduler reconciliation: compile the desired bindings from a bundle's
- * task and workflow sources, then diff them against the rows the native
+ * task sources, then diff them against the rows the native
  * scheduler holds.
  *
  * `compileSchedulerSources` reads each source once. One source that fails
@@ -20,32 +20,23 @@ import path from "node:path";
 import { makeBundleRef, parseBundleRef } from "../core/asset/asset-ref";
 import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
-import { UsageError } from "../core/errors";
-import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
-import { applyInputDefaults, validateInputs } from "../execution/input-contract";
-import { checkWorkflowPlan, compileWorkflowSource } from "../workflows/compile";
-import {
-  WorkflowSourceCollisionError,
-  WorkflowSourceNameError,
-  workflowNameForSourcePath,
-} from "../workflows/source-files";
 import { prepareTaskV3Execution } from "./prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "./prepare/prepared-execution";
-import { parseSchedule, type ScheduleBackend } from "./schedule";
+import type { ScheduleBackend } from "./schedule";
+import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "./schedule-gates";
 import {
   compileTaskSchedulerBindings,
-  compileWorkflowSchedulerBindings,
   type InstalledSchedulerBinding,
   type SchedulerBinding,
   type SchedulerInstallOptions,
   schedulerBindingNativeId,
   schedulerNativeBindingId,
 } from "./scheduler-binding";
-import { type ParsedTaskSource, parseTaskSource } from "./source/parse-task-source";
+import { parseTaskSource } from "./source/parse-task-source";
 import { projectTaskSourceV4 } from "./source/project-v4";
 import { taskSourceErrorDetail } from "./source-v3";
 
-/** One task/workflow source, bundle, or installed row that could not be reconciled. */
+/** One task source, bundle, or installed row that could not be reconciled. */
 export interface SchedulerSourceFailure {
   readonly path: string;
   readonly ref?: string;
@@ -82,7 +73,6 @@ export async function compileSchedulerSources(input: CompileSchedulerSourcesInpu
   const desired: SchedulerBinding[] = [];
   const failures: SchedulerSourceFailure[] = [];
   await compileTaskSources({ ...input, sourceRoot }, desired, failures);
-  compileWorkflowSources({ ...input, sourceRoot }, desired, failures);
   return Object.freeze({
     desired: Object.freeze(desired),
     failures: Object.freeze(failures.sort((left, right) => compareCodePoints(left.path, right.path))),
@@ -157,76 +147,6 @@ function taskSourceFiles(sourceRoot: string, adapterId: string): string[] {
   return [];
 }
 
-function compileWorkflowSources(
-  input: CompileSchedulerSourcesInput,
-  desired: SchedulerBinding[],
-  failures: SchedulerSourceFailure[],
-): void {
-  if (input.adapterId !== "akm" && input.adapterId !== "akm-workflow") return;
-  const root = input.adapterId === "akm" ? path.join(input.sourceRoot, "workflows") : input.sourceRoot;
-  const byName = new Map<string, string[]>();
-  for (const file of walkFiles(root)) {
-    if (path.basename(file).toLowerCase() === "readme.md") continue;
-    const authoredName = workflowNameForSourcePath(input.sourceRoot, input.adapterId, file);
-    if (authoredName === undefined) continue;
-    const extension = path.posix.extname(authoredName).toLowerCase();
-    const stem = authoredName.slice(0, -extension.length).toLowerCase();
-    const nestedSuffix = (WORKFLOW_EXTENSIONS as readonly string[]).find((suffix) => stem.endsWith(suffix));
-    if (nestedSuffix) {
-      const relative = toPosix(path.relative(input.sourceRoot, file));
-      failures.push({ path: file, reason: new WorkflowSourceNameError(relative, nestedSuffix).message });
-      continue;
-    }
-    const canonicalName = canonicalizeWorkflowName(authoredName);
-    byName.set(canonicalName, [...(byName.get(canonicalName) ?? []), file]);
-  }
-  for (const [canonicalName, sources] of [...byName].sort(([left], [right]) => compareCodePoints(left, right))) {
-    const conceptId = input.adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName;
-    const ref = sourceRef(input.bundleName, conceptId);
-    if (ref === undefined || (input.enabledRefs && !input.enabledRefs.has(ref))) continue;
-    const file = sources[0]!;
-    try {
-      if (sources.length > 1) {
-        throw new WorkflowSourceCollisionError(
-          conceptId,
-          sources.map((source) => toPosix(path.relative(input.sourceRoot, source))),
-        );
-      }
-      const relative = toPosix(path.relative(input.sourceRoot, file));
-      const compiled = compileWorkflowSource(fs.readFileSync(file, "utf8"), {
-        path: relative,
-        workspaceRoot: input.sourceRoot,
-      });
-      if (!compiled.ok) {
-        throw new UsageError(
-          compiled.errors
-            .map((error) => `${error.path}:${error.line ?? 1} [${error.code}] ${error.message}`)
-            .join("; "),
-          "WORKFLOW_SOURCE_INVALID",
-        );
-      }
-      const planDraft = checkWorkflowPlan(compiled.plan);
-      if (!planDraft.ok) {
-        throw new UsageError(
-          planDraft.errors.map((error) => `${relative}:${error.line} ${error.message}`).join("; "),
-          "WORKFLOW_SOURCE_INVALID",
-        );
-      }
-      const schedules = (compiled.plan.schedules ?? []).map((schedule) => ({
-        cron: schedule.cron,
-        source: `${relative}:${schedule.line}`,
-        ordinal: schedule.ordinal,
-      }));
-      for (const binding of compileWorkflowSchedulerBindings({ qualifiedRef: ref, schedules })) {
-        parseSchedule(binding.cron, input.backend);
-        desired.push(binding);
-      }
-    } catch (cause) {
-      failures.push({ path: file, ref, reason: errorMessage(cause) });
-    }
-  }
-}
-
 /** A file whose name cannot form a ref (a `#` in it) cannot be enabled, so it is not this sync's. */
 function sourceRef(bundleName: string, conceptId: string): string | undefined {
   try {
@@ -268,43 +188,6 @@ function statOrUndefined(file: string): fs.Stats | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * Validate every v4 `schedule:` entry's `inputs` against the task's own
- * declared contract with defaults applied — the exact set of values a
- * compiled invocation delivers — so a violation is reported at sync rather
- * than when the scheduler fires. Shared with `akm task validate`.
- */
-export function assertTaskScheduleInputsSatisfyContract(
-  v4: Pick<ParsedTaskSource["v4"], "inputs" | "schedule">,
-  refLabel: string,
-): void {
-  const contract = v4.inputs ?? {};
-  for (const scheduleEntry of v4.schedule) {
-    const defaultedInputs = applyInputDefaults(contract, { ...scheduleEntry.inputs });
-    const errors = validateInputs(contract, defaultedInputs);
-    if (errors.length > 0) {
-      throw new UsageError(
-        `Task ${JSON.stringify(refLabel)} schedule[${scheduleEntry.ordinal}].inputs does not satisfy ` +
-          `its declared inputs once defaults are applied: ${errors.join("; ")}`,
-        "TASK_SOURCE_INVALID",
-      );
-    }
-  }
-}
-
-/**
- * Validate every v4 `schedule:` entry's `cron` against the active backend's
- * dialect: cron is the most permissive of the three, so a task authored on
- * Linux can carry an expression launchd/schtasks cannot translate. Shared
- * with `akm task validate`.
- */
-export function assertTaskScheduleCronValid(
-  v4: Pick<ParsedTaskSource["v4"], "schedule">,
-  backend: ScheduleBackend,
-): void {
-  for (const scheduleEntry of v4.schedule) parseSchedule(scheduleEntry.cron, backend);
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────

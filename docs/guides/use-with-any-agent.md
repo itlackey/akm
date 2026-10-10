@@ -26,7 +26,7 @@ For a longer, agent-facing instruction block — usage patterns, flag guidance,
 the full ref format — generate one instead of hand-writing it:
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 The output is stable across patch releases and designed for agents rather
@@ -50,7 +50,7 @@ akm show workflows/deploy-to-prod
 akm feedback workflows/deploy-to-prod --positive --reason "Completed without issues"
 ```
 
-**Get refs from search.** Agents should call `akm search --shape agent` or
+**Get refs from search.** Agents should call `akm search --detail agent` or
 `akm curate` to discover refs — not guess them. The `ref` field in search
 results is the stable token to pass to `akm show`. Feedback closes the loop.
 Record `--negative` only when the asset's content is wrong or stale; a note that
@@ -70,7 +70,7 @@ sets expectations by environment.
 
 | Environment | Core support | Optional/extended support |
 | --- | --- | --- |
-| Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm help agents`) or a platform plugin |
+| Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm hints`) or a platform plugin |
 | Claude/OpenCode project layout | Indexed in place through a `BundleAdapter` — no migration needed | `akm clone` selected assets into a writable bundle for editing |
 | IDE assistant without shell access | Not a direct core integration | Requires a plugin, an `akm task`, or an external bridge that can shell out on the assistant's behalf |
 
@@ -118,12 +118,57 @@ than replacing either.
   browsing, automatic context injection — but the core `akm` CLI works
   without them.
 
+## OpenCode plugins: one package per OpenCode major
+
+OpenCode 1 and OpenCode 2 load different plugin APIs, so akm ships one plugin
+package for each. Install only the one that matches the `opencode` you run; akm
+never installs or replaces the `opencode` binary, and `akm upgrade` never adds
+one plugin to the other major's config.
+
+| OpenCode | Plugin package | Config key | Plugin cache |
+| --- | --- | --- | --- |
+| 1 | `akm-opencode` | `"plugin"` | `~/.cache/opencode/packages/akm-opencode@<tag>/` |
+| 2 | `akm-opencode-v2` | `"plugins"` (the key `opencode plugin add` writes) | `~/.cache/opencode/npm/akm-opencode-v2@<tag>/<build>/` |
+
+(`$XDG_CACHE_HOME` and `$XDG_CONFIG_HOME` move both.) Both packages declare the
+same `akm-cli` dependency.
+
+**OpenCode 1.** Add `akm-opencode` to the global config
+(`~/.config/opencode/opencode.json`):
+
+```json
+{ "plugin": ["akm-opencode"] }
+```
+
+**OpenCode 2.**
+
+```sh
+opencode plugin add akm-opencode-v2
+```
+
+This installs the package and adds it to `plugins` in the global config.
+
+**Updating.** `akm upgrade` refreshes the cached plugin of each major it finds,
+holds the CLI to the `akm-cli` those plugins pin, and leaves a plugin alone
+whose config pins another spec such as `akm-opencode@0.8.0`. Use
+`akm upgrade --next` with `akm-opencode@next` / `akm-opencode-v2@next` in the
+config to follow prereleases. The exact rules are in the
+[`akm upgrade` reference](../reference/cli.md#harness-plugins). `akm health`
+warns when either plugin's bundled `akm-cli` differs from the running CLI.
+
+**Which OpenCode akm drives** is detected, not configured: an `opencode` or
+`opencode-sdk` agent engine runs the most recent OpenCode on `PATH` (or its own
+`bin`) and uses the adapters for the major that binary reports; OpenCode 1 logs a
+warning recommending OpenCode 2 (see
+[Configuration](../reference/configuration.md#engines)). It does not change
+which plugin you install, and the plugin choice does not change it.
+
 ## See also
 
 - [Configuration](../reference/configuration.md#engines) — named agent engines and model aliases
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
 - [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
-- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `help agents` command documentation
+- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
 - [Concepts](concepts.md) — refs, origins, and the asset type system
 - [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place

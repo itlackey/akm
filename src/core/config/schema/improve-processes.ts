@@ -60,8 +60,7 @@ const excludeRefPrefixesField = z.array(z.string().min(1)).optional();
 
 /**
  * Consolidate process: hard cap on memories processed per pass.
- * Reflect/distill: max refs processed (same as profile-level `limit`).
- * proactiveMaintenance: fallback when `maxPerRun` is absent.
+ * Reflect: max refs processed (same as profile-level `limit`).
  */
 const processLimitField = positiveInt.optional();
 
@@ -98,21 +97,6 @@ const clsField = z
   })
   .passthrough()
   .optional();
-
-/**
- * WS-3b: Distill→source fidelity check (step 10). After a distill proposal,
- * check it against its cited source memories; a contradiction flag forces
- * human review. Default OFF. Distill process only.
- */
-const fidelityCheckField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
-
-/**
- * #639 — semantic value-floor filter for the `reflect` process. When
- * enabled, proposals classified as "low-value" by the deterministic noise
- * gate are deferred. DEFAULT OFF (absent / { enabled: false } = pre-#639
- * byte-identical behaviour). Reflect process only.
- */
-const lowValueFilterField = z.object({ enabled: z.boolean().optional() }).passthrough().optional();
 
 /**
  * The wording lists of reflect's pre-judge defect filter (`findReflectDefect`).
@@ -171,61 +155,31 @@ const triageJudgmentField = z
   )
   .optional();
 
-/**
- * WS-3b: Anti-collapse guard (step 8), consolidate process only: a small
- * random (non-similarity-driven) fraction of the pool is mixed into the
- * clustered order so consolidation is not purely rich-get-richer. Default ON
- * (opt out via `enabled: false`); `randomClusterFraction` defaults to 0.05.
- * The retired merge guards (`maxGeneration`, `lexicalDiversityCheck`,
- * `mergeInformationFloor`, `minSpecificityRetention`) never refused a merge
- * and are tolerated as unknown keys.
- */
-const antiCollapseField = z
-  .object({
-    enabled: z.boolean().optional(),
-    randomClusterFraction: z.number().min(0).max(1).optional(),
-  })
-  .passthrough()
-  .optional();
-
 const REFLECT_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   excludeRefPrefixes: excludeRefPrefixesField,
   limit: processLimitField,
   qualityGate: qualityGateField,
-  lowValueFilter: lowValueFilterField,
   defectFilter: defectFilterField,
 };
 
 const DISTILL_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
-  limit: processLimitField,
   qualityGate: qualityGateField,
   // Skip distill entirely when reflect produced zero planned refs.
   requirePlannedRefs: z.boolean().optional(),
   cls: clsField,
-  fidelityCheck: fidelityCheckField,
 };
 
 const CONSOLIDATE_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
   limit: processLimitField,
-  // Minimum eligible-memory pool size below which the consolidation pass skips
-  // entirely (emits `pool_below_min_size`). 0 disables the guard. Default 500.
-  minPoolSize: z.number().int().min(0).optional(),
   maxChunkSize: z.number().int().min(1).max(50).optional(),
-  // Fallback p90 wall-clock time per consolidation chunk in seconds, used for
-  // cold-start budget estimation when no telemetry history exists. The actual
-  // p90 is derived from observed run durations once sufficient history
-  // accumulates; this value is only used on the very first run. Default 30s.
-  p90ChunkSecondsDefault: z.number().finite().positive().optional(),
-  antiCollapse: antiCollapseField,
 };
 
 const MEMORY_INFERENCE_PROCESS_FIELDS = {
   // Minimum pending memory count to run the pass.
   minPendingCount: z.number().int().min(0).optional(),
-  cls: clsField,
 };
 
 const EXTRACT_PROCESS_FIELDS = {
@@ -267,10 +221,8 @@ const TRIAGE_PROCESS_FIELDS = {
 const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   // Staleness gate + rotation cooldown in days (default 30).
   dueDays: z.number().int().min(0).optional(),
-  // Top-N bound per run (default 25). Alias for `limit`; `maxPerRun` wins
-  // when both are set.
+  // Top-N bound per run (default 15).
   maxPerRun: positiveInt.optional(),
-  limit: processLimitField,
 };
 
 /** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */
@@ -343,8 +295,10 @@ export const ProactiveMaintenanceProcessConfigSchema = z
  * "unknown enabled process" check below — an old config must keep loading
  * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
  * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
+ * `feedbackDistillation`: a wrapper of `processes.distill.enabled`, removed in
+ * 0.8.0.
  */
-const RETIRED_PROCESS_NAMES = new Set(["graphExtraction"]);
+const RETIRED_PROCESS_NAMES = new Set(["graphExtraction", "feedbackDistillation"]);
 
 const ImproveProfileProcessesSchema = z
   .object({
@@ -359,20 +313,9 @@ const ImproveProfileProcessesSchema = z
   })
   .passthrough()
   .superRefine((val, ctx) => {
-    // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
-    // a thin wrapper around `processes.distill.enabled`. Keep the migration
-    // hint so a stale config gets an actionable message rather than silently
-    // doing nothing. Other unknown process keys remain preserved for
-    // cross-version compatibility, but an enabled one is rejected below because
-    // this version cannot execute it.
-    if ("feedbackDistillation" in (val as Record<string, unknown>)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "feedbackDistillation was removed in 0.8.0 — use processes.distill.enabled instead. " +
-          "It now controls both the orchestration gate and the LLM-call gate.",
-      });
-    }
+    // Unknown process keys remain preserved for cross-version compatibility,
+    // but an enabled one is rejected below because this version cannot
+    // execute it.
     for (const [name, process] of Object.entries(val as Record<string, unknown>)) {
       if (
         !(IMPROVE_PROCESS_NAMES as readonly string[]).includes(name) &&

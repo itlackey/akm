@@ -557,7 +557,13 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
 
 /** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
 export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
-  return [...sideSection("A (older)", older), ...sideSection("B (newer)", newer)].join("\n");
+  // Equal dates (a batch added in one commit, notes from one file time) make neither side newer: say so, or the judge
+  // reads "B (newer)" as proof that B replaces A (#1134).
+  const tied = Date.parse(older.createdIso) === Date.parse(newer.createdIso);
+  return [
+    ...sideSection(tied ? "A (same age as B)" : "A (older)", older),
+    ...sideSection(tied ? "B (same age as A)" : "B (newer)", newer),
+  ].join("\n");
 }
 
 /** The tombstone-vocabulary reason a judge label maps to (`supersedes` -> `superseded`; the rest unchanged). */

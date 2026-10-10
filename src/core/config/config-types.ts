@@ -23,23 +23,14 @@
  * have no schema counterpart.
  */
 import type { z } from "zod";
-// VALID_HARNESS_IDS / HARNESS_AGENT_DISPATCH_IDS derive from the dependency-free
-// harnesses/ids.ts leaf (WI-9.8 KILL 3), NOT the full HARNESS_REGISTRY barrel
-// (`../../integrations/harnesses`) — that barrel transitively pulls in every
-// harness's agent-builder and the agent runtime, which is what fused config
-// into the same import-cycle SCC as `integrations/agent/*`. `harnesses/index.ts`
-// asserts at construction time that its registry matches this leaf, so the two
-// cannot silently drift (see `tests/harnesses-registry.test.ts` for the
-// value-level pin). config ← harnesses/ids is the only import direction (the
-// leaf imports nothing), so there is no cycle.
-import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses/ids";
+// Harness ids derive from the harness registry; nothing the registry imports
+// reaches `core/config` at runtime, so there is no cycle.
+import { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS } from "../../integrations/harnesses";
 
 /**
- * Canonical list of valid agent harness / platform ids. Derived from the
- * dependency-free harness-id leaf (#562/WI-9.8) so the Zod `AgentPlatformSchema`
- * enum, the agent-engine platform union, and setup's `DetectedHarness` union
- * all derive from one place and cannot drift. Add a harness in
- * `src/integrations/harnesses/index.ts` (and its `ids.ts` mirror entry).
+ * Canonical list of valid agent harness / platform ids, derived from the harness
+ * registry so the Zod `AgentPlatformSchema` enum, the agent-engine platform
+ * union, and setup's `DetectedHarness` union cannot drift.
  */
 export { HARNESS_AGENT_DISPATCH_IDS, VALID_HARNESS_IDS };
 
@@ -61,7 +52,7 @@ export type EngineConfig = z.infer<typeof import("./config-schema").EngineConfig
 /**
  * Per-process config (`improve.strategies.<strategy>.processes.<process>`). Most
  * fields are process-specific — see the field comments in config-schema.ts for
- * which process each knob applies to and its default (e.g. `minPoolSize` =
+ * which process each knob applies to and its default (e.g. `maxChunkSize` =
  * consolidate; `minNewSessions`/`indexSessions`/`triage` = extract).
  */
 export type ImproveProcessConfig = z.infer<typeof import("./config-schema").ImproveProcessConfigSchema>;

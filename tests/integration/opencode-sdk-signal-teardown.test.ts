@@ -92,9 +92,13 @@ for (const signal of ["SIGTERM", "SIGINT"] as const) {
           `console.log("opencode server listening on http://127.0.0.1:" + server.port);`,
         ].join("\n"),
       );
-      fs.writeFileSync(bin, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(serve)} "$@"\n`, {
-        mode: 0o755,
-      });
+      fs.writeFileSync(
+        bin,
+        `#!/bin/sh\n[ "$1" = "--version" ] && { echo 1.18.34; exit 0; }\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(serve)} "$@"\n`,
+        {
+          mode: 0o755,
+        },
+      );
       writeSandboxConfig({
         engines: { fake: { kind: "agent", platform: "opencode-sdk", bin } },
         defaults: { engine: "fake" },

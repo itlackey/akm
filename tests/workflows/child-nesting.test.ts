@@ -426,7 +426,6 @@ describe("A-35 — a child that itself composes a grandchild drives recursively"
         id: "spawn-grandchild",
         instructions: "Compose the grandchild workflow.",
         onError: "fail",
-        isolation: "none",
         frozenTarget: grandchildTarget as FrozenWorkflowTarget,
         environment: [],
       },

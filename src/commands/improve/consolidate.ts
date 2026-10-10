@@ -31,7 +31,7 @@ import { assembleAssetFromString, serializeFrontmatter } from "../../core/asset/
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProfileConfig } from "../../core/config/config";
-import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
+import { loadConfig } from "../../core/config/config";
 import type { ConsolidateOpKind, ConsolidateResult } from "../../core/improve-types";
 import { parseEmbeddedJsonResponse } from "../../core/parse";
 import { openStateDatabase } from "../../core/state-db";
@@ -155,8 +155,6 @@ export interface AkmConsolidateOptions {
    * call once it aborts, and its `remainingBudgetMs` caps the pool up front.
    */
   signal?: AbortSignal;
-  /** Fallback p90 seconds per chunk for the up-front budget cap (default 30). */
-  p90ChunkSecondsDefault?: number;
   /** Body hashes of live knowledge, when the caller already walked `knowledge/`. */
   existingKnowledgeBodyHashes?: Set<string>;
 }
@@ -287,42 +285,6 @@ async function clusterMemoriesBySimilarity(
     current = bestIdx;
   }
   return { ordered, embedTelemetry: telemetry };
-}
-
-/**
- * Anti-collapse (default on, `antiCollapse.enabled: false` opts out): a small
- * deterministic sample of the pool is spread through the similarity order so
- * consolidation is not purely similarity-driven.
- */
-function injectRandomClusterMembers(
-  memories: MemoryEntry[],
-  profile: ImproveProfileConfig | undefined,
-  warnings: string[],
-) {
-  const config =
-    (getImproveProcessConfig("consolidate", profile)?.antiCollapse as
-      | { enabled?: boolean; randomClusterFraction?: number }
-      | undefined) ?? {};
-  if (config.enabled === false || memories.length <= 2) return memories;
-  const fraction = config.randomClusterFraction ?? 0.05;
-  const randomCount = Math.max(1, Math.floor(memories.length * fraction));
-  const sample = [...memories]
-    .sort((a, b) => contentHash(a.name).localeCompare(contentHash(b.name)))
-    .slice(0, randomCount);
-  const sampled = new Set(sample.map((m) => m.name));
-  const interval = Math.max(2, Math.floor(memories.length / randomCount));
-  const out: MemoryEntry[] = [];
-  let next = 0;
-  for (let i = 0; i < memories.length; i++) {
-    const m = memories[i];
-    if (m && !sampled.has(m.name)) out.push(m);
-    if (i > 0 && i % interval === 0 && next < sample.length) out.push(sample[next++] as MemoryEntry);
-  }
-  while (next < sample.length) out.push(sample[next++] as MemoryEntry);
-  warnings.push(
-    `Anti-collapse: injected ${randomCount} random (non-similarity-driven) cluster member(s) into consolidation pool (fraction=${fraction}).`,
-  );
-  return out;
 }
 
 /** Body hashes of pending consolidate proposals, so the prompt can mark memories already queued. */
@@ -820,11 +782,13 @@ async function judgeConsolidationChunks(args: {
   return planned;
 }
 
+/** Assumed wall-clock seconds per consolidation chunk for the up-front budget cap. */
+const CHUNK_SECONDS_ESTIMATE = 30;
+
 /**
  * The model's plan for the narrowed pool: chunk size from the context window,
  * an up-front cap when the remaining budget cannot cover every chunk (oldest
- * first, the rest deferred), similarity clustering, anti-collapse, then the
- * chunk loop.
+ * first, the rest deferred), similarity clustering, then the chunk loop.
  */
 async function planConsolidation(
   opts: AkmConsolidateOptions,
@@ -847,10 +811,7 @@ async function planConsolidation(
   let budgeted = memories;
   const budgetMs = (opts.signal as (AbortSignal & { remainingBudgetMs?: number }) | undefined)?.remainingBudgetMs;
   if (opts.signal && budgetMs !== undefined) {
-    const safeChunks = Math.max(
-      0,
-      Math.floor((Math.max(0, budgetMs) / 1000 / (opts.p90ChunkSecondsDefault ?? 30)) * 0.6),
-    );
+    const safeChunks = Math.max(0, Math.floor((Math.max(0, budgetMs) / 1000 / CHUNK_SECONDS_ESTIMATE) * 0.6));
     if (safeChunks * chunkSize < memories.length) {
       budgeted = [...memories]
         .sort((a, b) => mtimeMsOf(a) - mtimeMsOf(b) || a.name.localeCompare(b.name))
@@ -869,7 +830,7 @@ async function planConsolidation(
   );
   if (llmRunner && willDispatch) assertRunnerCredentials(llmRunner);
   const { ordered, embedTelemetry } = await clusterMemoriesBySimilarity(budgeted, config, stateDb, opts.signal);
-  const chunks = slice(injectRandomClusterMembers(ordered, opts.improveProfile, warnings));
+  const chunks = slice(ordered);
   const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir, opts.proposalsCtx);
   warn(
     `[consolidate] ${budgeted.length} memories / ${chunks.length} chunk(s) / chunk_size=${chunkSize}` +

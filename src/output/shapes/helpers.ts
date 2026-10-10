@@ -362,7 +362,7 @@ export function shapeSearchHit(hit: Record<string, unknown>, detail: DetailLevel
 
   // Stash hit (local or remote)
   // `ref` is included at `brief` so agents can run `akm show <ref>` without
-  // needing --detail full or --shape agent (REC-03).
+  // needing --detail full or --detail agent (REC-03).
   if (detail === "brief") {
     return pickFields(hit, ["type", "name", "ref", "action", "estimatedTokens", "keys"]);
   }
@@ -452,28 +452,6 @@ export function shapeShowOutput(
     if (shaped.editable !== false) delete shaped.editHint;
     return shaped;
   }
-  if (shape === "summary") {
-    return pickFields(result, [
-      "type",
-      "name",
-      // ref is present on every show shape (human/summary/agent) — it is the
-      // canonical identity of the asset, not an agent-only convenience field
-      // (R-020).
-      "ref",
-      "description",
-      "tags",
-      "parameters",
-      "workflowTitle",
-      "action",
-      "run",
-      "origin",
-      "keys",
-      "links",
-      ...FRAGMENT_PROVENANCE_FIELDS,
-      ...FRAGMENT_CONTEXT_FIELDS,
-    ]);
-  }
-
   const base = pickFields(result, [
     "type",
     "name",

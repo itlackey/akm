@@ -14,8 +14,9 @@ import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-pa
 import { collectSensitiveValues } from "../../core/redaction";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
+import { resolveOpencodeBin } from "../harnesses/opencode/version";
 import { DEFAULT_LLM_TIMEOUT_MS } from "./config";
-import { type AgentProfile, getBuiltinAgentProfile, OPENCODE_SDK_SERVER_BIN } from "./profiles";
+import { type AgentProfile, getBuiltinAgentProfile } from "./profiles";
 
 // `./runner.ts` imports values from this module, so RunnerSpec is referenced
 // through an erased type query instead of a top-level import (no cycle).
@@ -411,11 +412,13 @@ function lowerAgentEngine(name: string, engine: AgentEngineConfig, config: Engin
   const platform = harness.id;
   const sdk = platform === "opencode-sdk";
   const builtin = getBuiltinAgentProfile(platform);
+  // An OpenCode engine without its own `bin` runs the newest OpenCode on PATH.
+  const opencodeFamily = platform === "opencode" || sdk;
   const profile: AgentProfile = {
     name,
     platform,
     personaChannel: sdk ? "native" : (harness.agentBuilder?.personaChannel ?? "prompt"),
-    bin: engine.bin ?? builtin?.bin ?? (sdk ? OPENCODE_SDK_SERVER_BIN : platform),
+    bin: opencodeFamily ? resolveOpencodeBin(engine.bin) : (engine.bin ?? builtin?.bin ?? platform),
     args: engine.args ?? builtin?.args ?? [],
     stdio: "captured",
     ...(builtin?.env ? { env: builtin.env } : {}),

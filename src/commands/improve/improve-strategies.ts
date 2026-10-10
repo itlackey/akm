@@ -2,13 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import catchup from "../../assets/improve-strategies/catchup.json" with { type: "json" };
 import consolidate from "../../assets/improve-strategies/consolidate.json" with { type: "json" };
 import defaultStrategy from "../../assets/improve-strategies/default.json" with { type: "json" };
-import proactiveMaintenance from "../../assets/improve-strategies/proactive-maintenance.json" with { type: "json" };
-import quick from "../../assets/improve-strategies/quick.json" with { type: "json" };
-import reflectDistill from "../../assets/improve-strategies/reflect-distill.json" with { type: "json" };
-import thorough from "../../assets/improve-strategies/thorough.json" with { type: "json" };
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig } from "../../core/config/config";
 import { ImproveProfileConfigSchema } from "../../core/config/config-schema";
@@ -17,6 +12,7 @@ import {
   BUILTIN_IMPROVE_STRATEGY_NAMES,
   IMPROVE_ENGINE_PROCESSES,
   IMPROVE_PROCESS_NAMES,
+  REMOVED_IMPROVE_STRATEGY_NAMES,
 } from "../../core/config/engine-semantics";
 import { ConfigError } from "../../core/errors";
 import type { LoweringNotice } from "../../execution/resolved-request";
@@ -105,12 +101,7 @@ export function isStrategyFilteredForAllPasses(ref: string, strategy: ImprovePro
 
 const BUILTIN_STRATEGIES: Record<string, Record<string, unknown>> = {
   default: defaultStrategy,
-  quick,
-  thorough,
   consolidate,
-  catchup,
-  "reflect-distill": reflectDistill,
-  "proactive-maintenance": proactiveMaintenance,
 };
 
 if (BUILTIN_IMPROVE_STRATEGY_NAMES.some((name) => !(name in BUILTIN_STRATEGIES))) {
@@ -144,6 +135,17 @@ export function resolveImproveStrategy(name: string | undefined, config: AkmConf
       // suggestion is actively wrong — that is exactly the leftover-override
       // shape this refusal exists to reject, not a way around it.
       "Choose a different strategy. `graph-refresh` cannot be redefined under `improve.strategies` — it always refuses.",
+    );
+  }
+  if (
+    !(selectedName in BUILTIN_STRATEGIES) &&
+    !userStrategies[selectedName] &&
+    REMOVED_IMPROVE_STRATEGY_NAMES.includes(selectedName as (typeof REMOVED_IMPROVE_STRATEGY_NAMES)[number])
+  ) {
+    throw new ConfigError(
+      `Improve strategy "${selectedName}" was removed in 0.10. Use "default" (or "consolidate"), or define "${selectedName}" under improve.strategies to keep your own version.`,
+      "UNKNOWN_IMPROVE_STRATEGY",
+      `Run \`akm improve --strategy default\`, or add \`improve.strategies.${selectedName}\` to your config; a block of that name is a user-defined strategy that inherits \`default\`.`,
     );
   }
   if (!(selectedName in BUILTIN_STRATEGIES) && !userStrategies[selectedName]) {
@@ -481,7 +483,8 @@ function buildImprovePlan(
 
   if (
     engineUnavailable.length > 0 &&
-    !Object.values(processes).some((process) => process.enabled) &&
+    // proactiveMaintenance uses no engine: it is a selector, so it alone does not keep a run alive.
+    !IMPROVE_ENGINE_PROCESSES.some((name) => processes[name].enabled) &&
     (!options.allowAllDisabled || anyEngineNotConfigured)
   ) {
     const names = engineUnavailable.map((item) => `"${item.process}"`).join(", ");

@@ -279,7 +279,6 @@ describe("A-30 — aborting the parent's drive mid-dispatch aborts the child dri
             id: parentStepId,
             instructions: "Compose the child workflow.",
             onError: "fail",
-            isolation: "none",
             frozenTarget: target as FrozenWorkflowTarget,
             environment: [],
           },

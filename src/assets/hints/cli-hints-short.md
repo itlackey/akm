@@ -35,7 +35,7 @@ akm remember "note" --bundle my-bundle         # Route write to a named writable
 akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable)
 akm remember "fix" --supersedes memories/old-note # Write a correction AND demote the superseded asset
 akm import ./notes/release-checklist.md       # Import a knowledge doc into your bundle
-akm import ./doc.md --target my-bundle         # Route import to a named writable bundle source
+akm import ./doc.md --bundle my-bundle         # Route import to a named writable bundle source
 akm proposal diff skills/akm-dream            # Diff proposal by ref, UUID, or 8-char prefix
 akm proposal accept 7c115132                  # Accept by UUID prefix
 akm proposal reject skills/my-skill --reason "..."  # Reject by ref

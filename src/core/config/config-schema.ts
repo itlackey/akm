@@ -40,8 +40,12 @@
  *   enforced at save time via `superRefine` on the top-level schema.
  */
 import { z } from "zod";
-import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses/ids";
-import { BUILTIN_IMPROVE_STRATEGY_NAMES, IMPROVE_ENGINE_PROCESSES } from "./engine-semantics";
+import { HARNESS_MODEL_WORK_IDS } from "../../integrations/harnesses";
+import {
+  BUILTIN_IMPROVE_STRATEGY_NAMES,
+  IMPROVE_ENGINE_PROCESSES,
+  REMOVED_IMPROVE_STRATEGY_NAMES,
+} from "./engine-semantics";
 import { EmbeddingConnectionConfigSchema } from "./schema/embedding";
 import { EnginesSchema } from "./schema/engines";
 import { ExecutionPolicyConfigSchema } from "./schema/execution";
@@ -136,8 +140,9 @@ export const AkmConfigShape = {
   index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
-  // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load;
-  // there is no runtime config translator. `defaultBundle` names the primary
+  // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load,
+  // naming the 0.9.x `akm migrate apply` that converts them; there is no
+  // runtime config translator. `defaultBundle` names the primary
   // bundle used for short-ref resolution.
   bundles: BundlesConfigSchema.optional(),
   defaultBundle: nonEmptyString.optional(),
@@ -163,9 +168,12 @@ export const AkmConfigBaseSchema = z.object(AkmConfigShape).passthrough();
  * Per-key overrides for unsupported pre-cutover source shapes.
  */
 const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
-  stashDir:
-    "stashDir is not supported; configure `bundles`, or use `akm config path --all` / `akm info` to inspect current paths.",
+  stashDir: "stashDir is not supported; configure `bundles`, or use `akm info` to inspect current paths.",
 };
+
+/** The one message for a config older than 0.9.15: only akm 0.9.x converts it. */
+const PRE_FLOOR_CONFIG_REMEDY =
+  "This config predates akm 0.9.15 and 0.10 does not convert it: run `akm migrate apply` with akm 0.9.x, then upgrade.";
 
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   const raw = config as Record<string, unknown>;
@@ -176,8 +184,7 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: [key],
-        message:
-          RETIRED_SOURCE_SHAPE_KEY_MESSAGES[key] ?? `${key} is not supported; configure the current bundles shape`,
+        message: `${RETIRED_SOURCE_SHAPE_KEY_MESSAGES[key] ?? `${key} is not supported; configure the current bundles shape`} ${PRE_FLOOR_CONFIG_REMEDY}`,
       });
     }
   }
@@ -216,15 +223,6 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
         code: z.ZodIssueCode.custom,
         path: ["defaultWriteTarget"],
         message: `defaultWriteTarget "${config.defaultWriteTarget}" is disabled`,
-      });
-    }
-  }
-  for (const key of ["llm", "agent", "improve"]) {
-    if (config.defaults && key in config.defaults) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaults", key],
-        message: `defaults.${key} is retired in 0.9`,
       });
     }
   }
@@ -290,6 +288,9 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
     // (src/commands/improve/improve-strategies.ts) refuses it lazily, at
     // improve-invocation time, with the same message either way.
     defaultStrategy !== "graph-refresh" &&
+    // The strategies removed in 0.10 (#1130) are exempt for the same reason:
+    // `resolveImproveStrategy` refuses them lazily, naming `default`.
+    !REMOVED_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof REMOVED_IMPROVE_STRATEGY_NAMES)[number]) &&
     !BUILTIN_IMPROVE_STRATEGY_NAMES.includes(defaultStrategy as (typeof BUILTIN_IMPROVE_STRATEGY_NAMES)[number]) &&
     !config.improve?.strategies?.[defaultStrategy]
   ) {

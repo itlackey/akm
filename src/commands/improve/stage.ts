@@ -348,6 +348,8 @@ export interface QualityJudgeOptions {
   related?: Array<{ ref: string; content: string }>;
   /** Distill: the feedback lines the writer was given. */
   feedback?: string[];
+  /** Distill's lesson update: the body of the existing lesson the proposed lesson extends (judged as an edit of it). */
+  extending?: string;
   /** Reflect: the ref of the asset the candidate revises, for a judge on an agent engine to read. */
   ref?: string;
   /** The exact runner selected for this judge. */
@@ -365,14 +367,19 @@ export function buildJudgePrompt(
   sourceContent: string,
   related?: Array<{ ref: string; content: string }>,
   feedback?: string[],
+  extending?: string,
 ): string {
   const lines = [
     "You are evaluating a lesson an agent wrote from a memory and the feedback about it, for an akm knowledge base.",
     "",
     "Score this lesson on each criterion from 1 (poor) to 5 (excellent):",
     "1. REUSABLE: Does the lesson state a rule an agent can use on another occasion, with the reason it holds? Score 1-2 when it only records what was done, shipped, decided, found or is pending, on a date or for one build, machine or project, or how a system is set up now, however it is phrased. Score 4-5 for a rule with its reason.",
-    '2. NON-REDUNDANCY: Compare the lesson only with the assets listed under "Existing assets nearest the new lesson" (each starts with "Existing asset ref:"); never with the source memory. When that list is absent, score 5. Score 1-2 when a listed asset already states the same rule, or states most of what the lesson says in broader words. Score 4-5 when the lesson gives a rule none of the listed assets gives, or when they are on other subjects.',
-    "3. GROUNDING: Is every statement in the lesson stated by the source or its feedback, in any words? Check each cause, step, number, rule and limit in the lesson against them. Score 4-5 when each is stated. Score 3 when one stretches what the source says. Score 1-2 when any is in neither, when the lesson drops a limit the source states (one place checked, not confirmed, a guess) and says more than it, or when it is about another subject than the source.",
+    extending !== undefined
+      ? "2. NON-REDUNDANCY: The proposed lesson is the existing lesson below with lines added. Compare each added line (a line the existing lesson does not have) only with the existing lesson, never with the source memory. Redundancy means the information is already in the existing lesson. Score 1-2 when an added line only says again what the existing lesson says: its rule or cause in other words, or the same rule applied to an example from the memory. Score 4-5 when every added line states a fact the existing lesson does not contain (a cause, number, version, limit, consequence or observation), however specific or tied to one incident it is: whether the lesson is general enough is REUSABLE's question, asked of the whole lesson, never of this criterion."
+      : '2. NON-REDUNDANCY: Compare the lesson only with the assets listed under "Existing assets nearest the new lesson" (each starts with "Existing asset ref:"); never with the source memory. When that list is absent, score 5. Score 1-2 when a listed asset already states the same rule, or states most of what the lesson says in broader words. Score 4-5 when the lesson gives a rule none of the listed assets gives, or when they are on other subjects.',
+    extending !== undefined
+      ? "3. GROUNDING: Is every statement in the lesson stated by the source, its feedback or the existing lesson below, in any words? Check each cause, step, number, rule and limit in the lesson against them. Score 4-5 when each is stated. Score 3 when one stretches what they say. Score 1-2 when any is in none of them, when it contradicts the existing lesson, or when it is about another subject than the source."
+      : "3. GROUNDING: Is every statement in the lesson stated by the source or its feedback, in any words? Check each cause, step, number, rule and limit in the lesson against them. Score 4-5 when each is stated. Score 3 when one stretches what the source says. Score 1-2 when any is in neither, when the lesson drops a limit the source states (one place checked, not confirmed, a guess) and says more than it, or when it is about another subject than the source.",
     "",
     "Source memory:",
     "```",
@@ -389,7 +396,15 @@ export function buildJudgePrompt(
       "```",
     );
   }
-  if (related && related.length > 0) {
+  if (extending !== undefined) {
+    lines.push(
+      "",
+      "Existing lesson that the proposed lesson extends (it is already in the library):",
+      "```",
+      extending.slice(0, 2000),
+      "```",
+    );
+  } else if (related && related.length > 0) {
     lines.push("", "Existing assets nearest the new lesson (they may be on another subject):");
     for (const asset of related)
       lines.push(`\nExisting asset ref: ${asset.ref}`, "```", asset.content.slice(0, 600), "```");
@@ -502,12 +517,10 @@ export function buildReflectJudgePrompt(
  * 17 of 19 of them bad on 2026-10-05. The rubric reserves 1-2 for a lesson that
  * records what was done instead of a rule, repeats an asset the library holds,
  * or states what neither its source nor its feedback does. The judge is shown
- * the feedback the writer saw, so a statement it supports is not an invention. A
- * contradiction of the source is the optional fidelity check's to send to a
- * human (`judgeAndQueue` in distill.ts).
+ * the feedback the writer saw, so a statement it supports is not an invention.
  */
 const GROUNDING_CRITERION = "grounding";
-const LESSON_REJECT_MAX_SCORE = 2;
+export const LESSON_REJECT_MAX_SCORE = 2;
 
 const LESSON_JUDGE_CRITERIA = ["reusable", "nonRedundancy", GROUNDING_CRITERION] as const;
 const REFLECT_JUDGE_CRITERIA = ["need", "preservation", "quality"] as const;
@@ -632,7 +645,7 @@ export function runLessonQualityJudge(
   chat: QualityJudgeChat | undefined,
   options: QualityJudgeOptions = {},
 ): Promise<QualityJudgeResult> {
-  const prompt = buildJudgePrompt(lessonContent, sourceContent, options.related, options.feedback);
+  const prompt = buildJudgePrompt(lessonContent, sourceContent, options.related, options.feedback, options.extending);
   return runQualityJudge("lesson_quality_gate", config, prompt, LESSON_JUDGE_CRITERIA, chat, options);
 }
 

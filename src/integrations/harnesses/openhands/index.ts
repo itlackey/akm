@@ -31,6 +31,7 @@ export class OpenhandsHarness extends BaseHarness {
   readonly id = "openhands" as const;
   readonly displayName = "OpenHands";
   readonly agentBuilder = openhandsBuilder;
+  readonly profile = { bin: "openhands", args: [], envPassthrough: ["LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"] };
   readonly resultExtractor = openhandsResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // No flag-shaped resume: per the matrix OpenHands resumes from workspace state, not a

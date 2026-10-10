@@ -14,7 +14,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AkmConfig } from "../../src/core/config/config";
 import { getCommandBuilder } from "../../src/integrations/agent/builders";
-import { HARNESS_ID_TABLE } from "../../src/integrations/harnesses/ids";
+import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import { buildUnitPrompt, computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { prepareWorkflowExecution } from "../../src/workflows/exec/unit-dispatch";
 import { canonicalPlanJson } from "../../src/workflows/ir/plan-hash";
@@ -30,7 +30,7 @@ const RUN_ID = "55555555-5555-4555-8555-555555555555";
 
 const ENGINES: Record<string, Record<string, unknown>> = {
   llm: { kind: "llm", endpoint: "http://127.0.0.1:1/v1/chat/completions", model: "test-model" },
-  ...Object.fromEntries(HARNESS_ID_TABLE.map((entry) => [entry.id, { kind: "agent", platform: entry.id }])),
+  ...Object.fromEntries(HARNESS_REGISTRY.map((entry) => [entry.id, { kind: "agent", platform: entry.id }])),
 };
 
 /**

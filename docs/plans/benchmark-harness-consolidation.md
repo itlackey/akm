@@ -195,9 +195,9 @@ The interface is 4 methods. Subprocess form, verified live against 0.9.1:
 ```
 add(text, metadata) → akm remember "<text>" --name <id> --description "<md>" --tag k:v --format json
                       → {ok, ref, path}          # auto-indexes; no separate `akm index` needed
-search(query)       → akm search "<q>" --limit N --shape agent --format json
+search(query)       → akm search "<q>" --limit N --detail agent --format json
                       → hits[].{ref, name, type, path, score, description, estimatedTokens}
-get(ref)            → akm show <ref> --shape agent --format json → .content
+get(ref)            → akm show <ref> --detail agent --format json → .content
 ```
 
 Verified gotchas:

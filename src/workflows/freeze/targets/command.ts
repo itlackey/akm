@@ -3,9 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { createHash } from "node:crypto";
-import { parseBuiltinCommandAction } from "../../../commands/command/builtin-action";
 import { type PreparedCommandInvocation, prepareCommandInvocation } from "../../../commands/command/command-execution";
-import { PORTABLE_ARGUMENTS_PLACEHOLDER } from "../../../commands/command/portable-template";
 import { captureFrozenDirectoryIdentity } from "../../../execution/directory-identity";
 import {
   canonicalResolvedExecutionRequest,
@@ -14,9 +12,8 @@ import {
 import { fallbackAnnouncement } from "../../../integrations/agent/engine-fallback";
 import { buildExecution } from "../../../integrations/agent/execution";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
-import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding, WorkflowCommandMode } from "../../plan";
+import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding } from "../../plan";
 import { freezeEnvironment, workflowExecutionSource } from "../environment";
-import { gitIdentity } from "../identity";
 import {
   type BaseUnit,
   durableRequest,
@@ -27,13 +24,6 @@ import {
   targetConcurrency,
 } from "../step-values";
 
-function inlineWorkflowCommandAction(action: unknown, commandMode: WorkflowCommandMode | undefined): unknown {
-  if (commandMode !== "portable-template") return action;
-  const parsed = parseBuiltinCommandAction(action);
-  if (parsed.kind !== "inline") return action;
-  return { content: parsed.content.split(PORTABLE_ARGUMENTS_PLACEHOLDER).join(parsed.arguments ?? "") };
-}
-
 export async function commandDispatch(
   source: FreezeStep,
   baseUnit: BaseUnit,
@@ -41,14 +31,12 @@ export async function commandDispatch(
   context: ResolutionContext,
 ): Promise<ResolvedDispatch> {
   const prepared = await prepareCommandInvocation({
-    action: inlineWorkflowCommandAction(action, source.commandMode),
+    action,
     config: context.config,
     ...(context.plan.defaults
       ? { invocationDefaults: executionUnitValues(context.plan.defaults, context.asset.sourcePath) }
       : {}),
-    ...(source.commandMode === "literal" || source.commandMode === "portable-template"
-      ? { inlineContentMode: "literal" as const }
-      : {}),
+    inlineContentMode: "literal" as const,
     current: executionUnitValues(source.unit, context.asset.sourcePath),
     sourceLoader: (ref, kind) => workflowExecutionSource(ref, kind, context),
   });
@@ -83,7 +71,6 @@ export function commandResult(
     runner,
     ...(targetConcurrency(runner, context.config) ? { concurrency: targetConcurrency(runner, context.config) } : {}),
     cwdIdentity,
-    ...gitIdentity(baseUnit, cwdIdentity.realRoot),
   });
   const engineAnnouncement = fallbackAnnouncement(prepared.fallbackEngineName, request.engine.name);
   return {

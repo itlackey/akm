@@ -15,7 +15,6 @@
  * registration remains for either spelling.
  */
 
-import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
@@ -49,23 +48,6 @@ export function mergeProposalDrainNotices(
   for (const notice of resolutionNotices ?? []) byKey.set(JSON.stringify(notice), notice);
   for (const notice of dispatchNotices ?? []) byKey.set(JSON.stringify(notice), notice);
   return byKey.size > 0 ? Object.freeze([...byKey.values()]) : undefined;
-}
-
-/**
- * `--source` was renamed to `--generator` on `proposal accept`/`proposal
- * reject` in 0.9 (WS3/S8 — "Removed in 0.9.0"). citty is non-strict, so the
- * retired spelling is silently absorbed rather than rejected — a bulk
- * accept/reject invoked with `--source <name>` then has neither `--generator`
- * nor a positional id, and falls through to the single-proposal path, which
- * throws MISSING_REQUIRED_ARGUMENT instead of running the bulk action the
- * caller asked for. Reject it explicitly instead.
- */
-function rejectRetiredProposalSourceFlag(subcommand: "accept" | "reject"): void {
-  if (!getParsedInvocation().hasFlag("--source")) return;
-  throw new UsageError(
-    `\`akm proposal ${subcommand} --source\` was renamed to \`--generator\` in 0.9. Use \`--generator <name>\` instead.`,
-    "INVALID_FLAG_VALUE",
-  );
 }
 
 /**
@@ -141,7 +123,7 @@ const proposalAcceptCommand = defineJsonCommand({
       required: false,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Write destination; must match the proposal's recorded target" },
     // F-6 / #393: Batch accept by generator, diff size, or age.
     generator: {
       type: "string",
@@ -171,7 +153,6 @@ const proposalAcceptCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredProposalSourceFlag("accept");
     const generator = args.generator as string | undefined;
     // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
     if (generator && !args.id) {
@@ -192,7 +173,7 @@ const proposalAcceptCommand = defineJsonCommand({
         olderThanMs,
         dryRun: args["dry-run"] as boolean,
         queue: args.queue as string | undefined,
-        target: args.target as string | undefined,
+        target: args.bundle as string | undefined,
       });
       output("proposal-accept-batch", {
         accepted: count,
@@ -215,7 +196,7 @@ const proposalAcceptCommand = defineJsonCommand({
     const result = await akmProposalAccept({
       id: args.id as string,
       queue: args.queue as string | undefined,
-      target: args.target as string | undefined,
+      target: args.bundle as string | undefined,
     });
     output("proposal-accept", result);
   },
@@ -261,7 +242,6 @@ const proposalRejectCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredProposalSourceFlag("reject");
     const generator = args.generator as string | undefined;
     if (!args.reason || !String(args.reason).trim()) {
       throw new UsageError(
@@ -363,10 +343,10 @@ const proposalDiffCommand = defineJsonCommand({
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
   },
   run({ args }) {
-    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.target });
+    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.bundle });
     output("proposal-diff", result);
   },
 });
@@ -396,13 +376,13 @@ const proposalRevertCommand = defineJsonCommand({
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Write destination; must match the proposal's recorded target" },
   },
   async run({ args }) {
     const result = await akmProposalRevert({
       id: args.id as string,
       queue: args.queue as string | undefined,
-      target: args.target as string | undefined,
+      target: args.bundle as string | undefined,
     });
     output("proposal-revert", result);
   },
@@ -429,7 +409,7 @@ const proposalDrainCommand = defineJsonCommand({
   meta: {
     name: "drain",
     description:
-      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review",
+      "Drain the pending proposal backlog: accept what a quality judge passed, reject empty diffs, leave the rest for judgment or review. The judgment tier accepts only consolidate promotions; it accepted unsafe retirements and unreviewed fixes in testing (#1132), so every other kind waits for a person",
   },
   args: {
     "dry-run": {
@@ -459,7 +439,7 @@ const proposalDrainCommand = defineJsonCommand({
     judgment: {
       type: "boolean",
       description:
-        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). No-op with a logged triage_deferred summary when no runner is configured.",
+        "Enable the judgment tier for this drain (overrides judgment.enabled=false; agent/sdk per config). It accepts only consolidate promotions; every other kind it would accept is left for review. No-op with a logged triage_deferred summary when no runner is configured.",
       default: false,
     },
     strategy: {
@@ -468,10 +448,7 @@ const proposalDrainCommand = defineJsonCommand({
         "Read the triage block (applyMode, ceilings, judgment) from this improve strategy; enabled judgment runs the judge.",
     },
   },
-  async run({ args, rawArgs }) {
-    if (rawArgs.some((arg) => arg === "--profile" || arg.startsWith("--profile="))) {
-      throw new UsageError("proposal drain: --profile is retired; use --strategy.", "INVALID_FLAG_VALUE");
-    }
+  async run({ args }) {
     const stashDir = resolveStashDir();
     const cfg = loadConfig();
 

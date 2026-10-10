@@ -5,9 +5,7 @@
 /**
  * The `akm-workflow` adapter — akm 0.9.0 format-family work item (#46).
  *
- * A native akm workflow bundle. AKM Markdown and the strict local GitHub-shaped
- * `.yml` subset are peer source formats. Both compile through the source IR;
- * neither source is rewritten or projected onto the other.
+ * A native akm workflow bundle: Markdown workflow sources.
  *
  * ── validate (spec §6 workflow row) ──
  *
@@ -24,19 +22,18 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { looksLikeGithubWorkflowSource } from "../../../workflows/compile";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { perTypeValidateChecks, workflowYamlSourceDiagnostics } from "./akm-lint";
+import { perTypeValidateChecks } from "./akm-lint";
 import { hashContent, nonEmptyString, type ParsedForValidate, readTags, runBaseValidateChecks } from "./shared";
 
 /** A native workflow bundle is single-component; its one component is `main`. */
 const COMPONENT_ID = "main";
-/** The two authoritative workflow source formats. `.yaml` is deliberately not accepted. */
-const WORKFLOW_EXTS = new Set([".md", ".yml"]);
+/** The authoritative workflow source format. */
+const WORKFLOW_EXTS = new Set([".md"]);
 
 /** Strip the recognized workflow extension from a component-root-relative path → conceptId. */
 function conceptIdOf(relPath: string): string {
@@ -101,10 +98,6 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     if (!WORKFLOW_EXTS.has(ext) || isReservedDocFile(path.basename(change.path))) continue;
 
     const relPath = toPosix(change.path);
-    if (ext === ".yml") {
-      diagnostics.push(...workflowYamlSourceDiagnostics(relPath, raw, relPath, c.root).errors);
-      continue;
-    }
     if (!isWorkflowFile(raw)) continue;
     const p = parseFrontmatter(raw);
     const parsed: ParsedForValidate = { data: p.data, content: p.content, frontmatter: p.frontmatter };
@@ -146,7 +139,6 @@ function hasTopLevelWorkflowFile(root: string, entries: fs.Dirent[]): boolean {
     } catch {
       continue;
     }
-    if (ext === ".yml" && looksLikeGithubWorkflowSource(raw)) return true;
     if (ext === ".md" && parseFrontmatter(raw).data.type === "workflow") return true;
   }
   return false;
@@ -155,27 +147,17 @@ function hasTopLevelWorkflowFile(root: string, entries: fs.Dirent[]): boolean {
 export const akmWorkflowAdapter: BundleAdapter = {
   id: "akm-workflow",
   version: "0.9.2",
-  extensions: [".md", ".yml"],
+  extensions: [".md"],
 
   recognize,
   validate,
 
   readCandidates(c: BundleComponent, conceptId: string) {
     const posix = toPosix(conceptId);
-    const canonical = posix.replace(/\.(?:md|yml)$/i, "");
-    return /\.(?:md|yml)$/i.test(posix)
+    const canonical = posix.replace(/\.md$/i, "");
+    return /\.md$/i.test(posix)
       ? [{ path: path.join(c.root, posix), conceptId: canonical }]
-      : [
-          { path: path.join(c.root, `${posix}.md`), conceptId: canonical },
-          { path: path.join(c.root, `${posix}.yml`), conceptId: canonical },
-        ];
-  },
-
-  /** Markdown remains the default; an explicit `.md`/`.yml` suffix is preserved. */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    if (/\.(?:md|yml)$/i.test(posix)) return path.join(c.root, posix);
-    return path.join(c.root, `${posix}.md`);
+      : [{ path: path.join(c.root, `${posix}.md`), conceptId: canonical }];
   },
 
   /** Workflows live anywhere under the component root. */
@@ -185,7 +167,7 @@ export const akmWorkflowAdapter: BundleAdapter = {
 
   /**
    * Install-time probe (§1.2): a root holding an explicitly typed Markdown
-   * workflow or a complete GitHub-shaped YAML workflow at top level.
+   * workflow at top level.
    */
   looksLikeRoot(root: string): boolean {
     let entries: fs.Dirent[];

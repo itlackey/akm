@@ -1148,7 +1148,7 @@ function resolveRecordedProposalTarget(
   if (targetBundleId !== binding.source || path.resolve(target.source.path) !== path.resolve(binding.root)) {
     throw new UsageError(
       `Proposal ${proposalId} is bound to target "${binding.source}" at ${binding.root}; ` +
-        `--target "${explicitTarget}" resolves to "${targetBundleId}" at ${target.source.path}.`,
+        `--bundle "${explicitTarget}" resolves to "${targetBundleId}" at ${target.source.path}.`,
       "INVALID_FLAG_VALUE",
     );
   }
@@ -1175,7 +1175,7 @@ function resolveProposalWriteTarget(
         canonicalBundleIdForTarget(config, resolveWriteTarget(config, explicitTarget)) !== identity.bundle
       ) {
         throw new UsageError(
-          `Proposal ${proposal.id} ref is bound to bundle "${identity.bundle}", which conflicts with --target "${explicitTarget}".`,
+          `Proposal ${proposal.id} ref is bound to bundle "${identity.bundle}", which conflicts with --bundle "${explicitTarget}".`,
           "INVALID_FLAG_VALUE",
         );
       }
@@ -1187,7 +1187,7 @@ function resolveProposalWriteTarget(
     const target = explicitTarget ? resolveWriteTarget(config, explicitTarget) : queueTarget;
     if (!target) {
       throw new UsageError(
-        `Unbound short proposal ${proposal.id} requires an explicit --target or authenticated --queue context.`,
+        `Unbound short proposal ${proposal.id} requires an explicit --bundle or authenticated --queue context.`,
         "INVALID_PROPOSAL",
       );
     }

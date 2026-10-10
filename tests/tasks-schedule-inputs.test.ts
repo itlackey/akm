@@ -308,18 +308,20 @@ describe("a scheduled run's compiled invocation tail delivers schedule-supplied 
     setUp();
     try {
       write2(
-        "workflows/child.yml",
+        "workflows/child.md",
         [
-          "name: Child",
-          "on:",
-          "  workflow_dispatch:",
-          "jobs:",
-          "  contract:",
-          "    runs-on: [self-hosted]",
-          "    steps:",
-          "      - id: work",
-          '        run: "true"',
-          "        shell: sh",
+          "---",
+          "type: workflow",
+          "params:",
+          "  scope: { type: string }",
+          "steps:",
+          "  - id: work",
+          "    unit: { exec: { command: ['true'] } }",
+          "---",
+          "",
+          "## work",
+          "",
+          "Do nothing.",
           "",
         ].join("\n"),
       );

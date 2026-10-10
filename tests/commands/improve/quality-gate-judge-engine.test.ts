@@ -3,7 +3,7 @@
  * when that engine enables thinking, and memory inference uses the configured
  * temperature (0.1 only when nothing sets one).
  */
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { resolveImprovePlan } from "../../../src/commands/improve/improve-strategies";
 import { resolveQualityGateJudge, runReflectQualityJudge } from "../../../src/commands/improve/stage";
 import type { AkmConfig, ImproveProfileConfig } from "../../../src/core/config/config";
@@ -19,6 +19,9 @@ import {
   withLlmStage,
 } from "../../../src/llm/usage-telemetry";
 import { asLlmRunner } from "../../_helpers/llm-runner";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 function config(engines: Record<string, unknown> = {}): AkmConfig {
   return {
@@ -163,7 +166,9 @@ describe("the judge thinks only when its own engine enables thinking", () => {
   });
 
   test("a judge on an opencode-sdk runner runs; its thinking comes from the provider fallback", async () => {
-    const cfg = config({ "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" } });
+    const cfg = config({
+      "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" },
+    });
     __setTestServer({
       client: {
         session: {
@@ -184,7 +189,9 @@ describe("the judge thinks only when its own engine enables thinking", () => {
   });
 
   test("a judge on an agent engine gets the asset's ref and the tool rules; the plain judge gets neither", async () => {
-    const cfg = config({ "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" } });
+    const cfg = config({
+      "sdk-judge": { kind: "agent", platform: "opencode-sdk", llmEngine: "judge" },
+    });
     let sent = "";
     __setTestServer({
       client: {

@@ -178,17 +178,8 @@ describe("task lifecycle failure handling", () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(workflowsDir, "nightly.yml"),
-      [
-        "name: nightly",
-        "on: { workflow_dispatch: null }",
-        "jobs:",
-        "  main:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: run",
-        "        run: echo nightly",
-      ].join("\n"),
+      path.join(workflowsDir, "nightly.md"),
+      "---\ntype: workflow\nsteps:\n  - id: run\n---\n\n## run\n\nRun nightly.\n",
       "utf8",
     );
 

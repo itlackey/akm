@@ -1,9 +1,0 @@
-name: Child workflow mid tier
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: relay
-        uses: workflows/leaf

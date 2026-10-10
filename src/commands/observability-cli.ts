@@ -18,8 +18,8 @@
  * ranking's `lessonStrength` contributor is untouched, only the CLI read
  * surface for it goes away.
  *
- * The embedded agent-guide surfaces (`akm hints` and `akm help agents`) live
- * in src/cli.ts, so their loading code is intentionally outside this module.
+ * The embedded agent guide (`akm hints`) lives in src/cli.ts, so its
+ * loading code is intentionally outside this module.
  *
  * The leaf handler's body is a plain `runWithJsonErrors(...) + output(...)`,
  * migrated onto `defineJsonCommand`, which emits the same JSON envelope
@@ -27,7 +27,6 @@
  */
 
 import { parsePositiveIntFlag } from "../cli/parse-args";
-import { retiredCommandHint } from "../cli/retired-commands";
 import { defineJsonCommand, output, parseAllFlagValues } from "../cli/shared";
 import { UsageError } from "../core/errors";
 import { akmEventsList } from "./log";
@@ -44,15 +43,9 @@ import { akmEventsList } from "./log";
 function rejectExtraLogPositionals(positionals: unknown): void {
   const extra = Array.isArray(positionals) ? (positionals as unknown[]).map(String) : [];
   if (extra.length === 0) return;
-  // A retired subcommand spelling gets its replacement hint (same table the
-  // unknown-command path uses), so `akm log tail` teaches the durable-cursor
-  // polling pattern instead of a bare "takes no positional arguments".
-  const retired = extra[0] === undefined ? undefined : retiredCommandHint(["log"], extra[0]);
   throw new UsageError(
-    `akm log takes no positional arguments, but got ${extra.map((token) => `"${token}"`).join(" ")}. ` +
-      '"log list"/"log tail" were removed in 0.9.0 — `akm log` alone is today\'s `log list` surface.',
+    `akm log takes no positional arguments, but got ${extra.map((token) => `"${token}"`).join(" ")}.`,
     "INVALID_FLAG_VALUE",
-    retired,
   );
 }
 

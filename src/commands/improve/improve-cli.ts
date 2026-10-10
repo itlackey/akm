@@ -4,9 +4,8 @@
 
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getParsedInvocation } from "../../cli/invocation";
-import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
-import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
+import { findCittyTopLevelCommandIndex, getStringArg, hasSubcommand, parsePositiveIntFlag } from "../../cli/parse-args";
+import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
 import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
@@ -14,7 +13,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { clearLogFile, setLogFile, warn } from "../../core/warn";
+import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { defaultWhich } from "../../integrations/agent/detect";
@@ -54,45 +53,6 @@ let akmImproveForRun: typeof akmImprove = akmImprove;
 /** Swap the CLI's improve work implementation in deterministic subprocess tests. */
 export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
   akmImproveForRun = fake ?? akmImprove;
-}
-
-/**
- * `--auto-accept` (removed in 0.9): citty absorbs it silently, and
- * `--auto-accept 90` would leave `90` as the scope — a 0.8-era crontab would
- * match nothing and exit 0. Warn, and drop that positional.
- */
-function resolveScopeAfterRetiredAutoAccept(scopeArg: string | undefined): string | undefined {
-  const invocation = getParsedInvocation();
-  const autoAcceptRaw = invocation.getFlagValue("--auto-accept");
-  if (autoAcceptRaw === undefined && !invocation.hasFlag("--auto-accept")) return scopeArg;
-  warn(
-    "[improve] --auto-accept was removed in 0.9 and is ignored; proposals always queue for review. " +
-      "Replacement: `akm improve && akm proposal drain --promote --yes`, or a `triage` block with " +
-      'applyMode: "promote" in your strategy. It becomes a hard error in 0.10.',
-  );
-  if (scopeArg !== undefined && scopeArg === autoAcceptRaw) {
-    warn(`[improve] ignoring "${scopeArg}" as a scope — it is the removed --auto-accept flag's value.`);
-    return undefined;
-  }
-  return scopeArg;
-}
-
-/** `akm improve canary` (removed in 0.9) would otherwise be a type scope matching nothing, exiting 0. */
-function rejectRetiredCanaryScope(scopeArg: string | undefined): void {
-  if (scopeArg !== "canary") return;
-  throw new UsageError(
-    '"akm improve canary" was removed in 0.9; the collapse-detector canary set it managed no longer exists.',
-    "INVALID_FLAG_VALUE",
-  );
-}
-
-/** `--target` (renamed `--bundle` in 0.9) would otherwise be absorbed and write to the default bundle. */
-function rejectRetiredImproveTargetFlag(): void {
-  if (!getParsedInvocation().hasFlag("--target")) return;
-  throw new UsageError(
-    "`akm improve --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
 }
 
 /**
@@ -269,66 +229,107 @@ async function runShowPromptCli(
 }
 
 /** `akm improve report` (#944): the per-run LLM usage/routing report ("report" is no asset type). */
-function runImproveReportCli(args: { run?: string; since?: string }): void {
-  const runIdArg = getStringArg(args, "run");
-  const sinceArg = getStringArg(args, "since");
-  const result = runImproveReportQuery({ runId: runIdArg, since: sinceArg });
-  output("improve-report", { ok: true, ...result });
-}
-
-/** `--run`/`--since` belong to `improve report`; elsewhere citty would silently ignore them. */
-function rejectReportOnlyFlags(args: { run?: string; since?: string }): void {
-  const flag =
-    getStringArg(args, "run") !== undefined
-      ? "--run"
-      : getStringArg(args, "since") !== undefined
-        ? "--since"
-        : undefined;
-  if (flag === undefined) return;
-  throw new UsageError(
-    `\`${flag}\` only applies to \`akm improve report\`. Use \`akm improve report ${flag} <value>\` instead.`,
-    "INVALID_FLAG_VALUE",
-  );
-}
+const improveReportCommand = defineJsonCommand({
+  meta: {
+    name: "report",
+    description: "Show the LLM usage/routing report for the most recent improve run, one run, or a window of runs.",
+  },
+  args: {
+    run: {
+      type: "string",
+      description:
+        "Show the report for one specific improve_runs row instead of the most recent run. Mutually exclusive with --since.",
+    },
+    since: {
+      type: "string",
+      description:
+        'Aggregate the report over every real run started since <window> (a duration like "24h"/"7d", or an ISO timestamp) instead of showing one run. Mutually exclusive with --run.',
+    },
+  },
+  run({ args }) {
+    const result = runImproveReportQuery({ runId: getStringArg(args, "run"), since: getStringArg(args, "since") });
+    output("improve-report", { ok: true, ...result });
+  },
+});
 
 /**
  * `akm improve judge`: reflect's quality judge on one revision, read as
  * `{"source", "candidate", "feedback"}` JSON from stdin, with the engine the
  * strategy's reflect quality gate names. It writes nothing.
  */
-async function runImproveJudgeCli(strategyName: string | undefined): Promise<void> {
-  const input = process.stdin.isTTY
-    ? {}
-    : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
-  const { source, candidate, feedback, ref } = input;
-  if (typeof source !== "string" || typeof candidate !== "string") {
-    throw new UsageError(
-      '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "...", "ref": "..."} JSON from stdin.',
-      "MISSING_REQUIRED_ARGUMENT",
+const improveJudgeCommand = defineJsonCommand({
+  meta: {
+    name: "judge",
+    description:
+      "Run reflect's quality judge on one revision, read as {source, candidate, feedback, ref} JSON from stdin. Writes nothing.",
+  },
+  args: {
+    strategy: {
+      type: "string",
+      description: "Named improve strategy whose reflect quality gate names the judge engine.",
+    },
+  },
+  async run({ args }) {
+    const input = process.stdin.isTTY
+      ? {}
+      : (JSON.parse((await readStdin()).toString("utf8")) as Record<string, unknown>);
+    const { source, candidate, feedback, ref } = input;
+    if (typeof source !== "string" || typeof candidate !== "string") {
+      throw new UsageError(
+        '`akm improve judge` reads {"source": "...", "candidate": "...", "feedback": "...", "ref": "..."} JSON from stdin.',
+        "MISSING_REQUIRED_ARGUMENT",
+      );
+    }
+    const config = loadConfig();
+    const judge = resolveQualityGateJudge(
+      config,
+      resolveImproveStrategy(getStringArg(args, "strategy"), config).config,
+      "reflect",
     );
-  }
-  const config = loadConfig();
-  const judge = resolveQualityGateJudge(config, resolveImproveStrategy(strategyName, config).config, "reflect");
-  if (!judge) {
-    throw new ConfigError(
-      "`akm improve judge` judges with the reflect quality gate's engine. Set processes.reflect.qualityGate.engine.",
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  const notes = typeof feedback === "string" && feedback.trim() !== "" ? [feedback.trim()] : [];
-  const verdict = await runReflectQualityJudge(config, candidate, source, notes, undefined, {
-    runnerSelectionFrozen: true,
-    llmRunner: judge,
-    ...(typeof ref === "string" && ref ? { ref } : {}),
-  });
-  output("improve-judge", { engine: judge.engine, ...verdict });
-}
+    if (!judge) {
+      throw new ConfigError(
+        "`akm improve judge` judges with the reflect quality gate's engine. Set processes.reflect.qualityGate.engine.",
+        "INVALID_CONFIG_FILE",
+      );
+    }
+    const notes = typeof feedback === "string" && feedback.trim() !== "" ? [feedback.trim()] : [];
+    const verdict = await runReflectQualityJudge(config, candidate, source, notes, undefined, {
+      runnerSelectionFrozen: true,
+      llmRunner: judge,
+      ...(typeof ref === "string" && ref ? { ref } : {}),
+    });
+    output("improve-judge", { engine: judge.engine, ...verdict });
+  },
+});
+
+/** The subcommands `setup` withheld for this run, restored by `cleanup` (one command runs per process; in-process tests run many). */
+let subCommandsWithheld = false;
+
+const IMPROVE_SUBCOMMANDS = { report: improveReportCommand, judge: improveJudgeCommand };
 
 export const improveCommand = defineCommand({
   meta: {
     name: "improve",
     description:
-      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when the selected strategy enables consolidate.",
+      "Analyze existing AKM assets and generate improvement proposals; also consolidates memories when the selected strategy enables consolidate. `improve report` and `improve judge` are subcommands.",
+  },
+  subCommands: IMPROVE_SUBCOMMANDS,
+  // `improve` takes a scope positional (an asset type or ref), and citty reads
+  // the first positional of a command with subcommands as a subcommand name,
+  // failing with an unknown command for a scope. So the subcommands stay
+  // registered only for an invocation that names one; any other, scope or none,
+  // is the improve run itself.
+  setup(context) {
+    const index = findCittyTopLevelCommandIndex(context.rawArgs, improveCommand.args as never);
+    const token = index >= 0 ? context.rawArgs[index] : undefined;
+    if (token !== undefined && token in IMPROVE_SUBCOMMANDS) return;
+    subCommandsWithheld = true;
+    context.cmd.subCommands = undefined;
+  },
+  cleanup(context) {
+    if (!subCommandsWithheld) return;
+    context.cmd.subCommands = IMPROVE_SUBCOMMANDS;
+    subCommandsWithheld = false;
   },
   // Declared explicitly: otherwise citty takes `--format`'s value as the scope.
   args: {
@@ -340,12 +341,6 @@ export const improveCommand = defineCommand({
     },
     task: { type: "string", description: "Add extra guidance for this improvement pass" },
     "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
-    plan: {
-      type: "boolean",
-      description:
-        "Alias for --dry-run (#947). Sets the exact same internal flag; use it when previewing resolved process -> engine -> model routing (plan.processes) rather than checking what would write.",
-      default: false,
-    },
     bundle: {
       type: "string",
       description:
@@ -359,7 +354,7 @@ export const improveCommand = defineCommand({
     "require-feedback-signal": {
       type: "boolean",
       description:
-        "Turn the proactive/high-salience fallback lanes off (they only select and score assets; a rewrite needs negative feedback)",
+        "Turn the proactive-maintenance lane off for this run, so only assets with recent feedback are planned",
       default: false,
     },
     "json-to-stdout": {
@@ -385,20 +380,10 @@ export const improveCommand = defineCommand({
         "Print the composed reflect prompt for one asset ref and exit — no lock, index write, or engine dispatch (#952). Requires a fully-qualified asset ref as the scope positional (e.g. `akm improve lessons/my-lesson --show-prompt`). JSON/yaml format carries the prompt as a `prompt` field; text format prints it directly.",
       default: false,
     },
-    run: {
-      type: "string",
-      description:
-        'Only with the "report" scope (`akm improve report --run <id>`): show the LLM usage/routing report for one specific improve_runs row instead of the most recent run. Mutually exclusive with --since.',
-    },
-    since: {
-      type: "string",
-      description:
-        'Only with the "report" scope (`akm improve report --since <window>`): aggregate the LLM usage/routing report over every real run started since <window> (a duration like "24h"/"7d", or an ISO timestamp) instead of showing one run. Mutually exclusive with --run.',
-    },
     strategy: {
       type: "string",
       description:
-        "Named improve strategy from improve.strategies or built-in strategies (catchup, consolidate, default, proactive-maintenance, quick, reflect-distill, thorough). Controls which sub-processes run and which asset types are processed.",
+        "Named improve strategy from improve.strategies or built-in strategies (consolidate, default). Controls which sub-processes run and which asset types are processed.",
     },
     sync: {
       type: "boolean",
@@ -413,29 +398,20 @@ export const improveCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (getStringArg(args, "scope") === "report") {
-        runImproveReportCli(args);
-        return;
-      }
-      rejectReportOnlyFlags(args);
-      if (getStringArg(args, "scope") === "judge") {
-        await runImproveJudgeCli(getStringArg(args, "strategy"));
-        return;
-      }
-      rejectRetiredImproveTargetFlag();
+      // citty runs this body after a subcommand it dispatched too.
+      if (hasSubcommand(args, new Set(Object.keys(IMPROVE_SUBCOMMANDS)))) return;
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
-      // `--plan` is an alias for `--dry-run`; `--show-prompt` is read-only too.
-      const dryRun = args["dry-run"] || args.plan || args["show-prompt"];
+      // `--show-prompt` is read-only too.
+      const dryRun = args["dry-run"] || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
-      const scopeArg = resolveScopeAfterRetiredAutoAccept(getStringArg(args, "scope"));
-      rejectRetiredCanaryScope(scopeArg);
+      const scopeArg = getStringArg(args, "scope");
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
       const writeTarget = dryRun
         ? undefined

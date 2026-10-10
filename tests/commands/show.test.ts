@@ -88,15 +88,11 @@ describe("akmShow stash .meta convention", () => {
   });
 });
 
-describe("akmShow legacy colon refs (#964)", () => {
-  test("returns the exact slash-form replacement without treating meta refs as assets", async () => {
+describe("akmShow legacy colon refs", () => {
+  test("a colon ref is an ordinary not-found, with no migration tip", async () => {
     saveConfig({ semanticSearchMode: "off" });
-    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(
-      /Use the slash form instead: akm show knowledge\/print\/some-doc/,
-    );
-    await expect(akmShow({ ref: "team//skill:ai/agent-tools#usage" })).rejects.toThrow(
-      /akm show team\/\/skills\/ai\/agent-tools#usage/,
-    );
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.toThrow(NotFoundError);
+    await expect(akmShow({ ref: "knowledge:print/some-doc" })).rejects.not.toThrow(/slash form/);
   });
 });
 

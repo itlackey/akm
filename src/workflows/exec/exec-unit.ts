@@ -71,8 +71,7 @@ export interface RunExecUnitInput {
   unitId: string;
   exec: WorkflowExecSpec;
   /**
-   * Base working directory the unit's `cwd` resolves inside: the unit's fresh
-   * detached worktree under `isolation: worktree`, otherwise the engine's work
+   * Base working directory the unit's `cwd` resolves inside: the engine's work
    * dir (`ctx.workDir`, default `process.cwd()`).
    */
   baseDir: string;

@@ -100,18 +100,6 @@ function complain(...names: string[]): void {
   }
 }
 
-/** The refs a run scored: only a ref in the scored pool gets an `asset_outcome` row. */
-function scoredRefs(): string[] {
-  const db = openStateDatabase();
-  try {
-    return (db.prepare("SELECT asset_ref FROM asset_outcome").all() as Array<{ asset_ref: string }>).map(
-      (row) => row.asset_ref,
-    );
-  } finally {
-    db.close();
-  }
-}
-
 function seedReplayRank(ref: string, rankScore: number, encodingSource?: "content" | "type-stub"): void {
   const db = openStateDatabase();
   try {
@@ -284,9 +272,9 @@ describe("#800 effective dry-run planner", () => {
 
       expect(result.plan?.snapshot.status).toBe("ready");
       expect(result.plan?.candidates.rawInScope).toBe(2);
-      // The lane selects one ref from the held index; it plans nothing: only negative feedback plans a reflect.
+      // The lane selects one ref from the held index and plans it.
       expect(result.proactiveMaintenance?.selected).toBe(1);
-      expect(result.plannedRefs).toEqual([]);
+      expect(result.plannedRefs).toHaveLength(1);
       expect(snapshotTree(storage.root)).toEqual(before);
     } finally {
       writer.close();
@@ -442,7 +430,7 @@ describe("#800 effective dry-run planner", () => {
     expect(defaultRun.plan?.processes.map((row) => row.process).sort()).toEqual(expectedProcesses.sort());
   });
 
-  test("proactive dry-run reports due population and selected refs, and plans nothing", async () => {
+  test("proactive dry-run reports due population and selected refs, and plans them as the proactive lane", async () => {
     const { stashDir } = isolatedStorage();
     const proactiveConfig = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 2 } });
     await indexSkills(stashDir, 4, proactiveConfig);
@@ -459,9 +447,12 @@ describe("#800 effective dry-run planner", () => {
     expect(baseline.plannedRefs).toEqual([]);
     expect(baseline.proactiveMaintenance).toBeUndefined();
     expect(proactive.plan?.candidates.rawInScope).toBe(4);
-    // The lane selects two due refs for scoring; with no negative feedback nothing is planned for reflect.
-    expect(proactive.plannedRefs).toEqual([]);
-    expect(proactive.plan?.effectiveRefs).toEqual([]);
+    // The lane selects two due refs, capped by maxPerRun, and plans them.
+    expect(proactive.plannedRefs.map((entry) => entry.eligibilitySource)).toEqual(["proactive", "proactive"]);
+    expect(proactive.plan?.effectiveRefs.map((entry) => entry.lane)).toEqual(["proactive", "proactive"]);
+    expect(proactive.plan?.effectiveRefs.map((entry) => entry.ref).sort()).toEqual(
+      [...(proactive.proactiveMaintenance?.selectedRefs ?? [])].sort(),
+    );
     expect(proactive.proactiveMaintenance).toMatchObject({ dueTotal: 4, neverReflected: 4, selected: 2 });
     expect(proactive.proactiveMaintenance?.selectedRefs).toHaveLength(2);
     expect(proactive.plan?.proactive).toMatchObject({
@@ -510,46 +501,12 @@ describe("#800 effective dry-run planner", () => {
     expect(noSignalEvents[0]?.metadata?.count).toBe(terminalSignalSkips);
   });
 
-  test("a live high-salience pick is scored, planned nowhere, and reported once as an ordinary no-signal skip", async () => {
-    const { stashDir } = isolatedStorage();
-    const config = plannerConfig();
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 0.1 },
-    };
-    await indexSkills(stashDir, 1, config);
-    seedReplayRank("skills/skill-0", 0.99, "content");
-
-    const result = await akmImprove({
-      scope: "skill",
-      stashDir,
-      config,
-      ensureIndexFn: async () => false,
-      reflectFn: async ({ ref }) => okReflect(ref ?? ""),
-    });
-
-    expect(scoredRefs()).toContain("stash//skills/skill-0");
-    expect(result.plannedRefs).toEqual([]);
-    expect(result.plan?.gates.find((gate) => gate.name === "signal")?.removed).toBe(1);
-    expect(result.distillSkipped?.byReason["no new signal since last proposal"]).toBe(1);
-    const noSignalEvents = readEvents({ type: "improve_skipped" }).events.filter(
-      (event) => event.metadata?.reason === "no_new_signal",
-    );
-    expect(noSignalEvents).toHaveLength(1);
-    expect(noSignalEvents[0]?.metadata?.count).toBe(1);
-  });
-
-  test("feedback-only mode suppresses the proactive and high-salience selectors in dry and live plans", async () => {
+  test("feedback-only mode suppresses the proactive selector in dry and live plans", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig({ proactive: { enabled: true, dueDays: 0, maxPerRun: 1 } });
-    config.improve = {
-      ...config.improve,
-      salience: { salienceThreshold: 0.1 },
-    };
     await indexSkills(stashDir, 1, config);
-    // This one quiet ref qualifies for proactive and high-salience;
-    // feedback-only must suppress the selector family rather than merely
-    // deleting its winners from the final array.
+    // This one quiet ref qualifies for proactive; feedback-only must suppress
+    // the selector rather than merely deleting its winners from the final array.
     seedReplayRank("skills/skill-0", 0.99, "content");
     const reflectFn = mock(async ({ ref }: { ref?: string }) => okReflect(ref ?? ""));
     const commonOptions = {
@@ -647,7 +604,7 @@ describe("#800 effective dry-run planner", () => {
   test("consolidation preview reports the real pool, gates, and chunk estimate without dispatch", async () => {
     const { stashDir } = isolatedStorage();
     const config = plannerConfig({
-      consolidate: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
+      consolidate: { enabled: true, limit: 4, maxChunkSize: 2 },
     });
     for (let i = 0; i < 5; i++) writeMemory(stashDir, `memory-${i}`);
     saveConfig(config);
@@ -664,13 +621,12 @@ describe("#800 effective dry-run planner", () => {
 
     expect(modelCalls).toBe(0);
     expect(result.plan?.consolidation).toMatchObject({
-      configured: { enabled: true, minPoolSize: 3, limit: 4, maxChunkSize: 2 },
-      effective: { enabled: true, minPoolSize: 3, limit: 4, chunkSize: 2 },
+      configured: { enabled: true, limit: 4, maxChunkSize: 2 },
+      effective: { enabled: true, limit: 4, chunkSize: 2 },
       poolSize: 5,
       candidatePoolSize: 4,
       gates: {
         profile: { passed: true },
-        minimumPool: { passed: true },
         delta: { passed: true },
       },
       wouldRun: true,
@@ -701,7 +657,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("nothing judged recently → the pool is open", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
@@ -713,7 +669,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("some memories judged recently and unchanged → they are skipped, the rest are judged", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       writeMemory(stashDir, "memory-1");
       saveConfig(config);
@@ -731,7 +687,7 @@ describe("#800 effective dry-run planner", () => {
 
     test("every memory judged recently and unchanged → the delta gate holds", async () => {
       const { stashDir } = isolatedStorage();
-      const config = plannerConfig({ consolidate: { enabled: true, minPoolSize: 0 } });
+      const config = plannerConfig({ consolidate: { enabled: true } });
       writeMemory(stashDir, "memory-0");
       saveConfig(config);
       await akmIndex({ stashDir, full: true });
@@ -762,7 +718,7 @@ describe("#800 effective dry-run planner", () => {
     const credentialName = "AKM_800_CONSOLIDATION_PLAN_KEY";
     const config = plannerConfig({
       reflect: { enabled: false },
-      consolidate: { enabled: true, minPoolSize: 2, maxChunkSize: 50 },
+      consolidate: { enabled: true, maxChunkSize: 50 },
     });
     config.engines = {
       planner: {
@@ -919,7 +875,7 @@ describe("#800 effective dry-run planner", () => {
     const { stashDir } = storage;
     const config = plannerConfig({
       proactive: { enabled: true, dueDays: 0, maxPerRun: 2 },
-      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7 },
+      triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 7, judgment: { enabled: true } },
     });
     await indexSkills(stashDir, 3, config);
     appendEvent({ eventType: "feedback", ref: "skills/skill-0", metadata: { signal: "positive" } });

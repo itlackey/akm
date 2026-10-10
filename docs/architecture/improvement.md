@@ -39,8 +39,9 @@ everything else routes through `akm proposal accept`.
   `src/assets/improve-strategies/*.json`) — named presets that decide which
   improve processes run and with what engine/model/limits.
 - **Autonomy gate** (`src/commands/improve/autonomy-gate.ts`) — downgrades
-  the handful of processes that would otherwise mutate assets without review,
-  unless `experimental.improveAutonomy` is explicitly set.
+  the handful of processes that would otherwise mutate assets without review
+  (memory inference, memory cleanup, and a judged triage promote), unless
+  `experimental.improveAutonomy` is explicitly set.
 - **Reflect / distill / consolidate subprocesses** — the improve pipeline's
   proposal generators, invoked per asset (reflect, distill) or across the
   whole memory corpus (consolidate). See
@@ -80,10 +81,11 @@ everything else routes through `akm proposal accept`.
    reason or note, which gives the writer nothing to distil (10 of the 11
    lessons made from such memories were rejected). Unless
    `--require-feedback-signal` is set, the
-   fallback lanes (high salience, and proactive maintenance where the strategy
-   enables it) pick what the retrieval scope below admits, for scoring only:
-   they plan nothing, so improve does not rewrite assets on a proactive
-   cadence. It ranks the selected assets by salience, applies the limit, then
+   proactive-maintenance lane (where the strategy enables it, as `default`
+   does) adds the stable assets due for a revisit that the retrieval scope below
+   admits, and plans them with the feedback-bearing ones. At most `maxPerRun`
+   (15) assets are picked per run, an asset is due only if not reflected or
+   distilled for `dueDays` (30), and reflect's `limit` (25) bounds the run. It ranks the selected assets by salience, applies the limit, then
    runs whichever processes the selected strategy enables against each one (see
    [Improve Workflow](internals/improve-workflow.md#ledger-pre-filter-signal-delta)).
 4. Reflect and distill each emit at most one proposal per asset per run;
@@ -146,9 +148,8 @@ for the storage-level summary.
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `consolidate`, `catchup`,
-`reflect-distill`, and `proactive-maintenance`
-(`src/assets/improve-strategies/*.json`). Selection
+set: `default` and `consolidate` (`src/assets/improve-strategies/*.json`). The removed `quick`, `thorough`,
+`catchup`, `reflect-distill` and `proactive-maintenance` still work as user-defined strategies. Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
@@ -157,16 +158,16 @@ any user-defined override for that same name (under `improve.strategies` in
 config) is merged on top. So a strategy — built-in or user-defined — that
 omits a field, or an entire process block, inherits it from `default`; an
 explicit `enabled: true`/`false` in the more specific layer always wins. This
-is why, for example, `proactiveMaintenance` stays off in `default` and
-`reflect-distill`, but a preset that doesn't mention it at all still inherits
-that "off" rather than defaulting to on.
+is why, for example, `proactiveMaintenance` is on in `default` and off in
+`consolidate`, and a preset that doesn't mention it at all inherits the
+`default` value. A user-defined strategy named `proactive-maintenance` (the name
+of the retired built-in) resolves the same way, merged onto `default`.
 
 ### Retrieval scope
 
 Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
 scope (`akm improve skills/x`) are usage evidence of their own. Every other
-pick — the proactive-maintenance and high-salience lanes (which only score what
-they pick), and the memories consolidation judges — must be in the retrieval
+pick — the proactive-maintenance lane, and the memories consolidation judges — must be in the retrieval
 scope (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
@@ -217,13 +218,38 @@ both stay on the proposal when the drain accepts it, so a later audit can read
 why it passed (`akm proposal show --format json`). A distill pass is not staged:
 the lesson or promotion is minted `deferred` for a person (reason
 `distill-review`, same gate) with the same `scores` and `judgeReason`, and the
-triage drain and its judgment tier leave it alone. On 2026-10-05 the gate had
+triage drain and its judgment tier leave it alone. A lesson that repeats an existing
+lesson may instead be proposed as an update of that lesson (reason
+`distill-update`, same gate), with only what the memory adds; the drain leaves
+it for a person too. On 2026-10-05 the gate had
 staged 12 lessons and 10 were bad (they restated the memory, claimed what it
 does not say, or filed a dated status as a lesson), and no score separated them
 from the two good ones. Reflect revises only an asset's
 `description`, `when_to_use` and title, never its body. On 396 labelled edits,
 those that fixed a frontmatter defect and left the body alone were good 24
 times in 26, and those that also rewrote the body were bad 175 times in 224.
+
+### Judgment tier: promotions only
+
+The triage drain's judgment tier (`processes.triage.judgment`, off in every
+built-in strategy) may accept only a consolidate promotion, a memory proposed as
+a new knowledge note. A retirement, an exact fix or a reflect revision it would
+accept is left for a person (`judgment-not-promotion`); it may still reject.
+Measured on the nightly eval with `experimental.improveAutonomy` (#1132, #1094),
+judging every kind solved 0.49 (gpt-5.6-terra) and 0.53 (qwen3.8-27b) of the
+items, harmed 14 and 11, and changed 18 and 21 notes outside the planted set.
+Judging promotions alone: precision 0.87, recall 0.78 and 4.8% of bad promotions
+accepted on qwen3.8-27b; precision 1.0, recall 0.17 on gpt-5.6-terra.
+
+### Proactive-lane proposals wait for a person
+
+A proposal planned by the proactive-maintenance lane (`eligibilitySource:
+"proactive"`, an asset with no feedback behind it) is never accepted by the
+drain, whether a deterministic gate (a staged quality-judge pass), the judgment
+tier or an accept staged by an earlier drain would take it. It is left for a
+person with reason `proactive-needs-review`, and the judgment tier does not see
+it. An empty diff is still rejected. Proposals driven by feedback (`signal-delta`,
+`scope`) follow the one rule unchanged (#1147).
 
 ### Retrieval regression gate
 
@@ -297,8 +323,7 @@ but nothing assigns or emits it any more.
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
-the fallback lanes (proactive maintenance and high salience, which score and
-plan nothing), the retrieval scope, salience ranking, disk presence, and the
+the proactive-maintenance lane, the retrieval scope, salience ranking, disk presence, and the
 final cap, and resolve the bundle they plan the same way: `--bundle`, else
 `defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
 `defaultBundle`). Each invocation reports a best-effort observation assembled
@@ -337,13 +362,20 @@ equals `effective`. When the run is unbounded, `totalCeiling` is omitted.
 candidates, validation, and proactive-maintenance selection are proposal-only
 and never write assets directly regardless of this gate.
 Three specific lanes *would* mutate assets without review and are downgraded
-unless `experimental.improveAutonomy` is explicitly set to `true`:
+unless `experimental.improveAutonomy` is explicitly set to `true` (the triage
+lane only when its judgment tier is on; see below):
 
 | Lane | What it does when enabled | With autonomy off |
 | --- | --- | --- |
 | `memoryInference` | Writes `.derived.md` children and rewrites parent frontmatter | disabled |
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
-| `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+| `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+
+A deterministic-only `promote` (triage with judgment off) is not gated (#1143):
+the `default` strategy drains the queue through the deterministic gates, up to
+`maxAcceptsPerRun` (25) per run, with no opt-in. The nightly eval's baseline is
+exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) and
+0.89 (qwen) of items solved, 0 to 1 harmed.
 
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
@@ -361,8 +393,7 @@ explicit promote surface independent of this gate.
 For git-backed bundles (detected by a `.git` directory), `akm improve`
 automatically commits its changes as a single batch at the end of the run —
 the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. The `reflect-distill` and
-`proactive-maintenance` strategies skip sync entirely, so an interrupted run
+the active strategy's `sync` setting. A user-defined strategy can turn sync off, so an interrupted run
 does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.

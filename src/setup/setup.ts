@@ -748,7 +748,7 @@ export async function runSetupWizard(opts?: { dir?: string; noInit?: boolean }):
 
   p.outro(
     `Configuration saved to ${configPath}\n` +
-      'Next: `akm bundle add <source>`, `akm index`, `akm search "<query>"`, `akm help agents`',
+      'Next: `akm bundle add <source>`, `akm index`, `akm search "<query>"`, `akm hints`',
   );
 }
 

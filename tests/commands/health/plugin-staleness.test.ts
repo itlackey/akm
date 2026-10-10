@@ -313,4 +313,131 @@ describe("collectPluginStalenessAdvisories (itlackey/akm#832)", () => {
       expect(results.map((r) => r.name)).toEqual(["plugin-version", "opencode-plugin-version"]);
     });
   });
+
+  // OpenCode 2 keeps its plugins in `npm/<spec>/<epoch-ms>/node_modules` (observed on 2.0.26),
+  // and akm-opencode-v2 has its own advisory so it never reads as the OpenCode 1 plugin.
+  describe("opencode-v2-plugin-version", () => {
+    function installV2BundledAkm(
+      cacheRoot: string,
+      version: string,
+      spec = "akm-opencode-v2@latest",
+      build = "1800000000000",
+    ) {
+      const pkgDir = path.join(cacheRoot, "npm", spec, build, "node_modules", "akm-cli");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "akm-cli", version }));
+    }
+
+    function installV1BundledAkm(cacheRoot: string, version: string): void {
+      const pkgDir = path.join(cacheRoot, "packages", "akm-opencode", "node_modules", "akm-cli");
+      fs.mkdirSync(pkgDir, { recursive: true });
+      fs.writeFileSync(path.join(pkgDir, "package.json"), JSON.stringify({ name: "akm-cli", version }));
+    }
+
+    function roots(prefix: string) {
+      const pluginsRoot = makeTempDir(prefix);
+      return { pluginsRoot, opencodeCacheRoot: path.join(pluginsRoot, "opencode-cache") };
+    }
+
+    test("a stale bundled akm-cli warns, names the spec and the remedy", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-stale-");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.15");
+
+      const [adv, ...rest] = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(rest).toEqual([]);
+      expect(adv?.name).toBe("opencode-v2-plugin-version");
+      expect(adv?.status).toBe("warn");
+      expect(adv?.message).toContain("OpenCode 2's akm-opencode-v2");
+      expect(adv?.message).toContain("akm-opencode-v2@latest");
+      expect(adv?.message).toContain("v0.9.15");
+      expect(adv?.message).toContain("update the akm-opencode-v2 plugin");
+      expect(adv?.evidence).toEqual({ bundledVersion: "0.9.15", cliVersion: "0.9.17", spec: "akm-opencode-v2@latest" });
+    });
+
+    test("a matching bundled akm-cli passes", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-match-");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.17");
+
+      const [adv] = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(adv?.status).toBe("pass");
+    });
+
+    test("only the newest build folder of a spec counts", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-builds-");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.1", "akm-opencode-v2@latest", "1700000000000");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.17", "akm-opencode-v2@latest", "1800000000000");
+
+      const results = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(results).toHaveLength(1);
+      expect(results[0]?.status).toBe("pass");
+    });
+
+    test("each cached spec (@latest, @next, a pin) gets its own advisory", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-specs-");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.17", "akm-opencode-v2@latest");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.15", "akm-opencode-v2@0.8.0");
+
+      const results = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(results.map((r) => [r.evidence?.spec, r.status])).toEqual([
+        ["akm-opencode-v2@0.8.0", "warn"],
+        ["akm-opencode-v2@latest", "pass"],
+      ]);
+    });
+
+    test("an unreadable package.json, or a different package under npm/, is skipped", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-bad-");
+      const bad = path.join(
+        opencodeCacheRoot,
+        "npm",
+        "akm-opencode-v2@latest",
+        "1800000000000",
+        "node_modules",
+        "akm-cli",
+      );
+      fs.mkdirSync(bad, { recursive: true });
+      fs.writeFileSync(path.join(bad, "package.json"), "{not valid json");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.15", "akm-opencode@latest");
+
+      expect(collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot })).toEqual([]);
+    });
+
+    test("an OpenCode 1 cache never produces a V2 advisory, and a V2 cache never a V1 one", () => {
+      const v1 = roots("akm-plugin-v2-only-v1-");
+      installV1BundledAkm(v1.opencodeCacheRoot, "0.9.15");
+      expect(
+        collectPluginStalenessAdvisories({
+          pluginsRoot: v1.pluginsRoot,
+          cliVersion: "0.9.17",
+          opencodeCacheRoot: v1.opencodeCacheRoot,
+        }).map((r) => r.name),
+      ).toEqual(["opencode-plugin-version"]);
+
+      const v2 = roots("akm-plugin-v2-only-v2-");
+      installV2BundledAkm(v2.opencodeCacheRoot, "0.9.15");
+      expect(
+        collectPluginStalenessAdvisories({
+          pluginsRoot: v2.pluginsRoot,
+          cliVersion: "0.9.17",
+          opencodeCacheRoot: v2.opencodeCacheRoot,
+        }).map((r) => r.name),
+      ).toEqual(["opencode-v2-plugin-version"]);
+    });
+
+    test("both installed: independent advisories, each against the running CLI", () => {
+      const { pluginsRoot, opencodeCacheRoot } = roots("akm-plugin-v2-both-");
+      installV1BundledAkm(opencodeCacheRoot, "0.9.17");
+      installV2BundledAkm(opencodeCacheRoot, "0.9.15");
+
+      const results = collectPluginStalenessAdvisories({ pluginsRoot, cliVersion: "0.9.17", opencodeCacheRoot });
+
+      expect(results.map((r) => [r.name, r.status])).toEqual([
+        ["opencode-plugin-version", "pass"],
+        ["opencode-v2-plugin-version", "warn"],
+      ]);
+    });
+  });
 });

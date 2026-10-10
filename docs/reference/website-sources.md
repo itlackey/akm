@@ -51,7 +51,7 @@ Drop fetcher modules into:
 ```
 
 `<stashDir>` is the active bundle for the current operation. When a command has a
-resolved write target (for example `akm import --target ...`), akm loads
+resolved write target (for example `akm import --bundle ...`), akm loads
 fetchers from that target bundle before falling back to the built-in website
 scraper.
 

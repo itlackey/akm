@@ -222,13 +222,11 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).toThrow(ConfigError);
   });
 
-  // #852 (following #815): `extraParams.reasoning_effort` was the documented
-  // 0.9.1 workaround for LM Studio, where `enableThinking` is a no-op.
-  // `reasoningEffort` became a first-class — and therefore protected — field
-  // in 0.9.2. AGENTS.md cites this exact guard as already fixed to
-  // warn-and-auto-lift; loads onto the first-class field in memory, warning
-  // once and naming `akm migrate apply` as the way to persist it.
-  test("loads a legacy reasoning_effort extraParams override by lifting it, naming akm migrate apply in the warning", () => {
+  // #852 / #1091: `extraParams.reasoning_effort` was the documented 0.9.1
+  // workaround for LM Studio. It is older than the 0.9.15 floor, so 0.10 refuses
+  // it and names the first-class field instead of lifting it (tests/config-
+  // extraparams-protected.test.ts); `akm migrate apply` under 0.9.x rewrites it.
+  test("refuses a legacy reasoning_effort extraParams override, naming the first-class field", () => {
     writeConfig({
       configVersion: "0.9.0",
       engines: {
@@ -240,18 +238,7 @@ describe("0.9 config contract", () => {
         },
       },
     });
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const config = loadUserConfig();
-      expect(config.engines?.fast?.reasoningEffort).toBe("high");
-      expect(warnings.some((w) => w.includes("akm migrate apply"))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
+    expect(() => loadUserConfig()).toThrow(/set engines\.<name>\.reasoningEffort instead/);
   });
 
   test("rejects a reasoning_effort extraParams override that conflicts with a different first-class reasoningEffort", () => {
@@ -360,7 +347,9 @@ describe("0.9 config contract", () => {
       },
     };
     expect(validateConfigShape({ ...base, defaults: { improveStrategy: "missing" } }).ok).toBe(false);
-    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "quick" } }).ok).toBe(true);
+    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "consolidate" } }).ok).toBe(true);
+    // Removed in 0.10 (#1130): config load must not fail; resolution refuses it, naming `default`.
+    expect(validateConfigShape({ ...base, defaults: { improveStrategy: "thorough" } }).ok).toBe(true);
     expect(validateConfigShape({ ...base, improve: { strategies: { custom: { engine: "agent" } } } }).ok).toBe(false);
     // A triage judgment is unattended model work: an agent that cannot confine the policy is refused.
     expect(
@@ -444,6 +433,31 @@ describe("0.9 config contract", () => {
     );
   });
 
+  test("old hint-only keys load and are named once by the unknown-key warning (#1091)", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: { main: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" } },
+      defaults: { llmEngine: "main", llm: "x", agent: "y", improve: "z" },
+      index: { stalenessDetection: { enabled: true }, memory: { engine: "main", endpoint: "https://example.test" } },
+      improve: { strategies: { mine: { processes: { feedbackDistillation: { enabled: true } } } } },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().defaults?.llmEngine).toBe("main");
+    });
+    for (const key of [
+      "defaults.llm",
+      "defaults.agent",
+      "defaults.improve",
+      "index.stalenessDetection",
+      "index.memory.endpoint",
+      "improve.strategies.mine.processes.feedbackDistillation",
+    ]) {
+      const named = warnings.filter((w) => w.includes(`Unknown config key "${key}"`));
+      expect(named).toHaveLength(1);
+    }
+  });
+
   test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
     writeConfig({
       configVersion: "0.9.0",
@@ -488,6 +502,59 @@ describe("0.9 config contract", () => {
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback.allowedFailureModes).toEqual(["incorrect"]);
     expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
     expect(JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).feedback).toEqual({ requireReason: false });
+  });
+
+  test("the improve knobs removed in 0.10 (#1131, #1129) still load, with one warning apiece, and only akm migrate apply drops them", () => {
+    const removed = [
+      "improve.salience.outcomeWeightEnabled",
+      "improve.salience.salienceThreshold",
+      "improve.strategies.default.processes.consolidate.antiCollapse",
+      "improve.strategies.default.processes.consolidate.p90ChunkSecondsDefault",
+      "improve.strategies.default.processes.consolidate.minPoolSize",
+      "improve.strategies.default.processes.distill.fidelityCheck",
+      "improve.strategies.default.processes.reflect.lowValueFilter",
+    ];
+    writeConfig({
+      configVersion: "0.9.0",
+      improve: {
+        salience: { outcomeWeightEnabled: false, salienceThreshold: 0.8 },
+        strategies: {
+          default: {
+            processes: {
+              consolidate: {
+                antiCollapse: { enabled: false },
+                p90ChunkSecondsDefault: 10,
+                minPoolSize: 500,
+                limit: 7,
+              },
+              distill: { fidelityCheck: { enabled: true } },
+              reflect: { lowValueFilter: { enabled: true } },
+            },
+          },
+        },
+      },
+    });
+
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.improve?.strategies?.default?.processes?.consolidate?.limit).toBe(7);
+    });
+    for (const dotted of removed) {
+      expect(warnings.filter((w) => w.includes(`"${dotted}"`))).toHaveLength(1);
+    }
+
+    // An ordinary write keeps them; only `akm migrate apply` drops them.
+    mutateConfig((current) => ({ ...current, archiveRetentionDays: 30 }));
+    const read = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).improve;
+    expect(read().salience.outcomeWeightEnabled).toBe(false);
+    expect(read().strategies.default.processes.consolidate.minPoolSize).toBe(500);
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const after = read();
+    expect(after.salience).toEqual({});
+    expect(after.strategies.default.processes.consolidate).toEqual({ limit: 7 });
+    expect(after.strategies.default.processes.distill).toEqual({});
+    expect(after.strategies.default.processes.reflect).toEqual({});
   });
 
   test("rejects a bundle key that is not a legal slug and a non-source or multi-source entry", () => {

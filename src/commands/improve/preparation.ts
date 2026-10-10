@@ -10,8 +10,8 @@
  * Candidate selection reads the improve ledger plus one set of signals: a ref
  * is eligible for a source when feedback newer than its last attempt landed and
  * no ledger window holds it, and reflect reads only negative feedback. Refs
- * without recent feedback can still be picked by the fallback lanes (proactive
- * maintenance, high salience), which only score them; the survivors are ranked
+ * without recent feedback can still be picked by the proactive-maintenance
+ * lane, which plans them with the rest; the survivors are ranked
  * by salience, checked on disk and capped. A plan-only run evaluates the same
  * selectors against read snapshots and writes nothing.
  */
@@ -61,7 +61,6 @@ import {
   findAssetFilePath,
   isDistillCandidateRef,
   isLessonCandidate,
-  resolveImproveScope,
   withIndexDb,
 } from "./eligibility";
 import { akmExtract, countNewExtractCandidates, type ResolvedExtractPlan } from "./extract";
@@ -148,7 +147,7 @@ export function pickDefined<T extends object, K extends keyof T>(
   return out;
 }
 
-export const CONSOLIDATION_CONFIG_KEYS = ["enabled", "minPoolSize", "limit", "maxChunkSize"] as const;
+export const CONSOLIDATION_CONFIG_KEYS = ["enabled", "limit", "maxChunkSize"] as const;
 
 /** Emit an aggregate `improve_skipped` row (never one per ref). */
 export function recordImproveSkip(
@@ -170,32 +169,22 @@ export function pushRecentError(recentErrors: Record<string, string[]>, originat
 // ── Consolidation ────────────────────────────────────────────────────────────
 
 /**
- * The consolidation gates and pool, with no model call: the profile toggle,
- * `minPoolSize` (not for a named strategy or ref scope, nor once the pool is
- * over the 100-memory volume trigger), and the ledger delta (every memory
- * judged recently and unchanged since means nothing to do).
+ * The consolidation gates and pool, with no model call: the profile toggle
+ * and the ledger delta (every memory judged recently and unchanged since
+ * means nothing to do).
  */
 function planConsolidationPass(args: {
   options: AkmImproveOptions;
   primaryStashDir?: string;
-  memorySummary: { eligible: number; derived: number };
   improveProfile?: ImproveProfileConfig;
   resolvedPlan: ResolvedImprovePlan;
   eventsCtx?: EventsContext;
   existingKnowledgeBodyHashes?: Set<string>;
 }): {
-  poolBelowMinSize: boolean;
-  eligiblePoolSize: number;
-  minPoolSize: number;
   plan: ImproveExecutionPlan["consolidation"];
 } {
-  const { options, primaryStashDir, memorySummary, resolvedPlan } = args;
+  const { options, primaryStashDir, resolvedPlan } = args;
   const processConfig = args.improveProfile?.processes?.consolidate;
-  const volumeTriggered = memorySummary.eligible > 100 && resolvedPlan.processes.consolidate.runner !== null;
-  const minPoolSize = typeof processConfig?.minPoolSize === "number" ? processConfig.minPoolSize : 0;
-  const eligiblePoolSize = typeof memorySummary.eligible === "number" ? memorySummary.eligible : 0;
-  const userNamed = options.strategy !== undefined || resolveImproveScope(options.scope).mode === "ref";
-  const poolBelowMinSize = !volumeTriggered && !userNamed && minPoolSize > 0 && eligiblePoolSize < minPoolSize;
   const pool: Pick<ConsolidationPoolSnapshot, "poolSize" | "candidatePoolSize" | "judgedUnchanged"> = primaryStashDir
     ? inspectConsolidationPool(
         {
@@ -224,18 +213,13 @@ function planConsolidationPass(args: {
   );
   const profilePassed = processConfig?.enabled !== false;
   const deltaPassed = pool.candidatePoolSize > 0 || pool.judgedUnchanged === 0;
-  const wouldRun = profilePassed && !poolBelowMinSize && deltaPassed && pool.candidatePoolSize > 0;
-  const belowMin = `pool ${eligiblePoolSize} is below minPoolSize ${minPoolSize}`;
+  const wouldRun = profilePassed && deltaPassed && pool.candidatePoolSize > 0;
   const unchanged = "every memory was judged recently and is unchanged since";
   return {
-    poolBelowMinSize,
-    eligiblePoolSize,
-    minPoolSize,
     plan: {
       configured: pickDefined(processConfig, CONSOLIDATION_CONFIG_KEYS),
       effective: {
         enabled: profilePassed,
-        minPoolSize,
         ...(processConfig?.limit !== undefined ? { limit: processConfig.limit } : {}),
         chunkSize,
       },
@@ -245,10 +229,6 @@ function planConsolidationPass(args: {
         profile: {
           passed: profilePassed,
           reason: profilePassed ? "consolidation enabled" : "disabled by improve profile",
-        },
-        minimumPool: {
-          passed: !poolBelowMinSize,
-          reason: poolBelowMinSize ? belowMin : `pool satisfies minPoolSize ${minPoolSize}`,
         },
         delta: {
           passed: deltaPassed,
@@ -262,13 +242,11 @@ function planConsolidationPass(args: {
       wouldRun,
       reason: !profilePassed
         ? "disabled by improve profile"
-        : poolBelowMinSize
-          ? belowMin
-          : !deltaPassed
-            ? unchanged
-            : pool.candidatePoolSize === 0
-              ? "candidate pool is empty after narrowing"
-              : "all consolidation gates pass",
+        : !deltaPassed
+          ? unchanged
+          : pool.candidatePoolSize === 0
+            ? "candidate pool is empty after narrowing"
+            : "all consolidation gates pass",
       estimatedChunks: wouldRun ? Math.ceil(pool.candidatePoolSize / chunkSize) : 0,
     },
   };
@@ -283,13 +261,6 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
   let consolidation: ConsolidateResult = makeConsolidateResult({ target: "", durationMs: 0 });
   if (!planned.plan.gates.profile.passed) {
     info("[improve] consolidation skipped (disabled by improve profile)");
-  } else if (planned.poolBelowMinSize) {
-    recordImproveSkip(eventsCtx, "memories/_consolidation", {
-      reason: "pool_below_min_size",
-      poolSize: planned.eligiblePoolSize,
-      minPoolSize: planned.minPoolSize,
-    });
-    info(`[improve] consolidation skipped (pool ${planned.eligiblePoolSize} < minPoolSize ${planned.minPoolSize})`);
   } else if (!planned.plan.gates.delta.passed) {
     recordImproveSkip(eventsCtx, "memories/_consolidation", { reason: "consolidation_no_memory_updates" });
     info("[improve] consolidation skipped (every memory was judged recently and is unchanged)");
@@ -308,7 +279,6 @@ async function runConsolidationPass(args: ImprovePreparationStageArgs): Promise<
         limit: processConfig?.limit,
         maxChunkSize: processConfig?.maxChunkSize,
         signal: args.budgetSignal,
-        p90ChunkSecondsDefault: processConfig?.p90ChunkSecondsDefault,
         // Its read-only proposal lookups go through the run's own state.db handle.
         ...(eventsCtx?.db ? { proposalsCtx: { db: eventsCtx.db } } : {}),
       }),
@@ -864,7 +834,7 @@ export function buildSnapshotManifest(args: {
  *  - distillOnlyRefs: only distill's passes (any signal, a positive or a note
  *    included), on a distill candidate;
  *  - noFeedbackPool: no recent feedback and no reflect window, left to the
- *    fallback lanes, which only score them;
+ *    proactive-maintenance lane;
  *  - fullySkippedCount: feedback on record but nothing new, or a live window.
  * An explicit `--scope <ref>` bypasses every gate.
  */
@@ -925,9 +895,9 @@ export function partitionBySignalDelta(args: {
 }
 
 /**
- * Pick the loop's refs: signal delta, the fallback lanes (unless
- * `--require-feedback-signal`; they score, never plan), lane attribution,
- * salience, the no-op-dampened ranking, the disk check and the limit.
+ * Pick the loop's refs: signal delta, the proactive-maintenance lane (unless
+ * `--require-feedback-signal`), lane attribution, salience, the no-op-dampened
+ * ranking, the disk check and the limit.
  */
 async function selectLoopCandidates(
   args: ImprovePreparationStageArgs,
@@ -936,7 +906,7 @@ async function selectLoopCandidates(
   actions: ImproveActionResult[],
   persist: boolean,
 ) {
-  const { scope, options, primaryStashDir, eventsCtx, improveProfile } = args;
+  const { scope, options, primaryStashDir, eventsCtx } = args;
   const snapshot = buildSnapshotManifest({
     postCleanupRefs,
     validationFailureRefs,
@@ -948,9 +918,8 @@ async function selectLoopCandidates(
   const processableRefs = [...partition.eligibleRefs, ...partition.distillOnlyRefs];
   const signalFiltered = processableRefs.filter((c) => snapshot.feedback.get(c.ref)?.hasSignal === true);
   const signalBearingSet = new Set(signalFiltered.map((r) => r.ref));
-  // The fallback lanes (proactive, high salience) have no usage evidence of
-  // their own: they pick only what retrieval returned or new material improve
-  // never processed (#986). Evaluated once per candidate.
+  // The proactive lane has no usage evidence of its own: it picks only what
+  // retrieval returned or new material improve never processed (#986). Evaluated once per candidate.
   const fallbackEligible = postCleanupRefs.filter((c) => !validationFailureRefs.has(c.ref));
   const allowFallbacks = options.requireFeedbackSignal !== true;
   const retrievalScope =
@@ -965,35 +934,26 @@ async function selectLoopCandidates(
     ...partition.noFeedbackPool,
   ]);
   const noFeedbackCandidates = noFeedbackPool.filter((r) => !unscoped.has(r.ref));
-  // Only a ref no fallback lane may pick anymore is charged to the retrieval gate.
+  // Only a ref the proactive lane may not pick is charged to the retrieval gate.
   const outOfScope = new Set(noFeedbackPool.filter((r) => unscoped.has(r.ref)).map((r) => r.ref));
   const retrieval = fetchRetrievalSignals(options, signalFiltered, noFeedbackCandidates, eventsCtx, persist);
   const proactive = allowFallbacks
     ? selectProactiveMaintenanceLane(args, noFeedbackCandidates, snapshot, retrieval, persist)
     : { proactiveRefs: [] as ImproveEligibleRef[] };
-  const highSalienceRefs = allowFallbacks
-    ? selectHighSalienceLane(
-        options,
-        improveProfile,
-        eventsCtx,
-        noFeedbackCandidates.filter((r) => !proactive.proactiveRefs.some((p) => p.ref === r.ref)),
-        snapshot.lastReflectAttemptAt,
-        persist,
-      )
-    : [];
-  // An explicit ref scope always acts on its ref; otherwise only feedback plans the loop. The fallback lanes'
-  // picks are scored with it, never planned: a rewrite needs negative feedback.
-  const signalAndRetrievalRefs = dedupeRefs([...signalFiltered, ...proactive.proactiveRefs, ...highSalienceRefs]);
-  const mergedRefs = scope.mode === "ref" ? processableRefs : signalFiltered;
-  const scoredRefs = scope.mode === "ref" ? processableRefs : signalAndRetrievalRefs;
+  // Planned: signal-delta refs plus the proactive lane's picks (whole-stash / type scope); an explicit ref scope
+  // acts on its own refs.
+  const mergedRefs =
+    scope.mode === "ref" ? processableRefs : dedupeRefs([...signalFiltered, ...proactive.proactiveRefs]);
 
-  // Lane attribution: signal-delta, and an explicit ref scope over it.
+  // Lane attribution, weakest first so the strongest wins: proactive < signal-delta, and an explicit ref scope
+  // over everything.
   const sourceByRef = new Map<string, EligibilitySource>();
+  for (const r of proactive.proactiveRefs) sourceByRef.set(r.ref, "proactive");
   for (const r of signalFiltered) sourceByRef.set(r.ref, "signal-delta");
   if (scope.mode === "ref") for (const r of processableRefs) sourceByRef.set(r.ref, "scope");
   for (const r of mergedRefs) r.eligibilitySource = sourceByRef.get(r.ref) ?? "unknown";
 
-  const salienceMap = scoreSalience(args, scoredRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
+  const salienceMap = scoreSalience(args, mergedRefs, snapshot.feedback, retrieval.retrievalCounts, persist);
 
   // Rank by salience; a ref skipped as a no-op repeatedly sorts lower (its stored rank is untouched).
   const noOps = new Map<string, number>();
@@ -1015,8 +975,8 @@ async function selectLoopCandidates(
     limit: options.limit,
   });
 
-  if (signalAndRetrievalRefs.length > 0) {
-    info(`[improve] ${signalAndRetrievalRefs.length} refs with usage signals (${signalFiltered.length} feedback)`);
+  if (mergedRefs.length > 0) {
+    info(`[improve] ${mergedRefs.length} refs with usage signals (${signalFiltered.length} feedback)`);
   }
   if (validationFailureRefs.size > 0) info(`[improve] ${validationFailureRefs.size} with validation failures excluded`);
   if (persist && missing.length > 0) info(`[improve] ${missing.length} candidates dropped — file not on disk`);
@@ -1118,11 +1078,11 @@ function fetchRetrievalSignals(
 }
 
 /**
- * Proactive maintenance (default off, whole-stash/type runs): pick stable
- * assets due for a revisit. The picks are scored and never planned: improve
- * does not rewrite on a proactive cadence. The due gate doubles as the
- * rotation cooldown: a freshly reflected asset waits `dueDays` before it is
- * picked again.
+ * Proactive maintenance (default on, whole-stash/type runs): pick stable
+ * assets due for a revisit and plan them with the feedback-bearing refs. The
+ * cap against a proposal flood: `maxPerRun` limits the picks per run, the due
+ * gate admits only an asset not reflected or distilled for `dueDays` (so each
+ * comes up at most once per `dueDays`), and reflect's `limit` bounds the run.
  */
 function selectProactiveMaintenanceLane(
   args: ImprovePreparationStageArgs,
@@ -1140,7 +1100,7 @@ function selectProactiveMaintenanceLane(
   }
   const pmCfg = args.improveProfile.processes?.proactiveMaintenance;
   const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;
-  const maxPerRun = pmCfg?.maxPerRun ?? pmCfg?.limit ?? DEFAULT_MAX_PER_RUN;
+  const maxPerRun = pmCfg?.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const selection = selectProactiveMaintenanceRefs({
     candidates,
     lastReflectTs: snapshot.lastReflectAttemptAt,
@@ -1177,54 +1137,13 @@ function selectProactiveMaintenanceLane(
     proactiveRefs: selection.selected,
     proactiveMaintenanceSummary: { ...summary, selectedRefs },
     proactivePlan: {
-      configured: pickDefined(pmCfg, ["dueDays", "maxPerRun", "limit"] as const),
+      configured: pickDefined(pmCfg, ["dueDays", "maxPerRun"] as const),
       effective: { dueDays, maxPerRun },
       candidatePool: candidates.length,
       ...summary,
       selectedRefs,
     },
   };
-}
-
-/**
- * High salience: zero-feedback refs whose content-derived encoding score (not
- * a per-type stub) reaches `salienceThreshold` and that were never reflected,
- * top-N by score, capped at 10% of the effective limit. The picks are scored,
- * never planned.
- */
-function selectHighSalienceLane(
-  options: AkmImproveOptions,
-  improveProfile: ImproveProfileConfig,
-  eventsCtx: EventsContext | undefined,
-  candidates: ImproveEligibleRef[],
-  lastReflectAttemptAt: Map<string, string>,
-  persist: boolean,
-): ImproveEligibleRef[] {
-  const threshold = (options.config ?? loadConfig()).improve?.salience?.salienceThreshold ?? 0.75;
-  const effectiveLimit = options.limit ?? improveProfile?.processes?.reflect?.limit ?? improveProfile.limit ?? 10;
-  const selected =
-    withRunState(eventsCtx, persist, (db) =>
-      candidates
-        .flatMap((r) => {
-          const row = getAssetSalience(db, keyOf(r));
-          return row &&
-            isContentEncodingRow(row) &&
-            row.encoding_salience >= threshold &&
-            !lastReflectAttemptAt.has(r.ref)
-            ? [{ ref: r, score: row.encoding_salience }]
-            : [];
-        })
-        .sort((a, b) => b.score - a.score)
-        .slice(0, Math.max(1, Math.floor(effectiveLimit * 0.1)))
-        .map((q) => q.ref),
-    ) ?? [];
-  if (selected.length > 0) {
-    info(
-      `[improve] high-salience lane admitted ${selected.length} content-scored ref(s) ` +
-        `(threshold=${threshold}, requires content-derived encoding_source)`,
-    );
-  }
-  return selected;
 }
 
 /**
@@ -1239,7 +1158,7 @@ function scoreSalience(
   retrievalCounts: Map<string, number>,
   persist: boolean,
 ): Map<string, Salience> {
-  const { options, eventsCtx } = args;
+  const { eventsCtx } = args;
   const utilityMap = buildUtilityMap(mergedRefs, !persist);
   const lastUseMsByRef = withIndexDb(!persist, (db) => getLastUseMsByRef(db, mergedRefs)) ?? new Map<string, number>();
   const outcomeSalience = updateOutcomeScores({
@@ -1252,7 +1171,6 @@ function scoreSalience(
     eventsCtx,
     persist,
   });
-  const outcomeWeightEnabled = (options.config ?? loadConfig()).improve?.salience?.outcomeWeightEnabled !== false;
   const storedEncoding = new Map<string, number>();
   withRunState(eventsCtx, persist, (db) => {
     for (const r of mergedRefs) {
@@ -1276,7 +1194,6 @@ function scoreSalience(
         outcomeSalience: outcomeSalience.get(r.ref),
         sizeBytes: fileSize(r.filePath),
         now,
-        outcomeWeightEnabled,
       }),
     );
   }

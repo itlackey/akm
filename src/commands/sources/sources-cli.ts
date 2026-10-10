@@ -27,7 +27,6 @@
  * `akm sync` directly).
  */
 import { defineCommand } from "citty";
-import { getParsedInvocation } from "../../cli/invocation";
 import {
   defineJsonCommand,
   EXIT_CODES,
@@ -37,7 +36,6 @@ import {
   runWithJsonErrors,
 } from "../../cli/shared";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveWritableOverride, saveGitStash } from "../../sources/providers/git";
 import { pkgVersion } from "../../version";
@@ -50,7 +48,7 @@ export const upgradeCommand = defineJsonCommand({
     name: "upgrade",
     description:
       "Upgrade akm to the latest release, then update the akm plugin of each installed harness " +
-      "(Claude Code, Codex, OpenCode). With the OpenCode plugin installed, akm moves to the version that plugin pins.",
+      "(Claude Code, Codex, OpenCode 1 and 2). With an OpenCode plugin installed, akm moves to the version that plugin pins.",
   },
   args: {
     check: {
@@ -147,20 +145,6 @@ export const syncCommand = defineCommand({
   },
 });
 
-/**
- * `--target` was renamed to `--bundle` on `clone` in 0.9 (S8). citty is
- * non-strict, so the retired spelling is silently absorbed rather than
- * rejected — the asset then lands in the default bundle instead of the one
- * the caller named, with exit 0 and no error. Reject it explicitly instead.
- */
-function rejectRetiredCloneTargetFlag(): void {
-  if (!getParsedInvocation().hasFlag("--target")) return;
-  throw new UsageError(
-    "`akm clone --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
-}
-
 export const cloneCommand = defineJsonCommand({
   meta: {
     name: "clone",
@@ -178,7 +162,6 @@ export const cloneCommand = defineJsonCommand({
     dest: { type: "string", description: "Unmanaged destination directory (cannot be combined with --bundle)" },
   },
   async run({ args }) {
-    rejectRetiredCloneTargetFlag();
     const result = await akmClone({
       sourceRef: args.ref,
       newName: args.name,

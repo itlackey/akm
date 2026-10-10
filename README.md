@@ -66,7 +66,7 @@ akm show workflows/deploy                # load the best match by ref
 Each step, with its success check, is in [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/). Then tell your agent AKM exists:
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 ## Works with what you already have
@@ -78,7 +78,7 @@ AKM recognizes several existing directory layouts in place, each through its own
 | Native akm bundles | Full read/write — scripts, skills, workflows, agents, instructions, memories, knowledge, and more |
 | Claude Code / OpenCode tool directories | Indexes `CLAUDE.md`/`AGENTS.md`, `commands/`, `agents/`, `skills/` in place, read-only |
 | Standalone Agent Skills packages | Indexes `<name>/SKILL.md` collections in place, read-only |
-| Workflow and task files | Indexes standalone `.md`/`.yml` workflows and task source v4 `.yml` files |
+| Workflow and task files | Indexes standalone `.md` workflows and task source v4 `.yml` files |
 | OKF and LLM wikis | Indexes plain-markdown (OKF) and Karpathy-style wiki (`schema.md` + `raw/` + `pages/`) content, read-only |
 | Git, npm, local dirs, and websites | Any of these can be added as a source; AKM detects the bundle format inside and indexes it (a website is crawled into a local snapshot) |
 

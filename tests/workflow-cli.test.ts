@@ -48,7 +48,7 @@ function errorEnvelope(stderr: string): { ok: false; code: string; error: string
   return JSON.parse(start >= 0 ? stderr.slice(start + 1) : stderr);
 }
 
-const ROUTED_WORKFLOW = `---
+const TYPED_WORKFLOW = `---
 type: workflow
 description: Typed parameter workflow
 params:
@@ -57,14 +57,15 @@ params:
   labels: { type: array, items: { type: string } }
 steps:
   - id: choose
-    route:
-      input: params.include_processes
-      when: [{ match: "true", step: finish }]
-      default: finish
+    unit:
+      exec:
+        command: ["bun", "-e", "0"]
   - id: finish
 ---
 
 ## choose
+
+Decide.
 
 ## finish
 
@@ -114,22 +115,13 @@ describe("workflow CLI", () => {
   });
 
   test("create --force alone replaces an existing workflow with a fresh template", async () => {
-    await createWorkflow("template-target", ROUTED_WORKFLOW);
+    await createWorkflow("template-target", TYPED_WORKFLOW);
     const assetPath = path.join(storage.stashDir, "workflows", "template-target.md");
-    expect(fs.readFileSync(assetPath, "utf8")).toContain("route:");
+    expect(fs.readFileSync(assetPath, "utf8")).toContain("include_processes");
 
     const result = await runCliCapture(["workflow", "create", "template-target", "--force"]);
     expect(result.code).toBe(0);
-    expect(fs.readFileSync(assetPath, "utf8")).not.toContain("route:");
-  });
-
-  test("create --force --reset still works (deprecated alias, no independent effect)", async () => {
-    await createWorkflow("template-target-reset", ROUTED_WORKFLOW);
-    const assetPath = path.join(storage.stashDir, "workflows", "template-target-reset.md");
-
-    const result = await runCliCapture(["workflow", "create", "template-target-reset", "--force", "--reset"]);
-    expect(result.code).toBe(0);
-    expect(fs.readFileSync(assetPath, "utf8")).not.toContain("route:");
+    expect(fs.readFileSync(assetPath, "utf8")).not.toContain("include_processes");
   });
 
   test("create --from rejects invalid and duplicate-step documents", async () => {
@@ -143,7 +135,7 @@ describe("workflow CLI", () => {
     expect(invalid.code).toBe(2);
     expect(errorEnvelope(invalid.stderr).error).toContain('"## broken" body section');
 
-    const duplicate = ROUTED_WORKFLOW.replace("- id: finish", "- id: choose");
+    const duplicate = TYPED_WORKFLOW.replace("- id: finish", "- id: choose");
     const duplicated = await runCliCapture([
       "workflow",
       "create",
@@ -156,7 +148,7 @@ describe("workflow CLI", () => {
   });
 
   test("run materializes exact typed flags and persists a resumable partial run", async () => {
-    await createWorkflow("typed", ROUTED_WORKFLOW);
+    await createWorkflow("typed", TYPED_WORKFLOW);
 
     const result = await runCliCapture([
       "workflow",
@@ -228,7 +220,7 @@ describe("workflow CLI", () => {
   });
 
   test("run rejects aliases, retired JSON params, and params on an active run", async () => {
-    await createWorkflow("strict", ROUTED_WORKFLOW);
+    await createWorkflow("strict", TYPED_WORKFLOW);
 
     const alias = await runCliCapture([
       "workflow",
@@ -273,15 +265,12 @@ describe("workflow CLI", () => {
     expect(errorEnvelope(activeWithParams.stderr).error).toContain("only be set on a new run");
   });
 
-  test("removed manual lifecycle commands fail with explicit migration hints", async () => {
-    // brief/report joined the retired set when the external-driver protocol
-    // was removed, so every hint here must name a command that still exists.
+  test("removed manual lifecycle commands are unknown commands", async () => {
     for (const command of ["start", "next", "complete", "brief", "report"]) {
       const result = await runCliCapture(["workflow", command, "workflows/demo"]);
       expect(result.code).toBe(2);
       const envelope = errorEnvelope(result.stderr);
       expect(envelope.code).toBe("UNKNOWN_COMMAND");
-      expect(envelope.hint).toContain(command === "next" ? "workflow status" : "workflow run");
     }
   });
 

@@ -63,13 +63,7 @@ function configure(kind: BundleKind): CollisionFixture {
     root,
     ownedDir,
     canonicalRef: `${bundle}//${conceptId}`,
-    aliases: [
-      `${bundle}//${conceptId}`,
-      `${bundle}//${conceptId}.md`,
-      `${bundle}//${conceptId}.yml`,
-      `${bundle}//${conceptId}.MD`,
-      `${bundle}//${conceptId}.YML`,
-    ],
+    aliases: [`${bundle}//${conceptId}`, `${bundle}//${conceptId}.md`, `${bundle}//${conceptId}.MD`],
   };
 }
 
@@ -90,22 +84,9 @@ Execute ${label}.
 `;
 }
 
+/** A GitHub-shaped file is no longer a workflow source; it must be ignored, not collide. */
 function yamlWorkflow(label = "yaml"): string {
-  return `name: ${label}
-on: { workflow_dispatch: null }
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: execute
-        run: printf ${label}
-        shell: sh
-`;
-}
-
-function writeCollision(fixture: CollisionFixture, extensions: [string, string] = [".md", ".yml"]): void {
-  fs.writeFileSync(path.join(fixture.ownedDir, `collision${extensions[0]}`), markdownWorkflow());
-  fs.writeFileSync(path.join(fixture.ownedDir, `collision${extensions[1]}`), yamlWorkflow());
+  return `name: ${label}\non: { workflow_dispatch: null }\njobs: {}\n`;
 }
 
 function indexSnapshot(): number {
@@ -121,9 +102,7 @@ function indexSnapshot(): number {
 const kinds: BundleKind[] = ["ordinary", "standalone"];
 const soleSourceCases = [
   [".md", markdownWorkflow],
-  [".yml", yamlWorkflow],
   [".MD", markdownWorkflow],
-  [".YML", yamlWorkflow],
 ] as const;
 
 describe("workflow source canonical-ref collisions", () => {
@@ -153,10 +132,10 @@ describe("workflow source canonical-ref collisions", () => {
 
   test.each(kinds)("%s accepts a repeated-suffix filename, loading it under its real extension", async (kind) => {
     const fixture = configure(kind);
-    const sourcePath = path.join(fixture.ownedDir, "collision.md.yml");
-    fs.writeFileSync(sourcePath, yamlWorkflow("nested-suffix"));
+    const sourcePath = path.join(fixture.ownedDir, "collision.md.md");
+    fs.writeFileSync(sourcePath, markdownWorkflow("nested-suffix"));
 
-    await expect(loadWorkflowAsset(`${fixture.canonicalRef}.md.yml`)).resolves.toMatchObject({
+    await expect(loadWorkflowAsset(`${fixture.canonicalRef}.md.md`)).resolves.toMatchObject({
       path: sourcePath,
     });
     expect(fs.existsSync(getDbPath())).toBe(false);
@@ -176,15 +155,13 @@ describe("workflow source canonical-ref collisions", () => {
     expect(fs.existsSync(getDbPath())).toBe(false);
   });
 
-  test("ordinary picks the .md source deterministically over a colliding .yml sibling and loads/runs normally", async () => {
+  test("a .yml sibling is not a workflow source: the .md loads and runs, with no collision", async () => {
     const fixture = configure("ordinary");
-    writeCollision(fixture);
+    fs.writeFileSync(path.join(fixture.ownedDir, "collision.md"), markdownWorkflow());
+    fs.writeFileSync(path.join(fixture.ownedDir, "collision.yml"), yamlWorkflow());
     const mdPath = path.join(fixture.ownedDir, "collision.md");
 
-    for (const ref of fixture.aliases) {
-      await expect(loadWorkflowAsset(ref), ref).resolves.toMatchObject({ path: mdPath });
-    }
-
+    await expect(loadWorkflowAsset(fixture.canonicalRef)).resolves.toMatchObject({ path: mdPath });
     const started = await startWorkflowRun(fixture.canonicalRef);
     expect(started.run.status).toBe("active");
     const result = await runWorkflowSteps({
@@ -193,42 +170,16 @@ describe("workflow source canonical-ref collisions", () => {
       dispatcher: async () => ({ ok: true, text: "unexpected" }),
     });
     expect(result.done).toBe(true);
-    expect((await listWorkflowRuns()).runs).toHaveLength(1);
+    // The sibling is skipped with a message saying why; the .md is still indexed.
+    const indexed = await akmIndex({ stashDir: fixture.root, full: true });
+    expect(indexed.warnings).toHaveLength(1);
+    expect(indexed.warnings?.[0]).toMatch(/collision\.yml.*must use \.md/is);
+    expect(indexSnapshot()).toBe(1);
   });
 
-  test("standalone still rejects a .md/.yml collision via a separate, unfixed adapter-ownership guard", async () => {
-    const fixture = configure("standalone");
-    writeCollision(fixture);
-
-    for (const ref of fixture.aliases) {
-      await expect(loadWorkflowAsset(ref), ref).rejects.toMatchObject({ code: "RESOURCE_ALREADY_EXISTS" });
-    }
-  });
-
-  test("ordinary treats extension-case variants as the same canonical ref and still picks .MD deterministically", async () => {
-    const fixture = configure("ordinary");
-    writeCollision(fixture, [".MD", ".YmL"]);
-    const mdPath = path.join(fixture.ownedDir, "collision.MD");
-
-    await expect(loadWorkflowAsset(fixture.canonicalRef)).resolves.toMatchObject({ path: mdPath });
-    expect(fs.existsSync(getDbPath())).toBe(false);
-  });
-
-  test("standalone treats extension-case variants as the same canonical ref, still refused by the separate adapter-ownership guard", async () => {
-    const fixture = configure("standalone");
-    writeCollision(fixture, [".MD", ".YmL"]);
-
-    await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-      message: expect.stringMatching(/collision\.MD.*collision\.YmL/is),
-    });
-    expect(fs.existsSync(getDbPath())).toBe(false);
-  });
-
-  test("ordinary picks the malformed .md deterministically and fails on its own parse error, never a collision", async () => {
+  test("ordinary fails on a malformed .md's own parse error, never a collision", async () => {
     const fixture = configure("ordinary");
     fs.writeFileSync(path.join(fixture.ownedDir, "collision.md"), "---\ntype: [unterminated\n---\n");
-    fs.writeFileSync(path.join(fixture.ownedDir, "collision.yml"), yamlWorkflow("valid"));
 
     await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toMatchObject({
       code: "WORKFLOW_SOURCE_INVALID",
@@ -244,19 +195,19 @@ describe("workflow source canonical-ref collisions", () => {
     expect(indexed.warnings).toHaveLength(1);
     expect(indexed.warnings?.[0]).toMatch(/collision\.md/i);
     expect(indexed.warnings?.[0]).not.toMatch(/multiple workflow source files/i);
-    expect(indexSnapshot()).toBe(1);
+    expect(indexSnapshot()).toBe(0);
   });
 
   test.each(kinds)("%s skips a candidate with a dangling symlink and uses the valid sibling instead", async (kind) => {
     const fixture = configure(kind);
     fs.symlinkSync(path.join(fixture.ownedDir, "does-not-exist"), path.join(fixture.ownedDir, "collision.md"));
-    const yamlPath = path.join(fixture.ownedDir, "collision.yml");
-    fs.writeFileSync(yamlPath, yamlWorkflow("valid"));
+    const siblingPath = path.join(fixture.ownedDir, "collision.MD");
+    fs.writeFileSync(siblingPath, markdownWorkflow("valid"));
 
-    await expect(loadWorkflowAsset(fixture.canonicalRef)).resolves.toMatchObject({ path: yamlPath });
+    await expect(loadWorkflowAsset(fixture.canonicalRef)).resolves.toMatchObject({ path: siblingPath });
   });
 
-  test("preserves an authored symlink path and rejects a symlink that changes source format", async () => {
+  test("preserves an authored symlink path and rejects a symlink that changes the source extension", async () => {
     const fixture = configure("ordinary");
     const markdownTarget = path.join(fixture.ownedDir, "target.md");
     const yamlTarget = path.join(fixture.ownedDir, "target.yml");
@@ -281,128 +232,10 @@ describe("workflow source canonical-ref collisions", () => {
         await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toBeInstanceOf(Error);
       },
     );
-    expect(warnings.some((w) => /collision\.md.*target\.yml.*different source format/is.test(w))).toBe(true);
+    expect(warnings.some((w) => /collision\.md.*target\.yml.*different extension/is.test(w))).toBe(true);
     expect(fs.existsSync(getDbPath())).toBe(false);
     expect(indexSnapshot()).toBe(0);
     expect((await listWorkflowRuns()).runs).toHaveLength(0);
-  });
-
-  test("ordinary indexes, looks up, and shows the .md winner without any collision warning", async () => {
-    const fixture = configure("ordinary");
-    writeCollision(fixture);
-    const mdPath = path.join(fixture.ownedDir, "collision.md");
-
-    // Repeat the full scan: filesystem enumeration is not a precedence rule.
-    // Every pass must persist only the `.md` source for this canonical ref.
-    for (let run = 0; run < 3; run++) {
-      const indexed = await akmIndex({ stashDir: fixture.root, full: true });
-      expect(indexed.warnings ?? []).toEqual([]);
-      expect(indexSnapshot()).toBe(1);
-      await expect(lookupBundleRef(parseBundleRef(fixture.canonicalRef))).resolves.toMatchObject({
-        filePath: mdPath,
-      });
-    }
-
-    await expect(akmShowUnified({ ref: fixture.canonicalRef, skipLogging: true })).resolves.toMatchObject({
-      path: mdPath,
-    });
-  });
-
-  test("standalone: indexing silently picks a winner, but indexed lookup and show still reject via the separate adapter-ownership guard", async () => {
-    const fixture = configure("standalone");
-    writeCollision(fixture);
-
-    const indexed = await akmIndex({ stashDir: fixture.root, full: true });
-    expect(indexed.warnings ?? []).toEqual([]);
-    expect(indexSnapshot()).toBe(1);
-
-    await expect(lookupBundleRef(parseBundleRef(fixture.canonicalRef))).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-    });
-    await expect(akmShowUnified({ ref: fixture.canonicalRef, skipLogging: true })).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-    });
-  });
-
-  test("ordinary: a .yml sibling added after cache fill does not disturb the already-indexed .md, still loads and runs", async () => {
-    const fixture = configure("ordinary");
-    const markdownPath = path.join(fixture.ownedDir, "collision.md");
-    fs.writeFileSync(markdownPath, markdownWorkflow("cached-markdown"));
-    await akmIndex({ stashDir: fixture.root, full: true });
-    const before = indexSnapshot();
-    expect(before).toBe(1);
-
-    fs.writeFileSync(path.join(fixture.ownedDir, "collision.yml"), yamlWorkflow("late-yaml"));
-
-    await expect(loadWorkflowAsset(fixture.canonicalRef)).resolves.toMatchObject({ path: markdownPath });
-    const started = await startWorkflowRun(fixture.canonicalRef);
-    expect(started.run.status).toBe("active");
-    expect(indexSnapshot()).toEqual(before);
-  });
-
-  test("standalone still refuses a collision added after cache fill via the separate adapter-ownership guard", async () => {
-    const fixture = configure("standalone");
-    const markdownPath = path.join(fixture.ownedDir, "collision.md");
-    fs.writeFileSync(markdownPath, markdownWorkflow("cached-markdown"));
-    await akmIndex({ stashDir: fixture.root, full: true });
-    const before = indexSnapshot();
-    expect(before).toBe(1);
-
-    fs.writeFileSync(path.join(fixture.ownedDir, "collision.yml"), yamlWorkflow("late-yaml"));
-    let dispatches = 0;
-
-    await expect(loadWorkflowAsset(fixture.canonicalRef)).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-    });
-    await expect(startWorkflowRun(fixture.canonicalRef)).rejects.toMatchObject({
-      code: "RESOURCE_ALREADY_EXISTS",
-    });
-    await expect(
-      runWorkflowSteps({
-        target: fixture.canonicalRef,
-        summaryJudge: null,
-        dispatcher: async () => {
-          dispatches++;
-          return { ok: true, text: "unexpected" };
-        },
-      }),
-    ).rejects.toMatchObject({ code: "RESOURCE_ALREADY_EXISTS" });
-
-    expect(dispatches).toBe(0);
-    expect((await listWorkflowRuns()).runs).toHaveLength(0);
-    expect(indexSnapshot()).toEqual(before);
-  });
-
-  test("ordinary: a targeted reindex of a new .yml sibling stales the cache, and the read path falls back to the .md winner instead of serving the wrong file", async () => {
-    const fixture = configure("ordinary");
-    const markdownPath = path.join(fixture.ownedDir, "collision.md");
-    const yamlPath = path.join(fixture.ownedDir, "collision.yml");
-    fs.writeFileSync(markdownPath, markdownWorkflow("first"));
-    await akmIndex({ stashDir: fixture.root, full: true });
-    expect(indexSnapshot()).toBe(1);
-
-    fs.writeFileSync(yamlPath, yamlWorkflow("second"));
-    await indexWrittenAssets(fixture.root, [yamlPath], { bundleId: "ordinary-bundle" });
-    expect(indexSnapshot()).toBe(1);
-
-    expect(await lookupBundleRef(parseBundleRef(fixture.canonicalRef))).toBeNull();
-
-    const dispatched: string[] = [];
-    await runWorkflowSteps({
-      target: fixture.canonicalRef,
-      summaryJudge: null,
-      dispatcher: async (request) => {
-        dispatched.push(JSON.stringify(request));
-        return { ok: true, text: "done" };
-      },
-    });
-    expect(dispatched.join(" ")).toContain("printf first");
-    expect(dispatched.join(" ")).not.toContain("printf second");
-
-    await akmIndex({ stashDir: fixture.root, full: true });
-    await expect(lookupBundleRef(parseBundleRef(fixture.canonicalRef))).resolves.toMatchObject({
-      filePath: markdownPath,
-    });
   });
 
   test("a lower-priority bundle collision cannot poison an unqualified ref already owned by the primary bundle", async () => {
@@ -412,7 +245,7 @@ describe("workflow source canonical-ref collisions", () => {
     fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
     fs.writeFileSync(path.join(storage.stashDir, "workflows", "collision.md"), markdownWorkflow("primary"));
     fs.writeFileSync(path.join(secondaryWorkflows, "collision.md"), markdownWorkflow("secondary-markdown"));
-    fs.writeFileSync(path.join(secondaryWorkflows, "collision.yml"), yamlWorkflow("secondary-yaml"));
+    fs.writeFileSync(path.join(secondaryWorkflows, "collision.MD"), markdownWorkflow("secondary-upper"));
     writeSandboxConfig({
       semanticSearchMode: "off",
       defaultBundle: "primary",
@@ -444,11 +277,6 @@ describe("workflow source canonical-ref collisions", () => {
     await expect(akmShowUnified({ ref: "workflows/collision", skipLogging: true })).resolves.toMatchObject({
       ref: "workflows/collision",
       path: path.join(storage.stashDir, "workflows", "collision.md"),
-    });
-    await expect(loadWorkflowAsset("secondary//workflows/collision")).resolves.toMatchObject({
-      ref: "secondary//workflows/collision",
-      path: path.join(secondaryWorkflows, "collision.md"),
-      plan: { description: "secondary-markdown" },
     });
   });
 });

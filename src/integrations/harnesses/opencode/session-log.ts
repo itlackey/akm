@@ -5,18 +5,15 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { openDatabase } from "../../../storage/database";
+import { toErrorMessage } from "../../../core/common";
+import { warnOnce } from "../../../core/warn";
+import { type Database, openDatabase } from "../../../storage/database";
 import { openSqliteReadSnapshot } from "../../../storage/sqlite-read-snapshot";
-import { extractInlineRefMentions } from "../../session-logs/inline-refs";
 import { AbstractSessionLogProvider } from "../../session-logs/provider-base";
-import type {
-  InlineRefMention,
-  SessionData,
-  SessionEvent,
-  SessionLogHarness,
-  SessionRef,
-  SessionSummary,
-} from "../../session-logs/types";
+import type { SessionData, SessionLogHarness, SessionRef, SessionSummary } from "../../session-logs/types";
+import type { OpenCodeSessionMeta } from "./session-log-types";
+import { hasV1Session, listV1Sessions, readV1Session, V1_TABLES } from "./session-log-v1";
+import { listV2Sessions, readV2Session, V2_TABLES, v2SessionState } from "./session-log-v2";
 
 function getOpenCodeBaseDir(): string {
   if (process.platform === "darwin") {
@@ -26,16 +23,40 @@ function getOpenCodeBaseDir(): string {
 }
 
 /**
- * Opencode session storage:
+ * OpenCode session storage: one SQLite file, `<base>/opencode.db`, whose
+ * layout decides the reader, never the installed binary or its version:
  *
- *   SQLite (current, observed 2026-06): `<base>/opencode.db` — a Drizzle-managed
- *   database with `session` / `message` / `part` tables. Message text lives in
- *   `part` rows (`data` JSON, `type: "text"`); `message.data` holds role/timing.
- *   This is the sole supported layout.
+ *   - V1: `session` table, with `message` / `part` for content (`session-log-v1.ts`).
+ *   - V2: `session_v2` / `session_message` tables (`session-log-v2.ts`).
+ *   - Both: a natively upgraded V1 file keeps its V1 tables and gains the V2
+ *     ones. Sessions are merged by id, V2 winning, V1-only ones kept.
+ *   - Neither: an unsupported layout, reported, never presented as empty.
+ *
+ * The file is opened read-only and never migrated or written.
  */
 
 /** Filename of opencode's SQLite session store, relative to its base dir. */
 const OPENCODE_DB_FILENAME = "opencode.db";
+
+/** What a session store holds, from its actual tables. */
+export type OpenCodeStoreStatus =
+  | { kind: "missing" }
+  | { kind: "ok"; v1: boolean; v2: boolean }
+  /** Readable SQLite file with neither supported layout. */
+  | { kind: "unsupported"; tables: string[] }
+  /** Present but not openable or queryable as SQLite. */
+  | { kind: "unreadable"; reason: string };
+
+function tableNames(db: Database): Set<string> {
+  const rows = db.prepare<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").all();
+  return new Set(rows.map((r) => r.name));
+}
+
+function classify(tables: Set<string>): OpenCodeStoreStatus {
+  const v1 = V1_TABLES.every((t) => tables.has(t));
+  const v2 = V2_TABLES.every((t) => tables.has(t));
+  return v1 || v2 ? { kind: "ok", v1, v2 } : { kind: "unsupported", tables: [...tables].sort() };
+}
 
 export class OpenCodeProvider extends AbstractSessionLogProvider implements SessionLogHarness {
   readonly name = "opencode";
@@ -50,161 +71,113 @@ export class OpenCodeProvider extends AbstractSessionLogProvider implements Sess
     return path.join(base, OPENCODE_DB_FILENAME);
   }
 
+  /** Classify the store under `location` (default: opencode's data dir) without listing anything. */
+  inspectStore(location?: string): OpenCodeStoreStatus {
+    const dbPath = this.#dbPath(location ?? this.#baseDir);
+    if (!fs.existsSync(dbPath)) return { kind: "missing" };
+    let db: Database;
+    try {
+      db = openDatabase(dbPath, { readonly: true, create: false });
+    } catch (error) {
+      return { kind: "unreadable", reason: toErrorMessage(error) };
+    }
+    try {
+      return classify(tableNames(db));
+    } catch (error) {
+      return { kind: "unreadable", reason: toErrorMessage(error) };
+    } finally {
+      db.close();
+    }
+  }
+
   listSessions(input: { sinceMs?: number; location?: string; isolatedSnapshot?: boolean } = {}): SessionSummary[] {
-    const base = input.location ?? this.#baseDir;
-    const sinceMs = input.sinceMs ?? 0;
-    const dbPath = this.#dbPath(base);
+    const dbPath = this.#dbPath(input.location ?? this.#baseDir);
     if (!fs.existsSync(dbPath)) return [];
-    return this.#listSessionsFromDb(dbPath, sinceMs, input.isolatedSnapshot ?? false);
+    let db: Database | undefined;
+    try {
+      db = input.isolatedSnapshot
+        ? openSqliteReadSnapshot(dbPath)
+        : openDatabase(dbPath, { readonly: true, create: false });
+    } catch (error) {
+      this.#warnUnavailable(dbPath, `cannot open it (${toErrorMessage(error)})`);
+      return [];
+    }
+    if (!db) return [];
+    try {
+      const status = classify(tableNames(db));
+      if (status.kind !== "ok") {
+        this.#warnUnavailable(
+          dbPath,
+          `it has neither the OpenCode 1 (${V1_TABLES.join("/")}) nor the OpenCode 2 (${V2_TABLES.join("/")}) tables`,
+        );
+        return [];
+      }
+      return this.#listFromDb(db, dbPath, input.sinceMs ?? 0, status.v1, status.v2);
+    } catch (error) {
+      this.#warnUnavailable(dbPath, `cannot query it (${toErrorMessage(error)})`);
+      return [];
+    } finally {
+      db.close();
+    }
   }
 
   readSession(ref: SessionRef): SessionData {
-    return this.#readSessionFromDb(ref);
-  }
-
-  /**
-   * List sessions from the SQLite store. `filePath` on each summary is the
-   * `opencode.db` path so {@link readSession} can route back to the DB reader.
-   * Returns `[]` (never throws) when the DB is unreadable or lacks the expected
-   * schema — callers treat a missing harness as "no sessions".
-   */
-  #listSessionsFromDb(dbPath: string, sinceMs: number, isolatedSnapshot: boolean): SessionSummary[] {
-    let db: ReturnType<typeof openDatabase>;
-    try {
-      const opened = isolatedSnapshot
-        ? openSqliteReadSnapshot(dbPath)
-        : openDatabase(dbPath, { readonly: true, create: false });
-      if (!opened) return [];
-      db = opened;
-    } catch {
-      return [];
-    }
-    try {
-      const rows = db
-        .prepare<{
-          id: string;
-          title: string | null;
-          directory: string | null;
-          time_created: number | null;
-          time_updated: number | null;
-        }>(
-          "SELECT id, title, directory, time_created, time_updated FROM session WHERE time_updated >= ? ORDER BY time_updated DESC",
-        )
-        .all(sinceMs);
-      return rows.map((r) =>
-        this.sessionRef({
-          sessionId: r.id,
-          filePath: dbPath,
-          startedAt: typeof r.time_created === "number" ? r.time_created : undefined,
-          endedAt: typeof r.time_updated === "number" ? r.time_updated : undefined,
-          projectHint: typeof r.directory === "string" && r.directory.length > 0 ? r.directory : undefined,
-          title: typeof r.title === "string" && r.title.length > 0 ? r.title : undefined,
-        }),
-      );
-    } catch {
-      // Missing `session` table / unexpected schema — treat as no sessions.
-      return [];
-    } finally {
-      db.close();
-    }
-  }
-
-  /**
-   * Read one session from the SQLite store. Message text lives in `part` rows
-   * (`type: "text"`); `message.data` carries role + timing. One event per
-   * message, text-parts concatenated in time order. Returns empty events
-   * (never throws) when the DB is unreadable.
-   */
-  #readSessionFromDb(ref: SessionRef): SessionData {
-    const emptyRef: SessionSummary = this.sessionRef({ sessionId: ref.sessionId, filePath: ref.filePath });
-    let db: ReturnType<typeof openDatabase>;
+    const emptyRef = this.sessionRef({ sessionId: ref.sessionId, filePath: ref.filePath });
+    const empty: SessionData = { ref: emptyRef, events: [], inlineRefs: [] };
+    let db: Database;
     try {
       db = openDatabase(ref.filePath, { readonly: true, create: false });
-    } catch {
-      return { ref: emptyRef, events: [], inlineRefs: [] };
+    } catch (error) {
+      this.#warnUnavailable(ref.filePath, `cannot open it (${toErrorMessage(error)})`);
+      return empty;
     }
     try {
-      const meta = db
-        .prepare<{
-          title: string | null;
-          directory: string | null;
-          time_created: number | null;
-          time_updated: number | null;
-        }>("SELECT title, directory, time_created, time_updated FROM session WHERE id = ?")
-        .get(ref.sessionId);
-      const startedAt = typeof meta?.time_created === "number" ? meta.time_created : undefined;
-      const endedAt = typeof meta?.time_updated === "number" ? meta.time_updated : undefined;
-      const title = typeof meta?.title === "string" && meta.title.length > 0 ? meta.title : undefined;
-      const projectHint = typeof meta?.directory === "string" && meta.directory.length > 0 ? meta.directory : undefined;
-
-      const messages = db
-        .prepare<{ id: string; data: string; time_created: number | null }>(
-          "SELECT id, data, time_created FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC",
-        )
-        .all(ref.sessionId);
-      const parts = db
-        .prepare<{ message_id: string; data: string }>(
-          "SELECT message_id, data FROM part WHERE session_id = ? ORDER BY time_created ASC, id ASC",
-        )
-        .all(ref.sessionId);
-
-      // Group text-part bodies by their parent message.
-      const textByMessage = new Map<string, string[]>();
-      for (const part of parts) {
-        let parsed: Record<string, unknown> | undefined;
-        try {
-          parsed = JSON.parse(part.data) as Record<string, unknown>;
-        } catch {
-          continue;
-        }
-        if (parsed?.type !== "text") continue;
-        const text = parsed.text;
-        if (typeof text !== "string" || text.length < 1) continue;
-        const bucket = textByMessage.get(part.message_id) ?? [];
-        bucket.push(text);
-        textByMessage.set(part.message_id, bucket);
+      const status = classify(tableNames(db));
+      if (status.kind !== "ok") {
+        this.#warnUnavailable(ref.filePath, "it has no supported OpenCode 1 or OpenCode 2 session tables");
+        return empty;
       }
-
-      const events: SessionEvent[] = [];
-      const inlineRefs: InlineRefMention[] = [];
-      for (const message of messages) {
-        let mdata: Record<string, unknown> = {};
-        try {
-          mdata = JSON.parse(message.data) as Record<string, unknown>;
-        } catch {
-          // role/timing unavailable — fall through with defaults
-        }
-        const role = typeof mdata.role === "string" ? (mdata.role as SessionEvent["role"]) : "unknown";
-        const mtime = (mdata.time as Record<string, unknown> | undefined)?.created;
-        const ts =
-          typeof mtime === "number"
-            ? mtime
-            : typeof message.time_created === "number"
-              ? message.time_created
-              : undefined;
-        const text = (textByMessage.get(message.id) ?? []).join("\n").trim();
-        if (text.length < 1) continue;
-        events.push({ harness: this.name, text, ts, sessionId: ref.sessionId, role, filePath: ref.filePath });
-        inlineRefs.push(...extractInlineRefMentions(text, ts));
-      }
-      events.sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0));
-
+      // V2 owns a session that has messages there; otherwise a retained V1 copy (a
+      // session the upgrade has not copied, or copied without messages) is the history.
+      const v2 = status.v2 ? v2SessionState(db, ref.sessionId) : { exists: false, messages: 0 };
+      const useV2 = v2.exists && (v2.messages > 0 || !status.v1 || !hasV1Session(db, ref.sessionId));
+      const read = useV2
+        ? readV2Session(db, this.name, ref.sessionId, ref.filePath)
+        : readV1Session(db, this.name, ref.sessionId, ref.filePath);
       return {
-        ref: this.sessionRef({
-          sessionId: ref.sessionId,
-          filePath: ref.filePath,
-          startedAt,
-          endedAt,
-          projectHint,
-          title,
-        }),
-        events,
-        inlineRefs,
+        ref: this.sessionRef({ ...read.meta, filePath: ref.filePath }),
+        events: read.events,
+        inlineRefs: read.inlineRefs,
       };
-    } catch {
-      return { ref: emptyRef, events: [], inlineRefs: [] };
+    } catch (error) {
+      this.#warnUnavailable(ref.filePath, `cannot read session ${ref.sessionId} (${toErrorMessage(error)})`);
+      return empty;
     } finally {
       db.close();
     }
+  }
+
+  /** List each present layout; one failing layout is reported and the other still listed. */
+  #listFromDb(db: Database, dbPath: string, sinceMs: number, v1: boolean, v2: boolean): SessionSummary[] {
+    const merged = new Map<string, OpenCodeSessionMeta>();
+    const attempt = (label: string, list: () => OpenCodeSessionMeta[]) => {
+      try {
+        for (const meta of list()) if (!merged.has(meta.sessionId)) merged.set(meta.sessionId, meta);
+      } catch (error) {
+        this.#warnUnavailable(dbPath, `its ${label} session tables cannot be queried (${toErrorMessage(error)})`);
+      }
+    };
+    if (v2) attempt("OpenCode 2", () => listV2Sessions(db, sinceMs));
+    if (v1) attempt("OpenCode 1", () => listV1Sessions(db, sinceMs));
+    return [...merged.values()]
+      .sort((a, b) => (b.endedAt ?? 0) - (a.endedAt ?? 0))
+      .map((meta) => this.sessionRef({ ...meta, filePath: dbPath }));
+  }
+
+  #warnUnavailable(dbPath: string, why: string): void {
+    warnOnce(
+      `opencode-history:${dbPath}:${why}`,
+      `OpenCode session history at ${dbPath} was not read: ${why}. This is an unsupported or damaged store, not an empty history.`,
+    );
   }
 }

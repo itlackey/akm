@@ -37,14 +37,13 @@ export const SCRIPT_EXTENSIONS = new Set([
 ]);
 
 /**
- * Recognized workflow asset extensions. Markdown remains first-class and the
- * strict local GitHub-shaped source adapter adds `.yml` as a peer format.
- * `workflows/<name>` refs resolve against this list.
+ * Recognized workflow asset extensions. `workflows/<name>` refs resolve against
+ * this list.
  */
-export const WORKFLOW_EXTENSIONS = [".md", ".yml"] as const;
+export const WORKFLOW_EXTENSIONS = [".md"] as const;
 
 /**
- * Strip a recognized workflow extension (`.md` or `.yml`) from a workflow asset
+ * Strip the recognized workflow extension (`.md`) from a workflow asset
  * *name* so `foo` and `foo.md` collapse to one canonical identity — the same
  * collapse `workflowSpec.toCanonicalName` performs on a resolved file path.
  * Callers that turn a `workflows/<name>` ref into run identity (the

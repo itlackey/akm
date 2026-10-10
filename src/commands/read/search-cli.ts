@@ -21,33 +21,12 @@ import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseMetaRef } from "../../core/asset/stash-meta";
 import { UsageError } from "../../core/errors";
 import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
-import { getOutputMode } from "../../output/context";
+import { getOutputMode, type OutputMode } from "../../output/context";
 import { deliverRendered } from "../../output/html-render";
 import type { FragmentContextMode, ShowDetailLevel } from "../../sources/types";
-import { akmCurate, type CuratePackResult, packCuratedHits } from "./curate";
+import { akmCurate, type CuratePackResult, type CurateResponse, packCuratedHits } from "./curate";
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
-
-/**
- * `--source` was renamed to `--from` on `search`/`curate` in 0.9 (S8). citty
- * is non-strict, so the retired spelling is silently absorbed rather than
- * rejected — the command then runs against the DEFAULT `--from` value
- * (local) instead of the source the caller named, with exit 0 and no error.
- * Reject it explicitly instead.
- *
- * Exported so `akm task list` (`../tasks/tasks-cli.ts`, #951) — a pure
- * delegating alias for `akm search --type task` — applies the identical
- * guard rather than a second copy of it; a task-list-scoped `--source` must
- * fail exactly like `search`'s does, not fall through to citty's silent
- * unknown-flag absorption.
- */
-export function rejectRetiredSourceFlag(): void {
-  if (!getParsedInvocation().hasFlag("--source")) return;
-  throw new UsageError(
-    "`--source` was renamed to `--from` in 0.9. Use `--from local|registry|all` instead.",
-    "INVALID_FLAG_VALUE",
-  );
-}
 
 export const searchCommand = defineJsonCommand({
   meta: { name: "search", description: "Search the bundle" },
@@ -95,7 +74,6 @@ export const searchCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredSourceFlag();
     const query = (args.query ?? "").trim();
     const type = args.type as string | undefined;
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
@@ -156,28 +134,12 @@ export const curateCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredSourceFlag();
-    if (!args.query || !String(args.query).trim()) {
-      throw new UsageError(
-        'A curate query is required. Usage: akm curate "<task or prompt>" [--type <type>] [--limit <n>]',
-        "MISSING_REQUIRED_ARGUMENT",
-        'Describe the task you want assets for, e.g. `akm curate "deploy to prod"`.',
-      );
-    }
-    const type = args.type as string | undefined;
-    const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
-    const limit = limitParsed && limitParsed > 0 ? limitParsed : 4;
-    const source = parseSearchSource(args.from ?? "local");
-    const outputMode = getOutputMode();
     const packBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
-    const curated = await akmCurate({
-      query: args.query,
-      type,
-      limit,
-      source,
-      eventSource: resolveUsageEventSource(),
-      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
-    });
+    const outputMode = getOutputMode();
+    const curated = await runCurate(
+      { query: args.query, type: args.type as string | undefined, limit: args.limit, from: args.from },
+      outputMode,
+    );
     if (packBudget !== undefined) {
       const packed = await packCuratedHits(curated, packBudget);
       deliverRendered(
@@ -190,6 +152,35 @@ export const curateCommand = defineJsonCommand({
   },
 });
 
+/**
+ * Validate the curate arguments and run the curation. The one path both
+ * `akm curate` and the in-process `curate()` of `src/api.ts` go through, so
+ * argument errors and ranking cannot drift between them. Takes the output
+ * mode explicitly (it only picks the attribution projection) instead of
+ * reading the process-level singleton.
+ */
+export async function runCurate(
+  args: { query?: string; type?: string; limit?: string; from?: string },
+  outputMode: Pick<OutputMode, "detail" | "shape">,
+): Promise<CurateResponse> {
+  if (!args.query || !String(args.query).trim()) {
+    throw new UsageError(
+      'A curate query is required. Usage: akm curate "<task or prompt>" [--type <type>] [--limit <n>]',
+      "MISSING_REQUIRED_ARGUMENT",
+      'Describe the task you want assets for, e.g. `akm curate "deploy to prod"`.',
+    );
+  }
+  const limitParsed = parsePositiveIntFlag(args.limit ?? undefined);
+  return akmCurate({
+    query: args.query,
+    type: args.type,
+    limit: limitParsed && limitParsed > 0 ? limitParsed : 4,
+    source: parseSearchSource(args.from ?? "local"),
+    eventSource: resolveUsageEventSource(),
+    attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
+  });
+}
+
 /** Human-readable rendering for `akm curate --pack`: concatenated content per hit under a `## <ref>` header. */
 function formatCuratePackText(packed: CuratePackResult): string {
   if (packed.items.length === 0) {
@@ -199,68 +190,16 @@ function formatCuratePackText(packed: CuratePackResult): string {
 }
 
 /**
- * Reject `--scope` (either spelling) on `akm show` (E-3). `--scope` was
- * removed in favor of `--filter` (R-047, guardrail 6 — no alias, must keep
- * failing loudly, not silently). It is deliberately NOT a declared flag on
- * this command, which means citty's default behavior for an undeclared flag
- * kicks in — and that default is silent acceptance:
- *
- *   - `--scope=user=nobody` (equals form): citty consumes it as an unknown
- *     flag's own inline value. It never reaches `args._`, so nothing downstream
- *     ever notices — the command runs to completion and exits 0, having
- *     silently ignored the caller's (unsatisfied) scope request. This is the
- *     dangerous case: the caller believes a read was scoped when it was not,
- *     and it directly violates guardrail 6's "removed spelling must fail
- *     loudly, not silently".
- *   - `--scope user=nobody` (space form): citty treats `--scope` as boolean
- *     and pushes `user=nobody` into `args._` as a stray positional, which
- *     incidentally trips `rejectExtraShowPositionals`'s arity check below —
- *     but with the wrong diagnosis (it blames the unrelated retired
- *     `toc|section|lines|frontmatter|full` view-mode grammar).
- *
- * This check runs FIRST, before the positional check, so both spellings are
- * caught by one explicit, correctly-worded error — it does NOT make `--scope`
- * work, it only makes the failure loud and the diagnosis accurate.
- *
- * NOTE (general issue, out of scope here): citty silently accepts ANY
- * undeclared flag on ANY command (e.g. `akm info --totallybogus` exits 0) —
- * this same silent-ignore failure mode applies repo-wide, not just to
- * `--scope` on `show`. Fixing that generally is a separate, wide-blast-radius
- * owner decision (same family as E-2, `akm list --type skill`); this function
- * only closes the `--scope`/`show` instance of it.
- */
-function rejectRemovedScopeFlag(ref: string): void {
-  const usedScopeFlag = getParsedInvocation().userArgs.some(
-    (token) => token === "--scope" || token.startsWith("--scope="),
-  );
-  if (!usedScopeFlag) return;
-  throw new UsageError(
-    "akm show has no --scope flag — it was removed in 0.9.0. Use --filter instead: " +
-      "--filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>.",
-    "INVALID_FLAG_VALUE",
-    `\`akm show ${ref} --filter user=<id>\` narrows resolution to assets whose frontmatter scope matches.`,
-  );
-}
-
-/**
- * Reject any positional after the ref. The
- * `akm show <ref> toc|section "H"|lines A B|frontmatter|full` view grammar was
- * removed in 0.9.0; its keywords used to be rewritten into hidden flags before
- * citty saw argv, so without this guard a stale invocation would silently
- * render the whole item instead of the view the caller asked for.
- *
- * `--scope` is handled separately, and earlier, by {@link rejectRemovedScopeFlag}
- * — by the time this runs, a `--scope`-caused stray positional has already
- * been intercepted with the correct diagnosis, so this function's generic
- * message is reached only by genuine leftover view-grammar tokens.
+ * Reject any positional after the ref: `akm show` takes one ref, and a stray
+ * token would otherwise silently render the whole item instead of what the
+ * caller asked for.
  */
 function rejectExtraShowPositionals(positionals: unknown, ref: string): void {
   const extra = (Array.isArray(positionals) ? (positionals as unknown[]).map(String) : []).slice(1);
   if (extra.length === 0) return;
   throw new UsageError(
     `akm show takes a single ref, but got ${extra.map((token) => `"${token}"`).join(" ")} after "${ref}". ` +
-      "The view-mode grammar (toc|section|lines|frontmatter|full) was removed in 0.9.0 — use " +
-      `\`akm show ${ref}#<heading-slug>\` to read one section, or \`akm show ${ref}\` for the whole item.`,
+      `Use \`akm show ${ref}#<heading-slug>\` to read one section, or \`akm show ${ref}\` for the whole item.`,
     "INVALID_FLAG_VALUE",
     "An unmatched #fragment lists the available slugs.",
   );
@@ -303,10 +242,8 @@ export const showCommand = defineJsonCommand({
     // not a typed asset ref — skip ref validation and let akmShowUnified
     // direct-read it. (the ref parser would reject the non-type `meta`.)
     if (!parseMetaRef(args.ref)) parseBundleRef(args.ref);
-    rejectRemovedScopeFlag(args.ref);
     rejectExtraShowPositionals(args._, args.ref);
     const invocation = getParsedInvocation();
-    const cliShape = getOutputMode().shape;
     // F6/R-021 — `show` deliberately does NOT inherit `output.detail` from
     // config the way `search`/`curate` do via `getOutputMode().detail`
     // (which merges an explicit `--detail` flag with the config default,
@@ -320,16 +257,9 @@ export const showCommand = defineJsonCommand({
     // `--detail full` (explicit or, since it's also the implicit default,
     // omitted) and any other value fall through to the full response.
     const explicitDetail = invocation.getFlagValue("--detail");
-    // `--shape summary` selects the compact metadata projection for show.
-    // `--detail brief` forces the brief response regardless of shape.
+    // `--detail brief` forces the brief response regardless of projection.
     const showDetail: ShowDetailLevel | undefined =
-      explicitDetail === "brief"
-        ? "brief"
-        : explicitDetail === "full"
-          ? "full"
-          : cliShape === "summary"
-            ? "summary"
-            : undefined;
+      explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
     // `--filter` is repeatable — citty only exposes the last value, so read
     // every occurrence directly from argv (same helper as `akm search`; the two
     // commands share one spelling for the scope-narrowing axis).

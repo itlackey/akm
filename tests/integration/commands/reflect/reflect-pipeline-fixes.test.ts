@@ -706,7 +706,7 @@ describe("Reflect quality gate — source context", () => {
     const argvLog = path.join(stash, "judge-argv.log");
     fs.writeFileSync(
       judgeBin,
-      `#!/bin/sh\necho "$@" >> "${argvLog}"\necho '${JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" })}'\n`,
+      `#!/bin/sh\n[ "$1" = "--version" ] && { echo "opencode v2.0.26"; exit 0; }\necho "$@" >> "${argvLog}"\necho '${JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "ok" })}'\n`,
       { mode: 0o755 },
     );
     const config = {
@@ -743,7 +743,7 @@ describe("Reflect quality gate — source context", () => {
     if (!result.ok) throw new Error("expected a proposal");
     expect(chatRan).toBe(false);
     // The agent judged it, under the model-work policy, and its scores reach the stamp.
-    expect(fs.readFileSync(argvLog, "utf8")).toStartWith("run --agent akm-model-work");
+    expect(fs.readFileSync(argvLog, "utf8")).toStartWith("run --standalone --agent akm-model-work");
     expect(result.proposal.gateDecision).toMatchObject({
       outcome: "staged",
       scores: { need: 5, preservation: 5, quality: 5 },

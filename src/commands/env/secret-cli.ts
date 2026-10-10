@@ -116,7 +116,7 @@ const secretSetCommand = defineJsonCommand({
     },
     "from-file": { type: "string", description: "Read the value from this file (stored byte-exact)" },
     "from-env": { type: "string", description: "Read the value from the named environment variable" },
-    target: {
+    bundle: {
       type: "string",
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
@@ -124,7 +124,7 @@ const secretSetCommand = defineJsonCommand({
   },
   async run({ args }) {
     const { setSecret } = await import("./secret.js");
-    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.target, {
+    const { name, absPath, target, ref } = resolveSecretWriteTarget(args.ref, args.bundle, {
       subPath: getStringArg(args, "path"),
     });
 

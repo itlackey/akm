@@ -15,7 +15,10 @@ import {
 import { runWorkflowSteps } from "../../src/workflows/exec/run-workflow";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../src/workflows/validate-summary";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 /**
  * Process-lifecycle disposal (owner finding 4 — a successful engine-driven run
@@ -331,6 +334,8 @@ describe("disposeDispatchResources drains the SDK server registry", () => {
 // it the moment the run resolves — the exact hang the owner observed, headless.
 
 describe("engine run via the SDK runner closes its server on completion (end-to-end)", () => {
+  // The implicit opencode-sdk engine runs a binary reporting OpenCode 2.
+  beforeEach(() => fakeOpencodeMajor(2));
   afterEach(() => {
     __setServerFactory(null);
     __setTestServer(null);
@@ -346,11 +351,17 @@ describe("engine run via the SDK runner closes its server on completion (end-to-
       Promise.resolve({
         client: {
           session: {
-            create: async () => ({ data: { id: "sess-e2e" } }),
+            create: async () => ({ id: "sess-e2e" }),
             prompt: async () => {
               prompted++;
-              return { data: { parts: [{ type: "text", text: "sdk-done" }] } };
+              return { id: "msg-user" };
             },
+            wait: async () => {},
+            context: async () => [
+              { id: "msg-user", type: "user", text: "p" },
+              { id: "msg-a", type: "assistant", content: [{ type: "text", text: "sdk-done" }] },
+              { id: "msg-idle", type: "idle", outcome: "succeeded" },
+            ],
           },
         },
         server: {

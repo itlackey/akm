@@ -9,8 +9,10 @@
  * coding-agent CLI. Named engines lower canonical harness metadata into this
  * intentionally small internal shape. The wrapper is in `./spawn.ts`.
  */
-import { COMMON_SPAWN_ENV_PASSTHROUGH, OPENCODE_ENV_PASSTHROUGH } from "../../core/spawn-env";
+import { COMMON_SPAWN_ENV_PASSTHROUGH } from "../../core/spawn-env";
 import type { ExecutionJsonObject } from "../../execution/json";
+import { HARNESS_REGISTRY } from "../harnesses";
+import type { AkmHarness } from "../harnesses/types";
 
 export type AgentStdioMode = "captured" | "interactive";
 export type AgentParseMode = "text" | "json";
@@ -56,119 +58,58 @@ export interface AgentProfile {
   readonly inference?: ExecutionJsonObject;
 }
 
-// AKM_EVENT_SOURCE carries usage-event provenance (improve/task) so that akm
-// invocations a spawned agent makes are recorded as machine traffic, not user
-// demand (DRIFT-6). Without it in the passthrough whitelist, buildChildEnv drops
-// the stamp at the agent boundary — e.g. `akm wiki ingest` spawns an agent whose
-// `akm curate/show/search` tool-calls then log source='user', silently inflating
-// every lane's read-back (GRR). It is a provenance tag, never a secret.
-const COMMON_PASSTHROUGH = COMMON_SPAWN_ENV_PASSTHROUGH;
-
 /**
- * Built-in profiles for the agent CLIs akm knows out of the box: the five the
- * v1 spec calls out explicitly, plus the P2 harness adapters (copilot, pi,
- * amazonq, openhands — plan §"Capability matrix"). The fields here are
- * conservative defaults — every value is overridable from user config.
+ * Built-in profiles for the agent CLIs akm knows out of the box, DERIVED from
+ * the harness registry: each harness that declares `profile` defaults gets one,
+ * named by its id. The fields are conservative defaults, overridable from user
+ * config. Engine lowering selects captured stdio for unattended dispatch.
  *
- * Engine lowering selects captured stdio for unattended dispatch.
+ * Built lazily: the registry transitively imports this module, so it cannot be
+ * read at module load.
  */
-const BUILTINS: Record<string, AgentProfile> = {
-  opencode: {
-    name: "opencode",
-    bin: "opencode",
-    args: ["run"],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, ...OPENCODE_ENV_PASSTHROUGH],
-    parseOutput: "text",
-  },
-  claude: {
-    name: "claude",
-    bin: "claude",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "ANTHROPIC_API_KEY", "CLAUDE_CONFIG"],
-    parseOutput: "text",
-  },
-  codex: {
-    name: "codex",
-    bin: "codex",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "OPENAI_API_KEY", "CODEX_CONFIG"],
-    parseOutput: "text",
-  },
-  gemini: {
-    name: "gemini",
-    bin: "gemini",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "GEMINI_API_KEY", "GOOGLE_API_KEY"],
-    parseOutput: "text",
-  },
-  aider: {
-    name: "aider",
-    bin: "aider",
-    args: ["--no-auto-commits"],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
-    parseOutput: "text",
-  },
-  // ── P2 harness-adapter profiles (plan §"Capability matrix") ────────────────
-  copilot: {
-    name: "copilot",
-    bin: "copilot",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "GH_TOKEN", "GITHUB_TOKEN"],
-    parseOutput: "text",
-  },
-  pi: {
-    name: "pi",
-    bin: "pi",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"],
-    parseOutput: "text",
-  },
-  amazonq: {
-    name: "amazonq",
-    bin: "q",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "AWS_PROFILE", "AWS_REGION"],
-    parseOutput: "text",
-  },
-  openhands: {
-    name: "openhands",
-    bin: "openhands",
-    args: [],
-    stdio: "interactive",
-    envPassthrough: [...COMMON_PASSTHROUGH, "LLM_MODEL", "LLM_API_KEY", "LLM_BASE_URL"],
-    parseOutput: "text",
-  },
-};
+let builtins: Record<string, AgentProfile> | undefined;
+
+function builtinProfiles(): Record<string, AgentProfile> {
+  if (builtins) return builtins;
+  builtins = {};
+  for (const harness of HARNESS_REGISTRY as readonly AkmHarness[]) {
+    if (!harness.profile) continue;
+    builtins[harness.id] = {
+      name: harness.id,
+      bin: harness.profile.bin,
+      args: harness.profile.args,
+      stdio: "interactive",
+      // AKM_EVENT_SOURCE (in the common set) carries usage-event provenance so akm
+      // invocations a spawned agent makes are recorded as machine traffic; it is a
+      // provenance tag, never a secret.
+      envPassthrough: [...COMMON_SPAWN_ENV_PASSTHROUGH, ...harness.profile.envPassthrough],
+      parseOutput: "text",
+    };
+  }
+  return builtins;
+}
 
 /**
  * Binary the `opencode-sdk` harness needs on PATH.
  *
- * The embedded SDK is not self-contained, and that is the SDK's own design
- * rather than a consequence of how akm drives it: `@opencode-ai/sdk` ships
- * with `"dependencies": {}` and its `createOpencodeServer` is itself a
- * `spawn("opencode", ["serve", ...])`. akm's runner spawns the same binary
- * directly and talks HTTP to it (see `harnesses/opencode-sdk/sdk-runner.ts`),
+ * The embedded client is not self-contained, and that is the SDK's own design
+ * rather than a consequence of how akm drives it: `@opencode-ai/sdk` (OpenCode 1)
+ * ships with `"dependencies": {}` and its `createOpencodeServer` is itself a
+ * `spawn("opencode", ["serve", ...])`; `@opencode/client` (OpenCode 2, the
+ * default) is an HTTP client only and starts nothing. akm's runner spawns a
+ * private `opencode serve` of the engine's detected major (
+ * never the v2 background service) and talks HTTP to it through that major's
+ * adapter (see `harnesses/opencode-sdk/sdk-runner.ts`, `v1-adapter.ts`, `v2-adapter.ts`),
  * so the `opencode` binary gates the SDK path exactly as it gates the CLI
  * path — a host with the npm package but no binary can dispatch neither.
- * `opencode-sdk` deliberately has no {@link BUILTINS} entry — it dispatches
+ * `opencode-sdk` deliberately declares no `profile` — it dispatches
  * without argv construction — so this is the one place that pairing lives.
  */
 export const OPENCODE_SDK_SERVER_BIN = "opencode";
 
-/** Names of the canonical built-in harness descriptors. Stable, sorted. */
-export const BUILTIN_AGENT_PROFILE_NAMES: readonly string[] = Object.freeze(Object.keys(BUILTINS).sort());
-
 /** Returns the built-in descriptor for a canonical harness id. */
 export function getBuiltinAgentProfile(name: string): AgentProfile | undefined {
-  return BUILTINS[name];
+  return builtinProfiles()[name];
 }
 
 /**
@@ -177,7 +118,7 @@ export function getBuiltinAgentProfile(name: string): AgentProfile | undefined {
  */
 export function listBuiltinAgentProfiles(): Record<string, AgentProfile> {
   const out: Record<string, AgentProfile> = {};
-  for (const [name, profile] of Object.entries(BUILTINS)) {
+  for (const [name, profile] of Object.entries(builtinProfiles())) {
     out[name] = { ...profile };
   }
   return out;

@@ -92,6 +92,33 @@ describe("akm lint — malformed task YAML (issue #760)", () => {
     expect(findings[0]?.detail).toContain("akm migrate apply");
   });
 
+  test("a cron the local scheduler backend cannot parse is flagged (what `akm task sync` would refuse)", async () => {
+    storage = withIsolatedAkmStorage();
+    // 4 fields: the v4 grammar accepts any nonempty string, the backend wants 5.
+    writeTask(storage.stashDir, "bad-cron.yml", "version: 4\nrun: echo hi\nschedule: '99 * * *'\n");
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir), typeFilter: "tasks" });
+
+    const findings = result.flagged.filter((issue) => issue.file.endsWith("bad-cron.yml"));
+    expect(findings.map((issue) => issue.issue)).toEqual(["invalid-task-yaml"]);
+    expect(findings[0]?.detail).toContain("expected 5 fields");
+  });
+
+  test("a schedule entry that leaves a required input unsatisfied is flagged", async () => {
+    storage = withIsolatedAkmStorage();
+    writeTask(
+      storage.stashDir,
+      "bad-schedule-input.yml",
+      "version: 4\nrun: echo hi\ninputs:\n  ticket:\n    type: string\n    required: true\nschedule:\n  - cron: '0 8 * * 1'\n",
+    );
+
+    const result = await akmLint({ dir: storage.stashDir, config: makeConfig(storage.stashDir), typeFilter: "tasks" });
+
+    const findings = result.flagged.filter((issue) => issue.file.endsWith("bad-schedule-input.yml"));
+    expect(findings.map((issue) => issue.issue)).toEqual(["invalid-task-yaml"]);
+    expect(findings[0]?.detail).toContain("declared inputs");
+  });
+
   test("a tasks/*.yaml file is flagged for its extension instead of being skipped", async () => {
     storage = withIsolatedAkmStorage();
     // Content is VALID — the finding must come from the extension alone, so the

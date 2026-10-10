@@ -382,20 +382,23 @@ describe("Phase 4 parity: indexer.lookupBundleRef ↔ akmShowUnified", () => {
   test.each([
     "ordinary",
     "standalone",
-  ] as const)("%s GitHub YAML workflow indexes and shows through its owning adapter", async (kind) => {
-    const yaml = `name: YAML show
-on: { workflow_dispatch: null }
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: verify
-        run: bun test
-        shell: bash
-        working-directory: packages/cli
+  ] as const)("%s exec workflow indexes and shows through its owning adapter", async (kind) => {
+    const yaml = `---
+type: workflow
+steps:
+  - id: verify
+    unit:
+      exec:
+        command: [bash, -c, bun test]
+        cwd: packages/cli
+---
+
+## verify
+
+Run the tests.
 `;
     if (kind === "ordinary") {
-      writeFile(path.join(stashDir, "workflows", "yaml-show.yml"), yaml);
+      writeFile(path.join(stashDir, "workflows", "yaml-show.md"), yaml);
       await akmIndex({ stashDir, full: true });
       const shown = await akmShowUnified({ ref: "workflows/yaml-show", skipLogging: true });
       expect(shown).toMatchObject({
@@ -412,7 +415,7 @@ jobs:
     }
 
     const root = _createTmpDir("akm-yaml-show-");
-    writeFile(path.join(root, "yaml-show.yml"), yaml);
+    writeFile(path.join(root, "yaml-show.md"), yaml);
     await indexAdapterBundle("workflow-yaml", root, "akm-workflow", true);
     const shown = await akmShowUnified({ ref: "workflow-yaml//yaml-show", skipLogging: true });
     expect(shown).toMatchObject({
@@ -427,21 +430,9 @@ jobs:
     });
   });
 
-  test("invalid owned YAML is not indexed and show does not parse an unindexed file", async () => {
-    const invalidPath = path.join(stashDir, "workflows", "invalid-template.yml");
-    writeFile(
-      invalidPath,
-      `name: Invalid template
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dup
-        run: echo one
-      - id: dup
-        run: echo two
-`,
-    );
+  test("an invalid owned workflow is not indexed and show does not parse an unindexed file", async () => {
+    const invalidPath = path.join(stashDir, "workflows", "invalid-template.md");
+    writeFile(invalidPath, "---\ntype: workflow\nsteps:\n  - id: dup\n  - id: dup\n---\n\n## dup\n\nRun it.\n");
     await akmIndex({ stashDir, full: true });
 
     expect(await lookupBundleRef(parseBundleRef("workflows/invalid-template"))).toBeNull();

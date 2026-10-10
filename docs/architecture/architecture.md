@@ -260,8 +260,7 @@ schema (`src/core/config/schema/sources-bundles.ts`).
 refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: an explicit
-destination flag (`--bundle` on `remember`/`clone`/`improve`, `--target` on
-`import`/env/secret mutations) -> `config.defaultWriteTarget` -> working
+destination flag (`--bundle`) -> `config.defaultWriteTarget` -> working
 bundle (`defaultBundle`) -> `ConfigError`. The resolved target keeps the
 optional configured selector separate from the stable `source.name`: APIs
 that must re-resolve a destination use the selector, while durable refs and
@@ -299,8 +298,8 @@ whose proposal queue is read or adjudicated; it does not override the proposal's
 write destination. Qualified proposals and unqualified proposals created in a
 configured secondary queue record the destination source name and materialized
 root. Diff, accept, and revert use that binding by default and reject an explicit
-`--target` that resolves elsewhere. An unbound short proposal requires either
-an explicit `--target` or an authenticated `--queue` context; it does not
+`--bundle` that resolves elsewhere. An unbound short proposal requires either
+an explicit `--bundle` or an authenticated `--queue` context; it does not
 inherit a default write target.
 
 ---
@@ -442,7 +441,7 @@ An explicit missing or incompatible engine is an error and never falls
 through to another configured engine.
 
 Task-v3 execution and durable workflow-v4 dispatch use this runtime boundary.
-Markdown and GitHub-shaped YAML compile through source IR v1; new starts freeze
+Markdown workflows compile through source IR v1; new starts freeze
 v4-family `irVersion: 5`. A stored plan that decodes runs whatever release
 froze it; one that does not is marked abandoned and `akm workflow run <ref>`
 starts afresh. Only a plan a newer akm froze is refused, naming the upgrade.

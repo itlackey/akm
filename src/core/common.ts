@@ -5,7 +5,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { migrateLegacySourceShape } from "./config/legacy-source-shape-shim";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
 
@@ -309,7 +308,7 @@ function readStashDirFromConfig(): string | undefined {
     // STASH_DIR_NOT_FOUND despite a perfectly good config.
     const parsed = JSON.parse(stripJsonComments(text));
     if (typeof parsed !== "object" || parsed === null) return undefined;
-    const raw = migrateLegacySourceShape(parsed as Record<string, unknown>, configPath);
+    const raw = parsed as Record<string, unknown>;
     // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
@@ -968,6 +967,24 @@ export function wellFormedUnicode(value: string): boolean {
  */
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** The value when it is a plain object, else undefined (for `?.` chains over unknown JSON). */
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return isRecord(value) ? value : undefined;
+}
+
+/**
+ * Parse JSONC: comments stripped by {@link stripJsonComments}, and trailing
+ * commas (`[a, b,]`, `{"k": 1,}`) tolerated, as OpenCode's own `.jsonc` reader does.
+ */
+export function parseJsonc(text: string): unknown {
+  const stripped = stripJsonComments(text);
+  try {
+    return JSON.parse(stripped) as unknown;
+  } catch {
+    return JSON.parse(stripped.replace(/,(\s*[}\]])/g, "$1")) as unknown;
+  }
 }
 
 /** `JSON.parse` that returns `undefined` instead of throwing. */

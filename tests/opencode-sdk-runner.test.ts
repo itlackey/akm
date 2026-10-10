@@ -11,7 +11,7 @@
 // body as `{ parts: [...] }` with no `system`/`tools` and awaited
 // `session.prompt()` with no timer, so a stalled SDK call blocked the caller.
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { AgentProfile } from "../src/integrations/agent/profiles";
 import type { RunAgentOptions } from "../src/integrations/agent/spawn";
 import {
@@ -20,6 +20,9 @@ import {
   closeServer,
   runOpencodeSdk,
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { fakeOpencodeMajor } from "./_helpers/opencode-version";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 const baseProfile: AgentProfile = {
   name: "opencode-sdk",

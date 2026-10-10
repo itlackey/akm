@@ -253,7 +253,7 @@ extension, so an install without `sqlite-vec` leaves the unread table in place.
 
 #### Workflow source indexing
 
-Peer `.md` and `.yml` workflow sources compile directly to source IR version 1.
+Workflow `.md` sources compile directly to source IR version 1.
 The index stores the ordinary normalized `entries` row and metadata derived from
 that IR; there is no workflow-specific AST cache or parallel persisted source
 representation. Executable durable plans belong only to `state.db`.
@@ -503,7 +503,7 @@ Keys of `metadata_json`, each written only when the proposal has it:
 | `gateDecision` | `{ outcome: auto-accepted\|deferred\|staged\|auto-rejected, reason, gate?, contentHash?, measured?, thresholds?, scores?, judgeReason?, decidedAt }`; `scores` (per criterion) and `judgeReason` are the quality judge's evidence on its `staged` pass (or on a distill pass it deferred for review as `distill-review`), and stay on the row when the drain accepts it; a reflect pass deferred as `body-edit` by an older release carries them too |
 | `backupContent` | The target's content before promotion, for `revert` |
 | `acceptedTarget` | `{ source, root, path, contentHash }`, where accepted content went |
-| `eligibilitySource` | The improve lane that planned the asset: `signal-delta` or `scope`; `proactive` and `high-salience` only on rows an older release wrote, since those lanes score assets and no longer plan them |
+| `eligibilitySource` | The improve lane that planned the asset: `signal-delta`, `proactive` or `scope`; `high-salience` only on rows an older release wrote, since that lane was removed |
 | `promotionSource`, `promotionSourceHash` | A consolidate promotion's source memory and its raw body hash at mint: accept archives the memory only if the hash still matches, and once the promotion is decided the ledger holds the memory until its body changes |
 | `retirement` | A `consolidate-pair` retire proposal's verdict: `retiredRef`, `successorRef`, `cosine`, `judgeLabel`, `judgeReason`, `onlyInRetired` and `onlyInSuccessor` (the judge's claim lists by role, each at most 20 x 200 chars; absent before they were recorded), `retiredContentHash`, `successorContentHash`, `reason`, and `continuityRisk` when the retirement continuity check flagged it |
 | `retiredArchive` | `{ dirs }`, the archive directories of an accepted retirement, for `revert` |
@@ -632,7 +632,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `improve_invoked` | `akm improve`, live runs | `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_completed` | `akm improve`, end of a run | `strategy`, `plannedRefs`, per-mode and per-class action counts, memory-cleanup counts |
 | `improve_failed` | `akm improve`, a run that crashed | `strategy`, `error` (redacted), `durationMs` |
-| `improve_skipped` | `akm improve`: a ref, a lane, or a group of refs left out | `reason`: `no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`, `distill_deprecated_or_superseded`; with `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
+| `improve_skipped` | `akm improve`: a ref, a lane, or a group of refs left out | `reason`: `no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`, `distill_deprecated_or_superseded`; with `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
 | `improve_lock_recovered` | `akm improve` reclaiming a stale run lock | `lockName`, `stalePid`, `lockedAt`, `recoveredAt`, `lockAgeMs`, `reason` |
 | `improve_review_needed` | `akm feedback`, when a high-utility asset's utility drops below the review threshold | `previousUtility`, `nextUtility`, `reason` |
 | `improve_reflect_outcome` | the improve loop, after each reflect call | `ok`, `durationMs`, `engine`, `reason` |
@@ -703,7 +703,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 
 All asset files live under `$STASH/` in type-specific subdirectories defined by the `PLACEMENT_SPECS` map in `src/core/asset/asset-placement.ts`:
 
-The `workflows/` directory holds peer `.md` and `.yml` workflow sources. The
+The `workflows/` directory holds `.md` workflow sources. The
 `tasks/` directory holds task source v4 `.yml` sources.
 
 | Subdirectory | Asset Type | Format |
@@ -713,7 +713,7 @@ The `workflows/` directory holds peer `.md` and `.yml` workflow sources. The
 | `agents/<name>.md` | agent | YAML-FM + Markdown |
 | `knowledge/<name>.md` | knowledge | YAML-FM + Markdown |
 | `instructions/<name>.md` | instruction | YAML-FM + Markdown |
-| `workflows/<name>.md` / `workflows/<name>.yml` | workflow | Peer `.md` Markdown and `.yml` GitHub-shaped sources; both compile through source IR v1 |
+| `workflows/<name>.md` | workflow | Markdown source; compiles through source IR v1 |
 | `scripts/<name>.<ext>` | script | sh / ts / js / ps1 etc. |
 | `memories/<name>.md` | memory | YAML-FM + Markdown |
 | `env/<name>.env` | env | `KEY=VALUE` pairs |

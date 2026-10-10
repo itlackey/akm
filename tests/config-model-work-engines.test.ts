@@ -11,11 +11,11 @@
 
 import { describe, expect, test } from "bun:test";
 import { validateConfigShape } from "../src/core/config/config-schema";
-import { HARNESS_ID_TABLE } from "../src/integrations/harnesses/ids";
+import { HARNESS_REGISTRY } from "../src/integrations/harnesses";
 
 const ENGINES = {
   llm: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "m" },
-  ...Object.fromEntries(HARNESS_ID_TABLE.map((entry) => [entry.id, { kind: "agent", platform: entry.id }])),
+  ...Object.fromEntries(HARNESS_REGISTRY.map((entry) => [entry.id, { kind: "agent", platform: entry.id }])),
 };
 
 /** Each engine key, as the config fragment that sets it to `engine` and the key's dotted path. */
@@ -52,7 +52,7 @@ function errorsFor(fragment: Record<string, unknown>): { path: string; message: 
   return result.ok ? [] : result.errors;
 }
 
-const CONFINING = new Set(["llm", ...HARNESS_ID_TABLE.filter((e) => e.enforcesModelWorkTools).map((e) => e.id)]);
+const CONFINING = new Set(["llm", ...HARNESS_REGISTRY.filter((e) => e.capabilities.modelWork).map((e) => e.id)]);
 const ROWS = Object.keys(ENGINES).flatMap((engine) =>
   MODEL_WORK_KEYS.map(([key, set]): [string, string, (engine: string) => Record<string, unknown>] => [
     key,

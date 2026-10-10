@@ -808,15 +808,6 @@
                         },
                         "additionalProperties": true
                       },
-                      "lowValueFilter": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
-                      },
                       "defectFilter": {
                         "type": "object",
                         "properties": {
@@ -911,10 +902,6 @@
                           "minLength": 1
                         }
                       },
-                      "limit": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -990,15 +977,6 @@
                           }
                         },
                         "additionalProperties": true
-                      },
-                      "fidelityCheck": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          }
-                        },
-                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -1071,32 +1049,10 @@
                         "type": "integer",
                         "exclusiveMinimum": 0
                       },
-                      "minPoolSize": {
-                        "type": "integer",
-                        "minimum": 0
-                      },
                       "maxChunkSize": {
                         "type": "integer",
                         "minimum": 1,
                         "maximum": 50
-                      },
-                      "p90ChunkSecondsDefault": {
-                        "type": "number",
-                        "exclusiveMinimum": 0
-                      },
-                      "antiCollapse": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "randomClusterFraction": {
-                            "type": "number",
-                            "minimum": 0,
-                            "maximum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -1161,19 +1117,6 @@
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
-                      },
-                      "cls": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "adjacentCount": {
-                            "type": "integer",
-                            "minimum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -1540,10 +1483,6 @@
                       "maxPerRun": {
                         "type": "integer",
                         "exclusiveMinimum": 0
-                      },
-                      "limit": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
                       }
                     },
                     "additionalProperties": true
@@ -1585,16 +1524,7 @@
         },
         "salience": {
           "type": "object",
-          "properties": {
-            "outcomeWeightEnabled": {
-              "type": "boolean"
-            },
-            "salienceThreshold": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
+          "properties": {},
           "additionalProperties": true
         },
         "stateGc": {
@@ -2484,15 +2414,6 @@
                             },
                             "additionalProperties": true
                           },
-                          "lowValueFilter": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
-                          },
                           "defectFilter": {
                             "type": "object",
                             "properties": {
@@ -2587,10 +2508,6 @@
                               "minLength": 1
                             }
                           },
-                          "limit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2666,15 +2583,6 @@
                               }
                             },
                             "additionalProperties": true
-                          },
-                          "fidelityCheck": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -2747,32 +2655,10 @@
                             "type": "integer",
                             "exclusiveMinimum": 0
                           },
-                          "minPoolSize": {
-                            "type": "integer",
-                            "minimum": 0
-                          },
                           "maxChunkSize": {
                             "type": "integer",
                             "minimum": 1,
                             "maximum": 50
-                          },
-                          "p90ChunkSecondsDefault": {
-                            "type": "number",
-                            "exclusiveMinimum": 0
-                          },
-                          "antiCollapse": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "randomClusterFraction": {
-                                "type": "number",
-                                "minimum": 0,
-                                "maximum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -2837,19 +2723,6 @@
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
-                          },
-                          "cls": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "adjacentCount": {
-                                "type": "integer",
-                                "minimum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -3216,10 +3089,6 @@
                           "maxPerRun": {
                             "type": "integer",
                             "exclusiveMinimum": 0
-                          },
-                          "limit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
                           }
                         },
                         "additionalProperties": true
@@ -3261,16 +3130,7 @@
             },
             "salience": {
               "type": "object",
-              "properties": {
-                "outcomeWeightEnabled": {
-                  "type": "boolean"
-                },
-                "salienceThreshold": {
-                  "type": "number",
-                  "minimum": 0,
-                  "maximum": 1
-                }
-              },
+              "properties": {},
               "additionalProperties": true
             },
             "stateGc": {
@@ -3623,15 +3483,6 @@
           },
           "additionalProperties": true
         },
-        "lowValueFilter": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": true
-        },
         "defectFilter": {
           "type": "object",
           "properties": {
@@ -3675,41 +3526,10 @@
           },
           "additionalProperties": true
         },
-        "fidelityCheck": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            }
-          },
-          "additionalProperties": true
-        },
-        "minPoolSize": {
-          "type": "integer",
-          "minimum": 0
-        },
         "maxChunkSize": {
           "type": "integer",
           "minimum": 1,
           "maximum": 50
-        },
-        "p90ChunkSecondsDefault": {
-          "type": "number",
-          "exclusiveMinimum": 0
-        },
-        "antiCollapse": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "randomClusterFraction": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
-            }
-          },
-          "additionalProperties": true
         },
         "minPendingCount": {
           "type": "integer",
@@ -4040,15 +3860,6 @@
                   },
                   "additionalProperties": true
                 },
-                "lowValueFilter": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
-                },
                 "defectFilter": {
                   "type": "object",
                   "properties": {
@@ -4143,10 +3954,6 @@
                     "minLength": 1
                   }
                 },
-                "limit": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -4222,15 +4029,6 @@
                     }
                   },
                   "additionalProperties": true
-                },
-                "fidelityCheck": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    }
-                  },
-                  "additionalProperties": true
                 }
               },
               "additionalProperties": true
@@ -4303,32 +4101,10 @@
                   "type": "integer",
                   "exclusiveMinimum": 0
                 },
-                "minPoolSize": {
-                  "type": "integer",
-                  "minimum": 0
-                },
                 "maxChunkSize": {
                   "type": "integer",
                   "minimum": 1,
                   "maximum": 50
-                },
-                "p90ChunkSecondsDefault": {
-                  "type": "number",
-                  "exclusiveMinimum": 0
-                },
-                "antiCollapse": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "randomClusterFraction": {
-                      "type": "number",
-                      "minimum": 0,
-                      "maximum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 }
               },
               "additionalProperties": true
@@ -4393,19 +4169,6 @@
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
-                },
-                "cls": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "adjacentCount": {
-                      "type": "integer",
-                      "minimum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 }
               },
               "additionalProperties": true
@@ -4770,10 +4533,6 @@
                   "minimum": 0
                 },
                 "maxPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "limit": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 }

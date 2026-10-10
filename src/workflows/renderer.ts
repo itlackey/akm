@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Show renderer for peer workflow sources. `.md` and `.yml` both compile
- * through `compileWorkflowSource` into a plan, which is projected down to the
- * public `ShowResponse` shape, including a compact per-step orchestration
- * summary (engine/model or an exec unit's argv, `map.over` reference, route
- * table) when the step declares one.
+ * Show renderer for workflow sources. A `.md` source compiles through
+ * `compileWorkflowSource` into a plan, which is projected down to the public
+ * `ShowResponse` shape, including a compact per-step orchestration summary
+ * (engine/model or an exec unit's argv, `map.over` reference) when the step
+ * declares one.
  */
 
 import { displayRef } from "../core/asset/resolve-ref";
@@ -19,7 +19,7 @@ import type {
   WorkflowStepDefinition,
   WorkflowStepOrchestrationSummary,
 } from "../sources/types";
-import { compileWorkflowSource, routeDescription, workflowStepInstructions } from "./compile";
+import { compileWorkflowSource, workflowStepInstructions } from "./compile";
 import type { WorkflowPlan, WorkflowPlanStep } from "./plan";
 
 function shellQuote(value: string): string {
@@ -58,7 +58,7 @@ function projectParameters(plan: WorkflowPlan): WorkflowParameter[] | undefined 
  * Compact, show-facing orchestration summary for one step. Field mapping:
  * `engine`/`model`/`timeoutMs` merge the run-level `defaults` exactly like the
  * compiler does (per-unit override wins), `fanOut.over` carries the raw
- * reference string, and `route` carries the explicit input + branch table.
+ * reference string.
  * Returns undefined when the step declares nothing worth summarizing.
  *
  * ## exec units
@@ -67,8 +67,8 @@ function projectParameters(plan: WorkflowPlan): WorkflowParameter[] | undefined 
  * `engine`/`model`/`llm` alongside `exec:`. Merging `defaults.engine` into its
  * summary would make `show` state something untrue about what will run, so the
  * two fields are suppressed and the argv is projected instead, under `exec`
- * (field presence carries the dispatch kind, exactly like `fanOut`/`route`
- * carry the step kind).
+ * (field presence carries the dispatch kind, exactly like `fanOut`
+ * carries the step kind).
  *
  * `timeoutMs` still merges the defaults: an exec unit really does inherit
  * `defaults.timeout`, so that number stays true for it.
@@ -111,15 +111,6 @@ function summarizeStepOrchestration(
       : {}),
     ...(unit?.output !== undefined || step.outputSchema !== undefined ? { hasSchema: true } : {}),
     ...(unit?.env !== undefined ? { env: [...unit.env] } : {}),
-    ...(step.route
-      ? {
-          route: {
-            input: step.route.input,
-            branches: Object.entries(step.route.when).map(([match, stepId]) => ({ match, stepId })),
-            ...(step.route.defaultStepId !== undefined ? { defaultStepId: step.route.defaultStepId } : {}),
-          },
-        }
-      : {}),
   };
 
   return Object.keys(summary).length > 0 ? summary : undefined;
@@ -132,7 +123,7 @@ function projectStepDefinitions(plan: WorkflowPlan): WorkflowStepDefinition[] {
     return {
       id: step.stepId,
       title: step.stepId,
-      instructions: instructions || (step.route ? routeDescription(step.route) : ""),
+      instructions,
       ...(step.gate.criteria.length > 0 ? { completionCriteria: [...step.gate.criteria] } : {}),
       sequenceIndex,
       ...(orchestration ? { orchestration } : {}),
