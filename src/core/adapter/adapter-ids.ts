@@ -3,8 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Dependency-free adapter-id table (#909) — mirrors
- * `src/integrations/harnesses/ids.ts`'s split from its own heavy barrel.
+ * Dependency-free adapter-id table (#909).
  *
  * `core/config/schema/sources-bundles.ts` needs one small, DATA-shaped fact
  * about the adapter registry: the canonical ordered id list, to validate

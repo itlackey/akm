@@ -488,7 +488,7 @@ export async function detectHarness(whichFn: WhichFn = defaultWhich): Promise<De
   }
   for (const harness of AGENT_DISPATCH_HARNESSES) {
     // The SDK harness dispatches without a CLI profile and was decided above;
-    // an explicit skip so a future BUILTINS entry for it can't silently
+    // an explicit skip so a future `profile` for it can't silently
     // reintroduce it here after the import guard already rejected it.
     if (harness.id === "opencode-sdk") continue;
     const bin = getBuiltinAgentProfile(harness.id)?.bin;

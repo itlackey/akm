@@ -3,24 +3,10 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * OpenCode SDK harness DESCRIPTOR (#564).
+ * OpenCode SDK harness descriptor (#564).
  *
- * This module is a dependency-graph LEAF: it imports only the harness base
- * types (`../types`) and nothing from `core/config` or the SDK runner. Keeping
- * the descriptor separate from the runtime runner (`./sdk-runner`, which pulls
- * `core/config`) is load-bearing: `HARNESS_REGISTRY` in `../index.ts` imports
- * this class from HERE, not from the per-harness barrel (`./index.ts`). The
- * barrel additionally re-exports `runOpencodeSdk`/`closeServer` from
- * `./sdk-runner`; that re-export makes the barrel transitively depend on
- * `core/config`, and `core/config/config-types` derives `VALID_HARNESS_IDS`
- * back from `../index.ts`. If the registry imported the class through the
- * barrel, that cycle would evaluate `../index.ts` (and `new
- * OpencodeSdkHarness()`) while the barrel — and hence this class binding — was
- * still initializing, throwing a temporal-dead-zone "Cannot access
- * 'OpencodeSdkHarness' before initialization" whenever the barrel is the first
- * module loaded in a fresh graph (e.g. the workflow-exec subprocess entry).
- * Importing the descriptor from this leaf keeps the registry a config-leaf and
- * breaks the cycle.
+ * Descriptor only. The runner (`./sdk-runner`) imports `core/config`, so the
+ * registry must never load it; `agent/runner-dispatch.ts` imports it directly.
  */
 
 import { createAgentRequestLowerer } from "../../agent/request-lowering";
@@ -55,5 +41,7 @@ export class OpencodeSdkHarness extends BaseHarness {
   readonly capabilities = caps({
     agentDispatch: true,
     detection: true,
+    modelWork: true,
+    nativeAgent: true,
   });
 }

@@ -36,6 +36,7 @@ export class CodexHarness extends BaseHarness {
   // No `setupDetectionDir`: `~/.codex` holds credentials and session rollouts,
   // not assets, so `akm setup` must not offer it as a stash source.
   readonly agentBuilder = codexBuilder;
+  readonly profile = { bin: "codex", args: [], envPassthrough: ["OPENAI_API_KEY", "CODEX_CONFIG"] };
   readonly resultExtractor = codexResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // No flag-shaped resume: codex resume is the `exec resume <id>` SUBCOMMAND
