@@ -136,7 +136,6 @@ enumeration of the whole `proposal` noun group.
 | `akm task sync` | Evolving | |
 | `akm task doctor` | Evolving | |
 | `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
-| `akm task validate` | Evolving | New in 0.9.11; read-only, and the only `task` subcommand that takes a bare filesystem path instead of a ref — the file need not belong to any configured bundle. |
 
 ## Stable
 
@@ -301,14 +300,7 @@ CHANGELOG with a migration note.
   construction** (the excluded data never reaches the command). `akm task
   explain` instead **redacts** secret-shaped input values on a best-effort
   heuristic basis — a value that doesn't match the heuristic can still
-  print unredacted. `akm task validate <path>` (new in 0.9.11) is the same
-  kind of zero-write introspection as `explain`, but takes a bare filesystem
-  path rather than a bundle-qualified ref — it reports whether that ONE file
-  would parse cleanly (`valid`), need `akm migrate apply` first (`blocked`:
-  task v2/v3, or a retired `schedule[].enabled`),
-  fail schema validation (`invalid`), or isn't a task source at all
-  (`not-a-task`) — exactly the diagnostic `akm task sync` would produce for
-  it, before the file is ever wired into a bundle or the scheduler.
+  print unredacted.
 - **Workflow plan** — `akm workflow plan <ref>`, new in 0.9.2: zero-write
   compile+freeze introspection (the canonical step graph, task/child
   expansion, input bindings, and lowering notices for a workflow, without

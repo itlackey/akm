@@ -167,6 +167,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--bundle` is the one write-destination flag, as on `remember`, `clone`, `improve` and `task`; `--target` is an
   unknown flag (exit 2) with no alias. The plugins, akm-eval and OpenPalm pass no `--target`. Errors and hints that said
   `--target` now say `--bundle`.
+- **`akm task validate` (#1091).** Folded into `akm lint --type tasks`, as `akm workflow validate` was. Lint already parsed
+  every task file through the same version router; it now also runs the two gates `akm task sync` runs before it installs
+  a schedule (the cron suits the local scheduler backend; each schedule entry's `inputs` satisfy the declared contract),
+  so it never reports clean a task sync would refuse. Gone with the command: the `valid`/`blocked`/`invalid`/`not-a-task`
+  outcome, the `resolved` shape and the bare-path argument (point `akm lint --dir` at a bundle root). The
+  owner's crontab and tasks, the plugins, akm-eval and OpenPalm do not call it.
 
 ### Fixed
 

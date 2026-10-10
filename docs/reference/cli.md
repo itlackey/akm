@@ -3332,7 +3332,6 @@ akm task enable team//tasks/nightly       # Add local activation and sync its bu
 akm task disable team//tasks/nightly      # Remove local activation and unschedule it
 akm task run <id>                           # Execute now (what the scheduler calls)
 akm task explain <ref>                      # Read-only: declared inputs, target, schedule — spawns nothing
-akm task validate <path>                    # Read-only: parse one task file by path, report sync's diagnostic
 akm task history [<id>] [--id <id>] [--limit <n>]  # Recent runs from state.db (positional id == --id)
 akm task sync                               # Reconcile activated refs from all enabled configured bundles
 akm task sync --dry-run                     # Preview the reconcile — zero scheduler writes
@@ -3354,28 +3353,6 @@ target, effective execution settings, and schedule bindings — **read-only**:
 it never spawns anything, writes history, or touches the scheduler. A
 secret-shaped value prints as `<redacted>`. See
 [`akm task explain`](tasks.md#akm-task-explain).
-
-`akm task validate <path>` parses ONE task file by filesystem path — not a
-concept ref or id, and the file need not live in any configured bundle —
-and reports the same diagnostic `akm task sync` would produce for it,
-INCLUDING sync's own cron-dialect check and its per-schedule-entry
-input-contract check (so a file `sync` would reject can never be reported
-`valid` here): `{ok, path, sourceVersion, outcome, reason?,
-resolved?}` where `outcome` is `valid` (parses as task source v4 directly
-and passes both sync checks), `blocked` (task v2/v3 that must first be
-rewritten by `akm migrate apply`), `invalid` (the YAML doesn't parse, or the document fails schema
-validation, or it parsed but fails one of the two sync checks), or
-`not-a-task` (the YAML parses but never declares a `version:` field — not
-shaped like a task source). `resolved` is the compiled task shape
-`akm task sync` itself would build a scheduler binding from — id, the
-compiled schema version, resolved `uses`/`run` target, declared `inputs`
-contract, and `schedule` bindings — present only on `valid`.
-Unlike `akm task explain`, it never runs execution lowering: a command-kind
-task validates the same whether or not the local config has an engine
-configured. Exits 0 for `valid`, 1 for
-`blocked`/`invalid`/`not-a-task`, 2 for a missing or unreadable path.
-**Read-only**: it never touches the scheduler and never requires the file to
-be indexed or wired into a bundle.
 
 `akm task run` is what cron / launchd / schtasks invoke at the scheduled
 time. Each run is recorded as a row in the durable `task_history` table

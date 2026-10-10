@@ -274,7 +274,7 @@ function statOrUndefined(file: string): fs.Stats | undefined {
  * Validate every v4 `schedule:` entry's `inputs` against the task's own
  * declared contract with defaults applied — the exact set of values a
  * compiled invocation delivers — so a violation is reported at sync rather
- * than when the scheduler fires. Shared with `akm task validate`.
+ * than when the scheduler fires. Shared with `akm lint`.
  */
 export function assertTaskScheduleInputsSatisfyContract(
   v4: Pick<ParsedTaskSource["v4"], "inputs" | "schedule">,
@@ -298,7 +298,7 @@ export function assertTaskScheduleInputsSatisfyContract(
  * Validate every v4 `schedule:` entry's `cron` against the active backend's
  * dialect: cron is the most permissive of the three, so a task authored on
  * Linux can carry an expression launchd/schtasks cannot translate. Shared
- * with `akm task validate`.
+ * with `akm lint`.
  */
 export function assertTaskScheduleCronValid(
   v4: Pick<ParsedTaskSource["v4"], "schedule">,
