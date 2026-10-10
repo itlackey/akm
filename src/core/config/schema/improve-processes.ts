@@ -295,8 +295,10 @@ export const ProactiveMaintenanceProcessConfigSchema = z
  * "unknown enabled process" check below — an old config must keep loading
  * (AGENTS.md "Reading persisted data"). `graphExtraction`: the LLM
  * entity-graph extraction it ran was retired in 0.9.17-alpha.9.
+ * `feedbackDistillation`: a wrapper of `processes.distill.enabled`, removed in
+ * 0.8.0.
  */
-const RETIRED_PROCESS_NAMES = new Set(["graphExtraction"]);
+const RETIRED_PROCESS_NAMES = new Set(["graphExtraction", "feedbackDistillation"]);
 
 const ImproveProfileProcessesSchema = z
   .object({
@@ -311,20 +313,9 @@ const ImproveProfileProcessesSchema = z
   })
   .passthrough()
   .superRefine((val, ctx) => {
-    // 0.8.0 removed the duplicated `feedbackDistillation` process key — it was
-    // a thin wrapper around `processes.distill.enabled`. Keep the migration
-    // hint so a stale config gets an actionable message rather than silently
-    // doing nothing. Other unknown process keys remain preserved for
-    // cross-version compatibility, but an enabled one is rejected below because
-    // this version cannot execute it.
-    if ("feedbackDistillation" in (val as Record<string, unknown>)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message:
-          "feedbackDistillation was removed in 0.8.0 — use processes.distill.enabled instead. " +
-          "It now controls both the orchestration gate and the LLM-call gate.",
-      });
-    }
+    // Unknown process keys remain preserved for cross-version compatibility,
+    // but an enabled one is rejected below because this version cannot
+    // execute it.
     for (const [name, process] of Object.entries(val as Record<string, unknown>)) {
       if (
         !(IMPROVE_PROCESS_NAMES as readonly string[]).includes(name) &&

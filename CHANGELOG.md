@@ -138,6 +138,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The `targetVocab: 2` marker on `task_history` rows, and the `"mcp"` package keyword (#1091).** Nothing read the
   marker since migration 025 backfilled the old result vocabulary, so new rows no longer carry it and a stored one is
   ignored; its newer-than-2 warning is gone. akm has no MCP code left, so `package.json` no longer lists `mcp`.
+- **The hard-error and bespoke-warning hints for old config keys (#1091).** `defaults.llm`, `defaults.agent` and
+  `defaults.improve` (rejected since 0.9), the `feedbackDistillation` process (rejected since 0.8.0), and the engine
+  settings under `index.<pass>` and `index.stalenessDetection` (dropped with a bespoke message) now load like any other
+  unknown key: named once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
 
 ### Fixed
 
