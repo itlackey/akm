@@ -436,21 +436,33 @@ async function chatCompletionAttempt(
 ): Promise<string> {
   const wantsSchema =
     Boolean(options?.responseSchema) && config.supportsJsonSchema !== false && !isJsonSchemaKnownUnsupported(config);
+  // The schema attempt's error record is held, not emitted: when the retry without the schema
+  // recovers the call, that call is ONE success, not a failure plus a success. Every other exit
+  // flushes the held record, so a failed call is still recorded once.
+  const held: HeldUsage | undefined = wantsSchema ? {} : undefined;
+  const flushHeld = (): void => {
+    if (held?.record) emitLlmUsage(held.record);
+  };
   try {
-    return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema, includeThinking);
+    return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema, includeThinking, held);
   } catch (err) {
     // A 5xx that names the response format is answered like the 4xx rejection below (#1150).
     if (wantsSchema && err instanceof LlmCallError && err.namesResponseFormat) {
       return retryWithoutSchema(config, messages, options, timeoutMs, includeThinking, err);
     }
-    if (!isRejectedRequest(err)) throw err;
+    if (!isRejectedRequest(err)) {
+      flushHeld();
+      throw err;
+    }
     const key = connectionKey(config);
     if (TEMPERATURE_NAMED.test(err.message) && !temperatureRejectedConnections.has(key)) {
+      flushHeld();
       warnVerbose(`[akm] LLM rejected temperature (${err.statusCode}); retrying once without it: ${err.message}`);
       temperatureRejectedConnections.add(key);
       return chatCompletionAttempt(config, messages, options, timeoutMs, includeThinking);
     }
     if (MAX_TOKENS_REPLACED.test(err.message) && !maxCompletionTokensConnections.has(key)) {
+      flushHeld();
       warnVerbose(
         `[akm] LLM rejected max_tokens (${err.statusCode}); retrying once with max_completion_tokens: ${err.message}`,
       );
@@ -458,6 +470,7 @@ async function chatCompletionAttempt(
       return chatCompletionAttempt(config, messages, options, timeoutMs, includeThinking);
     }
     if (includeThinking && THINKING_FIELD_NAMED.test(err.message)) {
+      flushHeld();
       warnVerbose(
         `[akm] LLM rejected chat_template_kwargs/enable_thinking (${err.statusCode}); retrying once without them: ${err.message}`,
       );
@@ -469,6 +482,9 @@ async function chatCompletionAttempt(
     return retryWithoutSchema(config, messages, options, timeoutMs, includeThinking, err);
   }
 }
+
+/** Holds the error usage record of an attempt whose caller decides whether it is emitted. */
+type HeldUsage = { record?: LlmUsageRecord };
 
 async function retryWithoutSchema(
   config: ChatCompletionConfig,
@@ -493,6 +509,7 @@ async function chatCompletionAttemptOnce(
   timeoutMs: number | null,
   includeSchema: boolean,
   includeThinking: boolean,
+  held?: HeldUsage,
 ): Promise<string> {
   if (config.extraParams !== undefined) {
     const issue = validateExtraParams(config.extraParams)[0];
@@ -708,12 +725,14 @@ async function chatCompletionAttemptOnce(
     });
     return result;
   } catch (err) {
-    emitLlmUsage({
+    const errorRecord: LlmUsageRecord = {
       ...terminalFields,
       outcome: "error",
       durationMs: Date.now() - requestStartedAt,
       errorCode: err instanceof LlmCallError ? err.code : "unknown_error",
-    });
+    };
+    if (held) held.record = errorRecord;
+    else emitLlmUsage(errorRecord);
     throw err;
   }
 }
