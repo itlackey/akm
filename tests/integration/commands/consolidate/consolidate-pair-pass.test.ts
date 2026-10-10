@@ -603,6 +603,9 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     const { system, user } = judgeCalls[0]!;
     expect(system).toContain("B replaces a claim of A only when");
     expect(system).toContain("is a conflict, not a replacement");
+    // A later date alone never makes notes about different named things replace each other.
+    expect(system).toContain("both are about the same named thing");
+    expect(system).toContain("Notes about different named things never replace each other, whatever their dates");
     expect(system).toContain("B does not say it replaces the claim and was not created later");
     expect(user.match(/^Created: /gm)).toHaveLength(2);
     // Both notes carry one date: neither is "older" or "newer", so the prompt must not say so.

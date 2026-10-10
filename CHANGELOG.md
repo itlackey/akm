@@ -103,6 +103,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
     (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
 
+### Fixed
+
+- **consolidate's pair judge no longer lets a later date alone make one note replace another (#1134).** After the
+  same-age fix (#1146), `gpt-oss:120b` retired notes about a different named thing (two partners on one template:
+  "B is newer and replaces Alder with Birch") as `supersedes`, 1 to 2 unsafe retirements of 60 per run where the build
+  before it had none. The pair prompt now says a note replaces another only when both are about the same named thing
+  (service, integration, partner, component, region, file), and that notes about different named things never replace
+  each other whatever their dates; `unrelated` covers different named things written to one layout. Measured with
+  akm-eval `evals/consolidate`, per-case n=3: `gpt-oss:120b` unsafe retirements 1, 2, 1 -> 0, 0, 0 with recall
+  0.97 -> 0.99; qwen3.8-27b stays at 0 unsafe, recall 0.70.
+
 ## [0.9.31] - 2026-10-09
 
 A patch release: concurrent config writes no longer lose a change, OpenAI's reasoning models work as `llm`
