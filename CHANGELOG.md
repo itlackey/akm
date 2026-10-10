@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **Triage accepts up to 200 proposals per run by default, up from 25.** The consolidate pair pass stages about 90
+  pairs a night on a real stash, so a lower cap let the review queue grow every night. `maxAcceptsPerRun` still bounds
+  a run, and `akm proposal drain` uses the same default.
+
+
 ## [0.10.26101001] - 2026-10-10
 
 ### Added

@@ -813,7 +813,7 @@ function buildResultExecutionPlan(
       enabled: scope.mode !== "ref" && resolvedPlan.processes.triage.enabled,
       configuredMode: configuredTriage?.applyMode ?? "queue",
       mode: improveProfile.processes?.triage?.applyMode ?? "queue",
-      maxAcceptsPerRun: configuredTriage?.maxAcceptsPerRun ?? 25,
+      maxAcceptsPerRun: configuredTriage?.maxAcceptsPerRun ?? 200,
     },
   });
 }
@@ -836,7 +836,7 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
           ...(options.target ? { target: options.target } : {}),
           config: options.config,
           applyMode: triageConfig?.applyMode ?? "queue",
-          maxAccepts: triageConfig?.maxAcceptsPerRun ?? 25,
+          maxAccepts: triageConfig?.maxAcceptsPerRun ?? 200,
           dryRun: false,
           excludeIds: new Set<string>(),
           judgment: resolvedPlan.triageJudgment,

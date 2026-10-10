@@ -446,7 +446,7 @@ review-first config correctly shows `queue`.
 
 A deterministic-only `promote` (triage with judgment off) is **not** a gated
 lane (#1143): the `default` strategy runs it without the opt-in, bounded by
-`maxAcceptsPerRun` (25), through the same deterministic gates as
+`maxAcceptsPerRun` (200), through the same deterministic gates as
 `akm proposal drain --promote`. Only a promote that turns the judgment tier on
 needs `experimental.improveAutonomy`.
 

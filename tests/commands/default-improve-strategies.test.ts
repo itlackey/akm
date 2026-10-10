@@ -90,7 +90,7 @@ describe("default improve strategies (#552)", () => {
     const triage = resolveImproveStrategy("default", MINIMAL_CONFIG).config.processes?.triage;
     expect(triage?.enabled).toBe(true);
     expect(triage?.applyMode).toBe("promote");
-    expect(triage?.maxAcceptsPerRun).toBe(25);
+    expect(triage?.maxAcceptsPerRun).toBe(200);
     expect(triage?.judgment?.enabled).not.toBe(true);
   });
 
