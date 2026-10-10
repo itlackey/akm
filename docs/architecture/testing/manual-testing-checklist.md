@@ -231,13 +231,12 @@ akm() { bun "$REPO/src/cli.ts" "$@"; }
 
 ### 3.2 Verify isolation before mutation
 
-`config path --all` is a read-only recovery surface and works before config
-exists.
+`info` is read-only and works before config exists.
 
 ```sh
-akm config path --all --format json >"$AKM_SANDBOX/paths.json"
+akm info --format json >"$AKM_SANDBOX/paths.json"
 jq -e --arg root "$AKM_SANDBOX/" \
-  'all(to_entries[]; (.value | tostring | startswith($root)))' \
+  '[.bundleDir, .configDir, .dataDir, .cacheDir, .stateDir] | all(startswith($root))' \
   "$AKM_SANDBOX/paths.json"
 ```
 
@@ -598,9 +597,8 @@ test ! -s "$AKM_SANDBOX/silent.out"
       never materialize values.
 - [ ] **[LOCAL]** Concurrent independent `config set` processes preserve both
       changes or one fails cleanly; JSON stays valid and no temp file remains.
-- [ ] **[LOCAL]** `config path --all` honors output formatting. Bare
-      `config path` is a raw path primitive; if format/output are ignored it
-      must warn explicitly. Silent ignoring is a failure.
+- [ ] **[LOCAL]** Bare `config path` is a raw path primitive; if format/output
+      are ignored it must warn explicitly. Silent ignoring is a failure.
 
 ### 6.5 Help migration notes
 

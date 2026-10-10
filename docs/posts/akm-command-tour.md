@@ -99,7 +99,7 @@ Use this to inspect or change settings.
 ```sh
 akm config get output.format
 akm config set output.detail full
-akm config path --all
+akm info
 ```
 
 Real-world use: your agent prefers text output in one repo and JSON in another, or you want to set a default write target for memories and imports.

@@ -1979,7 +1979,6 @@ akm config set output.detail full   # Set one key
 akm config set output.detail full --silent  # Set without the post-write config dump on stdout
 akm config unset llm                # Remove an optional key
 akm config path                     # Print path to config file
-akm config path --all               # Print all config-related paths
 akm config diff other-host/config.json  # Effective-config differences, secrets redacted
 ```
 
@@ -1991,7 +1990,7 @@ Subcommands:
 | `list` | List current configuration |
 | `set <key> <value>` | Set one config key; prints the resulting config with `ok: true` |
 | `unset <key>` | Unset an optional key, or a whole `embedding`/engine section; prints the resulting config with `ok: true` |
-| `path` | Show paths to config, bundle, cache, and index. `--all` prints every path; without it, just the config path. Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
+| `path` | Print the config file path (`akm info` reports the bundle, config, data, cache and state directories). Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
 | `diff <path\|bundle//path>` | Compare this instance's effective config (its own `extends` already applied) against another config file or bundle-relative file (loaded through the same loader — its `extends` honoured too); prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
 
 `set` and `unset` accept `--silent` to suppress the post-write config dump

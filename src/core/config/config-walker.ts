@@ -519,7 +519,7 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
  * replaced the key they typed — this does.
  */
 const RETIRED_KEY_HINTS: Record<string, string> = {
-  stashDir: "stashDir was removed in 0.9; get the stash path from `akm config path --all` or `akm info`.",
+  stashDir: "stashDir was removed in 0.9; get the stash path from `akm info`.",
   sources: "sources is not supported; configure `bundles` instead.",
   installed: "installed is not supported; configure `bundles` instead.",
   wikiName: "the wiki subsystem was removed in 0.9; wikis are ordinary knowledge assets now — see `akm import`.",

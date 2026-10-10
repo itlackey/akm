@@ -416,7 +416,7 @@ describe("unknown-key hint stays in sync with schema (#460)", () => {
 // ── Mitigation item 3: actionable "use X instead" hints for retired keys ────
 
 describe("unknown-key hint names a replacement for retired pre-0.9 keys", () => {
-  test("config get stashDir points at `akm config path --all` / `akm info`", () => {
+  test("config get stashDir points at `akm info`", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
     try {
       getConfigValue(base, "stashDir");
@@ -424,7 +424,6 @@ describe("unknown-key hint names a replacement for retired pre-0.9 keys", () => 
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const combined = `${message} ${(err as { hint?: () => string }).hint?.() ?? ""}`;
-      expect(combined).toContain("akm config path --all");
       expect(combined).toContain("akm info");
     }
   });

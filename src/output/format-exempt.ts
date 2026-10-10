@@ -59,9 +59,7 @@ const EXEMPT_SUBCOMMANDS: ReadonlySet<string> = new Set([
   // envelope. Wrapping it broke every existing substitution silently: the
   // CLI's default format is `json`, so an un-flagged `akm env path <ref>`
   // (exactly how the substitution is always written) started emitting
-  // `{"path":"..."}` instead of the raw path. Unlike `config path`, this
-  // command has no `--all`-style multi-field variant, so the whole surface
-  // can be exempt without wrongly warning on a real envelope case.
+  // `{"path":"..."}` instead of the raw path.
   "env path",
 ]);
 

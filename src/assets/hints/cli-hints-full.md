@@ -310,7 +310,6 @@ akm config list                               # Show current config
 akm config get <key>                          # Read a value
 akm config set <key> <value>                  # Set a value
 akm config unset <key>                        # Remove a key
-akm config path --all                         # Show all config paths
 ```
 
 ## Other Commands

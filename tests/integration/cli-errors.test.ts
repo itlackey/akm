@@ -391,14 +391,15 @@ describe("config path subcommand", () => {
     expect(stdout.trim()).toContain("config.json");
   });
 
-  test("config path --all returns all path keys", async () => {
-    const { stdout, status } = await runCli("config", "path", "--all", "--format=json");
+  test("config path --all is an unknown flag; `info` reports the directories", async () => {
+    const all = await runCli("config", "path", "--all");
+    expect(all.status).toBe(2);
+    const { stdout, status } = await runCli("info");
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout.trim());
-    expect(parsed).toHaveProperty("config");
-    expect(parsed).toHaveProperty("bundle");
-    expect(parsed).toHaveProperty("cache");
-    expect(parsed).toHaveProperty("index");
+    for (const key of ["bundleDir", "configDir", "dataDir", "cacheDir", "stateDir"]) {
+      expect(parsed).toHaveProperty(key);
+    }
   });
 });
 
