@@ -176,6 +176,70 @@ describe("chatCompletion structured-output attempt-then-fallback", () => {
   });
 });
 
+describe("chatCompletion 5xx that names the response format (#1150)", () => {
+  const messages = [{ role: "user" as const, content: "Return a result" }];
+  const responseSchema = {
+    type: "object",
+    properties: { result: { type: "string" } },
+    required: ["result"],
+    additionalProperties: false,
+  };
+  const ok = () => Response.json({ choices: [{ message: { content: '{"result":"ok"}' } }] });
+
+  beforeEach(() => {
+    _resetEndpointSupportTrackersForTests();
+  });
+
+  test("a 502 format_ignored falls back once without response_format, and later calls skip the schema", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      if (body.response_format) {
+        // The gateway's wording: the response format is named only after the 200 characters an error message keeps.
+        const message = `All 1 routed attempt(s) failed with upstream provider errors. This is a provider-side failure, not a problem with your request. Attempt trail: ollama/gpt-oss:120b key1: format_ignored.`;
+        return Response.json({ error: { type: "provider_error", code: "upstream_failed", message } }, { status: 502 });
+      }
+      return ok();
+    });
+    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    try {
+      expect(await chatCompletion(config, messages, { responseSchema })).toBe('{"result":"ok"}');
+      expect(requestBodies).toHaveLength(2);
+      expect(requestBodies[0]?.response_format).toBeDefined();
+      expect(requestBodies[1]?.response_format).toBeUndefined();
+      expect(isJsonSchemaKnownUnsupported(config)).toBe(true);
+
+      requestBodies.length = 0;
+      await chatCompletion(config, messages, { responseSchema });
+      expect(requestBodies).toHaveLength(1);
+      expect(requestBodies[0]?.response_format).toBeUndefined();
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("a generic 502 is not treated as a schema rejection", async () => {
+    const requestBodies: Record<string, unknown>[] = [];
+    const { url, server } = createRequestServer((body) => {
+      requestBodies.push(body);
+      return Response.json({ error: "bad gateway" }, { status: 502 });
+    });
+    const config: LlmConnectionConfig = { endpoint: url, model: "test-model" };
+    try {
+      await expect(
+        chatCompletion(config, messages, { responseSchema, sleep: async () => {} } as Parameters<
+          typeof chatCompletion
+        >[2]),
+      ).rejects.toThrow(LlmCallError);
+      // The transient retry resends the same request, schema included.
+      expect(requestBodies.every((body) => body.response_format !== undefined)).toBe(true);
+      expect(isJsonSchemaKnownUnsupported(config)).toBe(false);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
 describe("chatCompletion against an OpenAI reasoning model (temperature and max_tokens rejected)", () => {
   const messages = [{ role: "user" as const, content: "Return a result" }];
   const ok = () => Response.json({ choices: [{ message: { content: "ok" } }] });
