@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../src/core/config/config";
-import { loadUserConfig, resetConfigCache } from "../src/core/config/config";
+import { loadUserConfig, normalizeConfigFile, resetConfigCache } from "../src/core/config/config";
 import { validateConfigShape } from "../src/core/config/config-schema";
 import { getConfigPath } from "../src/core/paths";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
@@ -297,15 +297,11 @@ describe("config loader: `index` block parsing", () => {
     expect(config.index?.memory?.engine).toBe("secondary");
   });
 
-  test("warns and drops per-pass provider configuration instead of failing config load (duplicate provider path)", () => {
+  test("per-pass inline engine settings load like any unknown key: warned once with the dotted path, kept on disk, dropped by migrate apply", () => {
+    const retired = ["endpoint", "provider", "apiKey", "baseUrl", "temperature", "maxTokens", "capabilities"];
     writeUserConfig({
       configVersion: "0.9.0",
-      index: {
-        enrichment: {
-          endpoint: "http://other-host/v1/chat/completions",
-          model: "other-model",
-        },
-      },
+      index: { enrichment: { model: "other-model", ...Object.fromEntries(retired.map((key) => [key, "anything"])) } },
     });
     const warnings: string[] = [];
     _setWarnSinkForTests((level, args) => {
@@ -314,33 +310,19 @@ describe("config loader: `index` block parsing", () => {
     try {
       const config = loadUserConfig();
       expect((config.index?.enrichment as Record<string, unknown> | undefined)?.model).toBe("other-model");
-      expect((config.index?.enrichment as Record<string, unknown> | undefined)?.endpoint).toBeUndefined();
-      expect(warnings.some((w) => w.includes("index.enrichment.endpoint") && w.includes("retired"))).toBe(true);
+      for (const key of retired) {
+        const named = warnings.filter((w) => w.includes(`Unknown config key "index.enrichment.${key}"`));
+        expect(named, key).toHaveLength(1);
+      }
     } finally {
       _setWarnSinkForTests(undefined);
     }
-  });
 
-  test("warns and drops per-pass provider configuration fields instead of failing config load", () => {
-    for (const key of ["provider", "apiKey", "temperature", "maxTokens", "baseUrl", "capabilities"]) {
-      writeUserConfig({
-        configVersion: "0.9.0",
-        index: { enrichment: { [key]: "anything" } },
-      });
-      resetConfigCache();
-      _resetWarnOnceForTests();
-      const warnings: string[] = [];
-      _setWarnSinkForTests((level, args) => {
-        if (level === "warn") warnings.push(args.map(String).join(" "));
-      });
-      try {
-        const config = loadUserConfig();
-        expect((config.index?.enrichment as Record<string, unknown> | undefined)?.[key]).toBeUndefined();
-        expect(warnings.some((w) => w.includes(`index.enrichment.${key}`))).toBe(true);
-      } finally {
-        _setWarnSinkForTests(undefined);
-      }
-    }
+    // Kept on disk until an explicit `akm migrate apply`.
+    const onDisk = () => JSON.parse(fs.readFileSync(getConfigPath(), "utf8")).index.enrichment;
+    expect(onDisk().endpoint).toBe("anything");
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    expect(onDisk()).toEqual({ model: "other-model" });
   });
 
   test("rejects a retired boolean llm selector under a pass", () => {
