@@ -142,6 +142,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `defaults.improve` (rejected since 0.9), the `feedbackDistillation` process (rejected since 0.8.0), and the engine
   settings under `index.<pass>` and `index.stalenessDetection` (dropped with a bespoke message) now load like any other
   unknown key: named once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
+- **`akm improve --auto-accept` is a hard error (#1091).** It was removed in 0.9.0 and has been accepted-and-warned
+  since; it is now an unknown flag like any other (exit 2), and `--auto-accept 90` no longer reaches the scope. Use
+  `akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`.
 
 ### Fixed
 

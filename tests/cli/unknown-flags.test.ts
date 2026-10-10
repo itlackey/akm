@@ -155,6 +155,13 @@ describe("stands down when the command itself is the problem", () => {
   });
 });
 
+describe("improve --auto-accept (removed in 0.9, a hard error since 0.10)", () => {
+  test("is an unknown flag, with or without a value", () => {
+    expect(errorFor(["improve", "--auto-accept"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["improve", "--auto-accept", "90"]).code).toBe("UNKNOWN_FLAG");
+  });
+});
+
 describe("retired flags get their replacement, not a generic unknown-flag hint", () => {
   // Unlike SELF_DIAGNOSED_FLAGS above (a rename the OWNING command answers
   // itself), these flags were removed outright with no successor flag on the

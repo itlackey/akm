@@ -14,7 +14,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { clearLogFile, setLogFile, warn } from "../../core/warn";
+import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { defaultWhich } from "../../integrations/agent/detect";
@@ -54,27 +54,6 @@ let akmImproveForRun: typeof akmImprove = akmImprove;
 /** Swap the CLI's improve work implementation in deterministic subprocess tests. */
 export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
   akmImproveForRun = fake ?? akmImprove;
-}
-
-/**
- * `--auto-accept` (removed in 0.9): citty absorbs it silently, and
- * `--auto-accept 90` would leave `90` as the scope — a 0.8-era crontab would
- * match nothing and exit 0. Warn, and drop that positional.
- */
-function resolveScopeAfterRetiredAutoAccept(scopeArg: string | undefined): string | undefined {
-  const invocation = getParsedInvocation();
-  const autoAcceptRaw = invocation.getFlagValue("--auto-accept");
-  if (autoAcceptRaw === undefined && !invocation.hasFlag("--auto-accept")) return scopeArg;
-  warn(
-    "[improve] --auto-accept was removed in 0.9 and is ignored; proposals always queue for review. " +
-      "Replacement: `akm improve && akm proposal drain --promote --yes`, or a `triage` block with " +
-      'applyMode: "promote" in your strategy. It becomes a hard error in 0.10.',
-  );
-  if (scopeArg !== undefined && scopeArg === autoAcceptRaw) {
-    warn(`[improve] ignoring "${scopeArg}" as a scope — it is the removed --auto-accept flag's value.`);
-    return undefined;
-  }
-  return scopeArg;
 }
 
 /** `akm improve canary` (removed in 0.9) would otherwise be a type scope matching nothing, exiting 0. */
@@ -428,7 +407,7 @@ export const improveCommand = defineCommand({
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
-      const scopeArg = resolveScopeAfterRetiredAutoAccept(getStringArg(args, "scope"));
+      const scopeArg = getStringArg(args, "scope");
       rejectRetiredCanaryScope(scopeArg);
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
       const writeTarget = dryRun

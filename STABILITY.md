@@ -279,12 +279,8 @@ CHANGELOG with a migration note.
   default and is **review-first**: the lanes that mutate assets without review
   require `experimental.improveAutonomy` — see
   [`akm improve` autonomy](#akm-improve-autonomy--opt-in-in-090).
-  `--auto-accept` was removed in 0.9.0. It is now accepted-and-warned rather
-  than silently absorbed: passing it prints a deprecation warning naming the
-  replacement, and the space-separated form (`--auto-accept 90`) no longer
-  poisons the asset-type positional — its value is discarded with a second
-  warning instead of silently reducing the run to a zero-match no-op. It
-  becomes a hard error in 0.10. The replacement is
+  `--auto-accept` was removed in 0.9.0 and is an unknown flag (a usage error,
+  exit 2) since 0.10. The replacement is
   `akm improve && akm proposal drain --promote --yes`, or a `triage` block
   with `applyMode: "promote"` in your strategy.
   **Session extraction** (`akm proposal extract` and the improve `extract`
@@ -539,7 +535,7 @@ Shipped from that record: **D1** (`#fragment` section selection),
 gone — `#fragment` is the only section selector), **D4** (conceptId /
 `bundle//` prefix browse), **D5** (`akm bundle` removed), **D6** (open `type`
 set at runtime), **D7** (all six `--format` values everywhere), **D8** (the
-`experimental.improveAutonomy` gate), **D9** (`--auto-accept` warn-and-ignore),
+`experimental.improveAutonomy` gate), **D9** (`--auto-accept` removed, a hard error since 0.10),
 and partially **D10** (an `akm-migrate` binary now exists, though the code still
 lives in this repo). **D3** shipped too, in the end: `akm mv` was removed in
 0.9.0 (see the Renames bullet above), with `scripts/rekey-asset-ref.ts` as the
@@ -551,8 +547,6 @@ Internal replacement for the one capability nothing else covered.
   a separately published `akm-migrate` package (see Internal above). The
   task-source migrator (`task-to-v4.ts`, `task-source-v3-frozen.ts`) already
   lives with it under `scripts/akm-migrate/migrate/`, out of `src/`.
-- **0.10 — `--auto-accept` hard error.** It is currently accepted-and-warned;
-  see the Improvement loop entry.
 - **0.10 — `BundleAdapter.placeNew()` wiring.** The interface declares
   `placeNew()` as an optional capability method, and 9 of the 11 built-in
   adapters already implement it (all but `okf` and `website-snapshot`;

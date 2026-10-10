@@ -79,7 +79,7 @@ const SELF_DIAGNOSED_FLAGS: ReadonlyMap<string, ReadonlySet<string>> = new Map(
     curate: ["source"], // renamed to --from
     remember: ["target"], // renamed to --bundle
     clone: ["target"], // renamed to --bundle
-    improve: ["auto-accept", "target"], // retired in 0.9.0 / renamed to --bundle
+    improve: ["target"], // renamed to --bundle
     "task add": ["target"], // renamed to --bundle
     "task run": ["target"], // renamed to --bundle
     "task history": ["target"], // renamed to --bundle
