@@ -40,7 +40,7 @@ import { buildExecution, resolveExecution } from "../../src/integrations/agent/e
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
-import { HARNESS_ID_TABLE } from "../../src/integrations/harnesses/ids";
+import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import { MODEL_WORK_OPENCODE_AGENT } from "../../src/integrations/harnesses/opencode/model-work-agent";
 import {
   __setServerFactory,
@@ -180,7 +180,7 @@ const LLM: Transport = {
   },
 };
 
-const CLI_HARNESSES: Transport[] = HARNESS_ID_TABLE.filter((entry) => entry.id !== "opencode-sdk").map((entry) => ({
+const CLI_HARNESSES: Transport[] = HARNESS_REGISTRY.filter((entry) => entry.id !== "opencode-sdk").map((entry) => ({
   name: entry.id,
   engine: (scenario) => ({ kind: "agent", platform: entry.id, bin: path.join(bins.dir, scenario) }),
   delivered: (result) => {
@@ -252,7 +252,7 @@ const ALL_TRANSPORTS: [string, Transport][] = [LLM, ...CLI_HARNESSES, OPENCODE_S
 
 /** A stage call is model work: it runs on the transports that confine the model-work tool policy. */
 const MODEL_WORK_TRANSPORTS = ALL_TRANSPORTS.filter(
-  ([name]) => name === LLM.name || HARNESS_ID_TABLE.some((entry) => entry.id === name && entry.enforcesModelWorkTools),
+  ([name]) => name === LLM.name || HARNESS_REGISTRY.some((entry) => entry.id === name && entry.capabilities.modelWork),
 );
 
 /** How many times `transport` was called for `scenario` in this test. */

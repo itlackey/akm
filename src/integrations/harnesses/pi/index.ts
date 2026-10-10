@@ -31,6 +31,7 @@ export class PiHarness extends BaseHarness {
   readonly id = "pi" as const;
   readonly displayName = "Pi";
   readonly agentBuilder = piBuilder;
+  readonly profile = { bin: "pi", args: [], envPassthrough: ["PI_API_KEY", "ANTHROPIC_API_KEY", "OPENAI_API_KEY"] };
   readonly resultExtractor = piResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker only — the matrix's bare PI_* presence vars must

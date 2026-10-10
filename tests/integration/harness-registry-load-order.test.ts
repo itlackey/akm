@@ -20,7 +20,7 @@
  * chaos driver at import time.
  *
  * The fix moves the descriptor into a config-leaf module
- * (`opencode-sdk/harness.ts`) that the registry imports directly, so loading the
+ * (`opencode-sdk/index.ts`) that the registry imports directly, so loading the
  * SDK path never re-enters the still-initializing registry. This test spawns a
  * REAL `bun` child whose entry import is `run-workflow` (the workflow-exec
  * subprocess entry — the exact order that reproduced the TDZ) and asserts it
