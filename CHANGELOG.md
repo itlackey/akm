@@ -120,6 +120,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   each other whatever their dates; `unrelated` covers different named things written to one layout. Measured with
   akm-eval `evals/consolidate`, per-case n=3: `gpt-oss:120b` unsafe retirements 1, 2, 1 -> 0, 0, 0 with recall
   0.97 -> 0.99; qwen3.8-27b stays at 0 unsafe, recall 0.70.
+- **A gateway that answers 5xx `format_ignored` no longer fails every schema call (#1150).** A `provider_error` 5xx whose
+  body names the response format (`format_ignored`, `response_format` or `json_schema`) is now answered like the 4xx
+  schema rejection: one retry without the schema, remembered for the connection. `gpt-oss:120b` through the lab
+  gateway needed `supportsJsonSchema: false` set by hand. Other 5xx answers keep the transient-retry path. (#1150)
 
 ## [0.9.31] - 2026-10-09
 

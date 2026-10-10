@@ -69,6 +69,8 @@ export class LlmCallError extends Error {
     message: string,
     public readonly code: LlmCallErrorCode,
     public readonly statusCode?: number,
+    /** A 5xx whose body names the response format; set from the whole body, since the message keeps only its first 200 characters. */
+    public readonly namesResponseFormat = false,
   ) {
     super(message);
     this.name = "LlmCallError";
@@ -404,6 +406,8 @@ const THINKING_FIELD_NAMED = /chat_template_kwargs|enable_thinking/;
 const TEMPERATURE_NAMED = /'temperature'/;
 /** `Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.` */
 const MAX_TOKENS_REPLACED = /max_completion_tokens/;
+/** A gateway that cannot honour the schema may answer 5xx: `502 {"error":{"code":"format_ignored"}}` (#1150). */
+const RESPONSE_FORMAT_NAMED = /format_ignored|response_format|json_schema/;
 
 /**
  * A single chat-completion attempt: one HTTP request/response cycle, with an
@@ -435,6 +439,10 @@ async function chatCompletionAttempt(
   try {
     return await chatCompletionAttemptOnce(config, messages, options, timeoutMs, wantsSchema, includeThinking);
   } catch (err) {
+    // A 5xx that names the response format is answered like the 4xx rejection below (#1150).
+    if (wantsSchema && err instanceof LlmCallError && err.namesResponseFormat) {
+      return retryWithoutSchema(config, messages, options, timeoutMs, includeThinking, err);
+    }
     if (!isRejectedRequest(err)) throw err;
     const key = connectionKey(config);
     if (TEMPERATURE_NAMED.test(err.message) && !temperatureRejectedConnections.has(key)) {
@@ -458,13 +466,24 @@ async function chatCompletionAttempt(
       return fallback;
     }
     if (!wantsSchema) throw err;
-    warnVerbose(
-      `[akm] LLM rejected response_format:json_schema (${err.statusCode}); retrying once without it: ${err.message}`,
-    );
-    const fallback = await chatCompletionAttemptOnce(config, messages, options, timeoutMs, false, includeThinking);
-    jsonSchemaUnsupportedConnections.add(connectionKey(config));
-    return fallback;
+    return retryWithoutSchema(config, messages, options, timeoutMs, includeThinking, err);
   }
+}
+
+async function retryWithoutSchema(
+  config: ChatCompletionConfig,
+  messages: ChatMessage[],
+  options: ChatCompletionOptions | undefined,
+  timeoutMs: number | null,
+  includeThinking: boolean,
+  err: LlmCallError,
+): Promise<string> {
+  warnVerbose(
+    `[akm] LLM rejected response_format:json_schema (${err.statusCode}); retrying once without it: ${err.message}`,
+  );
+  const fallback = await chatCompletionAttemptOnce(config, messages, options, timeoutMs, false, includeThinking);
+  jsonSchemaUnsupportedConnections.add(connectionKey(config));
+  return fallback;
 }
 
 async function chatCompletionAttemptOnce(
@@ -613,6 +632,7 @@ async function chatCompletionAttemptOnce(
           `LLM provider error (${status}) ${config.endpoint}: ${safeBody}`,
           "provider_error",
           status,
+          RESPONSE_FORMAT_NAMED.test(rawBody),
         );
       }
       throw new LlmCallError(
