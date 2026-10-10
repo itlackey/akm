@@ -74,7 +74,13 @@ const BIG_LESSON = `---\ndescription: A large consolidated lesson\nwhen_to_use: 
   (_, i) => `line ${i}`,
 ).join("\n")}\n`;
 
-function seed(stash: string, ref: string, source: string, content: string): Proposal {
+function seed(
+  stash: string,
+  ref: string,
+  source: string,
+  content: string,
+  eligibilitySource?: Proposal["eligibilitySource"],
+): Proposal {
   // The consolidate source requires a non-empty frontmatter.description at
   // createProposal time, so always pass a parsed frontmatter for seeded fixtures.
   const result = createProposal(stash, {
@@ -85,13 +91,20 @@ function seed(stash: string, ref: string, source: string, content: string): Prop
     payload: { content, frontmatter: { description: `${ref} fixture` } },
     // A consolidate fixture is a promotion unless a test says otherwise (#1132).
     ...(source === "consolidate" ? { promotionSource: "memory:fixture-source" } : {}),
+    ...(eligibilitySource ? { eligibilitySource } : {}),
   });
   return result;
 }
 
 /** Seed a proposal whose quality judge passed on its content (a `staged` stamp). */
-function seedJudged(stash: string, ref: string, source: string, content: string): Proposal {
-  return stageJudgedProposal(stash, seed(stash, ref, source, content));
+function seedJudged(
+  stash: string,
+  ref: string,
+  source: string,
+  content: string,
+  eligibilitySource?: Proposal["eligibilitySource"],
+): Proposal {
+  return stageJudgedProposal(stash, seed(stash, ref, source, content, eligibilitySource));
 }
 
 function ledgerRow(stash: string, ref: string, source: string) {
@@ -1431,5 +1444,57 @@ describe("drainProposals — judgment tier accepts promotions only (#1132)", () 
     expect(promoteFn).not.toHaveBeenCalled();
     expect(result.promoted).toEqual([]);
     expect(result.deferred.map((d) => d.id)).toEqual([fix.id]);
+  });
+});
+
+// A proposal from the proactive lane has no feedback behind it: it waits for a person (#1147).
+describe("drainProposals — proactive-lane proposals wait for a person (#1147)", () => {
+  test("a judge-passed reflect proposal from the lane is deferred; the same one from feedback is accepted", async () => {
+    const stash = makeStashDir();
+    const proactive = seedJudged(stash, "lessons/lane", "reflect", VALID_LESSON, "proactive");
+    const feedback = seedJudged(stash, "lessons/fed", "reflect", VALID_LESSON, "signal-delta");
+    const scoped = seedJudged(stash, "lessons/scoped", "reflect", VALID_LESSON, "scope");
+    expect(getProposal(stash, proactive.id).eligibilitySource).toBe("proactive");
+
+    const promoteFn = fakeAccept();
+    const result = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+
+    expect(result.promoted.sort()).toEqual([feedback.id, scoped.id].sort());
+    expect(result.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
+    expect(getProposal(stash, proactive.id).gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "proactive-needs-review",
+      gate: "triage",
+    });
+  });
+
+  test("the judgment tier never sees or accepts a lane proposal", async () => {
+    const stash = makeStashDir();
+    const proactive = seed(stash, "knowledge/lane-note", "consolidate", BIG_LESSON, "proactive");
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "looks right" }));
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, fakeReject(), {
+      chat,
+    });
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(result.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
+  });
+
+  test("a staged accept of a lane proposal is not promoted by a later drain", async () => {
+    const stash = makeStashDir();
+    const proactive = seedJudged(stash, "lessons/lane", "reflect", VALID_LESSON, "proactive");
+    // A staged accept whose stamp matches the content, as a drain before the lane rule left it.
+    expect(getProposal(stash, proactive.id).gateDecision).toMatchObject({ outcome: "staged" });
+    const promoteFn = fakeAccept();
+
+    const first = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+    const second = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(first.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
+    expect(second.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
   });
 });

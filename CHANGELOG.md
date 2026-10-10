@@ -78,6 +78,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
   said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`
   and `consolidate`. (#1130)
+- **A proposal from the proactive lane waits for a person (#1147).** With the lane on in `default` and the default
+  drain promoting through the deterministic gates, a reflect edit on an asset with no feedback was accepted unattended
+  once reflect's judge passed it (the nightly eval showed `when_to_use`, `type` and provenance stamps and a title
+  heading added to assets no one had asked about). `proposal drain` now never accepts a proposal whose
+  `eligibilitySource` is `proactive`, through a deterministic gate, the judgment tier or an earlier staged accept: it is
+  left for review with reason `proactive-needs-review` (and is not sent to the judgment tier). Feedback-driven
+  proposals (`signal-delta`, `scope`) are unchanged. No new setting. (#1147)
 
 ### Removed
 
@@ -105,6 +112,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   memory or the lesson states it), and each added line must state something the lesson does not already hold. An update is also tried only for a related lesson that the writer's NONE reason, or the judge's
   non-redundancy finding, names, or for the only related lesson, not for every lesson among the nearest three. The
   update writer lists the memory's new facts before the body, and an update that lists none is not proposed. (#1090)
+- **consolidate's pair judge no longer lets a later date alone make one note replace another (#1134).** After the
+  same-age fix (#1146), `gpt-oss:120b` retired notes about a different named thing (two partners on one template:
+  "B is newer and replaces Alder with Birch") as `supersedes`, 1 to 2 unsafe retirements of 60 per run where the build
+  before it had none. The pair prompt now says a note replaces another only when both are about the same named thing
+  (service, integration, partner, component, region, file), and that notes about different named things never replace
+  each other whatever their dates; `unrelated` covers different named things written to one layout. Measured with
+  akm-eval `evals/consolidate`, per-case n=3: `gpt-oss:120b` unsafe retirements 1, 2, 1 -> 0, 0, 0 with recall
+  0.97 -> 0.99; qwen3.8-27b stays at 0 unsafe, recall 0.70.
 
 ## [0.9.31] - 2026-10-09
 
