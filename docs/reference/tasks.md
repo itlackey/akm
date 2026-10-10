@@ -401,7 +401,7 @@ for full before/after examples and recovery guidance.
 
 ## Operations
 
-- `akm search --type task` (or its alias `akm task list`) and
+- `akm search --type task` and
   `akm show tasks/<id>` inspect task assets.
 - `akm task explain <ref>` prints a task's declared inputs, resolved target,
   effective execution settings, and schedule bindings without running

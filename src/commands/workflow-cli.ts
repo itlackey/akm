@@ -149,11 +149,6 @@ const workflowCreateCommand = defineJsonCommand({
         "Overwrite an existing workflow. Combined with --from, replaces its content; alone, replaces it with a fresh template.",
       default: false,
     },
-    reset: {
-      type: "boolean",
-      description: "Deprecated alias for --force with no --from (replaces an existing workflow with a fresh template).",
-      default: false,
-    },
     print: {
       type: "boolean",
       description:

@@ -61,8 +61,6 @@ export function appendHistory(result: TaskRunResult, historyReserved = false): v
       metadataVersion: 2,
       durationMs: result.durationMs,
       detail: result.detail ?? null,
-      // D8 (spec §5.3): every NEW row carries the vocabulary marker.
-      targetVocab: 2,
       ...(result.target.kind === "command" ? { engine: result.target.engine } : {}),
     }),
   };

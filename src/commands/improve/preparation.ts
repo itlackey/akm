@@ -1100,7 +1100,7 @@ function selectProactiveMaintenanceLane(
   }
   const pmCfg = args.improveProfile.processes?.proactiveMaintenance;
   const dueDays = pmCfg?.dueDays ?? DEFAULT_DUE_DAYS;
-  const maxPerRun = pmCfg?.maxPerRun ?? pmCfg?.limit ?? DEFAULT_MAX_PER_RUN;
+  const maxPerRun = pmCfg?.maxPerRun ?? DEFAULT_MAX_PER_RUN;
   const selection = selectProactiveMaintenanceRefs({
     candidates,
     lastReflectTs: snapshot.lastReflectAttemptAt,
@@ -1137,7 +1137,7 @@ function selectProactiveMaintenanceLane(
     proactiveRefs: selection.selected,
     proactiveMaintenanceSummary: { ...summary, selectedRefs },
     proactivePlan: {
-      configured: pickDefined(pmCfg, ["dueDays", "maxPerRun", "limit"] as const),
+      configured: pickDefined(pmCfg, ["dueDays", "maxPerRun"] as const),
       effective: { dueDays, maxPerRun },
       candidatePool: candidates.length,
       ...summary,

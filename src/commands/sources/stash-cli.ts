@@ -32,14 +32,12 @@
 import path from "node:path";
 import { defineCommand } from "citty";
 import * as p from "../../cli/clack";
-import { getParsedInvocation } from "../../cli/invocation";
 import { defineJsonCommand, GLOBAL_OUTPUT_ARGS, output, parseAllFlagValues, runWithJsonErrors } from "../../cli/shared";
 import { assertFlatAssetName } from "../../core/asset/asset-create";
 import { placementTypes } from "../../core/asset/asset-placement";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
-import { UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
@@ -47,7 +45,7 @@ import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
 import { akmIndex } from "../../indexer/indexer";
-import { getHyphenatedBoolean, getOutputMode } from "../../output/context";
+import { getOutputMode } from "../../output/context";
 import { pkgVersion } from "../../version";
 import {
   inferAssetName,
@@ -97,16 +95,6 @@ export const indexCommand = defineCommand({
   },
   async run({ args }) {
     await runWithJsonErrors(async () => {
-      if (getHyphenatedBoolean(args, "enrich") || getParsedInvocation().getFlagValue("--enrich") !== undefined) {
-        throw new UsageError(
-          "`akm index --enrich` has been removed. Metadata enrichment during indexing is retired; it never runs.",
-        );
-      }
-      if (getHyphenatedBoolean(args, "re-enrich") || getParsedInvocation().getFlagValue("--re-enrich") !== undefined) {
-        throw new UsageError(
-          "`akm index --re-enrich` has been removed. Metadata enrichment during indexing is retired; there is nothing to re-enrich.",
-        );
-      }
       // #956: opt-in, non-blocking rebuild lock — never gates a human-typed
       // `akm index` (it only warns and contends), but a scheduled/opportunistic
       // caller can pass --skip-if-locked to step aside instead of piling up

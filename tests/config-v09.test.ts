@@ -433,6 +433,31 @@ describe("0.9 config contract", () => {
     );
   });
 
+  test("old hint-only keys load and are named once by the unknown-key warning (#1091)", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: { main: { kind: "llm", endpoint: "https://example.test/v1/chat/completions", model: "test" } },
+      defaults: { llmEngine: "main", llm: "x", agent: "y", improve: "z" },
+      index: { stalenessDetection: { enabled: true }, memory: { engine: "main", endpoint: "https://example.test" } },
+      improve: { strategies: { mine: { processes: { feedbackDistillation: { enabled: true } } } } },
+    });
+
+    const warnings = captureWarnings(() => {
+      expect(loadUserConfig().defaults?.llmEngine).toBe("main");
+    });
+    for (const key of [
+      "defaults.llm",
+      "defaults.agent",
+      "defaults.improve",
+      "index.stalenessDetection",
+      "index.memory.endpoint",
+      "improve.strategies.mine.processes.feedbackDistillation",
+    ]) {
+      const named = warnings.filter((w) => w.includes(`Unknown config key "${key}"`));
+      expect(named).toHaveLength(1);
+    }
+  });
+
   test("index.metadataEnhance is retired: a single warning, an ordinary write keeps it, only akm migrate apply drops it", () => {
     writeConfig({
       configVersion: "0.9.0",

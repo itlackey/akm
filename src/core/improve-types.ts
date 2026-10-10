@@ -204,11 +204,11 @@ export interface ImproveExecutionPlan {
    * projection, not a dispatch report; #944's post-run cost/routing report is
    * a separate, additional field. Sourced from `ResolvedImprovePlan`, which
    * is resolved before any side effect on every invocation (dry or live), so
-   * `--dry-run`/`--plan` shows a `--strategy` override for free.
+   * `--dry-run` shows a `--strategy` override for free.
    */
   processes: ProcessRoutingRow[];
   proactive?: {
-    configured: { dueDays?: number; maxPerRun?: number; limit?: number };
+    configured: { dueDays?: number; maxPerRun?: number };
     effective: { dueDays: number; maxPerRun: number };
     candidatePool: number;
     dueTotal: number;
@@ -245,7 +245,6 @@ export interface ImproveExecutionPlan {
     /** Effective mode the live pre-pass will execute. */
     mode: "queue" | "promote";
     maxAcceptsPerRun: number;
-    maxDiffLines?: number;
   };
 }
 

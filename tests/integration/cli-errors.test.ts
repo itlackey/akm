@@ -633,76 +633,26 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     expect(parsed.hint).toBe("Run `akm --help` for usage.");
   });
 
-  // Retired 0.9-overhaul spellings get their REPLACEMENT, never a
-  // did-you-mean: edit distance steers agents into the wrong command
-  // (`init`→`info`, `update`→`upgrade` — the latter replaces the binary).
-  test("retired top-level spellings hint the replacement, not did-you-mean", () => {
-    const cases: Array<[string[], string]> = [
-      [["init"], "akm bundle create"],
-      [["update"], "akm bundle update"],
-      [["tasks", "doctor"], "akm task <subcommand>"],
-      [["history"], "akm log --ref"],
-      [["mv", "a", "b"], "rekey-asset-ref.ts"],
-      [["extract"], "akm proposal extract"],
-      // The removed `akm vault ...` family (0.9.0 release-notes headline)
-      // falls through to a generic did-you-mean without this hint.
-      [["vault", "list"], "akm env list"],
-      [["vault", "get", "x"], "akm secret set"],
-    ];
-    for (const [argv, expected] of cases) {
+  // Spellings an earlier release retired are ordinary unknown commands and
+  // flags: the usual UNKNOWN_COMMAND / UNKNOWN_FLAG exit 2, with a did-you-mean
+  // only when one is close and no migration hint.
+  test("retired spellings are plain unknown commands and flags", () => {
+    for (const argv of [["init"], ["vault", "list"], ["env", "set", "prod", "KEY"], ["log", "tail"]]) {
       const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
       expect(status, argv.join(" ")).toBe(2);
       const parsed = JSON.parse(stderr.trim());
-      expect(parsed.code, argv.join(" ")).toBe("UNKNOWN_COMMAND");
-      expect(parsed.hint, argv.join(" ")).toContain(expected);
-      expect(parsed.hint, argv.join(" ")).not.toContain("Did you mean");
-      // Every retired-spelling hint routes to the in-CLI rename table.
-      expect(parsed.hint, argv.join(" ")).toContain("akm help migrate 0.9.0");
+      expect(parsed.hint, argv.join(" ")).not.toContain("akm help migrate");
     }
-  });
-
-  test("retired group-scoped spellings resolve against their parent group", () => {
-    const cases: Array<[string[], string]> = [
-      [["env", "set", "prod", "KEY"], "edit the `.env` file"],
-      [["registry", "search", "x"], "akm search --from registry"],
-      [["workflow", "watch", "run-1"], "akm log --run"],
-      [["config", "show"], "akm config list"],
-      [["task", "show", "t1"], "akm show"],
-      [["log", "tail"], "@offset:"],
-    ];
-    for (const [argv, expected] of cases) {
-      const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
-      expect(status, argv.join(" ")).toBe(2);
-      const parsed = JSON.parse(stderr.trim());
-      expect(parsed.hint, argv.join(" ")).toContain(expected);
-    }
-  });
-
-  // Removed 0.9 flags (as opposed to removed commands) get no hint at all
-  // today — just a generic "unknown flag" from src/cli/unknown-flags.ts.
-  // `retiredFlagHint` (src/cli/retired-commands.ts) closes that gap. Uses a
-  // real subprocess (like the retired-spellings tests above), not the
-  // `runCli` in-process harness: a `UsageError` thrown by `assertKnownFlags`
-  // — BEFORE citty's own `runCommand` ever starts — escapes the harness's
-  // replicated startup contract without going through `emitJsonError`, so it
-  // lands in `stderr` as a raw message instead of the JSON envelope the real
-  // CLI always produces here (verified directly: `bun src/cli.ts index
-  // --background` prints the proper `{"ok":false,...}` envelope).
-  test("retired flags on their current command hint the replacement procedure", () => {
-    const cases: Array<[string[], string]> = [
-      [["index", "--background"], "--quiet"],
-      [["setup", "--detect-only"], "akm setup"],
-      [["setup", "--reset-recommended"], "recommended defaults"],
-      [["proposal", "extract", "--watch"], "proposal extract --auto"],
-      [["proposal", "extract", "--debounce-ms"], "proposal extract --auto"],
-    ];
-    for (const [argv, expected] of cases) {
+    for (const argv of [
+      ["index", "--background"],
+      ["setup", "--detect-only"],
+      ["proposal", "extract", "--watch"],
+    ]) {
       const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
       expect(status, argv.join(" ")).toBe(2);
       const parsed = JSON.parse(stderr.trim());
       expect(parsed.code, argv.join(" ")).toBe("UNKNOWN_FLAG");
-      expect(parsed.hint, argv.join(" ")).toContain(expected);
-      expect(parsed.hint, argv.join(" ")).toContain("akm help migrate 0.9.0");
+      expect(parsed.hint ?? "", argv.join(" ")).not.toContain("akm help migrate");
     }
   });
 });

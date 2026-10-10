@@ -828,7 +828,7 @@ Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` (requires `--from` or `--reset`) overwrites; `--print` prints the template that would be written instead of writing it |
+| `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
 | `run <run-id\|ref>` | Stable canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
 | `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
@@ -847,8 +847,8 @@ workflow ref is never mistaken for one.
 The public `workflow start`, `next`, and `complete` lifecycle was removed in
 0.9, along with the experimental `brief`/`report` external-driver protocol.
 Use `workflow run` for execution and `workflow status` for inspection. The
-removed commands fail with an `UNKNOWN_COMMAND` envelope and a migration hint;
-there are no compatibility aliases.
+removed commands fail with an `UNKNOWN_COMMAND` envelope; there are no
+compatibility aliases.
 
 There is also no `akm workflow template`, `validate`, or `watch`.
 `workflow create --print` prints a starter, `akm lint --type workflows`
@@ -942,7 +942,7 @@ when the cwd is inside it, otherwise the cwd itself. In practice this means:
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
 akm workflow create ship-release --from ./ship-release.md --force
-akm workflow create ship-release --force --reset
+akm workflow create ship-release --force
 akm workflow create ship --path release          # writes workflows/release/ship.md
 ```
 
@@ -950,13 +950,8 @@ akm workflow create ship --path release          # writes workflows/release/ship
 | --- | --- |
 | `--path <dir>` | Relative subdirectory under `workflows/` to place the workflow in. The filename comes from `<name>`. |
 | `--from <file>` | Import and validate a Markdown workflow from an existing file |
-| `--force` | Overwrite an existing workflow. Requires `--from` or `--reset`. |
-| `--reset` | Explicitly replace an existing workflow with a fresh template (use with `--force`) |
+| `--force` | Overwrite an existing workflow: with `--from`, replace its content from that file; alone, replace it with a fresh template |
 | `--print` | Print the Markdown template without creating anything |
-
-`--force` requires either `--from <file>` (replace from a source file) or
-`--reset` (explicitly acknowledge you are overwriting in place). Without one of
-these, `--force` is rejected to prevent silent template overwrites.
 
 `<name>` itself must be **flat** — `^[a-z0-9][a-z0-9._/-]*$` after combining
 with `--path`, but the bare `--name` positional is rejected if it contains a
@@ -2636,7 +2631,7 @@ akm improve --skip-if-locked           # for high-frequency scheduled runs: skip
 akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
 akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
-akm improve --plan --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
+akm improve --dry-run --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
 akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
 akm improve report                     # LLM usage/routing report for the most recent real run
 akm improve report --run <id>          # ...for one specific improve_runs id
@@ -2650,7 +2645,6 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--since <window>` | `report` scope only (#944): aggregate the usage report over every real (non-dry-run) run started since `<window>` (a duration like `24h`/`7d`, or an ISO timestamp) instead of one run. Mutually exclusive with `--run`. Rejected with any other scope, or no scope. |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
-| `--plan` | Alias for `--dry-run` (#947). Sets the exact same internal flag; no separate code path. Prefer this spelling when the goal is previewing `plan.processes` (resolved process -> engine -> model routing) rather than checking what would be written. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
 | `--limit <n>` | Cap the refs the run processes, highest salience first (refs routed to distill only come last). Overrides the strategy's `processes.reflect.limit` and `limit` |
 | `--timeout-ms <ms>` | Wall-clock budget for the run (default: `7200000` = 2 hours) |
@@ -2674,9 +2668,9 @@ bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves
 inside the write target only. To improve another bundle, name it
 (`akm improve --bundle team`, or `akm improve team//skills/code-review`). A
 scheduled `akm improve` therefore covers only its write target: schedule one
-`akm improve --bundle <name>` run per other bundle. `--dry-run` and `--plan`
-resolve the bundle the way a live run does (the working bundle starts from
-`AKM_BUNDLE_DIR`, then `defaultBundle`), so they preview the bundle a live run
+`akm improve --bundle <name>` run per other bundle. `--dry-run`
+resolves the bundle the way a live run does (the working bundle starts from
+`AKM_BUNDLE_DIR`, then `defaultBundle`), so it previews the bundle a live run
 improves.
 
 Every stage records what it did with each asset in the improve ledger
@@ -2761,7 +2755,7 @@ itself. `ok` and the exit code are unchanged either way, matching `extract`'s
 `skippedProcesses` (or pass `--require-engines` to abort instead of
 degrading). `reason` names which engine and which credential reference (an env
 var, `apiKeyFile` path, or `secret://` reference — never its value) is
-missing. A `--dry-run`/`--plan` preview never dispatches, so it never aborts
+missing. A `--dry-run` preview never dispatches, so it never aborts
 on an unavailable credential either — even a strategy left with every process
 disabled this way still returns its plan, with the affected processes in
 `skippedProcesses`.
@@ -2812,11 +2806,11 @@ still carries that engine's `engine`/`model`/`engineKind` alongside
 `unavailable`, rather than omitting them the way a never-configured process
 does — so a preview can show what would have run. This table is
 resolved before any dispatch on every invocation (dry or live), so
-`akm improve --dry-run --strategy <name>` (or `--plan`) previews an ad-hoc
+`akm improve --dry-run --strategy <name>` previews an ad-hoc
 strategy override without changing config first; `akm health`'s
 `active-improve-strategy` check performs the equivalent resolution but only
 for the configured default strategy (`defaults.improveStrategy`), and reports
-no model or per-process notices. Neither `--dry-run` nor `--plan` probes
+no model or per-process notices. `--dry-run` does not probe
 engine reachability over the network — pair with `akm health --probe` (or the
 default probe-on behavior) to check whether a named engine actually answers.
 
@@ -3349,15 +3343,14 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm task add` writes v4 —
 see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | run | explain | validate | list | sync | doctor | history | prune`
+group is `add | enable | disable | run | explain | validate | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
 task. Use `task enable` / `task disable` for host-local activation; edit the
 file only to change the authored schedule or remove the task.
-`task list` is a delegating alias for `akm search --type task` — both
-spellings return the identical envelope.
+List tasks with `akm search --type task`.
 
 ```sh
-akm task list                                # List tasks (cross-bundle) — alias for `search --type task`
+akm search --type task                       # List tasks (cross-bundle)
 akm show tasks/<id>                          # Inspect one task
 akm task add <id> --schedule "@daily" \     # Register a new task and install it
   --command "akm improve --strategy default"
@@ -3383,13 +3376,6 @@ akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
 this host's scheduler activation), `--force` (overwrite an existing task with
 the same id), and `--rebind` (also point the bundle's installed scheduler rows
 at this akm invocation, as `akm task sync --rebind` does).
-
-`akm task list [<query>] [--limit <n>] [--from local|registry|all]` is a
-pure alias for `akm search --type task` with the query, `--limit`, and
-`--from` flags passed through — same envelope, same `results` alias, no
-second implementation. 0.9.0 removed `task list` as a redundant
-implementation of task listing (see the 0.9.0 CHANGELOG entry); this
-reintroduces only the spelling, not the logic.
 
 `akm task explain <ref> [input flags]` prints a task's declared `inputs:`,
 the values that would actually be supplied (with provenance), the resolved

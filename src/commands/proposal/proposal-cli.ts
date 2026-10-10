@@ -15,7 +15,6 @@
  * registration remains for either spelling.
  */
 
-import { getParsedInvocation } from "../../cli/invocation";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
@@ -49,23 +48,6 @@ export function mergeProposalDrainNotices(
   for (const notice of resolutionNotices ?? []) byKey.set(JSON.stringify(notice), notice);
   for (const notice of dispatchNotices ?? []) byKey.set(JSON.stringify(notice), notice);
   return byKey.size > 0 ? Object.freeze([...byKey.values()]) : undefined;
-}
-
-/**
- * `--source` was renamed to `--generator` on `proposal accept`/`proposal
- * reject` in 0.9 (WS3/S8 — "Removed in 0.9.0"). citty is non-strict, so the
- * retired spelling is silently absorbed rather than rejected — a bulk
- * accept/reject invoked with `--source <name>` then has neither `--generator`
- * nor a positional id, and falls through to the single-proposal path, which
- * throws MISSING_REQUIRED_ARGUMENT instead of running the bulk action the
- * caller asked for. Reject it explicitly instead.
- */
-function rejectRetiredProposalSourceFlag(subcommand: "accept" | "reject"): void {
-  if (!getParsedInvocation().hasFlag("--source")) return;
-  throw new UsageError(
-    `\`akm proposal ${subcommand} --source\` was renamed to \`--generator\` in 0.9. Use \`--generator <name>\` instead.`,
-    "INVALID_FLAG_VALUE",
-  );
 }
 
 /**
@@ -171,7 +153,6 @@ const proposalAcceptCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredProposalSourceFlag("accept");
     const generator = args.generator as string | undefined;
     // F-6 / #393: Bulk-accept when --generator is provided without a positional id.
     if (generator && !args.id) {
@@ -261,7 +242,6 @@ const proposalRejectCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredProposalSourceFlag("reject");
     const generator = args.generator as string | undefined;
     if (!args.reason || !String(args.reason).trim()) {
       throw new UsageError(
@@ -468,10 +448,7 @@ const proposalDrainCommand = defineJsonCommand({
         "Read the triage block (applyMode, ceilings, judgment) from this improve strategy; enabled judgment runs the judge.",
     },
   },
-  async run({ args, rawArgs }) {
-    if (rawArgs.some((arg) => arg === "--profile" || arg.startsWith("--profile="))) {
-      throw new UsageError("proposal drain: --profile is retired; use --strategy.", "INVALID_FLAG_VALUE");
-    }
+  async run({ args }) {
     const stashDir = resolveStashDir();
     const cfg = loadConfig();
 

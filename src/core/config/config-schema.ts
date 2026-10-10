@@ -227,15 +227,6 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       });
     }
   }
-  for (const key of ["llm", "agent", "improve"]) {
-    if (config.defaults && key in config.defaults) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["defaults", key],
-        message: `defaults.${key} is retired in 0.9`,
-      });
-    }
-  }
   for (const [name, engine] of Object.entries(config.engines ?? {})) {
     if (engine.kind === "agent" && engine.llmEngine) {
       const fallback = config.engines?.[engine.llmEngine];

@@ -4,7 +4,6 @@
 
 import path from "node:path";
 import { defineCommand } from "citty";
-import { getParsedInvocation } from "../../cli/invocation";
 import { getStringArg, parsePositiveIntFlag } from "../../cli/parse-args";
 import { GLOBAL_OUTPUT_ARGS, output, runWithJsonErrors } from "../../cli/shared";
 import { type AssetRef, isFullRefInput, parseRefInput } from "../../core/asset/resolve-ref";
@@ -14,7 +13,7 @@ import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
 import { getCacheDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
-import { clearLogFile, setLogFile, warn } from "../../core/warn";
+import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { DEFAULT_LLM_TIMEOUT_MS } from "../../integrations/agent/config";
 import { defaultWhich } from "../../integrations/agent/detect";
@@ -54,45 +53,6 @@ let akmImproveForRun: typeof akmImprove = akmImprove;
 /** Swap the CLI's improve work implementation in deterministic subprocess tests. */
 export function _setAkmImproveForTests(fake?: typeof akmImprove): void {
   akmImproveForRun = fake ?? akmImprove;
-}
-
-/**
- * `--auto-accept` (removed in 0.9): citty absorbs it silently, and
- * `--auto-accept 90` would leave `90` as the scope — a 0.8-era crontab would
- * match nothing and exit 0. Warn, and drop that positional.
- */
-function resolveScopeAfterRetiredAutoAccept(scopeArg: string | undefined): string | undefined {
-  const invocation = getParsedInvocation();
-  const autoAcceptRaw = invocation.getFlagValue("--auto-accept");
-  if (autoAcceptRaw === undefined && !invocation.hasFlag("--auto-accept")) return scopeArg;
-  warn(
-    "[improve] --auto-accept was removed in 0.9 and is ignored; proposals always queue for review. " +
-      "Replacement: `akm improve && akm proposal drain --promote --yes`, or a `triage` block with " +
-      'applyMode: "promote" in your strategy. It becomes a hard error in 0.10.',
-  );
-  if (scopeArg !== undefined && scopeArg === autoAcceptRaw) {
-    warn(`[improve] ignoring "${scopeArg}" as a scope — it is the removed --auto-accept flag's value.`);
-    return undefined;
-  }
-  return scopeArg;
-}
-
-/** `akm improve canary` (removed in 0.9) would otherwise be a type scope matching nothing, exiting 0. */
-function rejectRetiredCanaryScope(scopeArg: string | undefined): void {
-  if (scopeArg !== "canary") return;
-  throw new UsageError(
-    '"akm improve canary" was removed in 0.9; the collapse-detector canary set it managed no longer exists.',
-    "INVALID_FLAG_VALUE",
-  );
-}
-
-/** `--target` (renamed `--bundle` in 0.9) would otherwise be absorbed and write to the default bundle. */
-function rejectRetiredImproveTargetFlag(): void {
-  if (!getParsedInvocation().hasFlag("--target")) return;
-  throw new UsageError(
-    "`akm improve --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
 }
 
 /**
@@ -340,12 +300,6 @@ export const improveCommand = defineCommand({
     },
     task: { type: "string", description: "Add extra guidance for this improvement pass" },
     "dry-run": { type: "boolean", description: "Show planned actions without writing", default: false },
-    plan: {
-      type: "boolean",
-      description:
-        "Alias for --dry-run (#947). Sets the exact same internal flag; use it when previewing resolved process -> engine -> model routing (plan.processes) rather than checking what would write.",
-      default: false,
-    },
     bundle: {
       type: "string",
       description:
@@ -422,20 +376,18 @@ export const improveCommand = defineCommand({
         await runImproveJudgeCli(getStringArg(args, "strategy"));
         return;
       }
-      rejectRetiredImproveTargetFlag();
       const jsonToStdout = args["json-to-stdout"];
       const targetArg = getStringArg(args, "bundle");
       const taskArg = getStringArg(args, "task");
-      // `--plan` is an alias for `--dry-run`; `--show-prompt` is read-only too.
-      const dryRun = args["dry-run"] || args.plan || args["show-prompt"];
+      // `--show-prompt` is read-only too.
+      const dryRun = args["dry-run"] || args["show-prompt"];
       const limitRaw = parsePositiveIntFlag(args.limit ?? undefined);
       const timeoutMs = parsePositiveIntFlag(args["timeout-ms"], "--timeout-ms");
       const requireFeedbackSignal = args["require-feedback-signal"];
       const skipIfLocked = args["skip-if-locked"];
       const strategyArg = getStringArg(args, "strategy");
       const effectiveConfig = loadConfig();
-      const scopeArg = resolveScopeAfterRetiredAutoAccept(getStringArg(args, "scope"));
-      rejectRetiredCanaryScope(scopeArg);
+      const scopeArg = getStringArg(args, "scope");
       const scopeRef = scopeArg && isFullRefInput(scopeArg) ? parseRefInput(scopeArg) : undefined;
       const writeTarget = dryRun
         ? undefined

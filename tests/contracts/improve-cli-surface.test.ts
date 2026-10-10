@@ -36,12 +36,12 @@ describe("current improvement CLI documentation contract", () => {
     expect(section).toContain("skippedProcesses");
   });
 
-  test("improve registers --plan as a zero-logic --dry-run alias and documents plan.processes (#947)", () => {
+  test("improve documents plan.processes and has no --plan alias (#947, #1091)", () => {
     const args = improveCommand.args as Record<string, { type?: string; default?: unknown }>;
-    expect(args.plan).toMatchObject({ type: "boolean", default: false });
+    expect(args.plan).toBeUndefined();
 
     const section = extractSection(cli, "### improve");
-    expect(section).toContain("--plan");
+    expect(section).not.toContain("--plan");
     expect(section).toContain("plan.processes");
   });
 

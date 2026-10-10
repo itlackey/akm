@@ -1079,11 +1079,15 @@ network filesystem for the data directory and falls back to `DELETE`.
 
 ## Retired Configuration
 
-`profiles`, `llm`, `agent`, `features`, `stashes`, `defaults.llm`,
-`defaults.agent`, and `defaults.improve` are rejected in 0.9. Recreate the
-configuration using `engines`, `defaults.engine`, `defaults.llmEngine`, and
-`improve.strategies`; AKM deliberately does not infer or rename ambiguous
-profile identities.
+`profiles`, `llm`, `agent`, `features`, and `stashes` are rejected in 0.9.
+Recreate the configuration using `engines`, `defaults.engine`,
+`defaults.llmEngine`, and `improve.strategies`; AKM deliberately does not infer
+or rename ambiguous profile identities. `defaults.llm`, `defaults.agent`,
+`defaults.improve`, `index.stalenessDetection`, the engine settings that used to
+sit under `index.<pass>` (`endpoint`, `provider`, `apiKey`, `baseUrl`,
+`temperature`, `maxTokens`, `capabilities`) and the `feedbackDistillation`
+process (use `processes.distill.enabled`) load like any other unknown key: named
+once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
 
 `embedding.chunkSize` was never read by anything under `src/` (#954), so a
 config that still sets it is simply ignored — it still loads, unvalidated

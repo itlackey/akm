@@ -123,15 +123,6 @@ describe("workflow CLI", () => {
     expect(fs.readFileSync(assetPath, "utf8")).not.toContain("route:");
   });
 
-  test("create --force --reset still works (deprecated alias, no independent effect)", async () => {
-    await createWorkflow("template-target-reset", ROUTED_WORKFLOW);
-    const assetPath = path.join(storage.stashDir, "workflows", "template-target-reset.md");
-
-    const result = await runCliCapture(["workflow", "create", "template-target-reset", "--force", "--reset"]);
-    expect(result.code).toBe(0);
-    expect(fs.readFileSync(assetPath, "utf8")).not.toContain("route:");
-  });
-
   test("create --from rejects invalid and duplicate-step documents", async () => {
     const invalid = await runCliCapture([
       "workflow",
@@ -273,15 +264,12 @@ describe("workflow CLI", () => {
     expect(errorEnvelope(activeWithParams.stderr).error).toContain("only be set on a new run");
   });
 
-  test("removed manual lifecycle commands fail with explicit migration hints", async () => {
-    // brief/report joined the retired set when the external-driver protocol
-    // was removed, so every hint here must name a command that still exists.
+  test("removed manual lifecycle commands are unknown commands", async () => {
     for (const command of ["start", "next", "complete", "brief", "report"]) {
       const result = await runCliCapture(["workflow", command, "workflows/demo"]);
       expect(result.code).toBe(2);
       const envelope = errorEnvelope(result.stderr);
       expect(envelope.code).toBe("UNKNOWN_COMMAND");
-      expect(envelope.hint).toContain(command === "next" ? "workflow status" : "workflow run");
     }
   });
 

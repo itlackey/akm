@@ -231,10 +231,11 @@ function buildEffectiveConfig(liftedLocalRaw: Record<string, unknown>, sourcePat
  * guarantees apply as any other retired config key (AGENTS.md "Reading
  * persisted data"): a config setting one keeps loading, is named once by
  * the unknown-key warning, and is dropped only by `akm migrate apply`.
- * Both were retired in 0.9.17-alpha.9: `index.graph` (the LLM entity-graph
- * extraction pass) and `index.metadataEnhance` (LLM metadata enrichment).
+ * `index.graph` (the LLM entity-graph extraction pass) and
+ * `index.metadataEnhance` (LLM metadata enrichment) were retired in
+ * 0.9.17-alpha.9; `index.stalenessDetection` before them.
  */
-const RETIRED_CATCHALL_KEY_PATHS = new Set(["index.graph", "index.metadataEnhance"]);
+const RETIRED_CATCHALL_KEY_PATHS = new Set(["index.graph", "index.metadataEnhance", "index.stalenessDetection"]);
 
 /**
  * Every dotted key in `raw` the schema does not know, at any depth (arrays

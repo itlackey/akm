@@ -38,11 +38,7 @@ import {
 } from "../../cli/shared";
 import { UsageError } from "../../core/errors";
 import type { InputFlag } from "../../execution/input-contract";
-import { resolveUsageEventSource } from "../../indexer/usage/usage-events";
-import { getOutputMode } from "../../output/context";
 import { TASK_RUN_BOOLEAN_FLAGS, TASK_RUN_VALUE_FLAGS } from "../../tasks/task-run-reserved-flags";
-import { akmSearch, parseSearchSource } from "../read/search";
-import { rejectRetiredSourceFlag } from "../read/search-cli";
 import { akmTaskExplain } from "./explain";
 import {
   akmTasksAdd,
@@ -92,34 +88,6 @@ function hasFlagNamed(name: string): boolean {
 }
 
 /**
- * `--target` was renamed to `--bundle` on `task` in 0.9 (S8.4). citty is
- * non-strict, so the retired spelling is silently absorbed rather than
- * rejected — reject it explicitly instead (mirrors improve-cli.ts /
- * remember-cli.ts). The generic pre-dispatch gate cannot catch it either: it
- * exempts `target` on every `task` subcommand precisely so this handler can
- * answer with the rename (`../../cli/unknown-flags`'s `SELF_DIAGNOSED_FLAGS`),
- * and that exemption is keyed on the flag NAME — so `--target=team` must be
- * rejected here by name too, or nothing rejects it at all.
- *
- * Rejecting by NAME means `--target=<value>` can no longer carry a declared
- * task input named `target` either (0.9.2 review round 2). That is settled on
- * the DECLARATION side, not by narrowing this rejecter back to whole-token
- * matching: `target` is listed in `TASK_RUN_SELF_DIAGNOSED_FLAGS`
- * (`../../tasks/task-run-reserved-flags.ts`), so `parseInputDeclarations`
- * refuses `inputs: {target: …}` with TASK_SOURCE_INVALID at authoring time and
- * no task can reach `akm task run` needing the flag this throws on. Do not
- * re-narrow the match here — the silently-ignored `--target=team` that round 1
- * closed would come straight back.
- */
-function rejectRetiredTaskTargetFlag(): void {
-  if (!hasFlagNamed("target")) return;
-  throw new UsageError(
-    "`akm task --target` was renamed to `--bundle` in 0.9. Use `--bundle <name>` instead.",
-    "INVALID_FLAG_VALUE",
-  );
-}
-
-/**
  * `--scheduled` is `akm task run`'s own declared flag (an internal marker for
  * scheduler-generated runs) — `task explain` declares no such flag. Because
  * `explain` reuses `parseTaskInputFlags` (the same exact-name scanner `task
@@ -155,9 +123,7 @@ function rejectExplainScheduledFlag(): void {
 // that knows the task's declared contract (Stage 2, src/tasks/run/load-task.ts)
 // — coercion happens once, there. `akm task run`'s own declared flags
 // (GLOBAL_OUTPUT_ARGS, --bundle, --scheduled) are excluded so they are never
-// mistaken for inputs (B-33); `--target` is excluded too, but only because
-// `rejectRetiredTaskTargetFlag()` above always runs first and throws before
-// this is ever reached (B-32) — it is not itself special-cased below.
+// mistaken for inputs (B-33).
 
 // `TASK_RUN_VALUE_FLAGS` / `TASK_RUN_BOOLEAN_FLAGS` are re-exported here
 // (unchanged in name, location, and value) from a dependency-free leaf module
@@ -258,7 +224,6 @@ const tasksAddCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const result = await akmTasksAdd({
       id: args.id,
       schedule: args.schedule,
@@ -302,7 +267,6 @@ const tasksRunCommand = defineCommand({
   },
   async run({ args, rawArgs }) {
     await runWithJsonErrors(async () => {
-      rejectRetiredTaskTargetFlag();
       const inputFlags = parseTaskInputFlags(rawArgs, args.id);
       const envelope = await akmTasksRun(args.id, {
         scheduled: args.scheduled === true,
@@ -327,7 +291,6 @@ const tasksEnableCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     output("task-enable", await akmTasksEnable(args.ref, { target: args.bundle }));
   },
 });
@@ -339,7 +302,6 @@ const tasksDisableCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     output("task-disable", await akmTasksDisable(args.ref, { target: args.bundle }));
   },
 });
@@ -370,7 +332,6 @@ const tasksHistoryCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const limit = parsePositiveIntFlag(args.limit ?? undefined);
     const id = resolveTaskHistoryId(args.task, args.id);
     const result = await akmTasksHistory({ id, limit, target: args.bundle });
@@ -416,7 +377,6 @@ const tasksSyncCommand = defineJsonCommand({
     },
   },
   async run({ args }) {
-    rejectRetiredTaskTargetFlag();
     const rebind = args.rebind === true;
     if (args["dry-run"] === true) {
       const preview = await akmTasksSyncPlan({}, args.bundle, { rebind });
@@ -448,7 +408,6 @@ const tasksExplainCommand = defineJsonCommand({
     ...bundleArg,
   },
   async run({ args, rawArgs }) {
-    rejectRetiredTaskTargetFlag();
     // `--scheduled` must be rejected BEFORE the shared scanner below ever
     // sees it — the scanner treats it as `task run`'s own reserved flag
     // (silently skipped, never surfaced as unknown) rather than explain's,
@@ -553,48 +512,6 @@ const tasksPruneCommand = defineJsonCommand({
   },
 });
 
-/**
- * #951: `akm task list` — a pure, zero-logic delegating alias for
- * `akm search --type task`. 0.9.0 removed `task list` because it was a
- * second, redundant IMPLEMENTATION of task listing, not because the
- * spelling itself was off-limits; this reuses `search`'s exact envelope
- * (its `results` alias comes along for free) instead of adding a second one.
- * `query`/`--limit`/`--from` are handled identically to `searchCommand.run()`
- * for the same inputs, including the retired `--source` guard (`../read/
- * search-cli.ts`'s `rejectRetiredSourceFlag`, reused rather than copied) so
- * `akm task list --source x` fails with the same actionable rename message
- * as `akm search --type task --source x` instead of citty's silent absorb.
- */
-const tasksListCommand = defineJsonCommand({
-  meta: { name: "list", description: "List task assets (alias for `akm search --type task`)" },
-  args: {
-    query: {
-      type: "positional",
-      description: "Search query (omit to list all tasks)",
-      required: false,
-      default: "",
-    },
-    limit: { type: "string", description: "Maximum number of results" },
-    from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
-  },
-  async run({ args }) {
-    rejectRetiredSourceFlag();
-    const query = (args.query ?? "").trim();
-    const limit = parsePositiveIntFlag(args.limit ?? undefined);
-    const source = parseSearchSource(args.from);
-    const outputMode = getOutputMode();
-    const result = await akmSearch({
-      query,
-      type: "task",
-      limit,
-      source,
-      eventSource: resolveUsageEventSource(),
-      attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
-    });
-    output("search", result);
-  },
-});
-
 export const taskCommand = defineGroupCommand({
   meta: {
     name: "task",
@@ -609,14 +526,13 @@ export const taskCommand = defineGroupCommand({
     explain: tasksExplainCommand,
     validate: tasksValidateCommand,
     history: tasksHistoryCommand,
-    list: tasksListCommand,
     sync: tasksSyncCommand,
     prune: tasksPruneCommand,
     doctor: tasksDoctorCommand,
   },
   // Bare `akm task` reports scheduler diagnostics. Deeper inspection of
-  // individual tasks is the generic `akm show <bundle//tasks/id>`; `list`
-  // above is a delegating alias for `akm search --type task` (#951).
+  // individual tasks is the generic `akm show <bundle//tasks/id>`; listing is
+  // `akm search --type task`.
   // No `defaultRun`: bare `akm task` is a usage error (exit 2), the canonical
   // bare-group behavior — owner ruling 12. Run `akm task doctor` for what the
   // bare form used to run.

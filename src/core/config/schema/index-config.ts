@@ -8,12 +8,12 @@
  * change.
  */
 import { z } from "zod";
-import { warnOnce } from "../../warn";
 import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt } from "./primitives";
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
 
-const INDEX_PASS_RETIRED_KEYS = new Set([
+/** Engine settings a pass once carried inline; the loader drops them (the unknown-key warning names each). */
+const INDEX_PASS_DROPPED_KEYS = [
   "endpoint",
   "provider",
   "apiKey",
@@ -21,33 +21,19 @@ const INDEX_PASS_RETIRED_KEYS = new Set([
   "temperature",
   "maxTokens",
   "capabilities",
-]);
+];
 
 /**
- * Per-pass `index.<pass>` entry. The preprocess names and drops the retired
- * engine settings above with a targeted message. Any other unknown key is kept
- * and named once by the config loader's schema walk, like an unknown key
- * anywhere else in config.
+ * Per-pass `index.<pass>` entry. The inline engine settings above are dropped
+ * from the loaded config, and the config loader's schema walk names each once
+ * as an unknown key. Any other unknown key is kept and named the same way.
  */
 export const IndexPassConfigSchema = z.preprocess(
-  (raw, ctx) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-      return raw; // let z.object below produce the type error
-    }
-    const obj = raw as Record<string, unknown>;
-    let cleaned: Record<string, unknown> | undefined;
-    for (const key of Object.keys(obj)) {
-      const dotted = [...(ctx.path ?? []), key].join(".");
-      if (INDEX_PASS_RETIRED_KEYS.has(key)) {
-        warnOnce(
-          `index-pass:retired:${dotted}`,
-          `\`${dotted}\` is a retired engine setting and is ignored; select a named engine and use typed invocation fields instead.`,
-        );
-        cleaned ??= { ...obj };
-        delete cleaned[key];
-      }
-    }
-    return cleaned ?? raw;
+  (raw) => {
+    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw; // z.object below reports the type error
+    const cleaned = { ...(raw as Record<string, unknown>) };
+    for (const key of INDEX_PASS_DROPPED_KEYS) delete cleaned[key];
+    return cleaned;
   },
   z
     .object({
@@ -98,14 +84,7 @@ const IndexConfigRuntimeSchema = z.preprocess(
       return raw;
     }
     if (typeof raw !== "object") return raw;
-    let cleaned: Record<string, unknown> | undefined;
     for (const [passName, value] of Object.entries(raw as Record<string, unknown>)) {
-      if (passName === "stalenessDetection") {
-        warnOnce("index:stalenessDetection", "`index.stalenessDetection` is a retired pass and is ignored.");
-        cleaned ??= { ...(raw as Record<string, unknown>) };
-        delete cleaned.stalenessDetection;
-        continue;
-      }
       if (typeof value !== "object" || value === null || Array.isArray(value)) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
@@ -114,7 +93,7 @@ const IndexConfigRuntimeSchema = z.preprocess(
         return raw;
       }
     }
-    return cleaned ?? raw;
+    return raw;
   },
   z
     .object({

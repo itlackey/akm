@@ -122,6 +122,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
     (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
 
+- **`akm workflow create --reset` (#1091).** Declared since 0.9.12 as a deprecated alias of `--force`, never read.
+  `--force` alone replaces a workflow with a fresh template; `--force --from <file>` replaces it from the file.
+- **`akm improve --plan` (#1091).** An exact alias of `--dry-run` with no other callers. Use `--dry-run`; it prints the
+  same `plan.processes` routing table.
+- **`akm task list` (#1091).** A delegating alias of `akm search --type task` (added in 0.9.15, #951) with no callers
+  in the plugins, akm-eval or OpenPalm. Use `akm search --type task`.
+- **Improve config keys nothing read (#1091).** `processes.distill.limit`, `processes.memoryInference.cls`,
+  `processes.proactiveMaintenance.limit` (an alias of `maxPerRun`) and `triage.policy` (set in the shipped `default`
+  strategy, read by no code) are gone from the schema and the shipped strategy. A config that still sets one loads
+  (named once by the unknown-key warning). `plan.triage.maxDiffLines` leaves the plan type; stored runs that carry it,
+  or `plan.proactive.configured.limit`, still decode. `processes.distill.cls` is read and stays. OpenPalm's improve
+  editor writes the strategy-level `limit`, not per-process ones, so the process `limit` of reflect and consolidate
+  stays.
+- **The `targetVocab: 2` marker on `task_history` rows, and the `"mcp"` package keyword (#1091).** Nothing read the
+  marker since migration 025 backfilled the old result vocabulary, so new rows no longer carry it and a stored one is
+  ignored; its newer-than-2 warning is gone. akm has no MCP code left, so `package.json` no longer lists `mcp`.
+- **The hard-error and bespoke-warning hints for old config keys (#1091).** `defaults.llm`, `defaults.agent` and
+  `defaults.improve` (rejected since 0.9), the `feedbackDistillation` process (rejected since 0.8.0), and the engine
+  settings under `index.<pass>` and `index.stalenessDetection` (dropped with a bespoke message) now load like any other
+  unknown key: named once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
+- **`akm improve --auto-accept` is a hard error (#1091).** It was removed in 0.9.0 and has been accepted-and-warned
+  since; it is now an unknown flag like any other (exit 2), and `--auto-accept 90` no longer reaches the scope. Use
+  `akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`.
+- **The hint tables for the 0.9.0 renames (#1091).** `RETIRED_COMMAND_HINTS` (39 entries), `RETIRED_FLAG_HINTS` (5) and
+  `SELF_DIAGNOSED_FLAGS` (`src/cli/retired-commands.ts` is gone), the per-command `--target`, `--source`, `--scope`,
+  `--enrich`/`--re-enrich` and `proposal drain --profile` rejections, the `akm improve canary` scope rejection, the
+  `akm show` colon-ref tip and the `<type>:` search tip. A retired command is now an ordinary `UNKNOWN_COMMAND` (with a
+  did-you-mean when one is close) and a retired flag an ordinary `UNKNOWN_FLAG` (exit 2), with no migration pointer.
+  `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
+  `akm improve canary` is now an asset-type scope that matches nothing.
+
 ### Fixed
 
 - **A call recovered by the retry without the schema is one successful call in the usage rows.** The failed schema
