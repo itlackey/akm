@@ -1708,8 +1708,8 @@ file path, a single HTTP/HTTPS URL, or `-` for stdin.
 
 **Write target resolution:** the destination is the working bundle
 (`defaultBundle`) unless `defaultWriteTarget` is set in config, which
-overrides it to a named source. An explicit `--target <name>` flag overrides
-both. The full order is `--target` → `defaultWriteTarget` → working bundle →
+overrides it to a named source. An explicit `--bundle <name>` flag overrides
+both. The full order is `--bundle` → `defaultWriteTarget` → working bundle →
 `ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
 details.
 
@@ -1726,14 +1726,14 @@ akm import ./notes/oauth-quirks.md --xref knowledge/auth/vendor-x-token-api
 akm import ./notes/modern-guide.md --supersedes knowledge/legacy-guide
 
 # Route the write to a specific writable bundle:
-akm import ./docs/auth-flow.md --target team-bundle
+akm import ./docs/auth-flow.md --bundle team-bundle
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
-| `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
 | `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
 
@@ -2130,9 +2130,9 @@ akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
 
 Env mutations (`create`, `remove`) pick their write destination the same way
-every other write command does: an explicit `--target <source>` wins, else
+every other write command does: an explicit `--bundle <source>` wins, else
 `defaultWriteTarget`, else the working bundle. The chosen source must be
-writable — a non-writable `--target`/`defaultWriteTarget` fails with a
+writable — a non-writable `--bundle`/`defaultWriteTarget` fails with a
 `ConfigError` before anything is written — and on a git-backed writable target
 the mutation lands in a single boundary commit (filesystem targets are
 committed by `akm sync`; `env/` stays out of git when your bundle `.gitignore`
@@ -2196,7 +2196,7 @@ akm env create prod --from-file ./.env    # seed from an existing .env (byte-for
 printf 'A=1\nB=2\n' | akm env create prod --from-stdin
 akm env create prod --path staging        # creates env/staging/prod.env
 akm env create prod --sensitive           # hidden from `env list` and the search index
-akm env create prod --target team         # write to the `team` source
+akm env create prod --bundle team         # write to the `team` source
 ```
 
 | Flag | Description |
@@ -2205,7 +2205,7 @@ akm env create prod --target team         # write to the `team` source
 | `--from-file <path>` | Seed the env file from an existing `.env` at this path |
 | `--from-stdin` | Seed the env file from stdin |
 | `--sensitive` | Exclude this env file from `env list` output and the search index |
-| `--target <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
+| `--bundle <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
 
 Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
 exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
@@ -2320,7 +2320,7 @@ of multi-line material. Writes are atomic (mode 0600) under an exclusive
 `<secret>.lock`. Maximum size is 5 MB.
 
 `secret set` selects its write destination like every other write command: an
-explicit `--target <source>` wins, else `defaultWriteTarget`, else the working
+explicit `--bundle <source>` wins, else `defaultWriteTarget`, else the working
 bundle. The chosen source must be writable (a non-writable target fails with a
 `ConfigError`), and on a git-backed writable target the mutation lands in a
 single boundary commit. Reads (`list`, `run`) still span all configured sources.
@@ -2870,10 +2870,10 @@ single queue.
 
 New qualified proposals record their destination source name and materialized
 root. `proposal diff`, `accept`, and `revert` use that recorded target by
-default; an explicit `--target` must resolve to the same source and root or the
+default; an explicit `--bundle` must resolve to the same source and root or the
 command fails with exit 2. An unbound proposal in a selected non-primary queue
 uses that authenticated queue root. A short historical unbound proposal
-mutation requires either an explicit `--target` or a selected `--queue` that
+mutation requires either an explicit `--bundle` or a selected `--queue` that
 authenticates its root; it never falls back to an ambient write target.
 
 #### proposal extract
@@ -3036,7 +3036,7 @@ akm proposal accept <id>
 akm proposal accept 7c115132                  # 8-char UUID prefix
 akm proposal accept skills/akm-dream           # Asset ref
 akm proposal accept <id> --queue team-bundle
-akm proposal accept <id> --target team-bundle  # Must match a recorded target
+akm proposal accept <id> --bundle team-bundle  # Must match a recorded target
 akm proposal accept --generator reflect -y    # Bulk-accept by generator (requires -y)
 akm proposal accept --generator reflect --max-diff-lines 50 -y    # ...only if <= 50 lines
 akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bulk accept
@@ -3045,7 +3045,7 @@ akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bu
 | Flag | Description |
 | --- | --- |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
-| `--target <name>` | Write destination; must match the proposal's recorded target |
+| `--bundle <name>` | Write destination; must match the proposal's recorded target |
 | `--generator <name>` | Bulk-accept all pending proposals from this generator (e.g. `reflect`, `distill`). Requires no positional id. |
 | `--max-diff-lines` | When bulk-accepting, only accept proposals whose content is `<=` this many lines. Larger proposals are skipped. |
 | `--older-than` | When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago |
@@ -3185,13 +3185,13 @@ to `reverted` and appends a `proposal_reverted` event to the audit log.
 akm proposal revert <id>
 akm proposal revert skills/akm-dream           # Asset ref
 akm proposal revert <id> --queue team-bundle
-akm proposal revert <id> --target team-bundle  # Must match a recorded target
+akm proposal revert <id> --bundle team-bundle  # Must match a recorded target
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
-| `--target <name>` | Select the destination for an unbound proposal, or confirm a recorded destination; a conflict with a recorded target is rejected |
+| `--bundle <name>` | Select the destination for an unbound proposal, or confirm a recorded destination; a conflict with a recorded target is rejected |
 
 Accepts the full proposal UUID or the asset ref. UUID prefixes are **not**
 supported for reverting (archived proposals require the full identifier). Errors
@@ -3208,13 +3208,13 @@ akm proposal diff <id>
 akm proposal diff skills/akm-dream             # Asset ref form
 akm proposal diff 7c115132                    # 8-char UUID prefix
 akm proposal diff <id> --queue team-bundle
-akm proposal diff <id> --target team-bundle    # Must match a recorded target
+akm proposal diff <id> --bundle team-bundle    # Must match a recorded target
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
-| `--target <name>` | Select an unbound destination or confirm a recorded one for `proposal accept`, `diff`, or `revert`; a conflict with a recorded target is rejected |
+| `--bundle <name>` | Select an unbound destination or confirm a recorded one for `proposal accept`, `diff`, or `revert`; a conflict with a recorded target is rejected |
 
 `proposal accept` runs full validation before promoting. `proposal reject`
 requires `--reason`.

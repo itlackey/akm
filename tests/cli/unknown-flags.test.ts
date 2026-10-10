@@ -140,6 +140,14 @@ describe("stands down when the command itself is the problem", () => {
     expect(errorFor(["task", "add", "nightly", "--schedule", "@daily", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["task", "history", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["task", "sync", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["import", "./a.md", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["env", "create", "prod", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["env", "remove", "prod", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["secret", "set", "key", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["proposal", "accept", "p-1", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["proposal", "diff", "p-1", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["proposal", "revert", "p-1", "--target", "team"]).code).toBe("UNKNOWN_FLAG");
+    expect(errorFor(["search", "foo", "--shape", "agent"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["index", "--background"]).code).toBe("UNKNOWN_FLAG");
     expect(errorFor(["proposal", "extract", "--watch"]).code).toBe("UNKNOWN_FLAG");
   });

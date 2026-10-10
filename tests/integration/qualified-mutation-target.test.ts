@@ -53,7 +53,7 @@ afterEach(() => {
 });
 
 describe("qualified mutation targets", () => {
-  test("a qualified env ref selects its bundle without --target", async () => {
+  test("a qualified env ref selects its bundle without --bundle", async () => {
     const team = sandbox("akm-qualified-env");
     configure(team);
     const value = seed(storage.root, "value.txt", "secret-value");
@@ -66,7 +66,7 @@ describe("qualified mutation targets", () => {
     expect(fs.existsSync(path.join(storage.stashDir, "env", "prod.env"))).toBe(false);
   });
 
-  test("a matching --target is accepted and a conflicting --target is a usage error", async () => {
+  test("a matching --bundle is accepted and a conflicting --bundle is a usage error", async () => {
     const team = sandbox("akm-qualified-match");
     configure(team);
     const value = seed(storage.root, "secret.txt", "secret-value");
@@ -77,7 +77,7 @@ describe("qualified mutation targets", () => {
       "team//secrets/deploy-key",
       "--from-file",
       value,
-      "--target",
+      "--bundle",
       "team",
     ]);
     expect(matching.code).toBe(0);
@@ -89,11 +89,11 @@ describe("qualified mutation targets", () => {
       "team//env/conflict",
       "--from-file",
       value,
-      "--target",
+      "--bundle",
       "stash",
     ]);
     expect(conflicting.code).toBe(2);
-    expect(JSON.parse(conflicting.stderr).error).toContain("conflicts with --target");
+    expect(JSON.parse(conflicting.stderr).error).toContain("conflicts with --bundle");
     expect(fs.existsSync(path.join(team, "env", "conflict.env"))).toBe(false);
     expect(fs.existsSync(path.join(storage.stashDir, "env", "conflict.env"))).toBe(false);
   });
@@ -169,7 +169,7 @@ describe("qualified mutation targets", () => {
     expect(JSON.parse(remembered.stdout).ref).toBe("team//memories/deployment-note");
 
     const source = seed(storage.root, "guide.md", "# Team guide\n");
-    const imported = await runCliCapture(["import", source, "--target", "team"]);
+    const imported = await runCliCapture(["import", source, "--bundle", "team"]);
     expect(imported.code).toBe(0);
     expect(JSON.parse(imported.stdout).ref).toBe("team//knowledge/guide");
   });

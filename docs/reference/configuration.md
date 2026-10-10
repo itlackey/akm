@@ -833,8 +833,7 @@ explicit destination flag is given and the command isn't already scoped to a
 specific source. It must name a configured bundle; setting it with no
 `bundles` configured, or naming an unconfigured bundle, is rejected at
 `config set` (or config load) time. The full write-target resolution order
-is the command's destination flag (`--bundle` on `remember`/`clone`/
-`improve`, `--target` on `env`/`secret create`) -> `defaultWriteTarget` ->
+is the command's destination flag (`--bundle`) -> `defaultWriteTarget` ->
 working bundle (`defaultBundle`) -> `ConfigError`.
 
 ### Memory scope

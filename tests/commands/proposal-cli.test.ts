@@ -269,7 +269,7 @@ describe("akm proposal list (CLI)", () => {
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
     expect(envelope.error).toContain('--queue must reference a source name from your config. No source named "ghost"');
-    expect(envelope.error).not.toContain("--target");
+    expect(envelope.error).not.toContain("--bundle");
   });
 
   test("accepts --status=reverted (parser allows reverted status)", async () => {
@@ -974,7 +974,7 @@ describe("akm proposal multi-bundle queues", () => {
       akmProposalAccept({ stashDir: secondary, id: conflicting.id, target: "primary", config }),
     ).rejects.toThrow(/bound.*target.*primary/i);
     const cliConflict = await runCli(
-      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--target", "primary", "--format=json"],
+      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--bundle", "primary", "--format=json"],
       { stashDir: primary },
     );
     expect(cliConflict.status).toBe(2);

@@ -163,6 +163,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   skillret and longmemeval benchmarks, and `akm help agents`-style scripts. `INVALID_SHAPE_VALUE` is gone, and
   `INVALID_DETAIL_VALUE` now lists `agent`. The CLI reference no longer claims `--shape summary` errors outside `show`
   (it warned and fell back to `agent`).
+- **`--target` on `import`, `env create`, `env remove`, `secret set` and `proposal accept`/`diff`/`revert` (#1091).**
+  `--bundle` is the one write-destination flag, as on `remember`, `clone`, `improve` and `task`; `--target` is an
+  unknown flag (exit 2) with no alias. The plugins, akm-eval and OpenPalm pass no `--target`. Errors and hints that said
+  `--target` now say `--bundle`.
 
 ### Fixed
 

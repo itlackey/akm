@@ -237,7 +237,7 @@ export const importKnowledgeCommand = defineJsonCommand({
       description: "Overwrite an existing knowledge document with the same name",
       default: false,
     },
-    target: {
+    bundle: {
       type: "string",
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
@@ -261,7 +261,7 @@ export const importKnowledgeCommand = defineJsonCommand({
     // read/write so an unresolvable ref (UsageError → exit 2) leaves the
     // stash untouched.
     const rawSupersedes = parseAllFlagValues("--supersedes");
-    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.target);
+    const writeTarget = resolveSupersedesWriteTarget(rawSupersedes, args.bundle);
     const xrefs = resolveXrefsForWrite(parseAllFlagValues("--xref"), writeTarget);
     // Collect and validate --supersedes occurrences (repeatable). Same
     // before-any-read/write contract: an unresolvable ref exits 2 with nothing
