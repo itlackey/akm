@@ -137,8 +137,9 @@ function main(): void {
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, generated);
   console.log(`Wrote ${target}`);
-  const docs = checkHarnessDocsDrift();
-  fs.writeFileSync(path.join(repoRoot, "docs", "reference", "configuration.md"), docs.generated);
+  // `bun run build` runs this too, and a source tree without docs/ (the Docker install images) still builds.
+  const docsPath = path.join(repoRoot, "docs", "reference", "configuration.md");
+  if (fs.existsSync(docsPath)) fs.writeFileSync(docsPath, checkHarnessDocsDrift().generated);
 }
 
 if (import.meta.main) {
