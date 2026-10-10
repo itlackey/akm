@@ -491,6 +491,15 @@ describe("runLessonQualityJudge — a criterion at 2 or below rejects, grounding
     expect(prompt).not.toContain("BEYOND_WINDOW");
   });
 
+  test("a lesson update is judged as an edit: its added lines against the lesson it extends, which is not a listed asset", () => {
+    const prompt = buildJudgePrompt("merged body", "source body", undefined, undefined, "existing body");
+    expect(prompt).toContain("Compare each added line");
+    expect(prompt).toContain("Existing lesson that the proposed lesson extends");
+    expect(prompt).toContain("existing body");
+    expect(prompt).not.toContain("Existing assets nearest the new lesson (they may");
+    expect(buildJudgePrompt("merged body", "source body")).not.toContain("Compare each added line");
+  });
+
   test("the existing assets shown to the judge are lessons, knowledge notes or skills near the lesson", () => {
     const prompt = buildJudgePrompt("lesson body", "source body", [{ ref: "skills/deploy", content: "Deploy steps." }]);
 

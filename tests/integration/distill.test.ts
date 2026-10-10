@@ -2872,7 +2872,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
         prompts.push(joined);
         if (joined.includes("Score this lesson")) {
           const scores = replies.judge?.[judged++] ?? { reusable: 5, nonRedundancy: 5, grounding: 5 };
-          return JSON.stringify({ scores, reason: "judged" });
+          return JSON.stringify({ scores, reason: "lessons/deploy-retries already states this rule." });
         }
         if (joined.includes("Extend the existing one")) return JSON.stringify(replies.update ?? { decision: "none" });
         return replies.writer;
@@ -2881,10 +2881,20 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     return { result, prompts };
   }
 
+  const noneNaming = (text: string) =>
+    JSON.stringify({
+      reason: `${text} already states the rule.`,
+      decision: "none",
+      description: "",
+      when_to_use: "",
+      body: "",
+      tags: [],
+    });
   const REPEAT = { reusable: 4, nonRedundancy: 2, grounding: 5 };
   const ADDITION_OK = { reusable: 4, nonRedundancy: 5, grounding: 5 };
   const updateWith = (body: string) => ({
     reason: "adds the 4xx stop",
+    new_facts: ["stop at a 4xx"],
     decision: "update",
     ref: "lessons/deploy-retries",
     body,
@@ -2923,10 +2933,15 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     });
     expect(proposal?.beforeHash).toBeDefined();
     expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(EXISTING);
-    // The judge read only the added line, against the existing lesson and the memory.
-    const additionJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
-    expect(additionJudge).toContain("Existing asset ref: lessons/deploy-retries");
-    expect(additionJudge).toMatch(/Proposed lesson:\n```\n- Stop retrying at once/);
+    // One judge call read the extended lesson as one lesson, and was given the lesson it extends to hold each added
+    // line against, in place of a list of assets the new lesson might repeat.
+    const updateJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
+    expect(updateJudge).not.toContain("Existing assets nearest the new lesson (they may");
+    expect(updateJudge).toContain("Existing lesson that the proposed lesson extends");
+    expect(updateJudge).toContain("Compare each added line");
+    const proposed = updateJudge.slice(updateJudge.indexOf("Proposed lesson:"));
+    expect(proposed).toContain("Retry a failed deploy at most three times.");
+    expect(proposed).toContain("Stop retrying at once");
     const { events } = readEvents({ type: "distill_invoked" });
     expect(events.at(-1)).toMatchObject({
       ref: MEMORY_REF,
@@ -2972,6 +2987,18 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
   });
 
+  test("an update that lists no new fact is not proposed", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: { ...updateWith(`${EXISTING_BODY}\n${NEW_FACT}`), new_facts: [] },
+      judge: [REPEAT, ADDITION_OK],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
   test("an update that only rewords the lesson adds no line and proposes nothing", async () => {
     const fixture = setup();
     const { result } = await run(fixture, {
@@ -3010,6 +3037,18 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
   });
 
+  test("added lines that only restate the lesson (non-redundancy 2) are not proposed", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, { reusable: 5, nonRedundancy: 2, grounding: 5 }],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
   test("a lesson of another bundle, or none related, is not extended", async () => {
     const fixture = setup();
     const other = makeStashDir();
@@ -3041,7 +3080,10 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       chat: async (_cfg, messages) => {
         const joined = messages.map((m) => m.content).join("\n");
         if (joined.includes("Score this lesson")) {
-          return JSON.stringify({ scores: joined.includes("Stop retrying") ? ADDITION_OK : REPEAT, reason: "judged" });
+          return JSON.stringify({
+            scores: joined.includes("Stop retrying") ? ADDITION_OK : REPEAT,
+            reason: "lessons/deploy-retries already states this rule.",
+          });
         }
         if (joined.includes("Extend the existing one")) {
           fs.writeFileSync(fixture.lessonPath, edited);
@@ -3059,7 +3101,7 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
   test("a writer that answers NONE because the lesson exists still yields the update", async () => {
     const fixture = setup();
     const { result } = await run(fixture, {
-      writer: "NONE",
+      writer: noneNaming("lessons/deploy-retries"),
       update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
       judge: [ADDITION_OK],
     });
@@ -3074,6 +3116,59 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     const { result, prompts } = await run(fixture, { writer: "NONE" });
 
     expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+  /** A second, unrelated lesson near the memory, so that no lesson is the only one. */
+  function addSecondLesson(fixture: Fixture): void {
+    const other = path.join(fixture.stash, "lessons", "other-lesson.md");
+    fs.writeFileSync(other, "---\ndescription: Another rule\nwhen_to_use: Another trigger\n---\n\nSomething else.\n");
+    fixture.related.push({ ref: "lessons/other-lesson", content: "Something else.", path: other });
+  }
+
+  test("a NONE whose reason names no lesson, with several lessons near, makes no update call", async () => {
+    const fixture = setup();
+    addSecondLesson(fixture);
+    const { result, prompts } = await run(fixture, {
+      writer: noneNaming("a skill"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+    });
+
+    expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
+    expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
+  });
+
+  test("a NONE whose reason names no lesson still updates the only lesson near the memory", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: noneNaming("an existing note"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+  });
+
+  test("a judge that rejects a repeat without naming a lesson, with several lessons near, makes no update call", async () => {
+    const fixture = setup();
+    addSecondLesson(fixture);
+    const prompts: string[] = [];
+    const result = await akmDistill({
+      ref: MEMORY_REF,
+      config: configJudgeEnabled(fixture.stash),
+      stashDir: fixture.stash,
+      fetchRelatedFn: async () => fixture.related,
+      lookupFn: async () => path.join(fixture.stash, "memories", "deploy-retries.md"),
+      readEventsFn: emptyEvents,
+      chat: async (_cfg, messages) => {
+        const joined = messages.map((m) => m.content).join("\n");
+        prompts.push(joined);
+        if (joined.includes("Score this lesson"))
+          return JSON.stringify({ scores: REPEAT, reason: "An existing asset states it." });
+        return VALID_LESSON;
+      },
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
     expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
   });
 });

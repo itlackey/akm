@@ -598,7 +598,7 @@ async function distill(
   if (none) {
     // The writer may have answered NONE because a lesson already states the rule (the related list says to).
     if (kind === "lesson") {
-      const update = await proposeLessonUpdate(run, feedbackLines(feedback));
+      const update = await proposeLessonUpdate(run, feedbackLines(feedback), none.reason);
       if (update) return update;
     }
     return skipDistill(
@@ -741,7 +741,7 @@ async function judgeAndQueue(
         !out.promotion &&
         (verdict.criteria?.nonRedundancy ?? 5) <= LESSON_REJECT_MAX_SCORE
       ) {
-        const update = await proposeLessonUpdate(run, out.feedback ?? [], related);
+        const update = await proposeLessonUpdate(run, out.feedback ?? [], verdict.reason, related);
         if (update) return update;
       }
       return rejectDistilled(run, out.ref, content, verdict.score, verdict.reason, {
@@ -823,34 +823,38 @@ async function judgeAndQueue(
 /**
  * A memory whose lesson repeats a lesson the library holds extends that lesson instead (#1090): the writer returns
  * the lesson's body with the memory's new lines added, and the update is proposed on the lesson's own ref, for a
- * person to review (never staged for the drain). Nothing is proposed, and `undefined` returned, when no related
- * lesson lies in this bundle, the writer finds the memory adds nothing or contradicts the lesson, the body drops or
- * rewords a line, the judge does not pass the added lines (against the lesson and the memory), or the lesson
- * changed meanwhile. Needs the quality gate: the judge is what holds the added lines to the memory.
+ * person to review (never staged for the drain). `finding` is what the writer (its NONE reason) or the judge said
+ * about the repeat: the related lessons it names are the candidates, or the only related lesson when it names none,
+ * so a lesson that merely sits among several near the memory costs no call. Nothing is proposed, and `undefined`
+ * returned, when no lesson qualifies, the writer finds the memory adds
+ * nothing or contradicts the lesson, the body drops or rewords a line, the judge does not pass the extended lesson,
+ * or the lesson changed meanwhile. Needs the quality gate: the judge is what holds the added lines to the memory.
  */
 async function proposeLessonUpdate(
   run: DistillRun,
   feedback: string[],
+  finding: string,
   related?: RelatedAsset[],
 ): Promise<AkmDistillResult | undefined> {
   const memory = run.asset.content ? parseFrontmatter(run.asset.content).content.trim() : "";
+  const said = finding.toLowerCase();
   if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
-  const candidates: Array<UpdateCandidate & { path: string; content: string }> = [];
+  const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     const parsed = parseRefInput(asset.ref);
     if (parsed.type !== "lesson" || !asset.path || !isWithin(asset.path, run.stash)) continue;
     try {
       const content = fs.readFileSync(asset.path, "utf8");
-      candidates.push({
-        ref: conceptIdFromTypeName("lesson", parsed.name),
-        path: asset.path,
-        content,
-        body: parseFrontmatter(content).content.trim(),
-      });
+      const ref = conceptIdFromTypeName("lesson", parsed.name);
+      lessons.push({ ref, path: asset.path, content, body: parseFrontmatter(content).content.trim() });
     } catch {
       // A lesson that cannot be read cannot be extended.
     }
   }
+  const named = lessons.filter(
+    (l) => said.includes(l.ref.toLowerCase()) || said.includes(l.ref.split("/").slice(1).join("/").toLowerCase()),
+  );
+  const candidates = named.length > 0 ? named : lessons.length === 1 ? lessons : [];
   if (candidates.length === 0) return undefined;
 
   const call = await callStage({
@@ -877,9 +881,11 @@ async function proposeLessonUpdate(
   }
   if (added.length === 0) return undefined;
 
-  // The added lines are the "lesson" the judge reads: against the lesson (non-redundancy) and the memory (grounding).
-  const verdict = await runLessonQualityJudge(run.config, added.join("\n"), memory, run.options.chat, {
-    related: [{ ref: target.ref, content: target.content }],
+  // An edit is judged as the lesson it makes: the existing lesson with the lines added, as one lesson (reusable,
+  // grounded in the memory or the lesson), whose added lines must each say something the lesson did not (one call).
+  const extended = assembleAsset(parseFrontmatter(target.content).data, update.body);
+  const verdict = await runLessonQualityJudge(run.config, extended, memory, run.options.chat, {
+    extending: target.body,
     ...(feedback.length > 0 ? { feedback } : {}),
     ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
     ...(run.options.signal ? { signal: run.options.signal } : {}),
