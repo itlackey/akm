@@ -881,22 +881,16 @@ async function proposeLessonUpdate(
   }
   if (added.length === 0) return undefined;
 
-  // An edit is judged as the lesson it makes: the existing lesson with the lines added, as one lesson. Its source is
-  // the memory and the lesson being extended, so a line is grounded when either states it. The lesson being extended
-  // is not listed as a related asset: that its rule is already there is the premise of an update.
+  // An edit is judged as the lesson it makes: the existing lesson with the lines added, as one lesson (reusable,
+  // grounded in the memory or the lesson), whose added lines must each say something the lesson did not (one call).
   const extended = assembleAsset(parseFrontmatter(target.content).data, update.body);
-  const verdict = await runLessonQualityJudge(
-    run.config,
-    extended,
-    `${memory}\n\nThe lesson being extended, which the lesson below is with lines added:\n${target.body}`,
-    run.options.chat,
-    {
-      ...(feedback.length > 0 ? { feedback } : {}),
-      ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
-      ...(run.options.signal ? { signal: run.options.signal } : {}),
-      onNotices: run.notices.add,
-    },
-  );
+  const verdict = await runLessonQualityJudge(run.config, extended, memory, run.options.chat, {
+    extending: target.body,
+    ...(feedback.length > 0 ? { feedback } : {}),
+    ...((run.judgeRunner ?? run.runner) ? { llmRunner: run.judgeRunner ?? run.runner } : {}),
+    ...(run.options.signal ? { signal: run.options.signal } : {}),
+    onNotices: run.notices.add,
+  });
   if (!verdict.pass) {
     warnVerbose(`[akm] distill update of ${target.ref} not proposed: ${verdict.reason}`);
     return undefined;

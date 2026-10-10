@@ -2933,11 +2933,12 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     });
     expect(proposal?.beforeHash).toBeDefined();
     expect(fs.readFileSync(fixture.lessonPath, "utf8")).toBe(EXISTING);
-    // The judge read the extended lesson as one lesson, against the memory and the lesson it extends, and was not
-    // shown that lesson as an asset the new one might repeat.
+    // One judge call read the extended lesson as one lesson, and was given the lesson it extends to hold each added
+    // line against, in place of a list of assets the new lesson might repeat.
     const updateJudge = prompts.filter((p) => p.includes("Score this lesson"))[1] ?? "";
     expect(updateJudge).not.toContain("Existing assets nearest the new lesson (they may");
-    expect(updateJudge).toContain("The lesson being extended");
+    expect(updateJudge).toContain("Existing lesson that the proposed lesson extends");
+    expect(updateJudge).toContain("Compare each added line");
     const proposed = updateJudge.slice(updateJudge.indexOf("Proposed lesson:"));
     expect(proposed).toContain("Retry a failed deploy at most three times.");
     expect(proposed).toContain("Stop retrying at once");
@@ -3030,6 +3031,18 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
       writer: VALID_LESSON,
       update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
       judge: [REPEAT, { reusable: 4, nonRedundancy: 5, grounding: 1 }],
+    });
+
+    expect(result.outcome).toBe("quality_rejected");
+    expect(listProposals(fixture.stash, { includeArchive: true })).toEqual([]);
+  });
+
+  test("added lines that only restate the lesson (non-redundancy 2) are not proposed", async () => {
+    const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: VALID_LESSON,
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [REPEAT, { reusable: 5, nonRedundancy: 2, grounding: 5 }],
     });
 
     expect(result.outcome).toBe("quality_rejected");
