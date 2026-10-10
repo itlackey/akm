@@ -929,9 +929,7 @@ describe("workflow smoke parity", () => {
     setupStorage();
     // `workflow create <name> --print` writes the RAW markdown template to
     // stdout (no envelope) — matching the dropped `workflow template` it
-    // replaces — `--print > starter.md` must yield a usable file. There is
-    // Creation emits Markdown; execution also accepts peer `.yml` sources
-    // through the same source IR. `.yaml` remains rejected.
+    // replaces — `--print > starter.md` must yield a usable file.
     const tpl = nodeRun(["workflow", "create", "smoke-program", "--print"], nodeEnv);
     assertNoBoundaryLeak(tpl, "workflow create --print");
     expect(tpl.status).toBe(0);
@@ -1018,15 +1016,11 @@ function writeJudgeWorkflow(name: string): void {
       "---",
       "type: workflow",
       "description: Node-compat smoke workflow.",
-      "params:",
-      "  mode: { type: string }",
       "steps:",
       "  - id: only-step",
-      "    route:",
-      "      input: params.mode",
-      "      when: [{ match: go, step: after }]",
-      "      default: after",
-      "    gate: {}",
+      "    unit:",
+      "      exec:",
+      '        command: ["true"]',
       "  - id: after",
       "---",
       "",
@@ -1079,9 +1073,9 @@ describe("workflow LLM import-site parity (reviewer #9)", () => {
       configureDeadLlm();
       writeJudgeWorkflow("judge-smoke");
 
-      // The route-only first step reaches its frozen judge without dispatching
-      // a unit. The dead endpoint rejects the gate, but the dynamic import must load.
-      const run = nodeRun(["workflow", "run", "workflows/judge-smoke", "--mode=go", "--max-steps=1"], nodeEnv);
+      // The gated exec step runs no engine, so the only LLM call is its frozen
+      // judge. The dead endpoint rejects the gate, but the dynamic import must load.
+      const run = nodeRun(["workflow", "run", "workflows/judge-smoke", "--max-steps=1"], nodeEnv);
       assertNoBoundaryLeak(run, "judge run");
       expect(run.stdout + run.stderr).not.toContain(REQUIRE_NOT_DEFINED);
       expect(run.stderr).not.toContain("resolved workflow judge missing");
