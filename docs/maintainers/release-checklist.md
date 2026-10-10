@@ -6,7 +6,13 @@ run of the exact commit that will be published.
 
 ## 1. Freeze the candidate
 
-1. Finish the version, changelog, migration-note, and release-PR changes.
+1. Finish the version, changelog, migration-note, and release-PR changes. From
+   0.10 the version is a daily build, `0.10.YYMMDDNN` (see step 4):
+   `bun scripts/release-version.ts next` prints the next free one for today
+   (UTC). Commit it in `package.json` and cut the CHANGELOG as
+   `## [0.10.YYMMDDNN] - YYYY-MM-DD`. A prerelease stage is not committed: it is
+   chosen when the Release workflow runs, and a stage of a build is covered by
+   that build's CHANGELOG section.
 2. Record `git rev-parse HEAD`. This is the full 40-character release-candidate SHA.
 3. Run `bun run release:check` locally. If Docker is unavailable, run
    `./tests/release-check.sh --skip-docker` and rely on the gated Docker job
@@ -101,3 +107,26 @@ After the exact-SHA gated run and local release check are green, trigger the
 Release workflow with the version already committed in `package.json`. Keep the
 candidate SHA and Gated CI run URL in the release record so the published
 artifact's validation can be audited later.
+
+0.10 and later use daily builds, `0.10.YYMMDDNN`: `YY` the UTC year, `MM` the
+month, `DD` the day and `NN` the build that day (`01` to `99`), two digits each
+(see [`STABILITY.md`](../../STABILITY.md)). The first build on 2026-10-10 is
+`0.10.26101001`. `bun scripts/release-version.ts next` takes `NN` as one above
+the highest build already on npm for today's UTC date (`npm view akm-cli
+versions`), so numbering follows what was published, not what was committed.
+
+The workflow has two inputs:
+
+- `version`: the version committed in `package.json`, as before. The workflow
+  rejects a malformed one (`scripts/release-version.ts`, tested in
+  `tests/release-version.test.ts`): two digits each for `YY`, `MM`, `DD`, `NN`, a
+  real calendar date, `NN` 01 to 99. For 0.9 and older it is the `X.Y.Z` as
+  before.
+- `stage`: `none` publishes the build itself to the npm `latest` tag and as a
+  GitHub release. `alpha`, `beta` or `rc` publishes `<version>-<stage>` to
+  `next` as a GitHub prerelease (no `.N`: the build number already differs per
+  build). Promote one build by running the workflow again with the same
+  `version` and the next stage, then with `none`. The order is
+  `-alpha` < `-beta` < `-rc` < the build.
+
+`bun scripts/release-version.ts validate <version>` checks a version by hand.

@@ -12,6 +12,19 @@ out in the CHANGELOG with a migration note. The 0.10.x series returns to bug
 fixes and tuning, and aims to restore the normal discipline of breaking
 changes only in major and minor releases.
 
+**Version numbers (0.10 onward, #1089).** A 0.10 release is a daily build,
+`0.10.YYMMDDNN`: `YY` the UTC year, `MM` the month, `DD` the day and `NN` the
+build that day (`01` to `99`), each two digits. The first build on 2026-10-10 is
+`0.10.26101001`, the second `0.10.26101002`. A prerelease carries its stage
+only: `0.10.26101001-alpha`, `-beta` or `-rc`, with no `.N`. One build is
+promoted by publishing the same `YYMMDDNN` with the next stage and then without
+one (`-alpha` < `-beta` < `-rc` < the build). Prereleases publish to the npm
+`next` tag and stable builds to `latest`; `akm upgrade --next` follows `next`.
+Versions sort by date, so semver ranges and `akm upgrade` order them correctly
+across months and years. The patch number no longer says how big a change is:
+read the CHANGELOG, which still marks breaking changes. The 0.9 line keeps
+`0.9.N`, and `0.11` restarts on the same daily scheme.
+
 This document classifies **every** user-facing surface by stability so you can
 decide which parts of `akm` are safe to script against today and which to
 treat as still-evolving. If a surface is not listed here, that is a bug —

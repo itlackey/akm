@@ -85,6 +85,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `eligibilitySource` is `proactive`, through a deterministic gate, the judgment tier or an earlier staged accept: it is
   left for review with reason `proactive-needs-review` (and is not sent to the judgment tier). Feedback-driven
   proposals (`signal-delta`, `scope`) are unchanged. No new setting. (#1147)
+- **0.10 releases are daily builds, `0.10.YYMMDDNN`, with `-alpha`, `-beta` and `-rc` stages (#1089).** The patch
+  number is the UTC year, month and day plus the build that day (`NN`, `01` to `99`), two digits each: the first build
+  on 2026-10-10 is `0.10.26101001`. A prerelease carries its stage only (`0.10.26101001-alpha`, no `.N`), so one build
+  is promoted `-alpha` < `-beta` < `-rc` < `0.10.26101001`; prereleases publish to the npm `next` tag and stable builds
+  to `latest`. The Release workflow validates the format and takes a new `stage` input (`scripts/release-version.ts`);
+  `bun scripts/release-version.ts next` prints the next free build number for today from the versions on npm. Versions
+  sort by date across months and years, so `akm upgrade` and semver ranges order them correctly. The 0.9 line keeps
+  `0.9.N`. See `STABILITY.md`. (#1089)
 
 ### Removed
 

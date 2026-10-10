@@ -4,9 +4,19 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version already committed in package.json (for example, 1.2.3)"
+        description: "Version already committed in package.json: 0.10 and later 0.<minor>.YYMMDDNN (for example 0.10.26101001; bun scripts/release-version.ts next prints the next free one), earlier lines X.Y.Z."
         required: true
         type: string
+      stage:
+        description: "Prerelease stage of the build, published to the npm next tag. none publishes the build itself to latest. Daily builds only."
+        required: false
+        default: none
+        type: choice
+        options:
+          - none
+          - alpha
+          - beta
+          - rc
 
 permissions:
   contents: write
@@ -25,7 +35,8 @@ jobs:
     timeout-minutes: 45
     environment: release
     env:
-      CANDIDATE_VERSION: ${{ inputs.version }}
+      VERSION_INPUT: ${{ inputs.version }}
+      STAGE_INPUT: ${{ inputs.stage }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
@@ -44,13 +55,25 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
+      # scripts/release-version.ts validates the format (0.10+:
+      # 0.<minor>.YYMMDDNN; older lines: X.Y.Z[-prerelease]) and appends the
+      # stage input to a daily build (#1089). package.json must carry the
+      # version input, as before; a stage is stamped into this run's
+      # package.json so one committed build can be published as -alpha, -beta,
+      # -rc and then as itself.
       - name: Verify version
         run: |
+          CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          if [ "$PACKAGE_VERSION" != "$CANDIDATE_VERSION" ]; then
-            echo "package.json is $PACKAGE_VERSION, not $CANDIDATE_VERSION"
+          if [ "$PACKAGE_VERSION" != "$VERSION_INPUT" ]; then
+            echo "package.json is $PACKAGE_VERSION, not $VERSION_INPUT"
             exit 1
           fi
+          if [ "$CANDIDATE_VERSION" != "$VERSION_INPUT" ]; then
+            npm pkg set version="$CANDIDATE_VERSION"
+          fi
+          echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
+          echo "Releasing akm-cli@$CANDIDATE_VERSION"
 
       # Publish gate: tests/release-check.sh — the same script the runbook
       # directs operators to run locally before triggering this workflow — is
