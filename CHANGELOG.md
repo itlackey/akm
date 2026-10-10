@@ -86,6 +86,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`akm improve <scope>` warns when the scope matches no asset.** A type scope that matches nothing in the stash
+  (`akm improve typo`, `improve skills`, `improve memorys`) prints one warning on stderr naming the scope and, for a
+  near-miss of a real type, the likely intended one. The exit code and the empty plan are unchanged, and a valid scope
+  with nothing eligible does not warn.
 - **Child workflows are kept in a simple form (#1096).** A markdown step declares `unit: { workflow: workflows/<name>,
   with: { <param>: <literal or { from: <reference> }> } }` and the engine starts the child as its own run and drives it
   to completion; the child's last step output is the composing step's output. The form is Experimental. The freeze,
