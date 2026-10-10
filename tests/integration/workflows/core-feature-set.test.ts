@@ -202,8 +202,8 @@ describe("core feature set: akm workflow run", () => {
     expect(envelope.ok).toBe(true);
     expect(envelope.run.status).toBe("completed");
     // params: the flags were typed against the declared schema (limit is an integer);
-    // the unsupplied boolean is simply absent (see the default-not-applied test below).
-    expect(envelope.run.params).toEqual({ topic: "gadgets", limit: 3 });
+    // the unsupplied boolean takes its declared default; explicit values win over defaults.
+    expect(envelope.run.params).toEqual({ topic: "gadgets", limit: 3, dry_run: false });
     expect(envelope.executed.map((step) => step.stepId)).toEqual(["collect", "report"]);
 
     // defaults.engine: both units ran on the workflow's own engine, never the install default.
@@ -233,11 +233,8 @@ describe("core feature set: akm workflow run", () => {
     expect(text).toContain("three gadgets");
   }, 30_000);
 
-  test("an omitted param is absent from the run: frontmatter `default:` is not applied or shown to the unit", async () => {
-    // Pins today's behaviour so a fix is a deliberate change (see docs/plans/0.10-workflows.md,
-    // "Gaps in the core set"): the schema accepts `default:` but the engine neither fills
-    // `run.params` nor puts the default in the unit prompt, which is why the real workflows
-    // restate their defaults in prose.
+  test("an omitted param takes its frontmatter `default:` and the unit sees it", async () => {
+    // Declared defaults are applied at run start; explicit values win (first test above).
     write("workflows/core.md", agentWorkflow({ gate: false }));
     const calls = installFakeSdk(happyReply);
 
@@ -245,8 +242,8 @@ describe("core feature set: akm workflow run", () => {
     expect(result.code).toBe(0);
     const envelope = parseEnvelope(result.stdout);
     expect(envelope.run.status).toBe("completed");
-    expect(envelope.run.params).toEqual({});
-    expect(unitCalls(calls)[0]?.prompt).toContain("Run parameters: {}");
+    expect(envelope.run.params).toEqual({ topic: "widgets", limit: 2, dry_run: false });
+    expect(unitCalls(calls)[0]?.prompt).toContain('"topic":"widgets"');
     // No rubric anywhere: no judge call is made.
     expect(judgeCalls(calls)).toHaveLength(0);
     expect(unitCalls(calls)).toHaveLength(2);
