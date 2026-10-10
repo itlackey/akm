@@ -83,7 +83,6 @@ describe("compiled plan — structural golden", () => {
           sequenceIndex: 0,
           spec: {
             uses: "akm/command",
-            commandMode: "literal",
             with: { content: "Build the artifact." },
             source: { path: "workflows/test.md", start: 4, end: 4 },
           },
@@ -102,7 +101,6 @@ describe("compiled plan — structural golden", () => {
           sequenceIndex: 1,
           spec: {
             uses: "akm/command",
-            commandMode: "literal",
             with: { content: "Deploy the artifact." },
             source: { path: "workflows/test.md", start: 5, end: 5 },
           },

@@ -212,20 +212,6 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
         ...optional,
       };
-    case "script":
-      return {
-        kind: "script",
-        ref: string(target.ref, `${label} script ref`),
-        contentHash: string(target.contentHash, `${label} contentHash`),
-        exec: decodeExec(target.exec, label),
-        interpreter: string(target.interpreter, `${label} interpreter`),
-        extension: string(target.extension, `${label} extension`),
-        bytesBase64: typeof target.bytesBase64 === "string" ? target.bytesBase64 : fail(`${label} has no script bytes`),
-        byteLength: typeof target.byteLength === "number" ? target.byteLength : 0,
-        cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
-        materialization: "ephemeral-0700-delete",
-        ...optional,
-      };
     case "child-workflow":
       return {
         kind: "child-workflow",
@@ -233,7 +219,7 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         planHash: string(target.planHash, `${label} planHash`),
         frozenPlan: decodeWorkflowPlan(target.frozenPlan),
         contentHash: string(target.contentHash, `${label} contentHash`),
-        via: target.via === "task" ? "task" : "direct",
+        ...(target.via === "task" || target.via === "direct" ? { via: target.via } : {}),
         ...(typeof target.taskRef === "string" ? { taskRef: target.taskRef } : {}),
         ...(inputBindings ? { inputBindings } : {}),
       };

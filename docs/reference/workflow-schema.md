@@ -13,19 +13,13 @@ detail.
 - For operating a run day to day (`run`, `status`, `resume`, `abandon`), see
   [Running Workflows](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md).
 
-## Source formats and shared IR
+## Source format
 
-Peer workflow sources include Markdown `.md` and GitHub-shaped YAML `.yml`.
-`.yaml` is not supported or recognized as a workflow source. Both adapters
-compile into the same strict source IR version 1 (`sourceIrVersion: 1`) before
-target resolution and durable freezing.
-
-The shipped `schemas/akm-workflow.json` frontmatter schema applies to and
-validates the Markdown source only. Markdown is not the sole or only workflow
-source; the GitHub-shaped YAML adapter has its own bounded parser and shares
-the source-IR decoder and semantic authorities.
-
-### Markdown source
+A workflow is a Markdown `.md` asset. Nothing else is a workflow source: the
+GitHub-shaped `.yml` workflow format was removed in 0.10, and a stray `.yml` file
+under `workflows/` is skipped at index time with a message saying it must use
+`.md`. The shipped `schemas/akm-workflow.json` frontmatter schema
+validates the source.
 
 A Markdown workflow is an ordinary AKM asset — the same envelope as every
 other Markdown type, OKF-conformant frontmatter plus a body — whose
@@ -33,100 +27,7 @@ frontmatter carries the orchestration graph (params, and how each step
 dispatches, fans out, and gates). Its body carries each step's
 instructions and gate rubric under plain headings, joined to the frontmatter
 by step id. The remainder of this page's frontmatter/body sections document
-that Markdown authoring format.
-
-## GitHub-shaped YAML subset
-
-A complete valid `on` plus `jobs` document is one workflow asset.
-It never creates a duplicate or second task asset. The root vocabulary is exactly
-`name`, `on`, and `jobs`:
-
-```yaml
-name: Local checks
-on:
-  schedule:
-    - cron: "0 6 * * *"
-  workflow_dispatch: {}
-jobs:
-  checks:
-    runs-on: [self-hosted]
-    steps:
-      - id: lint
-        run: bun run lint
-      - id: review
-        uses: akm/command
-        with:
-          ref: commands/review
-```
-
-AKM's public position on this format: **AKM YAML uses a familiar
-GitHub-step-shaped syntax but is an AKM workflow format, executed by AKM's
-native engine.** It is not Marketplace-action-compatible, does not evaluate
-GitHub expressions or contexts, has no hosted runner images or service
-containers, and does not execute multiple jobs.
-
-The accepted 0.9.2 subset is deliberately closed:
-
-- `on` accepts five-field `schedule` entries and an empty or null
-  `workflow_dispatch`; workflow_dispatch inputs are unsupported.
-- Service events are rejected.
-  A rejected service event creates no watcher and no polling daemon.
-- **`jobs:` must contain exactly one job.** A document with zero, two, or
-  more jobs fails at the adapter with reason `multi-job-unsupported`,
-  surfaced as `UsageError` code `COMPOSITION_INVALID` when the workflow is
-  frozen (`akm workflow run` or `akm workflow plan`). Split a multi-job
-  document into separate single-job workflows and compose them with a
-  child-workflow step (`uses: workflows/<ref>`) instead. A job's `needs:`
-  must be empty — a non-empty `needs:` fails for the same reason, since a
-  single job has nothing to depend on.
-- Each job requires exactly `runs-on: [self-hosted]`. `name`, `needs`, and
-  `steps` are the remaining job fields.
-- Each step requires `id` and exactly one `uses` or `run`; optional fields are
-  `name`, `with`, `env`, `shell`, and contained `working-directory`.
-- A `run` accepts only token-safe local command tokens.
-  Shell expansion and operators are unsupported and rejected, even when a host shell is named.
-- `uses` is classified as a canonical asset ref (`commands/`, `scripts/`,
-  `tasks/`, `workflows/`), plus the `akm/command` builtin. `akm/command`,
-  command, script, task, and **child-workflow** composition are local
-  targets — see [Child workflows](#child-workflows) for `uses:
-  workflows/<ref>`.
-  Local actions and Docker actions are unsupported and rejected (including
-  `./` and `docker://`); a GitHub Action locator (`owner/repo[/path]@ref`,
-  e.g. `actions/checkout@v4`) and every other unrecognized shape fail the
-  same way — `unsupported-uses-target` — since AKM never acquires or
-  executes a remote action. AKM does not recognize the locator grammar as a
-  distinct case; it is simply not one of the four canonical asset-ref
-  families or the `akm/command` builtin.
-- `with:` on a **task-composed** step (`uses: tasks/<ref>`) **binds** the
-  target task source's declared `inputs:` — see
-  [Typed inputs and output](tasks.md#typed-inputs-and-output). Each value is either a literal
-  (validated against the input's declared schema at freeze) or a reference
-  `{from: "steps.<id>.output(.<segment>)*"}`, resolved just before the unit
-  dispatches and re-validated against the same schema then. The reference
-  grammar also accepts `{from: "params.<name>"}`, naming a declared param of
-  the *composing* workflow itself — but a composing step is only authorable
-  in a GitHub-shaped document (this section), whose root keys are exactly
-  `name`, `on`, and `jobs` with `workflow_dispatch` inputs rejected, so it
-  can never declare `params:` of its own. In practice that reference form
-  therefore always fails freeze here, with "does not name a declared
-  workflow param; declared params: (none)". An unknown `with:` key, a
-  missing required input with no default, or a reference naming a step that
-  doesn't exist earlier in the job all fail at **freeze** with `UsageError`
-  code `INPUT_BINDING_INVALID`, before the plan is ever published. If the
-  target task declares **no** `inputs:` at all (a `version: 4` task with no
-  `inputs:` key) — or the step targets
-  `uses: commands/<ref>` / `uses: scripts/<ref>`, which are never binding
-  surfaces — any authored
-  `with:`, including an empty mapping (`with: {}`), is rejected at freeze
-  with `UsageError` code `COMPOSITION_INVALID`, exit 2. Omitting `with:`
-  entirely always freezes normally, regardless of target. `with:` on
-  `uses: akm/command` is unaffected by any of this and is still required to
-  supply the builtin action's arguments, as in the example above. `with:` on
-  a **child-workflow** target (direct or task-wrapped) binds the child's
-  declared `params:` instead of `inputs:` — see
-  [Child workflows](#child-workflows).
-- GitHub expressions and contexts are unsupported and rejected anywhere in
-  the parsed tree.
+that authoring format.
 
 ## Child workflows
 

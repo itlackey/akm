@@ -126,10 +126,10 @@ separate cleanup that includes restoring the OS scheduler.
 | WF-9 | Pre-`irVersion`-5 stored plan is retired | No | Any | Yes | — |
 | WF-10 | Removed `inherit_env` is rejected | No | Any | Yes | — |
 | INT-1 | A task that runs a workflow | No | Any | Yes | — |
-| INT-2 | A workflow step that targets a task (+ typed input binding) | No | Any | Yes | — |
+| INT-2 | (removed in 0.10: a workflow step that targets a task) | — | — | — | — |
 | INT-3 | Failure propagation: `task history` vs `workflow status` | No | Any | Yes | — |
 | INT-4 | Identity across the seam: abandon then re-invoke | No | Any | Yes | — |
-| INT-5 | Shipped `improve/*.yml` tasks as a real-world case | No | Any | Yes | — |
+| INT-5 | Shipped `improve/*.yml` tasks as a real-world case (`task explain` only) | No | Any | Yes | — |
 | DT-1 | `task add` happy path installs a real cron entry | **Yes** | Linux (cron) | Partial | — |
 | DT-2 | `task add --disabled` writes a disabled binding | **Yes** | Linux (cron) | Partial | — |
 | DT-3 | `task sync` drift reconciliation (shell-target task) | **Yes** | Linux (cron), VM recommended | No — **UNVERIFIED** | — |
@@ -670,7 +670,7 @@ incorrect.
 **Why it matters:** child workflows are the headline capability of this
 release. A parent step composing another workflow must show up correctly in
 the frozen plan graph before anything runs, and actually drive the child to
-completion, folding its exported output back into the parent step's
+completion, folding its last step output back into the parent step's
 artifact.
 
 **Setup:**
@@ -679,7 +679,7 @@ artifact.
 ```markdown
 ---
 type: workflow
-description: Child workflow composed by parent.yml (exec-only, no engine required)
+description: Child workflow composed by parent.md (exec-only, no engine required)
 updated: 2026-01-01
 tags: [example]
 params:
@@ -689,9 +689,6 @@ steps:
     unit:
       exec:
         command: ["bash", "-lc", "echo child-said-hello"]
-outputs:
-  message:
-    from: steps.greet.output
 ---
 
 # Child Workflow
@@ -701,20 +698,22 @@ outputs:
 Print a fixed greeting.
 ```
 
-`$AKM_BUNDLE_DIR/workflows/parent.yml` (composition requires a
-GitHub-shaped `.yml` parent — Markdown frontmatter has no `uses:` key):
-```yaml
-name: Parent composes child
-on:
-  workflow_dispatch: {}
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: workflows/child
-        with:
-          greeting: hello-from-parent
+`$AKM_BUNDLE_DIR/workflows/parent.md` (child workflows are Experimental):
+```markdown
+---
+type: workflow
+description: Parent composes child
+steps:
+  - id: dispatch
+    unit:
+      workflow: workflows/child
+      with:
+        greeting: hello-from-parent
+---
+
+## dispatch
+
+Run the child workflow.
 ```
 
 **Part A — `plan` (no writes, no execution):** `akm workflow plan
@@ -724,17 +723,15 @@ workflows/parent --format json`
 "child-workflow"`; `.steps[0].inputBindings == [{"name": "greeting", "kind":
 "literal", "value": "hello-from-parent"}]`; `.steps[0].expansion.via ==
 "child"`, `.expansion.childRef == "bundle//workflows/child"`,
-`.expansion.childVia == "direct"`, `.expansion.childOutputs ==
-["message"]`; `.steps[0].expansion.steps` contains the child's own frozen
+`.steps[0].expansion.steps` contains the child's own frozen
 graph (one entry, `stepId: "greet"`, `targetKind: "shell"`).
 
 **Part B — `run` (actually executes):** `akm workflow run workflows/parent
 --format json`, then `akm workflow status <run-id> --format json`
 
 **Expected result (verified live):** `run` exits `0`, `.run.status ==
-"completed"`; `status`'s `.workflow.steps[0].evidence.output == {"message":
-"child-said-hello"}` — the child's declared `outputs:` export, promoted as
-the parent step's own artifact; `status` has a top-level **`.children`**
+"completed"`; `status`'s `.workflow.steps[0].evidence.output == "child-said-hello"` — the
+child's last step output, promoted as the parent step's own artifact; `status` has a top-level **`.children`**
 array (not nested under `.workflow`): one entry, `status: "completed"`,
 `workflowRef: "bundle//workflows/child"`, `spawnedByUnitId:
 "dispatch:solo"`, `stepId: "dispatch"`.
@@ -1146,16 +1143,20 @@ scheduler writes).
 
 **Setup:**
 ```sh
-cat > "$AKM_BUNDLE_DIR/workflows/leaf.yml" <<'EOF'
-name: Manual test leaf workflow
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: work
-        run: printf leaf-ok
+cat > "$AKM_BUNDLE_DIR/workflows/leaf.md" <<'EOF'
+---
+type: workflow
+description: Manual test leaf workflow
+steps:
+  - id: work
+    unit:
+      exec:
+        command: ["printf", "leaf-ok"]
+---
+
+## work
+
+Print leaf-ok.
 EOF
 
 cat > "$AKM_BUNDLE_DIR/tasks/akm-manual-test-wf-task.yml" <<'EOF'
@@ -1193,98 +1194,11 @@ OS scheduler.
 **Cleanup:** `rm -rf "$AKM_SANDBOX"` (no scheduler entries were ever
 created).
 
-### INT-2 — A workflow step that targets a task (the inverse), including typed input binding
+### INT-2 — (removed in 0.10)
 
-**Why it matters:** the reverse composition — the alpha.5
-`FrozenChildWorkflowTarget`/task-bindings machinery. If a workflow step
-`uses: tasks/<ref>` doesn't correctly expand at `plan` time, a published
-workflow's step graph silently diverges from what actually runs.
-
-**Destructive:** No — `workflow plan` performs zero durable writes.
-
-**Setup:** reuses `workflows/leaf.yml` and
-`tasks/akm-manual-test-wf-task.yml` from INT-1, plus:
-```sh
-cat > "$AKM_BUNDLE_DIR/workflows/task-wrapped.yml" <<'EOF'
-name: Manual test workflow wrapping a task
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: tasks/akm-manual-test-wf-task
-EOF
-akm index
-```
-
-**Steps and expected results:**
-1. `akm workflow plan workflows/task-wrapped --format json` — expected
-   (verified live): `.steps[0].stepId == "dispatch"`, `.targetKind ==
-   "child-workflow"`, `.expansion.via == "child"`, `.expansion.childVia ==
-   "task"`, `.expansion.childTaskRef ==
-   "bundle//tasks/akm-manual-test-wf-task"`, `.expansion.childRef ==
-   "bundle//workflows/leaf"`, `.expansion.steps[0].stepId == "work"` and
-   `.targetKind == "shell"`; exit `0`.
-2. `akm workflow run workflows/task-wrapped --format json` (this DOES
-   publish a run — acceptable, scoped to isolated bundle/state dirs, not
-   the OS scheduler), then `akm workflow status <runId> --format json`.
-   **Expected result (verified live — this replaces an UNVERIFIED marker
-   from an earlier draft of this test):** exit `0`, final `.run.status ==
-   "completed"`. Because `leaf.yml` declares no `outputs:` block, the
-   parent step's `.workflow.steps[0].evidence.output` is **not** the
-   child's step output directly — it is a run pointer: `{"runId":
-   "<child-run-uuid>", "status": "completed"}`. The full child summary
-   lives in the top-level `.children[0]`: `{"runId": "<same uuid>",
-   "workflowRef": "bundle//workflows/leaf", "status": "completed",
-   "spawnedByUnitId": "dispatch:solo", "stepId": "dispatch", ...}` — same
-   shape as WF-3's `.children` array. (Contrast with WF-3, where the child
-   workflow *does* declare `outputs:`, and that gets promoted into the
-   parent step's `evidence.output` instead of a bare run pointer.)
-
-**Bonus check — typed input binding across the seam** (exercises the PR's
-"fail-closed input bindings"):
-```sh
-cat > "$AKM_BUNDLE_DIR/tasks/akm-manual-test-typed-input-task.yml" <<'EOF'
-version: 4
-name: Manual test typed-input task (run target)
-inputs:
-  note:
-    type: string
-    required: true
-run: printf "note=%s" "$AKM_TASK_INPUTS"
-schedule:
-  - cron: "0 3 * * *"
-    enabled: false
-    inputs:
-      note: scheduled-default
-EOF
-
-cat > "$AKM_BUNDLE_DIR/workflows/wrap-typed-input-task.yml" <<'EOF'
-name: Manual test workflow binding a literal input into a task step
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: tasks/akm-manual-test-typed-input-task
-        with:
-          note: hello-seam
-EOF
-akm index
-akm workflow plan workflows/wrap-typed-input-task --format json
-```
-**Expected (verified live):** `.steps[0].inputBindings == [{"name":"note","kind":"literal","value":"hello-seam"}]`.
-
-Note: a **required** task input with no `default:` must be given a matching
-`schedule[].inputs.<name>` entry or the task source is rejected outright
-(`TASK_SOURCE_INVALID`) — a task-only rule, not part of the seam, but it
-will trip up anyone building this fixture from scratch.
-
-**Cleanup:** `rm -rf "$AKM_SANDBOX"`.
+A workflow step that targets a task (`uses: tasks/<ref>`) went with the
+GitHub-shaped YAML workflow format. A task runs a workflow (INT-1); a workflow
+step runs a child workflow (WF-3), not a task.
 
 ### INT-3 — Failure propagation: `task history` vs `workflow status`
 
@@ -1297,16 +1211,19 @@ cron failure notification points at), or must they already know to pivot to
 
 **Setup:**
 ```sh
-cat > "$AKM_BUNDLE_DIR/workflows/fail-leaf.yml" <<'EOF'
-name: Manual test failing leaf workflow
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: boom
-        run: exit 1
+cat > "$AKM_BUNDLE_DIR/workflows/fail-leaf.md" <<'EOF'
+---
+type: workflow
+steps:
+  - id: boom
+    unit:
+      exec:
+        command: ["sh", "-c", "exit 1"]
+---
+
+## boom
+
+Fail.
 EOF
 
 cat > "$AKM_BUNDLE_DIR/tasks/akm-manual-test-fail-task.yml" <<'EOF'
@@ -1360,18 +1277,27 @@ the next scheduled firing must do something predictable.
 
 **Setup:**
 ```sh
-cat > "$AKM_BUNDLE_DIR/workflows/two-step.yml" <<'EOF'
-name: Manual test two-step workflow
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: first
-        run: printf step-one-ok
-      - id: second
-        run: printf step-two-ok
+cat > "$AKM_BUNDLE_DIR/workflows/two-step.md" <<'EOF'
+---
+type: workflow
+steps:
+  - id: first
+    unit:
+      exec:
+        command: ["printf", "step-one-ok"]
+  - id: second
+    unit:
+      exec:
+        command: ["printf", "step-two-ok"]
+---
+
+## first
+
+Print step-one-ok.
+
+## second
+
+Print step-two-ok.
 EOF
 
 cat > "$AKM_BUNDLE_DIR/tasks/akm-manual-test-abandon-task.yml" <<'EOF'
@@ -1411,7 +1337,7 @@ starts fresh, never resumes and never errors — a direct consequence of
 attaching to `status = 'active'` rows. One nuance: this auto-attach path is
 also `AND parent_run_id IS NULL`, so it applies to a top-level run a *task*
 starts (INT-1) but not to a run started as a **child** of a parent workflow
-(INT-2) — a child run is only ever driven by its parent. Abandoning a child
+(WF-3) — a child run is only ever driven by its parent. Abandoning a child
 run's semantics from the *task* side is **UNVERIFIED** — not exercised
 here, plausibly a second interesting gap (a task can only ever directly own
 a top-level run).
@@ -1430,30 +1356,16 @@ authors and what these shipped files contain.
 actually target an `akm workflow` asset. Every one is `run: akm <command>
 ...` — a shell target. Verified live for `akm-improve-consolidate.yml`:
 `.target == {"kind":"shell"}`. So the literal task→workflow seam (INT-1)
-has **no shipped real-world example** as of alpha.5 — "workflow" in the
-PR/brief is used in the English sense (the `improve` pipeline is a
-multi-step process), not the `akm workflow` asset sense. The direction a
-real shipped task asset DOES exercise unmodified is INT-2's shape — a
-workflow step wrapping a real task via `uses: tasks/`.
+has **no shipped real-world example** — "workflow" in the PR/brief is used in
+the English sense (the `improve` pipeline is a multi-step process), not the
+`akm workflow` asset sense.
 
-**Destructive:** No (`workflow plan` only — zero durable writes).
+**Destructive:** No (`task explain` only).
 
 **Setup:**
 ```sh
 cp /home/founder3/code/github/itlackey/akm/src/assets/tasks/improve/akm-improve-consolidate.yml \
    "$AKM_BUNDLE_DIR/tasks/akm-improve-consolidate.yml"
-
-cat > "$AKM_BUNDLE_DIR/workflows/wrap-real-improve-task.yml" <<'EOF'
-name: Manual test workflow wrapping the real shipped improve-consolidate task
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: tasks/akm-improve-consolidate
-EOF
 akm index
 ```
 
@@ -1463,15 +1375,11 @@ akm index
    pass (every 4h at :20)"`, `.schedule[0] == {"ordinal":0,"cron":"20 */4 * * *","enabled":false,"source":"schedule[0].cron","inputs":{}}`
    — the real shipped file describes a schedule but cannot activate itself;
    this host's `scheduler.enabled` list does not name it.
-2. `akm workflow plan workflows/wrap-real-improve-task --format json` →
-   `.steps[0].targetKind == "shell"`, `.steps[0].expansion ==
-   {"via":"task","taskRef":"tasks/akm-improve-consolidate"}`.
 
-**Do not** `workflow run` this composed workflow, and do not `task run
-akm-improve-consolidate` directly — both would invoke the real `akm improve
---strategy consolidate` pipeline against a live agent engine, which is slow,
-may require credentials, and is out of scope for a seam test. `workflow
-plan` already proves the seam without executing anything.
+**Do not** `task run akm-improve-consolidate` directly — it would invoke the
+real `akm improve --strategy consolidate` pipeline against a live agent
+engine, which is slow, may require credentials, and is out of scope for a seam
+test.
 
 **Cleanup:** `rm -rf "$AKM_SANDBOX"`.
 
@@ -1598,16 +1506,20 @@ collision-proof bundle name so the resulting scheduler evidence is easy to
 identify and clean up):
 ```sh
 export SEAM_BUNDLE_NAME="akm-manual-test-seam-$(date +%s)"
-cat > "$AKM_BUNDLE_DIR/workflows/leaf.yml" <<'EOF'
-name: Manual test leaf workflow
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: work
-        run: printf leaf-ok
+cat > "$AKM_BUNDLE_DIR/workflows/leaf.md" <<'EOF'
+---
+type: workflow
+description: Manual test leaf workflow
+steps:
+  - id: work
+    unit:
+      exec:
+        command: ["printf", "leaf-ok"]
+---
+
+## work
+
+Print leaf-ok.
 EOF
 cat > "$AKM_BUNDLE_DIR/tasks/akm-manual-test-drift.yml" <<'EOF'
 version: 4
@@ -1780,18 +1692,10 @@ specific corrections from that review:
    correct, still-true finding kept in this document instead is: `akm task
    --help` genuinely has no `remove` subcommand (`add|run|explain|history|
    sync|doctor` only) — confirmed live.
-2. **INT-2's parent-side child-run evidence shape**, marked `UNVERIFIED` in
-   the source draft, was resolved live during review (see INT-2 step 2
-   above): for a child dispatched via `uses: tasks/<ref>` where the child
-   workflow declares no `outputs:`, the parent step's `evidence.output` is
-   a bare `{runId, status}` pointer, while the full child summary is
-   carried in the top-level `.children[]` array — the same array shape
-   WF-3 already demonstrates for a direct (non-task) child dispatch whose
-   child workflow *does* declare `outputs:`.
 
 Live alpha.5 spot-checks performed (in addition to the two above): TASK-3,
 TASK-6, TASK-9, TASK-12, TASK-13, WF-2, WF-5 (incl. `status --units`),
-WF-3/INT-2's `.children` shape, WF-6/#847's original reproduction, WF-9's
+WF-3's `.children` shape, WF-6/#847's original reproduction, WF-9's
 sqlite table/column names and exact error message, and INT-1 end to end. All
 matched their source draft's claimed exact fields, error codes, and exit codes
 with no further discrepancies found. Stable 0.9.2 changes WF-6 and DT-5 to

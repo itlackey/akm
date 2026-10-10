@@ -21,7 +21,7 @@ projects.
 
 Every new run/start compiles source IR v1 and freezes the durable plan v4
 family's current executable format (`irVersion: 5`) before publishing the run.
-Markdown `.md` and GitHub-shaped `.yml` refs use the same freeze path.
+A workflow ref is a Markdown `.md` source.
 
 ```sh
 akm workflow run workflows/ship-release --version 1.2.3

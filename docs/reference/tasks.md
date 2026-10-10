@@ -251,10 +251,9 @@ redact: [TOKEN]
   consumer — a native run's status comes from its exit code alone — so
   declaring `output:` on them fails parsing with `TASK_SOURCE_INVALID`
   instead of silently recording a contract nothing enforces.
-- A task source v4 document **can** be the target of a workflow step's
-  `uses: tasks/<ref>` — see the
-  [GitHub-shaped YAML subset](workflow-schema.md#github-shaped-yaml-subset)
-  for how a workflow step's `with:` binds a v4 task's declared `inputs:`.
+- A workflow step cannot target a task: the GitHub-shaped YAML workflow format
+  that carried `uses: tasks/<ref>` was removed in 0.10. A task runs a workflow
+  (`uses: workflows/<ref>`), not the other way round.
 
 ### Input flags
 
@@ -280,10 +279,8 @@ workflow step's own composition uses); for every other target — `run:`
 shell, `scripts/<ref>`, `commands/<ref>` — the values are validated and then
 **discarded**. `akm task run`'s own flags never populate an
 `AKM_TASK_INPUTS` environment variable or a `## Task inputs` prompt block.
-Those two surfaces are a *different* delivery path: they exist only when a
-**workflow step** composes this task through `uses: tasks/<ref>` and a
-`with:` binding, resolved fresh for that step's own dispatch — see
-[`with:` on a task-composed step](workflow-schema.md#github-shaped-yaml-subset).
+Those two surfaces existed only for a workflow step composing a task through
+`uses: tasks/<ref>`, which was removed in 0.10.
 A scheduled run (`schedule[].inputs`, above) reaches the target through this
 same `akm task run` path, so it inherits the identical rule: delivered as
 params for a `workflows/<ref>` target, otherwise validated and discarded.

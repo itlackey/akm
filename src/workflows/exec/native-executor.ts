@@ -37,7 +37,6 @@ import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import type { TaskV3ScriptInterpreter } from "../../tasks/prepare/prepared-execution";
 import type { WorkflowBudget, WorkflowPlanStep } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 // The ONE child-workflow drive — publishes and drives a
@@ -78,7 +77,6 @@ import {
 
 export type { UnitDispatcher, UnitDispatchRequest, UnitDispatchResult } from "./unit-dispatch";
 
-import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../../tasks/frozen-script";
 import { enqueueUnitWrite } from "./unit-writer";
 
 export interface StepExecutionContext {
@@ -543,7 +541,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     ...(sensitiveValues ? { sensitiveValues } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     // F-1: forwarded to exec-unit.ts's childEnv for a
-    // "script"/"shell" unit, and to dispatchWorkflowExecution's
+    // "shell" unit, and to dispatchWorkflowExecution's
     // runExecution eventSource option (unit-dispatch.ts)
     // for a "command" unit — both arms observe it.
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
@@ -951,46 +949,6 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
  */
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
   const frozenTarget = request.frozenTarget;
-  if (frozenTarget.kind === "script") {
-    assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    const materialized = materializeFrozenScript({
-      sourceRef: frozenTarget.ref,
-      interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
-      extension: frozenTarget.extension,
-      bytesBase64: frozenTarget.bytesBase64,
-      byteLength: frozenTarget.byteLength,
-      sha256: frozenTarget.contentHash,
-    });
-    try {
-      const command = frozenScriptCommand(
-        {
-          sourceRef: frozenTarget.ref,
-          interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
-          extension: frozenTarget.extension,
-          bytesBase64: frozenTarget.bytesBase64,
-          byteLength: frozenTarget.byteLength,
-          sha256: frozenTarget.contentHash,
-        },
-        materialized.file,
-      );
-      return await runExecUnit({
-        unitId: request.unitId,
-        exec: {
-          ...frozenTarget.exec,
-          command: command as [string, ...string[]],
-        },
-        baseDir: request.cwd ?? frozenTarget.cwdIdentity.realCwd,
-        ...(request.env ? { env: request.env } : {}),
-        ...(request.execContext ? { context: request.execContext } : {}),
-        ...(request.schema ? { hasOutputSchema: true } : {}),
-        timeoutMs: request.timeoutMs,
-        ...(request.signal ? { signal: request.signal } : {}),
-        ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
-      });
-    } finally {
-      cleanupFrozenScript(materialized);
-    }
-  }
   if (frozenTarget.kind === "shell") {
     if (frozenTarget.cwdIdentity) assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
     return runExecUnit({

@@ -5,8 +5,8 @@
 /**
  * `akm workflow` command family. `run` is the canonical start/resume/execute
  * surface; the former public `start`, `next`, and `complete` lifecycle is gone.
- * `create --print` emits Markdown; execution accepts peer `.md` and
- * GitHub-shaped `.yml` workflow sources. Validate with `akm lint --type workflows`.
+ * `create --print` emits Markdown, the only workflow source format. Validate
+ * with `akm lint --type workflows`.
  */
 
 import { getStringArg } from "../cli/parse-args";

@@ -429,7 +429,7 @@ so a layout change is applied in place rather than by discarding the index.
 Durable workflow, task, proposal, event, and usage state in `state.db` is
 never touched by these paths.
 
-Workflow `.md` and `.yml` adapters compile directly to source IR version 1.
+The workflow `.md` adapter compiles directly to source IR version 1.
 The index stores only the ordinary normalized `entries` row and searchable
 metadata derived from that IR. It does not cache a second workflow AST or an
 executable plan. Starting a run recompiles the authored source once and freezes

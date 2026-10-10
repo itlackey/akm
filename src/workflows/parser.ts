@@ -402,7 +402,7 @@ function stepSpec(step: ProgramStep, section: StepSection | undefined): Workflow
         }
       : exec
         ? { exec: { ...exec }, ...(prose?.trim() ? { instructions: prose } : {}) }
-        : { uses: "akm/command", commandMode: "literal" as const, with: { content: prose ?? "" } }),
+        : { uses: "akm/command", with: { content: prose ?? "" } }),
     ...(Object.keys(unit).length > 0 ? { unit } : {}),
     ...(step.map
       ? {

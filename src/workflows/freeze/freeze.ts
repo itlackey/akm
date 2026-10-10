@@ -29,14 +29,10 @@ import {
   type WorkflowUnitNode,
 } from "../plan";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
-import { classifyWorkflowStepUses } from "../source-semantics";
-import { qualifyRef } from "./environment";
 import { baseUnitOf, type FreezeStep, type ResolutionContext, type ResolvedDispatch } from "./step-values";
 import { childWorkflowDispatch } from "./targets/child-workflow";
 import { commandDispatch, commandResult } from "./targets/command";
-import { directScript } from "./targets/script";
 import { directShell } from "./targets/shell";
-import { taskDispatch } from "./targets/task";
 
 export interface FrozenWorkflow {
   readonly plan: WorkflowPlan;
@@ -108,43 +104,10 @@ async function resolveStep(source: FreezeStep, context: ResolutionContext): Prom
   const baseUnit = baseUnitOf(source);
   if (source.exec) return directShell(source, baseUnit, context);
   if (source.workflow) {
-    return childWorkflowDispatch({
-      source,
-      baseUnit,
-      childRefInput: source.workflow,
-      context,
-      via: "direct",
-      authoredInputs: { kind: "with", value: source.with },
-    });
+    return childWorkflowDispatch({ source, baseUnit, childRefInput: source.workflow, context });
   }
-  if (!source.uses) throw new Error(`workflow step ${source.id} has neither exec nor uses`);
-  const target = classifyWorkflowStepUses(source.uses);
-  if (target.kind === "task") return taskDispatch(source, baseUnit, target.ref, context);
-  if (target.kind === "workflow") {
-    return childWorkflowDispatch({
-      source,
-      baseUnit,
-      childRefInput: target.ref,
-      context,
-      via: "direct",
-      authoredInputs: { kind: "with", value: source.with },
-    });
-  }
-  // `commands/<ref>` and `scripts/<ref>` are not binding surfaces; `akm/command`'s
-  // `with:` is its own argument bag.
-  if (target.kind !== "builtin-command" && source.with !== undefined) {
-    const family = target.kind === "command" ? "commands" : "scripts";
-    throw new UsageError(
-      `Workflow step ${source.id} cannot pass with: to ${family} target ${target.ref}; a ${target.kind} ref is not a binding surface.`,
-      "COMPOSITION_INVALID",
-    );
-  }
-  if (target.kind === "script") return directScript(source, baseUnit, target.ref, context);
-  const action =
-    target.kind === "builtin-command"
-      ? source.with
-      : { ref: qualifyRef(target.ref, "commands", context.asset, context.config) };
-  return commandDispatch(source, baseUnit, action, context);
+  // A prose step: its body is the `akm/command` literal content (`parser.ts` `stepSpec`).
+  return commandDispatch(source, baseUnit, source.with, context);
 }
 
 /** The gate judge's frozen command target, or undefined when no engine is available and none is configured. */

@@ -176,15 +176,11 @@ function targetConcurrency(runner: RunnerSpec, config: AkmConfig): number | unde
   );
 }
 
-function frozenEnvironment(exec: WorkflowExec | undefined, literals: Readonly<Record<string, unknown>> | undefined) {
-  const bindings: FrozenWorkflowEnvironmentBinding[] = [
-    ...Object.entries(literals ?? {}).map(([name, value]) => ({
-      kind: "literal" as const,
-      name,
-      value: String(value),
-    })),
-    ...(exec?.passEnv ?? []).map((name) => ({ kind: "pass-through" as const, name })),
-  ];
+function frozenEnvironment(exec: WorkflowExec | undefined) {
+  const bindings: FrozenWorkflowEnvironmentBinding[] = (exec?.passEnv ?? []).map((name) => ({
+    kind: "pass-through" as const,
+    name,
+  }));
   return Object.freeze(bindings);
 }
 
@@ -194,7 +190,7 @@ function freezeRoot(step: WorkflowPlanStep, config: AkmConfig, defaults: Workflo
   const unit = spec.unit;
   if (unit?.env?.length)
     throw new Error("freezeWorkflow test fixtures do not resolve env assets; use a v4 source test");
-  const environment = frozenEnvironment(spec.exec, spec.env);
+  const environment = frozenEnvironment(spec.exec);
   const instructions = workflowStepInstructions(step);
   let frozenTarget: FrozenWorkflowCommandTarget | FrozenWorkflowShellTarget;
   if (spec.exec) {

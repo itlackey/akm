@@ -18,7 +18,6 @@
  * and a script target's `bytesBase64` are never read at all.
  */
 
-import path from "node:path";
 import { loadConfig } from "../../core/config/config";
 import type { TaskInputBinding } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
@@ -57,42 +56,22 @@ function projectInputBinding(binding: TaskInputBinding): Record<string, unknown>
     : { name: binding.name, kind: "reference", from: binding.from };
 }
 
-/**
- * A `child-workflow` target's `expansion`. Recurses into the embedded
- * plan's own steps in the identical shape — `usesById` is
- * omitted for the recursive call because a nested child's own authored
- * source is not available here (only its already-frozen plan is), so a
- * task-wrapped step nested inside a child conservatively reports `via:
- * "direct"` rather than guessing at its authoring surface.
- */
+/** A `child-workflow` target's `expansion`. Recurses into the embedded plan's own steps in the identical shape. */
 function childExpansion(target: FrozenChildWorkflowTarget): Record<string, unknown> {
   return {
     via: "child",
     childRef: target.ref,
     childPlanHash: target.planHash,
-    childVia: target.via,
-    ...(target.taskRef !== undefined ? { childTaskRef: target.taskRef } : {}),
-    steps: target.frozenPlan.steps.map((step, index) => projectStep(step, index, undefined)),
+    steps: target.frozenPlan.steps.map((step, index) => projectStep(step, index)),
   };
 }
 
-/** The task/child expansion boundary for one step (§4.6). */
-function stepExpansion(
-  step: WorkflowPlanStep,
-  frozenTarget: FrozenWorkflowTarget | undefined,
-  usesById: ReadonlyMap<string, string | undefined> | undefined,
-): Record<string, unknown> {
-  if (frozenTarget?.kind === "child-workflow") return childExpansion(frozenTarget);
-  const uses = usesById?.get(step.stepId);
-  if (uses?.startsWith("tasks/")) return { via: "task", taskRef: uses };
-  return { via: "direct" };
+/** The child expansion boundary for one step (§4.6). */
+function stepExpansion(frozenTarget: FrozenWorkflowTarget | undefined): Record<string, unknown> {
+  return frozenTarget?.kind === "child-workflow" ? childExpansion(frozenTarget) : { via: "direct" };
 }
 
-function projectStep(
-  step: WorkflowPlanStep,
-  sequenceIndex: number,
-  usesById: ReadonlyMap<string, string | undefined> | undefined,
-): Record<string, unknown> {
+function projectStep(step: WorkflowPlanStep, sequenceIndex: number): Record<string, unknown> {
   const unit = stepUnit(step);
   const frozenTarget = unit?.frozenTarget;
   const kind = step.root?.kind === "map" ? "map" : "unit";
@@ -112,7 +91,7 @@ function projectStep(
       judgeEngine: step.gate.frozenJudge ? step.gate.frozenJudge.request.engine.name : null,
     },
     ...(step.outputSchema !== undefined ? { outputSchema: step.outputSchema } : {}),
-    expansion: stepExpansion(step, frozenTarget, usesById),
+    expansion: stepExpansion(frozenTarget),
   };
 }
 
@@ -151,14 +130,11 @@ export async function akmWorkflowPlan(ref: string): Promise<Record<string, unkno
   const frozen = await freezeWorkflow(asset, config);
   const plan = frozen.plan;
 
-  const usesById = new Map(asset.plan.steps.map((step) => [step.stepId, step.spec?.uses] as const));
-  const sourceFormat = path.extname(asset.path).toLowerCase() === ".md" ? "markdown" : "github-yaml";
-
   return {
     ok: true,
     ref: asset.ref,
     title: asset.title,
-    sourceFormat,
+    sourceFormat: "markdown",
     sourcePath: asset.path,
     irVersion: plan.irVersion,
     planHash: computePlanHash(plan),
@@ -166,7 +142,7 @@ export async function akmWorkflowPlan(ref: string): Promise<Record<string, unkno
     execution: plan.execution,
     ...(plan.budget ? { budget: plan.budget } : {}),
     ...(plan.params ? { params: plan.params } : {}),
-    steps: plan.steps.map((step, index) => projectStep(step, index, usesById)),
+    steps: plan.steps.map((step, index) => projectStep(step, index)),
     notices: collectLoweringNotices(plan, config),
     warnings: frozen.warnings.map((warning) => warning.message),
   };

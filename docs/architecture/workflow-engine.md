@@ -9,9 +9,9 @@ exact frontmatter/body syntax that produces the plan, see
 [Workflow Schema](../reference/workflow-schema.md). For the day-to-day
 commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 
-> **`akm workflow run` is Stable, ungated, and the only execution surface.**
-> It is the canonical start/resume/execute command; there is no separate
-> external-driver protocol.
+> **`akm workflow run` is Experimental (see `STABILITY.md`), ungated, and the only
+> execution surface.** It is the canonical start/resume/execute command; there is
+> no separate external-driver protocol.
 
 ## Frozen plans
 

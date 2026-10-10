@@ -51,7 +51,7 @@ describe("akm-workflow adapter — metadata", () => {
   test("id / version / extensions", () => {
     expect(akmWorkflowAdapter.id).toBe("akm-workflow");
     expect(akmWorkflowAdapter.version).toBe("0.9.2");
-    expect(akmWorkflowAdapter.extensions).toEqual([".md", ".yml"]);
+    expect(akmWorkflowAdapter.extensions).toEqual([".md"]);
   });
 
   test("a non-workflow markdown (README) abstains", () => {

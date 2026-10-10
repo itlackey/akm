@@ -339,7 +339,7 @@ export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput
 
   const gateLoop = input.gateLoop ?? 1;
   const target = template.frozenTarget;
-  const frozenExec = target.kind === "shell" || target.kind === "script" ? target.exec : undefined;
+  const frozenExec = target.kind === "shell" ? target.exec : undefined;
   const runner: WorkflowRuntimeKind = target.kind === "command" ? target.runner.kind : "exec";
   // Taken verbatim from the frozen plan, resolved once at freeze (an exec
   // unit's on its exec spec). A frozen `null` means genuinely unbounded
@@ -404,7 +404,7 @@ interface StepWorkUnitContext {
   runner: WorkflowRuntimeKind;
   timeoutMs: number | null;
   target: FrozenWorkflowTarget;
-  frozenExec?: Extract<FrozenWorkflowTarget, { kind: "shell" | "script" }>["exec"];
+  frozenExec?: Extract<FrozenWorkflowTarget, { kind: "shell" }>["exec"];
   /** Step-constant `AKM_PARAMS` / `AKM_INPUTS` payloads, serialized once (exec steps only). */
   execParamsJson?: string;
   execInputsJson?: string;

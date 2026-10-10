@@ -262,11 +262,9 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
   const via = typeof expansion.via === "string" ? expansion.via : "direct";
   const childPlanHash = typeof expansion.childPlanHash === "string" ? expansion.childPlanHash : undefined;
   const viaText =
-    via === "task"
-      ? `via ${String(expansion.taskRef ?? "")}`
-      : via === "child"
-        ? `-> ${String(expansion.childRef ?? "")}${childPlanHash ? ` (plan ${childPlanHash})` : ""}`
-        : "direct";
+    via === "child"
+      ? `-> ${String(expansion.childRef ?? "")}${childPlanHash ? ` (plan ${childPlanHash})` : ""}`
+      : "direct";
   lines.push(`${prefix}${ordinal}. ${stepId} ${targetKind} ${viaText}`.replace(/ +/g, " ").trimEnd());
 
   const detailPrefix = `${prefix}  `;

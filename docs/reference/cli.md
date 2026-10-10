@@ -829,7 +829,7 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
-| `run <run-id\|ref>` | Stable canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
+| `run <run-id\|ref>` | Canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
 | `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
@@ -920,7 +920,7 @@ budget is left. `gate.max_loops` (1–100) is the per-step ceiling;
 `budget.max_units` and `budget.max_tokens` are the whole-run ceilings, seeded
 from the unit journal so they hold across resumes.
 
-`run` is Stable and does not consult `experimental.workflowEngine`. Every
+`run` is Experimental and does not consult `experimental.workflowEngine`. Every
 non-empty `### gate` requires `workflow.judgeEngine` to name a configured LLM
 or agent engine before a new run can be frozen. Gate evaluation is fail-closed.
 
@@ -2580,7 +2580,7 @@ tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also 
 `dangerous-env-key` findings for env files (the same key set `akm bundle add`
 enforces — see [Dangerous env key audit](#dangerous-env-key-audit) — but
 non-blocking here; `lint` only warns). `--type workflows` structurally parses
-and compiles peer Markdown and GitHub-shaped YAML workflows; errors surface as
+and compiles Markdown workflows; errors surface as
 `invalid-workflow-structure` findings (0.9.0: this is the only
 structural-validation surface now that `akm workflow validate` is gone).
 

@@ -1,5 +1,0 @@
-version: 4
-inputs:
-  note:
-    type: string
-uses: commands/noop

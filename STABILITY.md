@@ -321,7 +321,7 @@ CHANGELOG with a migration note.
   both removed; `log` is now a leaf command — the former `list` surface).
 - **Bundles & the workspace model** — installed sources are *bundles*; each is
   recognized by a built-in *adapter* (native Agent Skills, Claude and OpenCode
-  commands/agents, knowledge, YAML workflows, tasks, env/secret files, scripts,
+  commands/agents, knowledge, workflows, tasks, env/secret files, scripts,
   OKF and LLM-wiki knowledge bases). Config is keyed by `bundles` and
   `defaultBundle`. The adapter set, bundle-recognition rules, and the
   `bundles` config shape may still shift; the `okf`, `llm-wiki` and

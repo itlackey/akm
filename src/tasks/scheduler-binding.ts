@@ -54,11 +54,6 @@ export interface CompileTaskSchedulerBindingsInput {
   readonly schedules: readonly SchedulerSourceSchedule[];
 }
 
-export interface CompileWorkflowSchedulerBindingsInput {
-  readonly qualifiedRef: string;
-  readonly schedules: readonly SchedulerSourceSchedule[];
-}
-
 /** One akm-owned row as a backend reads it back from the native scheduler. */
 export interface InstalledSchedulerBinding {
   readonly id: string;
@@ -153,27 +148,6 @@ function schedulerInputFlagValueText(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return canonicalInputJson(value);
-}
-
-export function compileWorkflowSchedulerBindings(
-  input: CompileWorkflowSchedulerBindingsInput,
-): readonly SchedulerBinding[] {
-  const ref = assertQualifiedRef(input.qualifiedRef, "workflow");
-  return Object.freeze(
-    input.schedules.map((schedule) => {
-      const bindingId = digestBindingId("workflow", ref, schedule.ordinal);
-      return freezeBinding({
-        id: bindingId,
-        nativeId: bindingId,
-        logicalSource: { kind: "workflow", ref },
-        cron: schedule.cron,
-        source: schedule.source,
-        ordinal: schedule.ordinal,
-        enabled: true,
-        invocation: ["workflow", "run", ref],
-      });
-    }),
-  );
 }
 
 /**

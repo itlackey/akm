@@ -3,11 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Show renderer for peer workflow sources. `.md` and `.yml` both compile
- * through `compileWorkflowSource` into a plan, which is projected down to the
- * public `ShowResponse` shape, including a compact per-step orchestration
- * summary (engine/model or an exec unit's argv, `map.over` reference, route
- * table) when the step declares one.
+ * Show renderer for workflow sources. A `.md` source compiles through
+ * `compileWorkflowSource` into a plan, which is projected down to the public
+ * `ShowResponse` shape, including a compact per-step orchestration summary
+ * (engine/model or an exec unit's argv, `map.over` reference) when the step
+ * declares one.
  */
 
 import { displayRef } from "../core/asset/resolve-ref";

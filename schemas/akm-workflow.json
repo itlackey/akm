@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://itlackey.github.io/akm/schemas/akm-workflow.json",
   "title": "AKM Workflow",
-  "description": "This frontmatter schema applies to and validates the Markdown (.md) workflow source: the standard AKM asset envelope plus its orchestration graph. Markdown is not the sole or only workflow source; peer GitHub-shaped .yml sources use the bounded adapter and both formats compile to source IR v1. Per-step prose instructions and gate rubrics live in the Markdown body, joined to this graph by step id. Hand-authored alongside src/workflows/program/schema.ts; see docs/reference/workflow-schema.md.",
+  "description": "This frontmatter schema validates the Markdown (.md) workflow source, the only workflow format: the standard AKM asset envelope plus its orchestration graph, compiled to source IR v1. Per-step prose instructions and gate rubrics live in the Markdown body, joined to this graph by step id. Hand-authored alongside src/workflows/program/schema.ts; see docs/reference/workflow-schema.md.",
   "type": "object",
   "required": ["steps"],
   "additionalProperties": false,

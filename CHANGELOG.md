@@ -31,6 +31,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **The GitHub-shaped YAML workflow format (#1096).** A `.yml` workflow (`name`/`on`/`jobs`, one job, `uses:` and `run:`
+  steps) is gone, with everything that existed only to carry it: workflow-step `uses: tasks/<ref>` (task composition),
+  `uses: scripts/<ref>` and `uses: commands/<ref>` targets, the `with:` rejection classifier for them, YAML `on.schedule`
+  triggers (and the scheduler sync of them), and the `script` frozen target. `.yml` under `workflows/` is skipped at
+  index time with a message saying it must use `.md`. Nothing in the owner's bundle or in OpenPalm used it. **Kept:** a
+  task that runs a workflow (`uses: workflows/<ref>`, or a `run:` calling `akm workflow run`) is a task feature and is
+  unchanged. A stored run whose plan has a `script` target can no longer be decoded and is abandoned like any other
+  undecodable plan.
 - **Top-level workflow `outputs:` (#1096).** Its only consumer was a parent reading a child's exports. A completed
   child workflow now returns the output of its last step, so `outputs:` is a lint error and the child-output reference
   check at freeze is gone; a parent reads `steps.<composing-step>.output`. The `outputs_json` column stays readable.

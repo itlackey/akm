@@ -23,8 +23,7 @@
  *
  * Explicit non-goals (binding, spec §4.1): no GitHub locator grammar, no
  * `akm/command` builtin special case, no resolution, no filesystem access, no
- * guessing. Callers layer builtin detection on top (see
- * `classifyWorkflowStepUses` in src/workflows/source-semantics.ts).
+ * guessing.
  */
 
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";

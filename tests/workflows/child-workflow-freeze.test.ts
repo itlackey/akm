@@ -127,9 +127,6 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
   readonly planHash: string;
   readonly frozenPlanIrVersion: number;
   readonly frozenPlanTitle: string;
-  readonly contentHash: string;
-  readonly via: "direct" | "task";
-  readonly taskRef: string | undefined;
   readonly inputBindings: readonly TaskInputBinding[] | undefined;
 } {
   if (!target) throw new Error("childWorkflowFields: target is undefined");
@@ -147,12 +144,6 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
     planHash: target.planHash,
     frozenPlanIrVersion: target.frozenPlan.irVersion,
     frozenPlanTitle: target.frozenPlan.title,
-    // contentHash already exists (as `string`) on all three current
-    // FrozenWorkflowTarget variants — no pin needed for the access itself,
-    // only for the NEW "child-workflow" preimage §3.5 defines for it.
-    contentHash: target.contentHash,
-    via: target.via,
-    taskRef: target.taskRef,
     inputBindings: target.inputBindings,
   };
 }
@@ -181,12 +172,11 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     const plan = decodeWorkflowPlan(JSON.parse(row?.plan_json ?? "null"));
     const target = stepTarget(plan, 0);
 
-    expect(target).toMatchObject({ kind: "child-workflow", via: "direct" });
+    expect(target).toMatchObject({ kind: "child-workflow" });
     const fields = childWorkflowFields(target);
     expect(fields.ref).toMatch(/\/\/workflows\/child$/);
     expect(fields.planHash).toBe(expectedChildPlanHash);
     expect(fields.frozenPlanIrVersion).toBe(6);
-    expect(fields.taskRef).toBeUndefined();
   });
 
   test("B-08: with: on the direct step naming a declared child param freezes as an inputBindings entry", async () => {
