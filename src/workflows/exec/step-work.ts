@@ -27,7 +27,6 @@ import {
 import { canonicalJson } from "../ir/plan-hash";
 import type {
   FrozenWorkflowTarget,
-  WorkflowIsolation,
   WorkflowOnError,
   WorkflowPlan,
   WorkflowPlanStep,
@@ -145,7 +144,6 @@ export interface StepWorkUnit {
   schema?: Record<string, unknown>;
   retry?: WorkflowRetry;
   onError: WorkflowOnError;
-  isolation?: WorkflowIsolation;
   /** The unit's rendered instructions, built once by the work-list builder. */
   prompt: string;
   /** Canonical hash of this unit's frozen inputs — the durable-reuse identity. */
@@ -469,7 +467,6 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
     ...(template.schema ? { schema: template.schema } : {}),
     ...(template.retry ? { retry: template.retry } : {}),
     onError: template.onError,
-    ...(template.isolation ? { isolation: template.isolation } : {}),
     // the SAME resolved `with:` bindings `taskInputs` already
     // carries, exposed under the name `child-workflow.ts`'s drive contract
     // reads. Absent (never `{}`) when the step binds nothing.
@@ -534,7 +531,8 @@ function computeUnitInputHash(ctx: StepWorkUnitContext, item: unknown): string {
         frozenTarget: ctx.target,
         environment: ctx.template.environment,
         schema: ctx.template.schema ?? null,
-        isolation: ctx.template.isolation ?? "none",
+        // Retired `isolation: worktree` field; kept constant so in-flight runs keep their journaled input hashes.
+        isolation: "none",
         ...(ctx.taskInputs !== undefined ? { taskInputs: ctx.taskInputs } : {}),
         ...(ctx.input.gateFeedback ? { gateFeedback: ctx.input.gateFeedback } : {}),
       }),

@@ -32,7 +32,7 @@ split by what you're doing:
   routing, failure policy, gates, and budget ceilings, with exact syntax.
 - **[Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md)**
   — how a frozen plan actually executes: persistence, the run lease, dispatch,
-  worktree isolation, concurrency limits, and resume-without-replay.
+  concurrency limits, and resume-without-replay.
 
 For task- or schedule-driven workflow runs — an `akm task` bound to
 `uses: workflows/<ref>` and reconciled with the OS scheduler — see

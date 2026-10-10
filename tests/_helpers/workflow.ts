@@ -230,7 +230,6 @@ function freezeRoot(step: WorkflowPlanStep, config: AkmConfig, defaults: Workflo
     ...(unit?.retry ? { retry: unit.retry } : {}),
     onError: unit?.onError ?? defaults?.onError ?? "fail",
     ...(unit?.env ? { env: unit.env } : {}),
-    isolation: unit?.isolation ?? "none",
     source: spec.source,
     frozenTarget,
     environment,

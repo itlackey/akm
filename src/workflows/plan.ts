@@ -43,7 +43,6 @@ export interface WorkflowError {
 }
 
 export type WorkflowOnError = "fail" | "continue";
-export type WorkflowIsolation = "none" | "worktree";
 export type WorkflowReducer = "collect" | "vote";
 export type WorkflowRuntimeKind = "llm" | "agent" | "sdk" | "exec";
 export type WorkflowCommandMode = "literal" | "portable-template" | "stored-ref";
@@ -71,7 +70,6 @@ export interface WorkflowUnitSettings {
   output?: Record<string, unknown>;
   /** Env asset refs whose values reach the unit's child environment. */
   env?: string[];
-  isolation?: WorkflowIsolation;
 }
 
 /** An authored argv; never shell-parsed. */
@@ -145,7 +143,6 @@ export interface FrozenWorkflowCommandTarget {
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
   readonly cwdIdentity?: FrozenWorkflowDirectoryIdentity;
-  readonly gitCommitOid?: string;
   /** A composing step's frozen `with:` bindings. Absent, never `[]`, when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
 }
@@ -155,7 +152,6 @@ export interface FrozenWorkflowShellTarget {
   readonly contentHash: string;
   readonly exec: WorkflowExecSpec;
   readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
-  readonly gitCommitOid?: string;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 
@@ -170,7 +166,6 @@ export interface FrozenWorkflowScriptTarget {
   readonly byteLength: number;
   readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
   readonly materialization: "ephemeral-0700-delete";
-  readonly gitCommitOid?: string;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 
@@ -204,7 +199,6 @@ export interface WorkflowUnitNode {
   readonly retry?: WorkflowRetry;
   readonly onError: WorkflowOnError;
   readonly env?: string[];
-  readonly isolation: WorkflowIsolation;
   readonly source?: SourceRef;
   readonly frozenTarget: FrozenWorkflowTarget;
   readonly environment: readonly FrozenWorkflowEnvironmentBinding[];
@@ -281,7 +275,7 @@ export interface WorkflowPlan {
   readonly sourceHash?: string;
   readonly steps: WorkflowPlanStep[];
   // ── compile-only (never stored) ──
-  readonly defaults?: Omit<WorkflowUnitSettings, "retry" | "output" | "env" | "isolation">;
+  readonly defaults?: Omit<WorkflowUnitSettings, "retry" | "output" | "env">;
   readonly description?: string;
   /** Markdown prose before the first step section. */
   readonly preamble?: string;

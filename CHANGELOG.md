@@ -31,6 +31,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **`unit.isolation: worktree` (#1096).** A workflow unit can no longer declare per-attempt git-worktree isolation
+  (`exec/worktree.ts` and the attempt prepare/cleanup in the native executor). It was unused by any workflow found, and
+  the largest standalone block in the engine. `unit.isolation` is now an unknown-key lint error; a stored plan that
+  still carries it decodes and runs the unit in the engine's working directory. The `worktree_path` columns stay readable.
 - **Runtime conversion of config older than 0.9.15 (#1091).** 0.10 reads what 0.9.15 and later wrote; an install on an
   earlier release runs `akm migrate apply` under akm 0.9.x first. Removed: the in-memory `stashDir`/`sources[]`/
   `installed[]` to `bundles` conversion (`legacy-source-shape-shim.ts`), the `engines.*.extraParams` lift onto

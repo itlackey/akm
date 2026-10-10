@@ -47,7 +47,6 @@ import {
   type WorkflowBudget,
   type WorkflowError,
   type WorkflowExec,
-  type WorkflowIsolation,
   type WorkflowOnError,
   type WorkflowOutput,
   type WorkflowPlan,
@@ -84,7 +83,6 @@ export type WorkflowParseResult = { ok: true; plan: WorkflowPlan } | { ok: false
 
 export const PROGRAM_REDUCERS = ["collect", "vote"] as const;
 export const PROGRAM_ON_ERROR = ["fail", "continue"] as const;
-export const PROGRAM_ISOLATION_KINDS = ["none", "worktree"] as const;
 
 /** `retry.on`: exactly the persisted `AgentFailureReason` taxonomy (the `satisfies` fails typecheck on drift). */
 const RETRY_REASON_SET = {
@@ -152,7 +150,7 @@ const TOP_LEVEL_KEYS = [...ENVELOPE_KEYS, ...WORKFLOW_KEYS];
 const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "unit", "map", "route", "inputs", "output", "gate"];
-const UNIT_KEYS = ["exec", "engine", "model", "llm", "timeout", "retry", "on_error", "output", "env", "isolation"];
+const UNIT_KEYS = ["exec", "engine", "model", "llm", "timeout", "retry", "on_error", "output", "env"];
 const EXEC_KEYS = ["command", "cwd", "pass_env"];
 /** Unit keys that name an ENGINE dispatch and therefore cannot appear beside `exec:`. */
 const UNIT_ENGINE_KEYS = ["engine", "model", "llm"] as const;
@@ -988,15 +986,6 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
       ctx.err([...path, "env"], `${stepLabel} "env" must be a list of non-empty env asset refs.`);
     }
   }
-
-  const isolation = parseEnumField(
-    ctx,
-    raw.isolation,
-    [...path, "isolation"],
-    `${stepLabel} "isolation"`,
-    PROGRAM_ISOLATION_KINDS,
-  );
-  if (isolation !== undefined) unit.isolation = isolation as WorkflowIsolation;
 
   return unit;
 }

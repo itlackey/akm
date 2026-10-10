@@ -13,7 +13,6 @@ import { projectTaskSourceV4 } from "../../../tasks/source/project-v4";
 import type { FrozenWorkflowShellTarget, FrozenWorkflowTarget, WorkflowExec } from "../../plan";
 import { workflowShellCommand } from "../../source-semantics";
 import { freezeEnvironment, resolveOwnedAsset, workflowExecutionSource } from "../environment";
-import { gitIdentity } from "../identity";
 import {
   type BaseUnit,
   declaredParamNames,
@@ -138,7 +137,6 @@ export async function taskDispatch(
       contentHash: "",
       exec,
       cwdIdentity: prepared.cwdIdentity,
-      ...gitIdentity(baseUnit, prepared.cwdIdentity.realRoot),
     });
     return withInputBindings(
       {

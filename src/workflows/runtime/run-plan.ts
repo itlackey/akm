@@ -196,7 +196,6 @@ function decodeUnit(node: Record<string, unknown>, stepId: string): WorkflowUnit
     id,
     instructions: typeof node.instructions === "string" ? node.instructions : "",
     onError: node.onError === "continue" ? "continue" : "fail",
-    isolation: node.isolation === "worktree" ? "worktree" : "none",
     frozenTarget: decodeTarget(node.frozenTarget, label),
     environment: Array.isArray(node.environment)
       ? node.environment.map((binding, index) => decodeEnvironmentBinding(binding, `${label} environment[${index}]`))
@@ -225,11 +224,7 @@ function decodeGate(value: unknown, stepId: string): WorkflowGateNode {
 function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
   const target = record(value, `${label} frozenTarget`);
   const inputBindings = decodeInputBindings(target.inputBindings, label);
-  const gitCommitOid = typeof target.gitCommitOid === "string" ? target.gitCommitOid : undefined;
-  const optional = {
-    ...(gitCommitOid ? { gitCommitOid } : {}),
-    ...(inputBindings ? { inputBindings } : {}),
-  };
+  const optional = inputBindings ? { inputBindings } : {};
   switch (target.kind) {
     case "command":
       return decodeCommandTarget(target, label);
@@ -292,7 +287,6 @@ function decodeCommandTarget(target: Record<string, unknown>, label: string): Fr
     ...(target.cwdIdentity && typeof target.cwdIdentity === "object"
       ? { cwdIdentity: target.cwdIdentity as FrozenWorkflowDirectoryIdentity }
       : {}),
-    ...(typeof target.gitCommitOid === "string" ? { gitCommitOid: target.gitCommitOid } : {}),
     ...(inputBindings ? { inputBindings } : {}),
   };
 }

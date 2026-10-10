@@ -7,7 +7,7 @@ import { prepareScriptTarget } from "../../../tasks/prepare/prepare-script-targe
 import type { PreparedTaskV3Execution } from "../../../tasks/prepare/prepared-execution";
 import type { FrozenWorkflowEnvironmentBinding, FrozenWorkflowScriptTarget, WorkflowExec } from "../../plan";
 import { freezeEnvironment, resolveOwnedAsset } from "../environment";
-import { gitIdentity, scriptExecutable } from "../identity";
+import { scriptExecutable } from "../identity";
 import {
   type BaseUnit,
   type FreezeStep,
@@ -73,7 +73,6 @@ export function scriptResult(
     byteLength: prepared.byteLength,
     cwdIdentity: prepared.cwdIdentity,
     materialization: "ephemeral-0700-delete",
-    ...gitIdentity(baseUnit, prepared.cwdIdentity.realRoot),
   });
   return {
     target,

@@ -16,7 +16,6 @@ import { buildExecution } from "../../../integrations/agent/execution";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding, WorkflowCommandMode } from "../../plan";
 import { freezeEnvironment, workflowExecutionSource } from "../environment";
-import { gitIdentity } from "../identity";
 import {
   type BaseUnit,
   durableRequest,
@@ -83,7 +82,6 @@ export function commandResult(
     runner,
     ...(targetConcurrency(runner, context.config) ? { concurrency: targetConcurrency(runner, context.config) } : {}),
     cwdIdentity,
-    ...gitIdentity(baseUnit, cwdIdentity.realRoot),
   });
   const engineAnnouncement = fallbackAnnouncement(prepared.fallbackEngineName, request.engine.name);
   return {

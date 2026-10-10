@@ -184,7 +184,7 @@ describe("P2b freeze identity — B-44: the frozen hash vocabulary is unchanged 
       frozenTarget: root.frozenTarget,
       environment: root.environment,
       schema: root.schema ?? null,
-      isolation: root.isolation ?? "none",
+      isolation: "none",
     };
     const expectedHash = createHash("sha256")
       .update("akm.workflow.unit\0v7\0")

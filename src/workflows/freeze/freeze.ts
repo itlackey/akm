@@ -192,7 +192,6 @@ function frozenRoot(
     ...(unit.retry ? { retry: { max: unit.retry.max, on: [...unit.retry.on] } } : {}),
     onError: unit.onError ?? plan.defaults?.onError ?? "fail",
     ...(unit.env ? { env: [...unit.env] } : {}),
-    isolation: unit.isolation ?? "none",
     source: { ...source.source },
     frozenTarget: target,
     environment: [...resolved.environment],

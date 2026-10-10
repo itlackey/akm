@@ -1826,7 +1826,7 @@ Environment scope and context:
       **before** the spawn, naming the variable, rather than surfacing a raw
       `E2BIG`.
 
-`cwd` and isolation:
+`cwd`:
 
 - [ ] **LOCAL** `cwd` is relative and contained: absolute paths, drive letters,
       `~`, and `..` **segments** are rejected by the parser *and* the
@@ -1834,13 +1834,6 @@ Environment scope and context:
       base (symlinks included) immediately before the spawn.
 - [ ] **LOCAL** A directory whose *name* merely begins with dots (`..data`) is a
       legal contained `cwd` and must **not** fail `exec_cwd_escape`.
-- [ ] **LOCAL** Under `isolation: worktree` each unit gets a fresh detached
-      worktree; a clean one is gone once the step resolves, a dirty one is
-      retained and its path logged.
-- [ ] **LOCAL** When a dirty leftover is moved aside and the worktree then fails
-      to mint, the failure still reports **where the preserved work went**.
-- [ ] **DESTRUCTIVE** The stale-worktree sweep removes abandoned trees after
-      seven days but leaves a tree that is still in use by a live run.
 
 Gates, retry, and reuse:
 
@@ -3073,7 +3066,7 @@ and not a substitute for the full check.
 | Sources/registry/write-source | provider/write/publication suites, controlled service; LIVE git/npm/HTTPS when lifecycle changed |
 | Storage/migration/transactions | crash/concurrency/property/published-upgrade gates, section 19, destructive rehearsal for cutover changes |
 | Workflow | workflow unit/integration, gate fake agents, slow expansion, crash/contention when scheduler changed |
-| Workflow exec units / subprocess capture | section 14.5 end to end on an engine-less install, plus the worktree isolation and stale-sweep gates; any capture, timeout, or process-group change also runs the agent spawn suites, which share that subprocess layer |
+| Workflow exec units / subprocess capture | section 14.5 end to end on an engine-less install; any capture, timeout, or process-group change also runs the agent spawn suites, which share that subprocess layer |
 | Workflow child environment / allowlist | section 14.5 environment gates plus section 11; a change to the shared floor is native Windows, not Linux emulation |
 | Task/scheduler | task suites, Linux standalone; native macOS/Windows for backend/quoting/binding; published upgrade for schema changes |
 | Env/secret/security path/archive/network | env/secret plus traversal/SSRF/archive/redaction/dangerous-key suites, section 20 |

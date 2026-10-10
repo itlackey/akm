@@ -5,7 +5,6 @@
 import { captureFrozenDirectoryIdentity } from "../../../execution/directory-identity";
 import type { FrozenWorkflowShellTarget } from "../../plan";
 import { freezeEnvironment } from "../environment";
-import { gitIdentity } from "../identity";
 import {
   type BaseUnit,
   type FreezeStep,
@@ -25,7 +24,6 @@ export function directShell(source: FreezeStep, baseUnit: BaseUnit, context: Res
     contentHash: "",
     exec,
     cwdIdentity,
-    ...gitIdentity(baseUnit, cwdIdentity.realRoot),
   });
   return {
     target,

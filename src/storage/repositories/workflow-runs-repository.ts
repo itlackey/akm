@@ -165,7 +165,6 @@ export interface ReserveUnitAttemptV4Input {
   engine: string | null;
   model: string | null;
   inputHash: string;
-  worktreePath?: string | null;
   now: string;
 }
 
@@ -854,9 +853,9 @@ export class WorkflowRunsRepository {
       db.prepare(
         `INSERT INTO workflow_run_unit_attempts (
            run_id, unit_id, attempt, dispatch_id, step_id, node_id, phase,
-           runner, engine, model, input_hash, status, worktree_path, started_at,
+           runner, engine, model, input_hash, status, started_at,
            claim_holder, claim_expires_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?)`,
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)`,
       ).run(
         input.runId,
         input.unitId,
@@ -869,7 +868,6 @@ export class WorkflowRunsRepository {
         input.engine,
         input.model,
         input.inputHash,
-        input.worktreePath ?? null,
         input.now,
         holder,
         input.now,
@@ -877,8 +875,8 @@ export class WorkflowRunsRepository {
       db.prepare(
         `INSERT INTO workflow_run_units (
            run_id, unit_id, step_id, node_id, parent_unit_id, phase, runner, engine, model,
-           status, input_hash, worktree_path, started_at, claim_holder, claim_expires_at, attempts
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?)
+           status, input_hash, started_at, claim_holder, claim_expires_at, attempts
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?, ?, ?)
          ON CONFLICT(run_id, unit_id) DO UPDATE SET
            step_id = excluded.step_id,
            node_id = excluded.node_id,
@@ -889,7 +887,6 @@ export class WorkflowRunsRepository {
            model = excluded.model,
            status = 'running',
            input_hash = excluded.input_hash,
-           worktree_path = excluded.worktree_path,
            started_at = excluded.started_at,
            claim_holder = excluded.claim_holder,
            claim_expires_at = excluded.claim_expires_at,
@@ -910,7 +907,6 @@ export class WorkflowRunsRepository {
         input.engine,
         input.model,
         input.inputHash,
-        input.worktreePath ?? null,
         input.now,
         holder,
         input.now,

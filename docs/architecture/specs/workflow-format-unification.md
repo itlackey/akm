@@ -121,7 +121,7 @@ steps:
     map:
       over: steps.intake.output.issues
       concurrency: 3
-      unit: { isolation: worktree, retry: { max: 2, on: [timeout] } }
+      unit: { retry: { max: 2, on: [timeout] } }
     # `output` describes the REDUCER RESULT: the default `collect` reducer
     # folds per-item unit results into an array.
     output: { type: array }

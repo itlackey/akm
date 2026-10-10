@@ -136,10 +136,6 @@
       "description": "How a map step folds per-item unit results into the step artifact.",
       "enum": ["collect", "vote"]
     },
-    "isolation": {
-      "description": "Filesystem isolation for file-mutating units.",
-      "enum": ["none", "worktree"]
-    },
     "failureReason": {
       "description": "Persisted AgentFailureReason taxonomy (src/integrations/agent/spawn.ts).",
       "enum": [
@@ -255,7 +251,7 @@
         },
         "cwd": {
           "type": "string",
-          "description": "Optional RELATIVE working directory inside the unit's working directory (its fresh worktree under `isolation: worktree`). Absolute paths, Windows drive letters, \"~\", and \"..\" segments are rejected here, and containment is re-checked against the resolved base — symlinks included — before the command is spawned.",
+          "description": "Optional RELATIVE working directory inside the unit's working directory. Absolute paths, Windows drive letters, \"~\", and \"..\" segments are rejected here, and containment is re-checked against the resolved base — symlinks included — before the command is spawned.",
           "minLength": 1,
           "pattern": "^(?!/|\\\\|~|[A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
         },
@@ -332,9 +328,6 @@
             "minLength": 1
           },
           "description": "Env asset refs injected into the dispatched unit env. Entries must be unique: the frozen-plan decoder rejects duplicates at run start."
-        },
-        "isolation": {
-          "$ref": "#/definitions/isolation"
         }
       }
     },

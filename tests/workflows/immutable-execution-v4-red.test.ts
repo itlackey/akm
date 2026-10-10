@@ -145,12 +145,12 @@ function rootUnit(plan: ReturnType<typeof commandPlan>) {
 }
 
 describe("durable workflow v4 immutable executable schema", () => {
-  test("keeps the cwd identity and worktree commit; an older release's executable identity is accepted and dropped", () => {
+  test("keeps the cwd identity and still decodes the retired worktree fields; an older release's executable identity is accepted and dropped", () => {
     const decoded = decodeWorkflowPlan(commandPlan({ isolation: "worktree" }));
     const root = decoded.steps[0]?.root;
     expect(root?.kind).toBe("unit");
     if (!root || root.kind !== "unit" || root.frozenTarget.kind !== "command") return;
-    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY, gitCommitOid: "a".repeat(40) });
+    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY });
     expect(Object.hasOwn(root.frozenTarget, "executable")).toBe(false);
 
     // Even an identity that no longer matches the host binary decodes.

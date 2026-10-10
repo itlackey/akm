@@ -315,10 +315,9 @@ families) plus the orchestration keys:
   or `route`. A step with neither is **still a unit step** — bare
   `- id: validate` is the complete minimal declaration. `unit:` is the
   optional dispatch-override bag (`exec`, `engine`, `model`, `llm`, `timeout`,
-  `retry`, `on_error`, `env`, `isolation`; see
-  [Exec (shell) units](#exec-shell-units),
-  [Failure policy](#failure-policy) and
-  [Worktree isolation](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#worktree-isolation)).
+  `retry`, `on_error`, `env`; see
+  [Exec (shell) units](#exec-shell-units) and
+  [Failure policy](#failure-policy)).
 - `inputs` — on a `unit`/`map` step, the prior-step artifacts this step
   consumes, as bare reference strings (sub-paths legal:
   `steps.x.output.issues`, not just `steps.x.output`). This is how a step's
@@ -418,7 +417,6 @@ steps:
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
         on_error: continue
-        isolation: worktree
         output: { type: object, properties: { file: { type: string }, verdict: { type: string } }, required: [file, verdict] }
     # `output` here describes the REDUCER RESULT, not one unit's result: the
     # default `collect` reducer folds per-item unit results into an array.
@@ -781,12 +779,10 @@ Bounds: 1–64 argv entries, each a non-empty string of at most 4096 bytes.
 ### `cwd`
 
 Optional and **relative**. It resolves inside the unit's working directory —
-the engine invocation's working directory normally, or the unit's fresh
-detached worktree under `isolation: worktree`. Absolute paths, Windows drive
+the engine invocation's working directory. Absolute paths, Windows drive
 letters, `~`, and `..` segments are rejected by the parser *and* by the
 frozen-plan decoder, and containment is re-checked against the *resolved* base
-(symlinks included) immediately before the command is spawned. An exec unit
-cannot step outside the tree its isolation promised.
+(symlinks included) immediately before the command is spawned.
 
 ### The output rule
 
@@ -989,7 +985,7 @@ akm deliberately does **not** transparently spill an oversized context to a file
 and pass a path instead. That would make the `AKM_INPUTS` contract conditional
 on the size of the data — sometimes JSON, sometimes a filename — so every
 command would have to handle both shapes, and the spill file would have to be
-placed, isolated and cleaned up inside a unit's worktree. A stable contract plus
+placed and cleaned up. A stable contract plus
 an explicit error is the smaller, more predictable surface.
 
 ### The child's environment is an allowlist
