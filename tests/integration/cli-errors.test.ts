@@ -633,6 +633,33 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     expect(parsed.hint).toBe("Run `akm --help` for usage.");
   });
 
+  // The did-you-mean threshold is floor(len / 3): real typos keep their
+  // suggestion, unrelated (or retired) command names get none.
+  test("did-you-mean suggests real typos and stays silent for unrelated or retired names", () => {
+    const table: Array<[argv: string[], suggestion: string | undefined]> = [
+      [["tasks"], "task"],
+      [["propose"], "proposal"],
+      [["serach"], "search"],
+      [["improv"], "improve"],
+      [["reflect"], undefined],
+      [["mv"], undefined],
+      [["accept"], undefined],
+      [["events"], undefined],
+      [["extract"], undefined],
+      [["history"], undefined],
+      [["init"], undefined],
+      [["update"], undefined],
+      [["workflow", "start"], undefined],
+    ];
+    for (const [argv, suggestion] of table) {
+      const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
+      expect(status, argv.join(" ")).toBe(2);
+      const hint: string = JSON.parse(stderr.trim()).hint ?? "";
+      if (suggestion) expect(hint, argv.join(" ")).toContain(`Did you mean \`${suggestion}\`?`);
+      else expect(hint, argv.join(" ")).not.toContain("Did you mean");
+    }
+  });
+
   // Spellings an earlier release retired are ordinary unknown commands and
   // flags: the usual UNKNOWN_COMMAND / UNKNOWN_FLAG exit 2, with a did-you-mean
   // only when one is close and no migration hint.
