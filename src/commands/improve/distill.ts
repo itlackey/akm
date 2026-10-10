@@ -838,7 +838,7 @@ async function proposeLessonUpdate(
 ): Promise<AkmDistillResult | undefined> {
   const memory = run.asset.content ? parseFrontmatter(run.asset.content).content.trim() : "";
   const said = finding.toLowerCase();
-  if (!run.runner || !qualityGateEnabled(run) || !memory || !said) return undefined;
+  if (!run.runner || !qualityGateEnabled(run) || !memory) return undefined;
   const lessons: Array<UpdateCandidate & { path: string; content: string }> = [];
   for (const asset of related ?? (await run.related(memory.slice(0, 500), RELATED_COUNT))) {
     const parsed = parseRefInput(asset.ref);
