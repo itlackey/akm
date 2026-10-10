@@ -19,6 +19,20 @@ apply` under akm 0.9.x first, then upgrades; a 0.10 reader that meets an older
 shape refuses with one message saying so. See
 [`docs/architecture/persisted-data-compat.md`](docs/architecture/persisted-data-compat.md).
 
+**CLI spellings merged in 0.10 (#1091).** Each of these is an unknown flag or
+command (exit 2) from 0.10, with no alias and no deprecation period; the new
+spelling is in the CHANGELOG entry and the CLI reference.
+
+| Gone | Use |
+| --- | --- |
+| `akm help agents` | `akm hints` (`--detail brief` for the short guide) |
+| `--shape agent` | `--detail agent` |
+| `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
+| `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
+| `akm task validate <path>` | `akm lint --type tasks` |
+| `akm config path --all` | `akm info` |
+| `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
+
 **Version numbers (0.10 onward, #1089).** A 0.10 release is a daily build,
 `0.10.YYMMDDNN`: `YY` the UTC year, `MM` the month, `DD` the day and `NN` the
 build that day (`01` to `99`), each two digits. The first build on 2026-10-10 is
@@ -107,6 +121,8 @@ enumeration of the whole `proposal` noun group.
 | `akm models` | Evolving | `list` and `copy-defaults` for model intent aliases. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
+| `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
+| `akm improve judge` | Evolving | Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. |
 | `akm proposal list` | Stable | See reconciliation note above. |
 | `akm proposal show` | Evolving | |
 | `akm proposal diff` | Evolving | |
@@ -118,7 +134,6 @@ enumeration of the whole `proposal` noun group.
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
-| `akm help agents` | Stable | |
 | `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; `--detail brief` selects the compact version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
@@ -137,7 +152,6 @@ enumeration of the whole `proposal` noun group.
 | `akm task sync` | Evolving | |
 | `akm task doctor` | Evolving | |
 | `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
-| `akm task validate` | Evolving | New in 0.9.11; read-only, and the only `task` subcommand that takes a bare filesystem path instead of a ref — the file need not belong to any configured bundle. |
 
 ## Stable
 
@@ -176,7 +190,7 @@ enumeration of the whole `proposal` noun group.
 - **Read commands** — `akm search`, `akm show`, `akm bundle list`, `akm curate`,
   `akm info`, `akm config get`, `akm config list`, `akm config path`,
   `akm env list`, `akm secret list`, `akm proposal list` (list filters),
-  `akm help`, `akm help agents`, `akm hints`, `akm completions`.
+  `akm help`, `akm hints`, `akm completions`.
 - **Write commands core surface** — `akm bundle add`, `akm bundle update`,
   `akm bundle remove`, `akm clone`, `akm import`, `akm sync`, `akm index`,
   `akm bundle create`, `akm setup`, `akm remember`, `akm feedback`,
@@ -214,12 +228,11 @@ enumeration of the whole `proposal` noun group.
   fetch**: a registered renderer fires on the shape of the result (`akm health
   --report` carries the report dataset in the envelope, so the same data is
   available as JSON), never on the format alone.
-  `--detail` is verbosity only (`brief|normal|full`);
-  `--shape` (`human|agent|summary`) is the output-projection axis (see
-  Experimental). A small set of commands is **format-exempt** because their
+  `--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
+  `search`, `curate` and `show`; see Experimental). A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
   child-process passthrough in `env run` / `secret run`, a bare-path payload
-  from `env path`, and document payloads from `help` (bare, `help agents`, and
+  from `env path`, and document payloads from `help` (bare and
   `help migrate`). The set is declared in
   `src/output/format-exempt.ts`, and
   passing `--format` to one of them warns rather than silently doing something
@@ -303,14 +316,7 @@ CHANGELOG with a migration note.
   construction** (the excluded data never reaches the command). `akm task
   explain` instead **redacts** secret-shaped input values on a best-effort
   heuristic basis — a value that doesn't match the heuristic can still
-  print unredacted. `akm task validate <path>` (new in 0.9.11) is the same
-  kind of zero-write introspection as `explain`, but takes a bare filesystem
-  path rather than a bundle-qualified ref — it reports whether that ONE file
-  would parse cleanly (`valid`), need `akm migrate apply` first (`blocked`:
-  task v2/v3, or a retired `schedule[].enabled`),
-  fail schema validation (`invalid`), or isn't a task source at all
-  (`not-a-task`) — exactly the diagnostic `akm task sync` would produce for
-  it, before the file is ever wired into a bundle or the scheduler.
+  print unredacted.
 - **Workflow plan** — `akm workflow plan <ref>`, new in 0.9.2: zero-write
   compile+freeze introspection (the canonical step graph, task/child
   expansion, input bindings, and lowering notices for a workflow, without
@@ -384,10 +390,10 @@ for scripted use.
   them.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
-- **`--shape agent` and `--shape summary`** — the output-projection axis
-  (`--shape human|agent|summary`). `summary` is implemented only on
-  `akm show`; `agent` is implemented on `search`, `show`, and `curate`.
-  Coverage will expand. `--detail` is verbosity only (`brief|normal|full`).
+- **`--detail agent`** — the agent projection, implemented on `search`, `show`,
+  and `curate` (other commands ignore it). Coverage will expand. It replaces
+  `--shape agent`; `--shape` (and `--shape summary`, which only `show` had) is
+  gone in 0.10 and is an unknown flag.
 - **Protected env & secret values** — `env` (a whole `.env` group; key names
   are surfaced for discoverability, values never are) and `secret` (a single
   sensitive value). Values are never written to stdout, the index, or

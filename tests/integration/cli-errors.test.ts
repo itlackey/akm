@@ -348,10 +348,7 @@ describe("error class hints", () => {
       "Pick one of: json, jsonl, yaml, text, md, html.",
     );
     expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
-      "Pick one of: brief, normal, full. For agent/summary projections use --shape.",
-    );
-    expect(new UsageError("bad shape", "INVALID_SHAPE_VALUE").hint()).toBe(
-      "Pick one of: human, agent, summary (summary falls back to agent, with a warning, on commands with no summary projection).",
+      "Pick one of: brief, normal, full, agent.",
     );
     expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("Quote JSON values");
     expect(new UsageError("bad target", "MISSING_OR_AMBIGUOUS_TARGET").hint()).toContain("akm bundle update --all");
@@ -394,14 +391,15 @@ describe("config path subcommand", () => {
     expect(stdout.trim()).toContain("config.json");
   });
 
-  test("config path --all returns all path keys", async () => {
-    const { stdout, status } = await runCli("config", "path", "--all", "--format=json");
+  test("config path --all is an unknown flag; `info` reports the directories", async () => {
+    const all = await runCli("config", "path", "--all");
+    expect(all.status).toBe(2);
+    const { stdout, status } = await runCli("info");
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout.trim());
-    expect(parsed).toHaveProperty("config");
-    expect(parsed).toHaveProperty("bundle");
-    expect(parsed).toHaveProperty("cache");
-    expect(parsed).toHaveProperty("index");
+    for (const key of ["bundleDir", "configDir", "dataDir", "cacheDir", "stateDir"]) {
+      expect(parsed).toHaveProperty(key);
+    }
   });
 });
 
@@ -906,18 +904,5 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
         expect(argKeys.has(key)).toBe(true);
       }
     }
-  });
-});
-
-// R-050(c) (S11: R-050(b)'s own "--detail is a no-op on info/list/remember"
-// boilerplate was dropped from the canonical wording — `list` doesn't exist
-// as a bare command any more (folded into `akm bundle list`, S7), and a
-// caveat naming stale commands is worse than no caveat). `--shape summary`
-// is still a hard usage error everywhere except `akm show`, and that caveat
-// should still be visible from a leaf's own `--help`, not only the root's.
-describe("GLOBAL_OUTPUT_ARGS help text is scoped honestly (R-050c)", () => {
-  test("--shape repeats the 'summary is show-only' caveat root help documents", () => {
-    expect(GLOBAL_OUTPUT_ARGS.shape.description).toContain("summary");
-    expect(GLOBAL_OUTPUT_ARGS.shape.description).toContain("akm show");
   });
 });

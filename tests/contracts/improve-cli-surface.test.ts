@@ -70,10 +70,14 @@ describe("current improvement CLI documentation contract", () => {
     expect(cheapestWayParagraph).toContain("--format text");
   });
 
-  test("improve registers --run/--since and documents the report scope + usageReport field (#944)", () => {
+  test("--run/--since belong to the `improve report` subcommand, which the docs describe with the usageReport field (#944)", () => {
     const args = improveCommand.args as Record<string, { type?: string }>;
-    expect(args.run).toMatchObject({ type: "string" });
-    expect(args.since).toMatchObject({ type: "string" });
+    expect(args.run).toBeUndefined();
+    expect(args.since).toBeUndefined();
+    const subCommands = improveCommand.subCommands as Record<string, { args?: Record<string, { type?: string }> }>;
+    expect(subCommands.report?.args?.run).toMatchObject({ type: "string" });
+    expect(subCommands.report?.args?.since).toMatchObject({ type: "string" });
+    expect(subCommands.judge).toBeDefined();
 
     const section = extractSection(cli, "### improve");
     expect(section).toContain("improve report");

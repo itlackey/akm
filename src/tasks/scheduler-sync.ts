@@ -22,7 +22,6 @@ import { compareCodePoints, toPosix } from "../core/common";
 import type { AkmConfig } from "../core/config/config-types";
 import { UsageError } from "../core/errors";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
-import { applyInputDefaults, validateInputs } from "../execution/input-contract";
 import { checkWorkflowPlan, compileWorkflowSource } from "../workflows/compile";
 import {
   WorkflowSourceCollisionError,
@@ -32,6 +31,7 @@ import {
 import { prepareTaskV3Execution } from "./prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "./prepare/prepared-execution";
 import { parseSchedule, type ScheduleBackend } from "./schedule";
+import { assertTaskScheduleCronValid, assertTaskScheduleInputsSatisfyContract } from "./schedule-gates";
 import {
   compileTaskSchedulerBindings,
   compileWorkflowSchedulerBindings,
@@ -268,43 +268,6 @@ function statOrUndefined(file: string): fs.Stats | undefined {
   } catch {
     return undefined;
   }
-}
-
-/**
- * Validate every v4 `schedule:` entry's `inputs` against the task's own
- * declared contract with defaults applied — the exact set of values a
- * compiled invocation delivers — so a violation is reported at sync rather
- * than when the scheduler fires. Shared with `akm task validate`.
- */
-export function assertTaskScheduleInputsSatisfyContract(
-  v4: Pick<ParsedTaskSource["v4"], "inputs" | "schedule">,
-  refLabel: string,
-): void {
-  const contract = v4.inputs ?? {};
-  for (const scheduleEntry of v4.schedule) {
-    const defaultedInputs = applyInputDefaults(contract, { ...scheduleEntry.inputs });
-    const errors = validateInputs(contract, defaultedInputs);
-    if (errors.length > 0) {
-      throw new UsageError(
-        `Task ${JSON.stringify(refLabel)} schedule[${scheduleEntry.ordinal}].inputs does not satisfy ` +
-          `its declared inputs once defaults are applied: ${errors.join("; ")}`,
-        "TASK_SOURCE_INVALID",
-      );
-    }
-  }
-}
-
-/**
- * Validate every v4 `schedule:` entry's `cron` against the active backend's
- * dialect: cron is the most permissive of the three, so a task authored on
- * Linux can carry an expression launchd/schtasks cannot translate. Shared
- * with `akm task validate`.
- */
-export function assertTaskScheduleCronValid(
-  v4: Pick<ParsedTaskSource["v4"], "schedule">,
-  backend: ScheduleBackend,
-): void {
-  for (const scheduleEntry of v4.schedule) parseSchedule(scheduleEntry.cron, backend);
 }
 
 // ── Planning ────────────────────────────────────────────────────────────────

@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   upgrading is recommended; a binary of an unknown major is driven as OpenCode 2 with a warning, never refused.
   `akm upgrade` and `akm health` know the `akm-opencode-v2` plugin beside `akm-opencode`.
 - **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format })` returns
-  exactly the stdout of `akm --shape agent -q curate …`, computed in-process, and rejects with the CLI's message and
+  exactly the stdout of `akm --detail agent -q curate …`, computed in-process, and rejects with the CLI's message and
   `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
@@ -156,6 +156,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the retired-spelling notes in the agent hints.
   `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
   `akm improve canary` is now an asset-type scope that matches nothing.
+- **`akm help agents` (#1091).** It printed the same two guides as `akm hints` with the opposite default (short, with
+  `--full` for the complete one). `akm hints` is the one command: the complete guide by default, `--detail brief` for the
+  short one (`akm help agents >> AGENTS.md` becomes `akm hints --detail brief >> AGENTS.md`). `akm help agents` is now an
+  ordinary unknown command.
+- **`--shape` (#1091).** It acted on three commands (`search`, `curate`, `show`; `summary` only on `show`) while about 55
+  others ignored it and `--detail`. `--detail agent` replaces `--shape agent`, and `--detail` now takes
+  `brief|normal|full|agent`. `--shape summary` had no caller; use `--detail brief` on `show`. `--shape` is an unknown flag
+  (exit 2, `UNKNOWN_FLAG`) with no alias, so callers must change in step: the akm plugins, akm-eval's retrieval,
+  skillret and longmemeval benchmarks, and `akm help agents`-style scripts. `INVALID_SHAPE_VALUE` is gone, and
+  `INVALID_DETAIL_VALUE` now lists `agent`. The CLI reference no longer claims `--shape summary` errors outside `show`
+  (it warned and fell back to `agent`).
+- **`--target` on `import`, `env create`, `env remove`, `secret set` and `proposal accept`/`diff`/`revert` (#1091).**
+  `--bundle` is the one write-destination flag, as on `remember`, `clone`, `improve` and `task`; `--target` is an
+  unknown flag (exit 2) with no alias. The plugins, akm-eval and OpenPalm pass no `--target`. Errors and hints that said
+  `--target` now say `--bundle`.
+- **`akm task validate` (#1091).** Folded into `akm lint --type tasks`, as `akm workflow validate` was. Lint already parsed
+  every task file through the same version router; it now also runs the two gates `akm task sync` runs before it installs
+  a schedule (the cron suits the local scheduler backend; each schedule entry's `inputs` satisfy the declared contract),
+  so it never reports clean a task sync would refuse. Gone with the command: the `valid`/`blocked`/`invalid`/`not-a-task`
+  outcome, the `resolved` shape and the bare-path argument (point `akm lint --dir` at a bundle root). The
+  owner's crontab and tasks, the plugins, akm-eval and OpenPalm do not call it.
+- **`akm config path --all` (#1091).** `akm info` already reports the bundle, config, data, cache and state directories
+  (the index is `<dataDir>/index.db`), and `--all` was the one place `config path` printed an envelope instead of a bare
+  path. `akm config path` still prints the config file path and still runs when the config itself fails to load; `--all`
+  is an unknown flag (exit 2). Hints that sent you to `config path --all` now say `akm info`.
+- **`akm improve report` and `akm improve judge` are real subcommands (#1091).** They were magic values of the `scope`
+  positional. Both spellings keep working. `--run` and `--since` are now flags of `report` alone, so `akm improve --run x`
+  and `akm improve skills --since 7d` are unknown flags (exit 2) instead of a usage error from a hand-written check;
+  `--strategy` is `judge`'s own flag too. `akm improve [scope]` is unchanged, and `akm-eval`'s judge-gate keeps calling
+  `akm improve judge`.
 
 ### Fixed
 

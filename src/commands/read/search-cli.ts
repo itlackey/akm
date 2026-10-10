@@ -244,7 +244,6 @@ export const showCommand = defineJsonCommand({
     if (!parseMetaRef(args.ref)) parseBundleRef(args.ref);
     rejectExtraShowPositionals(args._, args.ref);
     const invocation = getParsedInvocation();
-    const cliShape = getOutputMode().shape;
     // F6/R-021 — `show` deliberately does NOT inherit `output.detail` from
     // config the way `search`/`curate` do via `getOutputMode().detail`
     // (which merges an explicit `--detail` flag with the config default,
@@ -258,16 +257,9 @@ export const showCommand = defineJsonCommand({
     // `--detail full` (explicit or, since it's also the implicit default,
     // omitted) and any other value fall through to the full response.
     const explicitDetail = invocation.getFlagValue("--detail");
-    // `--shape summary` selects the compact metadata projection for show.
-    // `--detail brief` forces the brief response regardless of shape.
+    // `--detail brief` forces the brief response regardless of projection.
     const showDetail: ShowDetailLevel | undefined =
-      explicitDetail === "brief"
-        ? "brief"
-        : explicitDetail === "full"
-          ? "full"
-          : cliShape === "summary"
-            ? "summary"
-            : undefined;
+      explicitDetail === "brief" ? "brief" : explicitDetail === "full" ? "full" : undefined;
     // `--filter` is repeatable — citty only exposes the last value, so read
     // every occurrence directly from argv (same helper as `akm search`; the two
     // commands share one spelling for the scope-narrowing axis).

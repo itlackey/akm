@@ -167,7 +167,7 @@ function printSetupTtyHint(result: { bundleDir?: string; configPath?: string }):
   console.error(
     plainize(
       `\n✓ Bundle created at ${result.bundleDir}\n` +
-        '  Next: `akm bundle add <source>`, `akm index`, `akm search "<query>"`, `akm help agents`',
+        '  Next: `akm bundle add <source>`, `akm index`, `akm search "<query>"`, `akm hints`',
     ),
   );
 }
@@ -301,7 +301,7 @@ const healthCommand = defineCommand({
   args: {
     // R-051: `health` is a raw `defineCommand` (not `defineJsonCommand`), so
     // it does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
-    // `--shape`/`--output` already parsed correctly here (this command has
+    // `--output` already parsed correctly here (this command has
     // no positional for a stray value to fall into), so this is purely a
     // `--help` visibility / consistency fix, not a behavior change.
     ...GLOBAL_OUTPUT_ARGS,
@@ -427,10 +427,6 @@ const healthCommand = defineCommand({
   },
 });
 
-function loadAgentHints(full: boolean): string {
-  return full ? EMBEDDED_HINTS_FULL : EMBEDDED_HINTS;
-}
-
 const hintsCommand = defineCommand({
   meta: {
     name: "hints",
@@ -448,7 +444,7 @@ const hintsCommand = defineCommand({
   run({ args }) {
     return runWithJsonErrors(() => {
       const detail = parseDetailLevel(args.detail as string | undefined) ?? "normal";
-      process.stdout.write(loadAgentHints(detail !== "brief"));
+      process.stdout.write(detail === "brief" ? EMBEDDED_HINTS : EMBEDDED_HINTS_FULL);
     });
   },
 });
@@ -558,25 +554,6 @@ const helpCommand = defineGroupCommand({
   },
   subCommands: {
     ...commandHelpTopics,
-    agents: defineCommand({
-      meta: {
-        name: "agents",
-        description:
-          "Print agent instructions on how to use akm — the short guide by default; pass --full for the complete guide",
-      },
-      args: {
-        full: {
-          type: "boolean",
-          default: false,
-          description: "Print the complete guide instead of the short one.",
-        },
-      },
-      run({ args }) {
-        return runWithJsonErrors(() => {
-          process.stdout.write(loadAgentHints(args.full === true));
-        });
-      },
-    }),
     migrate: defineCommand({
       meta: {
         name: "migrate",
@@ -933,7 +910,7 @@ function renderCommandSections(): string {
  * USAGE line + global OPTIONS, then cuts the string before citty's own
  * "COMMANDS" heading (present because `main` has `subCommands`) and appends
  * the grouped sections plus a one-line bundle/ref-grammar tagline and the
- * `akm help agents` pointer.
+ * `akm hints` pointer.
  */
 async function renderSectionedRootHelp(): Promise<string> {
   const base = await renderUsage(main as CommandDef, undefined);
@@ -950,7 +927,7 @@ async function renderSectionedRootHelp(): Promise<string> {
       "`akm search` output rather than synthesizing them.",
     "",
     "Run `akm help <command>` or `akm <command> --help` for details on any command.",
-    "Agents: run `akm hints` for the complete guide or `akm help agents` for the short guide.",
+    "Agents: run `akm hints` for the complete guide, or `akm hints --detail brief` for the short one.",
   ].join("\n");
   return [head, "", renderCommandSections(), "", epilogue].join("\n");
 }

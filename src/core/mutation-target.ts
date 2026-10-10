@@ -92,7 +92,7 @@ function resolveExplicitMutationTarget(
 }
 
 /**
- * Reconcile a qualified mutation ref with the explicit target (`--target`, or
+ * Reconcile a qualified mutation ref with the explicit target (`--bundle`, or
  * the `options.flag` the caller's command spells), then resolve the write
  * destination.
  */
@@ -102,7 +102,7 @@ export function resolveMutationTarget(
   explicitTarget?: string,
   options: WriteTargetOptions & { allowedAdapters?: readonly string[] } = {},
 ): ResolvedMutationTarget {
-  const flag = options.flag ?? "--target";
+  const flag = options.flag ?? "--bundle";
   const writeOptions: WriteTargetOptions = { requireWritable: options.requireWritable, flag };
   const qualifiedTarget = ref.origin ? resolveBundleWriteTarget(config, ref.origin, writeOptions) : undefined;
   const explicitResolved = explicitTarget

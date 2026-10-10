@@ -113,30 +113,6 @@ describe("akm show --scope fails loudly for both spellings", () => {
   });
 });
 
-describe("entrypoint global --shape=summary ordering", () => {
-  test("allows global --shape=summary before show", async () => {
-    const storage = useStorage();
-    // Semantic off keeps stderr empty as asserted below: with the default
-    // ("auto") the local embedder fetches its model from huggingface.co
-    // during auto-index, and an offline/blocked fetch warns on stderr.
-    writeSandboxConfig({ semanticSearchMode: "off" });
-    writeFixture(
-      path.join(storage.stashDir, "commands", "release.md"),
-      "---\ndescription: Release\n---\nRun release {{version}}\n",
-    );
-
-    const result = await runEntrypoint(["--format=json", "--shape=summary", "show", "commands/release.md"]);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const json = JSON.parse(result.stdout) as Record<string, unknown>;
-    expect(json.type).toBe("command");
-    expect(json.name).toBe("release");
-    expect(json.description).toBe("Release");
-    expect(json).not.toHaveProperty("template");
-  });
-});
-
 // F6/R-021: `show` must resolve `--detail` through ONE explicit path, and
 // (owner ruling) deliberately does NOT inherit `config.output.detail` the
 // way `search`/`curate` do — a bare `akm show <ref>` always returns the

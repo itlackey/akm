@@ -51,7 +51,6 @@ import {
   akmTasksSync,
   akmTasksSyncPlan,
 } from "./tasks";
-import { akmTaskValidate } from "./validate";
 
 /** Shared `--bundle <bundle>` arg wired onto every task subcommand. */
 const bundleArg = {
@@ -439,37 +438,6 @@ const tasksDoctorCommand = defineJsonCommand({
 });
 
 /**
- * #907: `akm task validate`'s exit-code contract — `valid` succeeds (exit
- * 0); `blocked`/`invalid`/`not-a-task` are diagnosed defects the caller must
- * act on (exit 1, mirroring `task sync`'s own `failures.length > 0 ->
- * EXIT_CODES.GENERAL`). A missing path or an unreadable file never reaches
- * this function at all — `akmTaskValidate` throws a `UsageError` for those,
- * which `defineJsonCommand`'s wrapping already maps to exit 2.
- */
-export function taskValidateExitCode(result: { outcome: string }): number | undefined {
-  return result.outcome === "valid" ? undefined : EXIT_CODES.GENERAL;
-}
-
-const tasksValidateCommand = defineJsonCommand({
-  meta: {
-    name: "validate",
-    description:
-      "Parse a single task file by filesystem path — not a concept ref, and the file need not live in a " +
-      "configured bundle — and report the same diagnostic `akm task sync` would produce for it. Read-only; " +
-      "never touches the scheduler.",
-  },
-  args: {
-    path: { type: "positional", description: "Filesystem path to a task source YAML file", required: true },
-  },
-  async run({ args }) {
-    const result = await akmTaskValidate(args.path);
-    output("task-validate", result);
-    const exitCode = taskValidateExitCode(result);
-    if (exitCode !== undefined) process.exitCode = exitCode;
-  },
-});
-
-/**
  * #851: `akm task prune`'s exit-code contract mirrors `task sync --dry-run`'s
  * (`taskSyncDryRunExitCode` above) — non-zero whenever the preview lists
  * removals the invocation didn't (or couldn't, without `--yes`) execute, so
@@ -524,7 +492,6 @@ export const taskCommand = defineGroupCommand({
     disable: tasksDisableCommand,
     run: tasksRunCommand,
     explain: tasksExplainCommand,
-    validate: tasksValidateCommand,
     history: tasksHistoryCommand,
     sync: tasksSyncCommand,
     prune: tasksPruneCommand,

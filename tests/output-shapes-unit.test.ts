@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { _resetWarnOnceForTests, _setWarnSinkForTests } from "../src/core/warn";
+import { resolveOutputMode } from "../src/output/context";
 import { shapeForCommand } from "../src/output/shapes";
 import {
   capDescription,
@@ -297,13 +298,6 @@ describe("shapeShowOutput", () => {
     expect(out).not.toHaveProperty("extra");
   });
 
-  test("shape=summary picks the compact metadata field set", () => {
-    const out = shapeShowOutput(fullShow, "normal", "summary");
-    expect(out).toMatchObject({ type: "skill", name: "deploy", description: "Deploy" });
-    // summary omits content (compact metadata only).
-    expect(out).not.toHaveProperty("content");
-  });
-
   test("shape=human at full picks the show field set + adds schemaVersion", () => {
     const out = shapeShowOutput(fullShow, "full", "human");
     expect(out.schemaVersion).toBe(1);
@@ -335,10 +329,6 @@ describe("shapeShowOutput", () => {
     expect(shapeShowOutput(fullShow, "full", "human").ref).toBe("team//skills/deploy");
   });
 
-  test("ref is present in shape=summary", () => {
-    expect(shapeShowOutput(fullShow, "normal", "summary").ref).toBe("team//skills/deploy");
-  });
-
   test("ref is present in shape=agent", () => {
     expect(shapeShowOutput(fullShow, "normal", "agent").ref).toBe("team//skills/deploy");
   });
@@ -361,7 +351,7 @@ describe("shapeShowOutput", () => {
       contextTruncated: true,
     };
 
-    for (const shape of ["human", "summary", "agent"] as const) {
+    for (const shape of ["human", "agent"] as const) {
       expect(shapeShowOutput(fragmentShow, "normal", shape)).toMatchObject({
         selectedRef: fragmentShow.selectedRef,
         parentRef: fragmentShow.parentRef,
@@ -420,34 +410,6 @@ describe("shapeForCommand", () => {
     const result = { something: "untouched" };
     expect(shapeForCommand("info", result, "full", "human")).toMatchObject(result);
     expect(shapeForCommand("health", result, "full", "human")).toMatchObject(result);
-  });
-
-  test("--shape summary on a non-show command warns and falls back to 'agent' instead of throwing", () => {
-    const warnings: unknown[][] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args);
-    });
-    try {
-      const summaryResult = shapeForCommand("search", { hits: [], registryHits: [] }, "normal", "summary");
-      const agentResult = shapeForCommand("search", { hits: [], registryHits: [] }, "normal", "agent");
-      expect(summaryResult).toEqual(agentResult);
-      expect(warnings.some((args) => args.some((a) => String(a).includes("not supported for 'akm search'")))).toBe(
-        true,
-      );
-
-      warnings.length = 0;
-      const infoSummary = shapeForCommand("info", { x: 1 }, "normal", "summary");
-      const infoAgent = shapeForCommand("info", { x: 1 }, "normal", "agent");
-      expect(infoSummary).toEqual(infoAgent);
-      expect(warnings.some((args) => args.some((a) => String(a).includes("not supported for 'akm info'")))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-      _resetWarnOnceForTests();
-    }
-  });
-
-  test("--shape summary on show is allowed", () => {
-    expect(() => shapeForCommand("show", { type: "skill", name: "deploy" }, "normal", "summary")).not.toThrow();
   });
 });
 
@@ -642,7 +604,7 @@ describe("shapeForCommand — `results` collection alias (#922)", () => {
 
   for (const [command, key, raw] of LIST_COMMANDS) {
     for (const shapeMode of ["human", "agent"] as const) {
-      test(`akm ${command} --shape ${shapeMode} carries \`results\` as the SAME array as \`${key}\``, () => {
+      test(`akm ${command} projection ${shapeMode} carries \`results\` as the SAME array as \`${key}\``, () => {
         const out = shapeForCommand(command, raw, "normal", shapeMode) as Record<string, unknown>;
         expect(Array.isArray(out.results)).toBe(true);
         // Not merely equal in content — the identical reference, so `results`
@@ -955,5 +917,19 @@ describe("shapeProposal* — proposal commands", () => {
       "normal",
     ) as Record<string, unknown>;
     expect(propose.ok).toBe(true);
+  });
+});
+
+describe("--detail agent", () => {
+  test("selects the agent projection and leaves verbosity at the configured default", () => {
+    expect(resolveOutputMode(["--detail", "agent"], { detail: "normal" })).toMatchObject({
+      shape: "agent",
+      detail: "normal",
+    });
+    expect(resolveOutputMode(["--detail=full"])).toMatchObject({ shape: "human", detail: "full" });
+  });
+
+  test("an unknown --detail value is still a usage error", () => {
+    expect(() => resolveOutputMode(["--detail", "huge"])).toThrow(/brief\|normal\|full\|agent/);
   });
 });

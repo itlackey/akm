@@ -32,7 +32,7 @@ export interface CurateOptions {
 
 /**
  * Returns exactly the stdout text of
- * `akm --shape agent -q curate <query> [--limit N] [--type T] --format <format>`
+ * `akm --detail agent -q curate <query> [--limit N] [--type T] --format <format>`
  * including its trailing newline. Rejects with the error the CLI
  * would fail with: its message, and its error code on the `code` property.
  */
@@ -44,7 +44,7 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
   return withQuiet(async () => {
     // Same startup order as the CLI: config first (an invalid config fails
     // the call before anything runs), then the output mode from argv + config.
-    const mode = resolveOutputMode(["--shape", "agent", "--format", format], loadConfig().output ?? {});
+    const mode = resolveOutputMode(["--detail", "agent", "--format", format], loadConfig().output ?? {});
     const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
     try {
       const curated = await runCurate(

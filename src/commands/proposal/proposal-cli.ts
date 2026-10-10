@@ -123,7 +123,7 @@ const proposalAcceptCommand = defineJsonCommand({
       required: false,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Write destination; must match the proposal's recorded target" },
     // F-6 / #393: Batch accept by generator, diff size, or age.
     generator: {
       type: "string",
@@ -173,7 +173,7 @@ const proposalAcceptCommand = defineJsonCommand({
         olderThanMs,
         dryRun: args["dry-run"] as boolean,
         queue: args.queue as string | undefined,
-        target: args.target as string | undefined,
+        target: args.bundle as string | undefined,
       });
       output("proposal-accept-batch", {
         accepted: count,
@@ -196,7 +196,7 @@ const proposalAcceptCommand = defineJsonCommand({
     const result = await akmProposalAccept({
       id: args.id as string,
       queue: args.queue as string | undefined,
-      target: args.target as string | undefined,
+      target: args.bundle as string | undefined,
     });
     output("proposal-accept", result);
   },
@@ -343,10 +343,10 @@ const proposalDiffCommand = defineJsonCommand({
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Diff destination; must match the proposal's recorded target" },
   },
   run({ args }) {
-    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.target });
+    const result = akmProposalDiff({ id: args.id, queue: args.queue, target: args.bundle });
     output("proposal-diff", result);
   },
 });
@@ -376,13 +376,13 @@ const proposalRevertCommand = defineJsonCommand({
       required: true,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
-    target: { type: "string", description: "Write destination; must match the proposal's recorded target" },
+    bundle: { type: "string", description: "Write destination; must match the proposal's recorded target" },
   },
   async run({ args }) {
     const result = await akmProposalRevert({
       id: args.id as string,
       queue: args.queue as string | undefined,
-      target: args.target as string | undefined,
+      target: args.bundle as string | undefined,
     });
     output("proposal-revert", result);
   },

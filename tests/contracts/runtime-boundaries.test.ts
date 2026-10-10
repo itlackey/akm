@@ -4,9 +4,8 @@ import { ARCHITECTURE_PATH, extractSection, readDoc } from "./contract-helpers";
 // Current orchestration invariants:
 //   * search → indexer.search(q); registry hits never merge into source hits.
 //   * show → indexer.lookup(ref) then read file from disk.
-//   * remember/clone/improve target resolution: --bundle → defaultWriteTarget →
-//     working bundle → ConfigError. (import keeps --target, out of 0.9's S8
-//     rename scope.)
+//   * write-target resolution: --bundle → defaultWriteTarget → working bundle →
+//     ConfigError.
 //   * `index.db` is ephemeral; `usage_events` is preserved across schema bumps.
 
 describe("current orchestration documentation contract", () => {
@@ -28,7 +27,7 @@ describe("current orchestration documentation contract", () => {
 
   test("write-target resolution retains explicit, default, working-bundle order", () => {
     const section = extractSection(architecture, "## Writing to Sources");
-    expect(section.replace(/\s+/g, " ")).toMatch(/--target.*defaultWriteTarget.*working bundle.*ConfigError/);
+    expect(section.replace(/\s+/g, " ")).toMatch(/--bundle.*defaultWriteTarget.*working bundle.*ConfigError/);
   });
 
   test("workflow run state remains separate from the asset index", () => {

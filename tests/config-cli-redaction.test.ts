@@ -251,7 +251,7 @@ describe("config diff", () => {
     expect(parsed.rows).toEqual([]);
   });
 
-  test("diff --shape agent still exposes the results alias", async () => {
+  test("diff --detail agent still exposes the results alias", async () => {
     const env = freshEnv();
 
     const outputs = await withEnv(env, async () => {
@@ -263,7 +263,7 @@ describe("config diff", () => {
       );
       writeSandboxConfig({ configVersion: "0.9.0", semanticSearchMode: "off" });
 
-      return runCliCapture(["config", "diff", path.join(configDir, "other.json"), "--shape", "agent"]);
+      return runCliCapture(["config", "diff", path.join(configDir, "other.json"), "--detail", "agent"]);
     });
 
     expect(outputs.code).toBe(0);

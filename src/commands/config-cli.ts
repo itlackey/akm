@@ -15,7 +15,7 @@
  */
 import { isDeepStrictEqual } from "node:util";
 import { defineGroupCommand, defineJsonCommand, output } from "../cli/shared";
-import { isRecord, resolveStashDir } from "../core/common";
+import { isRecord } from "../core/common";
 import {
   type AkmConfig,
   DEFAULT_CONFIG,
@@ -27,7 +27,7 @@ import {
 } from "../core/config/config";
 import { configGet, configSet, configUnset, unknownKeyHint } from "../core/config/config-walker";
 import { UsageError } from "../core/errors";
-import { getCacheDir, getConfigPath, getDbPath, getDefaultStashDir } from "../core/paths";
+import { getConfigPath } from "../core/paths";
 import { formatRegistryUrl } from "../core/registry-url";
 
 // ── Public API ──────────────────────────────────────────────────────────────
@@ -149,30 +149,9 @@ export const configCommand = defineGroupCommand({
   meta: { name: "config", description: "Show and manage configuration" },
   subCommands: {
     path: defineJsonCommand({
-      meta: { name: "path", description: "Show paths to config, bundle, cache, and index" },
-      args: {
-        all: { type: "boolean", description: "Show all paths (config, bundle, cache, index)", default: false },
-      },
-      run({ args }) {
-        const configPath = getConfigPath();
-        if (args.all) {
-          let stashDir: string;
-          try {
-            stashDir = resolveStashDir();
-          } catch {
-            stashDir = `${getDefaultStashDir()} (not initialized)`;
-          }
-          const cacheDir = getCacheDir();
-          const result = {
-            config: configPath,
-            bundle: stashDir,
-            cache: cacheDir,
-            index: getDbPath(),
-          };
-          output("config", result);
-        } else {
-          console.log(configPath);
-        }
+      meta: { name: "path", description: "Print the path to the config file" },
+      run() {
+        console.log(getConfigPath());
       },
     }),
     list: defineJsonCommand({

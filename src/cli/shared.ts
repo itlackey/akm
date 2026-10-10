@@ -175,20 +175,9 @@ export const GLOBAL_OUTPUT_ARGS = {
   format: { type: "string", description: "Output format: json|jsonl|yaml|text|md|html (global flag)" },
   detail: {
     type: "string",
-    description: "Detail level (verbosity): brief|normal|full (global flag).",
-  },
-  // R-050(c): single-sourced with the root command's own `--shape` help
-  // (`main.args.shape` in src/cli.ts, which spreads this object) so the
-  // caveat is visible from every leaf's own `--help`, not only the top-level
-  // one. `summary` outside `show` falls back to `agent` with a warning
-  // (shapeForCommand in src/output/shapes.ts) — `--shape` is a global flag,
-  // so a script that passes it to a mixed batch of commands still works.
-  shape: {
-    type: "string",
     description:
-      "Output projection: human|agent|summary (global flag). 'agent' trims to agent-essential fields; " +
-      "'summary' only has a dedicated projection on 'akm show' — elsewhere it falls back to 'agent' with a " +
-      "warning. Default: human.",
+      "Detail level: brief|normal|full (verbosity), or agent (trims search, curate and show to agent-essential " +
+      "fields; other commands ignore it) (global flag).",
   },
   output: {
     type: "string",
