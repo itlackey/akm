@@ -50,7 +50,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": true,
         "maxAcceptsPerRun": 25,
-        "policy": "personal-stash",
       },
       "validation": {
         "enabled": true,
@@ -116,7 +115,6 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
         "applyMode": "promote",
         "enabled": false,
         "maxAcceptsPerRun": 25,
-        "policy": "personal-stash",
       },
       "validation": {
         "enabled": false,

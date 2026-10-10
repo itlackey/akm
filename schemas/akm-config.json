@@ -902,10 +902,6 @@
                           "minLength": 1
                         }
                       },
-                      "limit": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
                       "qualityGate": {
                         "type": "object",
                         "properties": {
@@ -1121,19 +1117,6 @@
                       "minPendingCount": {
                         "type": "integer",
                         "minimum": 0
-                      },
-                      "cls": {
-                        "type": "object",
-                        "properties": {
-                          "enabled": {
-                            "type": "boolean"
-                          },
-                          "adjacentCount": {
-                            "type": "integer",
-                            "minimum": 1
-                          }
-                        },
-                        "additionalProperties": true
                       }
                     },
                     "additionalProperties": true
@@ -1498,10 +1481,6 @@
                         "minimum": 0
                       },
                       "maxPerRun": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0
-                      },
-                      "limit": {
                         "type": "integer",
                         "exclusiveMinimum": 0
                       }
@@ -2529,10 +2508,6 @@
                               "minLength": 1
                             }
                           },
-                          "limit": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
                           "qualityGate": {
                             "type": "object",
                             "properties": {
@@ -2748,19 +2723,6 @@
                           "minPendingCount": {
                             "type": "integer",
                             "minimum": 0
-                          },
-                          "cls": {
-                            "type": "object",
-                            "properties": {
-                              "enabled": {
-                                "type": "boolean"
-                              },
-                              "adjacentCount": {
-                                "type": "integer",
-                                "minimum": 1
-                              }
-                            },
-                            "additionalProperties": true
                           }
                         },
                         "additionalProperties": true
@@ -3125,10 +3087,6 @@
                             "minimum": 0
                           },
                           "maxPerRun": {
-                            "type": "integer",
-                            "exclusiveMinimum": 0
-                          },
-                          "limit": {
                             "type": "integer",
                             "exclusiveMinimum": 0
                           }
@@ -3996,10 +3954,6 @@
                     "minLength": 1
                   }
                 },
-                "limit": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
                 "qualityGate": {
                   "type": "object",
                   "properties": {
@@ -4215,19 +4169,6 @@
                 "minPendingCount": {
                   "type": "integer",
                   "minimum": 0
-                },
-                "cls": {
-                  "type": "object",
-                  "properties": {
-                    "enabled": {
-                      "type": "boolean"
-                    },
-                    "adjacentCount": {
-                      "type": "integer",
-                      "minimum": 1
-                    }
-                  },
-                  "additionalProperties": true
                 }
               },
               "additionalProperties": true
@@ -4592,10 +4533,6 @@
                   "minimum": 0
                 },
                 "maxPerRun": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0
-                },
-                "limit": {
                   "type": "integer",
                   "exclusiveMinimum": 0
                 }

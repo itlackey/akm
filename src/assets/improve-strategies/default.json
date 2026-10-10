@@ -12,7 +12,7 @@
     "extract": { "enabled": false, "triage": { "enabled": true, "minScore": 2 } },
     "validation": { "enabled": true },
     "proactiveMaintenance": { "enabled": true, "dueDays": 30, "maxPerRun": 15 },
-    "triage": { "enabled": true, "applyMode": "promote", "maxAcceptsPerRun": 25, "policy": "personal-stash" }
+    "triage": { "enabled": true, "applyMode": "promote", "maxAcceptsPerRun": 25 }
   },
   "sync": { "enabled": true, "push": true }
 }

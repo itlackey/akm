@@ -128,6 +128,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   same `plan.processes` routing table.
 - **`akm task list` (#1091).** A delegating alias of `akm search --type task` (added in 0.9.15, #951) with no callers
   in the plugins, akm-eval or OpenPalm. Use `akm search --type task`.
+- **Improve config keys nothing read (#1091).** `processes.distill.limit`, `processes.memoryInference.cls`,
+  `processes.proactiveMaintenance.limit` (an alias of `maxPerRun`) and `triage.policy` (set in the shipped `default`
+  strategy, read by no code) are gone from the schema and the shipped strategy. A config that still sets one loads
+  (named once by the unknown-key warning). `plan.triage.maxDiffLines` leaves the plan type; stored runs that carry it,
+  or `plan.proactive.configured.limit`, still decode. `processes.distill.cls` is read and stays. OpenPalm's improve
+  editor writes the strategy-level `limit`, not per-process ones, so the process `limit` of reflect and consolidate
+  stays.
 
 ### Fixed
 

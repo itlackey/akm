@@ -184,6 +184,8 @@ function validateProactivePlan(value: unknown): void {
     new Set(["configured", "effective", "candidatePool", "dueTotal", "neverReflected", "selected", "selectedRefs"]),
   );
   if (!isRecord(value.configured)) fail("plan.proactive.configured must be an object");
+  // `limit` is no longer written (the `proactiveMaintenance.limit` alias of `maxPerRun` was removed in 0.10, #1091);
+  // runs an older release stored may carry it.
   requireExactFields(value.configured, new Set(["dueDays", "maxPerRun", "limit"]));
   for (const field of ["dueDays", "maxPerRun", "limit"] as const) {
     if (value.configured[field] !== undefined && typeof value.configured[field] !== "number") {
@@ -426,6 +428,8 @@ function validateImprovePlan(value: unknown, dryRun: boolean, plannedRefNames: r
     }
   }
   if (!isRecord(value.triage)) fail("plan.triage must be an object");
+  // `maxDiffLines` is no longer written (the triage config key was dropped before 0.10, #1091); runs an older
+  // release stored may carry it.
   requireExactFields(value.triage, new Set(["enabled", "configuredMode", "mode", "maxAcceptsPerRun", "maxDiffLines"]));
   if (typeof value.triage.enabled !== "boolean") fail("plan.triage.enabled must be a boolean");
   for (const field of ["configuredMode", "mode"] as const) {

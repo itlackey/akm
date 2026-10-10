@@ -60,8 +60,7 @@ const excludeRefPrefixesField = z.array(z.string().min(1)).optional();
 
 /**
  * Consolidate process: hard cap on memories processed per pass.
- * Reflect/distill: max refs processed (same as profile-level `limit`).
- * proactiveMaintenance: fallback when `maxPerRun` is absent.
+ * Reflect: max refs processed (same as profile-level `limit`).
  */
 const processLimitField = positiveInt.optional();
 
@@ -166,7 +165,6 @@ const REFLECT_PROCESS_FIELDS = {
 
 const DISTILL_PROCESS_FIELDS = {
   allowedTypes: allowedTypesField,
-  limit: processLimitField,
   qualityGate: qualityGateField,
   // Skip distill entirely when reflect produced zero planned refs.
   requirePlannedRefs: z.boolean().optional(),
@@ -182,7 +180,6 @@ const CONSOLIDATE_PROCESS_FIELDS = {
 const MEMORY_INFERENCE_PROCESS_FIELDS = {
   // Minimum pending memory count to run the pass.
   minPendingCount: z.number().int().min(0).optional(),
-  cls: clsField,
 };
 
 const EXTRACT_PROCESS_FIELDS = {
@@ -224,10 +221,8 @@ const TRIAGE_PROCESS_FIELDS = {
 const PROACTIVE_MAINTENANCE_PROCESS_FIELDS = {
   // Staleness gate + rotation cooldown in days (default 30).
   dueDays: z.number().int().min(0).optional(),
-  // Top-N bound per run (default 15). Alias for `limit`; `maxPerRun` wins
-  // when both are set.
+  // Top-N bound per run (default 15).
   maxPerRun: positiveInt.optional(),
-  limit: processLimitField,
 };
 
 /** distill/consolidate are memory-only and never read `excludeRefPrefixes` (reflect only, R12). */

@@ -85,7 +85,6 @@ describe("decodeImproveResult", () => {
       configuredMode: "promote",
       mode: "queue",
       maxAcceptsPerRun: 7,
-      maxDiffLines: 20,
     },
   } satisfies ImproveExecutionPlan;
 
@@ -179,6 +178,23 @@ describe("decodeImproveResult", () => {
         effective: { ...plan.consolidation.effective, minPoolSize: 3 },
         gates: { ...plan.consolidation.gates, minimumPool: { passed: true, reason: "large enough" } },
       },
+    };
+    const envelope = {
+      schemaVersion: 2,
+      strategy: "default",
+      ...common,
+      dryRun: true,
+      plannedRefs: [plannedRef],
+      plan: old,
+    };
+    expect(decodeImproveResult(envelope).envelope.plan).toEqual(old);
+  });
+
+  test("decodes a plan an older release stored with proactive.configured.limit and triage.maxDiffLines (#1091)", () => {
+    const old = {
+      ...plan,
+      proactive: { ...plan.proactive, configured: { ...plan.proactive.configured, limit: 4 } },
+      triage: { ...plan.triage, maxDiffLines: 20 },
     };
     const envelope = {
       schemaVersion: 2,

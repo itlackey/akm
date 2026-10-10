@@ -208,7 +208,7 @@ export interface ImproveExecutionPlan {
    */
   processes: ProcessRoutingRow[];
   proactive?: {
-    configured: { dueDays?: number; maxPerRun?: number; limit?: number };
+    configured: { dueDays?: number; maxPerRun?: number };
     effective: { dueDays: number; maxPerRun: number };
     candidatePool: number;
     dueTotal: number;
@@ -245,7 +245,6 @@ export interface ImproveExecutionPlan {
     /** Effective mode the live pre-pass will execute. */
     mode: "queue" | "promote";
     maxAcceptsPerRun: number;
-    maxDiffLines?: number;
   };
 }
 
