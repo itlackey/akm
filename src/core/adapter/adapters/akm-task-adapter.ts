@@ -128,12 +128,6 @@ export const akmTaskAdapter: BundleAdapter = {
     ];
   },
 
-  /** A task places to `<conceptId>.yml`; an already-suffixed conceptId is idempotent. */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    return path.join(c.root, /\.yml$/i.test(posix) ? posix : `${posix}.yml`);
-  },
-
   /** Tasks live anywhere under the component root. */
   directoryList(): string[] {
     return ["."];

@@ -259,11 +259,6 @@ export const agentSkillsAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, conceptId, SKILL_MANIFEST), conceptId }];
   },
 
-  /** A skill places to `<name>/SKILL.md`; the conceptId IS the package directory (spec §4.5). */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    return path.join(c.root, conceptId, SKILL_MANIFEST);
-  },
-
   /** Install-time probe (§1.2): a root that directly contains one or more `<name>/SKILL.md` skill packages. */
   looksLikeRoot(root: string): boolean {
     let entries: fs.Dirent[];
