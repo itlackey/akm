@@ -184,16 +184,16 @@ describe("plan freezing at workflow start (migration 006)", () => {
     const row = await withWorkflowRunsRepo((repo) => repo.getRunById(started.run.id));
     // An older release's row: a lower irVersion on the row AND in the plan
     // bytes, non-canonical JSON, and a hash that matches nothing.
-    const older = JSON.stringify({ ...JSON.parse(row?.plan_json ?? "{}"), irVersion: 4 }, null, 2);
+    const older = JSON.stringify({ ...JSON.parse(row?.plan_json ?? "{}"), irVersion: 5 }, null, 2);
     execOnWorkflowDb(
-      "UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = 4 WHERE id = ?",
+      "UPDATE workflow_runs SET plan_json = ?, plan_hash = ?, plan_ir_version = 5 WHERE id = ?",
       older,
       "0".repeat(64),
       started.run.id,
     );
 
-    expect((await getWorkflowStatus(started.run.id)).run.planIrVersion).toBe(4);
-    expect((await listWorkflowRuns()).runs.find((run) => run.id === started.run.id)?.planIrVersion).toBe(4);
+    expect((await getWorkflowStatus(started.run.id)).run.planIrVersion).toBe(5);
+    expect((await listWorkflowRuns()).runs.find((run) => run.id === started.run.id)?.planIrVersion).toBe(5);
     expect((await getNextWorkflowStep(started.run.id)).step?.id).toBe("only-step");
 
     let dispatches = 0;

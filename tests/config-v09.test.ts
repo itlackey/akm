@@ -222,13 +222,11 @@ describe("0.9 config contract", () => {
     expect(() => loadUserConfig()).toThrow(ConfigError);
   });
 
-  // #852 (following #815): `extraParams.reasoning_effort` was the documented
-  // 0.9.1 workaround for LM Studio, where `enableThinking` is a no-op.
-  // `reasoningEffort` became a first-class — and therefore protected — field
-  // in 0.9.2. AGENTS.md cites this exact guard as already fixed to
-  // warn-and-auto-lift; loads onto the first-class field in memory, warning
-  // once and naming `akm migrate apply` as the way to persist it.
-  test("loads a legacy reasoning_effort extraParams override by lifting it, naming akm migrate apply in the warning", () => {
+  // #852 / #1091: `extraParams.reasoning_effort` was the documented 0.9.1
+  // workaround for LM Studio. It is older than the 0.9.15 floor, so 0.10 refuses
+  // it and names the first-class field instead of lifting it (tests/config-
+  // extraparams-protected.test.ts); `akm migrate apply` under 0.9.x rewrites it.
+  test("refuses a legacy reasoning_effort extraParams override, naming the first-class field", () => {
     writeConfig({
       configVersion: "0.9.0",
       engines: {
@@ -240,18 +238,7 @@ describe("0.9 config contract", () => {
         },
       },
     });
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      const config = loadUserConfig();
-      expect(config.engines?.fast?.reasoningEffort).toBe("high");
-      expect(warnings.some((w) => w.includes("akm migrate apply"))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
+    expect(() => loadUserConfig()).toThrow(/set engines\.<name>\.reasoningEffort instead/);
   });
 
   test("rejects a reasoning_effort extraParams override that conflicts with a different first-class reasoningEffort", () => {

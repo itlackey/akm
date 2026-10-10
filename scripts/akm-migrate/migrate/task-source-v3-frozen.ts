@@ -14,7 +14,7 @@
  * commit 2 (`refactor(p4): remove github-action locator grammar from
  * native classification`) — i.e. INCLUDING the GitHub Action locator
  * grammar that commit deleted from native classification.
- * `src/tasks/source/task-to-v4.ts`'s `github-action-target-removed`
+ * `scripts/akm-migrate/migrate/task-to-v4.ts`'s `github-action-target-removed`
  * blocked reason needs this migrator to still be able to CLASSIFY a
  * locator (not merely detect its shape) so it can name the target
  * explicitly rather than guess (`tests/migrate/task-v3-to-v4.test.ts`'s
@@ -40,12 +40,12 @@
  * helpers for `src/`-side consumers, not part of reading a document).
  */
 
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../commands/command/builtin-action";
-import { bundleRefToString, parseBundleRef } from "../../core/asset/asset-ref";
-import { UsageError } from "../../core/errors";
-import { checkJsonSchemaDefinition } from "../../core/json-schema";
-import type { ExecutionJsonObject, ExecutionJsonValue } from "../../execution/json";
-import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../workflows/resource-limits";
+import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../src/commands/command/builtin-action";
+import { bundleRefToString, parseBundleRef } from "../../../src/core/asset/asset-ref";
+import { UsageError } from "../../../src/core/errors";
+import { checkJsonSchemaDefinition } from "../../../src/core/json-schema";
+import type { ExecutionJsonObject, ExecutionJsonValue } from "../../../src/execution/json";
+import { WORKFLOW_ENV_VAR_NAME_PATTERN } from "../../../src/workflows/resource-limits";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -64,7 +64,7 @@ import {
   TASK_V3_MAX_REDACT_NAMES,
   TASK_V3_MAX_SCHEDULES,
   validateWorkingDirectory,
-} from "./bounded-document";
+} from "../../../src/tasks/source/bounded-document";
 
 export const TASK_V3_SCHEMA_VERSION = 3 as const;
 

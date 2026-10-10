@@ -1938,15 +1938,16 @@ akm registry remove my-team --yes    # Skip the confirmation prompt
 Inspect or apply every pending migration in one plan. `akm migrate` is a thin
 wrapper over the standalone `akm-migrate` executable (installed alongside
 `akm`, and embedded in the release binary), which owns every historical shape
-akm has ever written so the CLI proper reads only current schemas. The steps,
+akm 0.9.15 and later wrote so the CLI proper reads only current schemas. The steps,
 in order:
 
 1. config.json rewritten in its current shape (`configFile`): retired and
-   unknown keys dropped, legacy `extraParams` lifted onto first-class engine
-   fields, the legacy `stashDir`/`sources[]`/`installed` layout converted to
-   `bundles`/`defaultBundle`, `configVersion` bumped — the same pipeline
-   every load already runs in memory, so this only persists it, under a
-   backup;
+   unknown keys dropped, `configVersion` bumped — the same pipeline every
+   load already runs in memory, so this only persists it, under a backup. A
+   config older than 0.9.15 (the legacy `stashDir`/`sources[]`/`installed`
+   layout, an `extraParams` key that shadows a first-class engine field) is
+   not converted by 0.10 and blocks this step: run `akm migrate apply` under
+   akm 0.9.x first;
 2. pending `state.db` migrations, historical-destructive ones included, with
    a verified sibling safety copy (`stateMigrations`) — the only path besides
    `akm upgrade` that admits released migration 018, which an ordinary

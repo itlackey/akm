@@ -12,6 +12,13 @@ out in the CHANGELOG with a migration note. The 0.10.x series returns to bug
 fixes and tuning, and aims to restore the normal discipline of breaking
 changes only in major and minor releases.
 
+**Version floor (0.10, #1091).** 0.10 reads what 0.9.15 and later wrote: config,
+`state.db`, task sources, frozen workflow plans and scheduler rows. It does not
+convert anything older. An install on an earlier release runs `akm migrate
+apply` under akm 0.9.x first, then upgrades; a 0.10 reader that meets an older
+shape refuses with one message saying so. See
+[`docs/architecture/persisted-data-compat.md`](docs/architecture/persisted-data-compat.md).
+
 **Version numbers (0.10 onward, #1089).** A 0.10 release is a daily build,
 `0.10.YYMMDDNN`: `YY` the UTC year, `MM` the month, `DD` the day and `NN` the
 build that day (`01` to `99`), each two digits. The first build on 2026-10-10 is
@@ -542,7 +549,9 @@ Internal replacement for the one capability nothing else covered.
 - **0.10 — `config set`/`config unset` may drop the config dump** in favor of
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
 - **0.10 — migration extraction.** The migration machinery leaves the CLI for
-  a separately published `akm-migrate` package (see Internal above).
+  a separately published `akm-migrate` package (see Internal above). The
+  task-source migrator (`task-to-v4.ts`, `task-source-v3-frozen.ts`) already
+  lives with it under `scripts/akm-migrate/migrate/`, out of `src/`.
 - **0.10 — `--auto-accept` hard error.** It is currently accepted-and-warned;
   see the Improvement loop entry.
 - **0.10 — `BundleAdapter.placeNew()` wiring.** The interface declares

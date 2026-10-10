@@ -6,7 +6,7 @@
  * Filesystem boundary for the task-source migration: every task file under a
  * bundle's task directory, whatever version it declares, planned to task
  * source v4 and written back under one backup. The version-specific work is
- * the pure planner `src/tasks/source/task-to-v4.ts`, which only this
+ * the pure planner `scripts/akm-migrate/migrate/task-to-v4.ts`, which only this
  * migration runs — the runtime reads only task source v4; this module only
  * walks directories, snapshots bytes, and replaces files.
  */
@@ -22,7 +22,7 @@ import {
   type TaskToV4FileInput,
   type TaskToV4MigrationPlan,
   taskToV4PlanFromOutcomes,
-} from "../../../src/tasks/source/task-to-v4";
+} from "./task-to-v4";
 
 export interface TaskFileRoot {
   readonly bundleId: string;
