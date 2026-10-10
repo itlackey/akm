@@ -2627,6 +2627,9 @@ ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
 flow. A qualified scope such as `team//skills/code-review` selects that bundle;
 a different explicit `--bundle` is a usage error.
 
+A type scope that matches no asset in the stash (a misspelt type, say) prints a warning on stderr, with the
+nearest real type when one is close, and plans nothing; the exit code stays 0.
+
 A run improves one bundle, the one it writes to, and plans only that bundle's
 assets: an asset that lives in another bundle is left alone even when that
 bundle is writable, and a bare ref scope (`akm improve skills/x`) resolves

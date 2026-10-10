@@ -32,6 +32,7 @@ import type { ConfigError } from "../../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../../src/core/improve-types";
 import { openStateDatabase } from "../../../../src/core/state-db";
+import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { akmIndex } from "../../../../src/indexer/indexer";
 import {
   type ImproveLedgerOutcome,
@@ -197,6 +198,77 @@ test("skips a malformed indexed ref without discarding valid candidates", async 
   expect(result.plannedRefs[0]?.itemRef).toBe("stash//memories/valid");
   expect(result.memorySummary).toEqual({ eligible: 1, derived: 0 });
   expect(result.strategyFilteredRefs).toEqual([]);
+});
+
+describe("a scope that matches no asset warns on stderr", () => {
+  async function scopeWarnings(scope: { mode: "all" } | { mode: "type" | "ref"; value: string }, stash: string) {
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await collectEligibleRefs(scope, stash, {});
+      return { warnings, result };
+    } finally {
+      _setWarnSinkForTests();
+    }
+  }
+
+  test("a misspelt type warns with the likely intended type and plans nothing", async () => {
+    const stash = makeTempDir("akm-elig-scope-typo-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    for (const [typed, intended] of [
+      ["memorys", "memory"],
+      ["memry", "memory"],
+    ] as const) {
+      const { warnings, result } = await scopeWarnings({ mode: "type", value: typed }, stash);
+      expect(warnings).toEqual([`Scope "${typed}" matches no asset in the stash. Did you mean \`${intended}\`?`]);
+      expect(result.plannedRefs).toEqual([]);
+    }
+  });
+
+  test("an unknown type with no near miss warns without a suggestion", async () => {
+    const stash = makeTempDir("akm-elig-scope-canary-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const { warnings } = await scopeWarnings({ mode: "type", value: "canary" }, stash);
+    expect(warnings).toEqual(['Scope "canary" matches no asset in the stash.']);
+  });
+
+  test("a nonexistent ref still fails as not found", async () => {
+    const stash = makeTempDir("akm-elig-scope-ref-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const { warnings, result } = await scopeWarnings({ mode: "ref", value: "memories/nope" }, stash).catch(
+      (error: unknown) => ({ warnings: [] as string[], result: error }),
+    );
+    expect(result).toMatchObject({ code: "ASSET_NOT_FOUND" });
+    expect(warnings).toEqual([]);
+  });
+
+  test("a valid type with nothing eligible does not warn", async () => {
+    const stash = makeTempDir("akm-elig-scope-valid-");
+    // Derived memories skip reflect, so the type exists but nothing is planned.
+    writeMemory(stash, "only.derived", "Derived memory.");
+    await buildIndex(stash);
+
+    const { warnings, result } = await scopeWarnings({ mode: "type", value: "memory" }, stash);
+    expect(result.plannedRefs).toEqual([]);
+    expect(warnings).toEqual([]);
+  });
+
+  test("no scope does not warn", async () => {
+    const stash = makeTempDir("akm-elig-scope-none-");
+    writeMemory(stash, "valid", "Valid memory.");
+    await buildIndex(stash);
+
+    const { warnings } = await scopeWarnings({ mode: "all" }, stash);
+    expect(warnings).toEqual([]);
+  });
 });
 
 test("a read-only nested bundle is never eligible through its writable ancestor", async () => {
