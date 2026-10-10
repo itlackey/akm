@@ -15,7 +15,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { Worker } from "node:worker_threads";
 import { computeAcceptRateBySource } from "../../../src/commands/health/accept-rate";
 import { rejectedProposalContext } from "../../../src/commands/improve/stage";
 import {
@@ -106,6 +105,17 @@ interface WorkerHandle<T> {
   release: () => void;
 }
 
+/**
+ * Start one concurrent writer in its OWN PROCESS, held at a barrier until `release()`.
+ *
+ * These are child processes, not `worker_threads`, on purpose (#1140): akm's
+ * concurrent writers are separate processes (improve cron + CLI). Bun 1.3.14's
+ * `bun:sqlite` keeps connections in a process-global table that is not safe
+ * for threads opening/closing connections at the same time, so two Workers in
+ * one process sometimes ended up driving the SAME connection — "cannot start a
+ * transaction within a transaction" — or crashed Bun outright. That is a
+ * runtime bug the product never exercises, so it must not fail this test.
+ */
 function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<T> {
   const scriptDir = makeTempDir("akm-prop-worker-");
   const scriptPath = path.join(scriptDir, "worker.mts");
@@ -113,81 +123,66 @@ function startProposalWorker<T>(payload: Record<string, unknown>): WorkerHandle<
   fs.writeFileSync(
     scriptPath,
     `
-      import { parentPort } from "node:worker_threads";
       import {
         archiveProposal,
         createProposal,
         recordGateDecision,
       } from ${JSON.stringify(moduleHref)};
 
-      if (!parentPort) throw new Error("Proposal worker requires a parent port");
-      parentPort.on("message", (message) => {
-        const { signalBuffer, action, payload } = message;
-        const signal = new Int32Array(signalBuffer);
-        parentPort.postMessage({ type: "ready" });
-        Atomics.wait(signal, 0, 0);
+      const { action, payload } = JSON.parse(process.argv[2]);
+      process.stdout.write("ready\\n");
+      // Barrier: stdin closes when the parent calls release().
+      await Bun.stdin.text();
 
-        if (action === "create") {
-          const result = createProposal(payload.stashDir, payload.input, { dbPath: payload.dbPath });
-          parentPort.postMessage({
-            type: "result",
-            result: { kind: "created", id: result.id },
-          });
-          return;
-        }
-
-        if (action === "archive") {
-          const updated = archiveProposal(payload.stashDir, payload.id, payload.status, payload.reason, {
-            dbPath: payload.dbPath,
-          });
-          parentPort.postMessage({ type: "result", result: { kind: "archived", status: updated.status } });
-          return;
-        }
-
-        if (action === "gate") {
-          const updated = recordGateDecision(payload.stashDir, payload.id, payload.decision, { dbPath: payload.dbPath });
-          parentPort.postMessage({ type: "result", result: { kind: "gate", updated: updated !== undefined } });
-        }
-      });
+      let result;
+      if (action === "create") {
+        const created = createProposal(payload.stashDir, payload.input, { dbPath: payload.dbPath });
+        result = { kind: "created", id: created.id };
+      } else if (action === "archive") {
+        const updated = archiveProposal(payload.stashDir, payload.id, payload.status, payload.reason, {
+          dbPath: payload.dbPath,
+        });
+        result = { kind: "archived", status: updated.status };
+      } else if (action === "gate") {
+        const updated = recordGateDecision(payload.stashDir, payload.id, payload.decision, { dbPath: payload.dbPath });
+        result = { kind: "gate", updated: updated !== undefined };
+      }
+      process.stdout.write("result " + JSON.stringify(result) + "\\n");
     `,
     "utf8",
   );
 
-  const worker = new Worker(pathToFileURL(scriptPath));
-  const signal = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
+  const child = Bun.spawn([process.execPath, scriptPath, JSON.stringify(payload)], {
+    env: { ...process.env },
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let stdout = "";
   let resolveReady: (() => void) | undefined;
-  let resolveResult: ((value: T) => void) | undefined;
-  let rejectResult: ((error: unknown) => void) | undefined;
   const ready = new Promise<void>((resolve) => {
     resolveReady = resolve;
   });
-  const result = new Promise<T>((resolve, reject) => {
-    resolveResult = resolve;
-    rejectResult = reject;
-  });
-
-  worker.on("message", (message) => {
-    if (message?.type === "ready") {
-      resolveReady?.();
-      return;
+  const drainStdout = (async () => {
+    const decoder = new TextDecoder();
+    for await (const chunk of child.stdout) {
+      stdout += decoder.decode(chunk, { stream: true });
+      if (stdout.includes("ready\n")) resolveReady?.();
     }
-    if (message?.type === "result") {
-      resolveResult?.(message.result as T);
-      void worker.terminate();
+  })();
+  const result = (async () => {
+    const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited, drainStdout]);
+    const line = stdout.split("\n").find((entry) => entry.startsWith("result "));
+    if (exitCode !== 0 || line === undefined) {
+      throw new Error(`Proposal worker failed (${exitCode}):\n${stderr || stdout}`);
     }
-  });
-  worker.once("error", (error) => {
-    rejectResult?.(error);
-    void worker.terminate();
-  });
-  worker.postMessage({ signalBuffer: signal.buffer, ...payload });
-
+    return JSON.parse(line.slice("result ".length)) as T;
+  })();
   return {
     ready,
     result,
     release: () => {
-      Atomics.store(signal, 0, 1);
-      Atomics.notify(signal, 0);
+      child.stdin.end();
     },
   };
 }
