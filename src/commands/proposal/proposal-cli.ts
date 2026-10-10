@@ -463,7 +463,7 @@ const proposalDrainCommand = defineJsonCommand({
     const maxAccepts =
       parsePositiveIntFlag(args["max-accepts"] as string | undefined, "--max-accepts") ??
       triageConfig?.maxAcceptsPerRun ??
-      25;
+      200;
 
     const rawOlderThan = parsePositiveIntFlag(args["older-than"] as string | undefined, "--older-than");
     const olderThanMs = rawOlderThan !== undefined ? rawOlderThan * 86_400_000 : undefined;

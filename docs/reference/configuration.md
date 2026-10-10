@@ -497,7 +497,7 @@ guidance. When enabled, engine selection is judgment → triage → strategy →
 `defaults.llmEngine`, and resolution fails closed if none is available.
 
 The `default` strategy runs triage in `promote` mode with judgment off and
-`maxAcceptsPerRun: 25` (#1143), so the proposal backlog drains through the
+`maxAcceptsPerRun: 200` (#1143), so the proposal backlog drains through the
 deterministic gates without `experimental.improveAutonomy`. Turning judgment on
 in a promote strategy is what that opt-in gates.
 

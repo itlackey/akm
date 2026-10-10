@@ -373,7 +373,7 @@ lane only when its judgment tier is on; see below):
 
 A deterministic-only `promote` (triage with judgment off) is not gated (#1143):
 the `default` strategy drains the queue through the deterministic gates, up to
-`maxAcceptsPerRun` (25) per run, with no opt-in. The nightly eval's baseline is
+`maxAcceptsPerRun` (200) per run, with no opt-in. The nightly eval's baseline is
 exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) and
 0.89 (qwen) of items solved, 0 to 1 harmed.
 

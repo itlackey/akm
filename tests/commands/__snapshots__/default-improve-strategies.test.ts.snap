@@ -49,7 +49,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "triage": {
         "applyMode": "promote",
         "enabled": true,
-        "maxAcceptsPerRun": 25,
+        "maxAcceptsPerRun": 200,
       },
       "validation": {
         "enabled": true,
@@ -114,7 +114,7 @@ exports[`default improve strategies (#552) complete resolved trees are pinned fo
       "triage": {
         "applyMode": "promote",
         "enabled": false,
-        "maxAcceptsPerRun": 25,
+        "maxAcceptsPerRun": 200,
       },
       "validation": {
         "enabled": false,

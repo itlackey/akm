@@ -68,7 +68,7 @@ describe("the shipped default strategy drains deterministically without autonomy
 
     expect(plan.processes.triage.enabled).toBe(true);
     expect(plan.strategy.config.processes?.triage?.applyMode).toBe("promote");
-    expect(plan.strategy.config.processes?.triage?.maxAcceptsPerRun).toBe(25);
+    expect(plan.strategy.config.processes?.triage?.maxAcceptsPerRun).toBe(200);
     expect(plan.triageJudgment ?? null).toBeNull();
     expect(plan.autonomyGated.map((g) => g.lane)).toEqual(["memoryInference"]);
   });
