@@ -19,6 +19,20 @@ apply` under akm 0.9.x first, then upgrades; a 0.10 reader that meets an older
 shape refuses with one message saying so. See
 [`docs/architecture/persisted-data-compat.md`](docs/architecture/persisted-data-compat.md).
 
+**CLI spellings merged in 0.10 (#1091).** Each of these is an unknown flag or
+command (exit 2) from 0.10, with no alias and no deprecation period; the new
+spelling is in the CHANGELOG entry and the CLI reference.
+
+| Gone | Use |
+| --- | --- |
+| `akm help agents` | `akm hints` (`--detail brief` for the short guide) |
+| `--shape agent` | `--detail agent` |
+| `--shape summary` | `--detail brief` (it only had a projection on `akm show`) |
+| `--target` on `import`, `env create`, `env remove`, `secret set`, `proposal accept`, `proposal diff`, `proposal revert` | `--bundle` |
+| `akm task validate <path>` | `akm lint --type tasks` |
+| `akm config path --all` | `akm info` |
+| `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
+
 **Version numbers (0.10 onward, #1089).** A 0.10 release is a daily build,
 `0.10.YYMMDDNN`: `YY` the UTC year, `MM` the month, `DD` the day and `NN` the
 build that day (`01` to `99`), each two digits. The first build on 2026-10-10 is
@@ -107,6 +121,8 @@ enumeration of the whole `proposal` noun group.
 | `akm models` | Evolving | `list` and `copy-defaults` for model intent aliases. |
 | `akm lint` | Evolving | |
 | `akm improve` | Evolving | Review-first by default; mutating lanes require `experimental.improveAutonomy` — see below. |
+| `akm improve report` | Evolving | Subcommand since 0.10 (was a magic `scope` value); owns `--run` and `--since`. |
+| `akm improve judge` | Evolving | Subcommand since 0.10 (was a magic `scope` value); reads one revision as JSON on stdin and writes nothing. |
 | `akm proposal list` | Stable | See reconciliation note above. |
 | `akm proposal show` | Evolving | |
 | `akm proposal diff` | Evolving | |

@@ -2611,8 +2611,6 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 
 | Flag | Description |
 | --- | --- |
-| `--run <id>` | `report` scope only (#944): show the usage report for one specific `improve_runs` row instead of the most recent real run. Mutually exclusive with `--since`. Rejected with any other scope, or no scope. |
-| `--since <window>` | `report` scope only (#944): aggregate the usage report over every real (non-dry-run) run started since `<window>` (a duration like `24h`/`7d`, or an ISO timestamp) instead of one run. Mutually exclusive with `--run`. Rejected with any other scope, or no scope. |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
@@ -2805,9 +2803,12 @@ destination than `memory`.
 `akm improve report` (#944) answers "which engine did each model-calling process
 use this run, how much did it cost, and which enabled processes made zero
 calls (and why)" without hand-written SQLite against `state.db`. It is a
-`scope` value, not a subcommand — `report` is not, and will never be, a real
-asset type, so it is intercepted before any lock/log/index side effect (same
-precedent as the retired `canary` scope).
+real subcommand (`report` is not an asset type, so it is not a scope of the
+improve run). It takes two flags of its own, `--run <id>` (the usage report for
+one specific `improve_runs` row instead of the most recent real run) and
+`--since <window>` (aggregate over every real, non-dry-run run started since a
+duration like `24h`/`7d` or an ISO timestamp); they are mutually exclusive, and on
+`akm improve` itself they are unknown flags (exit 2).
 
 Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
 field on the result (`result_json` in `improve_runs`, and in the
@@ -2842,7 +2843,7 @@ support.
 
 #### improve judge
 
-`akm improve judge` runs reflect's quality judge on one revision and prints its
+`akm improve judge` (a real subcommand; `--strategy` is its only flag) runs reflect's quality judge on one revision and prints its
 verdict, for testing a judge engine on revisions whose right answer you know. It
 reads `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON
 from stdin (`feedback` and `ref` are optional; `ref` names the revised asset,

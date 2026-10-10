@@ -177,6 +177,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (the index is `<dataDir>/index.db`), and `--all` was the one place `config path` printed an envelope instead of a bare
   path. `akm config path` still prints the config file path and still runs when the config itself fails to load; `--all`
   is an unknown flag (exit 2). Hints that sent you to `config path --all` now say `akm info`.
+- **`akm improve report` and `akm improve judge` are real subcommands (#1091).** They were magic values of the `scope`
+  positional. Both spellings keep working. `--run` and `--since` are now flags of `report` alone, so `akm improve --run x`
+  and `akm improve skills --since 7d` are unknown flags (exit 2) instead of a usage error from a hand-written check;
+  `--strategy` is `judge`'s own flag too. `akm improve [scope]` is unchanged, and `akm-eval`'s judge-gate keeps calling
+  `akm improve judge`.
 
 ### Fixed
 

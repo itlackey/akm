@@ -113,6 +113,11 @@ function collectKnownArgs(root: FlagScanCommand, rawArgs: readonly string[]): Kn
     if (!subCommands || Object.keys(subCommands).length === 0) break;
     const idx = findCittyTopLevelCommandIndex(args, (cmd.args ?? {}) as CittyArgsDefinitionForScan);
     const token = idx >= 0 ? args[idx] : undefined;
+    // A command that takes a positional AND has subcommands (`improve [scope]`
+    // beside `improve report`) is itself the target when the token is absent
+    // or names none of them.
+    const takesPositional = Object.values(cmd.args ?? {}).some((def) => def.type === "positional");
+    if (takesPositional && (token === undefined || !subCommands[token])) break;
     // A group with no subcommand token: citty reports "no command specified".
     if (token === undefined) return { names, valueFlags, booleanFlags, displayNames, path, resolved: false };
     const sub = subCommands[token];
