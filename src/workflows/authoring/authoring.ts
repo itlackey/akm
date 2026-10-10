@@ -48,14 +48,14 @@ function validateWorkflowContent(content: string, sourcePath: string): void {
   }
 }
 
-/** Peer YAML is executable, but `akm workflow create` emits the Markdown authoring form only. */
+/** Workflows are Markdown; `akm workflow create` rejects a YAML suffix. */
 const YAML_SUFFIX_RE = /\.ya?ml$/i;
 
 export function assertWorkflowMarkdownName(name: string): void {
   if (!YAML_SUFFIX_RE.test(name.trim())) return;
   throw new UsageError(
     `akm workflow create is markdown-only: it emits Markdown and cannot create "${name}". ` +
-      `Use a plain name (no ".yaml"/".yml" suffix), or author a peer GitHub-shaped ".yml" workflow directly.`,
+      `Use a plain name (no ".yaml"/".yml" suffix).`,
   );
 }
 
@@ -93,7 +93,7 @@ export function createWorkflowAsset(input: { name: string; content?: string; fro
   ) {
     throw new UsageError(`Resolved workflow path escapes the bundle: "${normalizedName}"`, "PATH_ESCAPE_VIOLATION");
   }
-  // A peer `.md` or `.yml` file whose canonical name matches already owns this
+  // A `.md` file whose canonical name matches already owns this
   // ref. Case variants (`upper.MD` vs `upper.md`) may also name one physical
   // file on a case-insensitive filesystem, so writing the Markdown create
   // target would silently clobber or shadow the existing asset.
@@ -199,9 +199,9 @@ export function formatWorkflowErrors(path: string, errors: WorkflowError[]): str
 
 /**
  * Every file under `typeRoot` whose canonical workflow name equals
- * `normalizedName`. Peer `.md`/`.yml` extension matching is case-INSENSITIVE,
- * so both cross-format owners and case variants are returned for the create
- * path to refuse rather than silently clobber or shadow them.
+ * `normalizedName`. `.md` extension matching is case-INSENSITIVE, so case
+ * variants are returned for the create path to refuse rather than silently
+ * clobber or shadow them.
  */
 function findExistingWorkflowPaths(typeRoot: string, normalizedName: string): string[] {
   const parent = path.join(typeRoot, path.dirname(normalizedName));

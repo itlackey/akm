@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://itlackey.github.io/akm/schemas/akm-workflow.json",
   "title": "AKM Workflow",
-  "description": "This frontmatter schema applies to and validates the Markdown (.md) workflow source: the standard AKM asset envelope plus its orchestration graph. Markdown is not the sole or only workflow source; peer GitHub-shaped .yml sources use the bounded adapter and both formats compile to source IR v1. Per-step prose instructions and gate rubrics live in the Markdown body, joined to this graph by step id. Hand-authored alongside src/workflows/program/schema.ts; see docs/reference/workflow-schema.md.",
+  "description": "This frontmatter schema validates the Markdown (.md) workflow source, the only workflow format: the standard AKM asset envelope plus its orchestration graph, compiled to source IR v1. Per-step prose instructions and gate rubrics live in the Markdown body, joined to this graph by step id. Hand-authored alongside src/workflows/program/schema.ts; see docs/reference/workflow-schema.md.",
   "type": "object",
   "required": ["steps"],
   "additionalProperties": false,
@@ -28,17 +28,6 @@
       },
       "additionalProperties": {
         "$ref": "#/definitions/jsonSchemaObject"
-      }
-    },
-    "outputs": {
-      "type": "object",
-      "minProperties": 1,
-      "description": "Named, optionally schema-validated projections of step artifacts, exported when the run completes. Names must be steps.<child>.output.<name>-addressable identifiers. Each entry: { from: steps.<id>.output(.<seg>)*, schema?: <bounded JSON Schema> }. Markdown-frontmatter only.",
-      "propertyNames": {
-        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-      },
-      "additionalProperties": {
-        "$ref": "#/definitions/outputDeclaration"
       }
     },
     "defaults": {
@@ -136,10 +125,6 @@
       "description": "How a map step folds per-item unit results into the step artifact.",
       "enum": ["collect", "vote"]
     },
-    "isolation": {
-      "description": "Filesystem isolation for file-mutating units.",
-      "enum": ["none", "worktree"]
-    },
     "failureReason": {
       "description": "Persisted AgentFailureReason taxonomy (src/integrations/agent/spawn.ts).",
       "enum": [
@@ -161,21 +146,6 @@
     "jsonSchemaObject": {
       "type": "object",
       "description": "A JSON Schema declaration. The parser validates it as a schema definition against the runtime's enforced subset (src/core/json-schema.ts checkJsonSchemaDefinition): typo'd type names and keywords outside the subset (e.g. $ref, const, format, patternProperties) are authoring-time errors, not silent no-ops."
-    },
-    "outputDeclaration": {
-      "type": "object",
-      "description": "One outputs: entry: a validated steps.<id>.output(.<seg>)* reference into a step artifact, plus an optional bounded JSON Schema.",
-      "required": ["from"],
-      "additionalProperties": false,
-      "properties": {
-        "from": {
-          "type": "string",
-          "description": "A steps.<id>.output(.<seg>)* reference into a step artifact. Never params.<name> — an output projects a step artifact, never a param."
-        },
-        "schema": {
-          "$ref": "#/definitions/jsonSchemaObject"
-        }
-      }
     },
     "retry": {
       "type": "object",
@@ -255,7 +225,7 @@
         },
         "cwd": {
           "type": "string",
-          "description": "Optional RELATIVE working directory inside the unit's working directory (its fresh worktree under `isolation: worktree`). Absolute paths, Windows drive letters, \"~\", and \"..\" segments are rejected here, and containment is re-checked against the resolved base — symlinks included — before the command is spawned.",
+          "description": "Optional RELATIVE working directory inside the unit's working directory. Absolute paths, Windows drive letters, \"~\", and \"..\" segments are rejected here, and containment is re-checked against the resolved base — symlinks included — before the command is spawned.",
           "minLength": 1,
           "pattern": "^(?!/|\\\\|~|[A-Za-z]:)(?!.*(?:^|[/\\\\])\\.\\.(?:[/\\\\]|$)).+$"
         },
@@ -273,7 +243,7 @@
     },
     "unit": {
       "type": "object",
-      "description": "Optional dispatch-override bag for a unit/map step. A step with none of these carries the run's engine/model/timeout defaults verbatim. Declaring `exec` turns the step into a shell-command unit: it names no engine, so `engine`, `model`, and `llm` are rejected alongside it.",
+      "description": "Optional dispatch-override bag for a unit/map step. A step with none of these carries the run's engine/model/timeout defaults verbatim. Declaring `exec` turns the step into a shell-command unit: it names no engine, so `engine`, `model`, and `llm` are rejected alongside it. Declaring `workflow` (Experimental, not allowed inside `map.unit`) makes the step start a child workflow run: it names no engine or env either, and the child's last step output is the step's result.",
       "additionalProperties": false,
       "allOf": [
         {
@@ -295,11 +265,54 @@
               ]
             }
           }
+        },
+        {
+          "if": {
+            "required": ["workflow"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["exec"]
+                },
+                {
+                  "required": ["engine"]
+                },
+                {
+                  "required": ["model"]
+                },
+                {
+                  "required": ["llm"]
+                },
+                {
+                  "required": ["env"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["with"]
+          },
+          "then": {
+            "required": ["workflow"]
+          }
         }
       ],
       "properties": {
         "exec": {
           "$ref": "#/definitions/exec"
+        },
+        "workflow": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Experimental. Canonical ref of a child workflow (`workflows/<name>` or `<bundle>//workflows/<name>`) this step starts and drives to completion."
+        },
+        "with": {
+          "type": "object",
+          "description": "Experimental. Binds the child workflow's params: each key is a declared child param, each value a literal or `{ from: <reference> }`."
         },
         "engine": {
           "$ref": "#/definitions/engineName",
@@ -332,9 +345,6 @@
             "minLength": 1
           },
           "description": "Env asset refs injected into the dispatched unit env. Entries must be unique: the frozen-plan decoder rejects duplicates at run start."
-        },
-        "isolation": {
-          "$ref": "#/definitions/isolation"
         }
       }
     },
@@ -362,43 +372,6 @@
         }
       }
     },
-    "routeBranch": {
-      "type": "object",
-      "required": ["match", "step"],
-      "additionalProperties": false,
-      "properties": {
-        "match": {
-          "type": ["string", "number", "boolean"],
-          "minLength": 1,
-          "description": "Branch key. An empty string is rejected: the frozen-plan decoder requires every `when` key to be non-empty."
-        },
-        "step": {
-          "$ref": "#/definitions/identifier"
-        }
-      }
-    },
-    "route": {
-      "type": "object",
-      "description": "Route on an explicit reference input to a LATER step. Targets must come after the routing step.",
-      "required": ["input", "when"],
-      "additionalProperties": false,
-      "properties": {
-        "input": {
-          "$ref": "#/definitions/reference",
-          "description": "Reference naming the value to route on."
-        },
-        "when": {
-          "type": "array",
-          "minItems": 1,
-          "items": {
-            "$ref": "#/definitions/routeBranch"
-          }
-        },
-        "default": {
-          "$ref": "#/definitions/identifier"
-        }
-      }
-    },
     "gate": {
       "type": "object",
       "description": "Optional validation-loop configuration. The rubric itself lives in the body under a `### gate` sub-heading inside the step's section; omitted or empty rubric text skips validation.",
@@ -422,7 +395,7 @@
     },
     "step": {
       "type": "object",
-      "description": "One step of the gated spine. A step with no map/route is a unit step (bare `{id: ...}` is the complete minimal declaration). At most one of map/route.",
+      "description": "One step of the gated spine. A step with no map is a unit step (bare `{id: ...}` is the complete minimal declaration).",
       "required": ["id"],
       "additionalProperties": false,
       "properties": {
@@ -435,9 +408,6 @@
         "map": {
           "$ref": "#/definitions/map"
         },
-        "route": {
-          "$ref": "#/definitions/route"
-        },
         "inputs": {
           "$ref": "#/definitions/inputs"
         },
@@ -449,13 +419,6 @@
         }
       },
       "allOf": [
-        {
-          "not": { "required": ["map", "route"] }
-        },
-        {
-          "if": { "required": ["route"] },
-          "then": { "not": { "anyOf": [{ "required": ["unit"] }, { "required": ["map"] }, { "required": ["inputs"] }] } }
-        },
         {
           "if": { "required": ["map"] },
           "then": { "not": { "required": ["unit"] } }

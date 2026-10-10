@@ -133,12 +133,12 @@ export interface WorkflowParameter {
 /**
  * Read-only projection of a workflow step's orchestration declarations for
  * `show` (`summarizeStepOrchestration` in src/workflows/renderer.ts).
- * `fanOut.over` and `route.input` carry raw reference strings from the closed
+ * `fanOut.over` carries a raw reference string from the closed
  * grammar (`params.<name>` / `steps.<id>.output…`, no `${{ }}` delimiters); the
  * full JSON Schema is reduced to a presence flag to keep show output compact.
  *
  * The step's dispatch kind is carried by FIELD PRESENCE, the same way `fanOut`
- * and `route` carry the step kind: `exec` present means the step runs a shell
+ * carries the step kind: `exec` present means the step runs a shell
  * command, and `engine`/`model` are then absent because an exec unit names no
  * engine — it must never be described as running on the workflow's default one.
  */
@@ -160,7 +160,6 @@ export interface WorkflowStepOrchestrationSummary {
   fanOut?: { over: string; concurrency?: number; reducer?: string };
   hasSchema?: boolean;
   env?: string[];
-  route?: { input: string; branches: Array<{ match: string; stepId: string }>; defaultStepId?: string };
 }
 
 export interface WorkflowStepDefinition {

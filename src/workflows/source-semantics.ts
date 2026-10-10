@@ -2,19 +2,10 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-/** Semantic checks shared by the workflow grammars (`parser.ts`, `github-yaml.ts`) and freeze. */
+/** Semantic checks for the Markdown workflow grammar (`parser.ts`). */
 
 import fs from "node:fs";
 import path from "node:path";
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../commands/command/builtin-action";
-import { classifyTargetRef } from "../execution/target-ref";
-import { parseSchedule } from "../tasks/schedule";
-import type { WorkflowCommandMode } from "./plan";
-
-/** A `uses:` target: an executable asset ref, or AKM's built-in `akm/command`. */
-export type WorkflowUsesTarget =
-  | { readonly kind: "command" | "script" | "task" | "workflow"; readonly ref: string }
-  | { readonly kind: "builtin-command"; readonly ref: "akm/command" };
 
 export class WorkflowSourceSemanticError extends Error {
   constructor(
@@ -24,42 +15,6 @@ export class WorkflowSourceSemanticError extends Error {
     super(message);
     this.name = "WorkflowSourceSemanticError";
   }
-}
-
-/** The argv a `run:` string executes under `shell`. */
-export function workflowShellCommand(shell: string, content: string): string[] {
-  if (shell === "cmd") return ["cmd", "/d", "/s", "/c", content];
-  if (shell === "pwsh" || shell === "powershell") return [shell, "-Command", content];
-  return [shell, "-c", content];
-}
-
-export function canonicalizeWorkflowCron(value: string): string {
-  const canonical = value.trim().split(/\s+/).join(" ");
-  if (canonical.startsWith("@") || canonical.split(" ").length !== 5) {
-    throw new WorkflowSourceSemanticError("invalid-cron", "GitHub schedule cron must use exactly five fields.");
-  }
-  try {
-    parseSchedule(canonical, "cron");
-  } catch (cause) {
-    throw new WorkflowSourceSemanticError(
-      "invalid-cron",
-      cause instanceof Error ? cause.message : "Invalid cron schedule.",
-    );
-  }
-  return canonical;
-}
-
-export function canonicalizeWorkflowRun(value: string): string {
-  if (value.includes("${{")) {
-    throw new WorkflowSourceSemanticError(
-      "unsupported-github-expression",
-      "GitHub expressions and contexts are not supported.",
-    );
-  }
-  if (value.includes("\0")) {
-    throw new WorkflowSourceSemanticError("invalid-exec-argv", "Local run may not contain NUL bytes.");
-  }
-  return value;
 }
 
 export function canonicalizeWorkflowWorkingDirectory(value: string, workspaceRoot?: string): string {
@@ -100,84 +55,6 @@ function hasControlCharacter(value: string): boolean {
     if (codePoint <= 0x1f || codePoint === 0x7f) return true;
   }
   return false;
-}
-
-export function classifyWorkflowStepUses(value: string): WorkflowUsesTarget {
-  if (value.includes("${{")) {
-    throw new WorkflowSourceSemanticError(
-      "unsupported-github-expression",
-      "GitHub expressions are unsupported in uses.",
-    );
-  }
-  if (value.length === 0 || value.trim() !== value || /\s/.test(value)) {
-    throw new WorkflowSourceSemanticError(
-      "unsupported-uses-target",
-      "uses must be one exact, non-empty executable ref",
-    );
-  }
-  if (value === "akm/command") return { kind: "builtin-command", ref: "akm/command" };
-  try {
-    return classifyTargetRef(value);
-  } catch (cause) {
-    throw usesFailure(value, cause);
-  }
-}
-
-/**
- * Validate AKM's built-in command action at the shared source/decoder boundary.
- *
- * Inline YAML actions are portable templates and therefore use WP4's one
- * authoritative template validator. Markdown prose is explicitly `literal`,
- * while a stored ref remains resolution-owned because its template bytes are
- * not available until the later resolver loads the command asset.
- */
-export function validateWorkflowBuiltinCommand(value: unknown, mode?: WorkflowCommandMode): ParsedBuiltinCommandAction {
-  let action: ParsedBuiltinCommandAction;
-  try {
-    action = parseBuiltinCommandAction(value);
-  } catch (cause) {
-    throw new WorkflowSourceSemanticError(
-      "builtin-command-inputs",
-      cause instanceof Error ? cause.message : "Invalid akm/command inputs.",
-    );
-  }
-
-  const expectedMode: WorkflowCommandMode = action.kind === "stored" ? "stored-ref" : "portable-template";
-  const effectiveMode = mode ?? expectedMode;
-  if (action.kind === "stored") {
-    if (effectiveMode !== "stored-ref") {
-      throw new WorkflowSourceSemanticError(
-        "builtin-command-inputs",
-        "Stored akm/command refs require commandMode stored-ref.",
-      );
-    }
-    return action;
-  }
-  if (effectiveMode === "stored-ref") {
-    throw new WorkflowSourceSemanticError(
-      "builtin-command-inputs",
-      "Inline akm/command content cannot use commandMode stored-ref.",
-    );
-  }
-  if (effectiveMode === "literal" && action.arguments !== undefined) {
-    throw new WorkflowSourceSemanticError(
-      "builtin-command-inputs",
-      "Literal akm/command content cannot declare arguments because no substitution occurs.",
-    );
-  }
-  return action;
-}
-
-function usesFailure(value: string, cause: unknown): WorkflowSourceSemanticError {
-  const message = cause instanceof Error ? cause.message : String(cause);
-  const code = value.startsWith("docker://")
-    ? "docker-action-unsupported"
-    : value.startsWith("./") || value.startsWith("../") || value.startsWith("/")
-      ? "local-action-path-unsupported"
-      : /^(?:[A-Za-z0-9][A-Za-z0-9._-]*\/\/)?agents\//.test(value)
-        ? "non-executable-asset-ref"
-        : "unsupported-uses-target";
-  return new WorkflowSourceSemanticError(code, message);
 }
 
 function verifyPhysicalContainment(workspaceRoot: string, relative: string): void {

@@ -145,12 +145,12 @@ function rootUnit(plan: ReturnType<typeof commandPlan>) {
 }
 
 describe("durable workflow v4 immutable executable schema", () => {
-  test("keeps the cwd identity and worktree commit; an older release's executable identity is accepted and dropped", () => {
+  test("keeps the cwd identity and still decodes the retired worktree fields; an older release's executable identity is accepted and dropped", () => {
     const decoded = decodeWorkflowPlan(commandPlan({ isolation: "worktree" }));
     const root = decoded.steps[0]?.root;
     expect(root?.kind).toBe("unit");
     if (!root || root.kind !== "unit" || root.frozenTarget.kind !== "command") return;
-    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY, gitCommitOid: "a".repeat(40) });
+    expect(root.frozenTarget).toMatchObject({ cwdIdentity: CWD_IDENTITY });
     expect(Object.hasOwn(root.frozenTarget, "executable")).toBe(false);
 
     // Even an identity that no longer matches the host binary decodes.
@@ -159,7 +159,7 @@ describe("durable workflow v4 immutable executable schema", () => {
     expect(() => decodeWorkflowPlan(stale)).not.toThrow();
   });
 
-  test("accepts shell and script executable identities while retaining exact script bytes", () => {
+  test("accepts a shell executable identity", () => {
     const shellExec = { command: ["/bin/sh", "-c", "printf shell"], timeoutMs: 30_000 };
     const shellEnvironment: never[] = [];
     const shell = commandPlan();
@@ -181,34 +181,6 @@ describe("durable workflow v4 immutable executable schema", () => {
       `akm.workflow.shell.v1\0${canonicalJson({ exec: shellExec, environment: shellEnvironment, cwdIdentity: CWD_IDENTITY })}`,
     );
     expect(() => decodeWorkflowPlan(shell)).not.toThrow();
-
-    const scriptBytes = Buffer.from("#!/bin/sh\nprintf script\n", "utf8");
-    const scriptIdentity = {
-      ref: "fixture//scripts/tool.sh",
-      bundle: "fixture",
-      adapter: "akm",
-      file: "scripts/tool.sh",
-      hash: sha256(scriptBytes),
-    };
-    const script = structuredClone(shell);
-    script.sourceReadSet = [
-      { ...sourceSnapshot(scriptIdentity, 1), size: scriptBytes.byteLength },
-      sourceSnapshot(WORKFLOW_IDENTITY, 2),
-    ];
-    rootUnit(script).frozenTarget = {
-      kind: "script",
-      ref: scriptIdentity.ref,
-      contentHash: sha256(scriptBytes),
-      exec: { command: ["/bin/sh"], timeoutMs: 30_000 },
-      interpreter: "sh",
-      extension: ".sh",
-      bytesBase64: scriptBytes.toString("base64"),
-      byteLength: scriptBytes.byteLength,
-      cwdIdentity: structuredClone(CWD_IDENTITY),
-      materialization: "ephemeral-0700-delete",
-      executable: executableIdentity("/bin/sh"),
-    };
-    expect(() => decodeWorkflowPlan(script)).not.toThrow();
   });
 
   test("keeps an in-process SDK target free of a host executable requirement", () => {

@@ -147,18 +147,6 @@ export async function dispatchWorkflowExecution(
       ...(notices ? { notices } : {}),
     };
   }
-  if (request.cwd && lowered.runner.kind === "llm") {
-    return {
-      ok: false,
-      text: "",
-      failureReason: "isolation_unsupported",
-      error:
-        `unit ${JSON.stringify(request.unitId)} declares isolation: worktree but resolved to the "llm" runner, ` +
-        `which has no working directory to isolate. Use the agent or sdk runner for isolated units.`,
-      ...(notices ? { notices } : {}),
-    };
-  }
-
   let result: Awaited<ReturnType<typeof runExecution>>;
   try {
     const eventSource = forwardedDispatchEventSource(request);

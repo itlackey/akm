@@ -240,53 +240,38 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.hint).toContain("akm migrate apply --dry-run");
   });
 
-  test("akm workflow run of a step passing with: to a task target emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
+  test("akm workflow run of a workflow that composes itself emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
-    fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
     fs.mkdirSync(path.join(stash.dir, "workflows"), { recursive: true });
     fs.writeFileSync(
-      path.join(stash.dir, "commands", "review.md"),
-      "Review the workflow-composed task target.\n",
-      "utf8",
-    );
-    fs.writeFileSync(
-      path.join(stash.dir, "tasks", "nightly.yml"),
-      ["version: 4", "uses: commands/review", ""].join("\n"),
-    );
-    // Lane A's with-rejection (P1a, taskDispatch's head guard): a workflow
-    // step composing a task target with a with: block.
-    fs.writeFileSync(
-      path.join(stash.dir, "workflows", "with-on-task.yml"),
+      path.join(stash.dir, "workflows", "loop.md"),
       [
-        "name: With on task",
-        "on:",
-        "  workflow_dispatch:",
-        "jobs:",
-        "  main:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: dispatch",
-        "        uses: tasks/nightly",
-        "        with:",
-        "          scope: all",
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: again",
+        "    unit: { workflow: workflows/loop }",
+        "---",
+        "",
+        "## again",
+        "",
+        "Run myself.",
         "",
       ].join("\n"),
     );
 
     await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCli("index", "--full"));
     const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("workflow", "run", "workflows/with-on-task"),
+      runCli("workflow", "run", "workflows/loop"),
     );
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("COMPOSITION_INVALID");
-    expect(parsed.error).toBe(
-      "Workflow step dispatch cannot pass with: to task target tasks/nightly; tasks/nightly declares no inputs.",
-    );
-    expect(parsed.hint).toBe(new UsageError("x", "COMPOSITION_INVALID").hint());
+    expect(parsed.error).toContain("composition cycle");
+    expect(parsed.hint).toContain("Break the cycle");
   });
 });
 

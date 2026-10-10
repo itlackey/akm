@@ -441,7 +441,7 @@ An explicit missing or incompatible engine is an error and never falls
 through to another configured engine.
 
 Task-v3 execution and durable workflow-v4 dispatch use this runtime boundary.
-Markdown and GitHub-shaped YAML compile through source IR v1; new starts freeze
+Markdown workflows compile through source IR v1; new starts freeze
 v4-family `irVersion: 5`. A stored plan that decodes runs whatever release
 froze it; one that does not is marked abandoned and `akm workflow run <ref>`
 starts afresh. Only a plan a newer akm froze is refused, naming the upgrade.

@@ -121,7 +121,7 @@ steps:
     map:
       over: steps.intake.output.issues
       concurrency: 3
-      unit: { isolation: worktree, retry: { max: 2, on: [timeout] } }
+      unit: { retry: { max: 2, on: [timeout] } }
     # `output` describes the REDUCER RESULT: the default `collect` reducer
     # folds per-item unit results into an array.
     output: { type: array }
@@ -131,11 +131,6 @@ steps:
   - id: verdict
     inputs: [steps.implement.output]
     output: { type: object }
-  - id: pick-outcome
-    route:
-      input: steps.verdict.output.status
-      when: [{ match: clean, step: announce }]
-      default: escalate       # both targets are LATER steps — routes are forward-only
   - id: escalate
     inputs: [steps.verdict.output]
   - id: announce

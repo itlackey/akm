@@ -27,13 +27,11 @@ import {
 import { canonicalJson } from "../ir/plan-hash";
 import type {
   FrozenWorkflowTarget,
-  WorkflowIsolation,
   WorkflowOnError,
   WorkflowPlan,
   WorkflowPlanStep,
   WorkflowReducer,
   WorkflowRetry,
-  WorkflowRoute,
   WorkflowRuntimeKind,
   WorkflowUnitNode,
 } from "../plan";
@@ -44,7 +42,7 @@ import {
   resolveReferenceString,
 } from "../program/expressions";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
-import { completeWorkflowStep, type SummaryValidationFailure, type WorkflowNextResult } from "../runtime/runs";
+import { completeWorkflowStep, type SummaryValidationFailure } from "../runtime/runs";
 import { type JudgeCallIdentity, parseJudgeVerdict, type SummaryJudge } from "../validate-summary";
 import { gateNodeId } from "./frozen-judge";
 import { enqueueUnitWrite } from "./unit-writer";
@@ -145,7 +143,6 @@ export interface StepWorkUnit {
   schema?: Record<string, unknown>;
   retry?: WorkflowRetry;
   onError: WorkflowOnError;
-  isolation?: WorkflowIsolation;
   /** The unit's rendered instructions, built once by the work-list builder. */
   prompt: string;
   /** Canonical hash of this unit's frozen inputs — the durable-reuse identity. */
@@ -269,11 +266,10 @@ function resolveTaskInputBindings(
  */
 export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput): ComputeWorkListResult {
   const root = plan.root;
-  // Route-only steps (YAML `route:`) carry no execution subgraph.
   if (!root) {
     return {
       ok: false,
-      error: `Step "${plan.stepId}" has no execution subgraph (a route-only step); the native executor cannot dispatch it.`,
+      error: `Step "${plan.stepId}" has no execution subgraph; the native executor cannot dispatch it.`,
     };
   }
 
@@ -284,7 +280,7 @@ export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput
 
   // Instructions are ALWAYS the step's body prose, byte-exact — never
   // templated, never scanned for reference syntax (workflow-format-
-  // unification, spec §2.3). Only `map.over` / `route.input` / `inputs[]`
+  // unification, spec §2.3). Only `map.over` / `inputs[]`
   // carry the closed reference grammar.
 
   // Resolve the step's declared `inputs:` ONCE (shared by every unit in this
@@ -343,7 +339,7 @@ export function computeStepWorkList(plan: WorkflowPlanStep, input: WorkListInput
 
   const gateLoop = input.gateLoop ?? 1;
   const target = template.frozenTarget;
-  const frozenExec = target.kind === "shell" || target.kind === "script" ? target.exec : undefined;
+  const frozenExec = target.kind === "shell" ? target.exec : undefined;
   const runner: WorkflowRuntimeKind = target.kind === "command" ? target.runner.kind : "exec";
   // Taken verbatim from the frozen plan, resolved once at freeze (an exec
   // unit's on its exec spec). A frozen `null` means genuinely unbounded
@@ -408,7 +404,7 @@ interface StepWorkUnitContext {
   runner: WorkflowRuntimeKind;
   timeoutMs: number | null;
   target: FrozenWorkflowTarget;
-  frozenExec?: Extract<FrozenWorkflowTarget, { kind: "shell" | "script" }>["exec"];
+  frozenExec?: Extract<FrozenWorkflowTarget, { kind: "shell" }>["exec"];
   /** Step-constant `AKM_PARAMS` / `AKM_INPUTS` payloads, serialized once (exec steps only). */
   execParamsJson?: string;
   execInputsJson?: string;
@@ -469,7 +465,6 @@ function buildStepWorkUnit(ctx: StepWorkUnitContext, unitId: string, item: unkno
     ...(template.schema ? { schema: template.schema } : {}),
     ...(template.retry ? { retry: template.retry } : {}),
     onError: template.onError,
-    ...(template.isolation ? { isolation: template.isolation } : {}),
     // the SAME resolved `with:` bindings `taskInputs` already
     // carries, exposed under the name `child-workflow.ts`'s drive contract
     // reads. Absent (never `{}`) when the step binds nothing.
@@ -534,7 +529,8 @@ function computeUnitInputHash(ctx: StepWorkUnitContext, item: unknown): string {
         frozenTarget: ctx.target,
         environment: ctx.template.environment,
         schema: ctx.template.schema ?? null,
-        isolation: ctx.template.isolation ?? "none",
+        // Retired `isolation: worktree` field; kept constant so in-flight runs keep their journaled input hashes.
+        isolation: "none",
         ...(ctx.taskInputs !== undefined ? { taskInputs: ctx.taskInputs } : {}),
         ...(ctx.input.gateFeedback ? { gateFeedback: ctx.input.gateFeedback } : {}),
       }),
@@ -667,7 +663,7 @@ function stepTemplate(stepPlan: WorkflowPlanStep): WorkflowUnitNode | undefined 
 
 /**
  * The step ids another step can still read (named by `inputs[]`, `map.over`,
- * or `route.input` — the whole reference surface). A step outside this set
+ * — the whole reference surface). A step outside this set
  * need not keep its artifact in memory once journaled. Derived from the plan alone.
  */
 export function referencedStepIds(plan: WorkflowPlan): Set<string> {
@@ -679,7 +675,6 @@ export function referencedStepIds(plan: WorkflowPlan): Set<string> {
   for (const step of plan.steps) {
     if (step.root?.kind === "map") note(step.root.over);
     for (const reference of stepTemplate(step)?.inputs ?? []) note(reference);
-    if (step.route) note(step.route.input);
   }
   return referenced;
 }
@@ -1157,185 +1152,9 @@ export async function journalGateEvaluationFinish(
   }
 }
 
-// ── Route evaluation + cascaded-skip bookkeeping (PURE) ──────────────────────
-
-export type RouteDecision = { ok: true; value: string; selected: string } | { ok: false; error: string };
-
-/** `selected: null` = the router itself was skipped, so it selected nothing. */
-export type RouteSkipInfo = { router: string; selected: string | null };
-
-/**
- * Resolve a route's input (a single whole-value reference string — `params.x` or
- * `steps.<id>.output…`, with no `${{ }}` delimiters) and pick the branch. No
- * ambient key search. Only primitive values route; the comparison is exact
- * string equality against the declared `when:` matches.
- */
-export function evaluateRoute(route: WorkflowRoute, scope: ExpressionScope): RouteDecision {
-  const resolved = resolveStepReference(route.input, scope);
-  if (!resolved.ok) {
-    return { ok: false, error: `route input ${route.input} failed to resolve: ${resolved.error.message}` };
-  }
-  const value = resolved.value;
-  if (typeof value === "object" && value !== null) {
-    return {
-      ok: false,
-      error: `route input ${route.input} resolved to a non-primitive value; branches match on strings/numbers/booleans.`,
-    };
-  }
-
-  const valueString = typeof value === "string" ? value : String(value);
-  // Own-property check: `when` is author-controlled, and a value such as
-  // "constructor" must not resolve through Object.prototype.
-  const selected = Object.hasOwn(route.when, valueString) ? route.when[valueString] : route.defaultStepId;
-  if (!selected) {
-    return {
-      ok: false,
-      error: `value "${valueString}" matched no "when:" branch and the route declares no default.`,
-    };
-  }
-  return { ok: true, value: valueString, selected };
-}
-
-/**
- * Cascade a SKIPPED router: it never evaluated its route, so every declared
- * target (branches + default) is marked skip-on-reach unless an earlier router
- * already claimed it. Shared by the live skip path and the journal replay.
- */
-export function cascadeSkippedRouter(
-  route: WorkflowRoute,
-  routerId: string,
-  routeUnselected: Map<string, RouteSkipInfo>,
-): void {
-  const targets = [...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])];
-  for (const target of targets) {
-    if (!routeUnselected.has(target)) {
-      routeUnselected.set(target, { router: routerId, selected: null });
-    }
-  }
-}
-
-/**
- * Record one router's decision in the skip bookkeeping: the selected target is
- * protected, every other declared target (branches + default) is marked
- * skip-on-reach unless an earlier router already claimed it. Shared by the live
- * evaluation path and the journal replay.
- */
-export function applyRouteDecision(
-  route: WorkflowRoute,
-  routerId: string,
-  selected: string,
-  routeSelected: Set<string>,
-  routeUnselected: Map<string, RouteSkipInfo>,
-): void {
-  routeSelected.add(selected);
-  const targets = [...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])];
-  for (const target of targets) {
-    if (target !== selected && !routeUnselected.has(target)) {
-      routeUnselected.set(target, { router: routerId, selected });
-    }
-  }
-}
-
-/**
- * The `stepOutputs` scope a route resolves against: every prior step's recorded
- * evidence plus the just-finished step's fresh evidence — each projected
- * through {@link projectStepOutput}. Same projection as unit templates, so the
- * two scopes cannot drift.
- */
-export function routeStepOutputs(
-  evidence: Record<string, Record<string, unknown> | undefined>,
-  currentStepId: string,
-  currentEvidence: Record<string, unknown>,
-): Record<string, unknown> {
-  const outputs: Record<string, unknown> = {};
-  for (const [stepId, stepEvidence] of Object.entries(evidence)) {
-    if (stepEvidence !== undefined) outputs[stepId] = projectStepOutput(stepEvidence);
-  }
-  outputs[currentStepId] = projectStepOutput(currentEvidence);
-  return outputs;
-}
-
-/** The `selected` target journaled on a route step's evidence, if well-formed. */
-function journaledRouteSelection(evidence: Record<string, unknown> | undefined): string | undefined {
-  const route = evidence?.route;
-  if (typeof route !== "object" || route === null || Array.isArray(route)) return undefined;
-  const selected = (route as Record<string, unknown>).selected;
-  return typeof selected === "string" && selected !== "" ? selected : undefined;
-}
-
-/** The set of steps a route may legally select: its `when` branches + default. */
-function routeTargets(route: WorkflowRoute): Set<string> {
-  return new Set([...Object.values(route.when), ...(route.defaultStepId ? [route.defaultStepId] : [])]);
-}
-
-/** A journaled route decision must name a target the route declares; anything else fails loudly. */
-function assertRouteTargetDeclared(route: WorkflowRoute, stepId: string, selected: string, runId: string): void {
-  const targets = routeTargets(route);
-  if (!targets.has(selected)) {
-    throw new UsageError(
-      `Workflow run ${runId} has a completed route step "${stepId}" whose journaled route decision selected ` +
-        `"${selected}", which is not a declared branch or default target of the route (valid targets: ` +
-        `${[...targets].join(", ") || "(none)"}). The route evidence was corrupted or manually edited — refusing to ` +
-        `apply a bogus route decision that would skip the real branch targets. Start a new run.`,
-    );
-  }
-}
-
-/**
- * Replay journaled route decisions into the skip bookkeeping (resume path).
- * For every COMPLETED route step of the frozen plan, in spine order: the
- * journaled decision wins; else a re-derivation from the frozen plan +
- * journaled evidence; else fail loudly. A SKIPPED route step cascades its
- * targets into the skip set exactly as on the live path.
- */
-export function seedJournaledRouteDecisions(
-  plan: WorkflowPlan,
-  state: WorkflowNextResult,
-  routeSelected: Set<string>,
-  routeUnselected: Map<string, RouteSkipInfo>,
-): void {
-  const evidence: Record<string, Record<string, unknown> | undefined> = {};
-  for (const s of state.workflow.steps) evidence[s.id] = s.evidence;
-
-  for (const stepPlan of plan.steps) {
-    if (!stepPlan.route) continue;
-    const stepState = state.workflow.steps.find((s) => s.id === stepPlan.stepId);
-    if (!stepState) continue;
-    if (stepState.status === "skipped") {
-      cascadeSkippedRouter(stepPlan.route, stepPlan.stepId, routeUnselected);
-      continue;
-    }
-    if (stepState.status !== "completed") continue;
-
-    let selected = journaledRouteSelection(stepState.evidence);
-    if (selected !== undefined) {
-      // a stored decision must name a declared target — a bogus one
-      // (tampered/hand-edited evidence) fails loudly rather than seeding a skip
-      // set that buries the real branches.
-      assertRouteTargetDeclared(stepPlan.route, stepPlan.stepId, selected, state.run.id);
-    }
-    if (selected === undefined) {
-      const scope: ExpressionScope = {
-        params: state.run.params ?? {},
-        stepOutputs: routeStepOutputs(evidence, stepPlan.stepId, stepState.evidence ?? {}),
-      };
-      const decision = evaluateRoute(stepPlan.route, scope);
-      if (decision.ok) selected = decision.selected;
-    }
-    if (selected === undefined) {
-      throw new UsageError(
-        `Workflow run ${state.run.id} has a completed route step "${stepPlan.stepId}" with no journaled route ` +
-          `decision, and the decision cannot be re-derived from the journaled evidence. Refusing to guess which ` +
-          `branch was selected. The run journal is inconsistent; abandon this run and start a new one.`,
-      );
-    }
-    applyRouteDecision(stepPlan.route, stepPlan.stepId, selected, routeSelected, routeUnselected);
-  }
-}
-
 // ── Step finalization (IO) — the shared completion path ──────────────────────
 //
-// The one implementation of "evaluate the route, judge the gate, and advance
+// The one implementation of "judge the gate, and advance
 // (or not) the spine" for an executed step, first pass or resume. The caller
 // walks the spine; this performs exactly one completion attempt.
 
@@ -1352,12 +1171,6 @@ export interface FinalizeStepInput {
   loopsRemaining: boolean;
   /** The reduced outcome of this loop's units (native dispatch or journal replay). */
   result: ExecutedStepOutcome;
-  /** Prior steps' recorded evidence, keyed by step id (route scope; current step excluded). */
-  priorEvidence: Record<string, Record<string, unknown> | undefined>;
-  params: Record<string, unknown>;
-  /** Route bookkeeping — mutated in place when this step carries a route decision. */
-  routeSelected: Set<string>;
-  routeUnselected: Map<string, RouteSkipInfo>;
   /**
    * Completion-criteria judge from the frozen plan. `undefined` and `null`
    * both mean no judge; live configuration is never consulted here.
@@ -1368,8 +1181,8 @@ export interface FinalizeStepInput {
 }
 
 export type FinalizeStepResult =
-  | { kind: "advanced"; summaryOverride?: string }
-  | { kind: "failed"; summary: string; routeFailure?: true }
+  | { kind: "advanced" }
+  | { kind: "failed"; summary: string }
   | { kind: "retry"; gateFeedback: GateFeedback }
   | { kind: "gate-exhausted"; gateRejection: { stepId: string; missing: string[]; feedback: string } }
   /**
@@ -1511,8 +1324,6 @@ async function blockFinalizedStepForChildWorkflow(
  * Perform one completion attempt for an executed step:
  *  - a hard unit failure fails the step (a retryable artifact-schema mismatch
  *    with loops left returns `retry` without a gate row);
- *  - a route decision is evaluated, journaled on the evidence, and applied to
- *    the skip bookkeeping; an unroutable value fails the step;
  *  - the gate judges a summary built from the promoted artifact: a rejection
  *    returns `retry` (loops left) or `gate-exhausted`, a pass `advanced`;
  *  - a judge infrastructure failure is not a verdict: it blocks the step for
@@ -1561,36 +1372,13 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
     );
   }
 
-  // Route evaluation BEFORE completion: an unroutable value is an
-  // authoring/config failure that must fail the step deterministically.
-  let summaryOverride: string | undefined;
-  if (stepPlan.route) {
-    const scope: ExpressionScope = {
-      params: input.params,
-      stepOutputs: routeStepOutputs(input.priorEvidence, stepId, result.evidence),
-    };
-    const decision = evaluateRoute(stepPlan.route, scope);
-    if (!decision.ok) {
-      const notes = `Step "${stepId}" route failed: ${decision.error}`;
-      await completeWorkflowStep({ runId, stepId, status: "failed", notes, evidence: result.evidence });
-      return { kind: "failed", summary: notes, routeFailure: true };
-    }
-    applyRouteDecision(stepPlan.route, stepId, decision.selected, input.routeSelected, input.routeUnselected);
-    // Journal the decision on the evidence: resume replays it via
-    // seedJournaledRouteDecisions, so the skip set survives re-invocation.
-    result.evidence.route = { input: stepPlan.route.input, value: decision.value, selected: decision.selected };
-    if (!stepPlan.root) {
-      summaryOverride = `Step "${stepId}" routed on ${stepPlan.route.input}: value "${decision.value}" selected step "${decision.selected}".`;
-    }
-  }
-
   // Artifact-judging gate: a criteria-bearing executing step is judged on a
   // summary BUILT FROM the promoted artifact; everything else keeps the machine
-  // summary (a route-only step's summary IS its decision).
+  // summary.
   const summary =
     stepPlan.root && completionCriteria.length > 0
       ? buildArtifactSummary(stepId, result.units, result.evidence)
-      : (summaryOverride ?? result.summary);
+      : result.summary;
 
   // Journal engine-driven judge calls as unit rows. With no criteria there is
   // no judge invocation or row; a criteria-bearing plan without a judge is a
@@ -1706,7 +1494,7 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
   }
 
   if (!rejection) {
-    return { kind: "advanced", ...(summaryOverride !== undefined ? { summaryOverride } : {}) };
+    return { kind: "advanced" };
   }
   if (loopsRemaining) {
     return { kind: "retry", gateFeedback: { feedback: rejection.feedback, missing: rejection.missing } };

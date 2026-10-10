@@ -91,7 +91,7 @@ akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
 akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
 akm workflow create ship-release               # Create a workflow asset in the bundle
-akm lint --type workflows                      # Parse and compile every .md/.yml workflow source; list every error
+akm lint --type workflows                      # Parse and compile every workflow source; list every error
 akm workflow run workflows/ship-release        # Start or resume and execute the workflow
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
@@ -175,9 +175,8 @@ akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0  # 
 
 ## Workflows
 
-Workflows live under `<bundle>/workflows/` as peer `.md` and `.yml` sources.
-Both compile to the same source IR; see `docs/reference/workflow-schema.md` for
-the bounded GitHub-shaped YAML subset.
+Workflows live under `<bundle>/workflows/` as `.md` sources; see
+`docs/reference/workflow-schema.md` for the frontmatter and body syntax.
 
 Ref-based workflow commands are scoped to the current project/worktree/directory,
 so one active run does not block unrelated directories from starting the same

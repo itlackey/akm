@@ -14,15 +14,12 @@ import { UsageError } from "../../core/errors";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../sources/resolve";
-import { isInferredSecretName } from "../../tasks/log-redaction";
 import { SECRET_TOKEN_RE } from "../exec/environment";
-import { detectSecretShapedParams } from "../exec/param-secrets";
 import type { FrozenWorkflowEnvironmentBinding, WorkflowExec } from "../plan";
-import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { FreezeStep, OwnedAsset, ResolutionContext } from "./step-values";
 
 /**
- * A step's frozen environment: literal `env:` values, `pass_env` names, then
+ * A step's frozen environment: `pass_env` names, then
  * one value-free descriptor per `unit.env` ref (owner, key set, secret-token
  * names). Values are read at dispatch (`exec/environment.ts`), never frozen.
  */
@@ -31,17 +28,6 @@ export function freezeEnvironment(
   exec: WorkflowExec | undefined,
   context: ResolutionContext,
 ): FrozenWorkflowEnvironmentBinding[] {
-  const literals = Object.entries(source.env ?? {}).map(([name, raw]) => {
-    const value = String(raw);
-    // A literal is frozen into plan_json; a credential belongs in an env ref, as for task env.
-    if (isInferredSecretName(name) || detectSecretShapedParams({ [name]: value }).length > 0) {
-      throw new UsageError(
-        `Workflow step ${source.id} env.${name} is a secret-shaped literal env value. Store credentials in an env asset (unit.env) rather than workflow source.`,
-        "WORKFLOW_SOURCE_INVALID",
-      );
-    }
-    return Object.freeze({ kind: "literal" as const, name, value });
-  });
   const passThrough = (exec?.passEnv ?? []).map((name) => Object.freeze({ kind: "pass-through" as const, name }));
   const seen = new Set<string>();
   const envRefs: FrozenWorkflowEnvironmentBinding[] = [];
@@ -74,7 +60,7 @@ export function freezeEnvironment(
       }),
     );
   }
-  return [...literals, ...passThrough, ...envRefs];
+  return [...passThrough, ...envRefs];
 }
 
 /** Load a command or persona the workflow names, resolved through the workflow's own bundles. */
@@ -87,7 +73,7 @@ export async function workflowExecutionSource(ref: string, kind: "command" | "pe
 
 export async function resolveOwnedAsset(
   ref: string,
-  type: "command" | "agent" | "task" | "workflow" | "script" | "env",
+  type: "command" | "agent" | "workflow" | "env",
   context: ResolutionContext,
 ): Promise<OwnedAsset> {
   return resolveOwnedAssetCore(ref, type, context, false) as Promise<OwnedAsset>;
@@ -99,7 +85,7 @@ export function resolveOwnedAssetSync(ref: string, type: "env", context: Resolut
 
 function resolveOwnedAssetCore(
   refInput: string,
-  type: "command" | "agent" | "task" | "workflow" | "script" | "env",
+  type: "command" | "agent" | "workflow" | "env",
   context: ResolutionContext,
   sync: boolean,
 ): OwnedAsset | Promise<OwnedAsset> {
@@ -173,37 +159,7 @@ function configuredOwner(
   };
 }
 
-const SCRIPT_EXTENSIONS = [
-  "",
-  ".sh",
-  ".ts",
-  ".js",
-  ".py",
-  ".rb",
-  ".go",
-  ".pl",
-  ".php",
-  ".lua",
-  ".r",
-  ".swift",
-  ".kt",
-  ".kts",
-  ".ps1",
-  ".cmd",
-  ".bat",
-];
-
 function assetExtensions(type: string): readonly string[] {
-  if (type === "script") return SCRIPT_EXTENSIONS;
   if (type === "env") return ["", ".env"];
-  return ["", ".md", ".yml"];
-}
-
-export function qualifyRef(ref: string, plural: string, asset: WorkflowAsset, config: AkmConfig): string {
-  const parsed = parseBundleRef(ref);
-  if (parsed.bundle) return ref;
-  const bundle = parseBundleRef(asset.ref).bundle ?? config.defaultBundle;
-  if (!bundle) throw new UsageError(`Workflow ref ${ref} has no owning bundle.`, "WORKFLOW_SOURCE_INVALID");
-  const concept = parsed.conceptId.startsWith(`${plural}/`) ? parsed.conceptId : `${plural}/${parsed.conceptId}`;
-  return makeBundleRef(bundle, concept);
+  return ["", ".md"];
 }

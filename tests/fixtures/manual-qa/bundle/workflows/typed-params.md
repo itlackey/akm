@@ -1,6 +1,6 @@
 ---
 type: workflow
-description: Deterministic route-first workflow for typed parameter checks
+description: Deterministic exec-first workflow for typed parameter checks
 updated: 2026-08-05
 params:
   include_processes: { type: boolean }
@@ -8,16 +8,17 @@ params:
   labels: { type: array, items: { type: string } }
 steps:
   - id: choose
-    route:
-      input: params.include_processes
-      when: [{ match: "true", step: finish }]
-      default: finish
+    unit:
+      exec:
+        command: ["true"]
   - id: finish
 ---
 
-# Typed Route
+# Typed Params
 
 ## choose
+
+Do nothing; the first step only exists so a bounded run needs no agent dispatch.
 
 ## finish
 

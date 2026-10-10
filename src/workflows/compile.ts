@@ -4,24 +4,17 @@
 
 /**
  * The workflow compiler's front door. `.md` goes through the Markdown grammar
- * (`parser.ts`), `.yml` through the GitHub-shaped YAML grammar
- * (`github-yaml.ts`); both produce a {@link WorkflowPlan} directly.
+ * (`parser.ts`), which produces a {@link WorkflowPlan} directly.
  *
  * {@link checkWorkflowPlan} is the one cross-step pass the grammars do not
- * run: every `steps.<id>` reference must name an earlier step (outputs may
- * name any step), `inputs:` never name a param, and two non-fatal advisories.
+ * run: every `steps.<id>` reference must name an earlier step, `inputs:` never name a param, and two non-fatal advisories.
  */
 
 import path from "node:path";
-import { parseBuiltinCommandAction } from "../commands/command/builtin-action";
-import { PORTABLE_ARGUMENTS_PLACEHOLDER } from "../commands/command/portable-template";
-import { parseGithubWorkflowSource, WorkflowSourceFailure } from "./github-yaml";
 import { parseWorkflow } from "./parser";
 import type { WorkflowError, WorkflowPlan, WorkflowPlanStep } from "./plan";
 import { formatReference, parseReference } from "./program/expressions";
 import { canonicalizeWorkflowWorkingDirectory, WorkflowSourceSemanticError } from "./source-semantics";
-
-export { looksLikeGithubWorkflowSource } from "./github-yaml";
 
 export interface WorkflowSourceError {
   code: string;
@@ -45,22 +38,13 @@ export interface CompileWorkflowSourceOptions {
 export function compileWorkflowSource(source: string, options: CompileWorkflowSourceOptions): WorkflowCompileResult {
   const extension = path.extname(options.path).toLowerCase();
   const title = options.title ?? path.basename(options.path, path.extname(options.path));
-  if (extension === ".yml") {
-    try {
-      return { ok: true, plan: parseGithubWorkflowSource(source, { ...options, title }) };
-    } catch (cause) {
-      if (cause instanceof WorkflowSourceFailure) return { ok: false, errors: [cause.error] };
-      const message = cause instanceof Error ? cause.message : String(cause);
-      return { ok: false, errors: [{ code: "invalid-workflow-source", message, path: options.path, line: 1 }] };
-    }
-  }
   if (extension !== ".md") {
     return {
       ok: false,
       errors: [
         {
           code: "unsupported-workflow-extension",
-          message: `Workflow source ${options.path} must use .md or .yml.`,
+          message: `Workflow source ${options.path} must use .md.`,
           path: options.path,
           line: 1,
         },
@@ -94,30 +78,15 @@ export function compileWorkflowSource(source: string, options: CompileWorkflowSo
 
 /**
  * The display text a step contributes to `show`, search hints, and the run
- * spine: its authored prose, else what its target does. Empty for a route
- * step with no section.
+ * spine: its authored prose, else what its target does.
  */
 export function workflowStepInstructions(step: WorkflowPlanStep): string {
   const spec = step.spec;
   if (!spec) return "";
   if (spec.instructions !== undefined) return spec.instructions;
-  if (spec.uses === "akm/command") {
-    const action = parseBuiltinCommandAction(spec.with);
-    if (action.kind === "stored") {
-      return `Invoke stored command ${action.ref}${action.arguments === undefined ? "" : " with arguments"}.`;
-    }
-    if (spec.commandMode === "literal") return action.content;
-    return action.content.split(PORTABLE_ARGUMENTS_PLACEHOLDER).join(action.arguments ?? "");
-  }
-  if (spec.uses !== undefined) return `Invoke local target ${spec.uses}.`;
-  return "";
-}
-
-/** A route step's deterministic one-line description of its branch table. */
-export function routeDescription(route: NonNullable<WorkflowPlanStep["route"]>): string {
-  const branches = Object.entries(route.when).map(([match, stepId]) => `"${match}" -> ${stepId}`);
-  if (route.defaultStepId !== undefined) branches.push(`default -> ${route.defaultStepId}`);
-  return `Route on ${route.input}: ${branches.join(", ")}.`;
+  // A prose step is `akm/command` with its body as literal content.
+  const content = spec.with?.content;
+  return spec.uses === "akm/command" && typeof content === "string" ? content : "";
 }
 
 export type WorkflowPlanCheck = { ok: true; warnings: WorkflowError[] } | { ok: false; errors: WorkflowError[] };
@@ -155,31 +124,10 @@ export function checkWorkflowPlan(plan: WorkflowPlan): WorkflowPlanCheck {
   for (const step of plan.steps) {
     const line = step.spec?.source.start ?? 1;
     if (step.spec?.map) check(step.spec.map.over, line, `Step "${step.stepId}" map.over`, true);
-    if (step.route) check(step.route.input, line, `Step "${step.stepId}" route.input`, true);
     for (const [index, reference] of (step.spec?.inputs ?? []).entries()) {
       check(reference, line, `Step "${step.stepId}" inputs[${index}]`, false);
     }
     earlierStepIds.add(step.stepId);
-  }
-
-  // Outputs resolve at run completion, so they may name any declared step.
-  for (const [name, declaration] of Object.entries(plan.outputs ?? {})) {
-    const parsed = parseReference(declaration.from);
-    const label = `Output "${name}" from`;
-    if (!parsed.ok) errors.push({ line: 1, message: `${label}: ${parsed.message}` });
-    else if (parsed.expr.kind === "param") {
-      errors.push({
-        line: 1,
-        message:
-          `${label}: "${formatReference(parsed.expr)}" names a param, not a step output — an output projects a ` +
-          `STEP artifact, never a param. "outputs:" only names step outputs (steps.<id>.output...).`,
-      });
-    } else if (!allStepIds.has(parsed.expr.stepId)) {
-      errors.push({
-        line: 1,
-        message: `${label}: "${formatReference(parsed.expr)}" cannot be resolved — "${parsed.expr.stepId}" is not a step in this workflow.`,
-      });
-    }
   }
 
   if (errors.length > 0) return { ok: false, errors };
@@ -188,7 +136,7 @@ export function checkWorkflowPlan(plan: WorkflowPlan): WorkflowPlanCheck {
 
 /**
  * Advisories that never fail compilation or change the plan:
- *   A. a `params.<name>` reference (in `map.over`/`route.input`) to a param the
+ *   A. a `params.<name>` reference (in `map.over`) to a param the
  *      document's `params:` block does not declare — a likely typo;
  *   B. `gate.max_loops` above 1 on an exec step, which is judged but never
  *      looped (a frozen argv cannot read the judge's feedback).
@@ -223,7 +171,6 @@ function workflowWarnings(plan: WorkflowPlan): WorkflowError[] {
       });
     };
     scan(step.spec?.map?.over, `Step "${step.stepId}" map.over`);
-    scan(step.route?.input, `Step "${step.stepId}" route.input`);
   }
   return warnings;
 }

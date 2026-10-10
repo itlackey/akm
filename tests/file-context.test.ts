@@ -541,36 +541,45 @@ describe("task-yaml metadata fold", () => {
 
 // ── 2c. workflow metadata fold: step targets (#935) ─────────────────────────
 describe("workflow-md metadata fold", () => {
-  test("records each step's target asset as `uses`, in step order, once each", () => {
+  test("records each child workflow step's ref as `uses`, in step order, once each", () => {
     const root = tmpDir();
-    const filePath = path.join(root, "workflows", "release.yml");
+    const filePath = path.join(root, "workflows", "release.md");
     writeFile(
       filePath,
       [
-        "name: release",
-        "on:",
-        "  workflow_dispatch: {}",
-        "jobs:",
-        "  release:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: cut",
-        "        uses: commands/cut-release",
-        "      - id: review",
-        "        uses: akm/command",
-        "        with:",
-        "          ref: commands/review",
-        "      - id: notify",
-        "        uses: other//scripts/notify",
-        "      - id: cut-again",
-        "        uses: commands/cut-release",
-        "      - id: shell",
-        "        run: echo done",
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: cut",
+        "    unit: { workflow: workflows/cut-release }",
+        "  - id: notify",
+        "    unit: { workflow: other//workflows/notify }",
+        "  - id: cut-again",
+        "    unit: { workflow: workflows/cut-release }",
+        "  - id: shell",
+        "    unit: { exec: { command: [echo, done] } }",
+        "---",
+        "",
+        "## cut",
+        "",
+        "Cut.",
+        "",
+        "## notify",
+        "",
+        "Notify.",
+        "",
+        "## cut-again",
+        "",
+        "Cut again.",
+        "",
+        "## shell",
+        "",
+        "Done.",
       ].join("\n"),
     );
     const entry: IndexDocument = { name: "release", type: "workflow" };
     applyFoldedMetadata(entry, foldRecognizedMetadata("workflow-md", buildFileContext(root, filePath)));
-    expect(entry.uses).toEqual(["commands/cut-release", "commands/review", "other//scripts/notify"]);
+    expect(entry.uses).toEqual(["workflows/cut-release", "other//workflows/notify"]);
   });
 
   test("a Markdown workflow's prose steps target no asset", () => {

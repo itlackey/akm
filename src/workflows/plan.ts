@@ -5,10 +5,10 @@
 /**
  * The ONE workflow plan type.
  *
- * Both authored grammars (Markdown `parser.ts`, GitHub-shaped YAML
- * `github-yaml.ts`) compile straight to a {@link WorkflowPlan}. A compiled
+ * The Markdown grammar (`parser.ts`) compiles straight to a
+ * {@link WorkflowPlan}. A compiled
  * plan carries what the author wrote — each step's {@link WorkflowStepSpec},
- * the document `defaults`, display prose, YAML schedules — and no execution
+ * the document `defaults`, display prose — and no execution
  * decisions. Freeze (`freeze/freeze.ts`) resolves every spec into a frozen
  * `root` (engine, model, concurrency, dispatch target), fills gate judges,
  * drops the compile-only fields, and records the source file's sha256. The
@@ -43,10 +43,8 @@ export interface WorkflowError {
 }
 
 export type WorkflowOnError = "fail" | "continue";
-export type WorkflowIsolation = "none" | "worktree";
 export type WorkflowReducer = "collect" | "vote";
 export type WorkflowRuntimeKind = "llm" | "agent" | "sdk" | "exec";
-export type WorkflowCommandMode = "literal" | "portable-template" | "stored-ref";
 
 export interface WorkflowRetry {
   max: number;
@@ -71,7 +69,6 @@ export interface WorkflowUnitSettings {
   output?: Record<string, unknown>;
   /** Env asset refs whose values reach the unit's child environment. */
   env?: string[];
-  isolation?: WorkflowIsolation;
 }
 
 /** An authored argv; never shell-parsed. */
@@ -84,20 +81,19 @@ export interface WorkflowExec {
 /**
  * What the author wrote for one step, as compiled. Exactly one of `exec` and
  * `uses` on a unit/map step (a Markdown prose step is `uses: akm/command`
- * with its body as literal content); neither on a route step. Compile-only:
+ * with its body as literal content). Compile-only:
  * freeze consumes it and a stored plan never carries it.
  */
 export interface WorkflowStepSpec {
   uses?: string;
-  commandMode?: WorkflowCommandMode;
+  /** Child workflow ref (Experimental): the step starts and drives that workflow as a child run, with `with:` as its params. */
+  workflow?: string;
   with?: Record<string, unknown>;
   exec?: WorkflowExec;
-  /** Literal environment values (YAML `env:`). */
-  env?: Record<string, string | number | boolean>;
   unit?: WorkflowUnitSettings;
   map?: { over: string; concurrency?: number; reducer?: WorkflowReducer };
   inputs?: string[];
-  /** Authored prose: the Markdown section of an exec or route step, or a YAML `run:` summary. */
+  /** Authored prose: the Markdown section of an exec step. */
   instructions?: string;
   source: SourceRef;
 }
@@ -145,7 +141,6 @@ export interface FrozenWorkflowCommandTarget {
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
   readonly cwdIdentity?: FrozenWorkflowDirectoryIdentity;
-  readonly gitCommitOid?: string;
   /** A composing step's frozen `with:` bindings. Absent, never `[]`, when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
 }
@@ -155,22 +150,6 @@ export interface FrozenWorkflowShellTarget {
   readonly contentHash: string;
   readonly exec: WorkflowExecSpec;
   readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
-  readonly gitCommitOid?: string;
-  readonly inputBindings?: readonly TaskInputBinding[];
-}
-
-export interface FrozenWorkflowScriptTarget {
-  readonly kind: "script";
-  readonly ref: string;
-  readonly contentHash: string;
-  readonly exec: WorkflowExecSpec;
-  readonly interpreter: string;
-  readonly extension: string;
-  readonly bytesBase64: string;
-  readonly byteLength: number;
-  readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
-  readonly materialization: "ephemeral-0700-delete";
-  readonly gitCommitOid?: string;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 
@@ -182,17 +161,13 @@ export interface FrozenChildWorkflowTarget {
   readonly planHash: string;
   readonly frozenPlan: WorkflowPlan;
   readonly contentHash: string;
-  readonly via: "direct" | "task";
-  /** Present only when `via` is "task": the composing task's ref. */
+  /** Written by releases before 0.10 (`"direct" | "task"`); never written now, kept so a stored plan decodes unchanged. */
+  readonly via?: "direct" | "task";
   readonly taskRef?: string;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 
-export type FrozenWorkflowTarget =
-  | FrozenWorkflowCommandTarget
-  | FrozenWorkflowShellTarget
-  | FrozenWorkflowScriptTarget
-  | FrozenChildWorkflowTarget;
+export type FrozenWorkflowTarget = FrozenWorkflowCommandTarget | FrozenWorkflowShellTarget | FrozenChildWorkflowTarget;
 
 export interface WorkflowUnitNode {
   readonly kind: "unit";
@@ -204,7 +179,6 @@ export interface WorkflowUnitNode {
   readonly retry?: WorkflowRetry;
   readonly onError: WorkflowOnError;
   readonly env?: string[];
-  readonly isolation: WorkflowIsolation;
   readonly source?: SourceRef;
   readonly frozenTarget: FrozenWorkflowTarget;
   readonly environment: readonly FrozenWorkflowEnvironmentBinding[];
@@ -233,12 +207,6 @@ export interface WorkflowGateNode {
   readonly frozenJudge: FrozenWorkflowCommandTarget | null;
 }
 
-export interface WorkflowRoute {
-  readonly input: string;
-  readonly when: Record<string, string>;
-  readonly defaultStepId?: string;
-}
-
 export interface WorkflowPlanStep {
   readonly stepId: string;
   /** Always the step id — a step has no separate title. */
@@ -246,25 +214,11 @@ export interface WorkflowPlanStep {
   readonly sequenceIndex: number;
   /** Compile-only: the authored step. */
   readonly spec?: WorkflowStepSpec;
-  /** Frozen dispatch subgraph; absent on a route step and on a not-yet-frozen plan. */
+  /** Frozen dispatch subgraph; absent on a not-yet-frozen plan. */
   readonly root?: WorkflowExecNode;
-  readonly route?: WorkflowRoute;
   /** JSON Schema the promoted step artifact must satisfy. */
   readonly outputSchema?: Record<string, unknown>;
   readonly gate: WorkflowGateNode;
-}
-
-/** One run-level export: a `steps.<id>.output(.<seg>)*` reference plus an optional schema. */
-export interface WorkflowOutput {
-  readonly from: string;
-  readonly schema?: Record<string, unknown>;
-}
-
-/** One YAML `on.schedule` entry. */
-export interface WorkflowSchedule {
-  readonly cron: string;
-  readonly ordinal: number;
-  readonly line: number;
 }
 
 export interface WorkflowPlan {
@@ -273,17 +227,14 @@ export interface WorkflowPlan {
   readonly params?: string[];
   readonly paramSchemas?: Record<string, Record<string, unknown>>;
   readonly budget?: WorkflowBudget;
-  /** Named projections of step artifacts exported when the run completes. Absent, never `{}`. */
-  readonly outputs?: Readonly<Record<string, WorkflowOutput>>;
   /** Filled at freeze. */
   readonly execution?: { readonly maxConcurrency: number };
   /** sha256 of the workflow source file, recorded at freeze for the resume "source changed" warning. */
   readonly sourceHash?: string;
   readonly steps: WorkflowPlanStep[];
   // ── compile-only (never stored) ──
-  readonly defaults?: Omit<WorkflowUnitSettings, "retry" | "output" | "env" | "isolation">;
+  readonly defaults?: Omit<WorkflowUnitSettings, "retry" | "output" | "env">;
   readonly description?: string;
   /** Markdown prose before the first step section. */
   readonly preamble?: string;
-  readonly schedules?: WorkflowSchedule[];
 }

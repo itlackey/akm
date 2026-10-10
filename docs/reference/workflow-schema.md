@@ -13,201 +13,75 @@ detail.
 - For operating a run day to day (`run`, `status`, `resume`, `abandon`), see
   [Running Workflows](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md).
 
-## Source formats and shared IR
+## Source format
 
-Peer workflow sources include Markdown `.md` and GitHub-shaped YAML `.yml`.
-`.yaml` is not supported or recognized as a workflow source. Both adapters
-compile into the same strict source IR version 1 (`sourceIrVersion: 1`) before
-target resolution and durable freezing.
-
-The shipped `schemas/akm-workflow.json` frontmatter schema applies to and
-validates the Markdown source only. Markdown is not the sole or only workflow
-source; the GitHub-shaped YAML adapter has its own bounded parser and shares
-the source-IR decoder and semantic authorities.
-
-### Markdown source
+A workflow is a Markdown `.md` asset. Nothing else is a workflow source: the
+GitHub-shaped `.yml` workflow format was removed in 0.10, and a stray `.yml` file
+under `workflows/` is skipped at index time with a message saying it must use
+`.md`. The shipped `schemas/akm-workflow.json` frontmatter schema
+validates the source.
 
 A Markdown workflow is an ordinary AKM asset — the same envelope as every
 other Markdown type, OKF-conformant frontmatter plus a body — whose
 frontmatter carries the orchestration graph (params, and how each step
-dispatches, fans out, routes, and gates). Its body carries each step's
+dispatches, fans out, and gates). Its body carries each step's
 instructions and gate rubric under plain headings, joined to the frontmatter
 by step id. The remainder of this page's frontmatter/body sections document
-that Markdown authoring format.
-
-## GitHub-shaped YAML subset
-
-A complete valid `on` plus `jobs` document is one workflow asset.
-It never creates a duplicate or second task asset. The root vocabulary is exactly
-`name`, `on`, and `jobs`:
-
-```yaml
-name: Local checks
-on:
-  schedule:
-    - cron: "0 6 * * *"
-  workflow_dispatch: {}
-jobs:
-  checks:
-    runs-on: [self-hosted]
-    steps:
-      - id: lint
-        run: bun run lint
-      - id: review
-        uses: akm/command
-        with:
-          ref: commands/review
-```
-
-AKM's public position on this format: **AKM YAML uses a familiar
-GitHub-step-shaped syntax but is an AKM workflow format, executed by AKM's
-native engine.** It is not Marketplace-action-compatible, does not evaluate
-GitHub expressions or contexts, has no hosted runner images or service
-containers, and does not execute multiple jobs.
-
-The accepted 0.9.2 subset is deliberately closed:
-
-- `on` accepts five-field `schedule` entries and an empty or null
-  `workflow_dispatch`; workflow_dispatch inputs are unsupported.
-- Service events are rejected.
-  A rejected service event creates no watcher and no polling daemon.
-- **`jobs:` must contain exactly one job.** A document with zero, two, or
-  more jobs fails at the adapter with reason `multi-job-unsupported`,
-  surfaced as `UsageError` code `COMPOSITION_INVALID` when the workflow is
-  frozen (`akm workflow run` or `akm workflow plan`). Split a multi-job
-  document into separate single-job workflows and compose them with a
-  child-workflow step (`uses: workflows/<ref>`) instead. A job's `needs:`
-  must be empty — a non-empty `needs:` fails for the same reason, since a
-  single job has nothing to depend on.
-- Each job requires exactly `runs-on: [self-hosted]`. `name`, `needs`, and
-  `steps` are the remaining job fields.
-- Each step requires `id` and exactly one `uses` or `run`; optional fields are
-  `name`, `with`, `env`, `shell`, and contained `working-directory`.
-- A `run` accepts only token-safe local command tokens.
-  Shell expansion and operators are unsupported and rejected, even when a host shell is named.
-- `uses` is classified as a canonical asset ref (`commands/`, `scripts/`,
-  `tasks/`, `workflows/`), plus the `akm/command` builtin. `akm/command`,
-  command, script, task, and **child-workflow** composition are local
-  targets — see [Child workflows](#child-workflows) for `uses:
-  workflows/<ref>`.
-  Local actions and Docker actions are unsupported and rejected (including
-  `./` and `docker://`); a GitHub Action locator (`owner/repo[/path]@ref`,
-  e.g. `actions/checkout@v4`) and every other unrecognized shape fail the
-  same way — `unsupported-uses-target` — since AKM never acquires or
-  executes a remote action. AKM does not recognize the locator grammar as a
-  distinct case; it is simply not one of the four canonical asset-ref
-  families or the `akm/command` builtin.
-- `with:` on a **task-composed** step (`uses: tasks/<ref>`) **binds** the
-  target task source's declared `inputs:` — see
-  [Typed inputs and output](tasks.md#typed-inputs-and-output). Each value is either a literal
-  (validated against the input's declared schema at freeze) or a reference
-  `{from: "steps.<id>.output(.<segment>)*"}`, resolved just before the unit
-  dispatches and re-validated against the same schema then. The reference
-  grammar also accepts `{from: "params.<name>"}`, naming a declared param of
-  the *composing* workflow itself — but a composing step is only authorable
-  in a GitHub-shaped document (this section), whose root keys are exactly
-  `name`, `on`, and `jobs` with `workflow_dispatch` inputs rejected, so it
-  can never declare `params:` of its own. In practice that reference form
-  therefore always fails freeze here, with "does not name a declared
-  workflow param; declared params: (none)". An unknown `with:` key, a
-  missing required input with no default, or a reference naming a step that
-  doesn't exist earlier in the job all fail at **freeze** with `UsageError`
-  code `INPUT_BINDING_INVALID`, before the plan is ever published. If the
-  target task declares **no** `inputs:` at all (a `version: 4` task with no
-  `inputs:` key) — or the step targets
-  `uses: commands/<ref>` / `uses: scripts/<ref>`, which are never binding
-  surfaces — any authored
-  `with:`, including an empty mapping (`with: {}`), is rejected at freeze
-  with `UsageError` code `COMPOSITION_INVALID`, exit 2. Omitting `with:`
-  entirely always freezes normally, regardless of target. `with:` on
-  `uses: akm/command` is unaffected by any of this and is still required to
-  supply the builtin action's arguments, as in the example above. `with:` on
-  a **child-workflow** target (direct or task-wrapped) binds the child's
-  declared `params:` instead of `inputs:` — see
-  [Child workflows](#child-workflows).
-- GitHub expressions and contexts are unsupported and rejected anywhere in
-  the parsed tree.
+that authoring format.
 
 ## Child workflows
 
-A step can compose another workflow, two ways. Composition is authored only
-through the GitHub-shaped `jobs.<id>.steps[].uses` surface — the composing
-(parent) document must be GitHub-shaped YAML, since the Markdown-frontmatter
-step schema has no `uses:` key at all (see [Source formats and shared
-IR](#source-formats-and-shared-ir)). The **child** workflow being composed
-may itself be authored in either format, Markdown or GitHub-shaped:
+> **Experimental.** Child workflows are part of the Experimental `akm workflow`
+> surface (see `STABILITY.md`) and may change or be removed before 0.11.
 
-- **Direct** — `uses: workflows/<ref>`:
+A step can run another workflow as a **child run**. It declares the child in
+its `unit:` bag:
 
-  ```yaml
-  - id: dispatch
-    uses: workflows/release-checklist
-    with:
-      channel: stable
-  ```
+```yaml
+steps:
+  - id: investigate
+    unit:
+      workflow: workflows/research      # canonical ref, or <bundle>//workflows/<name>
+      with:
+        topic: { from: params.topic }   # a child param: a literal or { from: <reference> }
+  - id: report
+    inputs: [steps.investigate.output]  # the child's last step output
+```
 
-- **Task-wrapped** — `uses: tasks/<ref>` where `<ref>` names a task source
-  v4 document whose own target is a workflow. The task's own effective
-  `inputs:` (its declared defaults plus whatever the *task's own* callers
-  bound) supply the child's params; a `with:` authored on the *workflow
-  step itself* binds on top of that, exactly as it would for a direct step.
+The step needs a `## investigate` body section like any other step (it is
+documentation for a human; the child's own steps carry the instructions).
 
-Both forms bind against the child workflow's own declared `params:`
-frontmatter key — **not** a task's `inputs:` contract, since a workflow has
-no `inputs:`. `with:` follows the same grammar as everywhere else in this
-document: each value is a literal (validated against the param's declared
-type at freeze) or a `{from: "steps.<id>.output(.<segment>)*"}` reference,
-resolved just before the unit dispatches. (The grammar also accepts
-`{from: "params.<name>"}`, naming a declared param of the *composing*
-workflow — but that form is unreachable here for the same reason noted
-above: the composing document is necessarily GitHub-shaped, so it never
-declares `params:` of its own.) An unknown key or an invalid reference
-fails at freeze with `UsageError` code `INPUT_BINDING_INVALID`, exactly like
-a task-composed step's `with:`.
+- `workflow` names the child. A workflow unit reaches no engine and the child
+  carries its own environment, so `exec`, `engine`, `model`, `llm` and `env`
+  beside `workflow` are lint errors. `workflow` is not allowed inside
+  `map.unit`.
+- `with:` binds the child's declared `params:` (a workflow has no `inputs:`).
+  Each value is a literal (validated against the param's declared type at
+  freeze) or `{from: "steps.<id>.output(.<segment>)*"}` or
+  `{from: "params.<name>"}`, resolved just before the unit dispatches. A child
+  param the step leaves out takes the child's own `default:`. An unknown key or
+  an invalid reference fails at freeze with `UsageError` code
+  `INPUT_BINDING_INVALID`.
+- **The child's result is its last step's output**, exactly what
+  `steps.<child-step>.output` would be for that step inside the child. A later
+  step reads it as `steps.<composing-step>.output` (sub-paths legal). A
+  workflow has no separate `outputs:` key.
 
 ### Frozen before publication
 
-Composing a child workflow is not a runtime call — it is a **freeze-time**
-resolution. When the parent workflow's plan is frozen, AKM loads the child's
-source, compiles it, validates it, and freezes the child's own complete plan
-*before the parent run is published*. The result is embedded whole inside
-the parent step's frozen target (`kind: "child-workflow"`); nothing about the
-child is re-read at dispatch time. Concretely:
+Composing a child workflow is a **freeze-time** resolution. When the parent
+workflow's plan is frozen, AKM loads the child's source, compiles it,
+validates it, and freezes the child's complete plan *before the parent run is
+published*. The result is embedded whole inside the parent step's frozen target
+(`kind: "child-workflow"`); nothing about the child is re-read at dispatch
+time. Editing the child's source after the parent run has started has no effect
+on that run.
 
-- Editing the child's source **after** the parent run has started has no
-  effect on that run — the parent already carries its own frozen copy of the
-  child's plan.
-- Editing the child's source in the narrow window **between** the parent's
-  freeze and its publication fails the whole parent publication atomically,
-  with no run row written — the same source-race protection that already
-  covers the parent's own command/script/task sources extends to every
-  transitive child source file.
-- The child's *own* source files (its workflow document plus every
-  command/script/task it in turn resolves) become part of the parent run's
-  guarded source read set, exactly like any other source the parent
-  workflow depends on.
-
-See [Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#child-workflows)
-for how an embedded child plan is decoded (`irVersion`, `planHash`, and
-`contentHash` are recorded provenance, not re-verified).
-
-### Composition limits
-
-Three bounds are enforced at **freeze**, before the parent run is published,
-each failing with `UsageError` code `COMPOSITION_INVALID` (exit 2):
-
-| Limit | Value | Message names |
-| --- | --- | --- |
-| Composition depth | 8 levels below the root | the limit and the ref path, e.g. `Workflow step <id> cannot compose <ref>: workflow composition is limited to 8 levels. Path: <a -> b -> …>.` |
-| Cycle detection | a workflow (direct or task-wrapped) reaching itself through any chain | the cycle path, e.g. `Workflow step <id> cannot compose <ref>: that would create a composition cycle. Path: <a -> tasks/w -> b -> a>.` |
-| Aggregate embedded plan bytes | 1 MiB total, summed across every embedded descendant of one root freeze | the cap and the running total, e.g. `Workflow step <id> cannot compose <ref>: the embedded child plans would total <N> bytes, over the <cap>-byte limit for one workflow run.` |
-
-The same workflow reached twice through disjoint branches (a diamond, not a
-cycle) is not a violation — each occurrence embeds its own independent copy;
-deduplicating identical embedded plans is not implemented. A step whose
-`uses: workflows/<ref>` (or task-wrapped equivalent) does not resolve to a
-real asset fails with the ordinary asset-resolution error, unchanged by any
-of this.
+A workflow that reaches itself through any chain of children fails at freeze
+with `UsageError` code `COMPOSITION_INVALID` (exit 2), naming the cycle path.
+The same workflow reached twice through disjoint branches (a diamond) is not a
+cycle; each occurrence embeds its own copy. A `workflow:` ref that does not
+resolve fails with the ordinary asset-resolution error.
 
 ### Child execution
 
@@ -225,7 +99,7 @@ The child's final status maps onto the composing step and the parent run:
 
 | Child status | Composing step | Parent run |
 | --- | --- | --- |
-| `completed` | completes; its output is the child's exported result — its declared `outputs:` (see [What a step's output is](#what-a-steps-output-is)), or `{runId, status}` when the child declares none | continues |
+| `completed` | completes; its output is the child's last step output | continues |
 | `failed` | `failed` | `failed` |
 | `blocked` | `blocked` | `blocked` |
 | aborted mid-drive (parent cancelled/timed out) | left unfinished, not finalized | active and resumable |
@@ -245,14 +119,9 @@ akm workflow resume <parentRunId>
 akm workflow run <parentRunId>
 ```
 
-**Nested blocks (composition depth 2+).** The three-command sequence above
-clears a block exactly one level deep. It does **not** generalize to a
-grandchild block (root composes child, child composes grandchild, grandchild
-blocks): re-driving the root does not cascade down into re-driving the
-still-blocked grandchild, because a composing step never re-drives a child
-whose own status is already `blocked` — re-running the root just re-observes
-the child's own block and re-blocks the root the same way, without the
-grandchild ever being reached. Resume every blocked run in the chain,
+**Nested blocks.** The three-command sequence above clears a block exactly
+one level deep. With a grandchild block (root composes child, child composes
+grandchild, grandchild blocks), resume every blocked run in the chain,
 **deepest first**, then re-run only the root:
 
 ```sh
@@ -262,31 +131,24 @@ akm workflow resume <rootRunId>
 akm workflow run <rootRunId>
 ```
 
-The status tree's own `resume`/`then` commands on a deeply nested node still
-name only that node and the root, never an intermediate ancestor — read the
-tree and resume every `blocked` row before re-running the root.
-
 **Identity and retries.** A child run's identity is keyed by the parent run,
 the parent unit, and that unit's input hash — publishing is idempotent, so
 re-driving the composing step (an explicit `akm workflow resume` +
-`akm workflow run`, or a `retry:` policy on the step) finds and continues
-the **same** child run rather than starting a new one. Only a change to the
-composing step's own inputs (params, upstream step outputs it reads, or gate
-feedback from a rejected verification loop) produces a different child.
+`akm workflow run`) finds and continues the **same** child run rather than
+starting a new one. Only a change to the composing step's own inputs (params,
+upstream step outputs it reads, or gate feedback from a rejected verification
+loop) produces a different child.
 
 **Visibility.** `akm workflow status` on a run that composes children
 renders a `children:` tree — every descendant run's ref, status, and, for a
-blocked child, its resume command — recursively to the same 8-level
-composition-depth bound described above. Child runs are excluded from `akm
+blocked child, its resume command. Child runs are excluded from `akm
 workflow list` by default; pass `--children` to include them. A child run
 id always works directly with `akm workflow status`/`resume`/`abandon`/`run`,
 listed or not. See
 [Running Workflows: Child runs](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md#child-runs) for a
 worked example, and
 [Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#child-workflows)
-for the dispatch seam and why reusing the top-level run engine (rather than a
-second executor) is what makes the identity and abort-propagation rules above
-hold for free.
+for the dispatch seam.
 
 ## Frontmatter keys
 
@@ -306,20 +168,16 @@ families) plus the orchestration keys:
   There is no per-step opt-out (`llm: {}` is a no-op and `llm: null` is a parse
   error), so in a mixed document put `llm:` on the `unit:` of each step it is
   meant for instead of in `defaults:`.
-- `outputs` — name → `{ from, schema? }`, a run-level export projected from
-  a step's own artifact (Markdown-only; see [Workflow
-  outputs](#workflow-outputs) below).
 - `budget` — run-lifetime ceilings (`max_units`, `max_tokens`; see
   [Budget ceilings](#budget-ceilings) below).
 - `steps` — an ordered list. Each step has an `id`
-  (`[A-Za-z_][A-Za-z0-9_-]*` — no dots) and **at most one** of `unit`, `map`,
-  or `route`. A step with neither is **still a unit step** — bare
+  (`[A-Za-z_][A-Za-z0-9_-]*` — no dots) and **at most one** of `unit` or `map`.
+  A step with neither is **still a unit step** — bare
   `- id: validate` is the complete minimal declaration. `unit:` is the
   optional dispatch-override bag (`exec`, `engine`, `model`, `llm`, `timeout`,
-  `retry`, `on_error`, `env`, `isolation`; see
-  [Exec (shell) units](#exec-shell-units),
-  [Failure policy](#failure-policy) and
-  [Worktree isolation](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#worktree-isolation)).
+  `retry`, `on_error`, `env`; see
+  [Exec (shell) units](#exec-shell-units) and
+  [Failure policy](#failure-policy)).
 - `inputs` — on a `unit`/`map` step, the prior-step artifacts this step
   consumes, as bare reference strings (sub-paths legal:
   `steps.x.output.issues`, not just `steps.x.output`). This is how a step's
@@ -346,10 +204,9 @@ Checked by `akm lint --type workflows`:
    frontmatter, exactly — no titles, no `Step:`/`Step ID:` lines, no
    `# Workflow:` prefix on the H1. (Fenced code blocks are skipped when
    scanning for headings.)
-2. A `unit` or `map` step **must** have a body section — its instructions,
+2. Every step **must** have a body section — its instructions,
    or its per-item template for a map step, byte-exact to the next H2 or
-   EOF. A `route` step **may** have one (documentation, plus a gate rubric
-   if it is gated). Everything before the first H2 is free preamble —
+   EOF. Everything before the first H2 is free preamble —
    indexed for search, shown in `akm show`, never dispatched.
 3. Inside a step's section, an optional `### gate` sub-heading starts that
    step's gate rubric, running to the section end — the format's **single
@@ -396,12 +253,12 @@ attached to this unit as input. Fix any failures before proceeding.
 
 ## Richer example
 
-Fan-out, routing, retries, gates, and a run budget:
+Fan-out, retries, gates, and a run budget:
 
 ```markdown
 ---
 type: workflow
-description: Review changed files and route the outcome
+description: Review changed files and triage the outcome
 params:
   changed_files: { type: array, description: Files to review }
 defaults: { engine: reviewer, model: balanced, timeout: 10m, on_error: fail }
@@ -419,7 +276,6 @@ steps:
         timeout: 5m
         retry: { max: 1, on: [timeout, llm_rate_limit] }
         on_error: continue
-        isolation: worktree
         output: { type: object, properties: { file: { type: string }, verdict: { type: string } }, required: [file, verdict] }
     # `output` here describes the REDUCER RESULT, not one unit's result: the
     # default `collect` reducer folds per-item unit results into an array.
@@ -429,10 +285,7 @@ steps:
     inputs: [steps.review.output]
     output: { type: object, properties: { verdict: { type: string } }, required: [verdict] }
   - id: triage
-    route:
-      input: steps.aggregate.output.verdict
-      when: [{ match: pass, step: ship }, { match: fail, step: rework }]
-      default: manual-triage
+    inputs: [steps.aggregate.output]
   - id: ship
   - id: rework
   - id: manual-triage
@@ -468,8 +321,9 @@ Combine the per-file review verdicts — attached to this unit as input via
 
 ## triage
 
-Routes on the verdict `aggregate` reported: `pass` proceeds to `ship`, `fail`
-proceeds to `rework`, anything else goes to `manual-triage`.
+Read the verdict `aggregate` reported (attached as input) and decide whether
+the change should ship, be reworked, or go to manual triage; later steps act on
+that decision.
 
 ## ship
 
@@ -478,7 +332,7 @@ Ship the change.
 ## rework
 
 Address the review findings. Confirming the fix is a fresh `akm workflow run`
-of this workflow, not a step this run routes back to.
+of this workflow, not a step this run goes back to.
 
 ## manual-triage
 
@@ -491,13 +345,12 @@ Workflow prose is **never templated** — there is no `${{ … }}`/`{{ … }}`
 interpolation anywhere in a workflow's body, and no escape syntax to learn,
 because there are no delimiters in prose to escape.
 
-Bare reference strings appear in exactly three frontmatter positions, each an
+Bare reference strings appear in exactly two frontmatter positions, each an
 unquoted-style YAML string:
 
 | Position | What it names |
 | --- | --- |
 | `map.over` | The list a map step fans out over. |
-| `route.input` | The value a route step matches on. |
 | `inputs` (each entry) | A prior step's artifact this step consumes. |
 
 Every reference resolves against exactly two roots:
@@ -595,70 +448,6 @@ akm does not warn about a missing step `output:` schema. It briefly did, and
 the advisory was removed: it fired on essentially every step, could not be
 enforced (advisories never reach `--fail-on-flagged`), and flagged a state
 that is legitimate.
-
-## Workflow outputs
-
-A workflow can declare a run-level export: the values a **completed run**
-promotes, projected from its steps' own artifacts. This is a Markdown
-frontmatter key, `outputs:`:
-
-```yaml
-outputs:
-  report:
-    from: steps.summarize.output
-  changed_count:
-    from: steps.collect.output.total
-    schema: { type: integer, minimum: 0 }
-```
-
-Each entry is a mapping of exactly `from` (required) and `schema`
-(optional):
-
-- `from` is a `steps.<id>.output(.<segment>)*` reference into a step's own
-  artifact — the same reference grammar `with:`/`inputs:` use elsewhere in
-  this document — naming a declared step. `from: params.<name>` is
-  rejected: a run's exports come from what its steps produced, not from its
-  input params verbatim.
-- `schema`, when present, is validated against the same [enforced JSON
-  Schema subset](#the-enforced-json-schema-subset) as a step's own `output:`
-  schema, and is bound by the same limit: at most 256 KiB.
-- Output names follow the same pattern as params, `^[A-Za-z_][A-Za-z0-9_]*$`,
-  and a workflow may declare at most 64.
-
-**This is a Markdown-only key.** GitHub-shaped YAML's root is a closed set —
-`name`, `on`, `jobs` — with no extension surface, the same reason a
-GitHub-shaped workflow cannot declare `params:` either. Composition itself
-is unaffected: the *composing* (parent) document must still be GitHub-shaped
-(only `jobs.<id>.steps[].uses` composes — see [Child
-workflows](#child-workflows)), and the *composed* (child) may be either
-format — but a child that wants to export more than `{runId, status}` must
-be authored in Markdown.
-
-**Different from a step's own `output:` schema.** A step's `output:` (see
-[Typed step artifacts](#typed-step-artifacts) below) is a typed-artifact
-contract on *one step*, enforced and retryable through that step's own gate
-loop. A workflow's `outputs:` is a *run-level export projection* over
-already-promoted step artifacts, resolved once, after every step has
-finished. They compose freely: a step can declare `output:` and the
-workflow's `outputs:` can project that same step's artifact under an export
-name.
-
-**Resolution happens once, at run completion**, over the run's persisted
-step evidence — never re-evaluated afterward. If a declared `from` cannot
-be resolved, reads a step artifact that was too large to persist in full, or
-its resolved value fails its declared `schema`, run completion itself
-rolls back: the run stays `active`, its final step stays `pending`, and no
-event is emitted. Fix the declaration (or the step that produces the value)
-and the next completion attempt resolves outputs again — a bad `outputs:`
-entry cannot silently strand a run as `completed` with missing exports.
-
-**What a completed run exports.** A run with an `outputs:` declaration
-exports exactly those resolved values. A run with none exports
-`{runId, status}` instead — synthesized whenever it is read, never
-persisted. This is what a parent step composing this workflow as a child
-sees at `steps.<id>.output`: see [Child execution](#child-execution) for how
-a composing step's own reference into a child's exports is checked at
-freeze time.
 
 ## Typed step artifacts
 
@@ -782,12 +571,10 @@ Bounds: 1–64 argv entries, each a non-empty string of at most 4096 bytes.
 ### `cwd`
 
 Optional and **relative**. It resolves inside the unit's working directory —
-the engine invocation's working directory normally, or the unit's fresh
-detached worktree under `isolation: worktree`. Absolute paths, Windows drive
+the engine invocation's working directory. Absolute paths, Windows drive
 letters, `~`, and `..` segments are rejected by the parser *and* by the
 frozen-plan decoder, and containment is re-checked against the *resolved* base
-(symlinks included) immediately before the command is spawned. An exec unit
-cannot step outside the tree its isolation promised.
+(symlinks included) immediately before the command is spawned.
 
 ### The output rule
 
@@ -990,7 +777,7 @@ akm deliberately does **not** transparently spill an oversized context to a file
 and pass a path instead. That would make the `AKM_INPUTS` contract conditional
 on the size of the data — sometimes JSON, sometimes a filename — so every
 command would have to handle both shapes, and the spill file would have to be
-placed, isolated and cleaned up inside a unit's worktree. A stable contract plus
+placed and cleaned up. A stable contract plus
 an explicit error is the smaller, more predictable surface.
 
 ### The child's environment is an allowlist
@@ -1062,7 +849,7 @@ The historical `inherit_env` spelling is unsupported.
 and **no `engine`/`model`** — an exec unit names no engine, so reporting the
 workflow's `defaults.engine` there would describe a dispatch that never
 happens. Field presence is the discriminator, the same way `fanOut` marks a
-`map` step and `route` marks a route step:
+`map` step:
 
 ```json
 {
@@ -1228,30 +1015,14 @@ changing the defaults above never alters a run that is already in flight or
 being resumed — it keeps the widths it froze. The new defaults apply only to
 runs started after the upgrade.
 
-## Routing
+## Going back
 
-A `route` step makes classify-and-dispatch first-class: the engine resolves
-the explicit `input:` expression, selects the matching `when:` branch (or
-`default:`), and auto-skips the unselected branch targets as the spine
-reaches them. **Routes are forward-only**: every target (each `when.step`
-and `default`) must be a step declared *later* in the workflow than the
-routing step, and a step never routes to itself — this keeps the plan a DAG,
-so termination is structural rather than a runtime budget's job. A
-`default:` that names an earlier step is a lint error, not a loop. An
-unroutable value with no `default` fails the step rather than letting every
-branch run.
-
-**"Go back and fix it" is a gate, not a backward route.** A failed gate
+**"Go back and fix it" is a gate.** A failed gate
 re-runs its *own* step with the judge's feedback, bounded by `gate.max_loops`
 — and a declared `output:` schema the promoted artifact fails is specifically
-the error a gate loop retries through. A workflow that used to describe "loop
-back to an earlier step until this passes" expresses that as a bounded gate
-on the step doing the work, not as routing.
-
-Route decisions are journaled, so a resumed run replays the same choice.
-Skips cascade: when a route step is itself skipped (it was the unselected
-target of an earlier route), its own branch targets are skipped too — a
-router that never decided selects nothing.
+the error a gate loop retries through. A workflow that wants to "loop back to an
+earlier step until this passes" expresses that as a bounded gate on the step
+doing the work.
 
 ## Failure policy
 

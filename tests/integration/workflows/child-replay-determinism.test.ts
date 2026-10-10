@@ -37,6 +37,7 @@ import { computeStepWorkList } from "../../../src/workflows/exec/step-work";
 import { decodeWorkflowPlan } from "../../../src/workflows/runtime/run-plan";
 import { getWorkflowStatus, resumeWorkflowRun, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
+import { childParentDoc } from "../../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -98,11 +99,6 @@ function writeChildLeaf(name: string): void {
   );
 }
 
-/** A distinctive command a v4 task can wrap, so a follow-up step's fake-dispatcher prompt is unambiguous to match. */
-function writeFinishCommand(): void {
-  write("commands/replay-finish.md", "Wrap up the replay test.\n");
-}
-
 /**
  * A GitHub-shaped composing parent with a SECOND, ordinary follow-up step
  * (`finish`, via a command) — giving `runWorkflowSteps` genuine incomplete
@@ -112,41 +108,32 @@ function writeFinishCommand(): void {
  */
 function writeComposingParentWithFollowup(name: string, childRef: string): void {
   write(
-    `workflows/${name}.yml`,
+    `workflows/${name}.md`,
     [
-      `name: ${name}`,
-      "on:",
-      "  workflow_dispatch:",
-      "jobs:",
-      "  main:",
-      "    runs-on: [self-hosted]",
-      "    steps:",
-      "      - id: dispatch",
-      `        uses: ${childRef}`,
-      "      - id: finish",
-      "        uses: commands/replay-finish",
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: dispatch",
+      "    unit:",
+      `      workflow: ${childRef}`,
+      "  - id: finish",
+      "---",
+      "",
+      "## dispatch",
+      "",
+      "Run the child.",
+      "",
+      "## finish",
+      "",
+      "Wrap up the replay test.",
       "",
     ].join("\n"),
   );
 }
 
-/** A GitHub-shaped composing parent with ONLY the composing step (for C-07's tamper target). */
+/** A composing parent with ONLY the composing step (for C-07's tamper target). */
 function writeSoloComposingParent(name: string, childRef: string): void {
-  write(
-    `workflows/${name}.yml`,
-    [
-      `name: ${name}`,
-      "on:",
-      "  workflow_dispatch:",
-      "jobs:",
-      "  main:",
-      "    runs-on: [self-hosted]",
-      "    steps:",
-      "      - id: dispatch",
-      `        uses: ${childRef}`,
-      "",
-    ].join("\n"),
-  );
+  write(`workflows/${name}.md`, childParentDoc([{ id: "dispatch", workflow: childRef }]));
 }
 
 // ── C-05, C-06: a resumed parent replays a completed composing step ────────
@@ -155,7 +142,6 @@ function writeSoloComposingParent(name: string, childRef: string): void {
 describe("a resumed parent replays a completed composing step without re-driving the child (C-05, C-06)", () => {
   test("the composing unit is REUSED from the journal on resume — the child's own leaf unit is never re-dispatched, and the composing step's evidence is byte-identical", async () => {
     writeChildLeaf("replay-leaf");
-    writeFinishCommand();
     writeComposingParentWithFollowup("replay-parent", "workflows/replay-leaf");
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const started = await startWorkflowRun("workflows/replay-parent", {});

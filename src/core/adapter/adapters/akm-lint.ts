@@ -253,7 +253,6 @@ export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Dia
     case "task":
       return taskDiagnostics(relPath, raw, workspaceRoot);
     case "workflow":
-      // Markdown lint handles `.md`; peer GitHub-shaped `.yml` sources enter through the workflow source adapter.
       return ext === ".md" ? workflowDiagnostics(relPath, raw, body) : [];
     case "memory":
       return memoryDiagnostics(relPath, data, body, ctx);
@@ -376,34 +375,6 @@ export type WorkflowFrontendDiagnostic = Diagnostic & {
 export interface WorkflowFrontendDiagnostics {
   errors: WorkflowFrontendDiagnostic[];
   warnings: WorkflowFrontendDiagnostic[];
-}
-
-/**
- * Compile one peer GitHub-shaped `.yml` source through the shared source-IR
- * frontend. YAML has no Markdown frontmatter/base/stub pass and currently
- * emits fatal source diagnostics only; keeping the same two-channel result
- * shape lets the ordinary sweep and both workflow adapters route it exactly
- * like the established Markdown frontend without inventing another parser.
- */
-export function workflowYamlSourceDiagnostics(
-  relPath: string,
-  raw: string,
-  parsePath: string,
-  workspaceRoot: string,
-): WorkflowFrontendDiagnostics {
-  if (isAkmRegistryCachePath(parsePath)) return { errors: [], warnings: [] };
-  const compiled = compileWorkflowSource(raw, { path: parsePath, workspaceRoot });
-  if (compiled.ok) return { errors: [], warnings: [] };
-  return {
-    errors: compiled.errors.map((error) => ({
-      file: relPath,
-      issue: "invalid-workflow-structure",
-      detail: error.message,
-      fixed: false,
-      ...lineOf(error),
-    })),
-    warnings: [],
-  };
 }
 
 /**

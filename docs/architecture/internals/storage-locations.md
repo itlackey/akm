@@ -253,7 +253,7 @@ extension, so an install without `sqlite-vec` leaves the unread table in place.
 
 #### Workflow source indexing
 
-Peer `.md` and `.yml` workflow sources compile directly to source IR version 1.
+Workflow `.md` sources compile directly to source IR version 1.
 The index stores the ordinary normalized `entries` row and metadata derived from
 that IR; there is no workflow-specific AST cache or parallel persisted source
 representation. Executable durable plans belong only to `state.db`.
@@ -703,7 +703,7 @@ One line per memory belief-state transition: `{ appliedAt, ref, parentRef, fromS
 
 All asset files live under `$STASH/` in type-specific subdirectories defined by the `PLACEMENT_SPECS` map in `src/core/asset/asset-placement.ts`:
 
-The `workflows/` directory holds peer `.md` and `.yml` workflow sources. The
+The `workflows/` directory holds `.md` workflow sources. The
 `tasks/` directory holds task source v4 `.yml` sources.
 
 | Subdirectory | Asset Type | Format |
@@ -713,7 +713,7 @@ The `workflows/` directory holds peer `.md` and `.yml` workflow sources. The
 | `agents/<name>.md` | agent | YAML-FM + Markdown |
 | `knowledge/<name>.md` | knowledge | YAML-FM + Markdown |
 | `instructions/<name>.md` | instruction | YAML-FM + Markdown |
-| `workflows/<name>.md` / `workflows/<name>.yml` | workflow | Peer `.md` Markdown and `.yml` GitHub-shaped sources; both compile through source IR v1 |
+| `workflows/<name>.md` | workflow | Markdown source; compiles through source IR v1 |
 | `scripts/<name>.<ext>` | script | sh / ts / js / ps1 etc. |
 | `memories/<name>.md` | memory | YAML-FM + Markdown |
 | `env/<name>.env` | env | `KEY=VALUE` pairs |

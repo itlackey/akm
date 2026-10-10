@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe("proposal workflow source-IR boundary", () => {
-  test("valid Markdown and GitHub-shaped YAML proposals use the same validation ingress", () => {
+  test("a valid Markdown proposal passes validation without touching the workspace", () => {
     const root = workspace();
     const before = fs.readdirSync(root);
 
@@ -65,24 +65,22 @@ describe("proposal workflow source-IR boundary", () => {
       ok: true,
       findings: [],
     });
-    expect(validateProposal(workflowProposal("workflows/source-ir.yml", GITHUB_WORKFLOW, root))).toEqual({
-      ok: true,
-      findings: [],
-    });
-
     expect(fs.readdirSync(root)).toEqual(before);
   });
 
-  test("unsupported .yaml proposals fail closed with source diagnostics and no workspace leak", () => {
+  test.each([
+    "yaml",
+    "yml",
+  ])("unsupported .%s proposals fail closed with source diagnostics and no workspace leak", (extension) => {
     const root = workspace();
     const before = fs.readdirSync(root);
-    const report = validateProposal(workflowProposal("workflows/source-ir.yaml", GITHUB_WORKFLOW, root));
+    const report = validateProposal(workflowProposal(`workflows/source-ir.${extension}`, GITHUB_WORKFLOW, root));
 
     expect(report.ok).toBe(false);
     expect(report.findings).toHaveLength(1);
     expect(report.findings[0]).toMatchObject({ kind: "invalid-workflow-structure" });
     expect(report.findings[0]?.message).toContain("unsupported-workflow-extension");
-    expect(report.findings[0]?.message).toContain("workflows/source-ir.yaml:1");
+    expect(report.findings[0]?.message).toContain(`workflows/source-ir.${extension}:1`);
     expect(report.findings[0]?.message).not.toContain(root);
     expect(fs.readdirSync(root)).toEqual(before);
   });

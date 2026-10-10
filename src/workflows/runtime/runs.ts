@@ -38,7 +38,6 @@ import type { WorkflowPlan, WorkflowRuntimeKind } from "../plan";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
-import { resolveWorkflowRunOutputs } from "./run-outputs";
 import { frozenStepRows, readRunPlan } from "./run-plan";
 import { canonicalizeWorkflowRefInput, loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
 
@@ -620,11 +619,10 @@ export async function completeWorkflowStep(
   return withWorkflowRunsRepo((repo) => {
     let updatedRun: WorkflowRunRow | undefined;
     let refreshedSteps: WorkflowRunStepRow[] = [];
-    let outputWarnings: string[] | undefined;
 
     repo.transaction(() => {
       const run = readWorkflowRun(repo, input.runId);
-      const plan = requireRunPlan(run);
+      const _plan = requireRunPlan(run);
       if (run.status !== "active") {
         throw new UsageError(`Workflow run ${run.id} is ${run.status} and cannot be updated.`);
       }
@@ -659,16 +657,6 @@ export async function completeWorkflowStep(
       refreshedSteps = readWorkflowRunSteps(repo, run.id);
       const state = deriveRunState(refreshedSteps);
 
-      // Declared outputs resolve inside this transaction once the run
-      // completes; a failure rolls the step completion back whole.
-      let outputsJson: string | null | undefined; // undefined = untouched, keep the row's existing value
-      if (state.status === "completed" && plan.outputs) {
-        const resolved = resolveWorkflowRunOutputs(plan, refreshedSteps);
-        outputsJson = JSON.stringify(resolved.outputs);
-        repo.setRunOutputs(run.id, outputsJson);
-        outputWarnings = resolved.errors;
-      }
-
       repo.updateRunState({
         status: state.status,
         currentStepId: state.currentStepId,
@@ -683,16 +671,10 @@ export async function completeWorkflowStep(
         current_step_id: state.currentStepId,
         updated_at: completedAt,
         completed_at: state.completedAt,
-        ...(outputsJson !== undefined ? { outputs_json: outputsJson } : {}),
       };
     });
 
     const detail = buildWorkflowRunDetail(repo, updatedRun as WorkflowRunRow, refreshedSteps);
-    if (outputWarnings?.length) {
-      const messages = outputWarnings.map((e) => `Workflow run ${input.runId} declared ${e}`);
-      for (const message of messages) warn(message);
-      detail.warnings = [...(detail.warnings ?? []), ...messages];
-    }
     // #11: emit `workflow_step_completed` ONLY for a genuine `completed`
     // transition; every other non-pending status (failed/skipped/blocked)
     // carries the honest `workflow_step_updated` name. The status is ALWAYS
@@ -952,10 +934,7 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
     agentHarness: run.agent_harness ?? null,
     agentSessionId: run.agent_session_id ?? null,
     planIrVersion: run.plan_ir_version ?? null,
-    // P3b: all three optional and conditionally spread, so every
-    // pre-existing (non-child, no-outputs-declared) run's envelope is
-    // byte-identical.
-    ...(run.outputs_json ? { outputs: parseJsonObject(run.outputs_json) ?? {} } : {}),
+    // Optional and conditionally spread, so a non-child run's envelope is unchanged.
     ...(run.parent_run_id ? { parentRunId: run.parent_run_id } : {}),
     ...(run.parent_unit_id ? { spawnedByUnitId: run.parent_unit_id } : {}),
   };

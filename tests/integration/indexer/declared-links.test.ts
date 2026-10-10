@@ -88,19 +88,24 @@ function writeStash(): void {
     "---\ndescription: The release train\npageKind: concept\nsources:\n  - raw/train-source.md\n---\n\n# Train\n",
   );
   write("wikis/notes/raw/train-source.md", "---\ndescription: Train source snapshot\n---\n\nSource.\n");
-  write("commands/cut-release.md", "---\ndescription: Cut a release branch\n---\n\nCut $ARGUMENTS.\n");
   write(
-    "workflows/release.yml",
+    "workflows/cut-release.md",
+    "---\ntype: workflow\ndescription: Cut a release branch\nsteps:\n  - id: cut\n---\n\n## cut\n\nCut the branch.\n",
+  );
+  write(
+    "workflows/release.md",
     [
-      "name: release",
-      "on:",
-      "  workflow_dispatch: {}",
-      "jobs:",
-      "  release:",
-      "    runs-on: [self-hosted]",
-      "    steps:",
-      "      - id: cut",
-      "        uses: commands/cut-release",
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: cut",
+      "    unit:",
+      "      workflow: workflows/cut-release",
+      "---",
+      "",
+      "## cut",
+      "",
+      "Run the cut.",
     ].join("\n"),
   );
   write(
@@ -133,7 +138,7 @@ describe("declared links", () => {
       "stash//memories/deploy-window xref wiki:notes/pages/release-train -> stash//knowledge/wikis/notes/pages/release-train",
       "stash//memories/deploy-window-moved.derived derived_from memories/deploy-window-moved -> stash//memories/deploy-window-moved",
       "stash//tasks/nightly-release uses workflows/release -> stash//workflows/release",
-      "stash//workflows/release uses commands/cut-release -> stash//commands/cut-release",
+      "stash//workflows/release uses workflows/cut-release -> stash//workflows/cut-release",
     ]);
 
     // `akm info` reports links per kind with the unresolved count.
@@ -170,7 +175,7 @@ describe("declared links", () => {
 
     const successor = await akmShowUnified({ ref: "knowledge/release-guide-v2" });
     expect(successor.links).toEqual({ incoming: { superseded_by: { total: 1, refs: ["knowledge/release-guide"] } } });
-    const command = await akmShowUnified({ ref: "commands/cut-release" });
+    const command = await akmShowUnified({ ref: "workflows/cut-release" });
     expect(command.links).toEqual({ incoming: { uses: { total: 1, refs: ["workflows/release"] } } });
 
     // An asset with no declared links in either direction has no links field.

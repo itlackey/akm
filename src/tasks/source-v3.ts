@@ -27,11 +27,7 @@
  * producer.
  *
  * The workflow-side trigger classifier that used to live here
- * (`classifyTaskV3Triggers`) is re-homed to `src/workflows/github-yaml.ts`
- * (`parseTriggers`, P4-N3) — its subject was always a WORKFLOW's `on:`
- * trigger fragment, not a task document, and after the move
- * `src/workflows/**` imports nothing at all from `src/tasks/**` source
- * modules.
+ * (`classifyTaskV3Triggers`) went with the GitHub-shaped workflow format.
  */
 
 import type { ParsedBuiltinCommandAction } from "../commands/command/builtin-action";

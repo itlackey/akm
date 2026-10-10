@@ -34,16 +34,17 @@ params:
   release: { type: string }
 steps:
   - id: choose
-    route:
-      input: params.release
-      when: [{ match: stable, step: deploy }]
-      default: deploy
+    unit:
+      exec:
+        command: ["bun", "-e", "0"]
   - id: deploy
 ---
 
 # Release Flow
 
 ## choose
+
+Choose the release channel.
 
 ## deploy
 

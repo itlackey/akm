@@ -18,6 +18,7 @@ import type { FrozenWorkflowTarget } from "../../src/workflows/plan";
 import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import { startWorkflowRun } from "../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
+import { type ChildStepFixture, childParentDoc } from "../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -43,22 +44,9 @@ function leafWorkflowDoc(body = "Do work."): string {
   return ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", body, ""].join("\n");
 }
 
-/** A GitHub-shaped parent workflow with the given pre-indented `steps:` entries. */
-function writeParent(name: string, stepLines: readonly string[]): void {
-  write(
-    `workflows/${name}.yml`,
-    [
-      `name: ${name}`,
-      "on:",
-      "  workflow_dispatch:",
-      "jobs:",
-      "  main:",
-      "    runs-on: [self-hosted]",
-      "    steps:",
-      ...stepLines,
-      "",
-    ].join("\n"),
-  );
+/** A markdown parent whose steps each run a child workflow. */
+function writeParent(name: string, steps: readonly ChildStepFixture[]): void {
+  write(`workflows/${name}.md`, childParentDoc(steps));
 }
 
 async function planRow(runId: string) {
@@ -100,7 +88,7 @@ function childWorkflowFields(target: FrozenWorkflowTarget | undefined): {
 describe("editing child source after parent publication does not change the parent's frozen child plan (row B-06)", () => {
   test("re-reading the stored run's plan_json shows the ORIGINAL child content, byte-identical, not the edited one", async () => {
     write("workflows/child.md", leafWorkflowDoc());
-    writeParent("parent-b06", ["      - id: dispatch", "        uses: workflows/child"]);
+    writeParent("parent-b06", [{ id: "dispatch", workflow: "workflows/child" }]);
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const started = await startWorkflowRun("workflows/parent-b06");

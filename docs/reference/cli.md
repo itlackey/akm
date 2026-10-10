@@ -798,7 +798,7 @@ akm workflow status 7c115132               # 8+ char run-id prefix also works
 akm workflow resume <run-id>
 akm workflow abandon <run-id>
 akm workflow list --active
-akm workflow list --children               # also list child workflow runs
+akm workflow list --children               # also list child workflow runs (Experimental)
 akm workflow list --all-scopes             # include runs started from a different working directory
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
@@ -811,9 +811,9 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
-| `run <run-id\|ref>` | Stable canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
+| `run <run-id\|ref>` | Canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
@@ -889,9 +889,8 @@ has nothing left to abort and nothing left to resume.
 
 **What `--max-steps` counts.** The budget is spent by the **steps that
 finish** — completed, failed, or gate-rejected with the loop budget spent — not
-by entries in the `executed` report, which gains one per gate-loop iteration
-and one per route-skip. So a step's whole bounded `gate.max_loops` loop costs
-one, a route-skipped step costs nothing (no work was dispatched for it), and a
+by entries in the `executed` report, which gains one per gate-loop iteration.
+So a step's whole bounded `gate.max_loops` loop costs one, and a
 step the invocation left unfinished — an abort, a verification-judge outage —
 costs nothing either, because the next invocation still owes that work.
 `--max-retries` subtracts the same way: a reopened run's remaining budget is
@@ -903,7 +902,7 @@ budget is left. `gate.max_loops` (1–100) is the per-step ceiling;
 `budget.max_units` and `budget.max_tokens` are the whole-run ceilings, seeded
 from the unit journal so they hold across resumes.
 
-`run` is Stable and does not consult `experimental.workflowEngine`. Every
+`run` is Experimental and does not consult `experimental.workflowEngine`. Every
 non-empty `### gate` requires `workflow.judgeEngine` to name a configured LLM
 or agent engine before a new run can be frozen. Gate evaluation is fail-closed.
 
@@ -989,11 +988,11 @@ Two output modes:
 - **`--format json`**: the full envelope — `ok`, `ref`, `title`,
   `sourceFormat`, `sourcePath`, `irVersion`, `planHash`, `published` (always
   `false`, so a consumer can never mistake this for a run envelope),
-  `execution`, `budget?`, `params?`, `outputs?`, `steps[]`, `notices[]`,
+  `execution`, `budget?`, `params?`, `steps[]`, `notices[]`,
   `warnings[]`. Each step entry carries an `expansion` field
   naming how its target was reached: `{via: "direct"}`, `{via: "task",
   taskRef}`, or — for a step composing a child workflow —
-  `{via: "child", childRef, childPlanHash, childOutputs, steps[]}` with the
+  `{via: "child", childRef, childPlanHash, steps[]}` with the
   child's own step list nested recursively in the same shape.
 
 Text-mode example:
@@ -1004,13 +1003,11 @@ source:   workflows/release.md
 plan:     irVersion 5, hash 4f2ba91c3d0e… (not published)
 limits:   maxConcurrency 4; budget max_units 50, max_tokens 100000
 params:   channel, version
-outputs:  report <- steps.summarize.output
 steps:
   1. notify   [command]        direct
   2. build    [script]         via tasks/plan-v4-task
   3. dispatch [child-workflow] -> workflows/release-checklist (plan 91acbe20f5d1…)
        with: channel="stable" (literal), files <- steps.build.output.files (reference)
-       exports: report, changed_count
        3.1 verify [command] direct
   4. summarize [command]       direct
 read set:
@@ -1042,7 +1039,7 @@ Workflow markdown contract:
 - Frontmatter carries the asset envelope and orchestration graph (`params`,
   `steps`, `defaults`, and `budget`).
 - Every `## <step-id>` heading must name a declared step exactly. Unit and map
-  steps require a section; route-only steps may omit one.
+  steps require a section.
 - An optional `### gate` inside a step section carries its gate rubric. Omitted
   or empty rubric text skips validation.
 
@@ -2553,7 +2550,7 @@ tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also 
 `dangerous-env-key` findings for env files (the same key set `akm bundle add`
 enforces — see [Dangerous env key audit](#dangerous-env-key-audit) — but
 non-blocking here; `lint` only warns). `--type workflows` structurally parses
-and compiles peer Markdown and GitHub-shaped YAML workflows; errors surface as
+and compiles Markdown workflows; errors surface as
 `invalid-workflow-structure` findings (0.9.0: this is the only
 structural-validation surface now that `akm workflow validate` is gone).
 

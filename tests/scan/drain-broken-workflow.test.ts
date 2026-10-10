@@ -53,22 +53,6 @@ steps:
 do A
 `;
 
-const VALID_YAML_WORKFLOW = `name: YAML drain
-on: { workflow_dispatch: null }
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: validate
-        run: echo ok
-        working-directory: packages/cli
-`;
-
-const BROKEN_YAML_WORKFLOW = VALID_YAML_WORKFLOW.replace(
-  "        run: echo ok\n        working-directory: packages/cli",
-  "        uses: actions/checkout@v4",
-);
-
 function makeStash(): { stashDir: string; goodPath: string; badPath: string } {
   const stashDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-drain-wf-"));
   fs.mkdirSync(path.join(stashDir, "workflows"), { recursive: true });
@@ -124,57 +108,25 @@ describe("drain-layer broken-workflow drop (F4a M-core-2 item 3)", () => {
   test.each([
     ["ordinary", akmAdapter, "akm", "workflows"],
     ["standalone", akmWorkflowAdapter, "akm-workflow", "."],
-  ] as const)("%s adapter drains valid YAML and surfaces invalid YAML", (_label, adapter, adapterId, subdir) => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-drain-yaml-"));
-    const ownedDir = path.join(root, subdir);
-    fs.mkdirSync(ownedDir, { recursive: true });
-    const goodPath = path.join(ownedDir, "good.yml");
-    const badPath = path.join(ownedDir, "bad.yml");
-    fs.writeFileSync(goodPath, VALID_YAML_WORKFLOW);
-    fs.writeFileSync(badPath, BROKEN_YAML_WORKFLOW);
-    try {
-      const c: BundleComponent = { id: "b", adapter: adapterId, root, writable: true };
-      const contexts = [buildFileContext(root, goodPath), buildFileContext(root, badPath)];
-      const [goodContext, badContext] = contexts;
-      if (!goodContext || !badContext) throw new Error("YAML drain fixture must contain two contexts");
-      expect(adapter.recognize(c, goodContext)).toMatchObject({ type: "workflow" });
-      expect(adapter.recognize(c, badContext)).toMatchObject({ type: "workflow" });
-
-      const drained = drainDirDocuments(adapter, c, contexts);
-      expect(drained.entries.map(({ name }) => name)).toEqual(["good"]);
-      expect(drained.warnings).toHaveLength(1);
-      expect(drained.warnings[0]).toContain(badPath);
-      // P4 FLIP (docs/plans/specs/p4-deletions-closeout.md §3.1, row B-05,
-      // F-A1.19): the locator grammar is deleted — this now rejects as an
-      // unrecognized ref shape, not the old "Remote action acquisition"
-      // wording.
-      expect(drained.warnings[0]).toContain("Target ref");
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
-  });
-
-  test.each([
-    ["ordinary", akmAdapter, "akm", "workflows"],
-    ["standalone", akmWorkflowAdapter, "akm-workflow", "."],
-  ] as const)("%s adapter drains inline akm/command content without scanning it for native-tool constructs", (_label, adapter, adapterId, subdir) => {
+  ] as const)("%s adapter drains prose step content without scanning it for native-tool constructs", (_label, adapter, adapterId, subdir) => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-drain-template-"));
     const ownedDir = path.join(root, subdir);
     fs.mkdirSync(ownedDir, { recursive: true });
-    const templatePath = path.join(ownedDir, "template.yml");
+    const templatePath = path.join(ownedDir, "template.md");
     fs.writeFileSync(
       templatePath,
-      `name: Inline template
-on: { workflow_dispatch: null }
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: review
-        uses: akm/command
-        with:
-          content: Review $ARGUMENTS against @docs/style-guide.md
-`,
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: review",
+        "---",
+        "",
+        "## review",
+        "",
+        "Review $ARGUMENTS against @docs/style-guide.md",
+        "",
+      ].join("\n"),
     );
     try {
       const c: BundleComponent = { id: "b", adapter: adapterId, root, writable: true };

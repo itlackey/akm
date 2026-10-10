@@ -369,7 +369,7 @@ Copy this only after exact ranking assertions:
 cp -R "$REPO/tests/fixtures/manual-qa/bundle/." "$AKM_BUNDLE_DIR/"
 akm index
 akm show knowledge/qa-guide | jq -e '.name == "qa-guide"'
-akm show workflows/typed-route | jq -e '.type == "workflow"'
+akm show workflows/typed-params | jq -e '.type == "workflow"'
 akm show tasks/manual-success | jq -e '.type == "task"'
 ```
 
@@ -1616,7 +1616,7 @@ akm lint --type workflows --fail-on-flagged
 
 - [ ] **CORE** Create-print emits raw valid Markdown and writes nothing.
 - [ ] **CORE** Create-from writes/indexes valid workflow with preamble and exact sections.
-- [ ] **LOCAL** Flat name plus safe path creates hierarchy; slash/traversal/duplicate step/missing section/unknown route/invalid params fail before write.
+- [ ] **LOCAL** Flat name plus safe path creates hierarchy; slash/traversal/duplicate step/missing section/invalid params fail before write.
 - [ ] **LOCAL** Existing workflow requires force plus from/reset; force alone fails.
 - [ ] **LOCAL** Lint catches structure without rewriting valid prose.
 - [ ] **CORE** A schema keyword outside the enforced subset (`format`, `pattern`,
@@ -1636,11 +1636,11 @@ akm lint --type workflows --fail-on-flagged
 
 ### 14.2 Typed params and partial run without an engine call
 
-The `typed-route` fixture executes a route-only first step. `--max-steps 1`
+The `typed-params` fixture's first step is an exec unit (no engine). `--max-steps 1`
 tests parameter parsing and durable run creation without agent/LLM dispatch.
 
 ```sh
-akm workflow run workflows/typed-route \
+akm workflow run workflows/typed-params \
   --include_processes=true --count 2 \
   --labels api --labels worker --max-steps 1 \
   > "$AKM_SANDBOX/typed-run.json"
@@ -1662,7 +1662,7 @@ jq -e '
 - [ ] **LOCAL** Params supplied to active run fail because creation-only.
 - [ ] **LOCAL** Invalid max-steps values fail; bounded partial exits `0`, remains active.
 - [ ] **LOCAL** `--max-steps` counts **finished spine steps**: a step's whole
-      bounded gate loop counts as one, and a route-skipped step consumes none.
+      bounded gate loop counts as one.
       It does not bound the dispatches inside a single step's gate loop — pair
       it with `budget.max_units` when that is what you need capped.
 
@@ -1670,8 +1670,8 @@ jq -e '
 
 ```sh
 akm workflow status "$QA_RUN_ID"
-akm workflow status workflows/typed-route
-akm workflow list --active --ref workflows/typed-route
+akm workflow status workflows/typed-params
+akm workflow list --active --ref workflows/typed-params
 akm workflow status "$QA_RUN_ID" --units
 akm workflow abandon "$QA_RUN_ID"
 akm workflow resume "$QA_RUN_ID"
@@ -1824,7 +1824,7 @@ Environment scope and context:
       **before** the spawn, naming the variable, rather than surfacing a raw
       `E2BIG`.
 
-`cwd` and isolation:
+`cwd`:
 
 - [ ] **LOCAL** `cwd` is relative and contained: absolute paths, drive letters,
       `~`, and `..` **segments** are rejected by the parser *and* the
@@ -1832,13 +1832,6 @@ Environment scope and context:
       base (symlinks included) immediately before the spawn.
 - [ ] **LOCAL** A directory whose *name* merely begins with dots (`..data`) is a
       legal contained `cwd` and must **not** fail `exec_cwd_escape`.
-- [ ] **LOCAL** Under `isolation: worktree` each unit gets a fresh detached
-      worktree; a clean one is gone once the step resolves, a dirty one is
-      retained and its path logged.
-- [ ] **LOCAL** When a dirty leftover is moved aside and the worktree then fails
-      to mint, the failure still reports **where the preserved work went**.
-- [ ] **DESTRUCTIVE** The stale-worktree sweep removes abandoned trees after
-      seven days but leaves a tree that is still in use by a live run.
 
 Gates, retry, and reuse:
 
@@ -3071,7 +3064,7 @@ and not a substitute for the full check.
 | Sources/registry/write-source | provider/write/publication suites, controlled service; LIVE git/npm/HTTPS when lifecycle changed |
 | Storage/migration/transactions | crash/concurrency/property/published-upgrade gates, section 19, destructive rehearsal for cutover changes |
 | Workflow | workflow unit/integration, gate fake agents, slow expansion, crash/contention when scheduler changed |
-| Workflow exec units / subprocess capture | section 14.5 end to end on an engine-less install, plus the worktree isolation and stale-sweep gates; any capture, timeout, or process-group change also runs the agent spawn suites, which share that subprocess layer |
+| Workflow exec units / subprocess capture | section 14.5 end to end on an engine-less install; any capture, timeout, or process-group change also runs the agent spawn suites, which share that subprocess layer |
 | Workflow child environment / allowlist | section 14.5 environment gates plus section 11; a change to the shared floor is native Windows, not Linux emulation |
 | Task/scheduler | task suites, Linux standalone; native macOS/Windows for backend/quoting/binding; published upgrade for schema changes |
 | Env/secret/security path/archive/network | env/secret plus traversal/SSRF/archive/redaction/dangerous-key suites, section 20 |

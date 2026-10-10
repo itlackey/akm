@@ -40,7 +40,7 @@
  * conceptId = `<stash-subdir>/<canonical-name>` — the placement stash-subdir
  * (`stashDirFor(type)`) followed by the winning type's canonical name
  * (`deriveCanonicalAssetNameFromStashRoot`: skill = its dir, script keeps its
- * extension, Markdown strips `.md`, workflow strips its peer `.md`/`.yml`
+ * extension, Markdown strips `.md`, workflow strips its `.md`
  * extension, env/task strip their ext, and secret/session keep the natural
  * path). For Markdown types this IS the OKF concept ID (path − `.md`); it is
  * the same spelling `readCandidates` consumes, so
@@ -105,7 +105,7 @@ import type { BundleAdapter } from "../bundle-adapter";
 import { executionDefaultsFromFrontmatter, renderMarkdownExecutionSource } from "../execution-source";
 import { recognizeMatch } from "../recognize-match";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
-import { perTypeValidateChecks, skillDirectoryDiagnostics, workflowYamlSourceDiagnostics } from "./akm-lint";
+import { perTypeValidateChecks, skillDirectoryDiagnostics } from "./akm-lint";
 import { applyFoldedMetadata, foldRecognizedMetadata } from "./akm-metadata";
 import { hashContent, type ParsedForValidate, RESERVED_FILES, runBaseValidateChecks } from "./shared";
 
@@ -438,13 +438,6 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
     const overlay = buildOverlayContext(c.root, change.path, raw);
     const match = recognizeMatch(overlay);
     const type = match?.type;
-
-    // A complete GitHub-shaped `on` + `jobs` document is workflow-owned. It
-    // never flows through task-v3 parsing or Markdown base/frontmatter checks.
-    if (type === "workflow" && overlay.ext === ".yml") {
-      diagnostics.push(...workflowYamlSourceDiagnostics(change.path, raw, change.path, c.root).errors);
-      continue;
-    }
 
     // Task parsing belongs to perTypeValidateChecks' canonical v3 parser. Base
     // checks need only a frontmatter-free placeholder here.

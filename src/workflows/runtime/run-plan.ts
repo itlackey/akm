@@ -38,7 +38,6 @@ import {
   type WorkflowMapNode,
   type WorkflowPlan,
   type WorkflowPlanStep,
-  type WorkflowRoute,
   type WorkflowUnitNode,
 } from "../plan";
 
@@ -99,18 +98,10 @@ export function frozenStepRows(plan: WorkflowPlan): FrozenStepRowDefinition[] {
       ? step.root.kind === "map"
         ? step.root.template.instructions
         : step.root.instructions
-      : routeInstructions(step.route as WorkflowRoute),
+      : "",
     completionJson: step.gate.criteria.length > 0 ? JSON.stringify(step.gate.criteria) : null,
     sequenceIndex: step.sequenceIndex,
   }));
-}
-
-function routeInstructions(route: WorkflowRoute): string {
-  const branches = Object.entries(route.when)
-    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
-    .map(([match, stepId]) => `"${match}" -> ${stepId}`);
-  if (route.defaultStepId !== undefined) branches.push(`default -> ${route.defaultStepId}`);
-  return `Route on ${route.input}: ${branches.join(", ")}.`;
 }
 
 export interface DecodeWorkflowPlanOptions {
@@ -123,11 +114,6 @@ export function decodeWorkflowPlan(input: unknown, options: DecodeWorkflowPlanOp
   const raw = record(input, "plan");
   if (!Array.isArray(raw.steps) || raw.steps.length === 0) fail("steps must be a non-empty array");
   const steps = raw.steps.map((value, index) => decodeStep(value, index));
-  if (raw.outputs !== undefined) {
-    for (const [name, entry] of Object.entries(record(raw.outputs, "outputs"))) {
-      string(record(entry, `outputs.${name}`).from, `outputs.${name}.from`);
-    }
-  }
   const sourceHash =
     typeof raw.sourceHash === "string" ? raw.sourceHash : legacySourceHash(raw.sourceReadSet, options.workflowRef);
   return {
@@ -152,26 +138,16 @@ function legacySourceHash(readSet: unknown, workflowRef: string | undefined): st
 function decodeStep(value: unknown, index: number): WorkflowPlanStep {
   const step = record(value, `step ${index}`);
   const stepId = string(step.stepId, `step ${index} stepId`);
-  const route = step.route === undefined ? undefined : decodeRoute(step.route, stepId);
-  const root = step.root === undefined ? undefined : decodeNode(step.root, stepId);
-  if (!root && !route) fail(`step ${stepId} has neither a frozen root nor a route`);
+  if (step.root === undefined) fail(`step ${stepId} has no frozen root`);
+  const root = decodeNode(step.root, stepId);
   return {
     ...step,
     stepId,
     title: typeof step.title === "string" ? step.title : stepId,
     sequenceIndex: index,
-    ...(root ? { root } : {}),
-    ...(route ? { route } : {}),
+    root,
     gate: decodeGate(step.gate, stepId),
   } as WorkflowPlanStep;
-}
-
-function decodeRoute(value: unknown, stepId: string): WorkflowRoute {
-  const route = record(value, `step ${stepId} route`);
-  string(route.input, `step ${stepId} route.input`);
-  const when = record(route.when, `step ${stepId} route.when`);
-  for (const target of Object.values(when)) string(target, `step ${stepId} route target`);
-  return route as unknown as WorkflowRoute;
 }
 
 function decodeNode(value: unknown, stepId: string): WorkflowExecNode {
@@ -196,7 +172,6 @@ function decodeUnit(node: Record<string, unknown>, stepId: string): WorkflowUnit
     id,
     instructions: typeof node.instructions === "string" ? node.instructions : "",
     onError: node.onError === "continue" ? "continue" : "fail",
-    isolation: node.isolation === "worktree" ? "worktree" : "none",
     frozenTarget: decodeTarget(node.frozenTarget, label),
     environment: Array.isArray(node.environment)
       ? node.environment.map((binding, index) => decodeEnvironmentBinding(binding, `${label} environment[${index}]`))
@@ -225,11 +200,7 @@ function decodeGate(value: unknown, stepId: string): WorkflowGateNode {
 function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
   const target = record(value, `${label} frozenTarget`);
   const inputBindings = decodeInputBindings(target.inputBindings, label);
-  const gitCommitOid = typeof target.gitCommitOid === "string" ? target.gitCommitOid : undefined;
-  const optional = {
-    ...(gitCommitOid ? { gitCommitOid } : {}),
-    ...(inputBindings ? { inputBindings } : {}),
-  };
+  const optional = inputBindings ? { inputBindings } : {};
   switch (target.kind) {
     case "command":
       return decodeCommandTarget(target, label);
@@ -241,20 +212,6 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
         ...optional,
       };
-    case "script":
-      return {
-        kind: "script",
-        ref: string(target.ref, `${label} script ref`),
-        contentHash: string(target.contentHash, `${label} contentHash`),
-        exec: decodeExec(target.exec, label),
-        interpreter: string(target.interpreter, `${label} interpreter`),
-        extension: string(target.extension, `${label} extension`),
-        bytesBase64: typeof target.bytesBase64 === "string" ? target.bytesBase64 : fail(`${label} has no script bytes`),
-        byteLength: typeof target.byteLength === "number" ? target.byteLength : 0,
-        cwdIdentity: record(target.cwdIdentity, `${label} cwdIdentity`) as unknown as FrozenWorkflowDirectoryIdentity,
-        materialization: "ephemeral-0700-delete",
-        ...optional,
-      };
     case "child-workflow":
       return {
         kind: "child-workflow",
@@ -262,7 +219,7 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         planHash: string(target.planHash, `${label} planHash`),
         frozenPlan: decodeWorkflowPlan(target.frozenPlan),
         contentHash: string(target.contentHash, `${label} contentHash`),
-        via: target.via === "task" ? "task" : "direct",
+        ...(target.via === "task" || target.via === "direct" ? { via: target.via } : {}),
         ...(typeof target.taskRef === "string" ? { taskRef: target.taskRef } : {}),
         ...(inputBindings ? { inputBindings } : {}),
       };
@@ -292,7 +249,6 @@ function decodeCommandTarget(target: Record<string, unknown>, label: string): Fr
     ...(target.cwdIdentity && typeof target.cwdIdentity === "object"
       ? { cwdIdentity: target.cwdIdentity as FrozenWorkflowDirectoryIdentity }
       : {}),
-    ...(typeof target.gitCommitOid === "string" ? { gitCommitOid: target.gitCommitOid } : {}),
     ...(inputBindings ? { inputBindings } : {}),
   };
 }

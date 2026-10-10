@@ -23,7 +23,7 @@ function fixtureRoot(prefix: string): string {
 function workflow(root: string, name: string): string {
   const file = path.join(root, "workflows", name);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, "name: local\non: workflow_dispatch\njobs: {}\n", "utf8");
+  fs.writeFileSync(file, "---\ntype: workflow\nsteps:\n  - id: a\n---\n\n## a\n\nDo it.\n", "utf8");
   return file;
 }
 
@@ -43,7 +43,7 @@ function projection(root: string, inputs: readonly string[]) {
 describe("bulk workflow source ownership deduplicates authored paths", () => {
   test("an exact duplicate absolute path remains one owner with point-lookup parity", () => {
     const root = fixtureRoot("akm-workflow-source-bulk-exact-");
-    const file = workflow(root, "exact.yml");
+    const file = workflow(root, "exact.md");
     const point = resolveUniqueWorkflowSource(root, "akm", "exact");
 
     const domains = resolveWorkflowSourceDomains(root, "akm", [file, file]);
@@ -51,28 +51,28 @@ describe("bulk workflow source ownership deduplicates authored paths", () => {
     expect(domains).toHaveLength(1);
     expect(domains[0]).toEqual({
       canonicalName: "exact",
-      sourcePaths: ["workflows/exact.yml"],
+      sourcePaths: ["workflows/exact.md"],
       source: point,
     });
   });
 
   test("lexically equivalent normalized paths collapse before domain arbitration", () => {
     const root = fixtureRoot("akm-workflow-source-bulk-lexical-");
-    const file = workflow(root, "lexical.yml");
+    const file = workflow(root, "lexical.md");
     const lexical = lexicalDotPath(file);
 
     const domains = resolveWorkflowSourceDomains(root, "akm", [lexical, file, lexical]);
 
     expect(domains).toHaveLength(1);
-    expect(domains[0]?.sourcePaths).toEqual(["workflows/lexical.yml"]);
-    expect(domains[0]?.source).toEqual(resolveUniqueWorkflowSource(root, "akm", "lexical.yml"));
+    expect(domains[0]?.sourcePaths).toEqual(["workflows/lexical.md"]);
+    expect(domains[0]?.source).toEqual(resolveUniqueWorkflowSource(root, "akm", "lexical.md"));
     expect(domains[0]?.rejection).toBeUndefined();
   });
 
   test("deduplication is deterministic across input order and preserves each point owner", () => {
     const root = fixtureRoot("akm-workflow-source-bulk-order-");
-    const alpha = workflow(root, "alpha.yml");
-    const beta = workflow(root, "beta.yml");
+    const alpha = workflow(root, "alpha.md");
+    const beta = workflow(root, "beta.md");
     const inputs = [beta, lexicalDotPath(alpha), beta, alpha, lexicalDotPath(beta)];
 
     const forward = projection(root, inputs);
@@ -82,14 +82,14 @@ describe("bulk workflow source ownership deduplicates authored paths", () => {
     expect(forward).toEqual([
       {
         canonicalName: "alpha",
-        sourcePaths: ["workflows/alpha.yml"],
-        source: "workflows/alpha.yml",
+        sourcePaths: ["workflows/alpha.md"],
+        source: "workflows/alpha.md",
         rejection: undefined,
       },
       {
         canonicalName: "beta",
-        sourcePaths: ["workflows/beta.yml"],
-        source: "workflows/beta.yml",
+        sourcePaths: ["workflows/beta.md"],
+        source: "workflows/beta.md",
         rejection: undefined,
       },
     ]);
@@ -99,14 +99,14 @@ describe("bulk workflow source ownership deduplicates authored paths", () => {
 
   test("a duplicated nested-suffix path resolves as one valid domain with point-lookup parity", () => {
     const root = fixtureRoot("akm-workflow-source-bulk-invalid-");
-    const file = workflow(root, "hostile.md.yml");
-    const point = resolveUniqueWorkflowSource(root, "akm", "hostile.md.yml");
+    const file = workflow(root, "hostile.md.md");
+    const point = resolveUniqueWorkflowSource(root, "akm", "hostile.md.md");
 
     const domains = resolveWorkflowSourceDomains(root, "akm", [file, lexicalDotPath(file), file]);
 
     expect(point).toBeDefined();
     expect(domains).toHaveLength(1);
-    expect(domains[0]?.sourcePaths).toEqual(["workflows/hostile.md.yml"]);
+    expect(domains[0]?.sourcePaths).toEqual(["workflows/hostile.md.md"]);
     expect(domains[0]?.source).toEqual(point);
     expect(domains[0]?.rejection).toBeUndefined();
   });

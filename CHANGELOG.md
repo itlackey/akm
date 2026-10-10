@@ -31,6 +31,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **The GitHub-shaped YAML workflow format (#1096).** A `.yml` workflow (`name`/`on`/`jobs`, one job, `uses:` and `run:`
+  steps) is gone, with everything that existed only to carry it: workflow-step `uses: tasks/<ref>` (task composition),
+  `uses: scripts/<ref>` and `uses: commands/<ref>` targets, the `with:` rejection classifier for them, YAML `on.schedule`
+  triggers (and the scheduler sync of them), and the `script` frozen target. `.yml` under `workflows/` is skipped at
+  index time with a message saying it must use `.md`. Nothing in the owner's bundle or in OpenPalm used it. **Kept:** a
+  task that runs a workflow (`uses: workflows/<ref>`, or a `run:` calling `akm workflow run`) is a task feature and is
+  unchanged. A stored run whose plan has a `script` target can no longer be decoded and is abandoned like any other
+  undecodable plan.
+- **Top-level workflow `outputs:` (#1096).** Its only consumer was a parent reading a child's exports. A completed
+  child workflow now returns the output of its last step, so `outputs:` is a lint error and the child-output reference
+  check at freeze is gone; a parent reads `steps.<composing-step>.output`. The `outputs_json` column stays readable.
+- **Workflow `route` steps (#1096).** A step can no longer declare `route:` (branch on a value to a later step). It was
+  unused by any workflow found, and its cost was the replay journal for route decisions and cascaded skips. Branching is
+  an `exec` step or an agent step that reads its inputs, plus a gate for "go back and fix it". `route` is now an
+  unknown-key lint error; a stored plan that still has a route step cannot be decoded, so that run is abandoned.
+- **`unit.isolation: worktree` (#1096).** A workflow unit can no longer declare per-attempt git-worktree isolation
+  (`exec/worktree.ts` and the attempt prepare/cleanup in the native executor). It was unused by any workflow found, and
+  the largest standalone block in the engine. `unit.isolation` is now an unknown-key lint error; a stored plan that
+  still carries it decodes and runs the unit in the engine's working directory. The `worktree_path` columns stay readable.
 - **Runtime conversion of config older than 0.9.15 (#1091).** 0.10 reads what 0.9.15 and later wrote; an install on an
   earlier release runs `akm migrate apply` under akm 0.9.x first. Removed: the in-memory `stashDir`/`sources[]`/
   `installed[]` to `bundles` conversion (`legacy-source-shape-shim.ts`), the `engines.*.extraParams` lift onto
@@ -67,6 +86,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Child workflows are kept in a simple form (#1096).** A markdown step declares `unit: { workflow: workflows/<name>,
+  with: { <param>: <literal or { from: <reference> }> } }` and the engine starts the child as its own run and drives it
+  to completion; the child's last step output is the composing step's output. The form is Experimental. The freeze,
+  idempotent publish, resume, blocked-child recovery, cycle check and `workflow list --children` behaviour of the existing
+  child executor is unchanged.
 - **`default` drains the proposal queue through the deterministic gates (#1143).** The `default` strategy now runs
   triage in `promote` mode with judgment off, up to `maxAcceptsPerRun: 25` accepts per run, so the backlog drains
   without `experimental.improveAutonomy`. The nightly eval's baseline is exactly this path (`proposal drain --promote`
