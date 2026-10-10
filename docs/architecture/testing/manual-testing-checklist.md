@@ -536,7 +536,7 @@ for command in \
       or `propose`.
 - [ ] **[CORE]** Bare `akm` and `akm help` print the sectioned overview without
       reading or rewriting invalid config.
-- [ ] **[CORE]** `help agents`, `help agents --full`, `hints`, and
+- [ ] **[CORE]** `hints` and
       `hints --detail brief` are nonempty and have the expected relative detail.
 - [ ] **[LOCAL]** `help bundle|env|secret|workflow|task|proposal` agrees with the
       corresponding `--help` command tree.

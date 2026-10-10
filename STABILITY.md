@@ -118,7 +118,6 @@ enumeration of the whole `proposal` noun group.
 | `akm proposal extract` | Evolving | Former top-level `akm extract`. Promoted from Experimental in 0.10 (#1133): the extract eval measures it. Evolving, not Stable, because 0.10 is still settling the improve defaults. |
 | `akm proposal new` | Evolving | Former top-level `akm propose`. |
 | `akm help` | Stable | |
-| `akm help agents` | Stable | |
 | `akm help migrate` | Stable | Only renders release notes. |
 | `akm hints` | Stable | Format-exempt agent guide; `--detail brief` selects the compact version. |
 | `akm completions` | Stable | Format-exempt (emits shell script source). |
@@ -176,7 +175,7 @@ enumeration of the whole `proposal` noun group.
 - **Read commands** — `akm search`, `akm show`, `akm bundle list`, `akm curate`,
   `akm info`, `akm config get`, `akm config list`, `akm config path`,
   `akm env list`, `akm secret list`, `akm proposal list` (list filters),
-  `akm help`, `akm help agents`, `akm hints`, `akm completions`.
+  `akm help`, `akm hints`, `akm completions`.
 - **Write commands core surface** — `akm bundle add`, `akm bundle update`,
   `akm bundle remove`, `akm clone`, `akm import`, `akm sync`, `akm index`,
   `akm bundle create`, `akm setup`, `akm remember`, `akm feedback`,
@@ -219,7 +218,7 @@ enumeration of the whole `proposal` noun group.
   Experimental). A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
   child-process passthrough in `env run` / `secret run`, a bare-path payload
-  from `env path`, and document payloads from `help` (bare, `help agents`, and
+  from `env path`, and document payloads from `help` (bare and
   `help migrate`). The set is declared in
   `src/output/format-exempt.ts`, and
   passing `--format` to one of them warns rather than silently doing something

@@ -17,7 +17,7 @@ Full per-directory indexes: [Guides](guides/README.md),
 - [Getting Started](guides/getting-started.md) -- Install akm, connect a source, and pull a curated shortlist in five to seven minutes
 - [Concepts](guides/concepts.md) -- Capabilities, bundles, adapters, asset types, and refs -- the mental model in one page
 - [Agent Install Guide](agents/agent-install.md) -- Step-by-step automated (non-interactive) install for agents
-- `akm help agents` (short guide by default; `akm help agents --full` for the complete guide) -- The CLI reference agents load to use akm; always the embedded corpus at `src/assets/hints/cli-hints-{full,short}.md`
+- `akm hints` (complete guide by default; `akm hints --detail brief` for the short one) -- The CLI reference agents load to use akm; always the embedded corpus at `src/assets/hints/cli-hints-{full,short}.md`
 
 ## Use
 

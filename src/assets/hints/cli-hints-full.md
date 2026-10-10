@@ -332,8 +332,7 @@ akm upgrade --check                           # Report pending CLI and plugin up
 akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
 akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
-akm help agents --full                        # Print this reference
-akm hints                                     # Print this complete agent guide
+akm hints                                     # Print this complete agent guide (--detail brief for the short one)
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```

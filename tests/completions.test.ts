@@ -133,7 +133,7 @@ describe("completions command", () => {
 
   test("offers command names as help topics", () => {
     expect(script).toContain('"akm help"');
-    for (const topic of ["bundle", "env", "task", "agents", "migrate"]) {
+    for (const topic of ["bundle", "env", "task", "migrate"]) {
       expect(script).toContain(`"akm help ${topic}"`);
     }
   });

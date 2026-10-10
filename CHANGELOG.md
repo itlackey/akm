@@ -152,6 +152,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   did-you-mean when one is close) and a retired flag an ordinary `UNKNOWN_FLAG` (exit 2), with no migration pointer.
   `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
   `akm improve canary` is now an asset-type scope that matches nothing.
+- **`akm help agents` (#1091).** It printed the same two guides as `akm hints` with the opposite default (short, with
+  `--full` for the complete one). `akm hints` is the one command: the complete guide by default, `--detail brief` for the
+  short one (`akm help agents >> AGENTS.md` becomes `akm hints --detail brief >> AGENTS.md`). `akm help agents` is now an
+  ordinary unknown command.
 
 ### Fixed
 

@@ -26,7 +26,7 @@ For a longer, agent-facing instruction block — usage patterns, flag guidance,
 the full ref format — generate one instead of hand-writing it:
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 The output is stable across patch releases and designed for agents rather
@@ -70,7 +70,7 @@ sets expectations by environment.
 
 | Environment | Core support | Optional/extended support |
 | --- | --- | --- |
-| Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm help agents`) or a platform plugin |
+| Shell-capable coding agent | `curate` / `show` / `feedback` via the CLI | Generated prompt block (`akm hints`) or a platform plugin |
 | Claude/OpenCode project layout | Indexed in place through a `BundleAdapter` — no migration needed | `akm clone` selected assets into a writable bundle for editing |
 | IDE assistant without shell access | Not a direct core integration | Requires a plugin, an `akm task`, or an external bridge that can shell out on the assistant's behalf |
 
@@ -169,6 +169,6 @@ which plugin you install, and the plugin choice does not change it.
 - [Discover and Load](discover-and-load.md) — the full curate → show retrieval path
 - [Knowledge Management](knowledge-management.md) — capturing agent-generated memories
 - [Improve the Library](improve-the-library.md) — feeding back usage signals
-- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `help agents` command documentation
+- [CLI Reference](../reference/cli.md) — `completions`, `agent`, and `hints` command documentation
 - [Concepts](concepts.md) — refs, origins, and the asset type system
 - [Bundle Types](../reference/bundle-types.md) — how AKM indexes existing project layouts in place

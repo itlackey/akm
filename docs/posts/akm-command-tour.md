@@ -404,12 +404,12 @@ akm help migrate latest
 
 Real-world use: you upgraded `akm` and want the release-specific migration notes without leaving the terminal.
 
-### `akm help agents`
+### `akm hints`
 
 Print instructions you can drop into `AGENTS.md` or `CLAUDE.md`.
 
 ```sh
-akm help agents
+akm hints
 ```
 
 Real-world use: you want every project to tell its coding agent how to use the local `akm` installation.

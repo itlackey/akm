@@ -2061,14 +2061,13 @@ column borrow its model from a configured engine instead of a literal string.
 
 ### help
 
-Print the sectioned command overview, detailed help for any command, agent
-usage instructions, or a release's migration guidance.
+Print the sectioned command overview, detailed help for any command, or a
+release's migration guidance.
 
 ```sh
 akm help                       # Sectioned command overview (same as `akm --help`)
 akm help bundle                # Detailed options and subcommands for `bundle`
 akm help env                   # Detailed options and subcommands for `env`
-akm help agents                # Agent-facing usage instructions
 akm help migrate 0.6.0         # Notes for a specific release
 akm help migrate v0.6.0        # v-prefix accepted
 akm help migrate v0.6.0-rc1    # Prereleases normalize to the stable note
@@ -2087,22 +2086,12 @@ unknown version prints the list of bundled notes so you can pick one that
 exists. See [`CONTRIBUTING.md`](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)
 for the per-release workflow.
 
-### help agents
-
-Print agent-facing instructions for using `akm`. Add this output to your
-`AGENTS.md`, `CLAUDE.md`, or system prompt so your agent knows how to use
-the CLI. Prints the short guide by default; pass `--full` for the complete
-one.
-
-```sh
-akm help agents
-```
-
 ### hints
 
-Print the agent-facing CLI guide directly. The complete guide is the default;
-use `--detail brief` for the compact version. `akm help agents` remains the
-short-first form and accepts `--full`.
+Print the agent-facing CLI guide. Add this output to your `AGENTS.md`,
+`CLAUDE.md`, or system prompt so your agent knows how to use the CLI. The
+complete guide is the default; use `--detail brief` for the compact version.
+(`akm help agents`, the short-first form, was removed in 0.10.)
 
 ```sh
 akm hints
