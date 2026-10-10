@@ -149,7 +149,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `SELF_DIAGNOSED_FLAGS` (`src/cli/retired-commands.ts` is gone), the per-command `--target`, `--source`, `--scope`,
   `--enrich`/`--re-enrich` and `proposal drain --profile` rejections, the `akm improve canary` scope rejection, the
   `akm show` colon-ref tip and the `<type>:` search tip. A retired command is now an ordinary `UNKNOWN_COMMAND` (with a
-  did-you-mean when one is close) and a retired flag an ordinary `UNKNOWN_FLAG` (exit 2), with no migration pointer.
+  did-you-mean when one is close, within a third of the name's length) and a retired flag an ordinary `UNKNOWN_FLAG`
+  (exit 2), with no migration pointer. The same goes for the `--from stash|both` rename error (a bundle may now be named
+  `stash`), the `vault:`/`env:`/`secret:` ref rejections (`env/`, `secrets/`, `secret://` and `${secret:NAME}` are
+  unchanged), the `config get` replacement hints for `stashDir`, `sources`, `installed`, `wiki`, `wikiName` and `llm`,
+  and the retired-spelling notes in the agent hints.
   `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
   `akm improve canary` is now an asset-type scope that matches nothing.
 

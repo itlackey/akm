@@ -12,39 +12,20 @@ import { engineName, LlmInvocationOverridesSchema, nonEmptyString, positiveInt }
 
 // ── Index / per-pass ────────────────────────────────────────────────────────
 
-/** Engine settings a pass once carried inline; the loader drops them (the unknown-key warning names each). */
-const INDEX_PASS_DROPPED_KEYS = [
-  "endpoint",
-  "provider",
-  "apiKey",
-  "baseUrl",
-  "temperature",
-  "maxTokens",
-  "capabilities",
-];
-
 /**
- * Per-pass `index.<pass>` entry. The inline engine settings above are dropped
- * from the loaded config, and the config loader's schema walk names each once
- * as an unknown key. Any other unknown key is kept and named the same way.
+ * Per-pass `index.<pass>` entry. Unknown keys (including inline engine
+ * settings an earlier release carried) are kept and named by the config
+ * loader's schema walk like any other unknown key.
  */
-export const IndexPassConfigSchema = z.preprocess(
-  (raw) => {
-    if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw; // z.object below reports the type error
-    const cleaned = { ...(raw as Record<string, unknown>) };
-    for (const key of INDEX_PASS_DROPPED_KEYS) delete cleaned[key];
-    return cleaned;
-  },
-  z
-    .object({
-      engine: engineName.optional(),
-      model: nonEmptyString.optional(),
-      timeoutMs: z.union([positiveInt, z.null()]).optional(),
-      enabled: z.boolean().optional(),
-      llm: LlmInvocationOverridesSchema.optional(),
-    })
-    .passthrough(),
-);
+export const IndexPassConfigSchema = z
+  .object({
+    engine: engineName.optional(),
+    model: nonEmptyString.optional(),
+    timeoutMs: z.union([positiveInt, z.null()]).optional(),
+    enabled: z.boolean().optional(),
+    llm: LlmInvocationOverridesSchema.optional(),
+  })
+  .passthrough();
 
 const IndexDefaultsSchema = z
   .object({

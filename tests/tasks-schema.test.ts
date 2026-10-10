@@ -469,4 +469,6 @@ test("published task schema's inputs: rejects every name akm task run reserves f
   // A name that is NOT reserved must still validate — the fix must not have
   // over-tightened `propertyNames` into rejecting everything.
   expect(validate({ ...base, inputs: { ticket: { type: "string" } } }), JSON.stringify(validate.errors)).toBe(true);
+  // `target` was reserved while `akm task run --target` existed; it is an ordinary input name now.
+  expect(validate({ ...base, inputs: { target: { type: "string" } } }), JSON.stringify(validate.errors)).toBe(true);
 });
