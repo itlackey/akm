@@ -135,6 +135,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or `plan.proactive.configured.limit`, still decode. `processes.distill.cls` is read and stays. OpenPalm's improve
   editor writes the strategy-level `limit`, not per-process ones, so the process `limit` of reflect and consolidate
   stays.
+- **The `targetVocab: 2` marker on `task_history` rows, and the `"mcp"` package keyword (#1091).** Nothing read the
+  marker since migration 025 backfilled the old result vocabulary, so new rows no longer carry it and a stored one is
+  ignored; its newer-than-2 warning is gone. akm has no MCP code left, so `package.json` no longer lists `mcp`.
 
 ### Fixed
 
