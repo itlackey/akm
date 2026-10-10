@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.26101001] - 2026-10-10
+
 ### Added
 
 - **OpenCode 2 is the primary OpenCode integration; OpenCode 1 keeps working (#1049).** akm detects the major from
