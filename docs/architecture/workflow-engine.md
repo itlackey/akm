@@ -127,28 +127,9 @@ preimage already covers everything the child drive depends on — the frozen
 target carries the child's ref, plan hash, content hash, binding mode, and
 its entire embedded plan, so any change anywhere in the child changes the
 parent unit's own input hash transitively. The child run id (minted at
-dispatch) and its exported result are unit *outputs*, not inputs, so neither
+dispatch) and its result (the child's last step output) are unit *outputs*, not inputs, so neither
 belongs in the preimage — adding either would be a hashing-boundary
 violation, not a fix.
-
-### Run outputs
-
-A workflow may declare `outputs:` — a run-level export projected from its
-steps' own artifacts once every step has finished (see [Workflow Schema:
-Workflow outputs](../reference/workflow-schema.md#workflow-outputs) for the
-authoring grammar). Resolution happens inside the same write transaction
-that completes the run's final step, immediately after the run's terminal
-status is derived: each declared output is resolved from the persisted step
-evidence and, if declared, validated against its schema. If resolution or
-validation fails for any entry, the **whole completion rolls back** — the
-run stays `active`, its final step stays `pending`, and no completion event
-is emitted — rather than leaving a run `completed` with missing or invalid
-exports. A run with no `outputs:` declaration exports `{runId, status}`
-instead, synthesized on read and never persisted. This exported result is
-exactly what a parent composing this workflow as a child promotes as the
-composing unit's own result on `completed` — the same value, read through
-the same function, whether the caller is `akm workflow status` or a parent
-unit's dispatch.
 
 ## Resume skips completed units
 

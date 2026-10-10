@@ -252,8 +252,7 @@ function formatInputBindingsList(bindings: readonly Record<string, unknown>[]): 
  * expansion's own steps, recursively, indented one level per composition
  * boundary. A child step also carries the child's `planHash` on the step
  * line itself, and (when present) a `with:` line for the step's own
- * `inputBindings[]` and an `exports:` line for the child's declared output
- * names — §4.6's worked example.
+ * `inputBindings[]` — §4.6's worked example.
  */
 function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lines: string[], prefix = "  "): void {
   const stepId = typeof step.stepId === "string" ? step.stepId : "unknown";
@@ -276,10 +275,6 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
     lines.push(`${detailPrefix}with: ${formatInputBindingsList(inputBindings)}`);
   }
   if (via === "child") {
-    const childOutputs = Array.isArray(expansion.childOutputs) ? expansion.childOutputs : [];
-    if (childOutputs.length > 0) {
-      lines.push(`${detailPrefix}exports: ${childOutputs.map(String).join(", ")}`);
-    }
     const childSteps = Array.isArray(expansion.steps) ? (expansion.steps as Array<Record<string, unknown>>) : [];
     for (const [index, childStep] of childSteps.entries()) {
       renderPlanStepLines(childStep, index + 1, lines, `${prefix}  ${ordinal}.`);
@@ -326,20 +321,6 @@ export function formatWorkflowPlanPlain(result: Record<string, unknown>): string
 
   const params = Array.isArray(result.params) ? (result.params as unknown[]) : undefined;
   if (params && params.length > 0) lines.push(`params:   ${params.join(", ")}`);
-
-  const outputs =
-    typeof result.outputs === "object" && result.outputs !== null
-      ? (result.outputs as Record<string, unknown>)
-      : undefined;
-  if (outputs) {
-    for (const [name, declaration] of Object.entries(outputs)) {
-      const from =
-        typeof declaration === "object" && declaration !== null
-          ? String((declaration as Record<string, unknown>).from ?? "")
-          : "";
-      lines.push(`outputs:  ${name} <- ${from}`);
-    }
-  }
 
   const steps = Array.isArray(result.steps) ? (result.steps as Array<Record<string, unknown>>) : [];
   lines.push("steps:");

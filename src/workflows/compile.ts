@@ -8,8 +8,7 @@
  * (`github-yaml.ts`); both produce a {@link WorkflowPlan} directly.
  *
  * {@link checkWorkflowPlan} is the one cross-step pass the grammars do not
- * run: every `steps.<id>` reference must name an earlier step (outputs may
- * name any step), `inputs:` never name a param, and two non-fatal advisories.
+ * run: every `steps.<id>` reference must name an earlier step, `inputs:` never name a param, and two non-fatal advisories.
  */
 
 import path from "node:path";
@@ -151,26 +150,6 @@ export function checkWorkflowPlan(plan: WorkflowPlan): WorkflowPlanCheck {
       check(reference, line, `Step "${step.stepId}" inputs[${index}]`, false);
     }
     earlierStepIds.add(step.stepId);
-  }
-
-  // Outputs resolve at run completion, so they may name any declared step.
-  for (const [name, declaration] of Object.entries(plan.outputs ?? {})) {
-    const parsed = parseReference(declaration.from);
-    const label = `Output "${name}" from`;
-    if (!parsed.ok) errors.push({ line: 1, message: `${label}: ${parsed.message}` });
-    else if (parsed.expr.kind === "param") {
-      errors.push({
-        line: 1,
-        message:
-          `${label}: "${formatReference(parsed.expr)}" names a param, not a step output — an output projects a ` +
-          `STEP artifact, never a param. "outputs:" only names step outputs (steps.<id>.output...).`,
-      });
-    } else if (!allStepIds.has(parsed.expr.stepId)) {
-      errors.push({
-        line: 1,
-        message: `${label}: "${formatReference(parsed.expr)}" cannot be resolved — "${parsed.expr.stepId}" is not a step in this workflow.`,
-      });
-    }
   }
 
   if (errors.length > 0) return { ok: false, errors };

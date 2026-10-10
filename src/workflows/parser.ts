@@ -37,10 +37,11 @@ import { LineCounter, parseDocument } from "yaml";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
-import { compareCodePoints, isContainedRelativePath, isRecord } from "../core/common";
+import { isContainedRelativePath, isRecord } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
+import { classifyTargetRef } from "../execution/target-ref";
 import {
   type SourceRef,
   WORKFLOW_PLAN_VERSION,
@@ -48,7 +49,6 @@ import {
   type WorkflowError,
   type WorkflowExec,
   type WorkflowOnError,
-  type WorkflowOutput,
   type WorkflowPlan,
   type WorkflowPlanStep,
   type WorkflowReducer,
@@ -112,7 +112,13 @@ export const PROGRAM_STEP_ID_PATTERN = /^[A-Za-z_][A-Za-z0-9_-]*$/;
 export const PROGRAM_PARAM_NAME_PATTERN = INPUT_NAME_PATTERN;
 
 /** One parsed `unit:` bag: its settings plus an optional argv and its frontmatter span. */
-type ProgramUnit = WorkflowUnitSettings & { exec?: WorkflowExec; source: SourceRef };
+type ProgramUnit = WorkflowUnitSettings & {
+  exec?: WorkflowExec;
+  /** Child workflow ref (Experimental) and its `with:` param bindings. */
+  workflow?: string;
+  with?: Record<string, unknown>;
+  source: SourceRef;
+};
 type ProgramDefaults = NonNullable<WorkflowPlan["defaults"]>;
 type ProgramGate = { maxLoops?: number };
 type ProgramMap = { over: string; concurrency?: number; reducer?: WorkflowReducer; unit?: ProgramUnit };
@@ -143,20 +149,30 @@ const ENVELOPE_KEYS = [
   "status",
   "stale_after",
 ];
-const WORKFLOW_KEYS = ["params", "outputs", "defaults", "budget", "steps"];
+const WORKFLOW_KEYS = ["params", "defaults", "budget", "steps"];
 const TOP_LEVEL_KEYS = [...ENVELOPE_KEYS, ...WORKFLOW_KEYS];
 const DEFAULTS_KEYS = ["engine", "model", "timeout", "on_error", "llm"];
 const BUDGET_KEYS = ["max_tokens", "max_units"];
 const STEP_KEYS = ["id", "unit", "map", "inputs", "output", "gate"];
-const UNIT_KEYS = ["exec", "engine", "model", "llm", "timeout", "retry", "on_error", "output", "env"];
+const UNIT_KEYS = [
+  "exec",
+  "workflow",
+  "with",
+  "engine",
+  "model",
+  "llm",
+  "timeout",
+  "retry",
+  "on_error",
+  "output",
+  "env",
+];
 const EXEC_KEYS = ["command", "cwd", "pass_env"];
 /** Unit keys that name an ENGINE dispatch and therefore cannot appear beside `exec:`. */
 const UNIT_ENGINE_KEYS = ["engine", "model", "llm"] as const;
 const MAP_KEYS = ["over", "concurrency", "reducer", "unit"];
 const RETRY_KEYS = ["max", "on"];
 const GATE_KEYS = ["max_loops"];
-/** Closed key set of one `outputs:` entry — mirrors `params:`'s bare-schema shape, plus `from`. */
-const OUTPUT_ENTRY_KEYS = ["from", "schema"];
 const ACTOR_STAMP_KEYS = ["by", "at"];
 
 const TIMEOUT_VALUE = /^(\d+)(ms|s|m)?$/;
@@ -300,7 +316,6 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   const description = typeof root.description === "string" ? root.description : undefined;
   readTags(ctx, root.tags, frontmatterEndLine);
   const params = parseParams(ctx, root.params);
-  const outputs = parseOutputs(ctx, root.outputs);
   const defaults = parseDefaults(ctx, root.defaults);
   const budget = parseBudget(ctx, root.budget);
   const parsedSteps = parseSteps(ctx, root.steps);
@@ -364,7 +379,6 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
     irVersion: WORKFLOW_PLAN_VERSION,
     title: source.title ?? path.replace(/^.*[\\/]/, "").replace(/\.[^.]*$/, ""),
     ...(params && paramNames.length > 0 ? { params: paramNames, paramSchemas: params } : {}),
-    ...(outputs ? { outputs: sortedByName(outputs) } : {}),
     ...(budget ? { budget } : {}),
     ...(defaults ? { defaults } : {}),
     ...(description ? { description } : {}),
@@ -378,11 +392,17 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
 function stepSpec(step: ProgramStep, section: StepSection | undefined): WorkflowStepSpec {
   const prose = section?.instructions?.text;
   const dispatchUnit = step.map?.unit ?? step.unit;
-  const { exec, source: _unitSource, ...unit } = dispatchUnit ?? { source: step.source };
+  const { exec, workflow, with: childWith, source: _unitSource, ...unit } = dispatchUnit ?? { source: step.source };
   return {
-    ...(exec
-      ? { exec: { ...exec }, ...(prose?.trim() ? { instructions: prose } : {}) }
-      : { uses: "akm/command", commandMode: "literal" as const, with: { content: prose ?? "" } }),
+    ...(workflow
+      ? {
+          workflow,
+          ...(childWith ? { with: childWith } : {}),
+          ...(prose?.trim() ? { instructions: prose } : {}),
+        }
+      : exec
+        ? { exec: { ...exec }, ...(prose?.trim() ? { instructions: prose } : {}) }
+        : { uses: "akm/command", commandMode: "literal" as const, with: { content: prose ?? "" } }),
     ...(Object.keys(unit).length > 0 ? { unit } : {}),
     ...(step.map
       ? {
@@ -396,15 +416,6 @@ function stepSpec(step: ProgramStep, section: StepSection | undefined): Workflow
     ...(step.inputs ? { inputs: [...step.inputs] } : {}),
     source: step.source,
   };
-}
-
-/** `outputs:` in canonical wire order (code-point ascending by name). */
-function sortedByName<T>(entries: Record<string, T>): Record<string, T> {
-  return Object.fromEntries(
-    Object.keys(entries)
-      .sort(compareCodePoints)
-      .map((name) => [name, entries[name] as T]),
-  );
 }
 
 /** `xrefs` entries must be canonical asset refs. */
@@ -653,79 +664,6 @@ function parseParams(ctx: Ctx, raw: unknown): Record<string, Record<string, unkn
   return Object.keys(params).length > 0 ? params : undefined;
 }
 
-/**
- * `outputs:`: named, optionally schema-validated projections
- * of step artifacts, exported when the run completes. Symmetrical with
- * `parseParams` above — same authoring surface, same name grammar,
- * same schema-subset validator, same per-schema byte bound — but each entry
- * is a STRUCTURED `{from, schema?}` mapping rather than a bare JSON Schema.
- *
- * `from` is validated for GRAMMAR only here: it must parse and it must be a
- * `steps.<id>.output(.<seg>)*` reference (never `params.<name>` — an output
- * projects a step artifact, never a param, B-07). Whether the named step is
- * actually DECLARED in this document is a semantic, cross-step check left to
- * `compile.ts`'s `checkWorkflowPlan`, mirroring how `inputs[]` /
- * `map.over` already splits "syntax here, semantics there".
- */
-function parseOutputs(ctx: Ctx, raw: unknown): Record<string, WorkflowOutput> | undefined {
-  if (raw === undefined) return undefined;
-  if (!isRecord(raw)) {
-    ctx.err(
-      ["outputs"],
-      `"outputs" must be a mapping of output name to { from, schema? } (e.g. report: { from: steps.summarize.output }).`,
-    );
-    return undefined;
-  }
-  const outputs: Record<string, WorkflowOutput> = {};
-  for (const [outputName, value] of Object.entries(raw)) {
-    const path: Path = ["outputs", outputName];
-    if (!PROGRAM_PARAM_NAME_PATTERN.test(outputName)) {
-      ctx.err(
-        path,
-        `Output name "${outputName}" is invalid. Use letters, digits, and underscores, starting with a letter or ` +
-          `underscore, so "steps.<child>.output.${outputName}" can address it.`,
-      );
-      continue;
-    }
-    if (!isRecord(value)) {
-      ctx.err(path, `Output "${outputName}" must be a mapping with "from" (and optional "schema").`);
-      continue;
-    }
-    checkUnknownKeys(ctx, value, path, OUTPUT_ENTRY_KEYS, `output "${outputName}"`);
-    if (typeof value.from !== "string" || value.from.trim() === "") {
-      ctx.err([...path, "from"], `Output "${outputName}" must declare "from": a steps.<id>.output(.<seg>)* reference.`);
-      continue;
-    }
-    const parsedFrom = parseReference(value.from);
-    if (!parsedFrom.ok) {
-      ctx.err([...path, "from"], `Output "${outputName}" "from": ${parsedFrom.message}`);
-      continue;
-    }
-    if (parsedFrom.expr.kind !== "stepOutput") {
-      ctx.err(
-        [...path, "from"],
-        `Output "${outputName}" "from" must reference a step output (steps.<id>.output...), not a param — an ` +
-          `output projects a step artifact, never a param (got "${value.from}").`,
-      );
-      continue;
-    }
-    const entry: { from: string; schema?: Record<string, unknown> } = { from: value.from };
-    if (value.schema !== undefined) {
-      if (!isRecord(value.schema)) {
-        ctx.err([...path, "schema"], `Output "${outputName}" "schema" must be a JSON Schema object.`);
-      } else {
-        if (jsonBytes(value.schema) > WORKFLOW_MAX_SCHEMA_BYTES) {
-          ctx.err([...path, "schema"], `Output "${outputName}" schema exceeds the 256 KiB resource limit.`);
-        }
-        checkSchemaDefinition(ctx, value.schema, [...path, "schema"], `Output "${outputName}" schema`);
-        entry.schema = value.schema;
-      }
-    }
-    outputs[outputName] = entry;
-  }
-  return Object.keys(outputs).length > 0 ? outputs : undefined;
-}
-
 function parseDefaults(ctx: Ctx, raw: unknown): ProgramDefaults | undefined {
   if (raw === undefined) return undefined;
   const path: Path = ["defaults"];
@@ -851,7 +789,13 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
 // Step blocks
 // ---------------------------------------------------------------------------
 
-function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): ProgramUnit | undefined {
+function parseUnit(
+  ctx: Ctx,
+  raw: unknown,
+  path: Path,
+  stepLabel: string,
+  allowWorkflow = true,
+): ProgramUnit | undefined {
   if (!isRecord(raw)) {
     ctx.err(path, `${stepLabel} "unit" must be a mapping (a dispatch-override bag).`);
     return undefined;
@@ -873,6 +817,41 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
         `${stepLabel} "unit" declares both "exec" and "${key}". An exec unit runs a shell command and never ` +
           `reaches an engine, so "${key}" would have no effect — remove one of the two.`,
       );
+    }
+  }
+
+  if (raw.workflow !== undefined) {
+    const workflow = parseChildWorkflowRef(ctx, raw.workflow, [...path, "workflow"], stepLabel, allowWorkflow);
+    if (workflow !== undefined) unit.workflow = workflow;
+    if (raw.exec !== undefined) {
+      ctx.err(
+        [...path, "workflow"],
+        `${stepLabel} "unit" declares both "exec" and "workflow" — a unit runs one or the other.`,
+      );
+    }
+    // A workflow unit starts a child run: it reaches no engine and the child carries its own environment.
+    for (const key of [...UNIT_ENGINE_KEYS, "env"]) {
+      if (raw[key] === undefined) continue;
+      ctx.err(
+        [...path, key],
+        `${stepLabel} "unit" declares both "workflow" and "${key}". A workflow unit starts a child run and never ` +
+          `reaches an engine or an environment of its own, so "${key}" would have no effect — set it in the child workflow.`,
+      );
+    }
+  }
+  if (raw.with !== undefined) {
+    if (raw.workflow === undefined) {
+      ctx.err(
+        [...path, "with"],
+        `${stepLabel} "unit" declares "with" without "workflow" — it binds a child workflow's params.`,
+      );
+    } else if (!isRecord(raw.with)) {
+      ctx.err(
+        [...path, "with"],
+        `${stepLabel} "with" must be a mapping of the child's param name to a literal value or { from: <reference> }.`,
+      );
+    } else {
+      unit.with = raw.with;
     }
   }
 
@@ -916,6 +895,27 @@ function parseUnit(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progr
   }
 
   return unit;
+}
+
+/** `unit.workflow` (Experimental): the canonical ref of a child workflow, `workflows/<name>` or `<bundle>//workflows/<name>`. */
+function parseChildWorkflowRef(
+  ctx: Ctx,
+  raw: unknown,
+  path: Path,
+  stepLabel: string,
+  allowed: boolean,
+): string | undefined {
+  if (!allowed) {
+    ctx.err(path, `${stepLabel} "workflow" is not supported inside "map.unit": a child workflow runs once per step.`);
+    return undefined;
+  }
+  try {
+    if (typeof raw === "string" && classifyTargetRef(raw).kind === "workflow") return raw;
+  } catch {
+    // falls through to the message below
+  }
+  ctx.err(path, `${stepLabel} "workflow" must be a canonical workflow ref such as "workflows/<name>".`);
+  return undefined;
 }
 
 /**
@@ -1067,7 +1067,7 @@ function parseMap(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): Progra
   }
 
   const reducer = parseEnumField(ctx, raw.reducer, [...path, "reducer"], `${stepLabel} "reducer"`, PROGRAM_REDUCERS);
-  const unit = raw.unit !== undefined ? parseUnit(ctx, raw.unit, [...path, "unit"], stepLabel) : undefined;
+  const unit = raw.unit !== undefined ? parseUnit(ctx, raw.unit, [...path, "unit"], stepLabel, false) : undefined;
 
   const map: ProgramMap = { over };
   if (concurrency !== undefined) map.concurrency = concurrency;

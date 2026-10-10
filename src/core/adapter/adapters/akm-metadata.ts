@@ -149,8 +149,9 @@ function storedCommandRef(action: ParsedBuiltinCommandAction | undefined): strin
   return action?.kind === "stored" ? action.ref : undefined;
 }
 
-/** The asset a workflow step targets: its `uses:` ref, or the ref of a stored `akm/command`. Prose and `run:` steps target none. */
+/** The asset a workflow step targets: its child workflow, its `uses:` ref, or the ref of a stored `akm/command`. Prose and `run:` steps target none. */
 function workflowStepTarget(spec: WorkflowStepSpec | undefined): string | undefined {
+  if (spec?.workflow) return spec.workflow;
   if (!spec?.uses) return undefined;
   if (spec.uses !== "akm/command") return spec.uses;
   if (spec.commandMode !== "stored-ref") return undefined;

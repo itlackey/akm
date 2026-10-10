@@ -30,17 +30,6 @@
         "$ref": "#/definitions/jsonSchemaObject"
       }
     },
-    "outputs": {
-      "type": "object",
-      "minProperties": 1,
-      "description": "Named, optionally schema-validated projections of step artifacts, exported when the run completes. Names must be steps.<child>.output.<name>-addressable identifiers. Each entry: { from: steps.<id>.output(.<seg>)*, schema?: <bounded JSON Schema> }. Markdown-frontmatter only.",
-      "propertyNames": {
-        "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
-      },
-      "additionalProperties": {
-        "$ref": "#/definitions/outputDeclaration"
-      }
-    },
     "defaults": {
       "$ref": "#/definitions/defaults"
     },
@@ -158,21 +147,6 @@
       "type": "object",
       "description": "A JSON Schema declaration. The parser validates it as a schema definition against the runtime's enforced subset (src/core/json-schema.ts checkJsonSchemaDefinition): typo'd type names and keywords outside the subset (e.g. $ref, const, format, patternProperties) are authoring-time errors, not silent no-ops."
     },
-    "outputDeclaration": {
-      "type": "object",
-      "description": "One outputs: entry: a validated steps.<id>.output(.<seg>)* reference into a step artifact, plus an optional bounded JSON Schema.",
-      "required": ["from"],
-      "additionalProperties": false,
-      "properties": {
-        "from": {
-          "type": "string",
-          "description": "A steps.<id>.output(.<seg>)* reference into a step artifact. Never params.<name> — an output projects a step artifact, never a param."
-        },
-        "schema": {
-          "$ref": "#/definitions/jsonSchemaObject"
-        }
-      }
-    },
     "retry": {
       "type": "object",
       "description": "Bounded retry on transient failures, keyed on the persisted failure_reason taxonomy.",
@@ -269,7 +243,7 @@
     },
     "unit": {
       "type": "object",
-      "description": "Optional dispatch-override bag for a unit/map step. A step with none of these carries the run's engine/model/timeout defaults verbatim. Declaring `exec` turns the step into a shell-command unit: it names no engine, so `engine`, `model`, and `llm` are rejected alongside it.",
+      "description": "Optional dispatch-override bag for a unit/map step. A step with none of these carries the run's engine/model/timeout defaults verbatim. Declaring `exec` turns the step into a shell-command unit: it names no engine, so `engine`, `model`, and `llm` are rejected alongside it. Declaring `workflow` (Experimental, not allowed inside `map.unit`) makes the step start a child workflow run: it names no engine or env either, and the child's last step output is the step's result.",
       "additionalProperties": false,
       "allOf": [
         {
@@ -291,11 +265,54 @@
               ]
             }
           }
+        },
+        {
+          "if": {
+            "required": ["workflow"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": ["exec"]
+                },
+                {
+                  "required": ["engine"]
+                },
+                {
+                  "required": ["model"]
+                },
+                {
+                  "required": ["llm"]
+                },
+                {
+                  "required": ["env"]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["with"]
+          },
+          "then": {
+            "required": ["workflow"]
+          }
         }
       ],
       "properties": {
         "exec": {
           "$ref": "#/definitions/exec"
+        },
+        "workflow": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Experimental. Canonical ref of a child workflow (`workflows/<name>` or `<bundle>//workflows/<name>`) this step starts and drives to completion."
+        },
+        "with": {
+          "type": "object",
+          "description": "Experimental. Binds the child workflow's params: each key is a declared child param, each value a literal or `{ from: <reference> }`."
         },
         "engine": {
           "$ref": "#/definitions/engineName",

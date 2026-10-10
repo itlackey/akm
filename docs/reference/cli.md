@@ -816,7 +816,7 @@ akm workflow status 7c115132               # 8+ char run-id prefix also works
 akm workflow resume <run-id>
 akm workflow abandon <run-id>
 akm workflow list --active
-akm workflow list --children               # also list child workflow runs
+akm workflow list --children               # also list child workflow runs (Experimental)
 akm workflow list --all-scopes             # include runs started from a different working directory
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
@@ -831,7 +831,7 @@ Subcommands:
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
 | `run <run-id\|ref>` | Stable canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
@@ -1006,11 +1006,11 @@ Two output modes:
 - **`--format json`**: the full envelope — `ok`, `ref`, `title`,
   `sourceFormat`, `sourcePath`, `irVersion`, `planHash`, `published` (always
   `false`, so a consumer can never mistake this for a run envelope),
-  `execution`, `budget?`, `params?`, `outputs?`, `steps[]`, `notices[]`,
+  `execution`, `budget?`, `params?`, `steps[]`, `notices[]`,
   `warnings[]`. Each step entry carries an `expansion` field
   naming how its target was reached: `{via: "direct"}`, `{via: "task",
   taskRef}`, or — for a step composing a child workflow —
-  `{via: "child", childRef, childPlanHash, childOutputs, steps[]}` with the
+  `{via: "child", childRef, childPlanHash, steps[]}` with the
   child's own step list nested recursively in the same shape.
 
 Text-mode example:
@@ -1021,13 +1021,11 @@ source:   workflows/release.md
 plan:     irVersion 5, hash 4f2ba91c3d0e… (not published)
 limits:   maxConcurrency 4; budget max_units 50, max_tokens 100000
 params:   channel, version
-outputs:  report <- steps.summarize.output
 steps:
   1. notify   [command]        direct
   2. build    [script]         via tasks/plan-v4-task
   3. dispatch [child-workflow] -> workflows/release-checklist (plan 91acbe20f5d1…)
        with: channel="stable" (literal), files <- steps.build.output.files (reference)
-       exports: report, changed_count
        3.1 verify [command] direct
   4. summarize [command]       direct
 read set:

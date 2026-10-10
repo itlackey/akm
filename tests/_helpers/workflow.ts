@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 import type { AkmConfig } from "../../src/core/config/config";
 import { captureFrozenDirectoryIdentity } from "../../src/execution/directory-identity";
 import type { ExecutionJsonObject } from "../../src/execution/json";
@@ -363,4 +364,24 @@ export function plantRunLock(runId: string, pid: number = process.pid): () => vo
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   fs.writeFileSync(lockPath, JSON.stringify({ pid, startedAt: new Date().toISOString() }), { flag: "wx" });
   return () => fs.rmSync(lockPath, { force: true });
+}
+
+/** One step of a markdown parent that runs a child workflow (`unit.workflow`, optional `with`). */
+export interface ChildStepFixture {
+  readonly id: string;
+  readonly workflow: string;
+  readonly with?: Record<string, unknown>;
+}
+
+/** A markdown workflow whose every step runs a child workflow. */
+export function childParentDoc(steps: readonly ChildStepFixture[]): string {
+  const frontmatter = {
+    type: "workflow",
+    steps: steps.map((step) => ({
+      id: step.id,
+      unit: { workflow: step.workflow, ...(step.with ? { with: step.with } : {}) },
+    })),
+  };
+  const body = steps.map((step) => `## ${step.id}\n\nRun ${step.workflow}.\n`).join("\n");
+  return `---\n${stringifyYaml(frontmatter)}---\n\n${body}`;
 }

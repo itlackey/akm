@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import fs from "node:fs";
 import path from "node:path";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { _setWarnSinkForTests, type WarnSinkForTests } from "../../../src/core/warn";
@@ -19,7 +18,7 @@ import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
-import { type Cleanup, sandboxEnvDir, writeSandboxConfig } from "../../_helpers/sandbox";
+import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
@@ -107,7 +106,7 @@ afterEach(() => {
   cleanup();
 });
 
-const SOLO_WF = `---
+const _SOLO_WF = `---
 type: workflow
 steps:
   - id: fetch
@@ -118,7 +117,7 @@ steps:
 Fetch the thing.
 `;
 
-function mutateDb(sql: string, ...params: unknown[]): void {
+function _mutateDb(sql: string, ...params: unknown[]): void {
   const db = openStateDatabase(path.join(tmpDir, "state.db"));
   try {
     db.prepare(sql).run(...(params as never[]));
@@ -127,7 +126,7 @@ function mutateDb(sql: string, ...params: unknown[]): void {
   }
 }
 
-async function captureWarns<T>(run: () => Promise<T>): Promise<{ result: T; warns: string[] }> {
+async function _captureWarns<T>(run: () => Promise<T>): Promise<{ result: T; warns: string[] }> {
   const warns: string[] = [];
   const result = await withSeam(
     _setWarnSinkForTests,

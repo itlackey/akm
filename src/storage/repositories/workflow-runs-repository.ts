@@ -746,16 +746,6 @@ export class WorkflowRunsRepository {
     });
   }
 
-  /**
-   * Persist a run's resolved declared `outputs:` (migration 024, P3b §4.3).
-   * Called from INSIDE `completeWorkflowStep`'s own write transaction — this
-   * method opens none of its own, matching `updateStepCompletion` /
-   * `updateRunState` immediately above.
-   */
-  setRunOutputs(runId: string, outputsJson: string): void {
-    this.db.prepare("UPDATE workflow_runs SET outputs_json = ? WHERE id = ?").run(outputsJson, runId);
-  }
-
   /** Every child run published under `parentRunId`, oldest first. `[]` when none. */
   childRunsOf(parentRunId: string): WorkflowRunRow[] {
     return this.db

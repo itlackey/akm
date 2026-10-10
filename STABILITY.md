@@ -378,7 +378,10 @@ for scripted use.
   workflow engine are Experimental from 0.9.28 and throughout 0.10. The 0.10
   series stabilizes the feature and trims what is not useful, then either
   promotes it out of Experimental or removes it if stabilization does not
-  produce a quality feature.
+  produce a quality feature. **Child workflows** (`unit: { workflow: … }`, a
+  step that runs another workflow and returns its last step's output) are the
+  least settled part and are kept only in that simple form; `akm workflow list
+  --children` goes with them.
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
   `--format html` dashboard may change in any release; do not script against
   them.

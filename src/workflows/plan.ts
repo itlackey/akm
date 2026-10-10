@@ -87,6 +87,8 @@ export interface WorkflowExec {
  */
 export interface WorkflowStepSpec {
   uses?: string;
+  /** Child workflow ref (Experimental): the step starts and drives that workflow as a child run, with `with:` as its params. */
+  workflow?: string;
   commandMode?: WorkflowCommandMode;
   with?: Record<string, unknown>;
   exec?: WorkflowExec;
@@ -241,12 +243,6 @@ export interface WorkflowPlanStep {
   readonly gate: WorkflowGateNode;
 }
 
-/** One run-level export: a `steps.<id>.output(.<seg>)*` reference plus an optional schema. */
-export interface WorkflowOutput {
-  readonly from: string;
-  readonly schema?: Record<string, unknown>;
-}
-
 /** One YAML `on.schedule` entry. */
 export interface WorkflowSchedule {
   readonly cron: string;
@@ -260,8 +256,6 @@ export interface WorkflowPlan {
   readonly params?: string[];
   readonly paramSchemas?: Record<string, Record<string, unknown>>;
   readonly budget?: WorkflowBudget;
-  /** Named projections of step artifacts exported when the run completes. Absent, never `{}`. */
-  readonly outputs?: Readonly<Record<string, WorkflowOutput>>;
   /** Filled at freeze. */
   readonly execution?: { readonly maxConcurrency: number };
   /** sha256 of the workflow source file, recorded at freeze for the resume "source changed" warning. */

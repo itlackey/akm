@@ -57,10 +57,6 @@ function projectInputBinding(binding: TaskInputBinding): Record<string, unknown>
     : { name: binding.name, kind: "reference", from: binding.from };
 }
 
-function childExportedOutputNames(frozenPlan: WorkflowPlan): readonly string[] {
-  return frozenPlan.outputs ? Object.keys(frozenPlan.outputs) : ["runId", "status"];
-}
-
 /**
  * A `child-workflow` target's `expansion`. Recurses into the embedded
  * plan's own steps in the identical shape — `usesById` is
@@ -76,7 +72,6 @@ function childExpansion(target: FrozenChildWorkflowTarget): Record<string, unkno
     childPlanHash: target.planHash,
     childVia: target.via,
     ...(target.taskRef !== undefined ? { childTaskRef: target.taskRef } : {}),
-    childOutputs: childExportedOutputNames(target.frozenPlan),
     steps: target.frozenPlan.steps.map((step, index) => projectStep(step, index, undefined)),
   };
 }
@@ -171,7 +166,6 @@ export async function akmWorkflowPlan(ref: string): Promise<Record<string, unkno
     execution: plan.execution,
     ...(plan.budget ? { budget: plan.budget } : {}),
     ...(plan.params ? { params: plan.params } : {}),
-    ...(plan.outputs ? { outputs: plan.outputs } : {}),
     steps: plan.steps.map((step, index) => projectStep(step, index, usesById)),
     notices: collectLoweringNotices(plan, config),
     warnings: frozen.warnings.map((warning) => warning.message),

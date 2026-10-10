@@ -30,7 +30,6 @@ import {
 } from "../plan";
 import type { WorkflowAsset } from "../runtime/workflow-asset-loader";
 import { classifyWorkflowStepUses } from "../source-semantics";
-import { assertChildOutputReferences } from "./child-output-references";
 import { qualifyRef } from "./environment";
 import { baseUnitOf, type FreezeStep, type ResolutionContext, type ResolvedDispatch } from "./step-values";
 import { childWorkflowDispatch } from "./targets/child-workflow";
@@ -92,14 +91,12 @@ export async function freezeWorkflow(
     }
     steps.push({ ...frozenStep, root, gate: { ...step.gate, frozenJudge } });
   }
-  assertChildOutputReferences(steps);
   const plan: WorkflowPlan = {
     irVersion: WORKFLOW_PLAN_VERSION,
     title: asset.title,
     ...(compiled.params ? { params: compiled.params } : {}),
     ...(compiled.paramSchemas ? { paramSchemas: compiled.paramSchemas } : {}),
     ...(compiled.budget ? { budget: compiled.budget } : {}),
-    ...(compiled.outputs ? { outputs: compiled.outputs } : {}),
     execution: { maxConcurrency: workflowMaxConcurrency(config.workflow?.maxConcurrency) },
     sourceHash: asset.sourceHash,
     steps,
@@ -110,6 +107,16 @@ export async function freezeWorkflow(
 async function resolveStep(source: FreezeStep, context: ResolutionContext): Promise<ResolvedDispatch> {
   const baseUnit = baseUnitOf(source);
   if (source.exec) return directShell(source, baseUnit, context);
+  if (source.workflow) {
+    return childWorkflowDispatch({
+      source,
+      baseUnit,
+      childRefInput: source.workflow,
+      context,
+      via: "direct",
+      authoredInputs: { kind: "with", value: source.with },
+    });
+  }
   if (!source.uses) throw new Error(`workflow step ${source.id} has neither exec nor uses`);
   const target = classifyWorkflowStepUses(source.uses);
   if (target.kind === "task") return taskDispatch(source, baseUnit, target.ref, context);

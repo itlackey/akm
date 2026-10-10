@@ -31,6 +31,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Top-level workflow `outputs:` (#1096).** Its only consumer was a parent reading a child's exports. A completed
+  child workflow now returns the output of its last step, so `outputs:` is a lint error and the child-output reference
+  check at freeze is gone; a parent reads `steps.<composing-step>.output`. The `outputs_json` column stays readable.
 - **Workflow `route` steps (#1096).** A step can no longer declare `route:` (branch on a value to a later step). It was
   unused by any workflow found, and its cost was the replay journal for route decisions and cascaded skips. Branching is
   an `exec` step or an agent step that reads its inputs, plus a gate for "go back and fix it". `route` is now an
@@ -72,6 +75,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **Child workflows are kept in a simple form (#1096).** A markdown step declares `unit: { workflow: workflows/<name>,
+  with: { <param>: <literal or { from: <reference> }> } }` and the engine starts the child as its own run and drives it
+  to completion; the child's last step output is the composing step's output. The form is Experimental. The freeze,
+  idempotent publish, resume, blocked-child recovery, cycle check and `workflow list --children` behaviour of the existing
+  child executor is unchanged.
 - **`default` drains the proposal queue through the deterministic gates (#1143).** The `default` strategy now runs
   triage in `promote` mode with judgment off, up to `maxAcceptsPerRun: 25` accepts per run, so the backlog drains
   without `experimental.improveAutonomy`. The nightly eval's baseline is exactly this path (`proposal drain --promote`

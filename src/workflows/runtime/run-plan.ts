@@ -114,11 +114,6 @@ export function decodeWorkflowPlan(input: unknown, options: DecodeWorkflowPlanOp
   const raw = record(input, "plan");
   if (!Array.isArray(raw.steps) || raw.steps.length === 0) fail("steps must be a non-empty array");
   const steps = raw.steps.map((value, index) => decodeStep(value, index));
-  if (raw.outputs !== undefined) {
-    for (const [name, entry] of Object.entries(record(raw.outputs, "outputs"))) {
-      string(record(entry, `outputs.${name}`).from, `outputs.${name}.from`);
-    }
-  }
   const sourceHash =
     typeof raw.sourceHash === "string" ? raw.sourceHash : legacySourceHash(raw.sourceReadSet, options.workflowRef);
   return {

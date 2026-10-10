@@ -52,17 +52,15 @@ still decodes runs, and one this akm cannot decode is abandoned by
 `akm workflow run` with a message naming how to start a new run. See
 [Architecture: The Workflow Engine](https://github.com/itlackey/akm/blob/main/docs/architecture/workflow-engine.md#resume-skips-completed-units).
 
-A step can compose another workflow as a child — directly
-(`uses: workflows/<ref>`) or through a task whose own target is a workflow
-(`uses: tasks/<ref>`) — frozen completely into the parent's plan before the
-parent run is published. See
+A step can run another workflow as a child (`unit: { workflow: workflows/<ref> }`,
+**Experimental**) — frozen completely into the parent's plan before the parent
+run is published. See
 [Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
-for both forms and their limits. Running a step that composes a child
+for the form and its limits. Running a step that composes a child
 workflow drives that child to completion (or as far as it gets) with the
 same engine the parent uses, then maps the child's final status onto the
-composing step: a completed child promotes its declared `outputs:` (or
-`{runId, status}` when it declares none) as the step's own output and the
-parent continues; a failed child fails the step and the run; a blocked
+composing step: a completed child's last step output becomes the step's own
+output and the parent continues; a failed child fails the step and the run; a blocked
 child blocks the composing step and the run, with recovery notes naming the
 exact `akm workflow resume`/`akm workflow run` sequence. `akm workflow
 status` on a run that composes children renders a `children:` tree showing
@@ -71,16 +69,6 @@ every descendant run's ref and status. See
 for the full status mapping and the blocked-child recovery flow, and
 [Running Workflows: Child runs](https://github.com/itlackey/akm/blob/main/docs/guides/run-workflows.md#child-runs) for a
 walkthrough.
-
-## Workflow outputs
-
-A workflow may declare a run-level export in its Markdown frontmatter —
-`outputs: {<name>: {from: steps.<id>.output(.<segment>)*, schema?}}`, up to
-64 entries — resolved once, from persisted step evidence, at run
-completion. A run with no `outputs:` declaration exports `{runId, status}`
-instead; a composing parent step promotes a completed child's `outputs:`
-(or that same `{runId, status}` fallback) as its own step output — see
-[Workflow Schema: Workflow outputs](../reference/workflow-schema.md#workflow-outputs).
 
 ## Inspecting a workflow without running it
 

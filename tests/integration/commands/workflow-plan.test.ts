@@ -80,6 +80,28 @@ function writeParent(name: string, stepLines: readonly string[]): void {
   );
 }
 
+/** A markdown parent whose one step runs `childRef` as a child workflow (Experimental `unit.workflow`). */
+function writeChildParent(name: string, childRef: string, withLines: readonly string[] = []): void {
+  write(
+    `workflows/${name}.md`,
+    [
+      "---",
+      "type: workflow",
+      "steps:",
+      "  - id: dispatch",
+      "    unit:",
+      `      workflow: ${childRef}`,
+      ...withLines,
+      "---",
+      "",
+      "## dispatch",
+      "",
+      "Run the child.",
+      "",
+    ].join("\n"),
+  );
+}
+
 async function index(): Promise<void> {
   await akmIndex({ stashDir: storage.stashDir, full: true });
 }
@@ -470,27 +492,13 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
   function writeChild(): void {
     write(
       "workflows/plan-child.md",
-      [
-        "---",
-        "type: workflow",
-        "outputs:",
-        "  report:",
-        "    from: steps.work.output",
-        "steps:",
-        "  - id: work",
-        "---",
-        "",
-        "## work",
-        "",
-        "Do the work.",
-        "",
-      ].join("\n"),
+      ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", "Do the work.", ""].join("\n"),
     );
   }
 
-  test("a per-step expansion names via: child, the child ref, its planHash, and its declared output names", async () => {
+  test("a per-step expansion names via: child, the child ref, and its planHash", async () => {
     writeChild();
-    writeParent("plan-composes-child", ["      - id: dispatch", "        uses: workflows/plan-child"]);
+    writeChildParent("plan-composes-child", "workflows/plan-child");
     await index();
 
     const result = await runCliCapture(["workflow", "plan", "workflows/plan-composes-child", "--format", "json"]);
@@ -502,14 +510,13 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
     expect(expansion.via).toBe("child");
     expect(String(expansion.childRef)).toContain("plan-child");
     expect(typeof expansion.childPlanHash).toBe("string");
-    expect(expansion.childOutputs).toEqual(["report"]);
     expect(Array.isArray(expansion.steps)).toBe(true);
   });
 
   // Code review finding B: text mode must carry the same child plan hash,
   // `with:` input bindings, and `exports:` line the spec's §4.6 worked
   // example prescribes — not just --format json.
-  test("text mode: the step line carries the child's plan hash, a with: line for its bindings, and an exports: line", async () => {
+  test("text mode: the step line carries the child's plan hash and a with: line for its bindings", async () => {
     write(
       "workflows/plan-child-params.md",
       [
@@ -517,9 +524,6 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
         "type: workflow",
         "params:",
         "  scope: { type: string }",
-        "outputs:",
-        "  report:",
-        "    from: steps.work.output",
         "steps:",
         "  - id: work",
         "---",
@@ -530,11 +534,9 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
         "",
       ].join("\n"),
     );
-    writeParent("plan-composes-child-text", [
-      "      - id: dispatch",
-      "        uses: workflows/plan-child-params",
-      "        with:",
-      "          scope: urgent",
+    writeChildParent("plan-composes-child-text", "workflows/plan-child-params", [
+      "      with:",
+      "        scope: urgent",
     ]);
     await index();
 
@@ -561,7 +563,6 @@ describe("akm workflow plan <ref> — a workflow composing a child (B-49)", () =
     expect(textResult.code).toBe(0);
     expect(textResult.stdout).toContain(`(plan ${childPlanHash})`);
     expect(textResult.stdout).toContain('with: scope="urgent" (literal)');
-    expect(textResult.stdout).toContain("exports: report");
   });
 });
 
