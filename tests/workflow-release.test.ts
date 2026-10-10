@@ -9,6 +9,7 @@ import YAML from "yaml";
 
 const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflows/release.yml"), "utf8");
 const VERSION_INPUT = "$" + "{{ inputs.version }}";
+const STAGE_INPUT = "$" + "{{ inputs.stage }}";
 
 describe("release workflow", () => {
   test("is one straightforward release job", () => {
@@ -21,10 +22,26 @@ describe("release workflow", () => {
   });
 
   test("publishes the exact version already committed in package.json", () => {
-    expect(source).toContain(`CANDIDATE_VERSION: ${VERSION_INPUT}`);
+    expect(source).toContain(`VERSION_INPUT: ${VERSION_INPUT}`);
     expect(source).toContain("require('./package.json').version");
-    expect(source).toContain('"$PACKAGE_VERSION" != "$CANDIDATE_VERSION"');
+    expect(source).toContain('"$PACKAGE_VERSION" != "$VERSION_INPUT"');
     expect(source).not.toContain("npm version");
+  });
+
+  test("validates the version format and appends the stage through scripts/release-version.ts (#1089)", () => {
+    expect(source).toContain(`STAGE_INPUT: ${STAGE_INPUT}`);
+    expect(source).toContain("bun scripts/release-version.ts resolve");
+    // Only a stage changes the version the artifacts carry; it is stamped into this run's package.json.
+    expect(source).toContain('npm pkg set version="$CANDIDATE_VERSION"');
+    expect(source).toContain('echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"');
+    // Prereleases go to the `next` tag, stable builds to `latest`.
+    expect(source).toContain('[[ "$CANDIDATE_VERSION" == *-* ]]');
+    expect(source).toContain("DIST_TAG=next");
+    expect(source).toContain("DIST_TAG=latest");
+    const workflow = YAML.parse(source) as {
+      on: { workflow_dispatch: { inputs: { stage: { type: string; options: string[] } } } };
+    };
+    expect(workflow.on.workflow_dispatch.inputs.stage.options).toEqual(["none", "alpha", "beta", "rc"]);
   });
 
   test("the changelog is cut: its newest released section names the shipping version", () => {
@@ -43,8 +60,11 @@ describe("release workflow", () => {
     // tests/release-check.sh, so it fails in seconds under the name a release
     // engineer is looking at.
     const root = path.resolve(import.meta.dir, "..");
-    const version = (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string })
-      .version;
+    // A daily build's -alpha/-beta/-rc stage is stamped in at release time (#1089): its changelog section is the
+    // build's, so the committed package.json carries no stage.
+    const version = (
+      JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string }
+    ).version.replace(/^(0\.\d+\.\d{8})-(alpha|beta|rc)$/, "$1");
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
     const newestReleased = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]
       .map((match) => match[1])

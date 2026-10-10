@@ -1,17 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import semver from "semver";
-import { deriveVersion, resolveVersion, validateVersion } from "../scripts/release-version";
+import { deriveVersion, resolveVersion, STAGES, validateVersion } from "../scripts/release-version";
 
 const at = (iso: string) => new Date(iso);
-const resolve = (over: Partial<Parameters<typeof resolveVersion>[0]> = {}) =>
-  resolveVersion({
-    version: "",
-    stage: "",
-    packageVersion: "0.10.0",
-    now: at("2026-10-10T04:00:00Z"),
-    listPublished: () => [],
-    ...over,
-  });
 
 describe("validateVersion", () => {
   test.each([
@@ -78,10 +69,6 @@ describe("deriveVersion", () => {
     expect(deriveVersion("0.10", at("2026-10-10T05:00:00Z"), ["0.10.26101003"])).toBe("0.10.26101004");
   });
 
-  test("a stage is appended", () => {
-    expect(deriveVersion("0.10", at("2026-10-10T05:00:00Z"), ["0.10.26101001"], "alpha")).toBe("0.10.26101002-alpha");
-  });
-
   test("fails when the day has no build numbers left", () => {
     expect(() => deriveVersion("0.10", at("2026-10-10T05:00:00Z"), ["0.10.26101099"])).toThrow(/no build numbers/);
   });
@@ -105,38 +92,30 @@ describe("deriveVersion", () => {
 });
 
 describe("resolveVersion", () => {
-  test("derives from package.json's line when no version is given", () => {
-    expect(resolve({ packageVersion: "0.10.0", listPublished: () => ["0.10.26101001"] })).toBe("0.10.26101002");
-    expect(resolve({ stage: "rc" })).toBe("0.10.26101001-rc");
+  test("a daily build is published as itself or with a stage appended", () => {
+    expect(resolveVersion("0.10.26101001", "")).toBe("0.10.26101001");
+    expect(resolveVersion("0.10.26101001", "none")).toBe("0.10.26101001");
+    for (const stage of STAGES) expect(resolveVersion("0.10.26101001", stage)).toBe(`0.10.26101001-${stage}`);
   });
 
-  test("does not read npm when the version is given", () => {
-    const listPublished = () => {
-      throw new Error("npm was read");
-    };
-    expect(resolve({ version: "0.10.26101001", listPublished })).toBe("0.10.26101001");
-  });
-
-  test("a build is promoted by giving its number with the next stage, then without one", () => {
-    expect(resolve({ version: "0.10.26101001", stage: "beta" })).toBe("0.10.26101001-beta");
-    expect(resolve({ version: "0.10.26101001" })).toBe("0.10.26101001");
+  test("a build is promoted alpha < beta < rc < the build", () => {
+    const ladder = [
+      ...STAGES.map((stage) => resolveVersion("0.10.26101001", stage)),
+      resolveVersion("0.10.26101001", ""),
+    ];
+    for (let i = 1; i < ladder.length; i++) expect(semver.lt(ladder[i - 1] as string, ladder[i] as string)).toBe(true);
   });
 
   test("the 0.9 line still releases with a plain version", () => {
-    expect(resolve({ version: "0.9.32", packageVersion: "0.9.31" })).toBe("0.9.32");
-    expect(resolve({ version: "0.9.32-rc.1", packageVersion: "0.9.31" })).toBe("0.9.32-rc.1");
-  });
-
-  test("the workflow's stage choice none means a stable build", () => {
-    expect(resolve({ version: "0.10.26101001", stage: "none" })).toBe("0.10.26101001");
-    expect(resolve({ stage: "none" })).toBe("0.10.26101001");
+    expect(resolveVersion("0.9.32", "none")).toBe("0.9.32");
+    expect(resolveVersion("0.9.32-rc.1", "")).toBe("0.9.32-rc.1");
   });
 
   test("rejects what the format forbids", () => {
-    expect(() => resolve({ stage: "gamma" })).toThrow(/stage/);
-    expect(() => resolve({ version: "0.10.26101001-alpha", stage: "beta" })).toThrow(/already has a stage/);
-    expect(() => resolve({ version: "0.9.32", stage: "rc" })).toThrow(/daily builds/);
-    expect(() => resolve({ version: "0.10.5" })).toThrow();
-    expect(() => resolve({ packageVersion: "0.9.31" })).toThrow(/cannot derive/);
+    expect(() => resolveVersion("0.10.26101001", "gamma")).toThrow(/stage/);
+    expect(() => resolveVersion("0.10.26101001-alpha", "beta")).toThrow(/already has a stage/);
+    expect(() => resolveVersion("0.9.32", "rc")).toThrow(/daily builds/);
+    expect(() => resolveVersion("0.10.5", "")).toThrow();
+    expect(() => resolveVersion("", "")).toThrow();
   });
 });

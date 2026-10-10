@@ -13,11 +13,12 @@
  * older keep plain `X.Y.Z[-prerelease]`.
  *
  *   bun scripts/release-version.ts validate <version>
+ *   bun scripts/release-version.ts next
  *   VERSION_INPUT=... STAGE_INPUT=... bun scripts/release-version.ts resolve
  *
- * `resolve` prints the version to release: the input (plus the stage), or,
- * with no input, the next daily build of package.json's line, numbered from
- * the versions already on npm.
+ * `next` prints the next daily build of package.json's line for the UTC day, numbered from the versions already on
+ * npm: the version to commit in the release PR (package.json and the CHANGELOG heading). `resolve` is what the
+ * Release workflow runs on its inputs.
  */
 
 import { execFileSync } from "node:child_process";
@@ -68,7 +69,7 @@ function pad2(n: number): string {
  * through its stages counts once and a gap left by an unpublished version is
  * never reused.
  */
-export function deriveVersion(line: string, now: Date, published: readonly string[], stage?: string): string {
+export function deriveVersion(line: string, now: Date, published: readonly string[]): string {
   const day = `${pad2(now.getUTCFullYear() % 100)}${pad2(now.getUTCMonth() + 1)}${pad2(now.getUTCDate())}`;
   let highest = 0;
   for (const v of published) {
@@ -77,47 +78,29 @@ export function deriveVersion(line: string, now: Date, published: readonly strin
   }
   if (highest >= 99)
     throw new Error(`${line}.${day}99 is already published: no build numbers are left for this UTC day`);
-  return `${line}.${day}${pad2(highest + 1)}${stage ? `-${stage}` : ""}`;
+  return `${line}.${day}${pad2(highest + 1)}`;
 }
 
-export interface ResolveInput {
-  /** The workflow's `version` input; empty to derive. */
-  version: string;
-  /** The workflow's `stage` input: empty or `none` for a stable build, else `alpha`, `beta` or `rc`. */
-  stage: string;
-  /** package.json's version, whose major.minor is the line to derive for. */
-  packageVersion: string;
-  now: Date;
-  /** Versions already on npm; read only when deriving. */
-  listPublished: () => readonly string[];
-}
-
-/** The version to release, or an Error naming what is wrong with the inputs. */
-export function resolveVersion(input: ResolveInput): string {
-  const stage = input.stage.trim() === "none" ? "" : input.stage.trim();
+/**
+ * The version to publish for the workflow's `version` and `stage` inputs. `version` is the one committed in
+ * package.json; a `stage` (empty or `none` for a stable build) is appended to a daily build, so one build can be
+ * promoted `-alpha`, `-beta`, `-rc`, then published as is. Throws an Error naming what is wrong.
+ */
+export function resolveVersion(versionInput: string, stageInput: string): string {
+  const given = versionInput.trim();
+  const stage = stageInput.trim() === "none" ? "" : stageInput.trim();
   if (stage !== "" && !(STAGES as readonly string[]).includes(stage)) {
     throw new Error(`stage "${stage}" is not one of ${STAGES.join(", ")}`);
   }
-  const given = input.version.trim();
-  let candidate: string;
-  if (given !== "") {
-    if (stage !== "") {
-      if (!usesDailyBuilds(given))
-        throw new Error(`stage applies to daily builds (0.${FIRST_DAILY_MINOR}+) only, not "${given}"`);
-      if (given.includes("-"))
-        throw new Error(
-          `"${given}" already has a stage; give the build number (0.<minor>.YYMMDDNN) and the stage separately`,
-        );
-      candidate = `${given}-${stage}`;
-    } else {
-      candidate = given;
-    }
-  } else {
-    const m = /^0\.(\d+)\./.exec(input.packageVersion);
-    if (!m || Number(m[1]) < FIRST_DAILY_MINOR) {
-      throw new Error(`cannot derive a daily build for package.json ${input.packageVersion}; pass version explicitly`);
-    }
-    candidate = deriveVersion(`0.${m[1]}`, input.now, input.listPublished(), stage || undefined);
+  let candidate = given;
+  if (stage !== "") {
+    if (!usesDailyBuilds(given))
+      throw new Error(`stage applies to daily builds (0.${FIRST_DAILY_MINOR}+) only, not "${given}"`);
+    if (given.includes("-"))
+      throw new Error(
+        `"${given}" already has a stage; give the build number (0.<minor>.YYMMDDNN) and the stage separately`,
+      );
+    candidate = `${given}-${stage}`;
   }
   const problem = validateVersion(candidate);
   if (problem) throw new Error(problem);
@@ -142,33 +125,30 @@ function npmVersions(name: string): string[] {
 
 function main(argv: string[]): number {
   const [command, arg] = argv;
-  if (command === "validate" && arg) {
-    const problem = validateVersion(arg);
-    if (problem) {
-      console.error(problem);
-      return 1;
-    }
-    return 0;
-  }
-  if (command === "resolve") {
-    const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as { name: string; version: string };
-    try {
-      console.log(
-        resolveVersion({
-          version: process.env.VERSION_INPUT ?? "",
-          stage: process.env.STAGE_INPUT ?? "",
-          packageVersion: pkg.version,
-          now: new Date(),
-          listPublished: () => npmVersions(pkg.name),
-        }),
-      );
+  try {
+    if (command === "validate" && arg) {
+      const problem = validateVersion(arg);
+      if (problem) throw new Error(problem);
       return 0;
-    } catch (err) {
-      console.error((err as Error).message);
-      return 1;
     }
+    if (command === "resolve") {
+      console.log(resolveVersion(process.env.VERSION_INPUT ?? "", process.env.STAGE_INPUT ?? ""));
+      return 0;
+    }
+    if (command === "next") {
+      const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")) as { name: string; version: string };
+      const line = /^0\.(\d+)\./.exec(pkg.version);
+      if (!line || Number(line[1]) < FIRST_DAILY_MINOR) {
+        throw new Error(`package.json ${pkg.version} is not on a daily-build line (0.${FIRST_DAILY_MINOR}+)`);
+      }
+      console.log(deriveVersion(`0.${line[1]}`, new Date(), npmVersions(pkg.name)));
+      return 0;
+    }
+  } catch (err) {
+    console.error((err as Error).message);
+    return 1;
   }
-  console.error("usage: release-version.ts validate <version> | resolve");
+  console.error("usage: release-version.ts validate <version> | resolve | next");
   return 2;
 }
 

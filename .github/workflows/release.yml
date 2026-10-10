@@ -4,12 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "0.10+: a daily build to promote (0.10.YYMMDDNN); leave empty to publish the next build of today (UTC). 0.9 and older: the X.Y.Z already committed in package.json."
-        required: false
-        default: ""
+        description: "Version already committed in package.json: 0.10 and later 0.<minor>.YYMMDDNN (for example 0.10.26101001; bun scripts/release-version.ts next prints the next free one), earlier lines X.Y.Z."
+        required: true
         type: string
       stage:
-        description: "Prerelease stage, published to the npm next tag. none publishes the stable build to latest."
+        description: "Prerelease stage of the build, published to the npm next tag. none publishes the build itself to latest. Daily builds only."
         required: false
         default: none
         type: choice
@@ -35,6 +34,9 @@ jobs:
     # gate room without being unbounded.
     timeout-minutes: 45
     environment: release
+    env:
+      VERSION_INPUT: ${{ inputs.version }}
+      STAGE_INPUT: ${{ inputs.stage }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
@@ -53,30 +55,25 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # The version to release: scripts/release-version.ts validates the format
-      # (0.10+: 0.<minor>.YYMMDDNN with an optional -alpha/-beta/-rc; older
-      # lines: X.Y.Z[-prerelease]) or, with no version input, derives the next
-      # daily build from the UTC date and the versions already on npm (#1089).
-      - name: Resolve version
-        env:
-          VERSION_INPUT: ${{ inputs.version }}
-          STAGE_INPUT: ${{ inputs.stage }}
-        run: |
-          CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"
-          echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
-          echo "Releasing akm-cli@$CANDIDATE_VERSION"
-
+      # scripts/release-version.ts validates the format (0.10+:
+      # 0.<minor>.YYMMDDNN; older lines: X.Y.Z[-prerelease]) and appends the
+      # stage input to a daily build (#1089). package.json must carry the
+      # version input, as before; a stage is stamped into this run's
+      # package.json so one committed build can be published as -alpha, -beta,
+      # -rc and then as itself.
       - name: Verify version
         run: |
+          CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"
           PACKAGE_VERSION="$(node -p "require('./package.json').version")"
-          if [[ "$CANDIDATE_VERSION" =~ ^0\.([0-9]+)\. ]] && [ "${BASH_REMATCH[1]}" -ge 10 ]; then
-            # A daily build is numbered when it is released, so it cannot be
-            # committed first: stamp it into this run's package.json.
-            npm pkg set version="$CANDIDATE_VERSION"
-          elif [ "$PACKAGE_VERSION" != "$CANDIDATE_VERSION" ]; then
-            echo "package.json is $PACKAGE_VERSION, not $CANDIDATE_VERSION"
+          if [ "$PACKAGE_VERSION" != "$VERSION_INPUT" ]; then
+            echo "package.json is $PACKAGE_VERSION, not $VERSION_INPUT"
             exit 1
           fi
+          if [ "$CANDIDATE_VERSION" != "$VERSION_INPUT" ]; then
+            npm pkg set version="$CANDIDATE_VERSION"
+          fi
+          echo "CANDIDATE_VERSION=$CANDIDATE_VERSION" >> "$GITHUB_ENV"
+          echo "Releasing akm-cli@$CANDIDATE_VERSION"
 
       # Publish gate: tests/release-check.sh — the same script the runbook
       # directs operators to run locally before triggering this workflow — is

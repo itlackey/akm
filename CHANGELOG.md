@@ -89,10 +89,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   number is the UTC year, month and day plus the build that day (`NN`, `01` to `99`), two digits each: the first build
   on 2026-10-10 is `0.10.26101001`. A prerelease carries its stage only (`0.10.26101001-alpha`, no `.N`), so one build
   is promoted `-alpha` < `-beta` < `-rc` < `0.10.26101001`; prereleases publish to the npm `next` tag and stable builds
-  to `latest`. The Release workflow takes an optional `version` and a `stage` input, validates the format
-  (`scripts/release-version.ts`) and, with no `version`, numbers the build from today's date and the versions already
-  on npm. Versions sort by date across months and years, so `akm upgrade` and semver ranges order them correctly. The
-  0.9 line keeps `0.9.N`. See `STABILITY.md`. (#1089)
+  to `latest`. The Release workflow validates the format and takes a new `stage` input (`scripts/release-version.ts`);
+  `bun scripts/release-version.ts next` prints the next free build number for today from the versions on npm. Versions
+  sort by date across months and years, so `akm upgrade` and semver ranges order them correctly. The 0.9 line keeps
+  `0.9.N`. See `STABILITY.md`. (#1089)
 
 ### Removed
 
