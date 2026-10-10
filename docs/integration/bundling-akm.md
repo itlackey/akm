@@ -30,10 +30,11 @@ akm migrate apply
 In order, every run applies (or, under `status`/`--dry-run`, plans):
 
 1. **config.json in its current shape** (`configFile`): retired and unknown
-   keys dropped, legacy `extraParams` lifted onto first-class fields, the
-   legacy `stashDir`/`sources[]`/`installed` layout converted to
-   `bundles`/`defaultBundle`. Config loading already does all of this in
-   memory; this persists it under a backup.
+   keys dropped, `configVersion` set. Config loading already does this in
+   memory; this persists it under a backup. A config older than 0.9.15 (the
+   legacy `stashDir`/`sources[]`/`installed` layout, an `extraParams` key
+   that shadows a first-class field) is not converted by 0.10: it blocks
+   with a message to run `akm migrate apply` under akm 0.9.x first.
 2. **Pending `state.db` migrations**, historical-destructive ones included
    (`stateMigrations`). This is the only path (besides `akm upgrade`, which
    calls the same code) that is allowed to apply a destructive migration to an
@@ -98,7 +99,7 @@ same step names):
 `status` is one of:
 
 - **`current`** — no task-source file needs converting, and no config
-  extraParams lift is pending. A no-op boot.
+  rewrite is pending. A no-op boot.
 - **`ready`** — task sources have eligible changes and no config-lift
   conflict; a real `apply` will clear them.
 - **`blocked`** — at least one item cannot be applied automatically (a

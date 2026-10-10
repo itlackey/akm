@@ -10,7 +10,7 @@
  * `parseTaskV3Document`, `classifyTaskV3Uses`, and the GitHub Action locator
  * grammar deleted from classification ahead of this file's own shrink)
  * survives only vendored, frozen, in
- * `src/tasks/source/task-source-v3-frozen.ts` — the ONE place
+ * `scripts/akm-migrate/migrate/task-source-v3-frozen.ts` — the ONE place
  * left that reads a v3 document, reachable only through `akm migrate apply`
  * / `akm-migrate`.
  *

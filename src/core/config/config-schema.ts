@@ -140,8 +140,9 @@ export const AkmConfigShape = {
   index: IndexConfigSchema.optional(),
   registries: z.array(RegistryConfigEntrySchema).optional(),
   // `bundles` + `defaultBundle` are the only source configuration shape. The
-  // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load;
-  // there is no runtime config translator. `defaultBundle` names the primary
+  // retired `stashDir`/`sources[]`/`installed[]` keys are rejected at load,
+  // naming the 0.9.x `akm migrate apply` that converts them; there is no
+  // runtime config translator. `defaultBundle` names the primary
   // bundle used for short-ref resolution.
   bundles: BundlesConfigSchema.optional(),
   defaultBundle: nonEmptyString.optional(),
@@ -171,6 +172,10 @@ const RETIRED_SOURCE_SHAPE_KEY_MESSAGES: Record<string, string> = {
     "stashDir is not supported; configure `bundles`, or use `akm config path --all` / `akm info` to inspect current paths.",
 };
 
+/** The one message for a config older than 0.9.15: only akm 0.9.x converts it. */
+const PRE_FLOOR_CONFIG_REMEDY =
+  "This config predates akm 0.9.15 and 0.10 does not convert it: run `akm migrate apply` with akm 0.9.x, then upgrade.";
+
 export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => {
   const raw = config as Record<string, unknown>;
   // Only the current source shape enters the runtime. There is no config
@@ -180,8 +185,7 @@ export const AkmConfigSchema = AkmConfigBaseSchema.superRefine((config, ctx) => 
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: [key],
-        message:
-          RETIRED_SOURCE_SHAPE_KEY_MESSAGES[key] ?? `${key} is not supported; configure the current bundles shape`,
+        message: `${RETIRED_SOURCE_SHAPE_KEY_MESSAGES[key] ?? `${key} is not supported; configure the current bundles shape`} ${PRE_FLOOR_CONFIG_REMEDY}`,
       });
     }
   }

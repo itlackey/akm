@@ -31,6 +31,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Removed
 
+- **Runtime conversion of config older than 0.9.15 (#1091).** 0.10 reads what 0.9.15 and later wrote; an install on an
+  earlier release runs `akm migrate apply` under akm 0.9.x first. Removed: the in-memory `stashDir`/`sources[]`/
+  `installed[]` to `bundles` conversion (`legacy-source-shape-shim.ts`), the `engines.*.extraParams` lift onto
+  `temperature`/`maxTokens`/`enableThinking`/`reasoningEffort`, and the `{kind, ref, sourceId}` write-back of
+  `scheduler.enabled` that kept 0.9.16 able to read what a newer release wrote (0.10 writes plain refs, still reads the
+  object form). A config with a retired source key now fails to load with one message naming `akm migrate apply` under
+  akm 0.9.x; a legacy `extraParams` key is refused with the first-class field to set. Kept, because 0.9.15 or 0.9.16
+  wrote them: scheduler adoption for a config with no `scheduler.enabled`, the `{kind, ref, sourceId}` reader, and the
+  irVersion 5 frozen-plan reader (there was no separate irVersion 4 reader to remove). `akm migrate apply` and
+  `akm migrate status` are unchanged for 0.9.15 and later data; the task-source migrator moved to
+  `scripts/akm-migrate/migrate/`. See `STABILITY.md` and `docs/architecture/persisted-data-compat.md`.
 - **The `quick`, `reflect-distill`, `thorough` and `catchup` built-in improve strategies, and the `akm-improve-frequent`
   and `akm-improve-catchup` task templates (#1130).** Measured (nightly eval, n=3, `gpt-5.6-terra` and `qwen3.8-27b`):
   `quick` solved 0.76 / 0.75 items against `default`'s 0.92 / 0.89, `reflect-distill` 0.78 / 0.77, and `thorough` (the

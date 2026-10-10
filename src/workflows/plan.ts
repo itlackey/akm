@@ -24,7 +24,7 @@ import type { ResolvedExecutionRequestV1 } from "../execution/resolved-request";
 import type { LlmInvocationOverrides } from "../integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
-/** Stored plans record this; earlier releases wrote 4 and 5, which still decode. */
+/** Stored plans record this; 0.9.15 and 0.9.16 wrote 5, which still decodes (the 0.9.15 floor, #1091). */
 export const WORKFLOW_PLAN_VERSION = 6 as const;
 
 /** A 1-indexed inclusive line span in a workflow source file. */

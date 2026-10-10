@@ -6,11 +6,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import { isBundleSlug, parseBundleRef } from "../asset/asset-ref";
+import { isBundleSlug } from "../asset/asset-ref";
 import { deriveBundleId } from "../bundle-id";
 import { isRecord, resolveStashDir } from "../common";
 import { ConfigError } from "../errors";
-import { liftLegacyEngineExtraParams } from "../extra-params";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
 import {
   acquireConfigLock,
@@ -40,7 +39,6 @@ import type {
 } from "./config-types";
 import { resolveSchemaAt } from "./config-walker";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-import { migrateLegacySourceShape } from "./legacy-source-shape-shim";
 import { isApiKeyReference, SECRET_STORE_REFERENCE_PATTERN } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
@@ -161,18 +159,16 @@ export function loadUserConfig(): AkmConfig {
  * Run the per-file config pipeline every raw config object goes through
  * before it is either validated (the local/top-level file) or merged in as
  * an `extends` base: JSONC parse already done by the caller, then the
- * `configVersion` read ({@link readConfigVersion}), then the legacy
- * `stashDir`/`sources[]`/`installed[]` shim, then the legacy `extraParams`
- * lift (#852). Unknown keys are not an error: the schema drops them in
- * memory. Shared by {@link parseAndValidateConfigText} (the local file) and
- * {@link resolveExtendsChain} (each base in the chain) so a fleet-shared base
- * config can carry its own `configVersion` / legacy shape independently of
+ * `configVersion` read ({@link readConfigVersion}). Unknown keys are not an
+ * error: the schema drops them in memory. A shape older than 0.9.15 is not
+ * converted here; it fails validation with a message naming `akm migrate
+ * apply` under akm 0.9.x. Shared by {@link parseAndValidateConfigText} (the
+ * local file) and {@link resolveExtendsChain} (each base in the chain) so a
+ * fleet-shared base config can carry its own `configVersion` independently of
  * the file that extends it.
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  const versioned = readConfigVersion(parseConfigText(text, sourcePath), sourcePath);
-  const parsedRaw = migrateLegacySourceShape(versioned, sourcePath);
-  return liftExtraParamsOrThrow(parsedRaw, sourcePath);
+  return readConfigVersion(parseConfigText(text, sourcePath), sourcePath);
 }
 
 /**
@@ -192,40 +188,6 @@ function readConfigVersion(raw: Record<string, unknown>, sourcePath?: string): R
     );
   }
   return { ...raw, configVersion: CURRENT_CONFIG_VERSION };
-}
-
-/**
- * #852 (following #815): a config still using legacy `extraParams` keys —
- * e.g. `reasoning_effort`, a documented 0.9.1 workaround — needs to be
- * rewritten onto the first-class engine field they now shadow. This used
- * to happen silently, in memory, on every load; that ran forever and never
- * converged. The lift itself is now `akm migrate apply`'s job (see
- * scripts/akm-migrate/migrate/config-extra-params.ts) and persists to disk, so a
- * config that has not been migrated yet fails closed here instead of
- * silently drifting from what's on disk.
- */
-function liftExtraParamsOrThrow(parsedRaw: Record<string, unknown>, sourcePath?: string): Record<string, unknown> {
-  const where = sourcePath ? ` at ${sourcePath}` : "";
-  const { config: liftedConfig, lifted, conflicts } = liftLegacyEngineExtraParams(parsedRaw);
-  if (conflicts.length > 0) {
-    const lines = conflicts
-      .map(
-        (c) =>
-          `  - engines.${c.engine}.extraParams.${c.key} (${JSON.stringify(c.extraParamsValue)}) conflicts with engines.${c.engine}.${c.field} (${JSON.stringify(c.fieldValue)})`,
-      )
-      .join("\n");
-    throw new ConfigError(
-      `Invalid config${where}: extraParams and the first-class field disagree:\n${lines}\n\nEach extraParams key above has a first-class equivalent and akm will not guess which value you meant — remove the extraParams entry once the field carries the value you want.`,
-      "INVALID_CONFIG_FILE",
-    );
-  }
-  if (lifted.length > 0) {
-    warnOnce(
-      `config:extra-params-lift${sourcePath ? `:${sourcePath}` : ""}`,
-      `Config${where} uses deprecated extraParams keys with first-class equivalents — auto-lifted in memory:\n  - ${lifted.join("\n  - ")}\n\nRun \`akm migrate apply\` to rewrite the config file and silence this warning.`,
-    );
-  }
-  return liftedConfig;
 }
 
 /**
@@ -883,9 +845,9 @@ export interface ConfigFileNormalization {
 
 /**
  * The migrator's one config step. The reader already tolerates every shape
- * akm has written (`configVersion` read as current, legacy source layout,
- * `extraParams` lift, unknown keys dropped); this writes that current shape back to
- * `config.json` — the same body `mutateConfig` writes — so the tolerance
+ * 0.9.15 and later wrote (`configVersion` read as current, 0.9.16
+ * `{kind, ref, sourceId}` scheduler entries, unknown keys dropped); this
+ * writes that current shape back to `config.json` — the same body `mutateConfig` writes — so the tolerance
  * becomes durable. Reports without writing unless `apply` is set.
  */
 export function normalizeConfigFile(configPath: string, options: { apply: boolean }): ConfigFileNormalization {
@@ -896,7 +858,7 @@ export function normalizeConfigFile(configPath: string, options: { apply: boolea
     const localRaw = runConfigFilePipeline(text, configPath);
     const current = buildEffectiveConfig(localRaw, configPath);
     const next = validateCompleteConfig({ ...current, configVersion: CURRENT_CONFIG_VERSION });
-    const body = withSchedulerOnDisk(configWriteBody(localRaw, current, next) as Record<string, unknown>, next);
+    const body = configWriteBody(localRaw, current, next) as Record<string, unknown>;
     for (const keyPath of unknownConfigKeyPaths(body)) deleteConfigPath(body, keyPath);
     // `improve.strategies["graph-refresh"]` is schema-valid (any name is a
     // legal custom-strategy key), so it never reaches the unknown-key sweep
@@ -982,8 +944,6 @@ export async function mutateConfigWithPrecommit<T>(
   }
 }
 
-const UNBOUND_SCHEDULER_SOURCE_ID = `sha256:${"0".repeat(64)}`;
-
 /**
  * The source identity 0.9.16 bound a scheduler grant to: the configured
  * bundle's source id, or the implicit `AKM_BUNDLE_DIR` stash's. `undefined`
@@ -999,41 +959,6 @@ export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): strin
   } catch {
     return undefined;
   }
-}
-
-/**
- * `scheduler.enabled` is a list of refs in memory but is written in the
- * `{kind, ref, sourceId}` shape 0.9.16 reads, so that release still runs
- * against a config this one wrote (the upgrade rehearsal's read-back). This
- * release reads either shape; the object form can go once no supported
- * release is strict about it.
- */
-function schedulerEnabledOnDisk(config: AkmConfig): unknown[] | undefined {
-  const enabled = config.scheduler?.enabled;
-  if (enabled === undefined) return undefined;
-  return enabled.map((ref) => {
-    let bundle: string | undefined;
-    let conceptId = "";
-    try {
-      const parsed = parseBundleRef(ref);
-      bundle = parsed.bundle;
-      conceptId = parsed.conceptId;
-    } catch {
-      return ref;
-    }
-    return {
-      kind: conceptId.startsWith("workflows/") ? "workflow" : "task",
-      ref,
-      sourceId:
-        (bundle !== undefined ? schedulerSourceIdFor(config, bundle) : undefined) ?? UNBOUND_SCHEDULER_SOURCE_ID,
-    };
-  });
-}
-
-function withSchedulerOnDisk(body: Record<string, unknown>, config: AkmConfig): Record<string, unknown> {
-  const onDisk = schedulerEnabledOnDisk(config);
-  if (onDisk === undefined || !isPlainConfigObject(body.scheduler)) return body;
-  return { ...body, scheduler: { ...body.scheduler, enabled: onDisk } };
 }
 
 /**
@@ -1104,7 +1029,7 @@ export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknow
     }
   }
 
-  return withSchedulerOnDisk(sanitized, config);
+  return sanitized;
 }
 
 export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {

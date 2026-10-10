@@ -6,9 +6,10 @@
  * Reading a run row's frozen plan: the ONE plan decoder and its tolerant
  * row-level wrapper.
  *
- * {@link decodeWorkflowPlan} accepts every plan shape a release has stored —
- * irVersion 4 and 5 (with their `sourceReadSet` and host-identity fields) as
- * well as the current one — and keeps keys it does not know rather than
+ * {@link decodeWorkflowPlan} accepts every plan shape a release at or above
+ * the 0.9.15 floor has stored — irVersion 5 (with its `sourceReadSet` and
+ * host-identity fields, which 0.9.15 and 0.9.16 wrote) as well as the current
+ * one — and keeps keys it does not know rather than
  * refusing them. It rejects only a plan it cannot run: no steps, a unit with
  * no frozen target, a request that does not decode. `plan_ir_version` and
  * `plan_hash` are informational columns: neither gates execution. A plan that

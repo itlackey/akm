@@ -239,72 +239,18 @@ describe("loadConfig", () => {
     expect(warnings.some((w) => w.includes("stashes") && w.includes("retired"))).toBe(true);
   });
 
-  test("folds the retired `sources[]` key into bundles, dropping entries this shim does not recognize", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        sources: [
-          { type: "openviking", url: "https://ov.example.com", name: "my-ov" },
-          { type: "filesystem", path: "/keep", name: "keep" },
-        ],
-      }),
+  // Older than the 0.9.15 floor: 0.10 does not convert these, it refuses them
+  // with one message naming `akm migrate apply` under akm 0.9.x (#1091).
+  test.each([
+    ["sources", [{ type: "filesystem", path: "/keep", name: "keep" }]],
+    ["installed", [{ id: "npm:left-pad", source: "npm", ref: "npm:left-pad" }]],
+    ["stashDir", "/legacy-stash"],
+  ])("refuses the pre-0.9 `%s` key, naming akm migrate apply under akm 0.9.x", (key, value) => {
+    writeRawConfig(getConfigPath(), JSON.stringify({ configVersion: "0.9.0", [key]: value }));
+
+    expect(() => loadConfig()).toThrow(
+      new RegExp(`${key}: .*predates akm 0\\.9\\.15.*akm migrate apply.* with akm 0\\.9\\.x`),
     );
-
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect(config.bundles).not.toHaveProperty("my-ov");
-      expect(config.bundles?.keep).toMatchObject({ path: "/keep", writable: true });
-      expect(config.defaultBundle).toBe("keep");
-      expect((config as unknown as Record<string, unknown>).sources).toBeUndefined();
-    });
-    expect(warnings.some((w) => w.includes("sources") && w.includes("akm migrate apply"))).toBe(true);
-  });
-
-  test("drops the retired `installed[]` key (no 0.9 equivalent) instead of failing config load", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        installed: [
-          {
-            id: "npm:left-pad",
-            source: "npm",
-            ref: "npm:left-pad",
-            artifactUrl: "https://registry.npmjs.org/left-pad/-/left-pad-1.3.0.tgz",
-            stashRoot: "/tmp/left-pad",
-            cacheDir: "/tmp/cache",
-            installedAt: "2026-05-01T00:00:00.000Z",
-            writable: true,
-          },
-        ],
-      }),
-    );
-
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect((config as unknown as Record<string, unknown>).installed).toBeUndefined();
-    });
-    expect(warnings.some((w) => w.includes("installed") && w.includes("akm migrate apply"))).toBe(true);
-  });
-
-  // `stashDir` becomes the `stash` bundle and the default write target.
-  test("folds the retired `stashDir` key into a `stash` bundle instead of failing config load", () => {
-    writeRawConfig(
-      getConfigPath(),
-      JSON.stringify({
-        configVersion: "0.9.0",
-        stashDir: "/legacy-stash",
-      }),
-    );
-
-    const warnings = captureWarnings(() => {
-      const config = loadConfig();
-      expect(config.bundles?.stash).toMatchObject({ path: "/legacy-stash", writable: true });
-      expect(config.defaultBundle).toBe("stash");
-      expect((config as unknown as Record<string, unknown>).stashDir).toBeUndefined();
-    });
-    expect(warnings.some((w) => w.includes("stashDir") && w.includes("akm migrate apply"))).toBe(true);
   });
 });
 

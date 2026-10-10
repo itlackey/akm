@@ -5,7 +5,6 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { migrateLegacySourceShape } from "./config/legacy-source-shape-shim";
 import { ConfigError } from "./errors";
 import { getConfigPath, getDefaultStashDir, getRegistryCacheDir, getRegistryIndexCacheDir } from "./paths";
 
@@ -309,7 +308,7 @@ function readStashDirFromConfig(): string | undefined {
     // STASH_DIR_NOT_FOUND despite a perfectly good config.
     const parsed = JSON.parse(stripJsonComments(text));
     if (typeof parsed !== "object" || parsed === null) return undefined;
-    const raw = migrateLegacySourceShape(parsed as Record<string, unknown>, configPath);
+    const raw = parsed as Record<string, unknown>;
     // 0.9.0 config-shape cutover (spec §10.1): the primary stash is the
     // `defaultBundle`'s filesystem `path`. Read it directly (no config module
     // import) so the primary-stash location survives the stashDir → bundles
