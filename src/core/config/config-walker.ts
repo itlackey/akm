@@ -38,14 +38,14 @@ type Path = string[];
  */
 function parsePath(dotted: string): Path {
   if (!dotted) {
-    throw new UsageError("Config key is required.", "INVALID_FLAG_VALUE", unknownKeyHint(""));
+    throw new UsageError("Config key is required.", "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   const segments = dotted.split(".");
   if (segments.some((s) => !s)) {
     throw new UsageError(
       `Invalid config key "${dotted}": empty segment between dots.`,
       "INVALID_FLAG_VALUE",
-      unknownKeyHint(dotted),
+      unknownKeyHint(),
     );
   }
   return segments;
@@ -165,7 +165,7 @@ export function configGet(config: Record<string, unknown>, dotted: string): unkn
   const path = parsePath(dotted);
   const schema = resolveSchemaAt(path, config);
   if (!schema) {
-    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
+    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   let cursor: unknown = config;
   for (const segment of path) {
@@ -305,7 +305,7 @@ export function configUnset(config: Record<string, unknown>, dotted: string): Re
   // Validate the path resolves to a real schema field (so typos don't no-op).
   const schema = resolveSchemaAt(path, config);
   if (!schema) {
-    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint(dotted));
+    throw new UsageError(`Unknown config key: ${dotted}`, "INVALID_FLAG_VALUE", unknownKeyHint());
   }
   return unsetPath(config, path);
 }
@@ -512,27 +512,9 @@ function unsetPath(config: Record<string, unknown>, path: Path): Record<string, 
 
 // ── Hint generation (#460) ──────────────────────────────────────────────────
 
-/**
- * Per-key "use X instead" guidance for config keys retired before the 0.9
- * cutover, keyed on the first dotted-path segment. Mitigation item 3: the
- * generic "valid top-level keys" hint doesn't tell a pre-0.9 user what
- * replaced the key they typed — this does.
- */
-const RETIRED_KEY_HINTS: Record<string, string> = {
-  stashDir: "stashDir was removed in 0.9; get the stash path from `akm config path --all` or `akm info`.",
-  sources: "sources is not supported; configure `bundles` instead.",
-  installed: "installed is not supported; configure `bundles` instead.",
-  wikiName: "the wiki subsystem was removed in 0.9; wikis are ordinary knowledge assets now — see `akm import`.",
-  wiki: "the wiki subsystem was removed in 0.9; wikis are ordinary knowledge assets now — see `akm import`.",
-  llm: "llm was replaced by named engines configuration in 0.9; configure `engines` instead.",
-};
-
-export function unknownKeyHint(attempted: string): string {
+export function unknownKeyHint(): string {
   const keys = listTopLevelConfigKeys();
-  const generic = `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, engines.<name>.model).`;
-  const firstSegment = attempted.split(".")[0] ?? "";
-  const retiredHint = RETIRED_KEY_HINTS[firstSegment];
-  return retiredHint ? `${retiredHint} ${generic}` : generic;
+  return `Valid top-level keys: ${keys.join(", ")}. Use dotted paths for nested values (e.g. embedding.endpoint, engines.<name>.model).`;
 }
 
 // ── Re-exports for the CLI ──────────────────────────────────────────────────
