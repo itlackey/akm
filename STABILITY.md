@@ -213,9 +213,8 @@ enumeration of the whole `proposal` noun group.
   fetch**: a registered renderer fires on the shape of the result (`akm health
   --report` carries the report dataset in the envelope, so the same data is
   available as JSON), never on the format alone.
-  `--detail` is verbosity only (`brief|normal|full`);
-  `--shape` (`human|agent|summary`) is the output-projection axis (see
-  Experimental). A small set of commands is **format-exempt** because their
+  `--detail` is `brief|normal|full` (verbosity) or `agent` (the projection of
+  `search`, `curate` and `show`; see Experimental). A small set of commands is **format-exempt** because their
   output is not a result envelope at all: `completions` (shell script source),
   child-process passthrough in `env run` / `secret run`, a bare-path payload
   from `env path`, and document payloads from `help` (bare and
@@ -383,10 +382,10 @@ for scripted use.
   them.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
-- **`--shape agent` and `--shape summary`** — the output-projection axis
-  (`--shape human|agent|summary`). `summary` is implemented only on
-  `akm show`; `agent` is implemented on `search`, `show`, and `curate`.
-  Coverage will expand. `--detail` is verbosity only (`brief|normal|full`).
+- **`--detail agent`** — the agent projection, implemented on `search`, `show`,
+  and `curate` (other commands ignore it). Coverage will expand. It replaces
+  `--shape agent`; `--shape` (and `--shape summary`, which only `show` had) is
+  gone in 0.10 and is an unknown flag.
 - **Protected env & secret values** — `env` (a whole `.env` group; key names
   are surfaced for discoverability, values never are) and `secret` (a single
   sensitive value). Values are never written to stdout, the index, or

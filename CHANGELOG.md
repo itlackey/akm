@@ -17,7 +17,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   upgrading is recommended; a binary of an unknown major is driven as OpenCode 2 with a warning, never refused.
   `akm upgrade` and `akm health` know the `akm-opencode-v2` plugin beside `akm-opencode`.
 - **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format })` returns
-  exactly the stdout of `akm --shape agent -q curate …`, computed in-process, and rejects with the CLI's message and
+  exactly the stdout of `akm --detail agent -q curate …`, computed in-process, and rejects with the CLI's message and
   `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
   `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
   [`docs/reference/api.md`](docs/reference/api.md).
@@ -156,6 +156,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--full` for the complete one). `akm hints` is the one command: the complete guide by default, `--detail brief` for the
   short one (`akm help agents >> AGENTS.md` becomes `akm hints --detail brief >> AGENTS.md`). `akm help agents` is now an
   ordinary unknown command.
+- **`--shape` (#1091).** It acted on three commands (`search`, `curate`, `show`; `summary` only on `show`) while about 55
+  others ignored it and `--detail`. `--detail agent` replaces `--shape agent`, and `--detail` now takes
+  `brief|normal|full|agent`. `--shape summary` had no caller; use `--detail brief` on `show`. `--shape` is an unknown flag
+  (exit 2, `UNKNOWN_FLAG`) with no alias, so callers must change in step: the akm plugins, akm-eval's retrieval,
+  skillret and longmemeval benchmarks, and `akm help agents`-style scripts. `INVALID_SHAPE_VALUE` is gone, and
+  `INVALID_DETAIL_VALUE` now lists `agent`. The CLI reference no longer claims `--shape summary` errors outside `show`
+  (it warned and fell back to `agent`).
 
 ### Fixed
 

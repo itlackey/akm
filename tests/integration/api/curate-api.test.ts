@@ -9,7 +9,7 @@
  * equivalence baseline and `curate()` opens the real index database.
  *
  * Pins: (1) `curate()` returns byte-for-byte the stdout of
- * `akm --shape agent -q curate … --format <fmt>` on the same sandbox stash, for
+ * `akm --detail agent -q curate … --format <fmt>` on the same sandbox stash, for
  * text and json; (2) it rejects with the CLI's message and `code`; (3) calling
  * it repeatedly in one long-lived process sees config edits on disk, leaks no
  * file descriptors, and leaves quiet/verbose/stdout/env/cwd as the host had them.
@@ -38,7 +38,7 @@ function runCli(args: string[]): { status: number | null; stdout: string; stderr
 }
 
 function cliCurate(query: string, flags: string[] = []) {
-  return runCli(["--shape", "agent", "-q", "curate", query, ...flags]);
+  return runCli(["--detail", "agent", "-q", "curate", query, ...flags]);
 }
 
 function configPath(): string {

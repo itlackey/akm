@@ -810,9 +810,9 @@ grep -qi '<html' "$AKM_SANDBOX/info.html"
 ### 8.3 Shape, detail, and output destination
 
 - [ ] **[CORE]** Brief/normal/full increase detail without identity drift.
-- [ ] **[CORE]** Summary succeeds only on show; all other commands reject it
-      before side effects with exit `2`, `INVALID_SHAPE_VALUE`.
-- [ ] **[LOCAL]** Agent shape keeps action fields and strips non-action metadata.
+- [ ] **[CORE]** `--shape` is an unknown flag on every command: it exits `2`,
+      `UNKNOWN_FLAG`, before side effects.
+- [ ] **[LOCAL]** `--detail agent` keeps action fields and strips non-action metadata.
 - [ ] **[LOCAL]** `show --format md --output <file>` writes file, empty stdout.
 - [ ] **[LOCAL]** Output replacement is atomic; unwritable/directory target does
       not truncate existing content.
@@ -837,7 +837,7 @@ expect_error 1 ASSET_NOT_FOUND show skills/does-not-exist
 expect_error 2 UNKNOWN_FLAG info --totally-bogus
 expect_error 2 INVALID_FORMAT_VALUE info --format xml
 expect_error 2 INVALID_DETAIL_VALUE info --detail maximum
-expect_error 2 INVALID_SHAPE_VALUE search docker --shape summary
+expect_error 2 UNKNOWN_FLAG search docker --shape agent
 expect_error 2 MISSING_REQUIRED_ARGUMENT help migrate
 expect_error 2 INVALID_FLAG_VALUE completions --shell zsh
 ```

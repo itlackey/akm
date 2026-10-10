@@ -145,14 +145,7 @@ describe("completions command", () => {
 
   test("contains flag value completions for --detail", () => {
     expect(script).toContain("--detail)");
-    expect(script).toContain("brief normal full");
-    // `summary` is a --shape value, not a detail level.
-    expect(script).not.toContain("brief normal full summary");
-  });
-
-  test("contains flag value completions for --shape", () => {
-    expect(script).toContain("--shape)");
-    expect(script).toContain("human agent summary");
+    expect(script).toContain("brief normal full agent");
   });
 
   test("contains flag value completions for --type", () => {

@@ -5,7 +5,8 @@
 /**
  * Process-level output mode singleton.
  *
- * Output mode (format + detail + shape) is parsed once at startup from
+ * Output mode (format + detail, and the agent projection `--detail agent`
+ * selects) is parsed once at startup from
  * `process.argv` and the persisted user config. All subsequent `output()`
  * calls read from this in-memory singleton instead of re-scanning argv and
  * re-loading config on every call.
@@ -18,10 +19,13 @@
 import { UsageError } from "../core/errors";
 
 export type OutputFormat = "json" | "yaml" | "text" | "jsonl" | "md" | "html";
-/** Verbosity axis. `--detail` is verbosity ONLY (v1 §3.2). */
+/** Verbosity axis. */
 export type DetailLevel = "brief" | "normal" | "full";
-/** Output-projection axis. `--shape` selects how a result is projected. */
-export type ShapeMode = "human" | "agent" | "summary";
+/**
+ * Output projection. `human` is the default; `--detail agent` selects `agent`
+ * (the token-lean action view, honoured by search/curate/show).
+ */
+export type ShapeMode = "human" | "agent";
 
 export interface OutputMode {
   format: OutputFormat;
@@ -40,8 +44,9 @@ export interface OutputDefaults {
 }
 
 const OUTPUT_FORMATS: OutputFormat[] = ["json", "yaml", "text", "jsonl", "md", "html"];
-const DETAIL_LEVELS: DetailLevel[] = ["brief", "normal", "full"];
-const SHAPE_MODES: ShapeMode[] = ["human", "agent", "summary"];
+/** What `--detail` accepts: a verbosity level, or `agent` for the agent projection. */
+export type DetailValue = DetailLevel | "agent";
+const DETAIL_VALUES: DetailValue[] = ["brief", "normal", "full", "agent"];
 
 function parseOutputFormat(value: string | undefined): OutputFormat | undefined {
   if (!value) return undefined;
@@ -52,21 +57,12 @@ function parseOutputFormat(value: string | undefined): OutputFormat | undefined 
   );
 }
 
-export function parseDetailLevel(value: string | undefined): DetailLevel | undefined {
+export function parseDetailLevel(value: string | undefined): DetailValue | undefined {
   if (!value) return undefined;
-  if ((DETAIL_LEVELS as string[]).includes(value)) return value as DetailLevel;
+  if ((DETAIL_VALUES as string[]).includes(value)) return value as DetailValue;
   throw new UsageError(
-    `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_LEVELS.join("|")}`,
+    `Invalid value for --detail: ${value}. Expected one of: ${DETAIL_VALUES.join("|")}`,
     "INVALID_DETAIL_VALUE",
-  );
-}
-
-function parseShapeMode(value: string | undefined): ShapeMode | undefined {
-  if (!value) return undefined;
-  if ((SHAPE_MODES as string[]).includes(value)) return value as ShapeMode;
-  throw new UsageError(
-    `Invalid value for --shape: ${value}. Expected one of: ${SHAPE_MODES.join("|")}`,
-    "INVALID_SHAPE_VALUE",
   );
 }
 
@@ -120,14 +116,12 @@ export function resolveOutputMode(argv: string[], defaults: OutputDefaults | und
   const format =
     parseOutputFormat(parseFlagValue(argv, "--format")) ?? (defaults?.format as OutputFormat | undefined) ?? "json";
 
-  const rawDetail = parseFlagValue(argv, "--detail");
-  const rawShape = parseFlagValue(argv, "--shape");
-
-  // `--detail` is verbosity only (brief|normal|full); the projection presets
-  // (`summary`/`agent`) and the `--for-agent` boolean were removed in 0.9.0 —
-  // use `--shape`. Unknown `--detail` values fall through to the default.
-  const detail = parseDetailLevel(rawDetail) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
-  const shape: ShapeMode = parseShapeMode(rawShape) ?? "human";
+  // `--detail agent` selects the agent projection; the verbosity then stays at
+  // the configured default (the projection ignores it).
+  const parsedDetail = parseDetailLevel(parseFlagValue(argv, "--detail"));
+  const shape: ShapeMode = parsedDetail === "agent" ? "agent" : "human";
+  const detail =
+    (parsedDetail === "agent" ? undefined : parsedDetail) ?? (defaults?.detail as DetailLevel | undefined) ?? "brief";
   const outputPath = parseFlagValue(argv, "--output");
 
   return { format, detail, shape, ...(outputPath ? { outputPath } : {}) };

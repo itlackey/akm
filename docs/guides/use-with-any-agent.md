@@ -50,7 +50,7 @@ akm show workflows/deploy-to-prod
 akm feedback workflows/deploy-to-prod --positive --reason "Completed without issues"
 ```
 
-**Get refs from search.** Agents should call `akm search --shape agent` or
+**Get refs from search.** Agents should call `akm search --detail agent` or
 `akm curate` to discover refs — not guess them. The `ref` field in search
 results is the stable token to pass to `akm show`. Feedback closes the loop.
 Record `--negative` only when the asset's content is wrong or stale; a note that

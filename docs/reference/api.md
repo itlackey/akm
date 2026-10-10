@@ -23,7 +23,7 @@ function curate(
 ```
 
 - **Result.** Exactly the stdout of
-  `akm --shape agent -q curate <query> [--limit N] [--type T] --format <format>`,
+  `akm --detail agent -q curate <query> [--limit N] [--type T] --format <format>`,
   including the trailing newline, computed in-process. `format` defaults to
   `"json"`, as the CLI does. It runs the same code as the command (argument
   validation, search, ranking, shaping and rendering are shared, not copied), so

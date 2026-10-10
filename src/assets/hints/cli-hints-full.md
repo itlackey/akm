@@ -23,8 +23,7 @@ akm search "team-catalog//"                   # List every item in one bundle
 | `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml`, `md`, `html` | `json` |
-| `--detail` | `brief`, `normal`, `full` | `brief` |
-| `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
+| `--detail` | `brief`, `normal`, `full`, `agent` (`agent`: search, curate and show only) | `brief` |
 
 Ref-prefix queries (a conceptId prefix ending in `/`, optionally bundle-qualified)
 return a deterministic listing, not a relevance ranking. Drop the trailing slash
@@ -425,7 +424,7 @@ akm log --run <run-id>                         # Events for one workflow-engine 
 
 ## Output Control
 
-Result-envelope commands accept `--format`, `--detail`, and `--shape` flags:
+Result-envelope commands accept `--format` and `--detail` flags:
 
 - `--format json` (default) — structured JSON
 - `--format jsonl` — one JSON object per line (streaming-friendly)
@@ -436,9 +435,7 @@ Result-envelope commands accept `--format`, `--detail`, and `--shape` flags:
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
-- `--shape human` (default) — standard projection
-- `--shape agent` — agent-optimized output: strips non-actionable fields
-- `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only `akm show` has a dedicated summary projection — elsewhere it falls back to `agent` with a warning
+- `--detail agent` — agent-optimized output on `search`, `curate` and `show`: strips non-actionable fields (other commands ignore it)
 
 Run `akm help <command>` or `akm <command> -h` for per-command help. Run
 `akm --help` for the sectioned command overview.

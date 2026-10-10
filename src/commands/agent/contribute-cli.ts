@@ -130,7 +130,7 @@ export const lintCommand = defineCommand({
   args: {
     // R-051: `lint` is a raw `defineCommand` (not `defineJsonCommand`), so it
     // does not get `GLOBAL_OUTPUT_ARGS` for free. `--format`/`--detail`/
-    // `--shape`/`--output` already parsed correctly here (this command has no
+    // `--output` already parsed correctly here (this command has no
     // positional for a stray value to fall into), so this is purely a
     // `--help` visibility / consistency fix, not a behavior change.
     ...GLOBAL_OUTPUT_ARGS,

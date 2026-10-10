@@ -127,7 +127,7 @@ describe("output baseline", () => {
 
     // QA #7: path and editable are now always projected in JSON shape.
     // R-020: canonical `ref` is now always projected too, not just under
-    // `--shape agent` — every show shape (human/summary/agent) carries it.
+    // `--detail agent` — every show shape (human/summary/agent) carries it.
     expect(Object.keys(json).sort()).toEqual([
       "action",
       "description",
@@ -198,22 +198,5 @@ describe("output baseline", () => {
     expect(json.schemaVersion).toBe(1);
     expect(Object.keys(json)).toContain("path");
     expect(Object.keys(json)).toContain("editable");
-  });
-
-  // ── WS2: --shape summary on show projects the compact metadata set ──────────
-  test("show --shape summary returns compact metadata (no content/template body)", async () => {
-    const stashDir = makeTempDir("akm-output-stash-");
-    writeFile(
-      path.join(stashDir, "commands", "release.md"),
-      "---\ndescription: Release\n---\nRun release {{version}}\n",
-    );
-
-    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=summary"]);
-    const json = JSON.parse(output) as Record<string, unknown>;
-    expect(json.type).toBe("command");
-    expect(json.name).toBe("release");
-    // summary omits the heavyweight template/content body.
-    expect(json).not.toHaveProperty("template");
-    expect(json).not.toHaveProperty("content");
   });
 });

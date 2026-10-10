@@ -14,7 +14,7 @@ whether a script, a workflow, or a skill covers this, so it starts broad,
 narrows to a ref, and loads that ref's content:
 
 ```sh
-akm curate "deploy the app to staging" --shape agent
+akm curate "deploy the app to staging" --detail agent
 # → ranked shortlist; top hit: {"type":"script","ref":"scripts/deploy.sh","score":0.91,...}
 
 akm show scripts/deploy.sh
@@ -40,7 +40,7 @@ curate when you know what you're trying to do.
 (BM25) and semantic (vector) matches fused into one list:
 
 ```sh
-akm search "deploy" --type script --shape agent
+akm search "deploy" --type script --detail agent
 # → [{"type":"script","name":"deploy.sh","ref":"scripts/deploy.sh","score":0.0328,...}]
 ```
 
@@ -53,7 +53,7 @@ akm curate "review an architecture proposal" --type skill
 # → ranked shortlist with akm show skills/code-review as the top follow-up
 ```
 
-Use `--shape agent` on either command to get the `ref`/`path`/`editable`
+Use `--detail agent` on either command to get the `ref`/`path`/`editable`
 fields an agent needs to act on a hit. See [CLI Reference](../reference/cli.md)
 for the full flag tables and exact output-field lists per `--detail` level.
 
@@ -145,7 +145,7 @@ its ranking) and does not trigger a rewrite.
 
 ## 7. Reference links
 
-- [CLI Reference](../reference/cli.md) — full `--detail`/`--shape` flag
+- [CLI Reference](../reference/cli.md) — full `--detail` flag
   semantics, complete flag tables, and exact output-field lists for `search`,
   `curate`, `show`, and `index`
 - [Architecture](../architecture/architecture.md) — ranking and search
