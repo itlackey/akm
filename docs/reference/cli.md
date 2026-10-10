@@ -828,7 +828,7 @@ Subcommands:
 
 | Subcommand | Description |
 | --- | --- |
-| `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` (requires `--from` or `--reset`) overwrites; `--print` prints the template that would be written instead of writing it |
+| `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
 | `run <run-id\|ref>` | Stable canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
 | `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
@@ -942,7 +942,7 @@ when the cwd is inside it, otherwise the cwd itself. In practice this means:
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
 akm workflow create ship-release --from ./ship-release.md --force
-akm workflow create ship-release --force --reset
+akm workflow create ship-release --force
 akm workflow create ship --path release          # writes workflows/release/ship.md
 ```
 
@@ -950,13 +950,8 @@ akm workflow create ship --path release          # writes workflows/release/ship
 | --- | --- |
 | `--path <dir>` | Relative subdirectory under `workflows/` to place the workflow in. The filename comes from `<name>`. |
 | `--from <file>` | Import and validate a Markdown workflow from an existing file |
-| `--force` | Overwrite an existing workflow. Requires `--from` or `--reset`. |
-| `--reset` | Explicitly replace an existing workflow with a fresh template (use with `--force`) |
+| `--force` | Overwrite an existing workflow: with `--from`, replace its content from that file; alone, replace it with a fresh template |
 | `--print` | Print the Markdown template without creating anything |
-
-`--force` requires either `--from <file>` (replace from a source file) or
-`--reset` (explicitly acknowledge you are overwriting in place). Without one of
-these, `--force` is rejected to prevent silent template overwrites.
 
 `<name>` itself must be **flat** — `^[a-z0-9][a-z0-9._/-]*$` after combining
 with `--path`, but the bare `--name` positional is rejected if it contains a

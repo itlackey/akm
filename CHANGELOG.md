@@ -122,6 +122,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
     (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
 
+- **`akm workflow create --reset` (#1091).** Declared since 0.9.12 as a deprecated alias of `--force`, never read.
+  `--force` alone replaces a workflow with a fresh template; `--force --from <file>` replaces it from the file.
+
 ### Fixed
 
 - **Distill's lesson update (#1139) is judged as the lesson it makes, and costs a call only for a lesson that is named.**
