@@ -3105,8 +3105,16 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     expect(result).toMatchObject({ outcome: "skipped", skipReason: "nothing_reusable" });
     expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
   });
-  test("a NONE whose reason names no lesson makes no update call, however near a lesson is", async () => {
+  /** A second, unrelated lesson near the memory, so that no lesson is the only one. */
+  function addSecondLesson(fixture: Fixture): void {
+    const other = path.join(fixture.stash, "lessons", "other-lesson.md");
+    fs.writeFileSync(other, "---\ndescription: Another rule\nwhen_to_use: Another trigger\n---\n\nSomething else.\n");
+    fixture.related.push({ ref: "lessons/other-lesson", content: "Something else.", path: other });
+  }
+
+  test("a NONE whose reason names no lesson, with several lessons near, makes no update call", async () => {
     const fixture = setup();
+    addSecondLesson(fixture);
     const { result, prompts } = await run(fixture, {
       writer: noneNaming("a skill"),
       update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
@@ -3116,8 +3124,20 @@ describe("akmDistill — a memory whose lesson repeats an existing lesson (#1090
     expect(prompts.some((p) => p.includes("Extend the existing one"))).toBe(false);
   });
 
-  test("a judge that rejects a repeat without naming a lesson makes no update call", async () => {
+  test("a NONE whose reason names no lesson still updates the only lesson near the memory", async () => {
     const fixture = setup();
+    const { result } = await run(fixture, {
+      writer: noneNaming("an existing note"),
+      update: updateWith(`${EXISTING_BODY}\n${NEW_FACT}`),
+      judge: [ADDITION_OK],
+    });
+
+    expect(result).toMatchObject({ outcome: "queued", proposalRef: "lessons/deploy-retries", updatesExisting: true });
+  });
+
+  test("a judge that rejects a repeat without naming a lesson, with several lessons near, makes no update call", async () => {
+    const fixture = setup();
+    addSecondLesson(fixture);
     const prompts: string[] = [];
     const result = await akmDistill({
       ref: MEMORY_REF,
