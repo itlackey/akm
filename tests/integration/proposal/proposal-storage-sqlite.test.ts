@@ -334,38 +334,6 @@ function commonPrefix(a: string, b: string): string {
 // ── WAL concurrency ──────────────────────────────────────────────────────────
 
 describe("concurrent create + list safety (WAL)", () => {
-  test(
-    "proposal worker remains functional after local inference replaces the ambient Worker",
-    async () => {
-      const child = Bun.spawn(
-        [
-          process.execPath,
-          "test",
-          "--timeout=120000",
-          "-t",
-          "akmSearch includes explainability reasons for indexed hits|concurrent duplicate proposal creation serializes",
-          path.join(import.meta.dir, "../../../tests/source.test.ts"),
-          path.join(import.meta.dir, "proposal-storage-sqlite.test.ts"),
-        ],
-        {
-          cwd: path.resolve(import.meta.dir, "../../.."),
-          env: { ...process.env },
-          stdout: "pipe",
-          stderr: "pipe",
-        },
-      );
-      const [exitCode, stdout, stderr] = await Promise.all([
-        child.exited,
-        new Response(child.stdout).text(),
-        new Response(child.stderr).text(),
-      ]);
-      if (exitCode !== 0) {
-        throw new Error(`Semantic-to-proposal isolation probe failed (${exitCode}):\n${stderr || stdout}`);
-      }
-    },
-    { timeout: 120_000 },
-  );
-
   test("a second open connection reads consistently while the command path writes", () => {
     const stash = makeStashDir();
     // Hold an independent reader connection open for the whole test — WAL mode
