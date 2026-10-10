@@ -34,14 +34,8 @@ import { akmShowUnified } from "./show";
  * rejected — the command then runs against the DEFAULT `--from` value
  * (local) instead of the source the caller named, with exit 0 and no error.
  * Reject it explicitly instead.
- *
- * Exported so `akm task list` (`../tasks/tasks-cli.ts`, #951) — a pure
- * delegating alias for `akm search --type task` — applies the identical
- * guard rather than a second copy of it; a task-list-scoped `--source` must
- * fail exactly like `search`'s does, not fall through to citty's silent
- * unknown-flag absorption.
  */
-export function rejectRetiredSourceFlag(): void {
+function rejectRetiredSourceFlag(): void {
   if (!getParsedInvocation().hasFlag("--source")) return;
   throw new UsageError(
     "`--source` was renamed to `--from` in 0.9. Use `--from local|registry|all` instead.",

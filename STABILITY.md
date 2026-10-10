@@ -138,7 +138,6 @@ enumeration of the whole `proposal` noun group.
 | `akm task doctor` | Evolving | |
 | `akm task explain` | Evolving | New in 0.9.2; secret-shaped values in provenance output are redacted on a best-effort heuristic basis (not a guarantee). |
 | `akm task validate` | Evolving | New in 0.9.11; read-only, and the only `task` subcommand that takes a bare filesystem path instead of a ref — the file need not belong to any configured bundle. |
-| `akm task list` | Evolving | New in 0.9.15 (#951); a pure delegating alias for `akm search --type task` — same envelope, no separate implementation. |
 
 ## Stable
 

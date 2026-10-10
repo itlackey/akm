@@ -219,7 +219,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     expect(plan.status).toBe("current");
   });
 
-  test("4. core read surfaces succeed: config get, bundle list, info, search, show, task list", async () => {
+  test("4. core read surfaces succeed: config get, bundle list, info, search, show, search --type task", async () => {
     const configGet = await runLauncher(candidateLauncher, ["config", "get", "defaultBundle"], home.env);
     expect(configGet.status, configGet.stderr).toBe(0);
 
@@ -259,7 +259,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
     const show = await runLauncher(candidateLauncher, ["show", ref as string], home.env);
     expect(show.status, show.stderr).toBe(0);
 
-    const taskList = await runLauncher(candidateLauncher, ["task", "list"], home.env);
+    const taskList = await runLauncher(candidateLauncher, ["search", "--type", "task"], home.env);
     expect(taskList.status, taskList.stderr).toBe(0);
   });
 
@@ -411,7 +411,7 @@ describe.skipIf(skipOrigin("previous"))("upgrade rehearsal: candidate against a 
   test("11. read-back: the OLD launcher still works against the candidate-written home", async () => {
     for (const args of [
       ["search", home.searchTerm],
-      ["task", "list"],
+      ["search", "--type", "task"],
       ["bundle", "list"],
     ] as const) {
       const result = await runLauncher(previousLauncher, [...args], home.env);

@@ -3343,15 +3343,14 @@ shell commands. It manages on-disk task definitions under
 (cron / launchd / schtasks). Task source v4 YAML (`version: 4`) is the only
 executable source contract this release accepts; `akm task add` writes v4 —
 see the canonical [Tasks reference](tasks.md). The
-group is `add | enable | disable | run | explain | validate | list | sync | doctor | history | prune`
+group is `add | enable | disable | run | explain | validate | sync | doctor | history | prune`
 — there is no `show` or `remove`; use `akm show tasks/<id>` to inspect one
 task. Use `task enable` / `task disable` for host-local activation; edit the
 file only to change the authored schedule or remove the task.
-`task list` is a delegating alias for `akm search --type task` — both
-spellings return the identical envelope.
+List tasks with `akm search --type task`.
 
 ```sh
-akm task list                                # List tasks (cross-bundle) — alias for `search --type task`
+akm search --type task                       # List tasks (cross-bundle)
 akm show tasks/<id>                          # Inspect one task
 akm task add <id> --schedule "@daily" \     # Register a new task and install it
   --command "akm improve --strategy default"
@@ -3377,13 +3376,6 @@ akm task prune --id ghost,stale --yes       # Remove only the named orphan ids
 this host's scheduler activation), `--force` (overwrite an existing task with
 the same id), and `--rebind` (also point the bundle's installed scheduler rows
 at this akm invocation, as `akm task sync --rebind` does).
-
-`akm task list [<query>] [--limit <n>] [--from local|registry|all]` is a
-pure alias for `akm search --type task` with the query, `--limit`, and
-`--from` flags passed through — same envelope, same `results` alias, no
-second implementation. 0.9.0 removed `task list` as a redundant
-implementation of task listing (see the 0.9.0 CHANGELOG entry); this
-reintroduces only the spelling, not the logic.
 
 `akm task explain <ref> [input flags]` prints a task's declared `inputs:`,
 the values that would actually be supplied (with provenance), the resolved

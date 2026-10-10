@@ -126,6 +126,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--force` alone replaces a workflow with a fresh template; `--force --from <file>` replaces it from the file.
 - **`akm improve --plan` (#1091).** An exact alias of `--dry-run` with no other callers. Use `--dry-run`; it prints the
   same `plan.processes` routing table.
+- **`akm task list` (#1091).** A delegating alias of `akm search --type task` (added in 0.9.15, #951) with no callers
+  in the plugins, akm-eval or OpenPalm. Use `akm search --type task`.
 
 ### Fixed
 
