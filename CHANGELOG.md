@@ -124,6 +124,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **A call recovered by the retry without the schema is one successful call in the usage rows.** The failed schema
+  attempt (`format_ignored` or a 4xx schema rejection) was recorded as a failed call with 0 tokens next to the retry's
+  success, so `akm improve` usage showed e.g. `distill freellm/gpt-oss:120b calls 1 failures 1` beside 17 successes. Only
+  the retry is recorded now; a retry that also fails is still one failure.
 - **Distill's lesson update (#1139) is judged as the lesson it makes, and costs a call only for a lesson that is named.**
   The judge read only the added lines as a standalone lesson, so a single added fact failed `reusable` and no update
   passed (0 of 8 on the akm-eval `lesson-update` class, on two models). It now reads the extended lesson (old body plus

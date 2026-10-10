@@ -215,6 +215,27 @@ describe("chatCompletion usage capture", () => {
     expect(rec?.durationMs).toBeGreaterThanOrEqual(0);
   });
 
+  test("a call recovered by the retry without the schema is one success, not a failure plus a success", async () => {
+    const records: LlmUsageRecord[] = [];
+    setLlmUsageSink((r) => records.push(r));
+    const config = { ...CONFIG, endpoint: "http://format-ignored.local/v1/chat/completions" };
+    let calls = 0;
+
+    const content = await withMockedFetch(
+      () =>
+        chatCompletion(config, [{ role: "user", content: "hi" }], {
+          responseSchema: { type: "object", properties: {} },
+        }),
+      () =>
+        ++calls === 1 ? new Response('{"error":"format_ignored"}', { status: 502 }) : jsonResponse(fullChatResponse()),
+    );
+
+    expect(content).toBe("hello");
+    expect(calls).toBe(2);
+    expect(records.map((r) => r.outcome)).toEqual(["success"]);
+    expect(records[0]?.totalTokens).toBe(20);
+  });
+
   test("absent usage block still records duration + model (token fields omitted)", async () => {
     const records: LlmUsageRecord[] = [];
     setLlmUsageSink((r) => records.push(r));
