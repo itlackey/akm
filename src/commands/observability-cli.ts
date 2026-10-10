@@ -18,8 +18,8 @@
  * ranking's `lessonStrength` contributor is untouched, only the CLI read
  * surface for it goes away.
  *
- * The embedded agent-guide surfaces (`akm hints` and `akm help agents`) live
- * in src/cli.ts, so their loading code is intentionally outside this module.
+ * The embedded agent guide (`akm hints`) lives in src/cli.ts, so its
+ * loading code is intentionally outside this module.
  *
  * The leaf handler's body is a plain `runWithJsonErrors(...) + output(...)`,
  * migrated onto `defineJsonCommand`, which emits the same JSON envelope

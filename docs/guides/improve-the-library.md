@@ -171,7 +171,7 @@ akm proposal diff <id>                          # Preview the change vs. the liv
 
 # Apply or discard
 akm proposal accept <uuid-or-prefix>
-akm proposal accept skills/akm-dream --target team-bundle
+akm proposal accept skills/akm-dream --bundle team-bundle
 akm proposal reject <uuid-or-prefix> --reason "duplicates existing workflow"
 ```
 

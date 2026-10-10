@@ -86,7 +86,7 @@ describe("--supersedes on a git write target", () => {
       sourcePath,
       "--name",
       "new-guide",
-      "--target",
+      "--bundle",
       "team",
       "--supersedes",
       "knowledge/old-guide",

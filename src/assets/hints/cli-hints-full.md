@@ -23,8 +23,7 @@ akm search "team-catalog//"                   # List every item in one bundle
 | `--from` | `local`, `registry`, `all`, or a configured bundle name | `local` |
 | `--limit` | number | `20` |
 | `--format` | `json`, `jsonl`, `text`, `yaml`, `md`, `html` | `json` |
-| `--detail` | `brief`, `normal`, `full` | `brief` |
-| `--shape` | `human`, `agent`, `summary` (`summary` only on `show`) | `human` |
+| `--detail` | `brief`, `normal`, `full`, `agent` (`agent`: search, curate and show only) | `brief` |
 
 Ref-prefix queries (a conceptId prefix ending in `/`, optionally bundle-qualified)
 return a deterministic listing, not a relevance ranking. Drop the trailing slash
@@ -90,7 +89,7 @@ akm import ./doc.md --xref knowledge/auth-flow # Merge provenance xrefs into the
 akm import ./new.md --supersedes knowledge/old # Import a correction AND demote the doc it replaces
 akm import - --name scratch-notes < notes.md   # Import stdin as a knowledge doc
 akm import https://example.com/docs/auth       # Fetch one URL and import it as knowledge
-akm import ./doc.md --target my-other-bundle    # Route import to a named writable bundle source
+akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
 akm workflow create ship-release               # Create a workflow asset in the bundle
 akm lint --type workflows                      # Parse and compile every workflow source; list every error
 akm workflow run workflows/ship-release        # Start or resume and execute the workflow
@@ -309,7 +308,6 @@ akm config list                               # Show current config
 akm config get <key>                          # Read a value
 akm config set <key> <value>                  # Set a value
 akm config unset <key>                        # Remove a key
-akm config path --all                         # Show all config paths
 ```
 
 ## Other Commands
@@ -330,8 +328,7 @@ akm upgrade --check                           # Report pending CLI and plugin up
 akm upgrade --next                            # Follow prereleases (@next); OpenCode needs "akm-opencode@next" (or "akm-opencode-v2@next" on OpenCode 2) in its plugin list
 akm help migrate 0.6.0                        # Print migration notes for a release (or: latest)
 akm help bundle                               # Print options and subcommands for one command
-akm help agents --full                        # Print this reference
-akm hints                                     # Print this complete agent guide
+akm hints                                     # Print this complete agent guide (--detail brief for the short one)
 akm completions                               # Print bash completion script
 akm completions --install                     # Install completions
 ```
@@ -350,7 +347,7 @@ akm proposal show <id>                                  # Render the proposal bo
 akm proposal diff <ref-or-id>                           # Diff by ref, UUID, or 8-char prefix
 akm proposal diff skills/akm-dream                      # Diff by asset ref
 akm proposal accept 7c115132                            # Accept by UUID prefix
-akm proposal accept <id> --target team-bundle            # Accept to a named writable bundle source
+akm proposal accept <id> --bundle team-bundle            # Accept to a named writable bundle source
 akm proposal reject skills/my-skill --reason "not ready" # Reject by asset ref
 akm proposal reject <id> --reason "..."                 # Archive with a reason
 akm proposal reopen <id> --reason "..."                 # Undo a rejection: back to pending (refused if the target changed)
@@ -419,7 +416,7 @@ akm log --run <run-id>                         # Events for one workflow-engine 
 
 ## Output Control
 
-Result-envelope commands accept `--format`, `--detail`, and `--shape` flags:
+Result-envelope commands accept `--format` and `--detail` flags:
 
 - `--format json` (default) — structured JSON
 - `--format jsonl` — one JSON object per line (streaming-friendly)
@@ -430,9 +427,7 @@ Result-envelope commands accept `--format`, `--detail`, and `--shape` flags:
 - `--detail brief` (default) — compact output
 - `--detail normal` — adds tags, refs, origins
 - `--detail full` — includes scores, paths, timing, debug info
-- `--shape human` (default) — standard projection
-- `--shape agent` — agent-optimized output: strips non-actionable fields
-- `--shape summary` — metadata only (no content/template/prompt), under 200 tokens; only `akm show` has a dedicated summary projection — elsewhere it falls back to `agent` with a warning
+- `--detail agent` — agent-optimized output on `search`, `curate` and `show`: strips non-actionable fields (other commands ignore it)
 
 Run `akm help <command>` or `akm <command> -h` for per-command help. Run
 `akm --help` for the sectioned command overview.

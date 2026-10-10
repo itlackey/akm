@@ -245,7 +245,7 @@ akm-migrate apply
 
 `akm migrate status`/`apply` (under the `akm` CLI) are a thin wrapper over
 this same executable — same plan, same exit codes. Reach for `akm-migrate`
-directly when you don't want `akm`'s `--format`/`--shape`/`--detail` output
+directly when you don't want `akm`'s `--format`/`--detail` output
 handling in the way, e.g. a shell script that just wants the raw JSON line
 on stdout and a plain exit code.
 

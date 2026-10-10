@@ -156,8 +156,9 @@ Frontmatter is the standard AKM asset envelope (`type`, `description`, `tags`,
 `when_to_use`, `xrefs`, `updated`/`timestamp`, and the OKF v0.2 trust/lifecycle
 families) plus the orchestration keys:
 
-- `params` — name → `{ type, description }` (JSON-Schema-typed, unlike a bare
-  description string).
+- `params` — name → `{ type, description, default }` (JSON-Schema-typed, unlike a bare
+  description string). A param the run does not supply takes its `default:`; an explicit
+  value wins. Params are never required.
 - `defaults` — run-level dispatch defaults (`engine`, `model`, `llm`,
   `timeout`, `on_error`), overridable per unit. `llm:` tuning reaches an engine
   of any kind, and a document-level `llm:` reaches EVERY step. An LLM engine

@@ -43,20 +43,19 @@
  * extension, Markdown strips `.md`, workflow strips its `.md`
  * extension, env/task strip their ext, and secret/session keep the natural
  * path). For Markdown types this IS the OKF concept ID (path − `.md`); it is
- * the same spelling {@link placeNew} consumes, so
- * recognize/place share one identity (D-R2 resolved the earlier split). The
+ * the same spelling `readCandidates` consumes, so
+ * recognize/read share one identity (D-R2 resolved the earlier split). The
  * `type` is carried separately on `IndexDocument.type`, per §0.2 (type ≠
  * identity), and `entry.name` keeps the BARE canonical name for FTS parity.
  *
- * ── placeNew / directoryList / looksLikeRoot: type-driven placement ──
+ * ── readCandidates / directoryList / looksLikeRoot: type-driven placement ──
  *
  * Placement is type-driven (`path-resolver.ts#buildDiskCandidates`: the primary
  * candidate is `assetPathForName(ref.type, join(root, stashDirFor(ref.type)),
- * ref.name)`). §5.1 removes `type` from the ref, so {@link placeNew} recovers
+ * ref.name)`). §5.1 removes `type` from the ref, so `readCandidates` recovers
  * it from the conceptId's LEADING path segment — the qualified `<stash-subdir>/
  * <name>` form of §1.3 — reverse-mapping that segment against the placement
- * stash-subdir map and then delegating to `assetPathForName`. See the method
- * doc for the recognize/place conceptId-spelling note.
+ * stash-subdir map and then delegating to `assetPathCandidatesForName`.
  *
  * ── validate: base checks only (WI-B) ──
  *
@@ -95,7 +94,6 @@ import {
 import type { FileContext } from "../../../indexer/walk/file-context";
 import {
   assetPathCandidatesForName,
-  assetPathForName,
   deriveCanonicalAssetNameFromStashRoot,
   placementTypes,
   stashDirFor,
@@ -296,7 +294,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   const stashDir = stashDirFor(match.type);
   const canonicalName = stashDir !== undefined ? conceptId.slice(stashDir.length + 1) : conceptId;
   // conceptId = the QUALIFIED `<stash-subdir>/<canonical-name>` spelling
-  // (ref-grammar decision D-R2): the same form `placeNew` consumes; Markdown
+  // (ref-grammar decision D-R2): the same form `readCandidates` consumes; Markdown
   // types use the OKF concept ID (path − .md), while workflows strip either
   // peer source extension. Both branches feed a
   // BARE canonicalName (the abstain fallback is the basename, above), so the
@@ -538,39 +536,6 @@ export const akmAdapter: BundleAdapter = {
       path: candidatePath,
       conceptId: posix,
     }));
-  },
-
-  /**
-   * Type-driven placement (§5.1), reproducing `path-resolver.ts#buildDiskCandidates`:
-   * the primary candidate is
-   * `assetPathForName(type, join(root, stashDirFor(type)), name)`.
-   *
-   * §5.1 removes `type` from the ref, so the winning type is recovered from the
-   * conceptId's LEADING path segment — the §1.3 qualified `<stash-subdir>/<name>`
-   * form (e.g. `knowledge/http-caching`, `workflows/release`, `skills/<dir>`).
-   * The leading segment is reverse-mapped against the placement stash-subdir map;
-   * the remainder is the per-type name handed to `assetPathForName`. An
-   * unqualified conceptId (no recognized leading stash-subdir) falls back to a
-   * direct `<root>/<conceptId>.md` — the same `${name}.md` fallback
-   * `buildDiskCandidates` carries (`preserveDirectNameFallback`).
-   *
-   * `recognize()` emits the SAME qualified spelling (ref-grammar decision
-   * D-R2), so recognize/place share one canonical identity — the earlier
-   * bare-vs-qualified split is resolved.
-   */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = conceptId.replace(/\\/g, "/");
-    const slash = posix.indexOf("/");
-    if (slash > 0) {
-      const head = posix.slice(0, slash);
-      const rest = posix.slice(slash + 1);
-      const type = stashDirToType(head);
-      if (type !== undefined && rest.length > 0) {
-        const typeDir = path.join(c.root, head);
-        return assetPathForName(type, typeDir, rest);
-      }
-    }
-    return path.join(c.root, `${posix}.md`);
   },
 
   /** The AKM workspace's owned stash subdirs (§7): the placement stash-subdir names, feeding git exact-path staging. */

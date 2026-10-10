@@ -66,7 +66,7 @@ akm show workflows/deploy                # load the best match by ref
 Each step, with its success check, is in [Getting Started](https://akm.fwdslsh.dev/docs/guides/getting-started/). Then tell your agent AKM exists:
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 ## Works with what you already have

@@ -68,32 +68,21 @@ describe("standalone extract CLI engine boundary", () => {
   });
 });
 
-describe("improve --run/--since are report-only flags (#944)", () => {
-  test("--run with no scope is rejected before any lock/log/index side effect", async () => {
+describe("improve --run/--since belong to the `improve report` subcommand (#944)", () => {
+  test("--run on the improve run itself is an unknown flag, before any lock/log/index side effect", async () => {
     const result = await runCli(["improve", "--run", "abc123"]);
     expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stderr) as { error: string; code?: string };
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--run");
-    expect(parsed.error).toContain("akm improve report");
+    expect(result.stderr).toContain('Unknown flag "--run"');
   });
 
-  test("--since with a real scope is rejected the same way", async () => {
+  test("--since with a real scope is an unknown flag the same way", async () => {
     const result = await runCli(["improve", "skill", "--since", "7d"]);
     expect(result.status).toBe(2);
-    const parsed = JSON.parse(result.stderr) as { error: string; code?: string };
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("--since");
-    expect(parsed.error).toContain("akm improve report");
+    expect(result.stderr).toContain('Unknown flag "--since"');
   });
 
-  test("--run is not rejected by the report-only-flag guard when the scope is report", async () => {
+  test("`improve report --run <id>` reaches the report (a fresh sandbox has no such run)", async () => {
     const result = await runCli(["improve", "report", "--run", "abc123"]);
-    // No improve_runs row exists in this fresh sandbox, so runImproveReportQuery
-    // itself fails to find it — that is a different, expected error. What this
-    // asserts is narrower: the report-only-flag guard this item adds must not
-    // also fire once the scope is actually "report".
-    const parsed = JSON.parse(result.stderr || "{}") as { error?: string };
-    expect(parsed.error ?? "").not.toContain("only applies to");
+    expect(JSON.parse(result.stderr)).toMatchObject({ code: "IMPROVE_RUN_NOT_FOUND" });
   });
 });

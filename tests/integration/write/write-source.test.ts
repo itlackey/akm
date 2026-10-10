@@ -534,7 +534,7 @@ describe("resolveWriteTarget", () => {
     ).toThrow(UsageError);
   });
 
-  test("names --target in its errors by default, and the caller's flag when it passes one", () => {
+  test("names --bundle in its errors by default, and the caller's flag when it passes one", () => {
     const config = {
       semanticSearchMode: "off",
       bundles: {
@@ -552,13 +552,13 @@ describe("resolveWriteTarget", () => {
       throw new Error("expected resolveWriteTarget to throw");
     };
 
-    expect(failure("nope").message).toContain("--target must reference a source name");
-    expect(failure("nope", "--bundle").message).toContain("--bundle must reference a source name");
-    expect(failure("nope", "--bundle").message).not.toContain("--target");
+    expect(failure("nope").message).toContain("--bundle must reference a source name");
+    expect(failure("nope", "--into").message).toContain("--into must reference a source name");
+    expect(failure("nope", "--into").message).not.toContain("--bundle");
 
-    expect(failure("frozen").hint).toContain("or pass --target to a different source");
-    expect(failure("frozen", "--bundle").hint).toContain("or pass --bundle to a different source");
-    expect(failure("frozen", "--bundle").hint).not.toContain("--target");
+    expect(failure("frozen").hint).toContain("or pass --bundle to a different source");
+    expect(failure("frozen", "--into").hint).toContain("or pass --into to a different source");
+    expect(failure("frozen", "--into").hint).not.toContain("--bundle");
   });
 });
 

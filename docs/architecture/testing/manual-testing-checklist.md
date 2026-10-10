@@ -231,13 +231,12 @@ akm() { bun "$REPO/src/cli.ts" "$@"; }
 
 ### 3.2 Verify isolation before mutation
 
-`config path --all` is a read-only recovery surface and works before config
-exists.
+`info` is read-only and works before config exists.
 
 ```sh
-akm config path --all --format json >"$AKM_SANDBOX/paths.json"
+akm info --format json >"$AKM_SANDBOX/paths.json"
 jq -e --arg root "$AKM_SANDBOX/" \
-  'all(to_entries[]; (.value | tostring | startswith($root)))' \
+  '[.bundleDir, .configDir, .dataDir, .cacheDir, .stateDir] | all(startswith($root))' \
   "$AKM_SANDBOX/paths.json"
 ```
 
@@ -536,7 +535,7 @@ for command in \
       or `propose`.
 - [ ] **[CORE]** Bare `akm` and `akm help` print the sectioned overview without
       reading or rewriting invalid config.
-- [ ] **[CORE]** `help agents`, `help agents --full`, `hints`, and
+- [ ] **[CORE]** `hints` and
       `hints --detail brief` are nonempty and have the expected relative detail.
 - [ ] **[LOCAL]** `help bundle|env|secret|workflow|task|proposal` agrees with the
       corresponding `--help` command tree.
@@ -598,9 +597,8 @@ test ! -s "$AKM_SANDBOX/silent.out"
       never materialize values.
 - [ ] **[LOCAL]** Concurrent independent `config set` processes preserve both
       changes or one fails cleanly; JSON stays valid and no temp file remains.
-- [ ] **[LOCAL]** `config path --all` honors output formatting. Bare
-      `config path` is a raw path primitive; if format/output are ignored it
-      must warn explicitly. Silent ignoring is a failure.
+- [ ] **[LOCAL]** Bare `config path` is a raw path primitive; if format/output
+      are ignored it must warn explicitly. Silent ignoring is a failure.
 
 ### 6.5 Help migration notes
 
@@ -810,9 +808,9 @@ grep -qi '<html' "$AKM_SANDBOX/info.html"
 ### 8.3 Shape, detail, and output destination
 
 - [ ] **[CORE]** Brief/normal/full increase detail without identity drift.
-- [ ] **[CORE]** Summary succeeds only on show; all other commands reject it
-      before side effects with exit `2`, `INVALID_SHAPE_VALUE`.
-- [ ] **[LOCAL]** Agent shape keeps action fields and strips non-action metadata.
+- [ ] **[CORE]** `--shape` is an unknown flag on every command: it exits `2`,
+      `UNKNOWN_FLAG`, before side effects.
+- [ ] **[LOCAL]** `--detail agent` keeps action fields and strips non-action metadata.
 - [ ] **[LOCAL]** `show --format md --output <file>` writes file, empty stdout.
 - [ ] **[LOCAL]** Output replacement is atomic; unwritable/directory target does
       not truncate existing content.
@@ -837,7 +835,7 @@ expect_error 1 ASSET_NOT_FOUND show skills/does-not-exist
 expect_error 2 UNKNOWN_FLAG info --totally-bogus
 expect_error 2 INVALID_FORMAT_VALUE info --format xml
 expect_error 2 INVALID_DETAIL_VALUE info --detail maximum
-expect_error 2 INVALID_SHAPE_VALUE search docker --shape summary
+expect_error 2 UNKNOWN_FLAG search docker --shape agent
 expect_error 2 MISSING_REQUIRED_ARGUMENT help migrate
 expect_error 2 INVALID_FLAG_VALUE completions --shell zsh
 ```

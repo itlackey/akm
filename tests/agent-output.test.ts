@@ -79,7 +79,7 @@ afterEach(() => {
   }
 });
 
-describe("--shape agent field projection", () => {
+describe("--detail agent field projection", () => {
   function makeStash(): string {
     const stashDir = makeTempDir("akm-agent-stash-");
     writeFile(
@@ -94,9 +94,9 @@ describe("--shape agent field projection", () => {
     return stashDir;
   }
 
-  test("--shape agent search output includes canonical location and edit authorization", async () => {
+  test("--detail agent search output includes canonical location and edit authorization", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=agent"]);
     const json = JSON.parse(output) as { hits: Array<Record<string, unknown>> };
 
     expect(json.hits.length).toBeGreaterThan(0);
@@ -132,9 +132,9 @@ describe("--shape agent field projection", () => {
     }
   });
 
-  test("--shape agent search output omits envelope and ranking internals", async () => {
+  test("--detail agent search output omits envelope and ranking internals", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--shape=agent"]);
+    const output = await runCli(stashDir, ["search", "architect", "--format=json", "--detail=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Top-level envelope must not have these
@@ -152,9 +152,9 @@ describe("--shape agent field projection", () => {
     }
   });
 
-  test("--shape agent show output strips non-essential fields", async () => {
+  test("--detail agent show output strips non-essential fields", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
+    const output = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--detail=agent"]);
     const json = JSON.parse(output) as Record<string, unknown>;
 
     // Must have essential fields
@@ -171,23 +171,23 @@ describe("--shape agent field projection", () => {
     expect(json).not.toHaveProperty("origin");
   });
 
-  test("--shape agent show output keeps content/run/action", async () => {
+  test("--detail agent show output keeps content/run/action", async () => {
     const stashDir = makeStash();
 
     // Command has template content
-    const cmdOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--shape=agent"]);
+    const cmdOutput = await runCli(stashDir, ["show", "commands/release.md", "--format=json", "--detail=agent"]);
     const cmdJson = JSON.parse(cmdOutput) as Record<string, unknown>;
     expect(cmdJson).toHaveProperty("template");
     expect(cmdJson).toHaveProperty("action");
 
     // Script has run field
-    const scriptOutput = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=json", "--shape=agent"]);
+    const scriptOutput = await runCli(stashDir, ["show", "scripts/deploy.sh", "--format=json", "--detail=agent"]);
     const scriptJson = JSON.parse(scriptOutput) as Record<string, unknown>;
     expect(scriptJson).toHaveProperty("run");
     expect(scriptJson).toHaveProperty("action");
   }, 30_000);
 
-  test("standard output (without --shape agent) is unchanged", async () => {
+  test("standard output (without --detail agent) is unchanged", async () => {
     const stashDir = makeStash();
 
     // Default brief search still has same shape
@@ -219,7 +219,7 @@ describe("--shape agent field projection", () => {
     };
 
     const search = JSON.parse(
-      await runCli(stashDir, ["search", "readonly guide", "--format=json", "--shape=agent"], config),
+      await runCli(stashDir, ["search", "readonly guide", "--format=json", "--detail=agent"], config),
     ) as { hits: Array<Record<string, unknown>> };
     const searchHit = search.hits.find((hit) => hit.ref === "team//knowledge/readonly-guide");
     expect(searchHit).toMatchObject({
@@ -232,14 +232,14 @@ describe("--shape agent field projection", () => {
     expect(searchHit?.action).not.toContain("clone");
 
     const show = JSON.parse(
-      await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--shape=agent"], config),
+      await runCli(stashDir, ["show", "team//knowledge/readonly-guide", "--format=json", "--detail=agent"], config),
     ) as Record<string, unknown>;
     expect(show).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
     expect(show.editHint).toContain("akm clone team//knowledge/readonly-guide");
     expect(show.action).not.toContain("clone");
 
     const curate = JSON.parse(
-      await runCli(stashDir, ["curate", "readonly guide", "--format=json", "--shape=agent"], config),
+      await runCli(stashDir, ["curate", "readonly guide", "--format=json", "--detail=agent"], config),
     ) as { items: Array<Record<string, unknown>> };
     const curated = curate.items.find((item) => item.ref === "team//knowledge/readonly-guide");
     expect(curated).toMatchObject({ ref: "team//knowledge/readonly-guide", path: assetPath, editable: false });
@@ -248,8 +248,8 @@ describe("--shape agent field projection", () => {
   }, 30_000);
 });
 
-// WS2 ("--shape agent is the canonical spelling") removed (D1): it was a
-// strict subset of the "--shape agent field projection" describe block above
+// WS2 ("--detail agent is the canonical spelling") removed (D1): it was a
+// strict subset of the "--detail agent field projection" describe block above
 // (:78-113 covers the same allowedKeys set plus essential-field checks;
 // :135-152 and :154-168 cover show fields + `template`). Its private
 // makeStash helper was local to the deleted describe block and needed no
@@ -297,9 +297,9 @@ describe("--format jsonl", () => {
     }
   });
 
-  test("JSONL combined with --shape agent uses agent shaping", async () => {
+  test("JSONL combined with --detail agent uses agent shaping", async () => {
     const stashDir = makeStash();
-    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl", "--shape=agent"]);
+    const output = await runCli(stashDir, ["search", "deploy", "--format=jsonl", "--detail=agent"]);
     const lines = output.split("\n").filter((line) => line.trim().length > 0);
 
     for (const line of lines) {

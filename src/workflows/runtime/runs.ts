@@ -27,7 +27,12 @@ import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
 import { frozenSummaryJudge } from "../exec/frozen-judge";
 import { detectSecretShapedParams } from "../exec/param-secrets";
 import { freezeWorkflow } from "../freeze/freeze";
-import { materializeWorkflowParameterFlags, validateWorkflowParams, type WorkflowParameterFlag } from "../ir/params";
+import {
+  applyWorkflowParamDefaults,
+  materializeWorkflowParameterFlags,
+  validateWorkflowParams,
+  type WorkflowParameterFlag,
+} from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import type { WorkflowPlan, WorkflowRuntimeKind } from "../plan";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
@@ -238,9 +243,10 @@ export async function startWorkflowRun(
   if (options?.parameterFlags?.length && Object.keys(params).length > 0) {
     throw new UsageError("Workflow parameters must use either an object or per-parameter flags, not both.");
   }
-  const effectiveParams = options?.parameterFlags?.length
-    ? materializeWorkflowParameterFlags(plan, options.parameterFlags)
-    : params;
+  const effectiveParams = applyWorkflowParamDefaults(
+    plan,
+    options?.parameterFlags?.length ? materializeWorkflowParameterFlags(plan, options.parameterFlags) : params,
+  );
   // Non-fatal WARNINGS: untyped-step and undeclared-param advisories surface
   // as `warn()` lines at start (stderr, consistent with the repo's other
   // author-facing warnings) without blocking the run.

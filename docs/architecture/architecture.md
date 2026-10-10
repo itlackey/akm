@@ -260,8 +260,7 @@ schema (`src/core/config/schema/sources-bundles.ts`).
 refresh.
 
 Write-target resolution (`resolveWriteTarget`) follows: an explicit
-destination flag (`--bundle` on `remember`/`clone`/`improve`, `--target` on
-`import`/env/secret mutations) -> `config.defaultWriteTarget` -> working
+destination flag (`--bundle`) -> `config.defaultWriteTarget` -> working
 bundle (`defaultBundle`) -> `ConfigError`. The resolved target keeps the
 optional configured selector separate from the stable `source.name`: APIs
 that must re-resolve a destination use the selector, while durable refs and
@@ -299,8 +298,8 @@ whose proposal queue is read or adjudicated; it does not override the proposal's
 write destination. Qualified proposals and unqualified proposals created in a
 configured secondary queue record the destination source name and materialized
 root. Diff, accept, and revert use that binding by default and reject an explicit
-`--target` that resolves elsewhere. An unbound short proposal requires either
-an explicit `--target` or an authenticated `--queue` context; it does not
+`--bundle` that resolves elsewhere. An unbound short proposal requires either
+an explicit `--bundle` or an authenticated `--queue` context; it does not
 inherit a default write target.
 
 ---

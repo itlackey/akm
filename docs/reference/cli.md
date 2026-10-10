@@ -2,7 +2,7 @@
 
 The CLI is called `akm` (Agent Knowledge Manager). Commands default to structured
 JSON at `--detail brief`. Use `--format json|jsonl|yaml|text|md|html`,
-`--detail brief|normal|full`, and `--shape human|agent|summary` when you want a
+`--detail brief|normal|full|agent` when you want a
 different presentation. Errors include `error` and `hint` fields.
 
 This page is authoritative for the current CLI. For per-release behavior
@@ -19,14 +19,15 @@ These flags are accepted by all commands:
 | --- | --- | --- | --- |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--output` | path | _(none)_ | Write rendered output to a file instead of stdout (all formats except `jsonl`) |
-| `--detail` | `brief`, `normal`, `full` | `brief` | Output **verbosity** level |
-| `--shape` | `human`, `agent`, `summary` | `human` | Output **projection** |
+| `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output **verbosity** level, or the `agent` projection |
 | `--quiet` / `-q` | boolean | `false` | Suppress stderr warnings |
 | `--verbose` | boolean | `false` | Enable verbose diagnostics gated behind `isVerbose()`. Parsed globally before any subcommand runs. The `AKM_VERBOSE` env var honours the same setting and wins when both are present (see `src/core/warn.ts`). |
 
-`--detail` controls **how much** is returned (`brief|normal|full`); `--shape`
-controls the **projection** (`human` for people, `agent` for a token-lean
-action view, `summary` for capability discovery).
+`--detail brief|normal|full` controls **how much** is returned. `--detail agent`
+selects the token-lean action view on `search`, `curate` and `show`; every other
+command ignores it. (`--shape`, which carried `agent` and `summary` before 0.10,
+is gone: it is an unknown flag, exit 2. `--shape summary` had a projection only
+on `show`; use `--detail brief` there.)
 
 ### `--format jsonl`
 
@@ -67,12 +68,12 @@ Scripted `setup` modes emit a normal format-aware result. Interactive `setup`
 is a terminal UI and emits no result document. `agent` leaves inherited child
 streams raw, then formats its final `agent-result` envelope normally.
 
-### `--shape=agent`
+### `--detail agent`
 
 Strips output to only action-relevant fields:
 
 - **search**: keeps `name`, canonical `ref`, absolute `path`, `editable`, `type`, `description`, `action`, `score`, and optional `estimatedTokens`/`keys`
-- **show**: adds absolute `path`, `editable`, and the existing type-specific action/content fields on top of the canonical `ref` that every `show` shape returns (`ref` is not agent-exclusive — see `--shape summary` below)
+- **show**: adds absolute `path`, `editable`, and the existing type-specific action/content fields on top of the canonical `ref` that every `show` shape returns (`ref` is not agent-exclusive; every `show` response carries it)
 - **curate**: local items keep canonical `ref`, absolute `path`, `editable`, and their follow-up fields
 
 For local materialized assets, `editHint` is added only when `editable` is
@@ -93,19 +94,10 @@ them.
 
 Every one of these commands also carries a `results` field — the identical
 array, not a copy — alongside its semantic key, in every `--format`/`--detail`
-combination and both `--shape human` (the default) and `--shape agent`. Code
+combination, including `--detail agent`. Code
 written against a single command should keep using its semantic key for
 clarity; code that needs to handle several list commands uniformly can read
 `results` and never maintain a per-command lookup table.
-
-### `--shape summary`
-
-Valid **only on `akm show`**. Every other command rejects `--shape summary`
-with an `INVALID_SHAPE_VALUE` usage error (exit 2) — an honest rejection rather
-than a silent fallback. It returns a compact view suitable for capability
-discovery:
-
-- **show**: `type`, `name`, canonical `ref`, `description`, `tags`, `parameters`, `workflowTitle`, `action`, `run`, `origin`, `keys`, `links`
 
 ## Exit Codes and Error Envelope
 
@@ -550,7 +542,7 @@ ran, `keyword` when keyword-only search was intentional or semantic search was
 not ready, and `fts-fallback` when a ready semantic backend failed during this
 query. The last case also adds one sanitized, endpoint-naming entry to
 `warnings`; it never repeats the provider/runtime error text. Both fields are
-preserved by `--shape agent` so machine consumers can lower their confidence
+preserved by `--detail agent` so machine consumers can lower their confidence
 instead of treating keyword fallback as healthy semantic ranking.
 
 Ranking fuses two candidate lists by reciprocal rank (k = 60, equal weights):
@@ -578,8 +570,7 @@ kept.
 | `--belief` | `all`, `current`, `historical` | `all` | Memory belief filter. `current` keeps active memory beliefs; `historical` keeps contradicted/superseded/archived ones. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
-| `--detail` | `brief`, `normal`, `full` | `brief` | Output verbosity level |
-| `--shape` | `human`, `agent`, `summary` | `human` | Output projection. `--shape summary` is valid **only on `akm show`**; passing it here is an `INVALID_SHAPE_VALUE` usage error (exit 2), like on every other command. |
+| `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
 
 `--filter` flags AND-join: every supplied key must match the entry's
 `scope` for the entry to appear in the result set. Entries without any scope
@@ -603,7 +594,7 @@ availability:
   it (`lexical rank 3`, `vector rank 12`); surfaced at `full`
 
 The default brief shape is intentionally small. The exact field set per
-detail level (and per `--shape`) is authoritative in
+detail level (and for `--detail agent`) is authoritative in
 `src/output/shapes/helpers.ts` (`shapeSearchHit` / `shapeSearchHitForAgent`),
 assembled into the shape registry by the `src/output/shapes.ts` barrel:
 
@@ -612,10 +603,7 @@ assembled into the shape registry by the `src/output/shapes.ts` barrel:
 | `brief` (default) | `type`, `name`, `ref`, `action`, `estimatedTokens` | `name`, `installRef`, `score` |
 | `normal` | `type`, `name`, `description`, `action`, `score`, `estimatedTokens`, optional `warnings`/`quality`/`keys` | `name`, `description`, `action`, `installRef`, `score`, optional `warnings` |
 | `full` | full hit object (includes `ref`, `origin`, `tags`, `whyMatched`, optional `warnings`, optional `quality`, timings, bundle metadata) | full hit object |
-| `--shape agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys` | no local access fields |
-
-`--shape summary` is **not valid on `search`** — see the `--shape summary`
-section above; it is a usage error (exit 2) everywhere except `akm show`.
+| `agent` | `name`, `ref`, `type`, `path`, `editable`, conditional `editHint`, `description`, `action`, `score`, optional `estimatedTokens`/`keys` | no local access fields |
 
 There is no registry `curated` boolean. Renderers surface an optional
 `warnings: string[]` field on hits when a provider has non-fatal issues to
@@ -661,8 +649,7 @@ candidates (`search.curateRerank.topN`) by name, description and the start of
 each asset's indexed content. Curate includes direct follow-up
 commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
 immediately inspect or install what it found.
-`--detail` and `--shape agent` both work on curate output; `--shape summary`
-does not.
+`--detail` (including `agent`) works on curate output.
 Curate preserves the underlying search's `searchMode` and warnings.
 Agent-shaped local items include `ref`, `path`, and `editable`, plus `editHint`
 only for read-only items. Their `followUp` remains `akm show <ref>` rather than
@@ -731,20 +718,15 @@ filter. A mismatch (or absent scope) returns `NotFoundError` so the caller
 cannot accidentally read out-of-scope content.
 
 The default `show` JSON includes the asset body when applicable. Canonical
-`ref` is always present, in every `--shape` (`human`, `agent`, and `summary`
-alike) and at every `--detail` level. Absolute `path` and `editable` are
-always present too, at every `--detail` level, in the `human` (default) and
-`agent` shapes — `--shape summary` omits both, since it is a compact
-capability-discovery view, not an edit-target view. None of `ref`/`path`/
+`ref` is always present, at every `--detail` level, `agent` included. Absolute `path` and `editable` are
+always present too. None of `ref`/`path`/
 `editable` are gated behind `--detail full`. Use `--detail brief` for a
 reduced metadata-first view without `content`/`template`/`prompt`;
 `--detail full` adds verbose extras such as `schemaVersion` and, when
-`editable` is `false`, `editHint`; `--shape agent` strips non-action metadata
+`editable` is `false`, `editHint`; `--detail agent` strips non-action metadata
 (e.g. `origin`, `tags`) down to the action-relevant field set while still
-including `ref`/`path`/`editable`; `--shape summary`
-returns a compact view with `type`, `name`, `ref`, `description`, `tags`,
-`parameters`, `workflowTitle`, `action`, `run`, `origin`, and `keys`, plus the
-optional fragment metadata described below.
+including `ref`/`path`/`editable`, plus the optional fragment metadata
+described below.
 
 `links` lists the asset's declared links, grouped by kind: `outgoing` (the
 assets its own `xrefs:`, `supersededBy:`, `contradictedBy:`,
@@ -1723,8 +1705,8 @@ file path, a single HTTP/HTTPS URL, or `-` for stdin.
 
 **Write target resolution:** the destination is the working bundle
 (`defaultBundle`) unless `defaultWriteTarget` is set in config, which
-overrides it to a named source. An explicit `--target <name>` flag overrides
-both. The full order is `--target` → `defaultWriteTarget` → working bundle →
+overrides it to a named source. An explicit `--bundle <name>` flag overrides
+both. The full order is `--bundle` → `defaultWriteTarget` → working bundle →
 `ConfigError`. See [Configuration](configuration.md#bundles-and-write-target) for
 details.
 
@@ -1741,14 +1723,14 @@ akm import ./notes/oauth-quirks.md --xref knowledge/auth/vendor-x-token-api
 akm import ./notes/modern-guide.md --supersedes knowledge/legacy-guide
 
 # Route the write to a specific writable bundle:
-akm import ./docs/auth-flow.md --target team-bundle
+akm import ./docs/auth-flow.md --bundle team-bundle
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--name` | Optional knowledge name. Defaults to the source filename, URL path, or a slug from stdin content |
 | `--force` | Overwrite an existing knowledge document with the same name |
-| `--target <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
+| `--bundle <name>` | Override the write destination. Accepts a source name from your config; falls back to `defaultWriteTarget` then the working bundle. |
 | `--xref <ref>` | Cross-reference ref merged into the document's `xrefs:` frontmatter list. Repeatable. A document without frontmatter gains a block; a document with valid frontmatter keeps every existing key and value and gets the refs dedupe-appended (never a nested second block). Each ref must resolve in the write target or a configured source; an unresolvable ref fails with exit 2 before anything is written. If the document's existing frontmatter is not a parseable YAML mapping, the import fails (exit 2) rather than rewriting the block lossily — fix the frontmatter or import without `--xref`, which preserves the file verbatim. |
 | `--supersedes <ref>` | Ref of an existing asset this document corrects. Repeatable. Imports the correction with the old ref merged into its `xrefs:` AND demotes the old asset (`beliefState: superseded` + `supersededBy: [<new ref>]`, a metadata-only frontmatter edit), then reindexes it. Same validation (including the self-supersede rejection), skipped-demotion (`applied: false`), idempotence, and git-boundary-commit behaviour as on `remember` (see above). |
 
@@ -1994,7 +1976,6 @@ akm config set output.detail full   # Set one key
 akm config set output.detail full --silent  # Set without the post-write config dump on stdout
 akm config unset llm                # Remove an optional key
 akm config path                     # Print path to config file
-akm config path --all               # Print all config-related paths
 akm config diff other-host/config.json  # Effective-config differences, secrets redacted
 ```
 
@@ -2006,7 +1987,7 @@ Subcommands:
 | `list` | List current configuration |
 | `set <key> <value>` | Set one config key; prints the resulting config with `ok: true` |
 | `unset <key>` | Unset an optional key, or a whole `embedding`/engine section; prints the resulting config with `ok: true` |
-| `path` | Show paths to config, bundle, cache, and index. `--all` prints every path; without it, just the config path. Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
+| `path` | Print the config file path (`akm info` reports the bundle, config, data, cache and state directories). Load-bearing: `config path` is the one subcommand the CLI still allows to run when the on-disk config itself fails to load, so you always have a way to locate a broken config. |
 | `diff <path\|bundle//path>` | Compare this instance's effective config (its own `extends` already applied) against another config file or bundle-relative file (loaded through the same loader — its `extends` honoured too); prints sorted `{ path, local, other }` rows for every differing leaf, secrets redacted on both sides. |
 
 `set` and `unset` accept `--silent` to suppress the post-write config dump
@@ -2058,14 +2039,13 @@ column borrow its model from a configured engine instead of a literal string.
 
 ### help
 
-Print the sectioned command overview, detailed help for any command, agent
-usage instructions, or a release's migration guidance.
+Print the sectioned command overview, detailed help for any command, or a
+release's migration guidance.
 
 ```sh
 akm help                       # Sectioned command overview (same as `akm --help`)
 akm help bundle                # Detailed options and subcommands for `bundle`
 akm help env                   # Detailed options and subcommands for `env`
-akm help agents                # Agent-facing usage instructions
 akm help migrate 0.6.0         # Notes for a specific release
 akm help migrate v0.6.0        # v-prefix accepted
 akm help migrate v0.6.0-rc1    # Prereleases normalize to the stable note
@@ -2084,22 +2064,12 @@ unknown version prints the list of bundled notes so you can pick one that
 exists. See [`CONTRIBUTING.md`](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)
 for the per-release workflow.
 
-### help agents
-
-Print agent-facing instructions for using `akm`. Add this output to your
-`AGENTS.md`, `CLAUDE.md`, or system prompt so your agent knows how to use
-the CLI. Prints the short guide by default; pass `--full` for the complete
-one.
-
-```sh
-akm help agents
-```
-
 ### hints
 
-Print the agent-facing CLI guide directly. The complete guide is the default;
-use `--detail brief` for the compact version. `akm help agents` remains the
-short-first form and accepts `--full`.
+Print the agent-facing CLI guide. Add this output to your `AGENTS.md`,
+`CLAUDE.md`, or system prompt so your agent knows how to use the CLI. The
+complete guide is the default; use `--detail brief` for the compact version.
+(`akm help agents`, the short-first form, was removed in 0.10.)
 
 ```sh
 akm hints
@@ -2156,9 +2126,9 @@ akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
 
 Env mutations (`create`, `remove`) pick their write destination the same way
-every other write command does: an explicit `--target <source>` wins, else
+every other write command does: an explicit `--bundle <source>` wins, else
 `defaultWriteTarget`, else the working bundle. The chosen source must be
-writable — a non-writable `--target`/`defaultWriteTarget` fails with a
+writable — a non-writable `--bundle`/`defaultWriteTarget` fails with a
 `ConfigError` before anything is written — and on a git-backed writable target
 the mutation lands in a single boundary commit (filesystem targets are
 committed by `akm sync`; `env/` stays out of git when your bundle `.gitignore`
@@ -2222,7 +2192,7 @@ akm env create prod --from-file ./.env    # seed from an existing .env (byte-for
 printf 'A=1\nB=2\n' | akm env create prod --from-stdin
 akm env create prod --path staging        # creates env/staging/prod.env
 akm env create prod --sensitive           # hidden from `env list` and the search index
-akm env create prod --target team         # write to the `team` source
+akm env create prod --bundle team         # write to the `team` source
 ```
 
 | Flag | Description |
@@ -2231,7 +2201,7 @@ akm env create prod --target team         # write to the `team` source
 | `--from-file <path>` | Seed the env file from an existing `.env` at this path |
 | `--from-stdin` | Seed the env file from stdin |
 | `--sensitive` | Exclude this env file from `env list` output and the search index |
-| `--target <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
+| `--bundle <source>` | Override the write destination (falls back to `defaultWriteTarget` then the working bundle) |
 
 Creates `env/prod.env` with mode 0600. Empty `create` is a no-op if the file
 exists; `--from-file`/`--from-stdin` **refuse to clobber** an existing env (remove
@@ -2346,7 +2316,7 @@ of multi-line material. Writes are atomic (mode 0600) under an exclusive
 `<secret>.lock`. Maximum size is 5 MB.
 
 `secret set` selects its write destination like every other write command: an
-explicit `--target <source>` wins, else `defaultWriteTarget`, else the working
+explicit `--bundle <source>` wins, else `defaultWriteTarget`, else the working
 bundle. The chosen source must be writable (a non-writable target fails with a
 `ConfigError`), and on a git-backed writable target the mutation lands in a
 single boundary commit. Reads (`list`, `run`) still span all configured sources.
@@ -2638,8 +2608,6 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 
 | Flag | Description |
 | --- | --- |
-| `--run <id>` | `report` scope only (#944): show the usage report for one specific `improve_runs` row instead of the most recent real run. Mutually exclusive with `--since`. Rejected with any other scope, or no scope. |
-| `--since <window>` | `report` scope only (#944): aggregate the usage report over every real (non-dry-run) run started since `<window>` (a duration like `24h`/`7d`, or an ISO timestamp) instead of one run. Mutually exclusive with `--run`. Rejected with any other scope, or no scope. |
 | `--task` | Optional extra guidance for this improvement pass |
 | `--dry-run` | Show the schema-v2 result on stdout without creating config, data, state, cache, bundle, log, or result artifacts. Dry-run results are never persisted, including on errors or signals. |
 | `--bundle` | Select the bundle the run improves and writes to (default: `defaultWriteTarget`, else the working bundle); only that bundle's assets are planned. When the ref scope is bundle-qualified, it must name the same bundle |
@@ -2832,9 +2800,12 @@ destination than `memory`.
 `akm improve report` (#944) answers "which engine did each model-calling process
 use this run, how much did it cost, and which enabled processes made zero
 calls (and why)" without hand-written SQLite against `state.db`. It is a
-`scope` value, not a subcommand — `report` is not, and will never be, a real
-asset type, so it is intercepted before any lock/log/index side effect (same
-precedent as the retired `canary` scope).
+real subcommand (`report` is not an asset type, so it is not a scope of the
+improve run). It takes two flags of its own, `--run <id>` (the usage report for
+one specific `improve_runs` row instead of the most recent real run) and
+`--since <window>` (aggregate over every real, non-dry-run run started since a
+duration like `24h`/`7d` or an ISO timestamp); they are mutually exclusive, and on
+`akm improve` itself they are unknown flags (exit 2).
 
 Every real (non-dry-run) `akm improve` invocation persists a `usageReport`
 field on the result (`result_json` in `improve_runs`, and in the
@@ -2869,7 +2840,7 @@ support.
 
 #### improve judge
 
-`akm improve judge` runs reflect's quality judge on one revision and prints its
+`akm improve judge` (a real subcommand; `--strategy` is its only flag) runs reflect's quality judge on one revision and prints its
 verdict, for testing a judge engine on revisions whose right answer you know. It
 reads `{"source": "...", "candidate": "...", "feedback": "...", "ref": "..."}` JSON
 from stdin (`feedback` and `ref` are optional; `ref` names the revised asset,
@@ -2896,10 +2867,10 @@ single queue.
 
 New qualified proposals record their destination source name and materialized
 root. `proposal diff`, `accept`, and `revert` use that recorded target by
-default; an explicit `--target` must resolve to the same source and root or the
+default; an explicit `--bundle` must resolve to the same source and root or the
 command fails with exit 2. An unbound proposal in a selected non-primary queue
 uses that authenticated queue root. A short historical unbound proposal
-mutation requires either an explicit `--target` or a selected `--queue` that
+mutation requires either an explicit `--bundle` or a selected `--queue` that
 authenticates its root; it never falls back to an ambient write target.
 
 #### proposal extract
@@ -3062,7 +3033,7 @@ akm proposal accept <id>
 akm proposal accept 7c115132                  # 8-char UUID prefix
 akm proposal accept skills/akm-dream           # Asset ref
 akm proposal accept <id> --queue team-bundle
-akm proposal accept <id> --target team-bundle  # Must match a recorded target
+akm proposal accept <id> --bundle team-bundle  # Must match a recorded target
 akm proposal accept --generator reflect -y    # Bulk-accept by generator (requires -y)
 akm proposal accept --generator reflect --max-diff-lines 50 -y    # ...only if <= 50 lines
 akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bulk accept
@@ -3071,7 +3042,7 @@ akm proposal accept --generator reflect --older-than 7 --dry-run  # Preview a bu
 | Flag | Description |
 | --- | --- |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
-| `--target <name>` | Write destination; must match the proposal's recorded target |
+| `--bundle <name>` | Write destination; must match the proposal's recorded target |
 | `--generator <name>` | Bulk-accept all pending proposals from this generator (e.g. `reflect`, `distill`). Requires no positional id. |
 | `--max-diff-lines` | When bulk-accepting, only accept proposals whose content is `<=` this many lines. Larger proposals are skipped. |
 | `--older-than` | When bulk-accepting, only accept proposals created (or last reopened) more than this many days ago |
@@ -3211,13 +3182,13 @@ to `reverted` and appends a `proposal_reverted` event to the audit log.
 akm proposal revert <id>
 akm proposal revert skills/akm-dream           # Asset ref
 akm proposal revert <id> --queue team-bundle
-akm proposal revert <id> --target team-bundle  # Must match a recorded target
+akm proposal revert <id> --bundle team-bundle  # Must match a recorded target
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
-| `--target <name>` | Select the destination for an unbound proposal, or confirm a recorded destination; a conflict with a recorded target is rejected |
+| `--bundle <name>` | Select the destination for an unbound proposal, or confirm a recorded destination; a conflict with a recorded target is rejected |
 
 Accepts the full proposal UUID or the asset ref. UUID prefixes are **not**
 supported for reverting (archived proposals require the full identifier). Errors
@@ -3234,13 +3205,13 @@ akm proposal diff <id>
 akm proposal diff skills/akm-dream             # Asset ref form
 akm proposal diff 7c115132                    # 8-char UUID prefix
 akm proposal diff <id> --queue team-bundle
-akm proposal diff <id> --target team-bundle    # Must match a recorded target
+akm proposal diff <id> --bundle team-bundle    # Must match a recorded target
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--queue <source>` | Select the proposal queue by configured writable source name |
-| `--target <name>` | Select an unbound destination or confirm a recorded one for `proposal accept`, `diff`, or `revert`; a conflict with a recorded target is rejected |
+| `--bundle <name>` | Select an unbound destination or confirm a recorded one for `proposal accept`, `diff`, or `revert`; a conflict with a recorded target is rejected |
 
 `proposal accept` runs full validation before promoting. `proposal reject`
 requires `--reason`.
@@ -3358,7 +3329,6 @@ akm task enable team//tasks/nightly       # Add local activation and sync its bu
 akm task disable team//tasks/nightly      # Remove local activation and unschedule it
 akm task run <id>                           # Execute now (what the scheduler calls)
 akm task explain <ref>                      # Read-only: declared inputs, target, schedule — spawns nothing
-akm task validate <path>                    # Read-only: parse one task file by path, report sync's diagnostic
 akm task history [<id>] [--id <id>] [--limit <n>]  # Recent runs from state.db (positional id == --id)
 akm task sync                               # Reconcile activated refs from all enabled configured bundles
 akm task sync --dry-run                     # Preview the reconcile — zero scheduler writes
@@ -3380,28 +3350,6 @@ target, effective execution settings, and schedule bindings — **read-only**:
 it never spawns anything, writes history, or touches the scheduler. A
 secret-shaped value prints as `<redacted>`. See
 [`akm task explain`](tasks.md#akm-task-explain).
-
-`akm task validate <path>` parses ONE task file by filesystem path — not a
-concept ref or id, and the file need not live in any configured bundle —
-and reports the same diagnostic `akm task sync` would produce for it,
-INCLUDING sync's own cron-dialect check and its per-schedule-entry
-input-contract check (so a file `sync` would reject can never be reported
-`valid` here): `{ok, path, sourceVersion, outcome, reason?,
-resolved?}` where `outcome` is `valid` (parses as task source v4 directly
-and passes both sync checks), `blocked` (task v2/v3 that must first be
-rewritten by `akm migrate apply`), `invalid` (the YAML doesn't parse, or the document fails schema
-validation, or it parsed but fails one of the two sync checks), or
-`not-a-task` (the YAML parses but never declares a `version:` field — not
-shaped like a task source). `resolved` is the compiled task shape
-`akm task sync` itself would build a scheduler binding from — id, the
-compiled schema version, resolved `uses`/`run` target, declared `inputs`
-contract, and `schedule` bindings — present only on `valid`.
-Unlike `akm task explain`, it never runs execution lowering: a command-kind
-task validates the same whether or not the local config has an engine
-configured. Exits 0 for `valid`, 1 for
-`blocked`/`invalid`/`not-a-task`, 2 for a missing or unreadable path.
-**Read-only**: it never touches the scheduler and never requires the file to
-be indexed or wired into a bundle.
 
 `akm task run` is what cron / launchd / schtasks invoke at the scheduled
 time. Each run is recorded as a row in the durable `task_history` table

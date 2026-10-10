@@ -138,7 +138,7 @@ describe("output baseline", () => {
       unresolved: { xref: { total: 1, refs: ["knowledge/missing"] } },
     });
     const agent = JSON.parse(
-      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--shape=agent"], config, envDirs),
+      runCli(stashDir, ["show", "knowledge/guide", "--format=json", "--detail=agent"], config, envDirs),
     );
     expect(agent.links).toEqual({ incoming: { xref: { total: 1, refs: ["memories/incident"] } } });
 

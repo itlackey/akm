@@ -160,13 +160,6 @@ export const akmWorkflowAdapter: BundleAdapter = {
       : [{ path: path.join(c.root, `${posix}.md`), conceptId: canonical }];
   },
 
-  /** An explicit `.md` suffix is preserved. */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    if (/\.md$/i.test(posix)) return path.join(c.root, posix);
-    return path.join(c.root, `${posix}.md`);
-  },
-
   /** Workflows live anywhere under the component root. */
   directoryList(): string[] {
     return ["."];

@@ -16,9 +16,7 @@
  *
  *  1. recognition parity — `recognize().type` (and the carried renderer) for
  *     every fixture file equals `goldens/recognition/all-types.json`;
- *  2. placement parity — `placeNew()` for every akm type equals
- *     `goldens/placement/all-types.json`;
- *  3. sync-arbitration FIDELITY — `recognizeMatch()` (the sync `runMatchers`
+ *  2. sync-arbitration FIDELITY — `recognizeMatch()` (the sync `runMatchers`
  *     reproduction) agrees with the async `runMatchers` on the real fixture
  *     contexts AND on hand-built contexts that make each matcher the winner.
  *
@@ -40,16 +38,10 @@ const BUNDLE_ID = "all-types";
 interface RecognitionGolden {
   byRelPath: Record<string, { type: string; specificity: number; renderer: string }>;
 }
-interface PlacementGolden {
-  byType: Record<string, { stashDir: string; name: string; assetPath: string }>;
-}
 
 const RECOGNITION_GOLDEN = JSON.parse(
   fs.readFileSync(path.resolve(__dirname, "../../fixtures/goldens/recognition/all-types.json"), "utf8"),
 ) as RecognitionGolden;
-const PLACEMENT_GOLDEN = JSON.parse(
-  fs.readFileSync(path.resolve(__dirname, "../../fixtures/goldens/placement/all-types.json"), "utf8"),
-) as PlacementGolden;
 
 /** Temp dirs created by fidelity/probe tests; cleaned in afterAll. */
 const tmpDirs: string[] = [];
@@ -59,10 +51,6 @@ afterAll(() => {
 
 function component(overrides: Partial<BundleComponent> = {}): BundleComponent {
   return { id: BUNDLE_ID, adapter: "akm", root: ALL_TYPES_ROOT, writable: true, ...overrides };
-}
-
-function relFromRoot(absPath: string): string {
-  return path.relative(ALL_TYPES_ROOT, absPath).split(path.sep).join("/");
 }
 
 /** Every asset FileContext in the all-types stash, MANIFEST.json excluded — exactly the golden capture's walk. */
@@ -170,35 +158,6 @@ describe("akm adapter — recognizeMatch classifies content/extension winners (�
       expect(recognizeMatch(buildFileContext(tmp, abs))?.type, `winner for ${rel}`).toBe(type);
     }
   });
-});
-
-// ── 3. placement parity (byte-for-byte vs the Chunk-0b golden) ───────────────
-
-describe("akm adapter — placeNew reproduces resolveAssetPathFromName placement (§5.1)", () => {
-  test("every akm type's qualified conceptId places at exactly the golden path", () => {
-    for (const [type, entry] of Object.entries(PLACEMENT_GOLDEN.byType)) {
-      // The §1.3 qualified path-form conceptId: <stash-subdir>/<canonical-name>.
-      const conceptId = `${entry.stashDir}/${entry.name}`;
-      const abs = akmAdapter.placeNew?.(component(), conceptId);
-      expect(abs, `placeNew undefined for ${type}`).toBeDefined();
-      expect(relFromRoot(abs as string), `placement for ${type}`).toBe(entry.assetPath);
-    }
-  });
-
-  test("the env `default` alias maps to the bare .env file", () => {
-    expect(relFromRoot(akmAdapter.placeNew?.(component(), "env/default") as string)).toBe("env/.env");
-  });
-
-  test("an unqualified conceptId (no leading stash-subdir) falls back to <root>/<id>.md", () => {
-    expect(relFromRoot(akmAdapter.placeNew?.(component(), "loose-note") as string)).toBe("loose-note.md");
-  });
-
-  // NOTE (workflow-format-unification): the old "workflow placement probes
-  // .md/.yaml/.yml and finds the real .yaml-only fixture" test is gone —
-  // `WORKFLOW_EXTENSIONS` collapsed to `[".md"]` only (spec §3: "the
-  // extension-collapse logic beyond .md" is deleted) and its fixture
-  // (`all-types-workflow-program.yaml`) was deleted with it, so there is no
-  // remaining multi-extension probe branch to exercise.
 });
 
 // ── 3b. recognize folds the 11 metadata contributors (§2) ────────────────────

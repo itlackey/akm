@@ -16,7 +16,7 @@ export interface CurateOptions {
 
 /**
  * Returns exactly the stdout text of
- * `akm --shape agent -q curate <query> [--limit N] [--type T] --format <format>`,
+ * `akm --detail agent -q curate <query> [--limit N] [--type T] --format <format>`,
  * including its trailing newline. Rejects with the error the CLI would fail
  * with: its message, and its error code on the `code` property.
  */

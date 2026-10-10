@@ -536,21 +536,21 @@ describe("stash parity", () => {
   test.skipIf(!ENABLED)("stash path returns same value on Bun and Node", async () => {
     setupStorage();
 
-    // No command prints the bare bundle path; `config path --all` emits a JSON
-    // envelope whose `bundle` field is the resolved bundle dir.
-    const nodeResult = nodeRun(["config", "path", "--all"], nodeEnv);
-    assertNoBoundaryLeak(nodeResult, "config path --all");
+    // No command prints the bare bundle path; `info` emits a JSON envelope
+    // whose `bundleDir` field is the resolved bundle dir.
+    const nodeResult = nodeRun(["info"], nodeEnv);
+    assertNoBoundaryLeak(nodeResult, "info");
     expect(nodeResult.status).toBe(0);
-    const nodeJson = parseJson(nodeResult.stdout) as { bundle?: string } | undefined;
-    expect(nodeJson?.bundle).toBe(stashDir);
+    const nodeJson = parseJson(nodeResult.stdout) as { bundleDir?: string } | undefined;
+    expect(nodeJson?.bundleDir).toBe(stashDir);
 
     const bunResult = await boundedWithEnv(
       { AKM_BUNDLE_DIR: stashDir, ...nodeEnv, AKM_OUTPUT: "json", NO_COLOR: "1" },
-      () => runCliCapture(["config", "path", "--all"]),
+      () => runCliCapture(["info"]),
     );
     expect(bunResult.code).toBe(0);
-    const bunJson = parseJson(bunResult.stdout) as { bundle?: string } | undefined;
-    expect(bunJson?.bundle).toBe(nodeJson?.bundle);
+    const bunJson = parseJson(bunResult.stdout) as { bundleDir?: string } | undefined;
+    expect(bunJson?.bundleDir).toBe(nodeJson?.bundleDir);
   });
 });
 
