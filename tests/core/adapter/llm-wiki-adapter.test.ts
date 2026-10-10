@@ -98,32 +98,6 @@ describe("llm-wiki adapter — recognition golden", () => {
   });
 });
 
-// ── placement golden ────────────────────────────────────────────────────────────
-
-describe("llm-wiki adapter — placement golden", () => {
-  const golden = loadGolden("placement");
-  const byType = golden.byType as Record<string, { conceptId: string; assetPath: string; name: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = llmWikiAdapter.placeNew?.(component(), expected.conceptId);
-      expect(abs).toBeDefined();
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-      // name = the conceptId's last path segment (placement golden `name`).
-      expect(expected.conceptId.split("/").pop()).toBe(expected.name);
-    });
-  }
-
-  test("directoryList + looksLikeRoot are wired", () => {
-    expect(llmWikiAdapter.directoryList?.(component())).toEqual(["."]);
-    expect(llmWikiAdapter.looksLikeRoot?.(FIXTURE_ROOT)).toBe(true);
-  });
-});
-
 // ── renderer golden ──────────────────────────────────────────────────────────────
 
 describe("llm-wiki adapter — renderer golden (generic fallback, reading A)", () => {

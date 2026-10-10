@@ -553,17 +553,9 @@ Internal replacement for the one capability nothing else covered.
   a separately published `akm-migrate` package (see Internal above). The
   task-source migrator (`task-to-v4.ts`, `task-source-v3-frozen.ts`) already
   lives with it under `scripts/akm-migrate/migrate/`, out of `src/`.
-- **0.10 — `BundleAdapter.placeNew()` wiring.** The interface declares
-  `placeNew()` as an optional capability method, and 9 of the 11 built-in
-  adapters already implement it (all but `okf` and `website-snapshot`;
-  `claude` and `opencode` inherit theirs from the shared tool-dir factory),
-  but nothing in the write path calls it —
-  writes still resolve through AKM's native flat type→directory table.
-  Placement for every existing bundle is already correct today; this is a
-  deliberately sequenced routing change, not unfinished behavior. See
-  [D12](https://github.com/itlackey/akm/blob/main/docs/architecture/specs/0.9.0-decisions.md#d12--bundleadapterplacenew-stays-unwired-until-010)
-  for why it is scoped out of 0.9.0. Nothing user-visible changes in 0.10 for
-  this alone.
+- **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.
+  Writable bundles in a non-akm layout would need per-adapter placement back
+  ([#1163](https://github.com/itlackey/akm/issues/1163)).
 - **1.0 contract freeze** — the `[bundle//]conceptId[#fragment]` ref grammar,
   the supported source model, search behavior, and write-target rules are
   frozen at 1.0. The SDK and in-process plugin story ship on top of that

@@ -15,7 +15,7 @@
  *   - `akm-format-neutral-bundle-workspace-spec.md` §12.1 (lines ~530-560)
  *     restates the same contract but its own code block OMITS
  *     `affectedItems` entirely (it only appears in §14.2 prose, not the
- *     §12.1 TS snippet), and splits placeNew/directoryList/looksLikeRoot
+ *     §12.1 TS snippet), and splits directoryList/looksLikeRoot
  *     into a separate "§12.2 Authoring methods" heading rather than the
  *     adapter spec's single inline block.
  *   - `akm-architecture-decision-history.md` §8.3 (lines 805-823) is a
@@ -35,7 +35,7 @@
  *   index .............................. optional
  *   affectedItems ....................... optional
  *   validate .......................... REQUIRED
- *   readCandidates / placeNew / directoryList / looksLikeRoot ... optional
+ *   readCandidates / directoryList / looksLikeRoot ... optional
  *
  * 0.9.2 adds two independent optional read/runtime facets:
  * `renderExecutionSource`, for the approved agent/command design, and
@@ -124,15 +124,12 @@ export interface BundleAdapter {
   renderExecutionSource?(c: BundleComponent, file: FileContext): AdapterRenderedExecutionSource | null;
 
   // OPTIONAL — authoritative read placement. Unlike `extensions` (a walk
-  // collection hint) and `placeNew` (a write-normalization policy), this lists
-  // the existing path spellings that may own one canonical concept. Every
+  // collection hint), this lists the existing path spellings that may own one canonical concept. Every
   // candidate carries that canonical identity, so core can arbitrate without
   // reading authored bytes or inferring identity from the query.
   readCandidates?(c: BundleComponent, conceptId: string): AdapterReadCandidate[];
 
   // OPTIONAL — placement / discovery
-  /** Replaces the per-type stash-subdir + name-to-path placement primitives. */
-  placeNew?(c: BundleComponent, conceptId: string): string;
   /** Owned dirs; feeds git exact-path staging (git-stash.ts:241). */
   directoryList?(c: BundleComponent): string[];
   /** Install-time probe; ordered per §1.2. */

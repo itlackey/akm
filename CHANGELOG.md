@@ -61,6 +61,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
   onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block still loads and fails
   when improve runs, with the same "removed in 0.10" error as `quick` and the other removed strategies (#1130).
+- **`BundleAdapter.placeNew()` (internal, #1091).** The optional adapter method, its nine implementations and their
+  tests were never called: every write already resolves through the fixed type-to-directory table. No behaviour
+  change. Writable bundles in a layout other than akm's own would need it back; see #1163.
 
 ### Changed
 

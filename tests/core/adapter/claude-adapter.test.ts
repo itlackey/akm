@@ -83,28 +83,6 @@ describe("claude adapter — recognition golden", () => {
   }
 });
 
-describe("claude adapter — placement golden", () => {
-  const byType = loadGolden("placement").byType as Record<string, { conceptId: string; assetPath: string }>;
-
-  function relFromRoot(abs: string): string {
-    return path.relative(FIXTURE_ROOT, abs).split(path.sep).join("/");
-  }
-
-  for (const [typeKey, expected] of Object.entries(byType)) {
-    test(`placeNew(${typeKey}) → ${expected.assetPath}`, () => {
-      const abs = claudeAdapter.placeNew?.(component(), expected.conceptId);
-      expect(abs).toBeDefined();
-      expect(relFromRoot(abs as string)).toBe(expected.assetPath);
-    });
-  }
-
-  test("skill dir-name round-trip edge case", () => {
-    const edge = loadGolden("placement").edgeCases as Record<string, { conceptId: string; assetPath: string }>;
-    const abs = claudeAdapter.placeNew?.(component(), edge.skillDirNameEqualsSkillName!.conceptId);
-    expect(relFromRoot(abs as string)).toBe(edge.skillDirNameEqualsSkillName!.assetPath);
-  });
-});
-
 describe("claude adapter — renderer golden (presentation keyed on the open type)", () => {
   const byRelPath = loadGolden("renderer").byRelPath as Record<string, Record<string, unknown>>;
 
