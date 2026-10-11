@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   old, but one session can hold it across two extraction attempts and the summary call, so a session-end hook racing
   the improve run processed the session twice. Only a lock whose holder process is dead is reclaimed, as with the
   improve run lock.
+- **Memory inference writes to the default bundle, not the first bundle in the list.** The pass took `sources[0]`, so
+  it relied on list order and did nothing, silently, when that entry was not an akm bundle. It now selects the source
+  flagged as the default bundle and warns when there is none or when it is not an akm bundle.
 
 ## [0.10.26101002] - 2026-10-10
 
