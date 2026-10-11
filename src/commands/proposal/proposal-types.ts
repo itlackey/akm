@@ -133,7 +133,8 @@ export interface ProposalGateDecision {
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
    * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band` and
-   * `possible-dup`.
+   * `possible-dup`. `akm feedback` (`feedback`) stamps `manual-fix` on the
+   * exact fix a person typed, which it accepts at once.
    */
   reason: string;
   /** What an older threshold gate measured (e.g. the line count in "210 > 200"). */

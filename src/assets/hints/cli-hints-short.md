@@ -41,7 +41,7 @@ akm proposal accept 7c115132                  # Accept by UUID prefix
 akm proposal reject skills/my-skill --reason "..."  # Reject by ref
 akm feedback <ref> --positive                 # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback <ref> --negative --reason "..."  # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
-akm feedback <ref> --negative --reason "..." --replace "<exact text>" --with "<fix>" --source "<url|cmd|file>"  # Queue an exact fix of its text
+akm feedback <ref> --negative --reason "..." --replace "<exact text>" --with "<fix>" --source "<url|cmd|file>"  # Apply an exact fix to its text
 akm bundle add <ref>                                 # Add a source (npm, GitHub, git, local dir)
 akm clone <ref>                               # Copy an asset to the working bundle (optional --dest arg to clone to specific location)
 akm sync                                      # Commit (and push if writable remote) changes in the primary bundle (--no-push to commit only)

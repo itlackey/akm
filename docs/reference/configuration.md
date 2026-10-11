@@ -502,7 +502,7 @@ deterministic gates without `experimental.improveAutonomy`. Turning judgment on
 in a promote strategy is what that opt-in gates.
 
 Judgment is off in every built-in strategy, and the judgment tier may accept
-only a consolidate promotion. Retirements, exact fixes and reflect revisions it
+only a consolidate promotion. Retirements and reflect revisions it
 would accept are left for a person. This is measured, not cautious by habit
 (#1132, #1094): with `experimental.improveAutonomy` and judgment over every
 proposal kind, the nightly eval solved 0.49 (gpt-5.6-terra) and 0.53

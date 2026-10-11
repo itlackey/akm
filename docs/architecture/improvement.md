@@ -63,8 +63,8 @@ everything else routes through `akm proposal accept`.
    `--negative --reason "<what is wrong and what should change>"` flags the
    asset: the next improve run may repair its frontmatter from the reason.
    `--replace`/`--with`/`--source` attach an exact fix of its text once the
-   agent has verified the correct fact, which akm checks at once and queues as
-   a `feedback` proposal.
+   agent has verified the correct fact, which akm checks and applies at once
+   through a `feedback` proposal it accepts on the spot (no review).
    `--positive` records that the asset helped (it raises its ranking) and does
    not trigger a rewrite.
 2. The feedback event is appended to `state.db`, and the asset's utility
@@ -233,7 +233,7 @@ times in 26, and those that also rewrote the body were bad 175 times in 224.
 
 The triage drain's judgment tier (`processes.triage.judgment`, off in every
 built-in strategy) may accept only a consolidate promotion, a memory proposed as
-a new knowledge note. A retirement, an exact fix or a reflect revision it would
+a new knowledge note. A retirement or a reflect revision it would
 accept is left for a person (`judgment-not-promotion`); it may still reject.
 Measured on the nightly eval with `experimental.improveAutonomy` (#1132, #1094),
 judging every kind solved 0.49 (gpt-5.6-terra) and 0.53 (qwen3.8-27b) of the
