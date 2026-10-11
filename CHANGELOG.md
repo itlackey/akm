@@ -19,6 +19,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `semanticSearchMode: auto` and no embedding settings, search uses the built-in local model, so the warning was
   false on every query. It now fires only for a remote `embedding.endpoint` set without `embedding.model` (the one
   config that cannot work), and the remedy names that field.
+- **`akm sync` fetches the remote and brings other hosts' changes in before it pushes.** It used to check the stale
+  local tracking ref, so once another host had pushed, the lease push failed and `akm sync` exited 70 instead of
+  committing, and a two-host filesystem bundle never converged. A writable bundle with a remote now fetches, then
+  fast-forwards (or merges with git's default merge) the upstream, then pushes; a host with nothing to commit still
+  receives the upstream. A merge that conflicts is aborted, your commit stays, the push is skipped, and
+  `reason` reads `not pushed: merging upstream conflicts in <files> ...`. A failed fetch likewise only skips the push.
+  `--no-push` and read-only bundles never touch the network.
+- **The end-of-run improve sync reports `committed: true` when only the push failed.** The commit had landed, but the
+  result and the `stash_synced` event said `committed: false`.
 
 ## [0.10.26101002] - 2026-10-10
 

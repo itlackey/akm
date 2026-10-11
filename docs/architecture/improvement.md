@@ -398,9 +398,13 @@ does not leave an uncommitted backlog. `--no-sync` disables sync for a single
 run; `--no-push` commits without pushing. Strategy sync behavior is
 configured via the `sync` block under `improve.strategies.<name>`.
 
-The sync always commits the paths it is given. A branch it cannot push (no
-upstream branch, or behind or diverged from its upstream) only skips the push,
-and the result says why: `sync.reason` reads `not pushed: ...`. A branch that is
+The sync always commits the paths it is given. It then fetches the remote and
+brings the upstream in (a fast-forward when it can, otherwise git's default
+merge) before it pushes, so a second host that pushed first does not stop the
+push. A branch it cannot push (no upstream branch, a failed fetch, or a merge
+that conflicts, which is aborted with the local commit kept) only skips the push,
+and the result says why: `sync.reason` reads `not pushed: ...`. A push the remote
+refuses after the commit landed still reports `sync.committed: true`. A branch that is
 ahead of its upstream, as it is after the accept commits above, is pushed with
 the sync commit. A clean tree that is ahead is not pushed: the sync pushes what
 it commits.

@@ -40,6 +40,7 @@ import { collectEngineCredentialValues } from "../../integrations/agent/engine-r
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
+  GitStashPushError,
   isGitBackedStash,
   listGitChangedPaths,
   resolveWritableOverride,
@@ -946,8 +947,10 @@ function makeCommitStashBatch(deps: {
     } catch (syncErr) {
       const reason = errMessage(syncErr);
       warn(`improve: stash sync failed (non-fatal): ${reason}`);
-      record({ committed: false, pushed: false, skipped: true, reason });
-      return { committed: false, pushed: false, skipped: true, reason };
+      // A push that failed after the commit landed still left the commit in the repo.
+      const committed = syncErr instanceof GitStashPushError;
+      record({ committed, pushed: false, skipped: true, reason });
+      return { committed, pushed: false, skipped: true, reason };
     }
   };
 }

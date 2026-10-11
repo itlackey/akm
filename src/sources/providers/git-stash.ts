@@ -324,8 +324,11 @@ export function saveGitStash(
       `git status failed: ${statusResult.error?.message || statusResult.stderr?.trim() || "unknown error"}`,
     );
   }
+  const hasRemote = readHasRemote(repoDir);
+  // `--no-push`, a read-only bundle and a bundle without a remote never touch the network.
+  const syncWithRemote = hasRemote && writable && allowPush;
   if (!statusResult.stdout.trim() && options?.paths === undefined) {
-    return { committed: false, pushed: false, skipped: false, output: "nothing to commit, working tree clean" };
+    return nothingToCommit(repoDir, "nothing to commit, working tree clean", syncWithRemote);
   }
 
   // Scoped staging (#476 + the auto-sync incident): NEVER refuse akm's commit
@@ -354,20 +357,12 @@ export function saveGitStash(
         : managedFallbackPaths(repoDir, changedPaths)),
   );
   if (requestedPaths.length === 0) {
-    return { committed: false, pushed: false, skipped: false, output: "nothing to commit" };
+    return nothingToCommit(repoDir, "nothing to commit", syncWithRemote);
   }
   assertNoIgnoredExactPaths(repoDir, requestedPaths);
 
   const baseHead = readOptionalHead(repoDir);
 
-  const remoteResult = runGit(["-C", repoDir, "remote"]);
-  if (remoteResult.status !== 0) {
-    throw new Error(`git remote failed: ${remoteResult.stderr?.trim() || "unknown error"}`);
-  }
-  const hasRemote = remoteResult.stdout.trim().length > 0;
-  // A branch that cannot be pushed still gets its commit: only the push is skipped, and the result says why.
-  const upstream = hasRemote && writable && allowPush ? readActualUpstream(repoDir, baseHead) : undefined;
-  const pushTarget = typeof upstream === "object" ? upstream : undefined;
   const exactCommit = createExactPathCommit(repoDir, {
     baseHead,
     commitMessage,
@@ -376,9 +371,19 @@ export function saveGitStash(
     expectedSnapshots: options?.expectedSnapshots,
   });
   if (!exactCommit) {
-    return { committed: false, pushed: false, skipped: false, output: "nothing to commit" };
+    return nothingToCommit(repoDir, "nothing to commit", syncWithRemote);
   }
 
+  // Bring in whatever another host pushed, then push. A branch that cannot be pushed still keeps its
+  // commit: only the push is skipped, and the result says why.
+  const integration = syncWithRemote ? integrateUpstream(repoDir) : undefined;
+  const upstream =
+    integration && "blocked" in integration
+      ? integration.blocked
+      : syncWithRemote
+        ? readActualUpstream(repoDir, readOptionalHead(repoDir))
+        : undefined;
+  const pushTarget = typeof upstream === "object" ? upstream : undefined;
   if (!pushTarget) {
     return {
       committed: true,
@@ -397,7 +402,7 @@ export function saveGitStash(
       "push",
       `--force-with-lease=${pushTarget.mergeRef}:${pushTarget.upstreamHead}`,
       pushTarget.remote,
-      `${exactCommit}:${pushTarget.mergeRef}`,
+      `${readOptionalHead(repoDir) ?? exactCommit}:${pushTarget.mergeRef}`,
     ],
     { timeout: GIT_PUSH_TIMEOUT_MS },
   );
@@ -411,6 +416,90 @@ export function saveGitStash(
     skipped: false,
     output: pushResult.stdout.trim() || "changes committed and pushed",
     commit: exactCommit,
+  };
+}
+
+function readHasRemote(repoDir: string): boolean {
+  const remoteResult = runGit(["-C", repoDir, "remote"]);
+  if (remoteResult.status !== 0) {
+    throw new Error(`git remote failed: ${remoteResult.stderr?.trim() || "unknown error"}`);
+  }
+  return remoteResult.stdout.trim().length > 0;
+}
+
+/** Nothing to commit still brings in the upstream, so a host with no changes of its own keeps up. */
+function nothingToCommit(repoDir: string, output: string, syncWithRemote: boolean): SaveGitStashResult {
+  const integration = syncWithRemote ? integrateUpstream(repoDir) : undefined;
+  if (integration && "blocked" in integration) {
+    return { committed: false, pushed: false, skipped: false, reason: `not pushed: ${integration.blocked}`, output };
+  }
+  return { committed: false, pushed: false, skipped: false, output: integration?.integrated ?? output };
+}
+
+interface UpstreamConfig {
+  remote: string;
+  mergeRef: string;
+}
+
+function readUpstreamConfig(repoDir: string): UpstreamConfig | undefined {
+  const branchRef = runGit(["-C", repoDir, "symbolic-ref", "--quiet", "HEAD"]);
+  if (branchRef.status !== 0 || !branchRef.stdout.trim()) return undefined;
+  const branch = branchRef.stdout.trim().replace(/^refs\/heads\//, "");
+  const remote = runGit(["-C", repoDir, "config", "--get", `branch.${branch}.remote`]);
+  const merge = runGit(["-C", repoDir, "config", "--get", `branch.${branch}.merge`]);
+  if (remote.status !== 0 || merge.status !== 0) return undefined;
+  return { remote: remote.stdout.trim(), mergeRef: merge.stdout.trim() };
+}
+
+function isAncestor(repoDir: string, ancestor: string, descendant: string): boolean {
+  return runGit(["-C", repoDir, "merge-base", "--is-ancestor", ancestor, descendant]).status === 0;
+}
+
+/**
+ * Fetch the branch's remote and bring its upstream into HEAD: nothing to do when HEAD already has it,
+ * a fast-forward when HEAD is behind, otherwise git's default merge. A merge that conflicts is aborted
+ * so the working tree and the local commits stay exactly as they were. `blocked` says why the branch
+ * could not be brought up to date (and therefore must not be pushed); `integrated` describes what moved.
+ */
+function integrateUpstream(repoDir: string): { integrated?: string } | { blocked: string } {
+  const config = readUpstreamConfig(repoDir);
+  if (!config) return {};
+  const fetch = runGit(["-C", repoDir, "fetch", config.remote], { timeout: GIT_PUSH_TIMEOUT_MS });
+  if (fetch.status !== 0) {
+    return { blocked: `could not fetch ${config.remote}: ${fetch.stderr?.trim() || "unknown error"}` };
+  }
+  const upstream = runGit(["-C", repoDir, "rev-parse", "--verify", "@{u}"]);
+  const head = readOptionalHead(repoDir);
+  if (upstream.status !== 0 || !head) return {};
+  const upstreamHead = upstream.stdout.trim();
+  if (isAncestor(repoDir, upstreamHead, head)) return {};
+
+  const fastForward = isAncestor(repoDir, head, upstreamHead);
+  const merge = runGit([
+    "-C",
+    repoDir,
+    "-c",
+    "user.name=akm",
+    "-c",
+    "user.email=akm@local",
+    "merge",
+    ...(fastForward ? ["--ff-only"] : ["--no-edit", "-m", `akm sync: merge ${config.remote} upstream`]),
+    upstreamHead,
+  ]);
+  if (merge.status === 0) return { integrated: fastForward ? "fast-forwarded to upstream" : "merged upstream" };
+
+  const conflicted = runGit(["-C", repoDir, "diff", "--name-only", "--diff-filter=U"])
+    .stdout.split("\n")
+    .filter(Boolean);
+  // Not every refusal leaves a merge in progress (e.g. local changes in the way); abort only if one is.
+  if (runGit(["-C", repoDir, "rev-parse", "--verify", "--quiet", "MERGE_HEAD"]).status === 0) {
+    runGit(["-C", repoDir, "merge", "--abort"]);
+  }
+  return {
+    blocked:
+      conflicted.length > 0
+        ? `merging upstream conflicts in ${conflicted.join(", ")}; the merge was aborted and the local commit kept`
+        : `could not merge upstream (${merge.stderr?.trim() || merge.stdout?.trim() || "unknown error"}); the local commit was kept`,
   };
 }
 

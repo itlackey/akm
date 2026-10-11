@@ -25,7 +25,7 @@ import { akmImprove } from "../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../src/core/config/config";
 import { saveConfig } from "../../../src/core/config/config";
 import { akmIndex } from "../../../src/indexer/indexer";
-import type { SaveGitStashResult } from "../../../src/sources/providers/git";
+import { GitStashPushError, type SaveGitStashResult } from "../../../src/sources/providers/git";
 import { type Cleanup, withIsolatedAkmStorage } from "../../_helpers/sandbox";
 
 const TIMEOUT_MS = 20_000;
@@ -324,6 +324,31 @@ describe("akm improve — end-of-run auto-sync", () => {
       expect(result.sync?.skipped).toBe(true);
       expect(result.sync?.committed).toBe(false);
       expect(result.sync?.reason).toContain("simulated push failure");
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "a push failure after the commit landed is reported as committed",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+      makeGitBacked();
+
+      const saveGitStashFn = mock(() => {
+        throw new GitStashPushError("git push failed: rejected", "a".repeat(40));
+      });
+
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: cheapConfig(),
+        saveGitStashFn: saveGitStashFn as never,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.sync).toMatchObject({ committed: true, pushed: false, skipped: true });
+      expect(result.sync?.reason).toContain("git push failed");
     },
     TIMEOUT_MS,
   );
