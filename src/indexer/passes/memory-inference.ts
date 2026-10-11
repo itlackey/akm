@@ -437,11 +437,19 @@ async function runMemoryInferencePassBody(
     ? { ...config, index: { ...config.index, memory: { ...config.index?.memory, enabled: true } } }
     : config;
 
-  // The pass only writes to the primary (working) stash. Read-only caches
-  // (git, npm, website) are deliberately untouched — writing inferred
-  // children there would be clobbered by the next sync().
-  const primary = sources[0];
-  if (!primary || (primary.adapterId ?? detectAdapterId(primary.path)) !== "akm") return completeResult();
+  // The pass only writes to the default (working) stash, found by its
+  // `isDefault` flag and never by array position. Read-only caches (git, npm,
+  // website) are deliberately untouched — writing inferred children there
+  // would be clobbered by the next sync().
+  const primary = sources.find((source) => source.isDefault === true);
+  if (!primary) {
+    warn("memory inference: skipped — no default bundle among the sources, so there is no write target");
+    return completeResult();
+  }
+  if ((primary.adapterId ?? detectAdapterId(primary.path)) !== "akm") {
+    warn(`memory inference: skipped — the default bundle at ${primary.path} is not an akm bundle`);
+    return completeResult();
+  }
 
   const pending = collectPendingMemories(primary.path).filter(
     (record) => !options.candidateRefs || options.candidateRefs.has(record.ref),
@@ -733,7 +741,9 @@ function markParentProcessed(parent: MemoryRecord): void {
     warn(`memory inference: skipping markParentProcessed for ${parent.filePath} — could not parse frontmatter block`);
     return;
   }
-  const updatedFm: Record<string, unknown> = { ...parent.data, [FM_INFERENCE_PROCESSED]: true };
+  // Stamp the frontmatter as it is now: `parent.data` was parsed before the model
+  // call, and writing it back would revert any edit made to the file since.
+  const updatedFm: Record<string, unknown> = { ...parseFrontmatter(raw).data, [FM_INFERENCE_PROCESSED]: true };
   const next = assembleAsset(updatedFm, block.content);
   try {
     fs.writeFileSync(parent.filePath, next, "utf8");

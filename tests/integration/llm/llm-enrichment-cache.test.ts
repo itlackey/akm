@@ -118,7 +118,7 @@ function configWithLlm(overrides?: Partial<AkmConfig>): AkmConfig {
 }
 
 function sources(): SearchSource[] {
-  return [{ path: tmpStash }];
+  return [{ path: tmpStash, isDefault: true }];
 }
 
 function writeFile(rel: string, frontmatter: Record<string, unknown>, body: string): string {

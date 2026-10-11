@@ -28,6 +28,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `--no-push` and read-only bundles never touch the network.
 - **The end-of-run improve sync reports `committed: true` when only the push failed.** The commit had landed, but the
   result and the `stash_synced` event said `committed: false`.
+- **The extract per-session lock no longer reclaims a live holder.** It was reclaimed once its file was five minutes
+  old, but one session can hold it across two extraction attempts and the summary call, so a session-end hook racing
+  the improve run processed the session twice. Only a lock whose holder process is dead is reclaimed, as with the
+  improve run lock.
+- **Memory inference writes to the default bundle, not the first bundle in the list.** The pass took `sources[0]`, so
+  it relied on list order and did nothing, silently, when that entry was not an akm bundle. It now selects the source
+  flagged as the default bundle and warns when there is none or when it is not an akm bundle.
+- **Memory inference no longer reverts a parent memory's frontmatter edit.** The `inferenceProcessed` stamp rewrote
+  frontmatter parsed before the model call, so an edit made to the memory in the meantime (accepted proposal,
+  feedback hash) was lost. The stamp now adds its key to the file's current frontmatter.
+- **The session summary prompt fences the transcript as untrusted.** Extract's summary call sent the raw, unfiltered
+  event stream with no boundary, so a crafted session could steer the text written into the session asset. It now
+  uses the same pre-filter and the same `UNTRUSTED SESSION TRANSCRIPT` fence, with forged fence markers neutralised,
+  as the extraction call.
 
 ## [0.10.26101002] - 2026-10-10
 
