@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The extract per-session lock no longer reclaims a live holder.** It was reclaimed once its file was five minutes
+  old, but one session can hold it across two extraction attempts and the summary call, so a session-end hook racing
+  the improve run processed the session twice. Only a lock whose holder process is dead is reclaimed, as with the
+  improve run lock.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed
