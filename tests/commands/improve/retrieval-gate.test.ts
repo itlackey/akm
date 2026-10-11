@@ -11,7 +11,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import { runRetrievalRegressionGate, usableRetrievalQueries } from "../../../src/commands/improve/retrieval-gate";
 import type { RunnerSpec } from "../../../src/integrations/agent/runner";
-import type { ChatMessage } from "../../../src/llm/client";
+import { type ChatMessage, LlmCallError } from "../../../src/llm/client";
 
 const runner = {
   kind: "llm",
@@ -87,12 +87,41 @@ describe("runRetrievalRegressionGate", () => {
     expect(users.some((user) => user.includes("Description: New description"))).toBe(true);
   });
 
-  test("fails closed, after one corrective retry, when a grade cannot be read", async () => {
+  test("a grade that cannot be read, after one corrective retry, is ungraded: no regression was measured", async () => {
     const chat = mock(async () => '{"grade":7,"reason":"out of range"}');
     const verdict = await runRetrievalRegressionGate({ ...base, queries: ["rotate the vpn key"], chat });
-    expect(verdict.pass).toBe(false);
+    expect(verdict).toMatchObject({ pass: false, ungraded: true });
     expect(verdict.reason).toContain("could not");
     expect(chat).toHaveBeenCalledTimes(2);
+  });
+
+  test("a transport error or a timeout is ungraded too", async () => {
+    for (const failure of [new Error("connect ECONNREFUSED"), new LlmCallError("grade request timed out", "timeout")]) {
+      const chat = mock(async () => {
+        throw failure;
+      });
+      const verdict = await runRetrievalRegressionGate({ ...base, queries: ["rotate the vpn key"], chat });
+      expect(verdict).toMatchObject({ pass: false, ungraded: true });
+    }
+  });
+
+  test("a measured regression is not ungraded", async () => {
+    const verdict = await runRetrievalRegressionGate({
+      ...base,
+      queries: ["rotate the vpn key"],
+      chat: judge({ old: 3, new: 0 }),
+    });
+    expect(verdict.pass).toBe(false);
+    expect(verdict.ungraded).toBeUndefined();
+  });
+
+  test("an aborted check is neither a pass nor ungraded", async () => {
+    const chat = mock(async () => {
+      throw new LlmCallError("LLM request aborted", "aborted");
+    });
+    const verdict = await runRetrievalRegressionGate({ ...base, queries: ["rotate the vpn key"], chat });
+    expect(verdict.pass).toBe(false);
+    expect(verdict.ungraded).toBeUndefined();
   });
 });
 

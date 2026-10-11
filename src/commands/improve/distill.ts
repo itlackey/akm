@@ -1025,7 +1025,14 @@ export function writeQualityRejection(args: {
           attemptedRefs: [ledgerRef],
           ...(args.eligibilitySource ? { eligibilitySource: args.eligibilitySource } : {}),
         },
-        { review: { reason: "quality-review", gate: "quality-gate" } },
+        {
+          review: {
+            reason: "quality-review",
+            gate: "quality-gate",
+            judgeReason: args.reason,
+            ...(meta.criteria ? { scores: meta.criteria as Record<string, number> } : {}),
+          },
+        },
       );
     } catch (error) {
       warn(

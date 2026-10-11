@@ -2,9 +2,9 @@
  * 07 P0-2 — the LLM-as-judge quality gate must fail CLOSED.
  *
  * When the judge cannot render a verdict (no LLM configured, parse failure, or
- * timeout/error), minted content must be REJECTED, not passed through. An
- * unverifiable judge waving content into the stash is exactly the injection
- * surface this flip removes.
+ * timeout/error), minted content must not pass: it is routed to review (score -1,
+ * `reviewNeeded`), so a person decides. An unverifiable judge waving content
+ * into the stash is exactly the injection surface this flip removes.
  */
 
 import { describe, expect, mock, test } from "bun:test";
@@ -61,13 +61,13 @@ describe("runLessonQualityJudge — fail-CLOSED (07 P0-2)", () => {
     expect(result.reviewNeeded).toBe(true);
   });
 
-  test("no LLM configured → pass:false (score -1), not routed to review (nothing was generated yet)", async () => {
+  test("no LLM configured → pass:false, routed to review (score -1, reviewNeeded): a person judges it", async () => {
     const result = await runLessonQualityJudge(configWithoutLlm(), "some lesson body", "some source body", async () => {
       throw new Error("chat must not be called when no LLM is configured");
     });
     expect(result.pass).toBe(false);
     expect(result.score).toBe(-1);
-    expect(result.reviewNeeded).toBeUndefined();
+    expect(result.reviewNeeded).toBe(true);
   });
 
   test("judge throws (timeout/error) → pass:false, routed to review (score -1, reviewNeeded)", async () => {

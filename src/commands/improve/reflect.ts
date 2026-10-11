@@ -1002,6 +1002,22 @@ async function runReflectRefineIterations(args: {
   return result;
 }
 
+/**
+ * The judge's review band for a reflect revision: a non-pass whose mean is at or above this goes to a
+ * person (`judge-uncertain`); a lower one is refused. The judge's own review label starts at 2.5, but
+ * nothing labelled below 3.5 is worth a person's time. Labelled runs of the judge (akm-eval judge-gate,
+ * lab 27B Q2; ~/akm/eval/judge-gate/tuning), good / bad among non-passing verdicts:
+ *   mean >= 3.5, frontmatter-only proposals Opus reviewed: 17 / 9 (shipped judge, 113 proposals),
+ *     15 / 0, 18 / 9 and 15 / 5 (earlier rubric, three runs);
+ *   mean >= 3.5, public corpus of body rewrites: 12 / 35;
+ *   mean < 3.5, 396 labelled body rewrites: 6 / 285 (Q4 judge 5 / 177, Q2 judge 1 / 108);
+ *     public corpus 3 / 37; frontmatter-only proposals: 1 / 2 (shipped judge), 5 / 1 (earlier runs).
+ * Mean 4.0 with one criterion at 2 was good 14 / 0; mean 3.67 was 3 / 8. A rule on the lowest
+ * criterion did not help: a criterion at 3 or more is rare in a non-pass, and a 2 is the usual
+ * shape of a good one.
+ */
+const REFLECT_REVIEW_MIN_SCORE = 3.5;
+
 const NOISE_SUBREASONS = {
   noop: "reflect_skipped_noop",
   cosmetic: "reflect_skipped_cosmetic",
@@ -1073,6 +1089,7 @@ async function finalizeReflectProposal(args: {
   if (defect) return refuse(defect, { reflectDefect: defect }, `Reflect proposal refused before the judge: ${defect}`);
   let verdict: QualityJudgeResult | undefined;
   let judgeFailed = false;
+  let judgeUncertain = false;
   if (judge.enabled) {
     verdict = await runReflectQualityJudge(run.config, content, assetContent, feedback, options.chat, {
       runnerSelectionFrozen: true,
@@ -1084,7 +1101,9 @@ async function finalizeReflectProposal(args: {
     });
     // A judge that timed out, errored or replied unparseably gave no verdict: a person reviews the revision.
     judgeFailed = verdict.reviewNeeded === true && verdict.score === -1;
-    if (!verdict.pass && !judgeFailed) {
+    // A real score in the band is uncertain, not bad: a person decides, and no window is recorded.
+    judgeUncertain = verdict.reviewNeeded === true && verdict.score >= REFLECT_REVIEW_MIN_SCORE;
+    if (!verdict.pass && !judgeFailed && !judgeUncertain) {
       return refuse(
         verdict.reason,
         {
@@ -1097,6 +1116,7 @@ async function finalizeReflectProposal(args: {
     }
   }
   // #722: a revision of an existing asset must not grade lower on its own retrieval queries.
+  let retrievalUngraded: string | undefined;
   if (verdict?.pass && judge.runner) {
     const retrieval = await runRetrievalRegressionGate({
       ref: payload.ref,
@@ -1109,7 +1129,9 @@ async function finalizeReflectProposal(args: {
       ...(options.signal ? { signal: options.signal } : {}),
       onNotices: run.notices.add,
     });
-    if (!retrieval.pass) {
+    // A check that could not grade measured nothing: a person decides, as when the judge gave no verdict.
+    if (retrieval.ungraded) retrievalUngraded = retrieval.reason;
+    if (!retrieval.pass && !retrieval.ungraded) {
       return refuse(
         retrieval.reason,
         {
@@ -1126,7 +1148,12 @@ async function finalizeReflectProposal(args: {
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
     ...(judgeFailed ? ["judge-error"] : []),
+    ...(judgeUncertain ? ["judge-uncertain"] : []),
+    ...(retrievalUngraded ? ["retrieval-ungraded"] : []),
   ];
+  const gateReview = judgeFailed || judgeUncertain || retrievalUngraded !== undefined;
+  // What the person is shown: the check's words when it could not grade, otherwise the judge's.
+  const reviewNote = retrievalUngraded ?? verdict?.reason;
   const proposal = mintProposal(
     run.stash,
     options.ctx,
@@ -1145,7 +1172,9 @@ async function finalizeReflectProposal(args: {
           review: {
             reason: reviewReasons.join("+"),
             // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
-            gate: judgeFailed ? "quality-gate" : "reflect",
+            gate: gateReview ? "quality-gate" : "reflect",
+            ...(gateReview && verdict?.criteria ? { scores: verdict.criteria } : {}),
+            ...(gateReview && reviewNote ? { judgeReason: reviewNote } : {}),
           },
         }
       : { judged: verdict },
@@ -1159,7 +1188,9 @@ async function finalizeReflectProposal(args: {
         source: "reflect",
         engine: run.engineName,
         ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
-        ...(judgeFailed ? { qualityReason: verdict?.reason } : {}),
+        ...(judgeFailed || judgeUncertain ? { qualityReason: verdict?.reason } : {}),
+        ...(judgeUncertain ? { qualityScore: verdict?.score } : {}),
+        ...(retrievalUngraded ? { qualityReason: retrievalUngraded, retrievalUngraded: true } : {}),
         ...telemetry,
       },
     },
