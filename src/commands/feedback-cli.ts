@@ -189,8 +189,9 @@ interface RecordFeedbackUsageResult {
  * state.db; entries + utility_scores stay in `indexDb`. BOTH positive and
  * negative signals apply the EMA utility update unconditionally and
  * immediately when the source is user-attributed — no `akm index` run is
- * required for either signal to affect search ranking. Uses the bounded-step
- * EMA policy (F-5 / #386, arXiv:2601.03192).
+ * required for either signal to affect search ranking (search counts the
+ * recorded events itself). Uses the bounded-step EMA policy (F-5 / #386,
+ * arXiv:2601.03192) for the utility score improve and metrics read.
  *
  * The update is intentionally SKIPPED for non-`user` event sources (`improve`,
  * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
@@ -503,10 +504,14 @@ export const feedbackCommand = defineJsonCommand({
       "state and nothing replaces it), with --reason and --source: the same edit sets its\n" +
       "beliefState and, for --superseded-by, adds the ref to supersededBy. `--positive` records\n" +
       "that an asset helped (it raises its ranking) and does not trigger a rewrite.\n\n" +
-      "Both signals adjust the asset's usefulness score right away, in the same\n" +
-      "process: positive feedback raises it, negative lowers it, and recent\n" +
-      "feedback counts for more than old feedback. No reindex is needed — the new\n" +
-      "score affects ranking starting with the very next `akm search`.",
+      "Feedback changes `akm search` and `akm curate` ranking starting with the very\n" +
+      "next search; no reindex is needed. Each recorded positive raises the asset's\n" +
+      "score and each negative lowers it, the same way for every asset: the more\n" +
+      "positives, the higher it ranks (5 outrank 2), and each further vote counts\n" +
+      "for a little less. The effect is small, so it reorders close matches and\n" +
+      "does not override relevance. Only feedback recorded as the user counts, not\n" +
+      "feedback from improve, task or audit runs. Feedback also moves the utility\n" +
+      "score that improve and `akm metrics` read.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate
@@ -715,9 +720,9 @@ export const feedbackCommand = defineJsonCommand({
         );
       }
       // Persist the feedback signal into usage_events. Both positive and
-      // negative signals apply the EMA utility update immediately — no
-      // `akm index` run is required for either signal to affect ranking in
-      // search results (see recordFeedbackUsage / applyFeedbackToUtilityScore).
+      // negative signals apply the EMA utility update immediately (see
+      // recordFeedbackUsage / applyFeedbackToUtilityScore). Search ranking
+      // reads the recorded events directly, so no `akm index` run is needed.
       // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta

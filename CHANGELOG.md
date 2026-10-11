@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   refusing it as a regression, and a distill lesson or promotion whose judge is missing at judge time is queued for
   review instead of recording a 30-day `quality_rejected` window. Triage never accepts any of these. `akm proposal
   list` shows the reason as `gate=deferred:<reason>`.
+- **Feedback now changes `akm search` and `akm curate` ranking, as `akm feedback` always said it did.** The fused
+  score is scaled by `1 + 0.03 x (ln(1 + positives) - ln(1 + negatives))`, counting the user's recorded feedback
+  events for the asset (improve, task and audit feedback does not count). The rule is the same for every asset, rises
+  with each positive and falls with each negative, and gains less per vote as votes pile up: about +2% / +3% / +5% /
+  +9% for 1 / 2 / 5 / 20 positives, so an asset with 5 positives outranks one with 2, and the effect reorders close
+  matches without overriding relevance. The counts are read from `state.db` in one query per search. `utility_scores`
+  is still written and read by improve and metrics, but search does not use it.
 
 ### Fixed
 

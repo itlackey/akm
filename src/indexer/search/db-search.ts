@@ -7,7 +7,8 @@
  *
  * Ranking is two candidate channels fused by reciprocal rank (`ranking.ts`):
  * BM25 over whole documents matching any query word, and the nearest document
- * vectors to the query embedding. Filters narrow the fused list; nothing else
+ * vectors to the query embedding. The fused score is then scaled by the
+ * asset's recorded user feedback. Filters narrow the list; nothing else
  * reorders it.
  */
 
@@ -17,6 +18,7 @@ import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
@@ -48,8 +50,15 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
+import { countFeedbackSignalsByRef } from "../usage/usage-events";
 import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
-import { type FusedCandidate, type RankedRef, reciprocalRankFusion } from "./ranking";
+import {
+  applyFeedback,
+  type FeedbackCounts,
+  type FusedCandidate,
+  type RankedRef,
+  reciprocalRankFusion,
+} from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -227,8 +236,9 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning } = await searchDatabase(db, input);
+    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
     if (semanticWarning) warnings.push(semanticWarning);
+    if (feedbackWarning) warnings.push(feedbackWarning);
     return {
       hits,
       tip: hits.length === 0 ? EMPTY_RESULT_TIP : undefined,
@@ -255,6 +265,7 @@ async function searchDatabase(
   rankMs?: number;
   mode: SearchExecutionMode;
   semanticWarning?: string;
+  feedbackWarning?: string;
 }> {
   const { query, searchType, limit, stashDir, sources, config, filters } = input;
   const filterOptions = {
@@ -322,7 +333,9 @@ async function searchDatabase(
 
   const tRank0 = Date.now();
   const vectorCandidates = vector.neighbors ? keepAllowedTypes(db, vector.neighbors, typeFilter, defaultExcludes) : [];
-  const fused = reciprocalRankFusion([lexical, vectorCandidates]);
+  const rrf = reciprocalRankFusion([lexical, vectorCandidates]);
+  const feedback = readFeedback(rrf);
+  const fused = applyFeedback(rrf, feedback.counts);
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
@@ -345,7 +358,30 @@ async function searchDatabase(
   );
 
   const mode: SearchExecutionMode = vector.warning ? "fts-fallback" : vector.neighbors ? "semantic" : "keyword";
-  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning };
+  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
+}
+
+/**
+ * User feedback counts of the fused candidates, from state.db in one query.
+ * A search never creates state.db, and one that cannot read it ranks without
+ * feedback and says so.
+ */
+function readFeedback(fused: readonly FusedCandidate[]): { counts: Map<string, FeedbackCounts>; warning?: string } {
+  let counts = new Map<string, FeedbackCounts>();
+  try {
+    withStateDbTelemetry((stateDb) => {
+      counts = countFeedbackSignalsByRef(
+        stateDb,
+        fused.map((candidate) => candidate.itemRef),
+      );
+    });
+  } catch (error) {
+    return {
+      counts: new Map(),
+      warning: `Feedback was not applied to the ranking: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  return { counts };
 }
 
 type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number };
