@@ -52,11 +52,7 @@ import {
 } from "../../storage/repositories/index-connection";
 import { getAllEntries } from "../../storage/repositories/index-entries-repository";
 import { listProposals, listProposalsReadOnly, type ProposalsContext, proposalContent } from "../proposal/repository";
-import {
-  hasHotCaptureMode,
-  hasSupersededStatus,
-  validateProposalFrontmatter,
-} from "../proposal/validators/proposal-quality-validators";
+import { hasSupersededStatus, validateProposalFrontmatter } from "../proposal/validators/proposal-quality-validators";
 import { buildChunkPrompt, computeSafeChunkSize, DEFAULT_CONTEXT_LENGTH_TOKENS } from "./consolidate/chunking";
 import { type CoveringKnowledgeFinder, openKnowledgeCoverage } from "./consolidate/coverage";
 import { runConsolidatePairPass } from "./consolidate/pair-pass";
@@ -113,20 +109,6 @@ export function mergePlans(chunks: ConsolidatePromoteOp[][]): ConsolidatePromote
 
 export function isConsolidationEligibleMemoryName(name: string): boolean {
   return !name.endsWith(".derived");
-}
-
-/**
- * A `captureMode: hot` memory (written deliberately with `akm remember`). A
- * missing file is not hot; an unreadable one is treated as hot — the check is
- * a protection and must not fail open.
- */
-export function isHotCapturedMemory(filePath: string): boolean {
-  if (!fs.existsSync(filePath)) return false;
-  try {
-    return hasHotCaptureMode(parseFrontmatter(fs.readFileSync(filePath, "utf8")).data as Record<string, unknown>);
-  } catch {
-    return true;
-  }
 }
 
 export interface AkmConsolidateOptions {
@@ -470,7 +452,7 @@ interface ConsolidateAccounting {
   skipReasonByRef: Map<string, SkipEntry>;
   /** Refs counted in judgedNoAction, so a later skip moves (never double-counts) them. */
   judgedNoActionRefs: Set<string>;
-  /** Every memory in a chunk the model judged (or an all-hot chunk judged without it). */
+  /** Every memory in a chunk the model judged. */
   judgedRefs: Set<string>;
 }
 
@@ -659,9 +641,8 @@ const ABORT_FAILURE_RATE = 0.5;
 
 /**
  * The chunk loop: stop cleanly on the budget signal, abort once ≥50% of at
- * least 4 chunks failed (the model is likely down), skip an all-hot chunk
- * without a call (the only thing the model could do with it is refused), and
- * count every memory into exactly one accounting bucket.
+ * least 4 chunks failed (the model is likely down), and count every memory
+ * into exactly one accounting bucket.
  */
 async function judgeConsolidationChunks(args: {
   chunks: MemoryEntry[][];
@@ -707,17 +688,6 @@ async function judgeConsolidationChunks(args: {
       }
     }
     const chunk = chunks[chunkIdx] as MemoryEntry[];
-    if (chunk.length > 0 && chunk.every((m) => isHotCapturedMemory(m.filePath))) {
-      for (const m of chunk) {
-        acc.judgedNoActionRefs.add(memRef(m));
-        acc.judgedRefs.add(memRef(m));
-      }
-      acc.judgedNoAction += chunk.length;
-      warn(
-        `[consolidate] chunk ${chunkIdx + 1}/${chunks.length}: all ${chunk.length} memories are captureMode: hot — skipping LLM (judged no-action).`,
-      );
-      continue;
-    }
     warn(`[consolidate] chunk ${chunkIdx + 1}/${chunks.length} (${chunk.length} memories) …`);
     processed++;
     if (!llmRunner) {
@@ -825,10 +795,7 @@ async function planConsolidation(
     Array.from({ length: Math.ceil(list.length / chunkSize) }, (_, i) =>
       list.slice(i * chunkSize, (i + 1) * chunkSize),
     );
-  const willDispatch = slice(budgeted).some(
-    (chunk) => chunk.length > 0 && !chunk.every((memory) => isHotCapturedMemory(memory.filePath)),
-  );
-  if (llmRunner && willDispatch) assertRunnerCredentials(llmRunner);
+  if (llmRunner && budgeted.length > 0) assertRunnerCredentials(llmRunner);
   const { ordered, embedTelemetry } = await clusterMemoriesBySimilarity(budgeted, config, stateDb, opts.signal);
   const chunks = slice(ordered);
   const pendingProposalBodyHashes = loadPendingConsolidateProposalHashes(stashDir, opts.proposalsCtx);

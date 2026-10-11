@@ -74,6 +74,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   written were never committed. Before exiting, the watchdog now records the run as terminated
   (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
 
+### Changed
+
+- **`captureMode: hot` memories are consolidated like any other memory.** The pair pass may now retire one, the promote
+  pass may promote one (accepting archives the source, as for any memory), and a chunk of only hot memories goes to the
+  model instead of being skipped as judged no-action. The hot-specific retire guard, chunk skip and promote-prompt
+  annotation are gone; `akm remember` still writes `captureMode: hot`.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed

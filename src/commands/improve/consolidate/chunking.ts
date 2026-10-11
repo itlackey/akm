@@ -5,7 +5,6 @@
 /** Consolidate's chunk sizing and per-chunk prompt (pure token math and text). */
 
 import fs from "node:fs";
-import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import type { MemoryEntry } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 
@@ -32,9 +31,8 @@ export function computeSafeChunkSize(contextLength: number, bodyTruncation: numb
 /**
  * One chunk's user prompt. Each memory shows its body only (frontmatter can
  * outrun the truncation and leave the model judging metadata), marked
- * `captureMode: hot` when the user captured it explicitly and `already queued`
- * when a pending consolidate proposal carries its body hash — the system
- * prompt forbids promoting those.
+ * `already queued` when a pending consolidate proposal carries its body hash —
+ * the system prompt forbids promoting those.
  */
 export function buildChunkPrompt(
   sourceName: string,
@@ -56,10 +54,7 @@ export function buildChunkPrompt(
     } catch {
       body = "(unreadable)";
     }
-    const annotations: string[] = [];
-    if (parseFrontmatter(body).data.captureMode === "hot") annotations.push("captureMode: hot");
-    if (pendingProposalBodyHashes.has(contentHash(body, "body"))) annotations.push("already queued");
-    const annotationSuffix = annotations.length > 0 ? ` (${annotations.join("; ")})` : "";
+    const annotationSuffix = pendingProposalBodyHashes.has(contentHash(body, "body")) ? " (already queued)" : "";
     lines.push(
       `[${i + 1}] memories/${m.name}${annotationSuffix}`,
       `Description: ${m.description || "(none)"}`,

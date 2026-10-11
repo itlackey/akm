@@ -764,7 +764,7 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(getProposal(storage.stashDir, result.retired[0]!).gateDecision).toBeUndefined();
   });
 
-  test("never retires a captureMode: hot memory — the pair is left alone", async () => {
+  test("retires a captureMode: hot memory like any other — hot memories can be archived", async () => {
     const hotPath = writeAsset("memories/hot-note.md", "description: hot\ncaptureMode: hot");
     dateAsset(hotPath, 60);
     const plainPath = writeAsset("memories/plain-note.md", "description: plain");
@@ -779,11 +779,13 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
     const warnings: string[] = [];
     const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
-      // duplicate would normally retire the older (hot) side.
+      // duplicate retires the older (hot) side.
       chat: fixedChat({ relation: "duplicate", redundant: null }),
     });
-    expect(result.retired).toHaveLength(0);
-    expect(listProposals(storage.stashDir)).toHaveLength(0);
+    expect(result.retired).toHaveLength(1);
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    expect(proposal.ref).toBe("stash//memories/hot-note");
+    expect(proposal.retirement).toMatchObject({ retiredRef: "memories/hot-note", successorRef: "memories/plain-note" });
   });
 
   test("never retires a .derived memory whose parent still exists", async () => {
@@ -1626,14 +1628,14 @@ describe("runConsolidatePairPass — knowledge is never replaced with a memory (
     expect(result.retired).toHaveLength(0);
   });
 
-  test("a flipped retirement of a hot-captured memory is still refused by the hot guard", async () => {
+  test("a flipped retirement of a hot-captured memory is minted like any memory's", async () => {
     const result = await runPair(
       "knowledge",
       { relation: "duplicate", redundant: null },
       { memoryFrontmatter: "description: hot capture\ncaptureMode: hot" },
     );
-    expect(result.retired).toHaveLength(0);
-    expect(listProposals(storage.stashDir)).toHaveLength(0);
+    expect(result.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, result.retired[0]!).ref).toBe("stash//memories/topic-memory");
   });
 
   test("a flipped retirement of a .derived memory whose parent exists is still refused", async () => {

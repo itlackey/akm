@@ -68,7 +68,7 @@ import {
   proposalContentHash,
   recordGateDecision,
 } from "../../proposal/repository";
-import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
+import type { AkmConsolidateOptions } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
@@ -763,9 +763,6 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   }
 
   // Guards (plan §5.2 step 4 / brief §A "Guards").
-  if (retired.asset.type === "memory" && isHotCapturedMemory(retired.asset.filePath)) {
-    return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
-  }
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
     // S3: derive the parent path from the FULL file path, not from name +
     // dirname — for a subfolder memory (e.g. memories/sub/foo.derived) the

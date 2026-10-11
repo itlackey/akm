@@ -150,7 +150,7 @@ flowchart TD
             PAIR_INIT --> PAIR_CAND[Candidates: k=5 nearest by stored vector,\nsame bundle + memory tier, cosine >= T_pair]
             PAIR_CAND --> PAIR_JUDGE[One LLM call per pair:\nconsolidate-pair.md, 6-label schema]
             PAIR_JUDGE --> PAIR_OUT{judge label}
-            PAIR_OUT -- duplicate / subsumed / supersedes --> PAIR_GUARDS[Guards: hot capture, derived parent,\nrejected-pair match, same-run chain]
+            PAIR_OUT -- duplicate / subsumed / supersedes --> PAIR_GUARDS[Guards: derived parent,\nrejected-pair match, same-run chain]
             PAIR_GUARDS --> PAIR_CONTINUITY[Continuity check R3:\nreplay retired asset's own queries,\nflag continuityRisk, never block]
             PAIR_CONTINUITY --> PAIR_PROPOSE[emitProposal: retire,\nsource: consolidate-pair]
             PAIR_OUT -- overlap / unrelated / contradicts --> PAIR_NOACTION[judged_no_action\nno 7-day timer — content change only]
@@ -385,8 +385,8 @@ duplicate, subsumed and superseding retirement, review-gated.
    body characters.
 4. **Outcome:** `duplicate`, `subsumed` and `supersedes` mint one `retire`
    proposal (source `consolidate-pair`, its own generator — see below) for
-   the side that does not survive — never a `captureMode: hot` memory, never
-   a `.derived` memory whose parent still exists, never across bundles,
+   the side that does not survive — never a
+   `.derived` memory whose parent still exists, never across bundles,
    never when either side already has a pending retire proposal (as the
    retired ref or its successor), and never retiring or reusing as a
    successor an asset already spent earlier in the SAME run (the durable
