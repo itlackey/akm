@@ -76,8 +76,16 @@ the command is `akm improve`'s own:
 
 ```sh
 akm task add improve-team --schedule "15 3 * * *" \
-  --command "akm improve --bundle team --skip-if-locked --require-engines"
+  --command "akm improve --bundle team --require-engines"
 ```
+
+Leave `--skip-if-locked` off a once-a-night run: if a short-cadence improve task
+holds the lock when it fires, the run fails with `IMPROVE_LOCK_HELD` (exit 75) and
+is recorded, rather than being silently skipped. Put `--skip-if-locked` on the
+frequent tasks, and give them a `--timeout-ms` that ends before the nightly starts.
+The shipped `improve/akm-improve-consolidate` task does both: it runs at `:20`
+every four hours with `--timeout-ms 3600000`, so the 00:20 run is over by 01:20,
+well before the 02:00 nightly.
 
 ## Rerunning setup preserves scheduler bindings
 

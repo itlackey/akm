@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **The 02:00 nightly `akm improve` can no longer lose its night to the consolidate task's lock.** The shipped
+  `akm-improve-consolidate` task (`20 */4 * * *`) kept the default 2-hour budget, so a 00:20 run could still hold
+  `improve.lock` at 02:00 and the nightly (deliberately without `--skip-if-locked`) failed with `IMPROVE_LOCK_HELD`.
+  The consolidate task now passes `--timeout-ms 3600000`; the nightly is unchanged.
 - **Scheduled command tasks (`uses: commands/…`) get the 6-hour unattended default timeout.** Only workflow and native
   shell/script tasks had it, so a wedged engine call could hold a command task forever. An explicit task `timeout:`,
   an engine timeout, or `timeout: null` still wins.
