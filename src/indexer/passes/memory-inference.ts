@@ -741,7 +741,9 @@ function markParentProcessed(parent: MemoryRecord): void {
     warn(`memory inference: skipping markParentProcessed for ${parent.filePath} — could not parse frontmatter block`);
     return;
   }
-  const updatedFm: Record<string, unknown> = { ...parent.data, [FM_INFERENCE_PROCESSED]: true };
+  // Stamp the frontmatter as it is now: `parent.data` was parsed before the model
+  // call, and writing it back would revert any edit made to the file since.
+  const updatedFm: Record<string, unknown> = { ...parseFrontmatter(raw).data, [FM_INFERENCE_PROCESSED]: true };
   const next = assembleAsset(updatedFm, block.content);
   try {
     fs.writeFileSync(parent.filePath, next, "utf8");

@@ -956,7 +956,7 @@ describe("runMemoryInferencePass — enabled", () => {
   });
 });
 
-describe("runMemoryInferencePass — bundle selection", () => {
+describe("runMemoryInferencePass — bundle selection and parent stamp", () => {
   test("infers in the default bundle, not whichever bundle is first in the array", async () => {
     const other = fs.mkdtempSync(path.join(os.tmpdir(), "akm-memory-infer-other-"));
     try {
@@ -998,5 +998,21 @@ describe("runMemoryInferencePass — bundle selection", () => {
       _setWarnSinkForTests(undefined);
     }
     expect(warnings.some((w) => w.includes("memory inference") && w.includes("default"))).toBe(true);
+  });
+
+  test("the parent stamp keeps a frontmatter edit made while the model call was in flight", async () => {
+    const parentPath = writeMemory("edited", { description: "before" }, "Body of the parent.");
+    compressor = () => {
+      // Another writer (accepted proposal, feedback hash) edits the parent mid-call.
+      fs.writeFileSync(parentPath, "---\ndescription: after\ntags: [fresh]\n---\n\nBody of the parent.\n", "utf8");
+      return sampleDraft();
+    };
+
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+
+    const { data } = parseFrontmatter(fs.readFileSync(parentPath, "utf8"));
+    expect(data.inferenceProcessed).toBe(true);
+    expect(data.description).toBe("after");
+    expect(data.tags).toEqual(["fresh"]);
   });
 });
