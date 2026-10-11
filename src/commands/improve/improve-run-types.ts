@@ -64,6 +64,8 @@ export interface AkmImproveOptions {
   sync?: { enabled?: boolean; push?: boolean };
   /** `--require-engines` probe outcomes, recorded on the result. */
   engineProbe?: readonly EngineProbeOutcome[];
+  /** Called once before the budget watchdog force-exits a run that did not drain (the CLI records the terminated run). */
+  onBudgetHardKill?: () => void;
   // Test seams.
   collectEligibleRefsFn?: typeof collectEligibleRefs;
   runImprovePreparationStageFn?: typeof import("./preparation").runImprovePreparationStage;

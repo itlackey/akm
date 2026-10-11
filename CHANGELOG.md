@@ -53,6 +53,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
   `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
   enabling embeddings reconsiders it, and warns once per run that the pair pass needs stored embeddings.
+- **A transient reflect failure no longer consumes the feedback that planned it.** A transport error, parse error,
+  timeout, budget abort or crash wrote a `failed` ledger row that advanced the signal cursor, so the ref was not
+  retried until new feedback arrived. Like distill, these now write no row; guard rejections and quality rejections
+  are unchanged.
+- **The per-run `akm improve` and `akm index` log files are now purged by the retention pass.**
+  `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log` were outside the purge and grew without bound;
+  they now follow `improve.eventRetentionDays` like the task log files.
+- **A run hard-killed by the budget watchdog now leaves a record and banks its writes.** The forced `process.exit(0)`
+  (exit code unchanged) skipped every finally block, so the run left no `improve_runs` row and the files it had
+  written were never committed. Before exiting, the watchdog now records the run as terminated
+  (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
 
 ## [0.10.26101002] - 2026-10-10
 

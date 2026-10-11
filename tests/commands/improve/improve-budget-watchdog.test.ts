@@ -155,6 +155,46 @@ describe("armBudgetWatchdog (H7 #566)", () => {
     expect(exitCodes).toEqual([0]); // normal exit code for budget exhaustion
   });
 
+  test("hard-kill runs onHardKill before exit(0), and a throwing hook cannot block the exit", () => {
+    const timers = new FakeTimers();
+    const controller = new AbortController();
+    const order: string[] = [];
+
+    armBudgetWatchdog(1_000, controller, {
+      setTimeoutFn: timers.setTimeout,
+      clearTimeoutFn: timers.clearTimeout,
+      exitFn: (code) => order.push(`exit:${code}`),
+      onHardKill: () => {
+        order.push("hook");
+        throw new Error("persist failed");
+      },
+      hardKillGraceMs: 5_000,
+    });
+
+    timers.advance(1_000);
+    expect(order).toEqual([]);
+    timers.advance(5_000);
+    expect(order).toEqual(["hook", "exit:0"]);
+  });
+
+  test("a clean drain never runs onHardKill", () => {
+    const timers = new FakeTimers();
+    const controller = new AbortController();
+    let hookCalls = 0;
+    const dispose = armBudgetWatchdog(1_000, controller, {
+      setTimeoutFn: timers.setTimeout,
+      clearTimeoutFn: timers.clearTimeout,
+      exitFn: () => {},
+      onHardKill: () => {
+        hookCalls += 1;
+      },
+    });
+    timers.advance(1_000);
+    dispose();
+    timers.advance(10_000);
+    expect(hookCalls).toBe(0);
+  });
+
   test("dispose() before budget expiry cancels everything; idempotent", () => {
     const timers = new FakeTimers();
     const controller = new AbortController();
