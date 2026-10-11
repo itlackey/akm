@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Scheduled command tasks (`uses: commands/…`) get the 6-hour unattended default timeout.** Only workflow and native
+  shell/script tasks had it, so a wedged engine call could hold a command task forever. An explicit task `timeout:`,
+  an engine timeout, or `timeout: null` still wins.
 - **`akm search` no longer warns "no embedding provider is configured" on a default install.** With
   `semanticSearchMode: auto` and no embedding settings, search uses the built-in local model, so the warning was
   false on every query. It now fires only for a remote `embedding.endpoint` set without `embedding.model` (the one

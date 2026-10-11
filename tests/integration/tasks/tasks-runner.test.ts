@@ -1124,6 +1124,37 @@ describe("runTask — prompt target", () => {
     expect(log).not.toContain("lowering_notice=untranslated-field adapter=llm field=runtime.environment");
   });
 
+  test("a command task gets the 6-hour scheduled default timeout unless the task sets one", async () => {
+    process.env.AKM_CONFIG_DIR = configDir;
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(configDir, "config.json"),
+      JSON.stringify({
+        configVersion: "0.9.0",
+        engines: { opencode: { kind: "agent", platform: "opencode" } },
+        defaults: { engine: "opencode" },
+      }),
+    );
+    const timeouts: Record<string, number | null | undefined> = {};
+    for (const [id, overrides] of [
+      ["unset", {}],
+      ["explicit", { timeout: 1000 }],
+      ["optout", { timeout: null }],
+    ] as const) {
+      writeTask(id, promptTask("say hello", { engine: "opencode", ...overrides }));
+      const result = await runTask(id, {
+        bundleDir,
+        logDir,
+        runAgentImpl: async (_profile, _prompt, options) => {
+          timeouts[id] = options.timeoutMs;
+          return { ok: true, exitCode: 0, stdout: "ok", stderr: "", durationMs: 1 };
+        },
+      });
+      expect(result.status).toBe("completed");
+    }
+    expect(timeouts).toEqual({ unset: 6 * 60 * 60 * 1000, explicit: 1000, optout: null });
+  });
+
   test("dispatches to runAgent (mocked) and writes captured stdout to the log", async () => {
     writeTask("prompt", promptTask("say hello", { engine: "opencode" }));
 

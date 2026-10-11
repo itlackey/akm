@@ -11,7 +11,7 @@
  *
  * F-1 (R-07 fix, spec §5.2 point 3): `runPreparedCommandTask` now passes the
  * resolved provenance into `dispatchPreparedCommandInvocation` via a new
- * `eventSource` option — the fix for R-07 (a prompt/command task run
+ * `eventSource` option — the fix for R-07 (a command task run
  * previously never stamped `AKM_EVENT_SOURCE` anywhere, so its nested usage
  * was recorded as user demand). The dispatched engine's child env now carries
  * the stamp too, matching the native arm.
@@ -30,6 +30,7 @@ import type { chatCompletion } from "../../llm/client";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Command } from "../prepare/prepared-execution";
 import { finishAttempt } from "./attempt-lifecycle";
+import { DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } from "./run-workflow-task";
 import { appendHistory } from "./task-history";
 import { persistRunLog, scrubTaskOutput, streamLines } from "./task-log";
 import type { TaskRunResult, TaskRunStatus } from "./task-result";
@@ -54,7 +55,14 @@ export async function runPreparedCommandTask(input: {
     // into the dispatched engine's child env and the recorded usage events.
     eventSource: provenance.eventSource,
   };
-  const result = await dispatchPreparedCommandInvocation(task.invocation, dispatchOptions);
+  // Unset anywhere (task `timeout:`, command asset, engine) → the unattended
+  // default; an explicit value or `null` (opt-out) already sits on the request.
+  const { request, runner } = task.invocation;
+  const unset = !Object.hasOwn(request.runtime, "timeoutMs") && runner.timeoutMs === undefined;
+  const invocation = unset
+    ? { ...task.invocation, runner: { ...runner, timeoutMs: DEFAULT_SCHEDULED_TASK_TIMEOUT_MS } }
+    : task.invocation;
+  const result = await dispatchPreparedCommandInvocation(invocation, dispatchOptions);
   const engineName = result.engine;
 
   const finishedAt = finishAttempt(startedAt, now());
