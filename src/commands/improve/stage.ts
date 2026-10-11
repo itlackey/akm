@@ -580,8 +580,9 @@ export function judgeResponseSchema(keys: readonly string[]): Record<string, unk
 }
 
 /**
- * The quality judge. Fails closed: no runner, an unparseable verdict or a
- * provider failure never passes content. Bands: every criterion in the mean
+ * The quality judge. No runner, an unparseable verdict or a provider failure
+ * never passes content: it comes back as review with score -1 (no verdict), for
+ * a person. Bands: every criterion in the mean
  * >= 4 passes, otherwise a mean >= 2.5 is review and a lower one reject; a
  * lesson criterion (`grounding` included) of {@link LESSON_REJECT_MAX_SCORE}
  * or less rejects whatever the mean is.
@@ -603,7 +604,13 @@ async function runQualityJudge(
       : null;
   if (resolved) options.onNotices?.(resolved.notices);
   const runner = options.llmRunner ?? resolved?.runner;
-  if (!runner) return { pass: false, score: -1, reason: "no engine configured — cannot judge, failing closed" };
+  if (!runner)
+    return {
+      pass: false,
+      score: -1,
+      reason: "no engine configured — cannot judge, routed to review",
+      reviewNeeded: true,
+    };
   const outcome = await callStage({
     feature,
     runner,

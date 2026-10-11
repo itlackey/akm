@@ -14,6 +14,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stages, so it plans from what other hosts pushed. It honours `--no-sync` and `--no-push`. A conflict or fetch failure
   warns and the run continues on the local state; the outcome is `preRunSync` on the result and a `stash_synced` event
   with `phase: "pre-run"`. Pending hand edits in the managed paths are committed by it, as `akm sync` would.
+- **Reflect no longer locks an asset for 14 days over an uncertain verdict; it asks a person.** A reflect revision the
+  quality judge does not pass but scores 3.5 or more (the judge's own review label begins at 2.5) is now queued as a
+  pending proposal for a person (`judge-uncertain`, with the per-criterion scores and the judge's reason) and records
+  no `quality_rejected` window; a lower score is refused as before. Likewise a retrieval check that cannot grade a
+  revision (transport error, timeout, unreadable reply) queues it for a person (`retrieval-ungraded`) instead of
+  refusing it as a regression, and a distill lesson or promotion whose judge is missing at judge time is queued for
+  review instead of recording a 30-day `quality_rejected` window. Triage never accepts any of these. `akm proposal
+  list` shows the reason as `gate=deferred:<reason>`.
 
 ### Fixed
 

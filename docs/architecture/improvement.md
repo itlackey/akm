@@ -210,7 +210,13 @@ Content passes only when **every** criterion scores 4 or more (a lesson's
 grounding is judged apart, see
 [distill](internals/improve-workflow.md#distill-akmdistill)); a mean of 3.5
 passed it before. A verdict that does not pass is a review when its mean is 2.5
-or more and a rejection below that. The rubric and the rule were chosen on 90
+or more and a rejection below that. Reflect narrows that band: a revision whose
+mean is 3.5 or more is queued for a person (reason `judge-uncertain`, with the
+`scores` and `judgeReason`) and records no rejection window, and a lower mean is
+refused. On 113 reviewed frontmatter-only proposals (lab 27B Q2, the shipped
+judge) the non-passing ones at 3.5 or more were 17 good and 9 bad, the rest 1
+good and 2 bad; on 396 labelled body rewrites a mean below 3.5 was good 6 times
+in 291 (the constant and its sources are in `src/commands/improve/reflect.ts`). The rubric and the rule were chosen on 90
 labelled real rewrites, where judging on the mean let rewrites that only
 reworded a correct asset through.
 
@@ -263,9 +269,11 @@ over 2,000 characters dropped) are each graded 0–3 against the old and the new
 content with the retrieval eval's prompt, `retrieval-relevance-judge.md`, and
 its document shape: type, ref, name, description and the first 1,500 body
 characters. A lower mean for the new content is a `quality_rejected` refusal
-with the reflect rejection window. A grade that cannot be obtained refuses the
-rewrite, as the quality judge fails closed. An asset with no such queries is
-not graded.
+with the reflect rejection window. A grade that cannot be obtained (a transport
+error, a timeout or a reply that is not a grade) measured no regression, so the
+revision is queued for a person (reason `retrieval-ungraded`, gate
+`quality-gate`) instead of refused; a call aborted by the run's budget is
+neither. An asset with no such queries is not graded.
 
 The gate exists because it was measured first. Of 60 accepted reflect rewrites
 (since 2026-07-01, stratified by lane) judged this way, 14 graded lower (23%,
