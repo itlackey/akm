@@ -998,6 +998,41 @@ describe("triage auto-accepts only a retire proposal the pair pass staged", () =
     expect(fs.existsSync(oldPath)).toBe(true);
   });
 
+  test("a staged retire proposal whose file is gone is auto-rejected once as stale-target, not failed every run", async () => {
+    const { proposal, oldPath } = stagedDuplicate();
+    fs.rmSync(oldPath);
+    const run = () =>
+      drainProposals({
+        stashDir: storage.stashDir,
+        config: makeConfig(storage.stashDir),
+        applyMode: "promote",
+        maxAccepts: 25,
+        dryRun: false,
+      });
+    const first = await run();
+    expect(first.failed).toEqual([]);
+    expect(first.rejected).toContain(proposal.id);
+    const archived = getProposal(storage.stashDir, proposal.id);
+    expect(archived.status).toBe("rejected");
+    expect(archived.gateDecision?.reason).toBe("stale-target");
+    expect((await run()).failed).toEqual([]);
+  });
+
+  test("a staged retire proposal whose successor is gone is auto-rejected as stale-target", async () => {
+    const { proposal } = stagedDuplicate();
+    fs.rmSync(path.join(storage.stashDir, "memories", "new-note.md"));
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.rejected).toContain(proposal.id);
+    expect(getProposal(storage.stashDir, proposal.id).gateDecision?.reason).toBe("stale-target");
+  });
+
   test("a staged duplicate with a continuity risk waits for a person", async () => {
     const { proposal, oldPath } = stagedDuplicate({
       failingQueries: 1,

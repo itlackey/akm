@@ -141,6 +141,10 @@ export function isEmptyDiff(proposal: Proposal): boolean {
 
 function categorizeDrainFailure(message: string, fallback: string): string {
   if (/target (?:changed after|was created after) proposal/.test(message)) return STALE_TARGET_GATE_REASON;
+  // A retire proposal whose target or successor is gone or changed since judging can never be accepted.
+  if (/^Retire proposal \S+ (?:target \(.*\) no longer exists|is stale )/.test(message)) {
+    return STALE_TARGET_GATE_REASON;
+  }
   if (/failed validation:/.test(message)) return "validation";
   return fallback;
 }

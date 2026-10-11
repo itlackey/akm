@@ -884,13 +884,10 @@ export function expireStaleProposals(stashDir: string, config: AkmConfig, ctx?: 
   const nowMs = (ctx?.now ?? Date.now)();
   const pending = listProposals(stashDir, { status: "pending" }, ctx);
   for (const p of pending) {
-    // Should-fix 8: a retire proposal never expires by age. B2's accept-time
-    // hash check already refuses it once it goes stale, and the
-    // one-pending-retire-per-asset rule (pair-pass.ts's pendingRetireRefs)
-    // bounds how many can queue up — retention expiry would instead
-    // permanently drop a still-fresh pair nobody has reviewed yet, with no
-    // way back short of the pair pass finding it again from scratch.
-    if (isRetireProposal(p)) continue;
+    // A retire proposal expires like any other: `akm proposal reopen` (#997)
+    // brings an expired one back while its files and hashes are still fresh,
+    // and an unexpired one would hold its pair (pair-pass.ts's
+    // pendingRetireRefs) for good.
     // A reopened proposal's wait starts over at the reopen (#997): expiring it
     // on its original age would undo the reopen at the next sweep.
     const createdMs = new Date(proposalWaitingSince(p)).getTime();

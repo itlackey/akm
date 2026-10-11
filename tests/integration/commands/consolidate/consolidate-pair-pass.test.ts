@@ -1036,6 +1036,36 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     }
   });
 
+  test("an expired retire proposal does not settle its pair the way a person's rejection does", async () => {
+    const { createRetireProposal, expireStaleProposals } = await import("../../../../src/commands/proposal/repository");
+    const { loadRejectedPairKeys } = await import("../../../../src/commands/improve/consolidate/pair-pass");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    const oldPath = writeAsset("memories/exp-old.md", "description: old");
+    const newPath = writeAsset("memories/exp-new.md", "description: new");
+    const now = Date.now();
+    createRetireProposal(
+      storage.stashDir,
+      {
+        ref: "memories/exp-old",
+        source: "consolidate-pair",
+        retirement: {
+          retiredRef: "memories/exp-old",
+          successorRef: "memories/exp-new",
+          cosine: 0.99,
+          judgeLabel: "duplicate",
+          judgeReason: "x",
+          retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+          successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+          reason: "duplicate",
+        },
+      },
+      { now: () => now - 120 * MS_PER_DAY },
+    );
+    const config = { ...makeConfig(storage.stashDir), archiveRetentionDays: 90 };
+    expect(expireStaleProposals(storage.stashDir, config as never).expired).toBe(1);
+    expect(loadRejectedPairKeys(storage.stashDir, undefined).size).toBe(0);
+  });
+
   test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (S1: no timer)", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old");
     dateAsset(oldPath, 60);

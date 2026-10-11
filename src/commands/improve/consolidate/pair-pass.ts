@@ -54,10 +54,12 @@ import {
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
 import { getNeighborsByEntryId, hasStoredEmbedding } from "../../../storage/repositories/index-vec-repository";
 import {
+  EXPIRED_GATE_REASON,
   isRetireProposal,
   PAIR_PASS_GATE,
   type RetirementMetadata,
   type RetireReason,
+  STALE_TARGET_GATE_REASON,
 } from "../../proposal/proposal-types";
 import {
   createRetireProposal,
@@ -389,6 +391,9 @@ export function loadRejectedPairKeys(stashDir: string, proposalsCtx: ProposalsCo
     for (const status of ["rejected", "reverted"] as const) {
       for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true }, proposalsCtx)) {
         if (!isRetireProposal(p) || !p.retirement) continue;
+        // Expiry and a stale target are procedural, not a person saying no: the pair may be judged again.
+        const autoReason = p.gateDecision?.outcome === "auto-rejected" ? p.gateDecision.reason : undefined;
+        if (autoReason === EXPIRED_GATE_REASON || autoReason === STALE_TARGET_GATE_REASON) continue;
         keys.add(
           rejectedPairKey(
             p.retirement.retiredRef,

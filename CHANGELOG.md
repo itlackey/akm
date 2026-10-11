@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Retire proposals can no longer become permanent.** They now expire by age like every other proposal (`akm proposal
+  reopen` brings one back, so the old "never expires" rationale is gone), a staged one whose file or successor is gone
+  or changed is auto-rejected once as `stale-target` instead of failing every drain run, and an expired or stale-target
+  retire proposal no longer counts as a person's rejection that settles its pair.
 - **The consolidate pair pass no longer marks assets judged when they have no stored embedding.** With
   `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
   `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
