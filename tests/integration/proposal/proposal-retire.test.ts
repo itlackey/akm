@@ -842,8 +842,9 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
     });
 
-    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op (S5)", async () => {
+    test("a REAL purge sweep past grace deletes the archived bytes — revert still restores the primary byte for byte from the proposal's backupContent, and a second sweep is a no-op (S5)", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const original = fs.readFileSync(parentPath, "utf8");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
       const config = makeConfig(storage.stashDir);
       const proposal = createRetireProposal(storage.stashDir, {
@@ -881,15 +882,14 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(fs.existsSync(entry.archivedAbs)).toBe(false);
       expect(fs.existsSync(tombstonePath)).toBe(true); // the tombstone is never purged
 
-      await expect(akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
-        /archived copy .* is missing/,
-      );
-      expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted"); // the failed revert changed nothing
-      expect(fs.existsSync(tombstonePath)).toBe(true); // still kept after the failed revert attempt
-
       // A second sweep finds nothing left under this retirement to purge.
       const sweep2 = purgeGracedArchive(storage.stashDir, pastGrace);
       expect(sweep2).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+
+      const result = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("reverted");
+      expect(fs.readFileSync(parentPath, "utf8")).toBe(original);
+      expect(fs.existsSync(tombstonePath)).toBe(false); // removed once the revert is recorded
     });
   });
 });

@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm proposal revert` of a retirement still works after the 30-day archive purge.** When the graced purge has
+  deleted the archived copy, the primary is restored byte for byte from the proposal's recorded `backupContent`
+  instead of the revert refusing. A file that now occupies the path is still never overwritten.
 - **Retire proposals can no longer become permanent.** They now expire by age like every other proposal (`akm proposal
   reopen` brings one back, so the old "never expires" rationale is gone), a staged one whose file or successor is gone
   or changed is auto-rejected once as `stale-target` instead of failing every drain run, and an expired or stale-target

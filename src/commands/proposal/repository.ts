@@ -2034,6 +2034,8 @@ async function unretireProposalWithLease(
     archivedAbs: string;
     /** Already moved back by an earlier, crashed attempt of our own — resume, do not re-move or error. */
     alreadyDone: boolean;
+    /** The archived copy was purged: nothing to move, the primary is rewritten from `backupContent`. */
+    fromBackup: boolean;
   }
   const pending: PendingRestore[] = [];
   for (const dirRel of archive.dirs) {
@@ -2066,7 +2068,15 @@ async function unretireProposalWithLease(
         "INVALID_FLAG_VALUE",
       );
     }
-    if (!originalExists && !archivedExists) {
+    // The graced purge deletes the archived bytes once git holds them, but the
+    // proposal keeps the primary's exact pre-retire bytes (`backupContent`),
+    // so the primary can still be restored from those.
+    const fromBackup =
+      !originalExists &&
+      !archivedExists &&
+      proposal.backupContent !== undefined &&
+      path.resolve(originalAbs) === path.resolve(assetPath);
+    if (!originalExists && !archivedExists && !fromBackup) {
       throw new UsageError(
         `Cannot revert proposal ${proposal.id}: archived copy ${archivedRel} is missing.`,
         "INVALID_FLAG_VALUE",
@@ -2096,12 +2106,14 @@ async function unretireProposalWithLease(
         );
       }
     }
-    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, alreadyDone: originalExists });
+    pending.push({ dirAbs, auditPath, originalAbs, archivedAbs, alreadyDone: originalExists, fromBackup });
   }
   const restoredPaths: string[] = [];
   let primaryOriginalAbs: string | undefined;
   for (const p of pending) {
-    if (!p.alreadyDone) {
+    if (p.fromBackup) {
+      fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
+    } else if (!p.alreadyDone) {
       fs.mkdirSync(path.dirname(p.originalAbs), { recursive: true });
       fs.renameSync(p.archivedAbs, p.originalAbs);
       recordWrittenPath(p.archivedAbs);
