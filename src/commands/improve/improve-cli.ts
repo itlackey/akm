@@ -388,12 +388,12 @@ export const improveCommand = defineCommand({
     sync: {
       type: "boolean",
       description:
-        "Commit (and optionally push) the git-backed primary bundle when the run finishes. Use --no-sync to disable. Default: on for git-backed bundles (per profile config).",
+        "Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. Use --no-sync to disable. Default: on for git-backed bundles (per profile config).",
     },
     push: {
       type: "boolean",
       description:
-        "Push after the end-of-run sync commit when writable + remote configured. Use --no-push to commit only. Default: per profile config (true).",
+        "Push after the pre-run and end-of-run sync commits when writable + remote configured. Use --no-push to commit only. Default: per profile config (true).",
     },
   },
   async run({ args }) {

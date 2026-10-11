@@ -643,7 +643,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `extract_invoked` | `akm proposal extract`, and improve's extract stage | `outcome` (no_candidates\|candidates_queued), `sessionId`, `harness`, `sourceRun`, `candidateCount`, `proposalCount` |
 | `extract_triaged` | the extract triage gate | `evaluated`, `passed`, `triagedOut`, `sourceRun` |
 | `schema_repair_invoked` | improve's schema-repair pass | `outcome` (queued\|error), `reason`, `proposalId`, `error` |
-| `stash_synced` | improve's end-of-run auto-sync | `committed`, `pushed`, `skipped`, `reason`, `attributed`, `unattributed` |
+| `stash_synced` | improve's pre-run and end-of-run sync | `phase`, `committed`, `pushed`, `skipped`, `reason`, `attributed`, `unattributed` |
 | `asset_state_gc` | improve maintenance: orphaned `asset_salience`/`asset_outcome` rows (ref `asset_state/_gc`) | `pending`, `collected`, `byTable` |
 | `events_purged`, `improve_runs_purged`, `task_logs_purged` | improve's retention pass (refs `events/_purge`, `improve_runs/_purge`, `task_logs/_purge`) | `purgedCount`, `retentionDays` |
 | `state_db_vacuumed`, `index_db_vacuumed` | the retention pass's VACUUM of `state.db`; `akm index` compacting `index.db` | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |

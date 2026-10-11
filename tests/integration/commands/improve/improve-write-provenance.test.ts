@@ -281,8 +281,9 @@ test("a budget hard-kill banks the run's writes locally and records the terminat
     await run?.catch(() => {});
   }
   expect(terminatedCalls).toBe(1);
-  // The forced-exit commit is local only: a dead remote must not hang the exit.
-  expect(pushFlags[0]).toBe(false);
+  // The pre-run sync pushes as configured; the forced-exit commit is local only: a dead remote must not hang the exit.
+  // (A third call is the released run unwinding afterwards.)
+  expect(pushFlags.slice(0, 2)).toEqual([true, false]);
   expect(headCount()).toBe(headBefore + 1);
   expect(lastCommitPaths()).toEqual(["memories/alpha.md"]);
 }, 20_000);
@@ -388,20 +389,22 @@ test("a path written then removed again during the run produces no commit", asyn
   expect(headCount()).toBe(before);
 });
 
-test("a run that writes nothing commits nothing — an empty set is not the managed fallback", async () => {
+test("a run that writes nothing commits nothing at the end — an empty set is not the managed fallback", async () => {
   initRepo();
   const before = headCount();
-  // Dirty managed content the run did not touch. `saveGitStash`'s managed
-  // pathspec fallback would sweep this up; an EMPTY explicit path list must not.
+  // Dirty managed content the run did not touch. The pre-run sync commits it, as `akm sync`
+  // would; the end-of-run sync, given an EMPTY explicit path list, must not add a commit.
   fs.writeFileSync(path.join(stashDir, "memories", "human.md"), "---\ntype: memory\n---\n\nSomeone else's WIP.\n");
 
   const result = await runImprove(() => {});
 
   expect(result.ok).toBe(true);
   expect(result.writtenPaths).toBeUndefined();
+  expect(result.preRunSync?.committed).toBe(true);
   expect(result.sync?.committed).toBe(false);
-  expect(headCount()).toBe(before);
-  expect(statusPaths()).toContain("memories/human.md");
+  expect(headCount()).toBe(before + 1);
+  expect(lastCommitPaths()).toEqual(["memories/human.md"]);
+  expect(statusPaths()).toEqual([]);
 });
 
 test("saveGitStash with no explicit path list still falls back to managed pathspecs", () => {

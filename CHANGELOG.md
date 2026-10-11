@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **`akm improve` syncs before it runs, not only after (#1091).** A live run on a git-backed bundle now does the same
+  fetch / fast-forward-or-merge / commit / push as `akm sync` right after taking its lock and before the index and plan
+  stages, so it plans from what other hosts pushed. It honours `--no-sync` and `--no-push`. A conflict or fetch failure
+  warns and the run continues on the local state; the outcome is `preRunSync` on the result and a `stash_synced` event
+  with `phase: "pre-run"`. Pending hand edits in the managed paths are committed by it, as `akm sync` would.
+
 ### Fixed
 
 - **The 02:00 nightly `akm improve` can no longer lose its night to the consolidate task's lock.** The shipped
