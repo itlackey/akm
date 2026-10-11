@@ -15,6 +15,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **The per-run `akm improve` and `akm index` log files are now purged by the retention pass.**
   `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log` were outside the purge and grew without bound;
   they now follow `improve.eventRetentionDays` like the task log files.
+- **A run hard-killed by the budget watchdog now leaves a record and banks its writes.** The forced `process.exit(0)`
+  (exit code unchanged) skipped every finally block, so the run left no `improve_runs` row and the files it had
+  written were never committed. Before exiting, the watchdog now records the run as terminated
+  (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
 
 ## [0.10.26101002] - 2026-10-10
 

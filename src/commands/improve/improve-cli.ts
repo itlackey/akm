@@ -502,6 +502,7 @@ export const improveCommand = defineCommand({
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
                 ...(engineProbe !== undefined ? { engineProbe } : {}),
+                onBudgetHardKill: () => persistTerminated("budget_exhausted"),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
               }),
           },
