@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm search` no longer warns "no embedding provider is configured" on a default install.** With
+  `semanticSearchMode: auto` and no embedding settings, search uses the built-in local model, so the warning was
+  false on every query. It now fires only for a remote `embedding.endpoint` set without `embedding.model` (the one
+  config that cannot work), and the remedy names that field.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed

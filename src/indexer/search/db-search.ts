@@ -117,20 +117,21 @@ function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance
 // ── Main search entrypoint ───────────────────────────────────────────────────
 
 /**
- * Whether an embedding provider is actually configured.
+ * Whether `auto` has a usable embedding provider.
  *
- * A remote provider needs BOTH endpoint and model. A LOCAL provider needs
- * neither — `embedding.localModel` selects a transformers model that runs in
- * process. Checking only the remote pair told every local-provider user that
- * "no embedding provider is configured" and pointed them at
- * `akm config set embedding '{"endpoint":...}'`, which is the wrong remedy and
- * hid the real diagnostic recorded in the semantic status.
+ * `auto` with no (or no remote) embedding settings falls back to the built-in
+ * local model (`DEFAULT_LOCAL_MODEL`, or `embedding.localModel`), so semantic
+ * search works without any configuration. The only config that can never
+ * succeed is a remote `endpoint` without a `model` — `RemoteEmbedder` throws on
+ * construction. Treating "no endpoint+model pair" as unconfigured warned every
+ * default install that semantic search had no provider while it worked.
  */
 function hasConfiguredEmbeddingProvider(config: {
   embedding?: { endpoint?: string; model?: string; localModel?: string };
 }): boolean {
-  if (config.embedding?.localModel) return true;
-  return Boolean(config.embedding?.endpoint && config.embedding?.model);
+  const embedding = config.embedding;
+  if (!embedding?.endpoint) return true;
+  return Boolean(embedding.model);
 }
 
 export interface SearchLocalInput {
@@ -185,9 +186,9 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   // worth flagging ahead of the attempt is a config that can never succeed.
   if (config.semanticSearchMode === "auto" && !hasConfiguredEmbeddingProvider(config)) {
     warnings.push(
-      "Semantic search is enabled (semanticSearchMode='auto') but no embedding provider is configured. " +
-        'Either: (a) `akm config set embedding \'{"endpoint":"...","model":"..."}\'`, or ' +
-        "(b) `akm config set semanticSearchMode off` to use keyword-only search.",
+      "Semantic search is enabled (semanticSearchMode='auto') but embedding.endpoint is set without embedding.model. " +
+        "Either: (a) set embedding.model, or (b) remove embedding.endpoint to use the built-in local model, or " +
+        "(c) `akm config set semanticSearchMode off` to use keyword-only search.",
     );
   }
 
