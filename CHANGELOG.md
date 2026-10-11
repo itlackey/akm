@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.26101101] - 2026-10-11
+
 ### Changed
 
 - **A manual fix to an asset applies at once.** `akm feedback --negative ... --replace/--with/--source`, `--superseded-by` and `--outdated` used to queue a `feedback` proposal that waited for `akm proposal accept` and expired after 90 days. The command now files the proposal and accepts it in the same run, through the ordinary accept (a git-backed bundle gets the usual commit; `akm proposal revert` undoes it), with gate decision `manual-fix` and no judge. If the accept refuses, the proposal is rejected, the file is untouched and the command fails. The edited asset stays eligible for every improve process.
