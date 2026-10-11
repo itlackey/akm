@@ -166,10 +166,6 @@ export function hasSupersededStatus(frontmatter: Record<string, unknown> | undef
   return typeof status === "string" && status.trim().toLowerCase() === "superseded";
 }
 
-export function hasHotCaptureMode(frontmatter: Record<string, unknown> | undefined): boolean {
-  return frontmatter?.captureMode === "hot";
-}
-
 export const REFLECT_SHRINK_RATIO_MIN = 0.5;
 export const REFLECT_EXPAND_RATIO_MAX = 2.5;
 export const REFLECT_SIZE_GUARD_MIN_BYTES = 200;

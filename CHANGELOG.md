@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A manual fix to an asset applies at once.** `akm feedback --negative ... --replace/--with/--source`, `--superseded-by` and `--outdated` used to queue a `feedback` proposal that waited for `akm proposal accept` and expired after 90 days. The command now files the proposal and accepts it in the same run, through the ordinary accept (a git-backed bundle gets the usual commit; `akm proposal revert` undoes it), with gate decision `manual-fix` and no judge. If the accept refuses, the proposal is rejected, the file is untouched and the command fails. The edited asset stays eligible for every improve process.
+- **`akm improve` syncs before it runs, not only after (#1091).** A live run on a git-backed bundle now does the same
+  fetch / fast-forward-or-merge / commit / push as `akm sync` right after taking its lock and before the index and plan
+  stages, so it plans from what other hosts pushed. It honours `--no-sync` and `--no-push`. A conflict or fetch failure
+  warns and the run continues on the local state; the outcome is `preRunSync` on the result and a `stash_synced` event
+  with `phase: "pre-run"`. Pending hand edits in the managed paths are committed by it, as `akm sync` would.
+- **Reflect no longer locks an asset for 14 days over an uncertain verdict; it asks a person.** A reflect revision the
+  quality judge does not pass but scores 3.5 or more (the judge's own review label begins at 2.5) is now queued as a
+  pending proposal for a person (`judge-uncertain`, with the per-criterion scores and the judge's reason) and records
+  no `quality_rejected` window; a lower score is refused as before. Likewise a retrieval check that cannot grade a
+  revision (transport error, timeout, unreadable reply) queues it for a person (`retrieval-ungraded`) instead of
+  refusing it as a regression, and a distill lesson or promotion whose judge is missing at judge time is queued for
+  review instead of recording a 30-day `quality_rejected` window. Triage never accepts any of these. `akm proposal
+  list` shows the reason as `gate=deferred:<reason>`.
+- **Feedback now changes `akm search` and `akm curate` ranking, as `akm feedback` always said it did.** The fused
+  score is scaled by `1 + 0.03 x (ln(1 + positives) - ln(1 + negatives))`, counting the user's recorded feedback
+  events for the asset (improve, task and audit feedback does not count). The rule is the same for every asset, rises
+  with each positive and falls with each negative, and gains less per vote as votes pile up: about +2% / +3% / +5% /
+  +9% for 1 / 2 / 5 / 20 positives, so an asset with 5 positives outranks one with 2, and the effect reorders close
+  matches without overriding relevance. The counts are read from `state.db` in one query per search. `utility_scores`
+  is still written and read by improve and metrics, but search does not use it.
+
 ### Fixed
 
 - **The 02:00 nightly `akm improve` can no longer lose its night to the consolidate task's lock.** The shipped
@@ -64,6 +88,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (exit code unchanged) skipped every finally block, so the run left no `improve_runs` row and the files it had
   written were never committed. Before exiting, the watchdog now records the run as terminated
   (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
+
+### Changed
+
+- **`captureMode: hot` memories are consolidated like any other memory.** The pair pass may now retire one, the promote
+  pass may promote one (accepting archives the source, as for any memory), and a chunk of only hot memories goes to the
+  model instead of being skipped as judged no-action. The hot-specific retire guard, chunk skip and promote-prompt
+  annotation are gone; `akm remember` still writes `captureMode: hot`.
 
 ## [0.10.26101002] - 2026-10-10
 

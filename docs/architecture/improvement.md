@@ -50,7 +50,7 @@ everything else routes through `akm proposal accept`.
 - **Proposal queue** (`state.db`) — written by `createProposal` (reflect,
   distill, consolidate's promote operations, and the other proposal producers)
   and by `createRetireProposal` (the pair pass's retire proposals).
-- **Auto-sync** — the end-of-run commit/push step for git-backed bundles.
+- **Auto-sync** — the pre-run sync and the end-of-run commit/push step for git-backed bundles.
 - **Session extraction** (`akm proposal extract`) — a separate entry point
   that mines coding-agent session transcripts for durable insights and queues
   them the same way.
@@ -63,13 +63,16 @@ everything else routes through `akm proposal accept`.
    `--negative --reason "<what is wrong and what should change>"` flags the
    asset: the next improve run may repair its frontmatter from the reason.
    `--replace`/`--with`/`--source` attach an exact fix of its text once the
-   agent has verified the correct fact, which akm checks at once and queues as
-   a `feedback` proposal.
+   agent has verified the correct fact, which akm checks and applies at once
+   through a `feedback` proposal it accepts on the spot (no review).
    `--positive` records that the asset helped (it raises its ranking) and does
    not trigger a rewrite.
-2. The feedback event is appended to `state.db`, and the asset's utility
-   score is updated immediately via the bounded-step formula (below) — no
-   reindex required.
+2. The feedback event is appended to `state.db`. `akm search` and `akm curate`
+   count a user's recorded positives and negatives per asset and scale the
+   fused score by them (logarithmic in each count, the same for every asset),
+   so ranking moves at once with no reindex. The asset's utility score, which
+   improve and metrics read, is updated immediately via the bounded-step
+   formula (below).
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
@@ -121,7 +124,9 @@ everything else routes through `akm proposal accept`.
    retires, go in the same commit. A commit that fails warns and the accept
    stands.
 8. For a git-backed bundle, `akm improve`'s end-of-run auto-sync commits the
-   rest of the run's changes as a single batch and pushes (see below).
+   rest of the run's changes as a single batch and pushes (see below). The run
+   began with the same sync, so it started from what other hosts had pushed.
+
 
 ## Current decisions
 
@@ -208,7 +213,13 @@ Content passes only when **every** criterion scores 4 or more (a lesson's
 grounding is judged apart, see
 [distill](internals/improve-workflow.md#distill-akmdistill)); a mean of 3.5
 passed it before. A verdict that does not pass is a review when its mean is 2.5
-or more and a rejection below that. The rubric and the rule were chosen on 90
+or more and a rejection below that. Reflect narrows that band: a revision whose
+mean is 3.5 or more is queued for a person (reason `judge-uncertain`, with the
+`scores` and `judgeReason`) and records no rejection window, and a lower mean is
+refused. On 113 reviewed frontmatter-only proposals (lab 27B Q2, the shipped
+judge) the non-passing ones at 3.5 or more were 17 good and 9 bad, the rest 1
+good and 2 bad; on 396 labelled body rewrites a mean below 3.5 was good 6 times
+in 291 (the constant and its sources are in `src/commands/improve/reflect.ts`). The rubric and the rule were chosen on 90
 labelled real rewrites, where judging on the mean let rewrites that only
 reworded a correct asset through.
 
@@ -233,7 +244,7 @@ times in 26, and those that also rewrote the body were bad 175 times in 224.
 
 The triage drain's judgment tier (`processes.triage.judgment`, off in every
 built-in strategy) may accept only a consolidate promotion, a memory proposed as
-a new knowledge note. A retirement, an exact fix or a reflect revision it would
+a new knowledge note. A retirement or a reflect revision it would
 accept is left for a person (`judgment-not-promotion`); it may still reject.
 Measured on the nightly eval with `experimental.improveAutonomy` (#1132, #1094),
 judging every kind solved 0.49 (gpt-5.6-terra) and 0.53 (qwen3.8-27b) of the
@@ -261,9 +272,11 @@ over 2,000 characters dropped) are each graded 0–3 against the old and the new
 content with the retrieval eval's prompt, `retrieval-relevance-judge.md`, and
 its document shape: type, ref, name, description and the first 1,500 body
 characters. A lower mean for the new content is a `quality_rejected` refusal
-with the reflect rejection window. A grade that cannot be obtained refuses the
-rewrite, as the quality judge fails closed. An asset with no such queries is
-not graded.
+with the reflect rejection window. A grade that cannot be obtained (a transport
+error, a timeout or a reply that is not a grade) measured no regression, so the
+revision is queued for a person (reason `retrieval-ungraded`, gate
+`quality-gate`) instead of refused; a call aborted by the run's budget is
+neither. An asset with no such queries is not graded.
 
 The gate exists because it was measured first. Of 60 accepted reflect rewrites
 (since 2026-07-01, stratified by lane) judged this way, 14 graded lower (23%,
@@ -390,13 +403,26 @@ explicit promote surface independent of this gate.
 
 ### Auto-sync
 
-For git-backed bundles (detected by a `.git` directory), `akm improve`
-automatically commits its changes as a single batch at the end of the run —
-the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. A user-defined strategy can turn sync off, so an interrupted run
-does not leave an uncommitted backlog. `--no-sync` disables sync for a single
-run; `--no-push` commits without pushing. Strategy sync behavior is
-configured via the `sync` block under `improve.strategies.<name>`.
+For git-backed bundles (detected by a `.git` directory), `akm improve` syncs
+twice: once **before** the run and once at the end. Both are the same operation
+as `akm sync` — fetch and merge the upstream, commit, and push if the bundle is
+writable, per the active strategy's `sync` setting. A user-defined strategy can
+turn sync off, so an interrupted run does not leave an uncommitted backlog.
+`--no-sync` disables both for a single run; `--no-push` commits without pushing.
+Strategy sync behavior is configured via the `sync` block under
+`improve.strategies.<name>`.
+
+The pre-run sync runs right after the run takes its lock and before the index
+and plan stages, so they see what another host pushed. It stages what `akm sync`
+stages (the managed paths, or the content subdirectory of a repo whose content
+lives in one), which means pending hand edits there are committed (and pushed)
+before the run starts, not mistaken for the run's own writes. It never aborts
+the run: a merge that conflicts (aborted, local commit kept), a failed fetch, or
+any other error is a warning, and the run continues on the local state. The
+outcome is `preRunSync` on the result (same shape as `sync`) and a `stash_synced`
+event with `phase: "pre-run"`. A dry run does not sync. Scheduled `core/improve`
+and `akm-improve-consolidate` runs go through the same `akm improve` entry, so
+they get it too.
 
 The sync always commits the paths it is given. It then fetches the remote and
 brings the upstream in (a fast-forward when it can, otherwise git's default

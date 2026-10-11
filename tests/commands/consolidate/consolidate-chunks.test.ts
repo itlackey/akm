@@ -97,13 +97,10 @@ afterEach(() => {
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 describe("buildChunkPrompt annotations (2026-05-27)", () => {
-  // The annotations drive system-prompt rules 2 and 3. Pre-fix the LLM was
-  // proposing ~110 dedup_pending_proposal skips + ~60 captureMode_hot_refused
-  // skips per 4h on this user's stack — both deterministic post-LLM
-  // rejections of memories the model couldn't know were already off-limits.
-  // See /tmp/akm-health-investigations/tuning-reasons-investigation.md §Q3.
+  // The "already queued" annotation drives the system prompt's no-promote rule: a duplicate
+  // proposal is deterministically dropped after the model call, so the model is told up front.
 
-  it("annotates memories with captureMode: hot frontmatter", () => {
+  it("does not annotate memories with captureMode: hot — a hot memory is judged like any other", () => {
     const filePath = path.join(tempDir, "hot-memory.md");
     fs.writeFileSync(filePath, "---\ncaptureMode: hot\n---\nHot body.", "utf8");
     const memory: MemoryEntry = {
@@ -116,7 +113,8 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
 
     const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500);
 
-    expect(prompt).toContain("memories/hot-memory (captureMode: hot)");
+    expect(prompt).toContain("memories/hot-memory\n");
+    expect(prompt).not.toContain("captureMode");
   });
 
   it("does NOT annotate memories with captureMode: background or absent", () => {
@@ -166,7 +164,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     expect(prompt).toContain("memories/dup-memory (already queued)");
   });
 
-  it("combines both annotations when a memory is hot AND already queued", async () => {
+  it("annotates a hot memory only as already queued when a pending proposal carries its body", async () => {
     const { createHash } = await import("node:crypto");
     const filePath = path.join(tempDir, "hot-dup.md");
     fs.writeFileSync(filePath, "---\ncaptureMode: hot\n---\nBoth flags body.", "utf8");
@@ -181,38 +179,7 @@ describe("buildChunkPrompt annotations (2026-05-27)", () => {
     const queuedHash = createHash("sha256").update("Both flags body.", "utf8").digest("hex");
     const prompt = buildChunkPrompt("/test/stash", [memory], 0, 1, 500, new Set([queuedHash]));
 
-    expect(prompt).toContain("memories/hot-dup (captureMode: hot; already queued)");
-  });
-
-  it("does not emit a top-of-prompt protection block for hot refs (delete retired from the op set)", () => {
-    // The block used to warn against proposing `delete` for hot refs. `delete`
-    // is no longer a valid op, so hot refs need no protection — only the
-    // inline `(captureMode: hot)` annotation remains.
-    const f1 = path.join(tempDir, "hot-1.md");
-    const f2 = path.join(tempDir, "hot-2.md");
-    const f3 = path.join(tempDir, "plain.md");
-    fs.writeFileSync(f1, "---\ncaptureMode: hot\n---\nBody 1.", "utf8");
-    fs.writeFileSync(f2, "---\ncaptureMode: hot\n---\nBody 2.", "utf8");
-    fs.writeFileSync(f3, "Plain body.", "utf8");
-
-    const prompt = buildChunkPrompt(
-      "/test/stash",
-      [
-        { name: "hot-1", filePath: f1, description: "", tags: [], stashDir: tempDir },
-        { name: "hot-2", filePath: f2, description: "", tags: [], stashDir: tempDir },
-        { name: "plain", filePath: f3, description: "", tags: [], stashDir: tempDir },
-      ],
-      0,
-      1,
-      500,
-    );
-
-    expect(prompt).not.toContain("⛔");
-    expect(prompt).not.toContain("  - memories/hot-1");
-    expect(prompt).not.toContain("  - memories/hot-2");
-    // Inline annotation is still emitted per memory.
-    expect(prompt).toContain("memories/hot-1 (captureMode: hot)");
-    expect(prompt).toContain("memories/hot-2 (captureMode: hot)");
+    expect(prompt).toContain("memories/hot-dup (already queued)");
   });
 
   it("omits the top-of-prompt block when no hot refs are present", () => {
@@ -529,15 +496,6 @@ describe("body truncation", () => {
     const prompt = buildChunkPrompt("/stash", [entry], 0, 1, 500);
 
     expect(prompt).toContain("Actual body text that must appear.");
-  });
-
-  it("a (captureMode: hot) memory with frontmatter longer than bodyTruncation is still detected as hot (R5)", () => {
-    const longFrontmatter = `---\ncaptureMode: hot\ndescription: ${"F".repeat(600)}\n---\n`;
-    const body = `${longFrontmatter}Body text.`;
-    const entry = makeMemoryEntry(tempDir, "hot-long-frontmatter", body);
-    const prompt = buildChunkPrompt("/stash", [entry], 0, 1, 500);
-
-    expect(prompt).toContain("memories/hot-long-frontmatter (captureMode: hot)");
   });
 });
 

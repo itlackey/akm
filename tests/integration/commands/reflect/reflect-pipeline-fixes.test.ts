@@ -14,11 +14,12 @@
  * refactors cannot reintroduce the regressions silently.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmReflect } from "../../../../src/commands/improve/reflect";
 import { splitFrontmatter } from "../../../../src/commands/improve/reflect-noise";
+import { drainProposals } from "../../../../src/commands/proposal/drain";
 import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
 import { createProposal, listProposals } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
@@ -28,7 +29,9 @@ import { openStateDatabase } from "../../../../src/core/state-db";
 import type { SpawnedSubprocess, SpawnFn } from "../../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../../src/core/warn";
 import { REFLECT_TRUNCATION_MARKER } from "../../../../src/integrations/agent/prompts";
+import type { RunnerSpec } from "../../../../src/integrations/agent/runner";
 import { LlmCallError } from "../../../../src/llm/client";
+import { formatGateDecisionSummary } from "../../../../src/output/text/proposal-format";
 import { listImproveLedgerRows } from "../../../../src/storage/repositories/improve-ledger-repository";
 import { durableItemRef } from "../../../_helpers/durable-ref";
 import { makeConfig, quietQualityGateConfig, reflectReply } from "../../../_helpers/factories";
@@ -821,8 +824,68 @@ describe("Reflect quality gate — a judge that gives no verdict defers the revi
     expect(judgeCalls).toBe(1);
   });
 
-  test("a real low score is still refused", async () => {
-    // NEED 2 leaves the mean (3.33) in the review band: a real score that also carries reviewNeeded.
+  test("a score in the uncertain band is queued for a person with its scores, and no window is recorded", async () => {
+    // NEED 2 with the rest at 5: a mean of 4.0, short of a pass but nowhere near bad.
+    const scores = { need: 2, preservation: 5, quality: 5 };
+    const result = await reflectJudgedBy(async () =>
+      JSON.stringify({ scores, reason: "the description was fine as it was" }),
+    );
+    if (!result.ok) throw new Error(`expected the revision to wait for a person, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: {
+        outcome: "deferred",
+        reason: "judge-uncertain",
+        gate: "quality-gate",
+        scores,
+        judgeReason: "the description was fine as it was",
+      },
+    });
+    expect(listProposals(makeStashDir()).map((p) => p.id)).toEqual([result.proposal.id]);
+    // `akm proposal list` shows the reason beside the proposal.
+    expect(formatGateDecisionSummary(result.proposal.gateDecision)).toBe("gate=deferred:judge-uncertain");
+    // `review_needed` is a revisit cadence a fresh signal lifts; the hard `quality_rejected` window is not recorded.
+    expect(reflectLedgerRows()).toMatchObject([{ outcome: "review_needed", detail: "judge-uncertain" }]);
+    const completed = readEvents({ type: "reflect_completed" }).events.at(-1)?.metadata;
+    expect(completed).toMatchObject({ proposalId: result.proposal.id, qualityScore: 4 });
+    expect(completed?.qualityRejected).toBeUndefined();
+  });
+
+  test("triage never accepts a revision in the uncertain band: it waits for a person", async () => {
+    const result = await reflectJudgedBy(async () =>
+      JSON.stringify({ scores: { need: 2, preservation: 5, quality: 4 }, reason: "borderline" }),
+    );
+    if (!result.ok) throw new Error(`expected a proposal, got: ${result.error}`);
+    const promote = mock(async () => {
+      throw new Error("triage accepted a revision awaiting a person");
+    });
+    const chat = mock(async () => {
+      throw new Error("the judgment tier saw a revision awaiting a person");
+    });
+    const drained = await drainProposals(
+      {
+        stashDir: makeStashDir(),
+        applyMode: "promote",
+        maxAccepts: 25,
+        dryRun: false,
+        judgment: {
+          kind: "llm",
+          engine: "judge",
+          connection: { endpoint: "http://localhost:11434/v1/chat/completions", model: "test-model" },
+        } as RunnerSpec,
+      },
+      promote as never,
+      undefined,
+      { chat },
+    );
+    expect(promote).not.toHaveBeenCalled();
+    expect(chat).not.toHaveBeenCalled();
+    expect(drained).toMatchObject({ promoted: [], rejected: [], deferred: [] });
+    expect(listProposals(makeStashDir(), { status: "pending" }).map((p) => p.id)).toEqual([result.proposal.id]);
+  });
+
+  test("a score just below the uncertain band is still refused", async () => {
+    // A mean of 3.33 (one criterion at 2, two at 4) is the judge's own review label, but short of the band.
     const result = await reflectJudgedBy(async () =>
       JSON.stringify({ scores: { need: 2, preservation: 4, quality: 4 }, reason: "rewords a correct asset" }),
     );

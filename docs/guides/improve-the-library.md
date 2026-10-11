@@ -28,8 +28,9 @@ rewrite an asset's text. Once you have verified the correct fact, attach the
 exact fix: `--replace "<exact current text>" --with "<corrected text>"
 --source "<URL, command or file that shows it>"` (repeat `--replace`/`--with`
 for several edits). akm checks that each `--replace` text appears exactly once,
-records nothing if one does not, and queues the edit as a `feedback` proposal
-for review. `--positive` records that an asset helped (it raises its ranking)
+records nothing if one does not, and applies the edit at once: no review, no
+gate (the `feedback` proposal it files is accepted on the spot, so
+`akm proposal revert` undoes it). `--positive` records that an asset helped (it raises its ranking)
 and does not trigger a rewrite.
 
 ```sh

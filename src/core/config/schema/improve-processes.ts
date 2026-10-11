@@ -67,8 +67,8 @@ const processLimitField = positiveInt.optional();
 /**
  * The distill and reflect LLM-as-judge quality gates. Default ON; set
  * `enabled: false` on the process to opt out. A judge error, timeout or
- * unparsable reply never passes: distill sends the lesson to review and
- * reflect refuses the edit. `engine`, `model`, `timeoutMs` and `llm` give the
+ * unparsable reply never passes: distill and reflect both send the content
+ * to a person. `engine`, `model`, `timeoutMs` and `llm` give the
  * gate a judge of its own (#1011), resolved over the process's own settings;
  * with none set, the gate judges with the generator's runner.
  */

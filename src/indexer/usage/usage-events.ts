@@ -11,6 +11,7 @@
 
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import type { Database } from "../../storage/database";
+import { SQLITE_CHUNK_SIZE } from "../../storage/repositories/index-sql";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -138,6 +139,33 @@ export function countFeedbackSignals(db: Database, entryId: number): { pos: numb
     )
     .get(entryId) as { pos: number | null; neg: number | null } | undefined;
   return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };
+}
+
+/**
+ * User feedback counts for many assets at once, keyed by durable `entry_ref`.
+ * Refs with no user feedback are absent from the map. Same events as
+ * {@link countFeedbackSignals}, read in one query per chunk of refs.
+ */
+export function countFeedbackSignalsByRef(
+  db: Database,
+  refs: readonly string[],
+): Map<string, { pos: number; neg: number }> {
+  const counts = new Map<string, { pos: number; neg: number }>();
+  for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
+    const rows = db
+      .prepare(
+        `SELECT entry_ref,
+           SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+           SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
+         FROM usage_events
+         WHERE event_type = 'feedback' AND source = 'user' AND entry_ref IN (${chunk.map(() => "?").join(",")})
+         GROUP BY entry_ref`,
+      )
+      .all(...chunk) as Array<{ entry_ref: string; pos: number; neg: number }>;
+    for (const row of rows) counts.set(row.entry_ref, { pos: row.pos, neg: row.neg });
+  }
+  return counts;
 }
 
 /**

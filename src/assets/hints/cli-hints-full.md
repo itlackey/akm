@@ -95,7 +95,7 @@ akm lint --type workflows                      # Parse and compile every workflo
 akm workflow run workflows/ship-release        # Start or resume and execute the workflow
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
-akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Queue an exact fix
+akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Apply an exact fix
 akm feedback memories/deployment-notes --positive # Works for memories too
 akm feedback env/prod --positive               # Records env feedback without surfacing values
 ```
@@ -110,7 +110,7 @@ its description, title or `when_to_use` from your reason. A note that simply did
 not fit your task is not negative feedback: record nothing for it. Improve does
 not rewrite an asset's text: once you have verified the correct fact, attach the
 exact fix with `--replace "<exact current text>" --with "<corrected text>"
---source "<URL, command or file>"`, which akm checks and queues as a proposal.
+--source "<URL, command or file>"`, which akm checks and applies at once.
 A note that is outdated can be marked with `--outdated`, or
 `--superseded-by <ref>` when another note replaces it.
 `--positive` records that an asset helped (it raises its ranking) and does not

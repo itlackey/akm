@@ -131,6 +131,42 @@ describe("reflect retrieval regression gate", () => {
     }
   });
 
+  test("a retrieval check that cannot grade waits for a person: no refusal, no window", async () => {
+    recordQuery("stash//knowledge/vpn-rotation", "how do I rotate the vpn key");
+
+    const result = await akmReflect({
+      ref: "knowledge/vpn-rotation",
+      stashDir: storage.stashDir,
+      config: config(),
+      assetContent: OLD,
+      runAgentOptions: { spawn: fakeSpawn(reflectReply(PATCH)) },
+      chat: async (_connection: unknown, messages: ChatMessage[]) => {
+        if ((messages.at(-1)?.content ?? "").startsWith("Query:")) throw new Error("connect ECONNREFUSED");
+        return JSON.stringify({ scores: { need: 5, preservation: 5, quality: 5 }, reason: "fine" });
+      },
+    });
+
+    if (!result.ok) throw new Error(`expected the revision to wait for a person, got: ${result.error}`);
+    expect(result.proposal).toMatchObject({
+      status: "pending",
+      gateDecision: {
+        outcome: "deferred",
+        reason: "retrieval-ungraded",
+        gate: "quality-gate",
+        scores: { need: 5, preservation: 5, quality: 5 },
+      },
+    });
+    expect(result.proposal.gateDecision?.judgeReason).toContain("could not grade");
+    const db = openStateDatabase();
+    try {
+      const rows = listImproveLedgerRows(db, storage.stashDir, ["reflect"]);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ outcome: "review_needed", detail: "retrieval-ungraded" });
+    } finally {
+      db.close();
+    }
+  });
+
   test("a revision that grades the same is proposed", async () => {
     recordQuery("stash//knowledge/vpn-rotation", "how do I rotate the vpn key");
     const prompts: string[] = [];

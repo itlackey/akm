@@ -101,12 +101,19 @@ export interface RetrievalGateVerdict {
   oldMean?: number;
   newMean?: number;
   reason: string;
+  /**
+   * `pass` is false only because no grade could be had (a transport error, a
+   * timeout or an unreadable reply): the rewrite was not measured, so it is
+   * no regression and is not refused. A budget abort is not this.
+   */
+  ungraded?: true;
 }
 
 /**
  * Grade `before` and `after` on each query; refuse the rewrite when the new
- * content's mean grade is lower. Fails closed, like the quality judge: a grade
- * that cannot be obtained refuses the rewrite.
+ * content's mean grade is lower. A grade that cannot be obtained is no
+ * regression: the verdict is `ungraded` and a person decides, as when the
+ * quality judge gives no verdict. An aborted call is neither.
  */
 export async function runRetrievalRegressionGate(args: {
   ref: string;
@@ -146,6 +153,7 @@ export async function runRetrievalRegressionGate(args: {
           pass: false,
           queries: args.queries.length,
           reason: `retrieval check could not grade the ${version} content${outcome.ok ? "" : ` (${outcome.reason})`}`,
+          ...(outcome.ok || outcome.reason !== "aborted" ? { ungraded: true as const } : {}),
         };
       }
       totals[version] += grade;

@@ -1767,17 +1767,26 @@ its description, title or `when_to_use` from your reason. Improve does not
 rewrite an asset's text. Once you have verified the correct fact, attach the
 exact fix with `--replace`, `--with` and `--source`: akm checks that each
 `--replace` text appears exactly once and that the frontmatter still parses,
-records nothing if either check fails, and queues the edit as a `feedback`
-proposal for review.
+records nothing if either check fails, and applies the edit at once, with no
+review or gate: it files a `feedback` proposal and accepts it in the same command
+(the accept is a normal one, committed to a git-backed bundle, and
+`akm proposal revert` undoes it). If the accept refuses, the proposal is
+rejected, the file is left alone and the command fails. The asset stays eligible
+for improve like any other.
 To mark the asset's history, with or without a text fix, add `--superseded-by
 <ref>` (another asset replaces it) or `--outdated` (it describes a past state
 and no single asset replaces it), with `--reason` and `--source`. The same single
-proposal sets the asset's `beliefState` (`superseded`, or `deprecated`) and, for
+edit sets the asset's `beliefState` (`superseded`, or `deprecated`) and, for
 `--superseded-by`, adds the successor's ref to its `supersededBy` list, by
 editing only those lines of the frontmatter. `--positive` records that an asset
-helped (it raises its ranking) and does not trigger a rewrite. Both signals
-update the asset's utility score right away, so highly-rated assets rank higher
-in search results.
+helped (it raises its ranking) and does not trigger a rewrite. Feedback
+changes `akm search` and `akm curate` ranking at once, with no reindex: each
+recorded positive raises the asset's score and each negative lowers it, the
+same way for every asset, so an asset with 5 positives ranks higher than one
+with 2, and each further vote counts for a little less. The effect is small: it
+reorders close matches and does not override relevance. Only feedback recorded
+as the user counts, not feedback from improve, task or audit runs. Feedback
+also updates the utility score that improve and `akm metrics` read.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
@@ -1799,9 +1808,9 @@ akm feedback knowledge/api-v1 --negative --reason "describes the retired v1 API"
 | `--reason` | What is wrong with the asset's content and what should change; not for `akm` command errors. Attached to the feedback event (required for negative feedback by default, and always with a fix: `--replace`, `--superseded-by` or `--outdated`) |
 | `--replace <text>` | Exact text to correct, copied verbatim from the asset file; it must appear exactly once. Repeatable, each paired in order with a `--with`. Negative feedback only |
 | `--with <text>` | The corrected text for the matching `--replace`. Use `--with=<text>` for a value that starts with `-` |
-| `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`, `--superseded-by` and `--outdated`; shown to the reviewer with the proposal |
-| `--superseded-by <ref>` | The ref of the asset that replaces this one. The proposal sets `beliefState: superseded` and adds the ref, as its `bundle//conceptId`, to `supersededBy`; `contradicted` and `archived` stay, a ref already listed is not added again, and a scalar `supersededBy` becomes a list. The ref must be indexed and must not be the asset itself, or nothing is recorded; nor is anything when the asset already says all this (the fix changes nothing). Negative feedback only; may be combined with `--replace`/`--with`, not with `--outdated`; markdown assets only |
-| `--outdated` | The asset describes a past state and no single asset replaces it. The proposal sets `beliefState: deprecated`, unless the asset already says `superseded`, `contradicted` or `archived`. Negative feedback only; may be combined with `--replace`/`--with`, not with `--superseded-by`; markdown assets only |
+| `--source <where>` | The URL, command or file that shows the correct fact. Required with `--replace`, `--superseded-by` and `--outdated`; kept on the proposal as the audit trail |
+| `--superseded-by <ref>` | The ref of the asset that replaces this one. The edit sets `beliefState: superseded` and adds the ref, as its `bundle//conceptId`, to `supersededBy`; `contradicted` and `archived` stay, a ref already listed is not added again, and a scalar `supersededBy` becomes a list. The ref must be indexed and must not be the asset itself, or nothing is recorded; nor is anything when the asset already says all this (the fix changes nothing). Negative feedback only; may be combined with `--replace`/`--with`, not with `--outdated`; markdown assets only |
+| `--outdated` | The asset describes a past state and no single asset replaces it. The edit sets `beliefState: deprecated`, unless the asset already says `superseded`, `contradicted` or `archived`. Negative feedback only; may be combined with `--replace`/`--with`, not with `--superseded-by`; markdown assets only |
 | `--tag` | Tag to attach to the feedback (repeatable, e.g. `--tag slice:train --tag team:platform`) |
 | `--applied-to <ref>` | Credit a `lessons/<name>` lesson that helped resolve this task. When combined with `--positive`, appends this feedback ref to the target lesson's `lessonStrength[]` frontmatter array (dedup, idempotent). A non-lesson target, or a missing `--positive`, produces a warning rather than silently doing nothing. |
 
@@ -2600,7 +2609,7 @@ akm improve skills/code-review
 akm improve workflows/release-checklist --task "reduce duplication"
 akm improve --skip-if-locked           # for high-frequency scheduled runs: skip (exit 0) if a run is already in progress
 akm improve --require-engines          # for scheduled runs: abort (exit 78) instead of degrading if an engine/credential is unavailable
-akm improve --no-sync                  # skip the end-of-run git commit entirely (default: on for git-backed bundles)
+akm improve --no-sync                  # skip the pre-run and end-of-run git sync entirely (default: on for git-backed bundles)
 akm improve --sync --no-push           # commit only, skip the push after it
 akm improve --dry-run --strategy consolidate # preview consolidate's resolved engine/model routing; nothing is dispatched
 akm improve lessons/my-lesson --show-prompt --format text # print the composed reflect prompt for one asset, unwrapped; no lock/index/engine call
@@ -2623,8 +2632,8 @@ akm improve judge < revision.json      # reflect's quality judge on one revision
 | `--skip-if-locked` | If another improve run already holds the lock, skip gracefully (exit 0) instead of failing with "already running" (exit 75, `TransientError`, code `IMPROVE_LOCK_HELD` — field follow-up to #948: two legitimate `improve` invocations colliding on this lock is ordinary, retryable contention, not a broken config file). Use for high-frequency scheduled runs so they don't pile up failures while a longer run is in progress. |
 | `--require-engines` | Abort (exit 78, before any indexing, lock, or log side effect) if the active strategy would enable a process whose engine or credential cannot be resolved in this process's environment, OR whose endpoint fails a bounded reachability probe — the same probe `akm health`'s `default-llm-engine`/`configured-engines` checks run, once per distinct endpoint. An agent engine's check is that its binary is on PATH, and an `opencode-sdk` engine's is both its binary and, when it sets `llmEngine`, that LLM fallback's endpoint. Without this flag, improve degrades gracefully: it skips the affected processes and reports them in the result's `skippedProcesses`. Recommended alongside `--skip-if-locked` for scheduled runs, since the operator's own shell can pass config validation while a scheduler's stripped-down environment (see #953) cannot. |
 | `--show-prompt` | Print the composed reflect prompt (#952) for one asset and exit — before any lock, index write, or engine dispatch. Requires a fully-qualified asset ref as the scope (`akm improve lessons/my-lesson --show-prompt`); rejected with a type or whole-bundle scope. The default output format is JSON, which carries the prompt as a `prompt` field (escaped into one line) alongside the resolved `engine`/`engineKind`; pass `--format text` to print the prompt itself, unwrapped and readable by eye. |
-| `--sync` / `--no-sync` | Commit (and optionally push) the git-backed primary bundle when the run finishes. Default: on for git-backed bundles (per profile config). |
-| `--push` / `--no-push` | Push after the end-of-run sync commit when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
+| `--sync` / `--no-sync` | Sync the git-backed primary bundle like `akm sync` (fetch and merge the upstream, commit, push) before the run, and commit (and optionally push) when it finishes. A conflict or fetch failure before the run only warns; the run continues on the local state. Default: on for git-backed bundles (per profile config). |
+| `--push` / `--no-push` | Push after the pre-run and end-of-run sync commits when writable with a remote configured. `--no-push` commits only, skipping the push. Default: per profile config (`true`). `sync.push` stays outside the autonomy gate — this is a per-run opt-out, not a default change. |
 
 `akm improve` is the public entrypoint for whole-bundle, type-scoped, and
 ref-scoped improvement. It owns the memory-cleanup and lesson-distillation
@@ -3270,7 +3279,7 @@ is left for a person too (reason `proactive-needs-review`), even when its judge
 passed it; everything else goes to the judgment tier when one is enabled, and
 is otherwise left for review. The judgment tier may accept only a consolidate
 promotion (a memory proposed as a new knowledge note); any other kind it would
-accept, such as a retirement, an exact fix or a reflect revision, is left for a
+accept, such as a retirement or a reflect revision, is left for a
 person (reason `judgment-not-promotion`). Judged over every kind, the tier
 accepted unsafe retirements, applied exact fixes unreviewed and changed notes
 nobody had touched: 6 to 14 harmed items a night on two models (#1132). A reflect revision that changes the body, and

@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * End-of-run auto-sync: once an improve run finishes, the primary stash is
- * committed (and optionally pushed) in one BATCH via `saveGitStash`. Recognition
+ * Pre-run and end-of-run auto-sync: before the index and plan stages the run
+ * syncs the bundle like `akm sync` (#1091), and once it finishes the primary
+ * stash is committed (and optionally pushed) in one BATCH via `saveGitStash`. Recognition
  * is by `.git` presence (NOT by a remote), decoupled from the per-write path.
  *
  * These tests drive the real `akmImprove` with an injected `saveGitStashFn` seam
@@ -93,7 +94,7 @@ afterEach(() => {
 
 describe("akm improve — end-of-run auto-sync", () => {
   test(
-    "FIRES for a git-backed stash, called once with push:true",
+    "FIRES for a git-backed stash, before and after the run, with push:true",
     async () => {
       writeMemory("alpha", "Remember alpha details.");
       await akmIndex({ stashDir, full: true });
@@ -115,10 +116,13 @@ describe("akm improve — end-of-run auto-sync", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(saveGitStashFn).toHaveBeenCalledTimes(1);
+      expect(saveGitStashFn).toHaveBeenCalledTimes(2);
       // Primary stash → name undefined; push defaults true.
-      expect(calls[0]?.name).toBeUndefined();
-      expect(calls[0]?.push).toBe(true);
+      expect(calls.map((call) => call.name)).toEqual([undefined, undefined]);
+      expect(calls.map((call) => call.push)).toEqual([true, true]);
+      expect(calls[0]?.message).toBe("akm improve pre-run sync");
+      expect(calls[1]?.message).toBe("akm improve auto-sync");
+      expect(result.preRunSync).toEqual({ committed: true, pushed: true, skipped: false });
       expect(result.sync).toEqual({ committed: true, pushed: true, skipped: false });
     },
     TIMEOUT_MS,
@@ -171,7 +175,11 @@ describe("akm improve — end-of-run auto-sync", () => {
         saveGitStashFn: saveGitStashFn as never,
       });
 
-      expect(calls).toEqual([{ writable: true, push: true, repoDir: repoRoot, paths: [] }]);
+      // Pre-run: only the content subdirectory is staged (nothing changed); end of run: the journaled paths.
+      expect(calls).toEqual([
+        { writable: true, push: true, repoDir: repoRoot, paths: [] },
+        { writable: true, push: true, repoDir: repoRoot, paths: [] },
+      ]);
     },
     TIMEOUT_MS,
   );
@@ -195,6 +203,7 @@ describe("akm improve — end-of-run auto-sync", () => {
       expect(result.ok).toBe(true);
       expect(saveGitStashFn).not.toHaveBeenCalled();
       expect(result.sync).toBeUndefined();
+      expect(result.preRunSync).toBeUndefined();
     },
     TIMEOUT_MS,
   );
@@ -294,8 +303,8 @@ describe("akm improve — end-of-run auto-sync", () => {
       });
 
       expect(result.ok).toBe(true);
-      expect(saveGitStashFn).toHaveBeenCalledTimes(1);
-      expect(calls[0]?.push).toBe(false);
+      expect(saveGitStashFn).toHaveBeenCalledTimes(2);
+      expect(calls.map((call) => call.push)).toEqual([false, false]);
       expect(result.sync).toEqual({ committed: true, pushed: false, skipped: false });
     },
     TIMEOUT_MS,
@@ -319,8 +328,9 @@ describe("akm improve — end-of-run auto-sync", () => {
         saveGitStashFn: saveGitStashFn as never,
       });
 
-      expect(saveGitStashFn).toHaveBeenCalledTimes(1);
+      expect(saveGitStashFn).toHaveBeenCalledTimes(2);
       expect(result.ok).toBe(true);
+      expect(result.preRunSync?.skipped).toBe(true);
       expect(result.sync?.skipped).toBe(true);
       expect(result.sync?.committed).toBe(false);
       expect(result.sync?.reason).toContain("simulated push failure");
@@ -349,6 +359,63 @@ describe("akm improve — end-of-run auto-sync", () => {
       expect(result.ok).toBe(true);
       expect(result.sync).toMatchObject({ committed: true, pushed: false, skipped: true });
       expect(result.sync?.reason).toContain("git push failed");
+    },
+    TIMEOUT_MS,
+  );
+  test(
+    "the pre-run sync runs before the index stage",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+      makeGitBacked();
+
+      const order: string[] = [];
+      const saveGitStashFn = mock(() => {
+        order.push("sync");
+        return committedResult(false);
+      });
+
+      await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: cheapConfig(),
+        ensureIndexFn: async () => {
+          order.push("index");
+        },
+        saveGitStashFn: saveGitStashFn as never,
+      });
+
+      expect(order.slice(0, 2)).toEqual(["sync", "index"]);
+    },
+    TIMEOUT_MS,
+  );
+
+  test(
+    "a pre-run conflict warns, is recorded, and the run continues",
+    async () => {
+      writeMemory("alpha", "Remember alpha details.");
+      await akmIndex({ stashDir, full: true });
+      makeGitBacked();
+
+      const conflict = "not pushed: merging upstream conflicts in memories/a.md; the merge was aborted";
+      let calls = 0;
+      const saveGitStashFn = mock(() => {
+        calls += 1;
+        return calls === 1
+          ? { committed: true, pushed: false, skipped: false, reason: conflict, output: "" }
+          : committedResult(true);
+      });
+
+      const result = await akmImprove({
+        scope: "memory",
+        stashDir,
+        config: cheapConfig(),
+        saveGitStashFn: saveGitStashFn as never,
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.preRunSync).toEqual({ committed: true, pushed: false, skipped: false, reason: conflict });
+      expect(result.sync).toEqual({ committed: true, pushed: true, skipped: false });
     },
     TIMEOUT_MS,
   );

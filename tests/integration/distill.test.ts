@@ -2279,6 +2279,59 @@ describe("akmDistill — quality rejections land in the improve ledger", () => {
     }
   });
 
+  test("a promotion whose judge is missing at judge time waits for a person: no rejection window", async () => {
+    const stash = makeStashDir();
+    const memoryFile = path.join(stash, "memories", "no-judge-promotion.md");
+    fs.writeFileSync(
+      memoryFile,
+      [
+        "---",
+        "description: A promotion nothing can judge",
+        "source: skill:deploy",
+        "observed_at: 2026-04-20",
+        "confidence: 0.95",
+        "tags: [deploy, ops]",
+        "---",
+        "",
+        "Always validate the deployment manifest before release.",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    // The gate is on and no engine exists to judge with; a reinforced memory needs no engine to be promoted.
+    const config = configJudgeEnabled(stash);
+    delete config.engines;
+    config.defaults = { improveStrategy: "test" };
+
+    const result = await akmDistill({
+      ref: "memories/no-judge-promotion",
+      proposalKind: "auto",
+      config,
+      stashDir: stash,
+      lookupFn: async (ref) => (ref === "memories/no-judge-promotion" ? memoryFile : null),
+      readEventsFn: eventsFor("memories/no-judge-promotion", ["positive", "positive"]),
+    });
+
+    expect(result.outcome).toBe("review_needed");
+    const proposals = listProposals(stash);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]).toMatchObject({
+      status: "pending",
+      source: "distill",
+      gateDecision: { outcome: "deferred", reason: "quality-review", gate: "quality-gate" },
+    });
+    expect(proposals[0]?.gateDecision?.judgeReason).toContain("no engine configured");
+    const db = openStateDatabase();
+    try {
+      const row = listImproveLedgerRows(db, stash, ["distill"]).find(
+        (entry) => entry.ref === "memories/no-judge-promotion",
+      );
+      expect(row).toMatchObject({ outcome: "review_needed" });
+    } finally {
+      db.close();
+    }
+  });
+
   test("review_needed mints a pending proposal (queued for human triage, not silently discarded)", async () => {
     const stash = makeStashDir();
     const result = await akmDistill({

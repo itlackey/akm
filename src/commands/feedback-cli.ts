@@ -35,7 +35,8 @@ import {
 import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
-import { createProposal } from "./proposal/repository";
+import { akmProposalAccept } from "./proposal/proposal";
+import { createProposal, recordGateDecision, rejectProposalDurably } from "./proposal/repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -188,8 +189,9 @@ interface RecordFeedbackUsageResult {
  * state.db; entries + utility_scores stay in `indexDb`. BOTH positive and
  * negative signals apply the EMA utility update unconditionally and
  * immediately when the source is user-attributed — no `akm index` run is
- * required for either signal to affect search ranking. Uses the bounded-step
- * EMA policy (F-5 / #386, arXiv:2601.03192).
+ * required for either signal to affect search ranking (search counts the
+ * recorded events itself). Uses the bounded-step EMA policy (F-5 / #386,
+ * arXiv:2601.03192) for the utility score improve and metrics read.
  *
  * The update is intentionally SKIPPED for non-`user` event sources (`improve`,
  * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
@@ -496,15 +498,20 @@ export const feedbackCommand = defineJsonCommand({
       'the exact fix: --replace "<exact current text>" --with "<corrected text>" --source "<URL,\n' +
       'command or file that shows it>" (repeat --replace/--with for several edits; use --with=...\n' +
       "for a value that starts with -). akm checks that each --replace text appears exactly once\n" +
-      "and queues the edit as a proposal for review. To mark the asset's history instead, add\n" +
+      "and applies the edit at once, with no review (`akm proposal revert` undoes it). To mark\n" +
+      "the asset's history instead, add\n" +
       "--superseded-by <ref> (the asset that replaces it) or --outdated (it describes a past\n" +
-      "state and nothing replaces it), with --reason and --source: the same proposal sets its\n" +
+      "state and nothing replaces it), with --reason and --source: the same edit sets its\n" +
       "beliefState and, for --superseded-by, adds the ref to supersededBy. `--positive` records\n" +
       "that an asset helped (it raises its ranking) and does not trigger a rewrite.\n\n" +
-      "Both signals adjust the asset's usefulness score right away, in the same\n" +
-      "process: positive feedback raises it, negative lowers it, and recent\n" +
-      "feedback counts for more than old feedback. No reindex is needed — the new\n" +
-      "score affects ranking starting with the very next `akm search`.",
+      "Feedback changes `akm search` and `akm curate` ranking starting with the very\n" +
+      "next search; no reindex is needed. Each recorded positive raises the asset's\n" +
+      "score and each negative lowers it, the same way for every asset: the more\n" +
+      "positives, the higher it ranks (5 outrank 2), and each further vote counts\n" +
+      "for a little less. The effect is small, so it reorders close matches and\n" +
+      "does not override relevance. Only feedback recorded as the user counts, not\n" +
+      "feedback from improve, task or audit runs. Feedback also moves the utility\n" +
+      "score that improve and `akm metrics` read.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate
@@ -713,9 +720,9 @@ export const feedbackCommand = defineJsonCommand({
         );
       }
       // Persist the feedback signal into usage_events. Both positive and
-      // negative signals apply the EMA utility update immediately — no
-      // `akm index` run is required for either signal to affect ranking in
-      // search results (see recordFeedbackUsage / applyFeedbackToUtilityScore).
+      // negative signals apply the EMA utility update immediately (see
+      // recordFeedbackUsage / applyFeedbackToUtilityScore). Search ranking
+      // reads the recorded events directly, so no `akm index` run is needed.
       // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta
@@ -782,17 +789,38 @@ export const feedbackCommand = defineJsonCommand({
       metadata: metadataObj,
     });
 
-    const fixProposal =
-      fix && reason?.trim() && fixSource
-        ? createProposal(resolveStashDir(), {
-            ref: durableRef,
-            itemRef: durableRef,
-            target: fix.target,
-            source: "feedback",
-            payload: { content: fix.content },
-            feedback: { reason: reason.trim(), source: fixSource },
-          })
-        : undefined;
+    // A person typed the fix, so it is applied now: the proposal is minted for the audit trail, `akm proposal
+    // revert` and reflect's "already acted on" rule, then accepted through the ordinary accept path (the same
+    // checks and git commit). If that refuses, the proposal is rejected and the command fails.
+    let fixProposal: ReturnType<typeof createProposal> | undefined;
+    if (fix && reason?.trim() && fixSource) {
+      const stashDir = resolveStashDir();
+      const minted = createProposal(stashDir, {
+        ref: durableRef,
+        itemRef: durableRef,
+        target: fix.target,
+        source: "feedback",
+        payload: { content: fix.content },
+        feedback: { reason: reason.trim(), source: fixSource },
+      });
+      try {
+        recordGateDecision(stashDir, minted.id, { outcome: "auto-accepted", reason: "manual-fix", gate: "feedback" });
+        fixProposal = (await akmProposalAccept({ stashDir, id: minted.id })).proposal;
+      } catch (err) {
+        try {
+          rejectProposalDurably(
+            stashDir,
+            minted.id,
+            `manual fix not applied: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } catch (rejectErr) {
+          warn(
+            `[feedback] could not reject proposal ${minted.id}: ${rejectErr instanceof Error ? rejectErr.message : String(rejectErr)}`,
+          );
+        }
+        throw err;
+      }
+    }
 
     // F-5 / #386: When a high-utility asset crosses below the review threshold,
     // auto-create a review-needed escalation proposal so a human can confirm

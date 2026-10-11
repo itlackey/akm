@@ -129,11 +129,12 @@ export interface ProposalGateDecision {
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
    * `quality-review` for a human, `distill-review` for a human on a distill
    * pass, `distill-update` for a human on a distill update of an existing lesson, `judge-error` for a human when reflect's
-   * judge gave no verdict. Reflect (`reflect`), for a human:
+   * judge gave no verdict, `judge-uncertain` when its mean is in reflect's review band, `retrieval-ungraded` when the retrieval check could not grade. Reflect (`reflect`), for a human:
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
    * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band` and
-   * `possible-dup`.
+   * `possible-dup`. `akm feedback` (`feedback`) stamps `manual-fix` on the
+   * exact fix a person typed, which it accepts at once.
    */
   reason: string;
   /** What an older threshold gate measured (e.g. the line count in "210 > 200"). */

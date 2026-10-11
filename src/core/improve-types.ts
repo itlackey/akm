@@ -1018,6 +1018,13 @@ export interface AkmImproveResult {
    */
   sync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
   /**
+   * The same outcome shape for the sync that ran before the index and plan
+   * stages (#1091), when the bundle is git-backed and sync is not disabled.
+   * A `reason` here means the upstream could not be brought in (conflict or
+   * fetch failure); the run continued on the local state.
+   */
+  preRunSync?: { committed: boolean; pushed: boolean; skipped: boolean; reason?: string };
+  /**
    * #652 — run-scoped write provenance: every path this run actually wrote,
    * created, or removed, as recorded by the write-provenance journal (NOT
    * inferred from a Git dirty-path diff). This is the exact set the end-of-run
