@@ -67,9 +67,12 @@ everything else routes through `akm proposal accept`.
    a `feedback` proposal.
    `--positive` records that the asset helped (it raises its ranking) and does
    not trigger a rewrite.
-2. The feedback event is appended to `state.db`, and the asset's utility
-   score is updated immediately via the bounded-step formula (below) — no
-   reindex required.
+2. The feedback event is appended to `state.db`. `akm search` and `akm curate`
+   count a user's recorded positives and negatives per asset and scale the
+   fused score by them (logarithmic in each count, the same for every asset),
+   so ranking moves at once with no reindex. The asset's utility score, which
+   improve and metrics read, is updated immediately via the bounded-step
+   formula (below).
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;

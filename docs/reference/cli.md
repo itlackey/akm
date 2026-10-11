@@ -1775,9 +1775,14 @@ and no single asset replaces it), with `--reason` and `--source`. The same singl
 proposal sets the asset's `beliefState` (`superseded`, or `deprecated`) and, for
 `--superseded-by`, adds the successor's ref to its `supersededBy` list, by
 editing only those lines of the frontmatter. `--positive` records that an asset
-helped (it raises its ranking) and does not trigger a rewrite. Both signals
-update the asset's utility score right away, so highly-rated assets rank higher
-in search results.
+helped (it raises its ranking) and does not trigger a rewrite. Feedback
+changes `akm search` and `akm curate` ranking at once, with no reindex: each
+recorded positive raises the asset's score and each negative lowers it, the
+same way for every asset, so an asset with 5 positives ranks higher than one
+with 2, and each further vote counts for a little less. The effect is small: it
+reorders close matches and does not override relevance. Only feedback recorded
+as the user counts, not feedback from improve, task or audit runs. Feedback
+also updates the utility score that improve and `akm metrics` read.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
