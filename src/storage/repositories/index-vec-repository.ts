@@ -177,6 +177,11 @@ export function getNeighborsByEntryId(db: Database, id: number, k: number, scope
   return searchVec(db, new Float32Array(row.embedding.slice().buffer), k, scope);
 }
 
+/** Whether the entry has a stored vector (what {@link getNeighborsByEntryId} reads). */
+export function hasStoredEmbedding(db: Database, id: number): boolean {
+  return db.prepare("SELECT 1 FROM embeddings WHERE id = ?").get(id) != null;
+}
+
 /** One entry the embedding pass has to (re)embed, with the text its vector is embedded from. */
 export interface EntryForEmbedding {
   id: number;

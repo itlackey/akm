@@ -52,7 +52,7 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../storage/repositories/index-connection";
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
-import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
+import { getNeighborsByEntryId, hasStoredEmbedding } from "../../../storage/repositories/index-vec-repository";
 import {
   isRetireProposal,
   PAIR_PASS_GATE,
@@ -450,12 +450,23 @@ export function selectInitiators(
  * apart from a fully-judged one). S2: fetches `PAIR_NEIGHBOR_FETCH_K` (20)
  * raw neighbours and keeps the first `PAIR_NEIGHBOR_K` (5) that clear every
  * filter, so a few self/twin/bundle/tier misses in the raw top-5 no longer
- * starve an initiator down to zero real candidates.
+ * starve an initiator down to zero real candidates. An initiator with no
+ * stored vector (embeddings off, or not embedded yet) cannot be queried at
+ * all; its ref is added to `unvectored` so the caller does not settle it.
  */
-export function selectCandidates(db: Database, initiators: Initiator[], bundleId: string): PairCandidate[] {
+export function selectCandidates(
+  db: Database,
+  initiators: Initiator[],
+  bundleId: string,
+  unvectored?: Set<string>,
+): PairCandidate[] {
   const candidates: PairCandidate[] = [];
   const seenPairs = new Set<string>();
   for (const initiator of initiators) {
+    if (!hasStoredEmbedding(db, initiator.entryId)) {
+      unvectored?.add(initiator.ref);
+      continue;
+    }
     // S1: a changed-content or new-material initiator judges at T_PAIR; the
     // rest of the backlog (no row, not recently git-added) needs the higher
     // BACKFILL_FLOOR.
@@ -905,13 +916,14 @@ export async function runConsolidatePairPass(
   let candidates: PairCandidate[];
   let gitFirstAdded: ReadonlyMap<string, number> | undefined;
   let db: ReturnType<typeof openExistingDatabase> | undefined;
+  const unvectored = new Set<string>();
   try {
     db = opts.dryRun ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
     if (!db) return empty;
     gitFirstAdded = loadGitFirstAddedMap(stashDir);
     const pool = loadPairPassPool(db, bundleId);
     initiators = selectInitiators(pool, opts, stashDir, gitFirstAdded).initiators;
-    candidates = selectCandidates(db, initiators, bundleId);
+    candidates = selectCandidates(db, initiators, bundleId, unvectored);
   } catch (error) {
     warnings.push(
       `Pair pass: index unavailable — skipped (${error instanceof Error ? error.message : String(error)}).`,
@@ -921,6 +933,11 @@ export async function runConsolidatePairPass(
     if (db) closeDatabase(db);
   }
   const initiatorsBacklog = initiators.filter((i) => i.backlog).length;
+  if (unvectored.size > 0) {
+    warnings.push(
+      `Pair pass: ${unvectored.size} asset(s) have no stored embedding, so their neighbours cannot be found and they were not judged. The pair pass needs stored embeddings (set semanticSearchMode to "auto" in the config, then run akm index).`,
+    );
+  }
 
   // Never judge a pair when either side already has a pending retire
   // proposal, as the retired ref OR its successor (B2 widens this from the
@@ -1038,6 +1055,8 @@ export async function runConsolidatePairPass(
     const admittedRefs = new Set(judgeable.map((c) => c.initiator.ref));
     const ledgerInputs = initiators
       .filter((i) => {
+        // No stored vector: the neighbour query never ran, so nothing was judged. Leave it unsettled.
+        if (unvectored.has(i.ref)) return false;
         const hasCandidates = byInitiator.has(i.ref);
         if (!hasCandidates) return true;
         if (!admittedRefs.has(i.ref)) return false;

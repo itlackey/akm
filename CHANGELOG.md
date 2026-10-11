@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The consolidate pair pass no longer marks assets judged when they have no stored embedding.** With
+  `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
+  `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
+  enabling embeddings reconsiders it, and warns once per run that the pair pass needs stored embeddings.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed
