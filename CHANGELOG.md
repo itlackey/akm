@@ -42,6 +42,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   event stream with no boundary, so a crafted session could steer the text written into the session asset. It now
   uses the same pre-filter and the same `UNTRUSTED SESSION TRANSCRIPT` fence, with forged fence markers neutralised,
   as the extraction call.
+- **`akm proposal revert` of a retirement still works after the 30-day archive purge.** When the graced purge has
+  deleted the archived copy, the primary is restored byte for byte from the proposal's recorded `backupContent`
+  instead of the revert refusing. A file that now occupies the path is still never overwritten.
+- **Retire proposals can no longer become permanent.** They now expire by age like every other proposal (`akm proposal
+  reopen` brings one back, so the old "never expires" rationale is gone), a staged one whose file or successor is gone
+  or changed is auto-rejected once as `stale-target` instead of failing every drain run, and an expired or stale-target
+  retire proposal no longer counts as a person's rejection that settles its pair.
+- **The consolidate pair pass no longer marks assets judged when they have no stored embedding.** With
+  `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
+  `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
+  enabling embeddings reconsiders it, and warns once per run that the pair pass needs stored embeddings.
 
 ## [0.10.26101002] - 2026-10-10
 

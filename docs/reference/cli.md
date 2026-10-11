@@ -3169,8 +3169,8 @@ A reopened retire proposal no longer counts as a settled pair for the pair
 pass, and while it is pending that pair is not proposed a second time. The
 proposal's `improve_ledger` row goes back to what the mint wrote (a retire
 proposal's mint writes none, so the row its rejection created is dropped).
-The age that retention expiry and `--older-than` see restarts at the reopen
-(retire proposals never expire), and a `proposal_reopened` event is appended.
+The age that retention expiry and `--older-than` see restarts at the reopen,
+and a `proposal_reopened` event is appended.
 Accepting a reopened retire proposal archives the retired file exactly as for
 any retire proposal, and `akm proposal revert` restores it byte-exactly.
 

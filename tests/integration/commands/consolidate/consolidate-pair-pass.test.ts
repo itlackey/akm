@@ -995,6 +995,77 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
     expect(chatCalls).toBe(0);
   });
 
+  test("an initiator with no stored vector gets no ledger row and one warning per run, so enabling embeddings later reconsiders it", async () => {
+    const aPath = writeAsset("memories/no-vec-a.md", "description: a");
+    const bPath = writeAsset("memories/no-vec-b.md", "description: b");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      for (const [name, filePath] of [
+        ["no-vec-a", aPath],
+        ["no-vec-b", bPath],
+      ] as const) {
+        // Indexed but never embedded (semanticSearchMode: off, or the embedding pass has not run).
+        upsertEntry(
+          db,
+          filePath,
+          { type: "memory", name, description: `desc for ${name}` },
+          {
+            bundleId: "stash",
+            componentId: "stash",
+            adapterId: "akm",
+            conceptId: `memories/${name}`,
+            itemRef: `stash//memories/${name}`,
+          },
+        );
+      }
+    } finally {
+      closeDatabase(db);
+    }
+    const warnings: string[] = [];
+    const result = await runConsolidatePairPass(baseOpts(), {} as never, storage.stashDir, "stash", warnings, {
+      chat: async () => "{}",
+    });
+    expect(result.initiators).toBe(2);
+    expect(warnings.filter((w) => w.includes("stored embedding"))).toHaveLength(1);
+    const stateDb = openStateDatabase();
+    try {
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/no-vec-a", "consolidate-pair")).toBeUndefined();
+      expect(getImproveLedgerRow(stateDb, storage.stashDir, "memories/no-vec-b", "consolidate-pair")).toBeUndefined();
+    } finally {
+      stateDb.close();
+    }
+  });
+
+  test("an expired retire proposal does not settle its pair the way a person's rejection does", async () => {
+    const { createRetireProposal, expireStaleProposals } = await import("../../../../src/commands/proposal/repository");
+    const { loadRejectedPairKeys } = await import("../../../../src/commands/improve/consolidate/pair-pass");
+    const { makeConfig } = await import("../../../_helpers/factories");
+    const oldPath = writeAsset("memories/exp-old.md", "description: old");
+    const newPath = writeAsset("memories/exp-new.md", "description: new");
+    const now = Date.now();
+    createRetireProposal(
+      storage.stashDir,
+      {
+        ref: "memories/exp-old",
+        source: "consolidate-pair",
+        retirement: {
+          retiredRef: "memories/exp-old",
+          successorRef: "memories/exp-new",
+          cosine: 0.99,
+          judgeLabel: "duplicate",
+          judgeReason: "x",
+          retiredContentHash: contentHash(fs.readFileSync(oldPath, "utf8"), "body"),
+          successorContentHash: contentHash(fs.readFileSync(newPath, "utf8"), "body"),
+          reason: "duplicate",
+        },
+      },
+      { now: () => now - 120 * MS_PER_DAY },
+    );
+    const config = { ...makeConfig(storage.stashDir), archiveRetentionDays: 90 };
+    expect(expireStaleProposals(storage.stashDir, config as never).expired).toBe(1);
+    expect(loadRejectedPairKeys(storage.stashDir, undefined).size).toBe(0);
+  });
+
   test("a rejected retire proposal is not re-proposed once the initiator's content is unchanged (S1: no timer)", async () => {
     const oldPath = writeAsset("memories/old-note.md", "description: old");
     dateAsset(oldPath, 60);
