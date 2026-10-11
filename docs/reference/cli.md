@@ -1521,7 +1521,10 @@ CI or fresh environments without running `akm setup` first.
 ### sync
 
 Stage and commit local changes in a git-backed bundle. If the bundle has a
-remote configured and is marked `writable: true`, the commit is also pushed.
+remote configured and is marked `writable: true`, `akm sync` first fetches the
+remote, brings in what another host pushed (a fast-forward when it can, otherwise
+git's default merge), and then pushes. A merge that conflicts is aborted: your
+commit stays, the push is skipped, and `reason` names the conflicting files.
 
 > **Note:** there is no `akm save` command — use `akm sync`.
 
@@ -1553,8 +1556,9 @@ value also looks like a format token.
 | Not a git repo | Exit 0, `skipped: true` in JSON output — no error |
 | Git repo, no remote | Stage and commit only |
 | Git repo, has remote, not writable | Stage and commit only |
-| Git repo, has remote, `writable: true` | Stage, commit, and push |
-| Writable with a remote, but no upstream branch, or behind or diverged from it | Stage and commit; the push is skipped and `reason` says `not pushed: ...` |
+| Git repo, has remote, `writable: true` | Stage, commit, fetch, fast-forward or merge the upstream, and push |
+| Writable with a remote, nothing to commit, upstream has moved | Fast-forward or merge the upstream; nothing is pushed unless there is a new commit |
+| Writable with a remote, but no upstream branch, the fetch fails, or the merge conflicts | Stage and commit; the merge is aborted, the push is skipped, and `reason` says `not pushed: ...` |
 | Writable with a remote and ahead of its upstream | Stage, commit, and push, unpushed commits included |
 | Any writable repo with `--no-push` | Stage and commit only (push suppressed) |
 

@@ -238,7 +238,7 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
     expect(warnings.some((w) => w.includes("content/memories/ignored.md"))).toBe(true);
   });
 
-  test("a push rejected by --force-with-lease leaves the commit local and names it", async () => {
+  test("a push the remote rejects leaves the commit local and names it", async () => {
     const repoDir = process.env.AKM_BUNDLE_DIR as string;
     const cacheHome = process.env.XDG_CACHE_HOME as string;
     const remoteDir = path.join(cacheHome, "lease-remote.git");
@@ -251,14 +251,17 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
     git(repoDir, ["commit", "-m", "seed"]);
     git(repoDir, ["remote", "add", "origin", remoteDir]);
     git(repoDir, ["push", "-u", "origin", "main"]);
-    // Advance the remote from a second checkout; repoDir never fetches, so its
-    // lease still names the seed commit.
+    // Advance the remote from a second checkout; the sync fetches and merges it, then the
+    // remote (a pre-receive hook below) refuses the push.
     git(cacheHome, ["clone", "--quiet", remoteDir, otherClone]);
     configureRepo(otherClone);
     writeFile(path.join(otherClone, "knowledge", "elsewhere.md"), "elsewhere\n");
     git(otherClone, ["add", "."]);
     git(otherClone, ["commit", "-m", "remote advance"]);
     git(otherClone, ["push", "origin", "main"]);
+    const hook = path.join(remoteDir, "hooks", "pre-receive");
+    fs.mkdirSync(path.dirname(hook), { recursive: true });
+    fs.writeFileSync(hook, "#!/bin/sh\necho rejected by remote policy >&2\nexit 1\n", { mode: 0o755 });
     const target = {
       source: { kind: "git", name: "team", path: repoDir, repoPath: repoDir, adapterId: "akm" },
       config: { type: "git" as const, name: "team", path: repoDir, writable: true },
@@ -269,7 +272,9 @@ describe("commitWriteTargetBoundary — exact operation paths", () => {
       /committed as [0-9a-f]{40}, but publication failed/,
     );
 
-    expect(committedFiles(repoDir)).toEqual(["memories/local.md"]);
+    // The sync merged the remote's advance before the push was refused; the local commit stays.
+    expect(git(repoDir, ["log", "--format=%s", "main"])).toContain("local write");
+    expect(git(repoDir, ["log", "--format=%s", "main"])).toContain("remote advance");
     expect(git(remoteDir, ["log", "-1", "--format=%s", "main"])).toBe("remote advance");
   });
 

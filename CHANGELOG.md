@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm sync` fetches the remote and brings other hosts' changes in before it pushes.** It used to check the stale
+  local tracking ref, so once another host had pushed, the lease push failed and `akm sync` exited 70 instead of
+  committing, and a two-host filesystem bundle never converged. A writable bundle with a remote now fetches, then
+  fast-forwards (or merges with git's default merge) the upstream, then pushes; a host with nothing to commit still
+  receives the upstream. A merge that conflicts is aborted, your commit stays, the push is skipped, and
+  `reason` reads `not pushed: merging upstream conflicts in <files> ...`. A failed fetch likewise only skips the push.
+  `--no-push` and read-only bundles never touch the network.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed
