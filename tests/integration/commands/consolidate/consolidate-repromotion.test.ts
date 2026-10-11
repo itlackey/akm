@@ -277,6 +277,21 @@ describe("an accepted promotion (#998)", () => {
     expect(namesIn(pool())).toContain("accepted");
   });
 
+  it("promotes a captureMode: hot memory and archives it like any other source", async () => {
+    fs.writeFileSync(
+      memoryPath("hot-source"),
+      `---\ndescription: hot-source memory\ncaptureMode: hot\n---\n\n${BODY}\n`,
+      "utf8",
+    );
+    markRetrieved("hot-source");
+    const proposal = await promote("hot-source");
+
+    await akmProposalAccept({ stashDir: stash, id: proposal.id, config });
+
+    expect(fs.existsSync(memoryPath("hot-source"))).toBe(false);
+    expect(fs.existsSync(path.join(stash, "knowledge", "hot-source-notes.md"))).toBe(true);
+  });
+
   it("offers a source edited after the promotion was queued straight away: it was not archived and its text is new", async () => {
     writeMemory("edited", BODY);
     markRetrieved("edited");
