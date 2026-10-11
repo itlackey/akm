@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A transient reflect failure no longer consumes the feedback that planned it.** A transport error, parse error,
+  timeout, budget abort or crash wrote a `failed` ledger row that advanced the signal cursor, so the ref was not
+  retried until new feedback arrived. Like distill, these now write no row; guard rejections and quality rejections
+  are unchanged.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed

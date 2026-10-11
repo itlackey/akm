@@ -250,10 +250,16 @@ async function runLoopReflectPass(planned: ImproveEligibleRef, env: ImproveLoopE
     result,
   });
   // A quality rejection recorded itself, and the judge's text is no lesson for
-  // the next prompt; skips revisit on the `unchanged` cadence.
+  // the next prompt; skips revisit on the `unchanged` cadence. A transient
+  // failure (transport, parse, timeout, budget abort, crash) is not a verdict
+  // on the asset and writes no row, like distill: a `failed` row would advance
+  // the ledger cursor and consume the feedback that planned the ref. Only a
+  // guard rejection records `failed`.
   if (!result.ok && reason !== "quality_rejected") {
-    recordLoopAttempt(planned, env, "reflect", skipped ? "unchanged" : "failed", reason);
-    if (!skipped) {
+    if (skipped) recordLoopAttempt(planned, env, "reflect", "unchanged", reason);
+    else if (reason === "content_policy_reject") recordLoopAttempt(planned, env, "reflect", "failed", reason);
+    // A budget abort is no lesson for the next prompt either.
+    if (!skipped && reason !== "aborted") {
       tally.recentErrorPushes.push({
         originator: "reflect",
         message: result.error ?? reason ?? "unknown reflect error",
