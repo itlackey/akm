@@ -121,30 +121,9 @@ export function insertUsageEvent(db: Database, event: UsageEvent): void {
 // ── Query ────────────────────────────────────────────────────────────────────
 
 /**
- * Aggregate positive/negative feedback counts for a single entry.
- *
- * Lifted verbatim from `akm feedback` (feedback-cli.ts) where the same
- * SUM(CASE …) query was hand-rolled inline. Returns plain numbers (NULL SUMs
- * over an empty set are coalesced to 0) so the result fully materialises before
- * any owning connection closes.
- */
-export function countFeedbackSignals(db: Database, entryId: number): { pos: number; neg: number } {
-  const counts = db
-    .prepare(
-      `SELECT
-         SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
-         SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
-       FROM usage_events
-       WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
-    )
-    .get(entryId) as { pos: number | null; neg: number | null } | undefined;
-  return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };
-}
-
-/**
  * User feedback counts for many assets at once, keyed by durable `entry_ref`.
- * Refs with no user feedback are absent from the map. Same events as
- * {@link countFeedbackSignals}, read in one query per chunk of refs.
+ * Refs with no user feedback are absent from the map. Read in one query per
+ * chunk of refs.
  */
 export function countFeedbackSignalsByRef(
   db: Database,
@@ -183,7 +162,7 @@ export function countUsageEventsByType(db: Database, eventType: string): number 
 /**
  * Durable refs a user-attributed `search`, `curate` or `show` returned, or a
  * user `feedback` named, at or after `sinceIso`. Machine traffic (`improve`,
- * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignals}.
+ * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignalsByRef}.
  */
 export function listUsedEntryRefs(db: Database, sinceIso: string): string[] {
   const rows = db

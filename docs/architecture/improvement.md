@@ -32,9 +32,9 @@ everything else routes through `akm proposal accept`.
 
 ## Components
 
-- **Utility policy** (`src/indexer/feedback/utility-policy.ts`) — pure
-  domain math that turns accumulated feedback counts into a new utility
-  score. No database access; unit-testable in isolation.
+- **Utility recompute** (`recomputeUtilityScores`, `src/indexer/indexer.ts`) —
+  the one place utility is computed from `usage_events`; `akm index` runs it
+  for every entry and `akm feedback` for the entry it touched.
 - **Strategies** (`src/commands/improve/improve-strategies.ts`,
   `src/assets/improve-strategies/*.json`) — named presets that decide which
   improve processes run and with what engine/model/limits.
@@ -71,8 +71,8 @@ everything else routes through `akm proposal accept`.
    count a user's recorded positives and negatives per asset and scale the
    fused score by them (logarithmic in each count, the same for every asset),
    so ranking moves at once with no reindex. The asset's utility score, which
-   improve and metrics read, is updated immediately via the bounded-step
-   formula (below).
+   improve and metrics read, is recomputed immediately by the same formula
+   `akm index` uses (below).
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
@@ -132,22 +132,24 @@ everything else routes through `akm proposal accept`.
 
 ### Utility scoring
 
-Utility moves by the MemRL bounded-step EMA formula (arXiv:2601.03192),
-implemented in `computeNextUtility` (`src/indexer/feedback/utility-policy.ts`):
+Utility has one formula and one implementation, `recomputeUtilityScores`
+(`src/indexer/indexer.ts`), counting only user-attributed (`source='user'`)
+events:
 
 ```text
-reward   = weighted average of positive (1.0) and negative (0.0) feedback in the batch
-nextUtil = clamp(currentUtil + FEEDBACK_LR * (reward - currentUtil), 0, 1)
+rate     = max(selectRate, max(0, positives - negatives) / (positives + negatives))
+nextUtil = prevUtil * 0.7^days + rate * (1 - 0.7^days)
 ```
 
-`FEEDBACK_LR` is `0.1`, so a single feedback batch moves utility by at most
-0.1 in either direction regardless of how lopsided the batch is — `reward` is
-a proportion of the counts, not their magnitude. When a previously
-high-utility asset (utility ≥ 0.5) crosses back below 0.5, the update is
-flagged as a review-threshold crossing so callers can escalate it. Decay is
-time-proportional rather than tied to index frequency, and usage history
-(and the utility it drives) is preserved across schema resets and full index
-rebuilds — see [Architecture: Utility Scoring](architecture.md#utility-scoring)
+`akm index` runs it for every entry. `akm feedback` runs the same function for
+the one entry it touched, so the value it stores is the one the next index
+would compute at that moment (a one-entry call skips the usage-event purge
+and leaves the recompute watermark alone). `days` is the time since the last
+full recompute, at least 1, so decay is time-proportional rather than tied to
+index frequency. When a previously high-utility asset (utility >= 0.5) falls
+below 0.5 after feedback, an `improve_review_needed` event is emitted. Usage
+history (and the utility it drives) is preserved across schema resets and full
+index rebuilds - see [Architecture: Utility Scoring](architecture.md#utility-scoring)
 for the storage-level summary.
 
 ### Strategy inheritance

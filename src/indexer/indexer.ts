@@ -1818,7 +1818,10 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
 // ── Utility score recomputation ──────────────────────────────────────────────
 
 /**
- * Recompute utility scores for all entries based on usage_events data.
+ * Recompute utility scores based on usage_events data: every entry by default,
+ * or just `onlyEntryId` (what `akm feedback` passes so the value it stores is
+ * the one `akm index` would compute, not a second formula). A one-entry call
+ * leaves the retention purge and the `last_utility_computed_at` watermark alone.
  *
  * For each entry:
  *   - Count search appearances (event_type = 'search')
@@ -1833,12 +1836,13 @@ export async function lookup(ref: AssetRef): Promise<IndexEntry | null> {
  *
  * Called during `akm index` after FTS rebuild.
  */
-export function recomputeUtilityScores(db: Database, stateDb: Database): void {
+export function recomputeUtilityScores(db: Database, stateDb: Database, onlyEntryId?: number): void {
   const EMA_DECAY = 0.7;
+  const scoped = onlyEntryId !== undefined;
 
   // Purge stale usage events (90-day retention). usage_events lives in state.db
   // (Chunk-8 WI-8.3); its table is created by state migration 020.
-  purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
+  if (!scoped) purgeOldUsageEvents(stateDb, USAGE_EVENT_RETENTION_DAYS);
 
   // Time-proportional decay: apply one round of EMA per elapsed day so
   // indexing frequency doesn't affect how fast scores decay.
@@ -1874,9 +1878,10 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
       FROM usage_events u
       WHERE u.entry_id IS NOT NULL
         AND u.source = 'user'
+        ${scoped ? "AND u.entry_id = ?" : ""}
       GROUP BY u.entry_id
     `)
-    .all() as Array<{
+    .all(...(scoped ? [onlyEntryId] : [])) as Array<{
     entry_id: number;
     search_count: number;
     show_count: number;
@@ -1891,7 +1896,9 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
 
   // Batch-load existing utility scores
   const existingScores = new Map<number, { utility: number; lastUsedAt: string | undefined }>();
-  const scoreRows = db.prepare("SELECT entry_id, utility, last_used_at FROM utility_scores").all() as Array<{
+  const scoreRows = db
+    .prepare(`SELECT entry_id, utility, last_used_at FROM utility_scores${scoped ? " WHERE entry_id = ?" : ""}`)
+    .all(...(scoped ? [onlyEntryId] : [])) as Array<{
     entry_id: number;
     utility: number;
     last_used_at: string | null;
@@ -1939,5 +1946,5 @@ export function recomputeUtilityScores(db: Database, stateDb: Database): void {
     });
   }
 
-  setMeta(db, "last_utility_computed_at", new Date().toISOString());
+  if (!scoped) setMeta(db, "last_utility_computed_at", new Date().toISOString());
 }

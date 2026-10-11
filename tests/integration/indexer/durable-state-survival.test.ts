@@ -18,7 +18,7 @@ import path from "node:path";
 import { getDbPath } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
-import { countFeedbackSignals, insertUsageEvent } from "../../../src/indexer/usage/usage-events";
+import { insertUsageEvent } from "../../../src/indexer/usage/usage-events";
 import { closeDatabase, openExistingDatabase } from "../../../src/storage/repositories/index-connection";
 import { findEntryIdByRef, getItemRefById } from "../../../src/storage/repositories/index-entries-repository";
 import { getRetrievalCounts } from "../../../src/storage/repositories/index-utility-repository";
@@ -36,6 +36,18 @@ afterEach(() => {
   storage.cleanup();
   stashDir = "";
 });
+
+/** User feedback counts linked to an entry id (the link a rebuild must restore). */
+function feedbackCounts(stateDb: ReturnType<typeof openStateDatabase>, entryId: number): { pos: number; neg: number } {
+  const row = stateDb
+    .prepare(
+      `SELECT SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+              SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
+       FROM usage_events WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
+    )
+    .get(entryId) as { pos: number | null; neg: number | null };
+  return { pos: row.pos ?? 0, neg: row.neg ?? 0 };
+}
 
 function writeMemory(name: string, body: string): void {
   const file = path.join(stashDir, "memories", `${name}.md`);
@@ -88,7 +100,7 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
   const beforeCounts = getRetrievalCounts(db, stateDb, ["memories/alpha", "memories/beta"]);
   expect(beforeCounts.get("memories/alpha")).toBe(3);
   expect(beforeCounts.get("memories/beta")).toBe(1);
-  expect(countFeedbackSignals(stateDb, alphaId as number)).toEqual({ pos: 1, neg: 1 });
+  expect(feedbackCounts(stateDb, alphaId as number)).toEqual({ pos: 1, neg: 1 });
   closeDatabase(db);
   stateDb.close();
 
@@ -107,7 +119,7 @@ test("usage + feedback survive a full rebuild via the item_ref relink", async ()
   expect(afterCounts.get("memories/beta")).toBe(1);
 
   // Feedback SURVIVES via the id relink (entry_id restored on rebuild).
-  expect(countFeedbackSignals(stateDb, alphaId2)).toEqual({ pos: 1, neg: 1 });
+  expect(feedbackCounts(stateDb, alphaId2)).toEqual({ pos: 1, neg: 1 });
   void betaId2;
 
   // The stored spelling stays the fully-qualified item_ref — the durable key.

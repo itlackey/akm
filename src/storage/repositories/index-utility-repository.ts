@@ -6,12 +6,11 @@
  * `index.db` utility-score + retrieval-count repository (MemRL signals).
  *
  * Owns the raw SQL for `utility_scores` and the retrieval-frequency counting
- * over `usage_events`. The bounded-step EMA policy itself lives in
- * `indexer/feedback/utility-policy`; this repo only reads/writes.
+ * over `usage_events`. The utility formula itself lives in
+ * `recomputeUtilityScores` (`indexer/indexer.ts`); this repo only reads/writes.
  */
 
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
-import { computeNextUtility, type FeedbackUtilityResult } from "../../indexer/feedback/utility-policy";
 import type { Database, SqlValue } from "../database";
 import type { RetrievalCountOptions, UtilityScoreData, UtilityScoreRow } from "./index-entry-types";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
@@ -290,45 +289,6 @@ function getSourceScopedRetrievalCounts(
   for (const [bare, count] of countsByBare) {
     for (const input of bareToInputs.get(bare) ?? []) result.set(input, count);
   }
-  return result;
-}
-
-/**
- * Apply accumulated feedback counts to the utility score of an entry, persisting
- * the result. The bounded-step EMA policy itself (MemRL, F-5 / #386,
- * arXiv:2601.03192) lives in {@link computeNextUtility} (feedback/utility-policy);
- * this function only reads the current utility, applies the policy, and writes
- * the new value.
- *
- * A new entry starts at 0.5 (neutral midpoint) before the EMA step is applied.
- * When there is no feedback (both counts zero) the score is left untouched — no
- * DB write. Returns a {@link FeedbackUtilityResult} so the caller can detect a
- * previously high-utility asset crossing below the review threshold and escalate.
- */
-export function applyFeedbackToUtilityScore(
-  db: Database,
-  entryId: number,
-  positiveCount: number,
-  negativeCount: number,
-): FeedbackUtilityResult {
-  const existing = getUtilityScore(db, entryId);
-  const previousUtility = existing?.utility ?? 0.5;
-
-  const result = computeNextUtility(previousUtility, positiveCount, negativeCount);
-
-  if (positiveCount === 0 && negativeCount === 0) {
-    return result;
-  }
-
-  const now = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO utility_scores (entry_id, utility, show_count, search_count, select_rate, last_used_at, updated_at)
-    VALUES (?, ?, 0, 0, 0, ?, ?)
-    ON CONFLICT(entry_id) DO UPDATE SET
-      utility    = ?,
-      updated_at = ?
-  `).run(entryId, result.nextUtility, now, now, result.nextUtility, now);
-
   return result;
 }
 

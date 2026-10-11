@@ -33,6 +33,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   EMA write succeeded, which no longer has anything to do with ranking. It is now `true` exactly when the recorded
   event is user-attributed (the events search counts) and `false` with a reason for improve, task, audit or unknown
   attribution; a utility-write failure only warns and no longer flips it.
+- **Utility has one formula and one implementation.** `akm feedback` used to move utility with its own bounded step
+  toward the cumulative positive share while `akm index` recomputed the same table with a different formula, so the
+  stored value depended on which ran last. `akm feedback` now calls the indexer's `recomputeUtilityScores` for the one
+  entry (user-attributed events only), so the value it stores is the one `akm index` would compute at that moment; the
+  bounded-step code (`utility-policy.ts`) is removed. A first positive on an entry with no utility row now gives 0.3
+  (the old start was 0.5). Search still does not read utility.
 
 ### Fixed
 

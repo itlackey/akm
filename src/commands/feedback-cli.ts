@@ -22,8 +22,9 @@ import { getDbPath } from "../core/paths";
 import { withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
+import { recomputeUtilityScores } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { countFeedbackSignals, insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
+import { insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
@@ -32,7 +33,7 @@ import {
   getEntryFilePathById,
   getItemRefById,
 } from "../storage/repositories/index-entries-repository";
-import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
+import { getUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
 import { akmProposalAccept } from "./proposal/proposal";
@@ -169,15 +170,18 @@ function buildLessonStrengthUpdate(rawBytes: Buffer, feedbackRef: string): { str
   return rawBytes.equals(nextBytes) ? { strength: strengthList.length } : { strength: strengthList.length, nextBytes };
 }
 
+/** Utility at or above this is "high"; falling below it after feedback emits `improve_review_needed`. */
+const UTILITY_REVIEW_THRESHOLD = 0.5;
+
 /**
- * Result of {@link recordFeedbackUsage}: the raw utility-policy result (when
- * the update ran) plus whether the event counts toward `akm search` /
+ * Result of {@link recordFeedbackUsage}: the entry's utility before and after
+ * (when the recompute ran) plus whether the event counts toward `akm search` /
  * `akm curate` ranking, and why not when it doesn't. Ranking counts the
  * recorded user-attributed events themselves, so this does not depend on the
  * utility update succeeding.
  */
 interface RecordFeedbackUsageResult {
-  utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+  utilityResult: { previousUtility: number; nextUtility: number } | undefined;
   /** True iff the recorded event is user-attributed, i.e. counted by the ranking factor. */
   countsTowardRanking: boolean;
   /** Set whenever `countsTowardRanking` is false; explains why. */
@@ -186,16 +190,17 @@ interface RecordFeedbackUsageResult {
 
 /**
  * Persist the feedback usage-event (state.db) and, for a user-attributed event,
- * fold it into the entry's MemRL utility score (index.db). Chunk-8 WI-8.3:
- * usage_events lives in state.db; entries + utility_scores stay in `indexDb`.
+ * recompute the entry's utility score (index.db) with the same function the
+ * `akm index` finalize pass uses, scoped to this one entry, so there is one
+ * formula and the stored value is what the next index would compute. Chunk-8
+ * WI-8.3: usage_events lives in state.db; entries + utility_scores stay in `indexDb`.
  * Search ranking does not read the utility score: it counts the recorded
  * `source='user'` feedback events itself, so a user-attributed event affects
  * ranking at once and an `improve`/`task`/`audit`/`unknown` one never does — an
  * anti-self-reinforcement guard that stops an agent or automated pipeline from
- * boosting its own picks. This is by design and must not be removed. Uses the
- * bounded-step EMA policy (F-5 / #386, arXiv:2601.03192) for the utility score
- * improve and metrics read; that update is best-effort and its failure never
- * fails the feedback record or changes the ranking effect.
+ * boosting its own picks. This is by design and must not be removed. The
+ * utility score is read by improve and metrics only; its update is best-effort
+ * and its failure never fails the feedback record or changes the ranking effect.
  */
 function recordFeedbackUsage(
   indexDb: Database,
@@ -204,7 +209,7 @@ function recordFeedbackUsage(
   signal: "positive" | "negative",
   metadataStr: string | undefined,
 ): RecordFeedbackUsageResult {
-  let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+  let utilityResult: RecordFeedbackUsageResult["utilityResult"];
   let rankingSkippedReason: string | undefined;
   const eventSource = resolveUsageEventSource();
   withStateDb((stateDb) => {
@@ -223,8 +228,9 @@ function recordFeedbackUsage(
       return;
     }
     try {
-      const { pos, neg } = countFeedbackSignals(stateDb, entryId);
-      utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);
+      const previousUtility = getUtilityScore(indexDb, entryId)?.utility ?? 0;
+      recomputeUtilityScores(indexDb, stateDb, entryId);
+      utilityResult = { previousUtility, nextUtility: getUtilityScore(indexDb, entryId)?.utility ?? previousUtility };
     } catch (err) {
       // best-effort — the event is recorded (and ranked) even if the utility update fails
       warn(`[feedback] utility update failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -683,7 +689,7 @@ export const feedbackCommand = defineJsonCommand({
     // The lock was originally needed to prevent feedback from racing a
     // background reindex it spawned — now that ensureIndex is removed, holding
     // the lock only causes feedback to block for the full improve run duration.
-    let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
+    let utilityResult: RecordFeedbackUsageResult["utilityResult"];
     let countsTowardRanking = false;
     let rankingSkippedReason: string | undefined;
     let durableRef = ref;
@@ -714,10 +720,10 @@ export const feedbackCommand = defineJsonCommand({
           "ASSET_NOT_FOUND",
         );
       }
-      // Persist the feedback signal into usage_events. Both positive and
-      // negative signals apply the EMA utility update immediately (see
-      // recordFeedbackUsage / applyFeedbackToUtilityScore). Search ranking
-      // reads the recorded events directly, so no `akm index` run is needed.
+      // Persist the feedback signal into usage_events. A user-attributed signal
+      // also recomputes the entry's utility at once (see recordFeedbackUsage).
+      // Search ranking reads the recorded events directly, so no `akm index`
+      // run is needed.
       // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta
@@ -825,7 +831,11 @@ export const feedbackCommand = defineJsonCommand({
     // Emit a structured event rather than a proposal so the review-needed
     // signal doesn't risk an accidental asset overwrite if the proposal is
     // accepted.
-    if (utilityResult?.crossedReviewThreshold) {
+    if (
+      utilityResult &&
+      utilityResult.previousUtility >= UTILITY_REVIEW_THRESHOLD &&
+      utilityResult.nextUtility < UTILITY_REVIEW_THRESHOLD
+    ) {
       try {
         appendEvent({
           eventType: "improve_review_needed",

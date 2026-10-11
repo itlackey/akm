@@ -7,9 +7,10 @@ import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
-import { akmIndex } from "../../src/indexer/indexer";
+import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
 import { runCliCapture } from "../_helpers/cli";
 import { withTestImproveLlm } from "../_helpers/improve-config";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -458,6 +459,50 @@ describe("akm feedback", () => {
     expect(result.status).toBe(0);
     expect(parseJsonOutput(result).rankingUpdate).toEqual({ applied: true });
   });
+
+  // ── One utility formula: `akm feedback` stores what `akm index` would compute ─
+  for (const signal of ["positive", "negative"] as const) {
+    test(`a ${signal} feedback stores the utility the index finalize pass would compute`, async () => {
+      writeFile(
+        path.join(stashDir, "memories", "deployment-notes.md"),
+        "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+      );
+      await buildIndex();
+
+      const db = openIndexDatabase(getDbPath());
+      const stateDb = openStateDatabase();
+      try {
+        const entryId = (db.prepare("SELECT id FROM entries LIMIT 1").get() as { id: number }).id;
+        const seed = (): void => {
+          upsertUtilityScore(db, entryId, { utility: 0.6, showCount: 0, searchCount: 0, selectRate: 0 });
+        };
+        seed();
+
+        const result = await runCli([
+          "feedback",
+          "memories/deployment-notes",
+          `--${signal}`,
+          ...(signal === "negative" ? ["--reason", "the VPN step is wrong"] : []),
+          "--format=json",
+        ]);
+        expect(result.status).toBe(0);
+        const fromFeedback = getUtilityScore(db, entryId)?.utility;
+
+        // Same starting point, but let the indexer's finalize recompute run instead.
+        seed();
+        recomputeUtilityScores(db, stateDb);
+        const fromIndex = getUtilityScore(db, entryId)?.utility;
+
+        expect(fromIndex).toBeDefined();
+        expect(fromFeedback).toBe(fromIndex as number);
+        // Not the retired bounded-step EMA (0.64 / 0.54 from a 0.6 start).
+        expect(fromFeedback).toBeCloseTo(signal === "positive" ? 0.72 : 0.42, 2);
+      } finally {
+        closeDatabase(db);
+        stateDb.close();
+      }
+    });
+  }
 
   // ── Which text each feedback judged ──────────────────────────────────────
   const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
