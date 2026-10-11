@@ -171,34 +171,31 @@ function buildLessonStrengthUpdate(rawBytes: Buffer, feedbackRef: string): { str
 
 /**
  * Result of {@link recordFeedbackUsage}: the raw utility-policy result (when
- * the update ran) plus whether the ranking update was actually applied, and
- * why not when it wasn't. R-034: the caller could not previously distinguish
- * "no update needed" from "update was skipped" — this makes that explicit so
- * `akm feedback`'s response envelope can report it instead of staying silent.
+ * the update ran) plus whether the event counts toward `akm search` /
+ * `akm curate` ranking, and why not when it doesn't. Ranking counts the
+ * recorded user-attributed events themselves, so this does not depend on the
+ * utility update succeeding.
  */
 interface RecordFeedbackUsageResult {
   utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-  rankingUpdateApplied: boolean;
-  /** Set whenever `rankingUpdateApplied` is false; explains why. */
-  rankingUpdateSkippedReason: string | undefined;
+  /** True iff the recorded event is user-attributed, i.e. counted by the ranking factor. */
+  countsTowardRanking: boolean;
+  /** Set whenever `countsTowardRanking` is false; explains why. */
+  rankingSkippedReason: string | undefined;
 }
 
 /**
- * Persist the feedback usage-event (state.db) and immediately fold it into the
- * entry's MemRL utility score (index.db). Chunk-8 WI-8.3: usage_events lives in
- * state.db; entries + utility_scores stay in `indexDb`. BOTH positive and
- * negative signals apply the EMA utility update unconditionally and
- * immediately when the source is user-attributed — no `akm index` run is
- * required for either signal to affect search ranking (search counts the
- * recorded events itself). Uses the bounded-step EMA policy (F-5 / #386,
- * arXiv:2601.03192) for the utility score improve and metrics read.
- *
- * The update is intentionally SKIPPED for non-`user` event sources (`improve`,
- * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
- * agent or automated pipeline from boosting its own picks. This is by design
- * and must not be removed; R-034 only asks that the skip be surfaced to the
- * caller rather than passing silently. Best-effort: a utility-update failure
- * never fails the feedback record.
+ * Persist the feedback usage-event (state.db) and, for a user-attributed event,
+ * fold it into the entry's MemRL utility score (index.db). Chunk-8 WI-8.3:
+ * usage_events lives in state.db; entries + utility_scores stay in `indexDb`.
+ * Search ranking does not read the utility score: it counts the recorded
+ * `source='user'` feedback events itself, so a user-attributed event affects
+ * ranking at once and an `improve`/`task`/`audit`/`unknown` one never does — an
+ * anti-self-reinforcement guard that stops an agent or automated pipeline from
+ * boosting its own picks. This is by design and must not be removed. Uses the
+ * bounded-step EMA policy (F-5 / #386, arXiv:2601.03192) for the utility score
+ * improve and metrics read; that update is best-effort and its failure never
+ * fails the feedback record or changes the ranking effect.
  */
 function recordFeedbackUsage(
   indexDb: Database,
@@ -208,8 +205,7 @@ function recordFeedbackUsage(
   metadataStr: string | undefined,
 ): RecordFeedbackUsageResult {
   let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-  let rankingUpdateApplied = false;
-  let rankingUpdateSkippedReason: string | undefined;
+  let rankingSkippedReason: string | undefined;
   const eventSource = resolveUsageEventSource();
   withStateDb((stateDb) => {
     insertUsageEvent(stateDb, {
@@ -221,21 +217,20 @@ function recordFeedbackUsage(
       source: eventSource,
     });
     if (eventSource !== "user") {
-      rankingUpdateSkippedReason =
-        `feedback source is "${eventSource}", not "user" — ranking updates only apply to user-attributed ` +
-        "feedback (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
+      rankingSkippedReason =
+        `feedback source is "${eventSource}", not "user" — it does not count toward search ranking, which counts ` +
+        "user-attributed feedback only (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
       return;
     }
     try {
       const { pos, neg } = countFeedbackSignals(stateDb, entryId);
       utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);
-      rankingUpdateApplied = true;
     } catch (err) {
-      // best-effort — feedback recording succeeds even if utility update fails
-      rankingUpdateSkippedReason = `utility update failed: ${err instanceof Error ? err.message : String(err)}`;
+      // best-effort — the event is recorded (and ranked) even if the utility update fails
+      warn(`[feedback] utility update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
-  return { utilityResult, rankingUpdateApplied, rankingUpdateSkippedReason };
+  return { utilityResult, countsTowardRanking: eventSource === "user", rankingSkippedReason };
 }
 
 // ── Judged text ──────────────────────────────────────────────────────────────
@@ -689,8 +684,8 @@ export const feedbackCommand = defineJsonCommand({
     // background reindex it spawned — now that ensureIndex is removed, holding
     // the lock only causes feedback to block for the full improve run duration.
     let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-    let rankingUpdateApplied = false;
-    let rankingUpdateSkippedReason: string | undefined;
+    let countsTowardRanking = false;
+    let rankingSkippedReason: string | undefined;
     let durableRef = ref;
     let fix:
       | {
@@ -777,8 +772,8 @@ export const feedbackCommand = defineJsonCommand({
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
       const recordResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
       utilityResult = recordResult.utilityResult;
-      rankingUpdateApplied = recordResult.rankingUpdateApplied;
-      rankingUpdateSkippedReason = recordResult.rankingUpdateSkippedReason;
+      countsTowardRanking = recordResult.countsTowardRanking;
+      rankingSkippedReason = recordResult.rankingSkippedReason;
     } finally {
       closeDatabase(db);
     }
@@ -889,9 +884,9 @@ export const feedbackCommand = defineJsonCommand({
       signal,
       reason: reason?.trim() ?? null,
       tags: validatedTags,
-      rankingUpdate: rankingUpdateApplied
+      rankingUpdate: countsTowardRanking
         ? { applied: true }
-        : { applied: false, reason: rankingUpdateSkippedReason ?? "unknown" },
+        : { applied: false, reason: rankingSkippedReason ?? "unknown" },
       ...(fixProposal
         ? {
             fix: {

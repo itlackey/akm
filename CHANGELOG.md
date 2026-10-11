@@ -29,6 +29,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   +9% for 1 / 2 / 5 / 20 positives, so an asset with 5 positives outranks one with 2, and the effect reorders close
   matches without overriding relevance. The counts are read from `state.db` in one query per search. `utility_scores`
   is still written and read by improve and metrics, but search does not use it.
+- **`akm feedback` reports the real ranking effect.** `rankingUpdate.applied` in its output used to mean the utility
+  EMA write succeeded, which no longer has anything to do with ranking. It is now `true` exactly when the recorded
+  event is user-attributed (the events search counts) and `false` with a reason for improve, task, audit or unknown
+  attribution; a utility-write failure only warns and no longer flips it.
 
 ### Fixed
 

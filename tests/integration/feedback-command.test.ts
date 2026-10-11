@@ -5,9 +5,11 @@ import path from "node:path";
 import { renderReflectPromptPreview } from "../../src/commands/improve/reflect";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
+import { getDbPath } from "../../src/core/paths";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { withTestImproveLlm } from "../_helpers/improve-config";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -417,6 +419,44 @@ describe("akm feedback", () => {
     const rankingUpdate = parsed.rankingUpdate as { applied: boolean; reason: string };
     expect(rankingUpdate.reason).toMatch(/not "user"/);
     expect(rankingUpdate.reason).toMatch(/anti-self-reinforcement/);
+  });
+
+  test("rankingUpdate follows the recorded event's attribution, not the utility update (improve source)", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+
+    const result = await withEnv({ AKM_EVENT_SOURCE: "improve" }, () =>
+      runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]),
+    );
+    expect(result.status).toBe(0);
+    const rankingUpdate = parseJsonOutput(result).rankingUpdate as { applied: boolean; reason: string };
+    expect(rankingUpdate.applied).toBe(false);
+    expect(rankingUpdate.reason).toMatch(/"improve", not "user"/);
+    expect(rankingUpdate.reason).toMatch(/does not count toward search ranking/);
+  });
+
+  test("rankingUpdate.applied stays true for a user event when the utility update cannot run", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+
+    // Search ranking counts the recorded events, not utility_scores, so breaking the utility
+    // table must not change what the output says about ranking.
+    const db = openIndexDatabase(getDbPath());
+    try {
+      db.exec("DROP TABLE utility_scores");
+    } finally {
+      closeDatabase(db);
+    }
+
+    const result = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(parseJsonOutput(result).rankingUpdate).toEqual({ applied: true });
   });
 
   // ── Which text each feedback judged ──────────────────────────────────────

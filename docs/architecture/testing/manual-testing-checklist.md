@@ -1543,7 +1543,7 @@ akm feedback skills/k8s-deploy --negative \
 - [ ] **CORE** Negative feedback without a reason fails by default with `MISSING_REQUIRED_ARGUMENT`, exit `2`.
 - [ ] **LOCAL** Both signals, missing/nonexistent ref, malformed tag, and more than ten tags fail before durable mutation.
 - [ ] **LOCAL** `feedback.requireReason:false` produces the documented warning rather than the default hard failure.
-- [ ] **LOCAL** User feedback updates ranking immediately and reports `rankingUpdate.applied`; machine-origin signals do not impersonate user demand.
+- [ ] **LOCAL** User feedback updates ranking immediately and reports `rankingUpdate.applied: true`; machine-origin signals (`AKM_EVENT_SOURCE=improve`) report `applied: false` with a reason and do not impersonate user demand.
 - [ ] **LOCAL** Feedback survives full reindex and contains no credential fixture value.
 
 ### 13.2 Durable log and cursors

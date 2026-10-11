@@ -1785,8 +1785,9 @@ recorded positive raises the asset's score and each negative lowers it, the
 same way for every asset, so an asset with 5 positives ranks higher than one
 with 2, and each further vote counts for a little less. The effect is small: it
 reorders close matches and does not override relevance. Only feedback recorded
-as the user counts, not feedback from improve, task or audit runs. Feedback
-also updates the utility score that improve and `akm metrics` read.
+as the user counts, not feedback from improve, task or audit runs; the output's
+`rankingUpdate.applied` says which it was (`true`, or `false` with a `reason`).
+Feedback also updates the utility score that improve and `akm metrics` read.
 
 ```sh
 akm feedback scripts/deploy.sh --positive
