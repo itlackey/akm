@@ -11,7 +11,7 @@ import type { AkmConfig, LlmConnectionConfig } from "../../core/config/config";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, UsageError } from "../../core/errors";
 import { resolveMutationTarget } from "../../core/mutation-target";
-import { getCacheDir } from "../../core/paths";
+import { getRunLogDir } from "../../core/paths";
 import { redactSensitiveText } from "../../core/redaction";
 import { clearLogFile, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
@@ -447,9 +447,7 @@ export const improveCommand = defineCommand({
 
       if (!dryRun) {
         const improveLogFile = path.join(
-          getCacheDir(),
-          "logs",
-          "improve",
+          getRunLogDir("improve"),
           `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
         );
         setLogFile(improveLogFile);
@@ -504,6 +502,7 @@ export const improveCommand = defineCommand({
                 ...(skipIfLocked ? { skipIfLocked } : {}),
                 ...(strategyArg !== undefined ? { strategy: strategyArg } : {}),
                 ...(engineProbe !== undefined ? { engineProbe } : {}),
+                onBudgetHardKill: () => persistTerminated("budget_exhausted"),
                 ...(Object.keys(syncOverride).length > 0 ? { sync: syncOverride } : {}),
               }),
           },

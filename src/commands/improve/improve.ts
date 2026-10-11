@@ -40,6 +40,7 @@ import { collectEngineCredentialValues } from "../../integrations/agent/engine-r
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
+  GitStashPushError,
   isGitBackedStash,
   listGitChangedPaths,
   resolveWritableOverride,
@@ -141,7 +142,8 @@ export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
 
 /**
  * Abort the run at the budget; force-exit (0 — budget exhaustion is a normal
- * scheduled-task outcome) only if the drain overruns the grace period.
+ * scheduled-task outcome) only if the drain overruns the grace period, after
+ * `onHardKill` has persisted what the killed run left behind.
  * Returns an idempotent disposer.
  */
 export function armBudgetWatchdog(
@@ -152,6 +154,8 @@ export function armBudgetWatchdog(
     clearTimeoutFn?: typeof clearTimeout;
     exitFn?: (code: number) => void;
     hardKillGraceMs?: number;
+    /** Best-effort persistence run once before the forced exit (never throws out of the watchdog). */
+    onHardKill?: () => void;
   },
 ): () => void {
   const setTimeoutFn = deps?.setTimeoutFn ?? setTimeout;
@@ -161,7 +165,14 @@ export function armBudgetWatchdog(
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
   const budgetTimer = setTimeoutFn(() => {
     controller.abort("improve budget exhausted");
-    hardKillTimer = setTimeoutFn(() => exitFn(0), hardKillGraceMs);
+    hardKillTimer = setTimeoutFn(() => {
+      try {
+        deps?.onHardKill?.();
+      } catch {
+        // Best-effort: the forced exit must still happen.
+      }
+      exitFn(0);
+    }, hardKillGraceMs);
     hardKillTimer.unref?.();
   }, budgetMs);
   return () => {
@@ -236,7 +247,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
   if (!options.dryRun) {
     const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
-    clearBudgetTimer = armBudgetWatchdog(Math.max(1, remainingBudget ?? budgetMs), budgetAbortController);
+    clearBudgetTimer = armBudgetWatchdog(Math.max(1, remainingBudget ?? budgetMs), budgetAbortController, {
+      // The forced exit skips every finally and the CLI catch: leave a terminated
+      // run record and bank the files this run wrote (journal is in memory) first.
+      // Local commit only — a push to a dead remote must not hang the exit.
+      onHardKill: () => {
+        try {
+          options.onBudgetHardKill?.();
+        } catch {
+          // best-effort
+        }
+        commitStashBatch({ scope, plannedRefs: collected?.plannedRefs ?? [], runId: options.runId }, { push: false });
+      },
+    });
   }
 
   try {
@@ -894,9 +917,12 @@ function makeCommitStashBatch(deps: {
   getInitialGitPaths: () => Set<string>;
   getWriteJournal: () => WriteProvenanceJournal | undefined;
   getEventsCtx: () => EventsContext;
-}): (messageContext: Parameters<typeof renderSyncCommitMessage>[1]) => AkmImproveResult["sync"] | undefined {
+}): (
+  messageContext: Parameters<typeof renderSyncCommitMessage>[1],
+  override?: { push?: boolean },
+) => AkmImproveResult["sync"] | undefined {
   const { writeTarget, primaryStashDir, effectiveSync, options, config, improveProfile } = deps.run;
-  return (messageContext) => {
+  return (messageContext, override) => {
     const eventsCtx = deps.getEventsCtx();
     const writeJournal = deps.getWriteJournal();
     const repoDir = writeTarget?.source.repoPath ?? primaryStashDir;
@@ -905,7 +931,7 @@ function makeCommitStashBatch(deps: {
     }
     const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
     const writableOverride = writeTarget ? resolveWritable(writeTarget.config) : resolveWritableOverride(config);
-    const push = options.sync?.push ?? improveProfile.sync?.push ?? true;
+    const push = override?.push ?? options.sync?.push ?? improveProfile.sync?.push ?? true;
     const message = renderSyncCommitMessage(
       effectiveSync.message ?? "akm improve auto-sync",
       messageContext,
@@ -946,8 +972,10 @@ function makeCommitStashBatch(deps: {
     } catch (syncErr) {
       const reason = errMessage(syncErr);
       warn(`improve: stash sync failed (non-fatal): ${reason}`);
-      record({ committed: false, pushed: false, skipped: true, reason });
-      return { committed: false, pushed: false, skipped: true, reason };
+      // A push that failed after the commit landed still left the commit in the repo.
+      const committed = syncErr instanceof GitStashPushError;
+      record({ committed, pushed: false, skipped: true, reason });
+      return { committed, pushed: false, skipped: true, reason };
     }
   };
 }

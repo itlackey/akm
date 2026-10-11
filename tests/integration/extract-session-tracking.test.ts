@@ -1051,6 +1051,36 @@ describe("akmExtract — per-session lock", () => {
     expect(result.sessions[0]?.skipReason).toBe("locked_concurrent");
   });
 
+  test("does not reclaim a live holder's lock however old it is (zero LLM calls)", async () => {
+    const stash = makeStashDir();
+    const stateDir = makeTempDir("akm-extract-lock-old-");
+    const stateDbPath = path.join(stateDir, "state.db");
+    const session = fakeSession("ses_old_locked", Date.now());
+
+    const lockPath = path.join(stateDir, "extract-locks", "extract-claude-ses_old_locked.lock");
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    expect(tryAcquireLockSync(lockPath, String(process.pid))).toBeDefined();
+    // The holder (this process) is alive; the lock file is an hour old, as a long extraction leaves it.
+    const hourAgo = new Date(Date.now() - 60 * 60 * 1000);
+    fs.utimesSync(lockPath, hourAgo, hourAgo);
+
+    let chatCalls = 0;
+    const result = await akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [makeHarness([session])],
+      stateDbPath,
+      chat: async () => {
+        chatCalls += 1;
+        return JSON.stringify({ candidates: [] });
+      },
+    });
+
+    expect(chatCalls).toBe(0);
+    expect(result.sessions[0]?.skipReason).toBe("locked_concurrent");
+  });
+
   test("processes normally when no lock is held, and releases the lock after", async () => {
     const stash = makeStashDir();
     const stateDir = makeTempDir("akm-extract-lock-free-");

@@ -8,19 +8,13 @@
  * makes atomic: exactly one creator wins, so no further mutex or barrier is
  * needed around acquisition. The payload records the holder's PID (and the
  * launcher PID under a scheduler) so a probe can tell a live holder from a
- * dead one; only a verifiably dead holder — or, when the caller opts in via
- * `staleAfterMs`, an over-age one — is ever reclaimed. Reclaim moves the
+ * dead one; only a verifiably dead holder is ever reclaimed. Reclaim moves the
  * stale file aside, re-verifies it is the very file that was probed, and only
  * then unlinks it, so two reclaimers cannot both "win" the same stale lock.
  */
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import { isProcessAlive, MAX_LOCK_METADATA_BYTES, readTextFileDescriptorWithLimit } from "./common";
-
-export type LockProbeOptions = {
-  /** Treat a lock older than this as stale even when its holder PID is alive. */
-  staleAfterMs?: number;
-};
 
 export type LockProbeResult =
   | { state: "absent" }
@@ -34,7 +28,7 @@ export type LockProbeResult =
     }
   | {
       state: "stale";
-      reason: "pid_dead" | "unreadable" | "invalid_pid" | "age_exceeded";
+      reason: "pid_dead" | "unreadable" | "invalid_pid";
       holderPid?: number;
       launcherPid?: number;
       ageMs?: number;
@@ -140,7 +134,7 @@ export function createLockPayload(metadata: Record<string, unknown> = {}): strin
   });
 }
 
-export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeResult {
+export function probeLock(lockPath: string): LockProbeResult {
   let snapshot: ReturnType<typeof readLockSnapshot>;
   try {
     snapshot = readLockSnapshot(lockPath);
@@ -158,9 +152,6 @@ export function probeLock(lockPath: string, opts?: LockProbeOptions): LockProbeR
   }
   if (!isProcessAlive(holderPid)) {
     return { state: "stale", reason: "pid_dead", holderPid, launcherPid, ageMs, rawContent, identity };
-  }
-  if (opts?.staleAfterMs !== undefined && ageMs > opts.staleAfterMs) {
-    return { state: "stale", reason: "age_exceeded", holderPid, launcherPid, ageMs, rawContent, identity };
   }
   return { state: "held", holderPid, launcherPid, ageMs, rawContent, identity };
 }

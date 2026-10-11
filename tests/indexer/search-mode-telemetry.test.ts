@@ -86,4 +86,15 @@ describe("search-mode telemetry", () => {
     expect(result.hits.length).toBeGreaterThan(0);
     expect(result.mode).toBe("keyword");
   });
+
+  test("auto mode with no embedding settings does not warn that no provider is configured", async () => {
+    // `auto` falls back to the built-in local model, so semantic search works.
+    const result = await runSearch({ semanticSearchMode: "auto" });
+    expect((result.warnings ?? []).join("\n")).not.toContain("embedding provider");
+  });
+
+  test("auto mode with a remote endpoint but no model still warns", async () => {
+    const result = await runSearch({ semanticSearchMode: "auto", embedding: { endpoint: "http://localhost:1/v1" } });
+    expect((result.warnings ?? []).join("\n")).toContain("embedding.model");
+  });
 });

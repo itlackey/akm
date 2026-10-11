@@ -407,6 +407,11 @@ export function getTaskLogDir(): string {
   return path.join(getCacheDir(), "tasks", "logs");
 }
 
+/** Per-run `akm improve` / `akm index` log files: flat `<ISO>.log` files under `$CACHE/logs/<kind>`. */
+export function getRunLogDir(kind: "improve" | "index"): string {
+  return path.join(getCacheDir(), "logs", kind);
+}
+
 export function getTaskHistoryDir(): string {
   return path.join(getCacheDir(), "tasks", "history");
 }

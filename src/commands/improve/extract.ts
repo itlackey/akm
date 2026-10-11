@@ -92,8 +92,6 @@ const DEFAULT_MAX_SESSIONS_PER_RUN = 25;
  * but never less than 48h. The content-hash ledger makes the overlap free.
  */
 const DEFAULT_SINCE_FLOOR_MS = 48 * 60 * 60 * 1000;
-/** A per-session lock older than this belongs to a crashed holder. */
-const EXTRACT_SESSION_LOCK_STALE_MS = 5 * 60 * 1000;
 
 function resolveDefaultSinceMs(
   harnessName: string,
@@ -125,15 +123,15 @@ function extractSessionLockPath(harness: string, sessionId: string, stateDbPath:
 }
 
 function extractSessionLockIsUnavailable(harness: string, sessionId: string, stateDbPath: string): boolean {
-  const probe = probeLock(extractSessionLockPath(harness, sessionId, stateDbPath), {
-    staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS,
-  });
+  const probe = probeLock(extractSessionLockPath(harness, sessionId, stateDbPath));
   return probe.state === "held" || probe.state === "inaccessible";
 }
 
 /**
  * Claim a session so a concurrent extract (a session-end hook racing the
- * hourly improve run) cannot process it twice. A stale lock is reclaimed; a
+ * hourly improve run) cannot process it twice. Only a lock whose holder is
+ * dead is reclaimed (no age window: a live extraction can run for many
+ * minutes, the #872 lesson in `core/run-lock.ts`); a
  * filesystem error proceeds, so locking never blocks extraction outright.
  */
 function acquireExtractSessionLock(lockPath: string): { proceed: boolean; ownership?: LockOwnership } {
@@ -141,7 +139,7 @@ function acquireExtractSessionLock(lockPath: string): { proceed: boolean; owners
     fs.mkdirSync(path.dirname(lockPath), { recursive: true });
     let ownership = tryAcquireLockSync(lockPath, createLockPayload());
     if (ownership) return { proceed: true, ownership };
-    const probe = probeLock(lockPath, { staleAfterMs: EXTRACT_SESSION_LOCK_STALE_MS });
+    const probe = probeLock(lockPath);
     if (probe.state === "held") return { proceed: false };
     if (probe.state === "stale" && !reclaimStaleLock(lockPath, probe)) return { proceed: false };
     ownership = tryAcquireLockSync(lockPath, createLockPayload());

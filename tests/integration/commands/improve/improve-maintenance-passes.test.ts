@@ -173,6 +173,36 @@ describe("runRetentionPurgePass", () => {
     expect(fs.existsSync(newFile)).toBe(true);
   });
 
+  // #1168 §3.8: `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log`
+  // are flat files outside the task log dir and were never purged.
+  test("purges per-run improve and index log files past the retention window", async () => {
+    const stash = freshStash();
+    const cacheSb = sandboxXdgCacheHome();
+    disposers.push(cacheSb);
+    const { getRunLogDir } = await import("../../../../src/core/paths");
+
+    const kept: string[] = [];
+    const stale: string[] = [];
+    for (const kind of ["improve", "index"] as const) {
+      const dir = getRunLogDir(kind);
+      fs.mkdirSync(dir, { recursive: true });
+      const oldFile = path.join(dir, "2026-01-01T00-00-00-000Z.log");
+      fs.writeFileSync(oldFile, "stale run");
+      const oldMtime = new Date(Date.now() - 200 * 86_400_000);
+      fs.utimesSync(oldFile, oldMtime, oldMtime);
+      stale.push(oldFile);
+      const newFile = path.join(dir, "2026-10-10T00-00-00-000Z.log");
+      fs.writeFileSync(newFile, "recent run");
+      kept.push(newFile);
+    }
+
+    const out = runRetentionPurgePass(makeCtx(stash)); // default config → 90d window
+
+    expect(out.warnings).toEqual([]);
+    for (const f of stale) expect(fs.existsSync(f)).toBe(false);
+    for (const f of kept) expect(fs.existsSync(f)).toBe(true);
+  });
+
   // R0 step 3 wires vacuumIfReclaimable into the
   // purge callback, reading the freelist off the same connection the purge
   // just used. Recipe (bulk-insert-then-delete) reused from

@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **The 02:00 nightly `akm improve` can no longer lose its night to the consolidate task's lock.** The shipped
+  `akm-improve-consolidate` task (`20 */4 * * *`) kept the default 2-hour budget, so a 00:20 run could still hold
+  `improve.lock` at 02:00 and the nightly (deliberately without `--skip-if-locked`) failed with `IMPROVE_LOCK_HELD`.
+  The consolidate task now passes `--timeout-ms 3600000`; the nightly is unchanged.
+- **Scheduled command tasks (`uses: commands/…`) get the 6-hour unattended default timeout.** Only workflow and native
+  shell/script tasks had it, so a wedged engine call could hold a command task forever. An explicit task `timeout:`,
+  an engine timeout, or `timeout: null` still wins.
+- **`akm search` no longer warns "no embedding provider is configured" on a default install.** With
+  `semanticSearchMode: auto` and no embedding settings, search uses the built-in local model, so the warning was
+  false on every query. It now fires only for a remote `embedding.endpoint` set without `embedding.model` (the one
+  config that cannot work), and the remedy names that field.
+- **`akm sync` fetches the remote and brings other hosts' changes in before it pushes.** It used to check the stale
+  local tracking ref, so once another host had pushed, the lease push failed and `akm sync` exited 70 instead of
+  committing, and a two-host filesystem bundle never converged. A writable bundle with a remote now fetches, then
+  fast-forwards (or merges with git's default merge) the upstream, then pushes; a host with nothing to commit still
+  receives the upstream. A merge that conflicts is aborted, your commit stays, the push is skipped, and
+  `reason` reads `not pushed: merging upstream conflicts in <files> ...`. A failed fetch likewise only skips the push.
+  `--no-push` and read-only bundles never touch the network.
+- **The end-of-run improve sync reports `committed: true` when only the push failed.** The commit had landed, but the
+  result and the `stash_synced` event said `committed: false`.
+- **The extract per-session lock no longer reclaims a live holder.** It was reclaimed once its file was five minutes
+  old, but one session can hold it across two extraction attempts and the summary call, so a session-end hook racing
+  the improve run processed the session twice. Only a lock whose holder process is dead is reclaimed, as with the
+  improve run lock.
+- **Memory inference writes to the default bundle, not the first bundle in the list.** The pass took `sources[0]`, so
+  it relied on list order and did nothing, silently, when that entry was not an akm bundle. It now selects the source
+  flagged as the default bundle and warns when there is none or when it is not an akm bundle.
+- **Memory inference no longer reverts a parent memory's frontmatter edit.** The `inferenceProcessed` stamp rewrote
+  frontmatter parsed before the model call, so an edit made to the memory in the meantime (accepted proposal,
+  feedback hash) was lost. The stamp now adds its key to the file's current frontmatter.
+- **The session summary prompt fences the transcript as untrusted.** Extract's summary call sent the raw, unfiltered
+  event stream with no boundary, so a crafted session could steer the text written into the session asset. It now
+  uses the same pre-filter and the same `UNTRUSTED SESSION TRANSCRIPT` fence, with forged fence markers neutralised,
+  as the extraction call.
+- **`akm proposal revert` of a retirement still works after the 30-day archive purge.** When the graced purge has
+  deleted the archived copy, the primary is restored byte for byte from the proposal's recorded `backupContent`
+  instead of the revert refusing. A file that now occupies the path is still never overwritten.
+- **Retire proposals can no longer become permanent.** They now expire by age like every other proposal (`akm proposal
+  reopen` brings one back, so the old "never expires" rationale is gone), a staged one whose file or successor is gone
+  or changed is auto-rejected once as `stale-target` instead of failing every drain run, and an expired or stale-target
+  retire proposal no longer counts as a person's rejection that settles its pair.
+- **The consolidate pair pass no longer marks assets judged when they have no stored embedding.** With
+  `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
+  `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
+  enabling embeddings reconsiders it, and warns once per run that the pair pass needs stored embeddings.
+- **A transient reflect failure no longer consumes the feedback that planned it.** A transport error, parse error,
+  timeout, budget abort or crash wrote a `failed` ledger row that advanced the signal cursor, so the ref was not
+  retried until new feedback arrived. Like distill, these now write no row; guard rejections and quality rejections
+  are unchanged.
+- **The per-run `akm improve` and `akm index` log files are now purged by the retention pass.**
+  `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log` were outside the purge and grew without bound;
+  they now follow `improve.eventRetentionDays` like the task log files.
+- **A run hard-killed by the budget watchdog now leaves a record and banks its writes.** The forced `process.exit(0)`
+  (exit code unchanged) skipped every finally block, so the run left no `improve_runs` row and the files it had
+  written were never committed. Before exiting, the watchdog now records the run as terminated
+  (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
+
 ## [0.10.26101002] - 2026-10-10
 
 ### Changed

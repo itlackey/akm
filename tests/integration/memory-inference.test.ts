@@ -19,6 +19,7 @@ import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ConfigError } from "../../src/core/errors";
+import { _setWarnSinkForTests } from "../../src/core/warn";
 import type { LoweringNotice } from "../../src/execution/resolved-request";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { compressMemoryToDerivedMemory } from "../../src/llm/memory-infer";
@@ -105,7 +106,7 @@ function configOptedOut(): AkmConfig {
 }
 
 function sources(): SearchSource[] {
-  return [{ path: tmpStash }];
+  return [{ path: tmpStash, isDefault: true }];
 }
 
 function sampleDraft(title = "Derived Insight"): Draft {
@@ -674,7 +675,7 @@ describe("runMemoryInferencePass — enabled", () => {
 
     const result = await runMemoryInferencePass({
       config: configWithLlm(),
-      sources: [{ path: tmpStash, adapterId: "okf" }],
+      sources: [{ path: tmpStash, adapterId: "okf", isDefault: true }],
     });
 
     expect(result.considered).toBe(0);
@@ -805,7 +806,7 @@ describe("runMemoryInferencePass — enabled", () => {
 
       const result = await runMemoryInferencePass({
         config: configWithLlm(),
-        sources: [{ path: tmpStash }, { path: cacheDir }],
+        sources: [{ path: tmpStash, isDefault: true }, { path: cacheDir }],
       });
 
       // Only the primary parent was considered.
@@ -952,5 +953,66 @@ describe("runMemoryInferencePass — enabled", () => {
     expect(result.splitParents).toBe(0);
     expect(result.writtenFacts).toBe(0);
     expect(result.unaccounted).toBe(0);
+  });
+});
+
+describe("runMemoryInferencePass — bundle selection and parent stamp", () => {
+  test("infers in the default bundle, not whichever bundle is first in the array", async () => {
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "akm-memory-infer-other-"));
+    try {
+      fs.mkdirSync(path.join(other, "memories"), { recursive: true });
+      fs.writeFileSync(path.join(other, "memories", "foreign.md"), "---\ndescription: foreign\n---\n\nbody\n");
+      writeMemory("mine", { description: "mine" }, "Body of the default bundle memory.");
+      compressor = () => sampleDraft();
+
+      const result = await runMemoryInferencePass({
+        config: configWithLlm(),
+        sources: [
+          { path: other, adapterId: "akm" },
+          { path: tmpStash, adapterId: "akm", isDefault: true },
+        ],
+      });
+
+      expect(result.considered).toBe(1);
+      expect(fs.existsSync(path.join(tmpStash, "memories", "mine.derived.md"))).toBe(true);
+      expect(fs.existsSync(path.join(other, "memories", "foreign.derived.md"))).toBe(false);
+    } finally {
+      fs.rmSync(other, { recursive: true, force: true });
+    }
+  });
+
+  test("warns instead of silently doing nothing when no default akm bundle is present", async () => {
+    writeMemory("mine", { description: "mine" }, "Body.");
+    compressor = () => sampleDraft();
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await runMemoryInferencePass({
+        config: configWithLlm(),
+        sources: [{ path: tmpStash, adapterId: "akm" }],
+      });
+      expect(result.considered).toBe(0);
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.some((w) => w.includes("memory inference") && w.includes("default"))).toBe(true);
+  });
+
+  test("the parent stamp keeps a frontmatter edit made while the model call was in flight", async () => {
+    const parentPath = writeMemory("edited", { description: "before" }, "Body of the parent.");
+    compressor = () => {
+      // Another writer (accepted proposal, feedback hash) edits the parent mid-call.
+      fs.writeFileSync(parentPath, "---\ndescription: after\ntags: [fresh]\n---\n\nBody of the parent.\n", "utf8");
+      return sampleDraft();
+    };
+
+    await runMemoryInferencePass({ config: configWithLlm(), sources: sources() });
+
+    const { data } = parseFrontmatter(fs.readFileSync(parentPath, "utf8"));
+    expect(data.inferenceProcessed).toBe(true);
+    expect(data.description).toBe("after");
+    expect(data.tags).toEqual(["fresh"]);
   });
 });

@@ -40,7 +40,7 @@ import { isHttpUrl, resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { appendEvent } from "../../core/events";
 import { resolveBundleWriteTarget } from "../../core/mutation-target";
-import { getCacheDir } from "../../core/paths";
+import { getRunLogDir } from "../../core/paths";
 import { clearLogFile, info, isVerbose, setLogFile } from "../../core/warn";
 import { resolveWriteTarget } from "../../core/write-source";
 import { releaseIndexRebuildLock, tryAcquireIndexRebuildLock } from "../../indexer/index-rebuild-lock";
@@ -121,12 +121,7 @@ export const indexCommand = defineCommand({
       const abort = (): void => controller.abort(new Error("index interrupted"));
       process.once("SIGINT", abort);
       process.once("SIGTERM", abort);
-      const indexLogFile = path.join(
-        getCacheDir(),
-        "logs",
-        "index",
-        `${new Date().toISOString().replace(/[:.]/g, "-")}.log`,
-      );
+      const indexLogFile = path.join(getRunLogDir("index"), `${new Date().toISOString().replace(/[:.]/g, "-")}.log`);
       setLogFile(indexLogFile);
       const verbose = isVerbose();
       const spin = !verbose && outputMode.format === "text" ? p.spinner() : null;
