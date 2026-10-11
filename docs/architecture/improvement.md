@@ -50,7 +50,7 @@ everything else routes through `akm proposal accept`.
 - **Proposal queue** (`state.db`) — written by `createProposal` (reflect,
   distill, consolidate's promote operations, and the other proposal producers)
   and by `createRetireProposal` (the pair pass's retire proposals).
-- **Auto-sync** — the end-of-run commit/push step for git-backed bundles.
+- **Auto-sync** — the pre-run sync and the end-of-run commit/push step for git-backed bundles.
 - **Session extraction** (`akm proposal extract`) — a separate entry point
   that mines coding-agent session transcripts for durable insights and queues
   them the same way.
@@ -121,7 +121,9 @@ everything else routes through `akm proposal accept`.
    retires, go in the same commit. A commit that fails warns and the accept
    stands.
 8. For a git-backed bundle, `akm improve`'s end-of-run auto-sync commits the
-   rest of the run's changes as a single batch and pushes (see below).
+   rest of the run's changes as a single batch and pushes (see below). The run
+   began with the same sync, so it started from what other hosts had pushed.
+
 
 ## Current decisions
 
@@ -390,13 +392,26 @@ explicit promote surface independent of this gate.
 
 ### Auto-sync
 
-For git-backed bundles (detected by a `.git` directory), `akm improve`
-automatically commits its changes as a single batch at the end of the run —
-the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. A user-defined strategy can turn sync off, so an interrupted run
-does not leave an uncommitted backlog. `--no-sync` disables sync for a single
-run; `--no-push` commits without pushing. Strategy sync behavior is
-configured via the `sync` block under `improve.strategies.<name>`.
+For git-backed bundles (detected by a `.git` directory), `akm improve` syncs
+twice: once **before** the run and once at the end. Both are the same operation
+as `akm sync` — fetch and merge the upstream, commit, and push if the bundle is
+writable, per the active strategy's `sync` setting. A user-defined strategy can
+turn sync off, so an interrupted run does not leave an uncommitted backlog.
+`--no-sync` disables both for a single run; `--no-push` commits without pushing.
+Strategy sync behavior is configured via the `sync` block under
+`improve.strategies.<name>`.
+
+The pre-run sync runs right after the run takes its lock and before the index
+and plan stages, so they see what another host pushed. It stages what `akm sync`
+stages (the managed paths, or the content subdirectory of a repo whose content
+lives in one), which means pending hand edits there are committed (and pushed)
+before the run starts, not mistaken for the run's own writes. It never aborts
+the run: a merge that conflicts (aborted, local commit kept), a failed fetch, or
+any other error is a warning, and the run continues on the local state. The
+outcome is `preRunSync` on the result (same shape as `sync`) and a `stash_synced`
+event with `phase: "pre-run"`. A dry run does not sync. Scheduled `core/improve`
+and `akm-improve-consolidate` runs go through the same `akm improve` entry, so
+they get it too.
 
 The sync always commits the paths it is given. It then fetches the remote and
 brings the upstream in (a fast-forward when it can, otherwise git's default

@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - **A manual fix to an asset applies at once.** `akm feedback --negative ... --replace/--with/--source`, `--superseded-by` and `--outdated` used to queue a `feedback` proposal that waited for `akm proposal accept` and expired after 90 days. The command now files the proposal and accepts it in the same run, through the ordinary accept (a git-backed bundle gets the usual commit; `akm proposal revert` undoes it), with gate decision `manual-fix` and no judge. If the accept refuses, the proposal is rejected, the file is untouched and the command fails. The edited asset stays eligible for every improve process.
+- **`akm improve` syncs before it runs, not only after (#1091).** A live run on a git-backed bundle now does the same
+  fetch / fast-forward-or-merge / commit / push as `akm sync` right after taking its lock and before the index and plan
+  stages, so it plans from what other hosts pushed. It honours `--no-sync` and `--no-push`. A conflict or fetch failure
+  warns and the run continues on the local state; the outcome is `preRunSync` on the result and a `stash_synced` event
+  with `phase: "pre-run"`. Pending hand edits in the managed paths are committed by it, as `akm sync` would.
 
 ### Fixed
 

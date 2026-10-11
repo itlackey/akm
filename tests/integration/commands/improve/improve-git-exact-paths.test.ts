@@ -56,7 +56,7 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
   fs.mkdirSync(memoriesDir, { recursive: true });
   fs.writeFileSync(path.join(memoriesDir, "staged-wip.md"), "pre-staged WIP\n", "utf8");
   expect(spawnSync("git", ["-C", stashDir, "add", "--", "memories/staged-wip.md"]).status).toBe(0);
-  const calls: string[][] = [];
+  const calls: Array<string[] | undefined> = [];
 
   const result = await akmImprove({
     scope: "memory",
@@ -114,11 +114,12 @@ test("improve auto-sync excludes pre-staged WIP from the same content directory"
       memoryInferenceDurationMs: 0,
     })) as never,
     saveGitStashFn: mock((_name?: string, _message?: string, _writable?: boolean, options?: { paths?: string[] }) => {
-      calls.push(options?.paths ?? []);
+      calls.push(options?.paths);
       return { committed: true, pushed: false, skipped: false, output: "committed" };
     }) as never,
   });
 
   expect(result.ok).toBe(true);
-  expect(calls).toEqual([["memories/operation.md"]]);
+  // The pre-run sync passes no path list (`akm sync` scoping); the end-of-run commit names the journaled path.
+  expect(calls).toEqual([undefined, ["memories/operation.md"]]);
 });
