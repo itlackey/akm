@@ -12,6 +12,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   timeout, budget abort or crash wrote a `failed` ledger row that advanced the signal cursor, so the ref was not
   retried until new feedback arrived. Like distill, these now write no row; guard rejections and quality rejections
   are unchanged.
+- **The per-run `akm improve` and `akm index` log files are now purged by the retention pass.**
+  `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log` were outside the purge and grew without bound;
+  they now follow `improve.eventRetentionDays` like the task log files.
 
 ## [0.10.26101002] - 2026-10-10
 

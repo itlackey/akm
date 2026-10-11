@@ -46,7 +46,7 @@ import {
   stampAssetSalienceMissing,
 } from "../../storage/repositories/salience-repository";
 import { readFreelistInfo, STATE_DB_VACUUMED_EVENT, vacuumIfReclaimable } from "../../storage/state-db-integrity";
-import { purgeOldTaskLogFiles } from "../../tasks/run/task-log";
+import { purgeOldRunLogFiles, purgeOldTaskLogFiles } from "../../tasks/run/task-log";
 import { expireStaleProposals, purgeOrphanProposals } from "../proposal/repository";
 import { checkDeadUrls, type DeadUrl, type DeadUrlCoverage } from "../url-checker";
 import { isDistillCandidateRef } from "./eligibility";
@@ -784,6 +784,17 @@ export function runRetentionPurgePass(ctx: MaintenanceCtx): { warnings: string[]
     );
   } catch (err) {
     warnings.push(`task log files purge failed: ${errMessage(err)}`);
+  }
+
+  try {
+    report(
+      "run_log_files_purged",
+      "run_log_files/_purge",
+      purgeOldRunLogFiles(retentionDays),
+      "improve/index run log file(s)",
+    );
+  } catch (err) {
+    warnings.push(`run log files purge failed: ${errMessage(err)}`);
   }
   return { warnings };
 }
