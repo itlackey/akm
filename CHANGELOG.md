@@ -18,6 +18,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **Memory inference no longer reverts a parent memory's frontmatter edit.** The `inferenceProcessed` stamp rewrote
   frontmatter parsed before the model call, so an edit made to the memory in the meantime (accepted proposal,
   feedback hash) was lost. The stamp now adds its key to the file's current frontmatter.
+- **The session summary prompt fences the transcript as untrusted.** Extract's summary call sent the raw, unfiltered
+  event stream with no boundary, so a crafted session could steer the text written into the session asset. It now
+  uses the same pre-filter and the same `UNTRUSTED SESSION TRANSCRIPT` fence, with forged fence markers neutralised,
+  as the extraction call.
 
 ## [0.10.26101002] - 2026-10-10
 
