@@ -4,11 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Version already committed in package.json: 0.10 and later 0.<minor>.YYMMDDNN (for example 0.10.26101001; bun scripts/release-version.ts next prints the next free one), earlier lines X.Y.Z."
+        description: "Version already committed in package.json: 0.10 and later 0.<minor>.YYMMNN, the UTC year and month then the release number in that month (for example 0.10.261001; bun scripts/release-version.ts next prints the next free one), earlier lines X.Y.Z."
         required: true
         type: string
       stage:
-        description: "Prerelease stage of the build, published to the npm next tag. none publishes the build itself to latest. Daily builds only."
+        description: "Stage of this release: alpha, beta or rc publishes <version>-<stage> to the npm next tag; none publishes <version> to latest. Every release takes its own number. 0.10 and later only."
         required: false
         default: none
         type: choice
@@ -56,11 +56,11 @@ jobs:
       - run: bun install --frozen-lockfile
 
       # scripts/release-version.ts validates the format (0.10+:
-      # 0.<minor>.YYMMDDNN; older lines: X.Y.Z[-prerelease]) and appends the
-      # stage input to a daily build (#1089). package.json must carry the
+      # 0.<minor>.YYMMNN; older lines: X.Y.Z[-prerelease]) and appends the
+      # stage input to the version (#1089). package.json must carry the
       # version input, as before; a stage is stamped into this run's
-      # package.json so one committed build can be published as -alpha, -beta,
-      # -rc and then as itself.
+      # package.json. Each release takes its own number: a build is not
+      # promoted through stages.
       - name: Verify version
         run: |
           CANDIDATE_VERSION="$(bun scripts/release-version.ts resolve)"

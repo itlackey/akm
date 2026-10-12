@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **0.10 release numbers are monthly, `0.10.YYMMNN`, not daily (#1089).** The patch is the UTC year, the month and the
+  release within that month (`NN`, `01` to `99`), two digits each. Every release takes the next `NN`, whatever its
+  stage (`0.10.261001-alpha`, then `0.10.261002-beta`, then `0.10.261003`); a build is no longer promoted through
+  `-alpha`, `-beta` and `-rc` under one number. `bun scripts/release-version.ts next` now counts the month's releases on
+  npm, and the Release workflow rejects the old 8-digit `YYMMDDNN` form for a new release. **Known, accepted break:**
+  semver compares the patch numerically, so every `0.10.YYMMNN` sorts below the 0.10 daily alphas
+  (`0.10.26101001-alpha` to `0.10.26101202-alpha`), and `akm upgrade` will not offer it from one. The next release is
+  `0.10.261001-beta`; if you are on a 0.10 daily alpha, install it explicitly once
+  (`npm install -g akm-cli@0.10.261001-beta`), after which `akm upgrade` works as before.
+
 ### Deprecated
 
 - **The `opencode` CLI dispatch path.** An agent engine with `platform: "opencode"`, which runs `opencode run` for each
