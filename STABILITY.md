@@ -552,10 +552,11 @@ Internal replacement for the one capability nothing else covered.
 
 - **0.10 — `config set`/`config unset` may drop the config dump** in favor of
   a compact `{ok, shape, key}` result; `akm config list` remains the full read.
-- **0.10 — migration extraction.** The migration machinery leaves the CLI for
-  a separately published `akm-migrate` package (see Internal above). The
-  task-source migrator (`task-to-v4.ts`, `task-source-v3-frozen.ts`) already
-  lives with it under `scripts/akm-migrate/migrate/`, out of `src/`.
+- **0.10 — migration extraction.** The migration machinery lives in its own
+  `akm-migrate` executable, which ships inside the `akm-cli` package next to
+  `akm` (no separate npm package). The task-source migrator (`task-to-v4.ts`,
+  `task-source-v3-frozen.ts`) lives with it under `scripts/akm-migrate/migrate/`,
+  out of `src/`.
 - **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.
   Writable bundles in a non-akm layout would need per-adapter placement back
   ([#1163](https://github.com/itlackey/akm/issues/1163)).
