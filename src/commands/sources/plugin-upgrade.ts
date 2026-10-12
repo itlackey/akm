@@ -103,7 +103,7 @@ function unknownRefresh(harness: PluginUpgradeEntry["harness"], from: string | u
 
 // ── Claude Code ─────────────────────────────────────────────────────────────
 
-type Detected = { entry: PluginUpgradeEntry } | { version: string | undefined };
+type Detected = { entry: PluginUpgradeEntry } | { version: string | undefined; ref: string | undefined };
 
 function claudePluginVersion(): { version: string | undefined } | { error: CommandFailure } {
   const listed = runCommand("claude", ["plugin", "list", "--json"], READ_TIMEOUT_MS);
@@ -119,25 +119,29 @@ function detectClaudeCode(): Detected {
     return { entry: skipped("claude-code", marketplaces.missing ? "claude is not on PATH" : marketplaces.error) };
   }
   const list = parseJson(marketplaces.stdout);
-  if (!Array.isArray(list) || !list.some((m) => m?.name === MARKETPLACE)) {
-    return { entry: skipped("claude-code", `the ${MARKETPLACE} marketplace is not configured`) };
-  }
+  const marketplace = Array.isArray(list) ? list.find((m) => m?.name === MARKETPLACE) : undefined;
+  if (!marketplace) return { entry: skipped("claude-code", `the ${MARKETPLACE} marketplace is not configured`) };
   const plugin = claudePluginVersion();
   if ("error" in plugin) return { entry: skipped("claude-code", plugin.error.error) };
   if (plugin.version === undefined) return { entry: skipped("claude-code", "the akm plugin is not installed") };
-  return { version: plugin.version };
+  return { version: plugin.version, ref: typeof marketplace.ref === "string" ? marketplace.ref : undefined };
 }
 
-function upgradeClaudeCode(dryRun: boolean): PluginUpgradeEntry {
+function upgradeClaudeCode(dryRun: boolean, next: boolean): PluginUpgradeEntry {
   const detected = detectClaudeCode();
   if ("entry" in detected) return detected.entry;
-  if (dryRun) return unknownRefresh("claude-code", detected.version);
+  const entry = refreshClaudeCode(dryRun, detected.version);
+  return next ? withChannelNote(entry, detected.ref, "re-add the marketplace as `itlackey/akm-plugins@next`") : entry;
+}
+
+function refreshClaudeCode(dryRun: boolean, from: string | undefined): PluginUpgradeEntry {
+  if (dryRun) return unknownRefresh("claude-code", from);
   const marketplace = runCommand("claude", ["plugin", "marketplace", "update", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!marketplace.ok) return failed("claude-code", marketplace.error);
   const update = runCommand("claude", ["plugin", "update", PLUGIN_ID], REFRESH_TIMEOUT_MS);
   if (!update.ok) return failed("claude-code", update.error);
   const after = claudePluginVersion();
-  return refreshed("claude-code", detected.version, "version" in after ? after.version : undefined);
+  return refreshed("claude-code", from, "version" in after ? after.version : undefined);
 }
 
 // ── Codex ───────────────────────────────────────────────────────────────────
@@ -150,18 +154,41 @@ function codexPluginVersion(): { version: string | undefined } | { error: Comman
   return { version: plugin ? String(plugin.version ?? "") : undefined };
 }
 
-function upgradeCodex(dryRun: boolean): PluginUpgradeEntry {
+/** The ref `[marketplaces.akm-plugins]` follows in Codex's config.toml; undefined when it names none (the default branch). */
+function codexMarketplaceRef(): string | undefined {
+  try {
+    const home = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+    const config = fs.readFileSync(path.join(home, "config.toml"), "utf8");
+    const section = config.split(/^\[/m).find((part) => part.startsWith(`marketplaces.${MARKETPLACE}]`));
+    return section?.match(/^ref\s*=\s*"([^"]+)"/m)?.[1];
+  } catch {
+    return undefined;
+  }
+}
+
+function upgradeCodex(dryRun: boolean, next: boolean): PluginUpgradeEntry {
   const before = codexPluginVersion();
   if ("error" in before) return skipped("codex", before.error.missing ? "codex is not on PATH" : before.error.error);
   if (before.version === undefined) {
     return skipped("codex", `the akm plugin is not installed from the ${MARKETPLACE} marketplace`);
   }
-  if (dryRun) return unknownRefresh("codex", before.version);
+  const entry = refreshCodex(dryRun, before.version);
+  return next
+    ? withChannelNote(
+        entry,
+        codexMarketplaceRef(),
+        "run `codex plugin marketplace add itlackey/akm-plugins --ref next`",
+      )
+    : entry;
+}
+
+function refreshCodex(dryRun: boolean, from: string | undefined): PluginUpgradeEntry {
+  if (dryRun) return unknownRefresh("codex", from);
   // Also refreshes the installed plugin's cache, so no re-add is needed.
   const upgrade = runCommand("codex", ["plugin", "marketplace", "upgrade", MARKETPLACE], REFRESH_TIMEOUT_MS);
   if (!upgrade.ok) return failed("codex", upgrade.error);
   const after = codexPluginVersion();
-  return refreshed("codex", before.version, "version" in after ? after.version : undefined);
+  return refreshed("codex", from, "version" in after ? after.version : undefined);
 }
 
 // ── OpenCode ────────────────────────────────────────────────────────────────
@@ -421,13 +448,18 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
 
 // ── Orchestration ───────────────────────────────────────────────────────────
 
-const NO_PRERELEASE_CHANNEL =
-  "--next: no prerelease channel; the akm-plugins marketplace is followed as usual and works with any 0.9.x akm";
-
-/** The note `--next` adds to a harness whose plugin has no prerelease channel. */
-function withNextNote(entry: PluginUpgradeEntry): PluginUpgradeEntry {
+/**
+ * The note `--next` adds to a marketplace harness. The channel is the ref the marketplace follows (`next` is the
+ * prerelease branch, the default branch is stable); akm only updates that ref and cannot switch it.
+ */
+function withChannelNote(entry: PluginUpgradeEntry, ref: string | undefined, howToSwitch: string): PluginUpgradeEntry {
   if (entry.outcome === "skipped") return entry;
-  return { ...entry, message: entry.message ? `${entry.message}; ${NO_PRERELEASE_CHANNEL}` : NO_PRERELEASE_CHANNEL };
+  const note =
+    ref === "next"
+      ? `--next: the ${MARKETPLACE} marketplace follows ref next, the prerelease channel`
+      : `--next: the ${MARKETPLACE} marketplace follows ${ref ? `ref ${ref}` : "the default branch (stable)"}, ` +
+        `not the prerelease channel; akm upgrade cannot switch it, ${howToSwitch} to follow prereleases`;
+  return { ...entry, message: entry.message ? `${entry.message}; ${note}` : note };
 }
 
 /** What `--next` means for one OpenCode plugin: which npm tag it follows, and whether the user's config follows it too. */
@@ -450,11 +482,9 @@ export function upgradePlugins(opts: {
   next: boolean;
   openCode: OpenCodeTarget[];
 }): PluginUpgradeEntry[] {
-  const claude = upgradeClaudeCode(opts.dryRun);
-  const codex = upgradeCodex(opts.dryRun);
   return [
-    opts.next ? withNextNote(claude) : claude,
-    opts.next ? withNextNote(codex) : codex,
+    upgradeClaudeCode(opts.dryRun, opts.next),
+    upgradeCodex(opts.dryRun, opts.next),
     ...opts.openCode.map((target) => upgradeOpenCode(opts.dryRun, target)),
   ];
 }

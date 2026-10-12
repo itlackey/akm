@@ -1425,9 +1425,15 @@ carries `channel: "next"` (`"latest"` otherwise); no other field changes.
   Without that line the OpenCode entry is `skipped`, its message names the line
   to add, and lockstep stays against the `@latest` pin, so the CLI does not go
   past what OpenCode will run.
-- **Claude Code and Codex.** Unchanged: their plugin comes from the `akm-plugins`
-  git marketplace, which has no prerelease channel and accepts any 0.9.x akm,
-  prereleases included. Their entries carry a note saying so.
+- **Claude Code and Codex.** Their plugin comes from the `akm-plugins` git
+  marketplace, and the channel is the ref the marketplace follows: the default
+  branch is stable, the `next` branch carries prereleases. `akm upgrade` updates
+  whatever ref the marketplace follows and cannot switch it, with or without
+  `--next`. To follow prereleases, add the marketplace as `itlackey/akm-plugins@next`
+  in Claude Code (`extraKnownMarketplaces.akm-plugins.source.ref = "next"` in
+  `settings.json`), or run `codex plugin marketplace add itlackey/akm-plugins --ref next`
+  in Codex. Under `--next` their entries carry a note naming the ref followed.
+  The plugins need akm 0.10.261001 or newer; any newer akm passes.
 - `--check --next` reports all of this and changes nothing.
 
 #### Containers

@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm upgrade --next` no longer says the Claude Code and Codex plugins have "no prerelease channel" and work "with
+  any 0.9.x akm".** akm-plugins now has a `next` branch for prereleases, and the plugins require akm 0.10.261001 or
+  newer. The `--next` note now names the ref the `akm-plugins` marketplace follows (read from `claude plugin marketplace
+  list` and Codex's `config.toml`) and, when it is the stable default branch, how to switch to `next`. `akm upgrade`
+  still only updates the ref the marketplace follows.
+
 ## [0.10.261002] - 2026-10-12
 
 ### Fixed
