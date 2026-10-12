@@ -60,11 +60,11 @@ describe("release workflow", () => {
     // tests/release-check.sh, so it fails in seconds under the name a release
     // engineer is looking at.
     const root = path.resolve(import.meta.dir, "..");
-    // A daily build's -alpha/-beta/-rc stage is stamped in at release time (#1089): its changelog section is the
-    // build's, so the committed package.json carries no stage.
+    // A release's -alpha/-beta/-rc stage is stamped in at release time (#1089): its changelog section is the
+    // release's, so the committed package.json carries no stage.
     const version = (
       JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string }
-    ).version.replace(/^(0\.\d+\.\d{8})-(alpha|beta|rc)$/, "$1");
+    ).version.replace(/^(0\.\d+\.\d{6})-(alpha|beta|rc)$/, "$1");
     const changelog = fs.readFileSync(path.join(root, "CHANGELOG.md"), "utf8");
     const newestReleased = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]
       .map((match) => match[1])

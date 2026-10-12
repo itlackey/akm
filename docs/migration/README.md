@@ -2,7 +2,7 @@
 
 Upgrade guides and per-release migration notes.
 
-- [v0.9 -> v0.10 migration guide](v0.9-to-v0.10.md) -- Upgrade order for a 0.9.15+ install, every removed CLI spelling, strategy, config key and workflow feature with its replacement, changed `akm improve` defaults, the OpenCode plugins, and `0.10.YYMMDDNN` version numbers
+- [v0.9 -> v0.10 migration guide](v0.9-to-v0.10.md) -- Upgrade order for a 0.9.15+ install, every removed CLI spelling, strategy, config key and workflow feature with its replacement, changed `akm improve` defaults, the OpenCode plugins, and `0.10.YYMMNN` version numbers
 - [v0.10.0 release note](release-notes/0.10.0.md) -- Summary of the 0.10 series: the 0.9.15 version floor, `--shape`/`--target`/`help agents` removals, `default` and `consolidate` as the only built-in strategies, OpenCode 2, feedback-scaled ranking, and what is gone
 - [v0.9.1 -> v0.9.2 migration guide](v0.9.1-to-v0.9.2.md) -- Task-v2/task-v3 to task source v4 conversion, the durable-v4-family workflow boundary at executable `irVersion: 5`, and release behavior changes
 - [v0.9.2 release note](release-notes/0.9.2.md) -- Self-contained terminal upgrade summary shipped for `akm help migrate 0.9.2`

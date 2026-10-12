@@ -33,18 +33,25 @@ spelling is in the CHANGELOG entry and the CLI reference.
 | `akm config path --all` | `akm info` |
 | `--run` / `--since` on `akm improve` | `akm improve report --run` / `--since` |
 
-**Version numbers (0.10 onward, #1089).** A 0.10 release is a daily build,
-`0.10.YYMMDDNN`: `YY` the UTC year, `MM` the month, `DD` the day and `NN` the
-build that day (`01` to `99`), each two digits. The first build on 2026-10-10 is
-`0.10.26101001`, the second `0.10.26101002`. A prerelease carries its stage
-only: `0.10.26101001-alpha`, `-beta` or `-rc`, with no `.N`. One build is
-promoted by publishing the same `YYMMDDNN` with the next stage and then without
-one (`-alpha` < `-beta` < `-rc` < the build). Prereleases publish to the npm
-`next` tag and stable builds to `latest`; `akm upgrade --next` follows `next`.
-Versions sort by date, so semver ranges and `akm upgrade` order them correctly
-across months and years. The patch number no longer says how big a change is:
-read the CHANGELOG, which still marks breaking changes. The 0.9 line keeps
-`0.9.N`, and `0.11` restarts on the same daily scheme.
+**Version numbers (0.10 onward, #1089).** A 0.10 release is numbered
+`0.10.YYMMNN`: `YY` the UTC year, `MM` the month (`01` to `12`) and `NN` the
+release within that month (`01` to `99`), each two digits. Every release takes
+the next `NN`, whatever its stage: the first release of 2026-10 is `0.10.261001`
+(or `0.10.261001-alpha`), the next `0.10.261002`. A prerelease carries its stage
+only: `-alpha`, `-beta` or `-rc`, with no `.N`. A build is not promoted through
+stages under one number: each stage is its own release. Prereleases publish to
+the npm `next` tag and stable releases to `latest`; `akm upgrade --next` follows
+`next`. Versions sort by month and then `NN`, so semver ranges and `akm upgrade`
+order them correctly across months and years. The patch number no longer says
+how big a change is: read the CHANGELOG, which still marks breaking changes. The
+0.9 line keeps `0.9.N`, and `0.11` restarts on the same scheme.
+
+The 0.10 daily alphas (`0.10.26101001-alpha` through `0.10.26101202-alpha`) used
+an 8-digit patch, `YYMMDDNN`. Semver compares the patch numerically, so every
+`0.10.YYMMNN` sorts below them and `akm upgrade` does not offer it from a daily
+alpha: install the first monthly release explicitly once (for example
+`npm install -g akm-cli@0.10.261001-beta`). This is a known, accepted break and
+`tests/semver-order.test.ts` pins it.
 
 This document classifies **every** user-facing surface by stability so you can
 decide which parts of `akm` are safe to script against today and which to
