@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261001] - 2026-10-12
+
 ### Changed
 
 - **0.10 release numbers are monthly, `0.10.YYMMNN`, not daily (#1089).** The patch is the UTC year, the month and the
