@@ -291,38 +291,6 @@ export function lookupOpenCodeLatest(tag: UpgradeChannel, flavor: OpenCodeFlavor
   return { version: parsed.version, akmCli: typeof akmCli === "string" ? akmCli : undefined };
 }
 
-/**
- * `<pkg>@next`, which must exist and pin an akm-cli no older than the one
- * `@latest` pins: a prerelease channel that trails the stable one is not a target.
- *
- * The two builds are compared by their akm-cli pins, never by their own
- * versions. akm-plugins' stable versions are `<akm_version><yyyymmddhhmm>`
- * concatenated into the PATCH (`0.9.27202610072331`), while prereleases are
- * `<akm_version>.<ts>` (`0.9.28-alpha.8.202610081938`), so by semver every
- * prerelease sorts below the stable build and the comparison means nothing
- * (#1089). For the same reason plugin versions are only ever tested for
- * equality (is the cache already this build?), never ordered.
- */
-export function lookupOpenCodeNext(flavor: OpenCodeFlavor): OpenCodeLatest {
-  const next = lookupOpenCodeLatest("next", flavor);
-  if ("error" in next) return next;
-  const latest = lookupOpenCodeLatest("latest", flavor);
-  if ("error" in latest) return { error: `could not compare with ${flavor.pkg}@latest: ${latest.error}` };
-  // No pin on @next: returned as is, and the lockstep holds the CLI and says why.
-  if (!next.akmCli) return next;
-  if (!latest.akmCli) {
-    return { error: `could not compare with ${flavor.pkg}@latest: it declares no akm-cli dependency` };
-  }
-  if (semverOrder(next.akmCli, latest.akmCli) < 0) {
-    return {
-      error:
-        `${nextSpec(flavor)} (${next.version}) pins akm-cli ${next.akmCli}, older than the ` +
-        `${latest.akmCli} that ${flavor.pkg}@latest (${latest.version}) pins`,
-    };
-  }
-  return next;
-}
-
 const CONTAINER_CGROUP = /docker|containerd|podman|libpod|lxc/;
 
 /**
@@ -397,20 +365,24 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
   if (target.notFollowingNext) return skipped(harness, notFollowingNext(flavor));
   if (cache.version === latest.version) return { harness, outcome: "current", from: cache.version, to: latest.version };
   const base = { harness, from: cache.version, to: latest.version };
-  const running = openCodeRunning();
-  if (running !== false) {
-    return {
-      ...base,
-      outcome: "deferred",
-      message:
-        running === true
-          ? "OpenCode is running; the plugin cache is replaced by a later `akm upgrade` once it has exited"
-          : "could not tell whether OpenCode is running; the plugin cache is replaced by a later `akm upgrade`",
-    };
+  // OpenCode 1's refresh replaces the cache the running OpenCode is using, so it waits for the exit.
+  // OpenCode 2's `plugin update` installs beside the old build, which a running service keeps using until it restarts.
+  if (flavor.replacesCache) {
+    const running = openCodeRunning();
+    if (running !== false) {
+      return {
+        ...base,
+        outcome: "deferred",
+        message:
+          running === true
+            ? "OpenCode is running; the plugin cache is replaced by a later `akm upgrade` once it has exited"
+            : "could not tell whether OpenCode is running; the plugin cache is replaced by a later `akm upgrade`",
+      };
+    }
   }
   if (dryRun) return { ...base, outcome: "pending" };
-  // OpenCode must be runnable before the cache goes: it does the prefetch, and only the major
-  // that owns this plugin's cache can re-create it. akm never installs or replaces the binary.
+  // OpenCode must be runnable before anything changes: only the major that owns this plugin's cache can
+  // refresh it. akm never installs or replaces the binary.
   // OpenCode 2 may sit beside an OpenCode 1 `opencode` as `opencode2`; OpenCode 1 is only ever `opencode`.
   const bin = flavor.major === 2 ? resolveOpencodeBin() : OPENCODE_SDK_SERVER_BIN;
   const detected = detectOpencodeMajor(bin);
@@ -422,27 +394,39 @@ function upgradeOpenCode(dryRun: boolean, target: OpenCodeTarget): PluginUpgrade
     return skipped(
       harness,
       `\`${bin}\` on PATH is ${major === undefined ? "of an unknown version" : `OpenCode ${major}`}, ` +
-        `not OpenCode ${flavor.major}, so it cannot re-create the ${flavor.pkg} cache; the cache is left alone`,
+        `not OpenCode ${flavor.major}, so it cannot refresh the ${flavor.pkg} cache; the cache is left alone`,
     );
   }
-  try {
-    moveToTrash(cache.dir);
-  } catch (error) {
-    return failed(
-      harness,
-      `could not move ${cache.dir} to the trash: ${error instanceof Error ? error.message : String(error)}`,
-    );
+  if (flavor.replacesCache) {
+    try {
+      moveToTrash(cache.dir);
+    } catch (error) {
+      return failed(
+        harness,
+        `could not move ${cache.dir} to the trash: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
+  const trashed = flavor.replacesCache ? " (the old cache is in the trash)" : "";
   // From a temp dir, so no project's opencode.json is read.
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "akm-opencode-prefetch-"));
   try {
-    const prefetch = runCommand(bin, flavor.prefetch(target.spec), PREFETCH_TIMEOUT_MS, { cwd: workDir });
-    if (!prefetch.ok) return failed(harness, `${prefetch.error} (the old cache is in the trash)`);
+    let refresh = runCommand(bin, flavor.refresh(target.spec), PREFETCH_TIMEOUT_MS, { cwd: workDir });
+    // OpenCode 2 starts its background service for this command and answers "Plugin is not configured" until
+    // that service has loaded the plugins, so the first command after the service was down fails. Ask again.
+    for (
+      let retry = 0;
+      !refresh.ok && flavor.major === 2 && retry < 2 && /not configured/.test(refresh.error);
+      retry++
+    ) {
+      refresh = runCommand(bin, flavor.refresh(target.spec), PREFETCH_TIMEOUT_MS, { cwd: workDir });
+    }
+    if (!refresh.ok) return failed(harness, `${refresh.error}${trashed}`);
   } finally {
     fs.rmSync(workDir, { recursive: true, force: true });
   }
   const after = detectOpenCodeCache(tag, flavor);
-  if (!after) return failed(harness, "opencode did not re-create the plugin cache (the old cache is in the trash)");
+  if (!after) return failed(harness, `opencode did not re-create the plugin cache${trashed}`);
   return { ...base, outcome: "updated", to: after.version ?? latest.version };
 }
 
@@ -615,7 +599,7 @@ function resolveOpenCodeTarget(
   if (!followsLatest && !followNext) return leftAlone(otherSpecNote(flavor, spec));
   const tag: UpgradeChannel = followNext ? "next" : "latest";
   const cache = detectOpenCodeCache(tag, flavor);
-  const latest = cache ? (followNext ? lookupOpenCodeNext(flavor) : lookupOpenCodeLatest("latest", flavor)) : undefined;
+  const latest = cache ? lookupOpenCodeLatest(tag, flavor) : undefined;
   return { flavor, cache, latest, tag, spec, notFollowingNext: next && !followNext };
 }
 

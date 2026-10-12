@@ -1341,7 +1341,7 @@ stopping the CLI upgrade.
 | Claude Code | `claude` is on `PATH`, the `akm-plugins` marketplace is configured and `akm@akm-plugins` is installed | `claude plugin marketplace update akm-plugins`, then `claude plugin update akm@akm-plugins` |
 | Codex | `codex` is on `PATH` and `akm@akm-plugins` is installed from the `akm-plugins` marketplace | `codex plugin marketplace upgrade akm-plugins` (this also refreshes the installed plugin cache) |
 | OpenCode 1 | `akm-opencode` is cached at `$XDG_CACHE_HOME/opencode/packages/akm-opencode@latest` (default `~/.cache/opencode/...`) and `opencode` is on `PATH` | If npm's `akm-opencode@latest` differs from the cached version and no OpenCode process is running: the cache directory is moved to the trash (never deleted), then `opencode debug config` is run from a temporary directory to fetch the new version. While OpenCode runs the update is `deferred` to a later `akm upgrade`. |
-| OpenCode 2 | `akm-opencode-v2` is named under `"plugins"` in the global OpenCode config (`opencode.json` or `.jsonc`) and cached at `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@latest/<build>/`, and the `opencode` on `PATH` is OpenCode 2 | Same rule as OpenCode 1, with `akm-opencode-v2`: the cache folder is moved to the trash, then `opencode plugin add akm-opencode-v2` is run from a temporary directory (for a spec the config already names it only re-installs the cache; it does not touch the config). Listed only on a host that has the plugin, so an OpenCode 1 host reports exactly what it did before. |
+| OpenCode 2 | `akm-opencode-v2` is named under `"plugins"` in the global OpenCode config (`opencode.json` or `.jsonc`) and cached at `$XDG_CACHE_HOME/opencode/npm/akm-opencode-v2@latest/<build>/`, and the `opencode` on `PATH` is OpenCode 2 | If npm's `akm-opencode-v2@latest` differs from the cached version (the newest `<build>` folder): `opencode plugin update <spec>` is run from a temporary directory, with the spec as the config names it. OpenCode 2 installs the new build into a fresh `<build>` folder and the running service keeps the old one until it restarts, so nothing is moved to the trash and the update is not deferred while OpenCode runs. Listed only on a host that has the plugin, so an OpenCode 1 host reports exactly what it did before. |
 
 The two OpenCode plugins never touch each other: `akm-opencode` is only looked
 for in OpenCode 1's cache and `plugin` key, `akm-opencode-v2` only in OpenCode
@@ -1349,10 +1349,16 @@ for in OpenCode 1's cache and `plugin` key, `akm-opencode-v2` only in OpenCode
 --version` and skips the plugin when the `opencode` on `PATH` is the other
 major, since only the matching major can re-create that cache; akm never
 installs or replaces `opencode`. A spec that appears only under the legacy
-`plugin` key for OpenCode 2 is skipped with a note (`opencode plugin add`
-would write a `plugins` entry). Which OpenCode major akm itself drives is
+`plugin` key for OpenCode 2 is skipped with a note (move it to `plugins`). Which OpenCode major akm itself drives is
 [detected from the engine's binary](configuration.md#engines), independent of this
 step.
+
+OpenCode 2 has its own updater, `opencode plugin check` and `opencode plugin update`,
+which akm uses for `akm-opencode-v2`. Two things to know when you run them by
+hand: `plugin list` and `plugin check` print "No plugins found" until the
+OpenCode service has loaded its plugins after a restart, and `plugin update`
+leaves the old `<build>` folders under the cache folder (the newest one is the
+one in use).
 
 Claude Code does not update third-party marketplaces on its own (the Claude
 desktop app turns plugin updates off), and OpenCode never re-checks a cached
@@ -1414,9 +1420,8 @@ carries `channel: "next"` (`"latest"` otherwise); no other field changes.
   With that line in the global OpenCode config (`~/.config/opencode/opencode.json`
   or `.jsonc`, or the file named by `OPENCODE_CONFIG`), lockstep and the cache
   refresh use `akm-opencode@next` (its version and its `akm-cli` pin) instead of
-  `@latest`. If `akm-opencode@next` is missing, pins an older `akm-cli` than
-  `@latest` does, or its `akm-cli` pin is unreadable, the CLI is held where it is and the OpenCode entry
-  is `failed`, exactly as in the stable lockstep above.
+  `@latest`. If `akm-opencode@next` is missing or its `akm-cli` pin is unreadable,
+  the CLI is held where it is and the OpenCode entry is `failed`, exactly as in the stable lockstep above.
 
   OpenCode 2's `akm-opencode-v2` follows the same rule with its own spec:
   `{ "plugins": ["akm-opencode-v2@next"] }`, cached under
