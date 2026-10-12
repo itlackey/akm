@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261003] - 2026-10-12
+
 ### Fixed
 
 - **`akm upgrade` now keeps the OpenCode 2 plugin (`akm-opencode-v2`) current.** Three things stopped it:
