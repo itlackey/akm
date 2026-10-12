@@ -76,6 +76,27 @@ export function v2Turn(messages: readonly SessionMessageInfo[], userId: string):
   return undefined;
 }
 
+/**
+ * The turn that began with the user message `userId`, when OpenCode 2 ended it
+ * by interrupting a step instead of writing the closing `idle` message. Only
+ * meaningful once `session.wait` has returned (the session is not running).
+ *
+ * Recorded from 2.0.26: when akm rejects a permission request the step fails
+ * with `{ type: "aborted", message: "Step interrupted" }` (`finish: "error"`),
+ * the tool call is `error` ("The user declined this tool call"),
+ * `session.execution.interrupted` fires and the session goes idle, but no
+ * `idle` message is written and `session.idle` is not emitted.
+ */
+export function v2InterruptedTurn(messages: readonly SessionMessageInfo[], userId: string): V2Turn | undefined {
+  const start = messages.findIndex((m) => m.id === userId);
+  if (start < 0) return undefined;
+  const assistants = messages.slice(start + 1).filter((m): m is SessionMessageAssistant => m.type === "assistant");
+  const last = assistants.at(-1);
+  return last?.finish === "error" && last.error?.type === "aborted"
+    ? { outcome: "interrupted", assistants }
+    : undefined;
+}
+
 /** Decode a finished turn into the answer, the usage of every step and the failure, if any. */
 function v2PromptResult(turn: V2Turn): WirePromptResult {
   const text =
@@ -102,7 +123,13 @@ function v2PromptResult(turn: V2Turn): WirePromptResult {
 
 function v2Failure(turn: V2Turn): WireFailure | undefined {
   if (turn.outcome === "interrupted") {
-    return { reason: "aborted", message: "OpenCode session was interrupted" };
+    // Say why when the last step says so, e.g. "Step interrupted: The user declined this tool call".
+    const last = turn.assistants.at(-1);
+    const declined = last?.content.flatMap((c) =>
+      c.type === "tool" && c.state.status === "error" ? [c.state.error.message] : [],
+    );
+    const detail = [last?.error?.message, ...(declined ?? [])].filter(Boolean).join(": ");
+    return { reason: "aborted", message: `OpenCode session was interrupted${detail ? ` (${detail})` : ""}` };
   }
   const last = turn.assistants.at(-1);
   if (turn.outcome === "failed") {
@@ -182,7 +209,8 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
     const user = await c.session.prompt({ sessionID: sessionId, text }, { signal });
     for (;;) {
       await c.session.wait({ sessionID: sessionId }, { signal });
-      const turn = v2Turn(await c.session.context({ sessionID: sessionId }, { signal }), user.id);
+      const messages = await c.session.context({ sessionID: sessionId }, { signal });
+      const turn = v2Turn(messages, user.id) ?? v2InterruptedTurn(messages, user.id);
       if (turn) return v2PromptResult(turn);
       // `wait` can return before the queued prompt starts; look again.
       await sleep(POLL_INTERVAL_MS);
