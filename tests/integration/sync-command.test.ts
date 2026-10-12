@@ -8,6 +8,7 @@ import { readEvents } from "../../src/core/events";
 import { getStateDbPath } from "../../src/core/state-db";
 import { parseGitRepoUrl } from "../../src/sources/providers/git";
 import { type CliResult, runCliCapture } from "../_helpers/cli";
+import { seedIgnoredTrackedChanges } from "../_helpers/git-ignored-tracked";
 import { withEnv } from "../_helpers/sandbox";
 
 // INTEGRATION TEST — lives in tests/integration/ because real subprocesses are
@@ -160,6 +161,29 @@ describe("akm sync", () => {
     // Verify the commit actually landed
     const log = spawnSync("git", ["-C", stashDir, "log", "--oneline"], { encoding: "utf8" });
     expect(log.stdout).toContain("test commit");
+  });
+
+  test("leaves tracked files under a git-ignored directory alone and still commits the managed change", async () => {
+    const stashDir = makeTempDir("akm-save-ignored-tracked-");
+    initGitRepo(stashDir);
+    seedIgnoredTrackedChanges(stashDir);
+
+    const result = await runCli(["sync", "-m", "ignored tracked"], stashDir);
+
+    expect(result.code).toBe(0);
+    const json = parseSaveOutput(result.stdout);
+    expect(json.committed).toBe(true);
+    expect(json.skipped).toBe(false);
+    const committed = spawnSync("git", ["-C", stashDir, "show", "--name-only", "--format=", "HEAD"], {
+      encoding: "utf8",
+    });
+    expect(committed.stdout.trim()).toBe("skills/skill.md");
+    // The ignored-but-tracked edits stay uncommitted in the working tree: ignoring means "do not publish".
+    const status = spawnSync("git", ["-C", stashDir, "status", "--porcelain"], { encoding: "utf8" });
+    expect(status.stdout.split("\n").filter(Boolean)).toEqual([
+      " M .akm/evals/runs/latest",
+      " M .akm/evals/runs/run-1/report.md",
+    ]);
   });
 
   test("persists eventType 'sync'", async () => {
