@@ -1,7 +1,7 @@
 // Integration (spawns real processes): `akm upgrade`'s OpenCode 2 plugin step (`akm-opencode-v2`)
 // runs against stand-in `opencode`, `npm`, `pgrep` and `trash-put` scripts on a PATH that holds
 // nothing else, mirroring tests/integration/upgrade-plugins.test.ts for OpenCode 1. The layout
-// (`npm/<spec>/<build>/node_modules/<pkg>`, the `plugins` key, `opencode plugin add`) is what
+// (`npm/<spec>/<build>/node_modules/<pkg>`, the `plugins` key, `opencode plugin update`) is what
 // OpenCode 2.0.26 was observed to do. No network, no real harness is touched.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -100,7 +100,7 @@ function writeConfig(config: Record<string, unknown>, file = "opencode.json"): v
 
 /**
  * `npm view <pkg>@<tag>` answers from `pins` (version, akm-cli pin); `opencode` reports `--version` as
- * `major`, `plugin add <spec>` re-creates the V2 cache of `<pkg>@latest|next` at `fresh`, and
+ * `major`, `plugin update <spec>` installs a newer build folder beside the old ones for `<pkg>@latest|next` at `fresh`, and
  * `debug config` re-creates the V1 `@latest` cache at `fresh`.
  */
 function stubWorld(opts: {
@@ -117,6 +117,7 @@ function stubWorld(opts: {
     )
     .join("\n");
   stub("npm", `case "$2" in\n${npmCases}\n*) exit 2;;\nesac`);
+  // `plugin update` installs into a fresh <epoch-ms> folder and leaves the old build folders behind.
   const v2Latest = path.join(v2CacheDir("latest"), "1900000000000", "node_modules", V2);
   const v2Next = path.join(v2CacheDir("next"), "1900000000000", "node_modules", V2);
   const v1Latest = path.join(v1CacheDir("latest"), "node_modules", V1);
@@ -124,8 +125,8 @@ function stubWorld(opts: {
     "opencode",
     `case "$*" in
 "--version") echo "${opts.major === 2 ? "opencode v2.0.26" : "1.18.34"}";;
-"plugin add ${V2}"|"plugin add ${V2}@latest") /bin/mkdir -p "${v2Latest}"; printf '{"version":"${opts.fresh}"}' > "${v2Latest}/package.json";;
-"plugin add ${V2}@next") /bin/mkdir -p "${v2Next}"; printf '{"version":"${opts.fresh}"}' > "${v2Next}/package.json";;
+"plugin update ${V2}"|"plugin update ${V2}@latest") /bin/mkdir -p "${v2Latest}"; printf '{"version":"${opts.fresh}"}' > "${v2Latest}/package.json";;
+"plugin update ${V2}@next") /bin/mkdir -p "${v2Next}"; printf '{"version":"${opts.fresh}"}' > "${v2Next}/package.json";;
 "debug config") /bin/mkdir -p "${v1Latest}"; printf '{"version":"${opts.fresh}"}' > "${v1Latest}/package.json";;
 *) exit 2;;
 esac`,
@@ -138,7 +139,7 @@ function commands(): string[] {
   return fs.readFileSync(world.log, "utf8").split("\n").filter(Boolean);
 }
 
-const MUTATING = ["trash-put", "opencode debug config", "opencode plugin add"];
+const MUTATING = ["trash-put", "opencode debug config", "opencode plugin update"];
 
 function mutations(): string[] {
   return commands().filter((line) => MUTATING.some((m) => line.startsWith(m)));
@@ -201,15 +202,17 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     expect(run.result.lockstep?.plugin).toBe(V1);
   });
 
-  test("moves the stale cache to the trash and re-creates it with `opencode plugin add`, from a temp dir", async () => {
+  test("updates a stale cache with `opencode plugin update <spec>`: nothing is trashed", async () => {
     writeConfig({ plugins: [V2] });
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
     const before = fs.readFileSync(configFile(), "utf8");
     const run = await upgrade();
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", from: "0.9.26", to: "0.9.27" });
-    expect(mutations()).toEqual([`trash-put ${v2CacheDir()}`, `opencode plugin add ${V2}`]);
-    expect(fs.existsSync(path.join(world.state, "trash", `${V2}@latest`))).toBe(true);
+    expect(mutations()).toEqual([`opencode plugin update ${V2}`]);
+    // The old build folders stay (OpenCode 2 leaves them too), and nothing goes to the trash.
+    expect(fs.existsSync(path.join(world.state, "trash"))).toBe(false);
+    expect(fs.existsSync(path.join(v2CacheDir(), "1800000000000"))).toBe(true);
     // The OpenCode config is never written by akm, and OpenCode 1's package is never named.
     expect(fs.readFileSync(configFile(), "utf8")).toBe(before);
     expect(commands().join("\n")).not.toContain("debug config");
@@ -225,14 +228,47 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     expect(mutations()).toEqual([]);
   });
 
-  test("deferred while OpenCode is running: the cache is untouched", async () => {
+  test("a running OpenCode does not defer the update: `plugin update` leaves the running build in place", async () => {
     writeConfig({ plugins: [V2] });
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS, running: true });
     const run = await upgrade();
-    expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "deferred", from: "0.9.26", to: "0.9.27" });
-    expect(mutations()).toEqual([]);
-    expect(fs.existsSync(v2CacheDir())).toBe(true);
+    expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", from: "0.9.26", to: "0.9.27" });
+    expect(mutations()).toEqual([`opencode plugin update ${V2}`]);
+    expect(commands().some((c) => c.startsWith("pgrep"))).toBe(false);
+    expect(fs.existsSync(path.join(v2CacheDir(), "1800000000000"))).toBe(true);
+  });
+
+  test('a cold OpenCode 2 service answers "not configured" once: the update is asked again', async () => {
+    writeConfig({ plugins: [V2] });
+    writeV2Cache("0.9.26");
+    stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
+    const fresh = path.join(v2CacheDir(), "1900000000000", "node_modules", V2);
+    stub(
+      "opencode",
+      `case "$*" in
+"--version") echo "opencode v2.0.26";;
+"plugin update ${V2}")
+  if [ ! -f "$STUB_STATE/warm" ]; then : > "$STUB_STATE/warm"; echo "Error: Plugin is not configured: ${V2}" >&2; exit 1; fi
+  /bin/mkdir -p "${fresh}"; printf '{"version":"0.9.27"}' > "${fresh}/package.json";;
+*) exit 2;;
+esac`,
+    );
+    const run = await upgrade();
+    expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.9.27" });
+    expect(mutations()).toEqual([`opencode plugin update ${V2}`, `opencode plugin update ${V2}`]);
+  });
+
+  test("a failing `plugin update` fails the entry and leaves the cache as it was", async () => {
+    writeConfig({ plugins: [V2] });
+    writeV2Cache("0.9.26");
+    stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
+    stub("opencode", `case "$*" in\n"--version") echo "opencode v2.0.26";;\n*) echo "no network" >&2; exit 1;;\nesac`);
+    const run = await upgrade();
+    expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "failed" });
+    expect(entry(run, "opencode-v2").message).toContain("no network");
+    expect(entry(run, "opencode-v2").message).not.toContain("trash");
+    expect(fs.existsSync(path.join(v2CacheDir(), "1800000000000"))).toBe(true);
   });
 
   test("a bare `akm-opencode-v2@latest` spec refreshes @latest and re-fetches that exact spec", async () => {
@@ -241,7 +277,7 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
     const run = await upgrade();
     expect(entry(run, "opencode-v2").outcome).toBe("updated");
-    expect(mutations()).toContain(`opencode plugin add ${V2}@latest`);
+    expect(mutations()).toContain(`opencode plugin update ${V2}@latest`);
   });
 
   test("an exact-version pin is left alone on any run, with no lockstep (#1117 for V2)", async () => {
@@ -276,8 +312,50 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
 
     const run = await upgrade(NEXT, fakeDeps("0.9.28", "0.9.27"));
     expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.9.28-alpha.2.202610091000" });
-    expect(mutations()).toEqual([`trash-put ${v2CacheDir("next")}`, `opencode plugin add ${V2}@next`]);
+    expect(mutations()).toEqual([`opencode plugin update ${V2}@next`]);
     expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: "0.9.28" });
+  });
+
+  test("--next follows @next even when npm's @latest is a retired build pinning a higher akm-cli", async () => {
+    writeConfig({ plugins: [`${V2}@next`] });
+    writeV2Cache("0.10.26101002-alpha", "next");
+    stubWorld({
+      major: 2,
+      fresh: "0.10.261001-beta",
+      running: true,
+      pins: {
+        // The retired daily alpha: its 8-digit CalVer sorts above every monthly build.
+        "akm-opencode-v2@latest": ["0.10.26101001-alpha", "0.10.26101002-alpha"],
+        "akm-opencode-v2@next": ["0.10.261001-beta", "0.10.261001-beta"],
+      },
+    });
+    const deps = fakeDeps("0.10.261001-beta", "0.10.261001-beta");
+    const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.10.261001-beta", deps));
+    expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.10.261001-beta" });
+    expect(mutations()).toEqual([`opencode plugin update ${V2}@next`]);
+    expect(run.result.lockstep).toMatchObject({ plugin: V2, pinnedVersion: "0.10.261001-beta", heldBack: false });
+    expect(run.result.lockstep).not.toHaveProperty("reason");
+    // @latest is not consulted: nothing about it decides what --next follows.
+    expect(commands().some((c) => c.startsWith(`npm view ${V2}@latest`))).toBe(false);
+  });
+
+  test("--check --next reports the stale @next cache as pending with the @next pin as the lockstep", async () => {
+    writeConfig({ plugins: [`${V2}@next`] });
+    writeV2Cache("0.10.26101002-alpha", "next");
+    stubWorld({
+      major: 2,
+      fresh: "0.10.261001-beta",
+      pins: {
+        "akm-opencode-v2@latest": ["0.10.26101001-alpha", "0.10.26101002-alpha"],
+        "akm-opencode-v2@next": ["0.10.261001-beta", "0.10.261001-beta"],
+      },
+    });
+    const run = await withEnv(world.env, () =>
+      runUpgrade({ ...CHECK, next: true }, "0.10.261001-beta", fakeDeps("0.10.261001-beta", "0.10.261001-beta")),
+    );
+    expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "pending", to: "0.10.261001-beta" });
+    expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.10.261001-beta" });
+    expect(mutations()).toEqual([]);
   });
 
   test("--next with a bare spec in the config: skipped with the line to add, lockstep stays on @latest", async () => {
@@ -291,7 +369,7 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     expect(mutations()).toEqual([]);
   });
 
-  test("a cache that OpenCode 2 holds but the config does not name is never refreshed: plugin add would write the config", async () => {
+  test("a cache that OpenCode 2 holds but the config does not name is never refreshed: this upgrade only refreshes a plugin the config names", async () => {
     writeConfig({ plugins: ["something-else"] });
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
@@ -301,7 +379,7 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     expect(mutations()).toEqual([]);
   });
 
-  test("named only under the legacy `plugin` key: skipped, because `plugin add` would write a `plugins` entry", async () => {
+  test("named only under the legacy `plugin` key: skipped: this upgrade only refreshes the `plugins` key", async () => {
     writeConfig({ plugin: [V2] });
     writeV2Cache("0.9.26");
     stubWorld({ major: 2, fresh: "0.9.27", pins: PINS });
@@ -318,7 +396,7 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
     expect(entry(await upgrade(), "opencode-v2").outcome).toBe("updated");
   });
 
-  test("OPENCODE_CONFIG is not read for OpenCode 2: `plugin add` would write the global config instead", async () => {
+  test("OPENCODE_CONFIG is not read for OpenCode 2: `plugin update` acts on the global config", async () => {
     const elsewhere = path.join(world.root, "elsewhere.json");
     fs.writeFileSync(elsewhere, JSON.stringify({ plugins: [V2] }));
     writeV2Cache("0.9.26");
@@ -371,7 +449,7 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
       expect(entry(run, "opencode")).toMatchObject({ outcome: "skipped" });
       const log = commands().join("\n");
       expect(log).not.toContain("debug config");
-      expect(log).not.toMatch(/plugin add akm-opencode( |$)/m);
+      expect(log).not.toMatch(/plugin (add|update) akm-opencode( |$)/m);
       expect(fs.existsSync(path.join(world.root, "xdg-cache", "opencode", "packages"))).toBe(false);
       expect(JSON.parse(fs.readFileSync(configFile(), "utf8").replace(/^\/\/.*\n/, ""))).toEqual({ plugins: [V2] });
     });
@@ -396,7 +474,7 @@ posixOnly("akm upgrade: OpenCode 2 plugin (akm-opencode-v2)", () => {
       expect(run.result.plugins.map((p) => p.harness)).toEqual(["claude-code", "codex", "opencode", "opencode-v2"]);
       expect(entry(run, "opencode-v2")).toMatchObject({ outcome: "updated", to: "0.9.28" });
       expect(entry(run, "opencode")).toMatchObject({ outcome: "skipped" });
-      expect(mutations()).toEqual([`trash-put ${v2CacheDir()}`, `opencode plugin add ${V2}`]);
+      expect(mutations()).toEqual([`opencode plugin update ${V2}`]);
       expect(fs.existsSync(v1CacheDir())).toBe(true);
     });
 

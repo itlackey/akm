@@ -590,19 +590,17 @@ esac`,
       expect(entry(run, "opencode").outcome).toBe("skipped");
     });
 
-    test("akm-opencode@next older than @latest fails closed: CLI held, entry failed", async () => {
+    test("akm-opencode@next pinning an older akm-cli than @latest is still followed: --next asked for the prerelease channel", async () => {
       writeConfig(["akm-opencode@next"]);
       writeCachedOpenCode("0.9.26-rc.1", "next");
       stubNpm({ latest: ["0.9.26", "0.9.26"], next: ["0.9.26-rc.2", "0.9.26-rc.2"] });
       stubOpenCodeNext("0.9.26-rc.2");
       const deps = fakeDeps("0.9.27-rc.1", "0.9.25");
       const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
-      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.25", updateAvailable: false });
-      expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
-      expect(run.result.lockstep?.reason).toContain("older than the 0.9.26 that akm-opencode@latest");
-      expect(entry(run, "opencode").outcome).toBe("failed");
-      expect(run.mode === "upgrade" && run.failed).toBe(true);
-      expect(mutations()).toEqual([]);
+      expect(deps.upgradeCalls[0]).toMatchObject({ latestVersion: "0.9.26-rc.2", updateAvailable: true });
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.26-rc.2", heldBack: true });
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", to: "0.9.26-rc.2" });
+      expect(commands().some((c) => c.startsWith("npm view akm-opencode@latest"))).toBe(false);
     });
 
     test("real version shapes: a prerelease plugin build is not behind the stable one, the pins decide (#1089)", async () => {
@@ -625,7 +623,7 @@ esac`,
       });
     });
 
-    test("real version shapes: @next whose pin is older than @latest's pin still fails closed", async () => {
+    test("real version shapes: @next whose pin is older than @latest's pin is still followed", async () => {
       writeConfig(["akm-opencode@next"]);
       writeCachedOpenCode("0.9.26-alpha.1.202610010000", "next");
       stubNpm({
@@ -633,12 +631,10 @@ esac`,
         next: ["0.9.27-alpha.1.202610081938", "0.9.26"],
       });
       stubOpenCodeNext("0.9.27-alpha.1.202610081938");
-      const deps = fakeDeps("0.9.28-alpha.8", "0.9.26");
-      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.26", deps));
-      expect(run.result.lockstep).toMatchObject({ pinnedVersion: null, heldBack: true });
-      expect(run.result.lockstep?.reason).toContain("pins akm-cli 0.9.26, older than the 0.9.27");
-      expect(entry(run, "opencode").outcome).toBe("failed");
-      expect(mutations()).toEqual([]);
+      const deps = fakeDeps("0.9.28-alpha.8", "0.9.25");
+      const run = await withEnv(world.env, () => runUpgrade(NEXT, "0.9.25", deps));
+      expect(run.result.lockstep).toMatchObject({ pinnedVersion: "0.9.26", heldBack: true });
+      expect(entry(run, "opencode")).toMatchObject({ outcome: "updated", to: "0.9.27-alpha.1.202610081938" });
     });
 
     test("an @next cache that already holds npm's @next build is current: plugin versions are compared for equality only", async () => {

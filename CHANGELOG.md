@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm upgrade` now keeps the OpenCode 2 plugin (`akm-opencode-v2`) current.** Three things stopped it:
+  `--next` refused with "pins akm-cli ... older than the ... that @latest pins" because npm's `latest` for
+  `akm-opencode-v2` is a retired daily alpha whose 8-digit pin sorts above every monthly build (and the lockstep
+  reported that as "could not read the akm-cli pin"); `--next` now follows the `next` tag and no longer compares it with
+  `@latest`, for OpenCode 1 as well. The refresh trashed the cache and deferred whenever an OpenCode process ran, which
+  on a host with a standing `opencode serve` was always. It now runs OpenCode 2's own `opencode plugin update <spec>`,
+  which installs the new build beside the old one for the running service to pick up at its next restart, so it is
+  neither trashed nor deferred. OpenCode 1 is unchanged.
+
 - **`akm upgrade --next` no longer says the Claude Code and Codex plugins have "no prerelease channel" and work "with
   any 0.9.x akm".** akm-plugins now has a `next` branch for prereleases, and the plugins require akm 0.10.261001 or
   newer. The `--next` note now names the ref the `akm-plugins` marketplace follows (read from `claude plugin marketplace

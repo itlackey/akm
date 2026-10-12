@@ -28,7 +28,7 @@ export interface OpenCodeFlavor {
   /** Config keys that name plugins, in the order they are read. */
   configKeys: readonly string[];
   /**
-   * Read only the global config files. OpenCode 2's re-fetch is `opencode plugin add`, which writes
+   * Read only the global config files. OpenCode 2's updater is `opencode plugin update`, which acts on
    * the global config, so it is only run for a spec that file already names.
    */
   globalConfigOnly: boolean;
@@ -36,8 +36,14 @@ export interface OpenCodeFlavor {
   cacheFolder: (spec: string) => string;
   /** The `node_modules` holding the installed plugin and its bundled akm-cli, inside a cache folder. */
   nodeModulesDir: (folder: string) => string | undefined;
-  /** The `opencode` arguments that make it re-create the cache of `spec`, after that cache was moved away. */
-  prefetch: (spec: string) => string[];
+  /** The `opencode` arguments that bring the cache of `spec` up to date. */
+  refresh: (spec: string) => string[];
+  /**
+   * Whether `refresh` re-creates a cache that was moved away first (OpenCode 1, which must not be running: its
+   * cache is replaced under it). Otherwise `refresh` installs the new build beside the old one and the running
+   * OpenCode keeps the old build until it restarts (OpenCode 2's `plugin update`), so nothing is moved or deferred.
+   */
+  replacesCache: boolean;
 }
 
 /** The newest numbered build folder (`<epoch-ms>`) under an OpenCode 2 cache folder. */
@@ -73,7 +79,8 @@ export const OPENCODE_V1: OpenCodeFlavor = {
   cacheFolder: (spec) => path.join("packages", spec),
   nodeModulesDir: (folder) => path.join(folder, "node_modules"),
   // Any OpenCode command that resolves the config installs the plugin again.
-  prefetch: () => ["debug", "config"],
+  refresh: () => ["debug", "config"],
+  replacesCache: true,
 };
 
 export const OPENCODE_V2: OpenCodeFlavor = {
@@ -89,6 +96,8 @@ export const OPENCODE_V2: OpenCodeFlavor = {
     const build = newestBuildDir(folder);
     return build ? path.join(build, "node_modules") : undefined;
   },
-  // `debug config` does not resolve plugins in OpenCode 2; `plugin add` of a configured spec only reinstalls it.
-  prefetch: (spec) => ["plugin", "add", spec],
+  // `plugin update <spec>` (the spec as the config names it) installs the new build into a fresh
+  // `<epoch-ms>` folder and leaves the old ones; the running service stays on the old build until it restarts.
+  refresh: (spec) => ["plugin", "update", spec],
+  replacesCache: false,
 };
