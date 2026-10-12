@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.26101202] - 2026-10-12
+
 ### Fixed
 
 - **A signal to `akm agent` no longer leaves the CLI harness running (#1049).** `akm agent` on the `opencode`,
