@@ -264,36 +264,12 @@ person with reason `proactive-needs-review`, and the judgment tier does not see
 it. An empty diff is still rejected. Proposals driven by feedback (`signal-delta`,
 `scope`) follow the one rule unchanged (#1147).
 
-### Retrieval regression gate
-
-Reflect refuses a revision of an existing asset that grades lower on the
-asset's own retrieval queries (#722, `src/commands/improve/retrieval-gate.ts`).
-After the quality judge passes, up to five distinct user `search`/`curate`
-queries that returned the asset (envelopes, the stash README line and inputs
-over 2,000 characters dropped) are each graded 0–3 against the old and the new
-content with the retrieval eval's prompt, `retrieval-relevance-judge.md`, and
-its document shape: type, ref, name, description and the first 1,500 body
-characters. A lower mean for the new content is a `quality_rejected` refusal
-with the reflect rejection window. A grade that cannot be obtained (a transport
-error, a timeout or a reply that is not a grade) measured no regression, so the
-revision is queued for a person (reason `retrieval-ungraded`, gate
-`quality-gate`) instead of refused; a call aborted by the run's budget is
-neither. An asset with no such queries is not graded.
-
-The gate exists because it was measured first. Of 60 accepted reflect rewrites
-(since 2026-07-01, stratified by lane) judged this way, 14 graded lower (23%,
-95% CI 14–35%) and 12 higher. Grading the same content twice flipped 11 of 174
-query grades, which puts 3 of 60 rewrites in the "lower" bucket by noise
-alone. The threshold for building it was fixed before judging: a lower bound of
-at least 10%.
-
 ### Retirement continuity
 
 Before the consolidate pair pass mints a `retire` proposal (rule R3,
 `src/commands/improve/consolidate/continuity-check.ts`), it replays up to five
 of the retired asset's own past `search`/`curate` queries
-(`loadRetrievalQueries`, the same cleaned set `../retrieval-gate.ts` replays
-for the retrieval regression gate — boilerplate, harness/tool envelopes,
+(`loadRetrievalQueries`, `../retrieval-queries.ts` — boilerplate, harness/tool envelopes,
 pastes and near-duplicates dropped before replay, S3a) through akm's own
 search, in-process — the ranking a user actually gets, no LLM. For every
 query where the retired asset ranked in the top 10, the successor must too

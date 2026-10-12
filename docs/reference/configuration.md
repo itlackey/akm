@@ -218,7 +218,7 @@ Reasoning effort has one word in a request, `reasoningEffort`. `effort`, as a
 Unattended model work is the work akm hands a model with no one watching:
 - the improve processes (reflect, distill, consolidate, memory inference,
   extract, and validation's repair);
-- the quality, triage and retrieval-gate judges;
+- the quality and triage judges;
 - index passes;
 - `akm remember --enrich`.
 
