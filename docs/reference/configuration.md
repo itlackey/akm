@@ -168,6 +168,23 @@ working and logs a warning recommending OpenCode 2. A `--version` akm cannot rea
 with the raw output. To run a particular OpenCode, set the engine's `bin`, e.g.
 `{"kind":"agent","platform":"opencode-sdk","bin":"/opt/opencode1/bin/opencode"}`.
 
+**Permissions in a dispatch.** akm answers every OpenCode permission request of a
+dispatch with "reject" (there is no one to approve it), and the rejection reaches
+the model as a tool error. akm changes no OpenCode permission default, so what
+gets asked is OpenCode's own setting:
+
+- **OpenCode 1** asks before reading or writing outside the project directory
+  (`external_directory`), so akm rejects it.
+- **OpenCode 2** (2.0.26) does not ask: a read or write outside the project
+  directory just runs, and akm's rejection never happens, unless your OpenCode
+  config says to ask. Add a rule to the global `opencode.json`, e.g.
+  `"permissions": [{"action": "external_directory", "resource": "*", "effect": "ask"}]`
+  (`"read"` and `"shell"` are actions too).
+
+On OpenCode 2 a rejection ends the turn: the dispatch returns `ok: false` with
+`reason: "aborted"` and the declined tool call in `error`. On OpenCode 1 the model
+carries on.
+
 On an engine without `timeoutMs`, model work (an improve process, a quality or
 triage judge, or an index pass) stops after 600 seconds, whatever the engine's
 kind; other work on an agent engine runs until it finishes. An improve stage's

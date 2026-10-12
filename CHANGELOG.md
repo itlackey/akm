@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A signal to `akm agent` no longer leaves the CLI harness running (#1049).** `akm agent` on the `opencode`,
+  `claude` and `codex` CLI engines runs the harness in its own process group, so SIGTERM or SIGINT to akm ended akm and
+  left `opencode run` (and, on OpenCode 2, its `serve --stdio` child) running. The managed-subprocess primitive now runs
+  the timeout kill ladder on every live group child when akm gets such a signal with no handler of its own, then
+  re-raises it so akm still ends by the signal.
+- **An OpenCode 2 SDK dispatch ends when akm rejects a permission request (#1049).** OpenCode 2 interrupts the step
+  (`aborted`, "Step interrupted") and goes idle without writing the closing `idle` message, so the dispatch waited out
+  its whole deadline. It now returns at once with `reason: "aborted"` and the declined tool call in `error`.
+- **Documented: OpenCode permission defaults in a dispatch (#1049).** OpenCode 1 asks before reading or writing outside
+  the project directory; OpenCode 2 does not unless its config says `ask`, so akm's permission rejection only happens
+  on OpenCode 2 once you add that rule. akm changes no default. See [Configuration](docs/reference/configuration.md#engines).
+
 ## [0.10.26101201] - 2026-10-12
 
 ### Removed
