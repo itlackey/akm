@@ -16,6 +16,7 @@ import os from "node:os";
 import path from "node:path";
 import { akmImprove } from "../../../../src/commands/improve/improve";
 import type { AkmConfig } from "../../../../src/core/config/config";
+import { seedIgnoredTrackedChanges } from "../../../_helpers/git-ignored-tracked";
 import { type Cleanup, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
 
 let cleanup: Cleanup = () => {};
@@ -165,6 +166,22 @@ describe("improve pre-run sync across two hosts", () => {
     expect(seenAtIndex).toBe(true);
     expect(result.preRunSync).toMatchObject({ committed: false, pushed: false, skipped: false });
     expect(result.preRunSync?.reason).toBeUndefined();
+  });
+
+  test("tracked files under a git-ignored directory do not skip the sync", async () => {
+    const { b } = setup();
+    commitFile(b, "memories/from-b.md", "from b\n", "host B change");
+    git(b, "push", "origin", "main");
+    seedIgnoredTrackedChanges(stashDir);
+
+    const result = await runImprove(() => {});
+
+    expect(result.ok).toBe(true);
+    expect(result.preRunSync?.reason).toBeUndefined();
+    expect(result.preRunSync).toMatchObject({ committed: true, skipped: false });
+    // Host B's change was merged in, and the managed change was committed.
+    expect(fs.existsSync(path.join(stashDir, "memories", "from-b.md"))).toBe(true);
+    expect(git(stashDir, "show", "--name-only", "--format=", "HEAD^")).toBe("skills/skill.md");
   });
 
   test("a conflicting upstream change warns and the run continues on the local state", async () => {

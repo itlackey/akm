@@ -350,11 +350,14 @@ export function saveGitStash(
   const requestedPaths = normalizeExactPaths(
     repoDir,
     options?.paths ??
-      (managedRelativeRoot && managedRelativeRoot !== ".." && !managedRelativeRoot.startsWith("../")
-        ? changedPaths.filter(
-            (changedPath) => changedPath === managedRelativeRoot || changedPath.startsWith(`${managedRelativeRoot}/`),
-          )
-        : managedFallbackPaths(repoDir, changedPaths)),
+      withoutIgnoredPaths(
+        repoDir,
+        managedRelativeRoot && managedRelativeRoot !== ".." && !managedRelativeRoot.startsWith("../")
+          ? changedPaths.filter(
+              (changedPath) => changedPath === managedRelativeRoot || changedPath.startsWith(`${managedRelativeRoot}/`),
+            )
+          : managedFallbackPaths(repoDir, changedPaths),
+      ),
   );
   if (requestedPaths.length === 0) {
     return nothingToCommit(repoDir, "nothing to commit", syncWithRemote);
@@ -512,6 +515,17 @@ function managedFallbackPaths(repoDir: string, changedPaths: string[]): string[]
   );
 }
 
+/**
+ * Drop paths a `.gitignore` rule matches from the paths sync picks for itself. Ignoring means "do
+ * not publish", also for a file committed before the rule existed (`.akm/evals/runs/latest` in a
+ * stash whose eval runs are ignored): git refuses to stage such a file, which would fail the whole
+ * sync. Only an explicit `paths` request still reaches {@link assertNoIgnoredExactPaths}.
+ */
+function withoutIgnoredPaths(repoDir: string, paths: string[]): string[] {
+  const ignored = new Set(listIgnoredExactPaths(repoDir, paths, { includeTracked: true }));
+  return ignored.size === 0 ? paths : paths.filter((candidate) => !ignored.has(candidate));
+}
+
 function normalizeExactPaths(repoDir: string, paths: string[]): string[] {
   const normalized = [...new Set(paths.map((value) => value.replaceAll(path.sep, "/")))];
   for (const filePath of normalized) {
@@ -549,10 +563,23 @@ function runExactPathChunks(
   return results;
 }
 
-export function listIgnoredExactPaths(repoDir: string, paths: string[]): string[] {
+/**
+ * The subset of `paths` a `.gitignore` rule matches. By default a tracked file never counts (git's
+ * own `check-ignore` skips it); `includeTracked` asks about the rule alone, as `git add` does.
+ */
+export function listIgnoredExactPaths(
+  repoDir: string,
+  paths: string[],
+  options: { includeTracked?: boolean } = {},
+): string[] {
   if (paths.length === 0) return [];
   const input = `${paths.join("\0")}\0`;
-  const result = runGit(["-C", repoDir, "check-ignore", "-z", "--stdin"], { input });
+  const result = runGit(
+    ["-C", repoDir, "check-ignore", "-z", "--stdin", ...(options.includeTracked ? ["--no-index"] : [])],
+    {
+      input,
+    },
+  );
   if (result.status === 1) return [];
   if (result.status !== 0) {
     throw new Error(`git check-ignore failed: ${result.stderr.trim() || "unknown error"}`);

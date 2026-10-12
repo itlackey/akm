@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm sync` and improve's pre-run sync no longer fail on tracked files under a git-ignored directory.** A stash whose
+  `.gitignore` lists `.akm/evals/runs/` after files under it were committed has tracked, ignored files that change
+  with every eval run (the `latest` symlink). The sync picked them with the managed paths and git refused to stage them
+  ("The following paths are ignored by one of your .gitignore files"), so the whole sync stopped: no fetch, merge,
+  commit or push. Sync now leaves any path a `.gitignore` rule matches out of the paths it picks, tracked or not; those
+  edits stay uncommitted in the working tree. An explicit `paths` request naming an ignored path still fails.
+
 ## [0.10.261001] - 2026-10-12
 
 ### Changed
