@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Deprecated
+
+- **The `opencode` CLI dispatch path.** An agent engine with `platform: "opencode"`, which runs `opencode run` for each
+  call, still works on OpenCode 1 and 2 throughout 0.10, but is deprecated: use an `opencode-sdk` engine, which covers
+  it, including a default agent (#1098). It may be removed in 0.11 or later (STABILITY.md).
+
 ## [0.10.26101202] - 2026-10-12
 
 ### Fixed
