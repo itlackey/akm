@@ -581,9 +581,11 @@ describe("runConsolidatePairPass — end-to-end with a fake judge", () => {
 
   test("#1134: the judge is told a different value is a replacement only when B says so or is newer, and a tie in dates is not called newer", async () => {
     const aPath = writeAsset("memories/lease-a.md", "description: lease a");
-    dateAsset(aPath, 2);
     const bPath = writeAsset("memories/lease-b.md", "description: lease b");
-    dateAsset(bPath, 2);
+    // One shared instant: two dateAsset(…, 2) calls read Date.now() separately and can land 1 ms apart.
+    const sameInstant = new Date(Date.now() - 2 * MS_PER_DAY);
+    fs.utimesSync(aPath, sameInstant, sameInstant);
+    fs.utimesSync(bPath, sameInstant, sameInstant);
     const db = openIndexDatabase(getDbPath());
     try {
       indexAsset(db, "memory", "lease-a", aPath, 0);
