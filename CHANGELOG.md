@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.26101201] - 2026-10-12
+
 ### Removed
 
 - **Reflect's retrieval regression gate (#1171).** After the quality judge passed a revision, reflect graded the old and the new text against up to five of the asset's own retrieval queries and refused the revision (`quality_rejected`, a 14-day window) when the mean grade fell at all. Re-measured on 0.10 it refused 12-17% of the revisions the judge had passed and lowered defects fixed from 84 to 77 (35B) and from 92 to 77 (27B) of 96, now that reflect edits frontmatter only. A judge-passed revision is now minted as a proposal with no further check. This also removes the `retrieval-ungraded` review reason, the `retrievalRegression`/`retrievalUngraded` event metadata and the `retrieval-relevance-judge.md` prompt. No config key existed for the gate, so no config changes.
