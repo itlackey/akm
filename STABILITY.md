@@ -351,9 +351,14 @@ CHANGELOG with a migration note.
   `claude`, `opencode-sdk` (the primary OpenCode interface), `codex`, and the
   `opencode` CLI path, `copilot`, `pi`, `gemini`, `aider`, `amazonq`,
   `openhands`. Every harness is Evolving: the harness implementation is being
-  reworked so harnesses are easy to add, remove and update (0.10), and the
-  `opencode` CLI dispatch path is a deprecation candidate once `opencode-sdk`
-  covers it. The set will grow.
+  reworked so harnesses are easy to add, remove and update (0.10). The set will
+  grow.
+  **Deprecated:** the `opencode` CLI dispatch path (an agent engine with
+  `platform: "opencode"`, which runs `opencode run` per call). It still works on
+  OpenCode 1 and 2 throughout 0.10; use an `opencode-sdk` engine instead, which
+  covers it, including a default agent (#1098). It may be removed in 0.11 or
+  later. The rest of the OpenCode integration (session-log import, config
+  import) is not deprecated.
 - **Model aliases** — `akm models list|copy-defaults` and the intent-alias
   defaults they expose.
 - **Proposal queue** — quality classifications (`accepted`, `pending`,
@@ -557,6 +562,9 @@ Internal replacement for the one capability nothing else covered.
   `akm` (no separate npm package). The task-source migrator (`task-to-v4.ts`,
   `task-source-v3-frozen.ts`) lives with it under `scripts/akm-migrate/migrate/`,
   out of `src/`.
+- **0.11 or later — the `opencode` CLI dispatch path may be removed.**
+  Deprecated in 0.10 (see Agent dispatch under Evolving); `opencode-sdk`
+  engines replace it.
 - **0.10 — `BundleAdapter.placeNew()` is removed.** Nothing called it; writes use AKM's fixed type→directory table.
   Writable bundles in a non-akm layout would need per-adapter placement back
   ([#1163](https://github.com/itlackey/akm/issues/1163)).
