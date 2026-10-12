@@ -35,7 +35,6 @@ import { DISTILL_KNOWLEDGE_JSON_SCHEMA, DISTILL_LESSON_JSON_SCHEMA } from "../..
 import { DISTILL_LESSON_UPDATE_JSON_SCHEMA } from "../../src/commands/improve/distill/lesson-update";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
 import { REFLECT_JSON_SCHEMA, REFLECT_UNSCOPED_JSON_SCHEMA } from "../../src/commands/improve/reflect";
-import { GRADE_SCHEMA } from "../../src/commands/improve/retrieval-gate";
 import { SESSION_SUMMARY_JSON_SCHEMA } from "../../src/commands/improve/session-asset";
 import { judgeResponseSchema } from "../../src/commands/improve/stage";
 import { PROPOSAL_JSON_SCHEMA } from "../../src/integrations/agent/prompts";
@@ -49,7 +48,6 @@ const RESPONSE_SCHEMAS: Record<string, unknown> = {
   DISTILL_LESSON_JSON_SCHEMA,
   DISTILL_LESSON_UPDATE_JSON_SCHEMA,
   EXTRACT_JSON_SCHEMA,
-  GRADE_SCHEMA,
   PAIR_CHECK_JSON_SCHEMA,
   PAIR_JUDGE_JSON_SCHEMA,
   PROPOSAL_JSON_SCHEMA,

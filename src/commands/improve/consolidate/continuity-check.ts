@@ -21,7 +21,7 @@ import type { SearchExecutionMode } from "../../../sources/types";
 import type { ContinuityRiskRank, RetirementContinuityRisk } from "../../proposal/proposal-types";
 import { stripFrontmatterBody } from "../content-hash";
 import { type LedgerAccess, stripBundle } from "../ledger";
-import { loadRetrievalQueries } from "../retrieval-gate";
+import { loadRetrievalQueries } from "../retrieval-queries";
 
 /** At most this many of the retired asset's most recent queries are replayed (plan §5.4, §7). */
 export const CONTINUITY_MAX_QUERIES = 5;
@@ -109,8 +109,8 @@ function normalizedBody(raw: string): string {
  *
  * S3: two fixes against false flags measured on a real night-1 admission
  * (300 pairs, 6 flags, half spurious):
- *  - queries are the SAME cleaned set `loadRetrievalQueries` replays for the
- *    retrieval regression gate (`../retrieval-gate.ts`) — stash-README
+ *  - queries are the cleaned set `loadRetrievalQueries` returns
+ *    (`../retrieval-queries.ts`) — stash-README
  *    boilerplate, harness/tool envelopes, pastes over 2,000 characters, and
  *    duplicates are dropped before replay, not just capped at 5 raw entries;
  *  - when the retired and successor bodies normalize identical, the check
@@ -150,7 +150,7 @@ export async function checkRetirementContinuity(args: {
   // no real risk here to check for.
   if (normalizedBody(args.retiredRaw) === normalizedBody(args.successorRaw)) return undefined;
 
-  // S3a: the SAME cleaned queries the retrieval regression gate replays —
+  // S3a: the cleaned queries from `loadRetrievalQueries` —
   // boilerplate, envelopes, pastes and duplicates dropped before replay.
   const queries = loadRetrievalQueries(args.ledgerAccess, args.retiredRef).slice(0, CONTINUITY_MAX_QUERIES);
   if (queries.length === 0) return undefined; // no queries recorded: no check, no flag

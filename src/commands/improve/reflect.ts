@@ -67,7 +67,6 @@ import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
 import { classifyReflectChange, findReflectDefect, type ReflectDefectFilter, splitFrontmatter } from "./reflect-noise";
-import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
 import {
   callStageOnce,
   errMessage,
@@ -1115,45 +1114,13 @@ async function finalizeReflectProposal(args: {
       );
     }
   }
-  // #722: a revision of an existing asset must not grade lower on its own retrieval queries.
-  let retrievalUngraded: string | undefined;
-  if (verdict?.pass && judge.runner) {
-    const retrieval = await runRetrievalRegressionGate({
-      ref: payload.ref,
-      before: assetContent,
-      after: content,
-      queries: loadRetrievalQueries({ proposalsCtx: options.ctx, eventsCtx: options.eventsCtx }, payload.ref),
-      runner: judge.runner,
-      ...(options.chat ? { chat: options.chat } : {}),
-      ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.signal ? { signal: options.signal } : {}),
-      onNotices: run.notices.add,
-    });
-    // A check that could not grade measured nothing: a person decides, as when the judge gave no verdict.
-    if (retrieval.ungraded) retrievalUngraded = retrieval.reason;
-    if (!retrieval.pass && !retrieval.ungraded) {
-      return refuse(
-        retrieval.reason,
-        {
-          retrievalRegression: true,
-          retrievalQueries: retrieval.queries,
-          ...(retrieval.oldMean !== undefined ? { retrievalGradeBefore: retrieval.oldMean } : {}),
-          ...(retrieval.newMean !== undefined ? { retrievalGradeAfter: retrieval.newMean } : {}),
-        },
-        `Reflect proposal refused: ${retrieval.reason}`,
-      );
-    }
-  }
 
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
     ...(judgeFailed ? ["judge-error"] : []),
     ...(judgeUncertain ? ["judge-uncertain"] : []),
-    ...(retrievalUngraded ? ["retrieval-ungraded"] : []),
   ];
-  const gateReview = judgeFailed || judgeUncertain || retrievalUngraded !== undefined;
-  // What the person is shown: the check's words when it could not grade, otherwise the judge's.
-  const reviewNote = retrievalUngraded ?? verdict?.reason;
+  const gateReview = judgeFailed || judgeUncertain;
   const proposal = mintProposal(
     run.stash,
     options.ctx,
@@ -1174,7 +1141,7 @@ async function finalizeReflectProposal(args: {
             // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
             gate: gateReview ? "quality-gate" : "reflect",
             ...(gateReview && verdict?.criteria ? { scores: verdict.criteria } : {}),
-            ...(gateReview && reviewNote ? { judgeReason: reviewNote } : {}),
+            ...(gateReview && verdict?.reason ? { judgeReason: verdict.reason } : {}),
           },
         }
       : { judged: verdict },
@@ -1190,7 +1157,6 @@ async function finalizeReflectProposal(args: {
         ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
         ...(judgeFailed || judgeUncertain ? { qualityReason: verdict?.reason } : {}),
         ...(judgeUncertain ? { qualityScore: verdict?.score } : {}),
-        ...(retrievalUngraded ? { qualityReason: retrievalUngraded, retrievalUngraded: true } : {}),
         ...telemetry,
       },
     },
