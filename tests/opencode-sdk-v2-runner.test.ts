@@ -21,7 +21,7 @@ import {
   runOpencodeSdk,
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { V1_ADAPTER } from "../src/integrations/harnesses/opencode-sdk/v1-adapter";
-import { V2_ADAPTER, v2Turn } from "../src/integrations/harnesses/opencode-sdk/v2-adapter";
+import { V2_ADAPTER, v2InterruptedTurn, v2Turn } from "../src/integrations/harnesses/opencode-sdk/v2-adapter";
 import { parseReadiness } from "../src/integrations/harnesses/opencode-sdk/wire";
 
 const parseReadiness1 = (line: string) => parseReadiness(line, 1);
@@ -303,6 +303,69 @@ describe("OpenCode 2 adapter — failures", () => {
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("aborted");
     expect(res.exitCode).toBeNull();
+  });
+
+  test("a turn OpenCode 2 interrupts after a rejected permission ends the dispatch promptly (no closing idle message)", async () => {
+    // Recorded from 2.0.26: after `permission.reply: reject` the step fails with `aborted: Step interrupted`, the
+    // tool call is `error` ("The user declined this tool call"), the session goes idle and NO `idle` message is
+    // written, so the turn never "finished" for the poll loop and the dispatch ran to its deadline.
+    const feed = eventFeed();
+    const fake = makeFakeV2({
+      feed,
+      waitImpl: async () => {
+        feed.push({
+          type: "permission.asked",
+          data: { id: "perm-1", sessionID: "sess-v2", action: "shell", resources: ["date"] },
+        });
+        await new Promise((r) => setTimeout(r, 30));
+      },
+      contexts: [
+        [
+          USER,
+          assistant("msg-a", "", {
+            content: [
+              {
+                type: "tool",
+                state: {
+                  status: "error",
+                  input: { command: "date" },
+                  error: { type: "aborted", message: "The user declined this tool call" },
+                },
+              },
+            ],
+            finish: "error",
+            error: { type: "aborted", message: "Step interrupted" },
+          }),
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: 3000 });
+    expect(res.reason).toBe("aborted");
+    expect(res.ok).toBe(false);
+    expect(res.exitCode).toBeNull();
+    expect(res.durationMs).toBeLessThan(2000);
+    expect(res.error).toContain("Step interrupted");
+    expect(res.error).toContain("The user declined this tool call");
+    expect(res.stderr).toContain("permission requested: shell (date); auto-rejecting");
+    expect(fake.calls.reply).toEqual([{ sessionID: "sess-v2", requestID: "perm-1", decision: "reject" }]);
+    expect(res.sessionId).toBe("sess-v2");
+  });
+
+  test("an assistant step that is still running is not mistaken for an interrupted turn", () => {
+    expect(
+      v2InterruptedTurn([USER as never, assistant("a", "x", { finish: "tool-calls" }) as never], "msg-user"),
+    ).toBeUndefined();
+    expect(
+      v2InterruptedTurn(
+        [
+          USER as never,
+          assistant("a", "x", { finish: "error", error: { type: "provider.auth", message: "m" } }) as never,
+        ],
+        "msg-user",
+      ),
+    ).toBeUndefined();
+    expect(v2InterruptedTurn([USER as never], "missing")).toBeUndefined();
   });
 
   test("a reply cut off at the output limit is reason parse_error", async () => {
