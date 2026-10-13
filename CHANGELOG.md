@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm feedback` fails when it cannot record the feedback** (also in 0.9.32). When `state.db` was read-only to the
+  process, as it is inside an agent sandbox that only allows writes in the workspace, the feedback row was silently
+  dropped and the command still printed `"ok": true`. It now fails with a `DATA_DIR_NOT_WRITABLE` config error (exit
+  78) and records nothing. Add akm's data directory to the sandbox's writable paths.
+
 ## [0.10.261003] - 2026-10-12
 
 ### Fixed

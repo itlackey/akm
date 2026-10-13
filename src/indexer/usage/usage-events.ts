@@ -100,22 +100,27 @@ export function ensureUsageEventsSchema(db: Database): void {
  */
 export function insertUsageEvent(db: Database, event: UsageEvent): void {
   try {
-    db.prepare(
-      `INSERT INTO usage_events (event_type, query, entry_id, entry_ref, signal, metadata, source)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      event.event_type,
-      event.query ?? null,
-      event.entry_id ?? null,
-      event.entry_ref ?? null,
-      event.signal ?? null,
-      event.metadata ?? null,
-      event.source ?? "unknown",
-    );
+    insertUsageEventStrict(db, event);
   } catch (error) {
     rethrowIfTestIsolationError(error);
     /* fire-and-forget: silently ignore errors */
   }
+}
+
+/** Insert a usage event and let a failed write throw, for callers whose record is the event itself. */
+export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
+  db.prepare(
+    `INSERT INTO usage_events (event_type, query, entry_id, entry_ref, signal, metadata, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    event.event_type,
+    event.query ?? null,
+    event.entry_id ?? null,
+    event.entry_ref ?? null,
+    event.signal ?? null,
+    event.metadata ?? null,
+    event.source ?? "unknown",
+  );
 }
 
 // ── Query ────────────────────────────────────────────────────────────────────

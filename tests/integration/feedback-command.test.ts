@@ -6,7 +6,7 @@ import { renderReflectPromptPreview } from "../../src/commands/improve/reflect";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
 import { getDbPath } from "../../src/core/paths";
-import { openStateDatabase } from "../../src/core/state-db";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -503,6 +503,42 @@ describe("akm feedback", () => {
       }
     });
   }
+
+  // A sandbox that leaves state.db read-only used to get ok:true while the
+  // feedback row was silently dropped. chmod does not restrict root or Windows.
+  const canMakeReadOnly = process.platform !== "win32" && process.getuid?.() !== 0;
+  test.skipIf(!canMakeReadOnly)("fails with DATA_DIR_NOT_WRITABLE when state.db is read-only", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+    const first = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
+    expect(first.status).toBe(0);
+
+    const statePath = getStateDbPath();
+    const countRows = () => {
+      const db = openStateDatabase();
+      try {
+        return (
+          db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE event_type = 'feedback'").get() as { n: number }
+        ).n;
+      } finally {
+        db.close();
+      }
+    };
+    expect(countRows()).toBe(1);
+
+    fs.chmodSync(statePath, 0o444);
+    try {
+      const result = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
+      expect(result.status).toBe(78);
+      expect(parseJsonOutput(result)).toMatchObject({ ok: false, code: "DATA_DIR_NOT_WRITABLE" });
+    } finally {
+      fs.chmodSync(statePath, 0o644);
+    }
+    expect(countRows()).toBe(1);
+  });
 
   // ── Which text each feedback judged ──────────────────────────────────────
   const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");

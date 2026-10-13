@@ -14,17 +14,17 @@ import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "
 import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { NotFoundError, UsageError } from "../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { isPathAbsent } from "../core/path-access";
 import { getDbPath } from "../core/paths";
-import { withStateDb } from "../core/state-db";
+import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
 import { recomputeUtilityScores } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
+import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
@@ -201,6 +201,7 @@ interface RecordFeedbackUsageResult {
  * boosting its own picks. This is by design and must not be removed. The
  * utility score is read by improve and metrics only; its update is best-effort
  * and its failure never fails the feedback record or changes the ranking effect.
+ * A failed usage-event write fails the command (DATA_DIR_NOT_WRITABLE).
  */
 function recordFeedbackUsage(
   indexDb: Database,
@@ -213,14 +214,23 @@ function recordFeedbackUsage(
   let rankingSkippedReason: string | undefined;
   const eventSource = resolveUsageEventSource();
   withStateDb((stateDb) => {
-    insertUsageEvent(stateDb, {
-      event_type: "feedback",
-      entry_ref: durableEntryRef,
-      entry_id: entryId,
-      signal,
-      metadata: metadataStr,
-      source: eventSource,
-    });
+    // The usage event IS the feedback record, so a failed write fails the command
+    // instead of reporting ok while nothing was stored.
+    try {
+      insertUsageEventStrict(stateDb, {
+        event_type: "feedback",
+        entry_ref: durableEntryRef,
+        entry_id: entryId,
+        signal,
+        metadata: metadataStr,
+        source: eventSource,
+      });
+    } catch (err) {
+      throw new ConfigError(
+        `Feedback was not recorded: could not write ${getStateDbPath()} (${err instanceof Error ? err.message : String(err)}).`,
+        "DATA_DIR_NOT_WRITABLE",
+      );
+    }
     if (eventSource !== "user") {
       rankingSkippedReason =
         `feedback source is "${eventSource}", not "user" — it does not count toward search ranking, which counts ` +
