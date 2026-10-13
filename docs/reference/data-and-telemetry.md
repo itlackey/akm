@@ -79,6 +79,12 @@ mode and owner, and the uid you are running as. They do **not** report an empty
 index. `akm health` stays runnable in that state and reports it as a failing
 `state-db-readable` check, so it remains the command to reach for.
 
+If akm can read this directory but **cannot write** it — an agent sandbox that
+only allows writes inside the workspace, for instance — `akm feedback` fails with
+a `DATA_DIR_NOT_WRITABLE` config error (exit 78) and records nothing, instead of
+reporting success for feedback it could not store. Add the data directory to the
+sandbox's writable paths.
+
 > **0.9.1 note.** A pre-release build briefly chmodded this directory to `0700`
 > and the databases to `0600` on every open. That was reverted: it silently
 > changed the permissions of directories akm did not create, which broke installs

@@ -14,16 +14,16 @@ import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "
 import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { NotFoundError, UsageError } from "../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { isPathAbsent } from "../core/path-access";
 import { getDbPath } from "../core/paths";
-import { withStateDb } from "../core/state-db";
+import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { countFeedbackSignals, insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
+import { countFeedbackSignals, insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
@@ -195,8 +195,9 @@ interface RecordFeedbackUsageResult {
  * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
  * agent or automated pipeline from boosting its own picks. This is by design
  * and must not be removed; R-034 only asks that the skip be surfaced to the
- * caller rather than passing silently. Best-effort: a utility-update failure
- * never fails the feedback record.
+ * caller rather than passing silently. A failed usage-event write fails the
+ * command (DATA_DIR_NOT_WRITABLE); a utility-update failure never fails the
+ * feedback record.
  */
 function recordFeedbackUsage(
   indexDb: Database,
@@ -210,14 +211,23 @@ function recordFeedbackUsage(
   let rankingUpdateSkippedReason: string | undefined;
   const eventSource = resolveUsageEventSource();
   withStateDb((stateDb) => {
-    insertUsageEvent(stateDb, {
-      event_type: "feedback",
-      entry_ref: durableEntryRef,
-      entry_id: entryId,
-      signal,
-      metadata: metadataStr,
-      source: eventSource,
-    });
+    // The usage event IS the feedback record, so a failed write fails the command
+    // instead of reporting ok while nothing was stored.
+    try {
+      insertUsageEventStrict(stateDb, {
+        event_type: "feedback",
+        entry_ref: durableEntryRef,
+        entry_id: entryId,
+        signal,
+        metadata: metadataStr,
+        source: eventSource,
+      });
+    } catch (err) {
+      throw new ConfigError(
+        `Feedback was not recorded: could not write ${getStateDbPath()} (${err instanceof Error ? err.message : String(err)}).`,
+        "DATA_DIR_NOT_WRITABLE",
+      );
+    }
     if (eventSource !== "user") {
       rankingUpdateSkippedReason =
         `feedback source is "${eventSource}", not "user" — ranking updates only apply to user-attributed ` +
