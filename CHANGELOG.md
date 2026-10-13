@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261004] - 2026-10-13
+
 ### Fixed
 
 - **`akm feedback` fails when it cannot record the feedback** (also in 0.9.32). When `state.db` was read-only to the
