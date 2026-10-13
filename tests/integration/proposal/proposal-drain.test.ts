@@ -18,6 +18,7 @@ import {
   getProposal,
   listProposals,
   type Proposal,
+  proposalContentHash,
   recordGateDecision,
 } from "../../../src/commands/proposal/repository";
 import { writeSalienceToFrontmatter } from "../../../src/core/asset/frontmatter";
@@ -73,7 +74,13 @@ const BIG_LESSON = `---\ndescription: A large consolidated lesson\nwhen_to_use: 
   (_, i) => `line ${i}`,
 ).join("\n")}\n`;
 
-function seed(stash: string, ref: string, source: string, content: string): Proposal {
+function seed(
+  stash: string,
+  ref: string,
+  source: string,
+  content: string,
+  eligibilitySource?: Proposal["eligibilitySource"],
+): Proposal {
   // The consolidate source requires a non-empty frontmatter.description at
   // createProposal time, so always pass a parsed frontmatter for seeded fixtures.
   const result = createProposal(stash, {
@@ -82,13 +89,22 @@ function seed(stash: string, ref: string, source: string, content: string): Prop
     sourceRun: "run-x",
     target: { source: "stash", root: stash },
     payload: { content, frontmatter: { description: `${ref} fixture` } },
+    // A consolidate fixture is a promotion unless a test says otherwise (#1132).
+    ...(source === "consolidate" ? { promotionSource: "memory:fixture-source" } : {}),
+    ...(eligibilitySource ? { eligibilitySource } : {}),
   });
   return result;
 }
 
 /** Seed a proposal whose quality judge passed on its content (a `staged` stamp). */
-function seedJudged(stash: string, ref: string, source: string, content: string): Proposal {
-  return stageJudgedProposal(stash, seed(stash, ref, source, content));
+function seedJudged(
+  stash: string,
+  ref: string,
+  source: string,
+  content: string,
+  eligibilitySource?: Proposal["eligibilitySource"],
+): Proposal {
+  return stageJudgedProposal(stash, seed(stash, ref, source, content, eligibilitySource));
 }
 
 function ledgerRow(stash: string, ref: string, source: string) {
@@ -900,7 +916,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
 
   test("a judged-accept promote that hits the stale-target guard is auto-rejected, not left deferred (STALE, R20)", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lessons/judged-stale", "distill", VALID_LESSON);
+    const deferred = seed(stash, "lessons/judged-stale", "consolidate", VALID_LESSON);
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));
     const promoteFn = mock(async () => {
       throw new Error(
@@ -926,7 +942,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
 
   test("a judged-accept stale-target auto-reject that itself fails leaves the item unresolved", async () => {
     const stash = makeStashDir();
-    const deferred = seed(stash, "lessons/judged-stale-reject-fails", "distill", VALID_LESSON);
+    const deferred = seed(stash, "lessons/judged-stale-reject-fails", "consolidate", VALID_LESSON);
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "valuable" }));
     const promoteFn = mock(async () => {
       throw new Error(
@@ -952,7 +968,8 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     fs.writeFileSync(assetPath, VALID_LESSON.replace("Prefer rg", "Original: prefer rg"), "utf8");
     const created = createProposal(stash, {
       ref: "lessons/judgment-dry-run-stale",
-      source: "distill",
+      source: "consolidate",
+      promotionSource: "memory:fixture-source",
       sourceRun: "run-x",
       target: { source: "stash", root: stash },
       payload: { content: VALID_LESSON, frontmatter: { description: "judgment-dry-run-stale fixture" } },
@@ -1322,20 +1339,162 @@ describe("drainProposals — REVIEW: quality-gate review-band rows are skipped, 
     expect(result.promoted).toEqual([drainDeferred.id]);
   });
 
-  test("an unstamped distill row still reaches the judgment tier", async () => {
+  test("an unstamped distill row still reaches the judgment tier, but a judged accept leaves it for a person (#1132)", async () => {
     const stash = makeStashDir();
     const distillRow = seed(stash, "lessons/unstamped-distill", "distill", VALID_LESSON);
 
     const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "genuinely useful" }));
+    const promoteFn = fakeAccept();
 
     const result = await drainProposals(
       baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "promote" }),
-      fakeAccept(),
+      promoteFn,
       fakeReject(),
       { chat },
     );
 
     expect(chat).toHaveBeenCalledTimes(1);
-    expect(result.promoted).toEqual([distillRow.id]);
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred).toEqual([{ id: distillRow.id, reason: "needs-judgment" }]);
+  });
+});
+
+// The judgment tier may accept only a consolidate promotion (#1132). A kind it
+// would accept is left for a person; a reject still stands.
+describe("drainProposals — judgment tier accepts promotions only (#1132)", () => {
+  const acceptChat = () => mock(async () => JSON.stringify({ decision: "accept", reason: "looks right" }));
+
+  test("a good promotion is accepted while a retirement-like consolidate, an exact fix and a reflect proposal are deferred", async () => {
+    const stash = makeStashDir();
+    const promotion = seed(stash, "knowledge/new-note", "consolidate", BIG_LESSON);
+    // A consolidate proposal over an existing note with no promotionSource (a supersede/retire-style change).
+    const retirement = createProposal(stash, {
+      ref: "lessons/old-note",
+      source: "consolidate",
+      sourceRun: "run-x",
+      target: { source: "stash", root: stash },
+      payload: { content: BIG_LESSON, frontmatter: { description: "old note" } },
+    });
+    const exactFix = seed(stash, "lessons/exact-fix", "distill", VALID_LESSON);
+    const reflect = seed(stash, "lessons/reflect-edit", "reflect", VALID_LESSON);
+    const chat = acceptChat();
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, fakeReject(), {
+      chat,
+    });
+
+    expect(chat).toHaveBeenCalledTimes(4);
+    expect(result.promoted).toEqual([promotion.id]);
+    expect(promoteFn).toHaveBeenCalledTimes(1);
+    expect(result.deferred.map((d) => d.id).sort()).toEqual([retirement.id, exactFix.id, reflect.id].sort());
+    for (const proposal of [retirement, exactFix, reflect]) {
+      expect(getProposal(stash, proposal.id)?.gateDecision).toMatchObject({
+        outcome: "deferred",
+        reason: "judgment-not-promotion",
+        gate: "triage",
+        judgeReason: "looks right",
+      });
+    }
+  });
+
+  test("queue mode stages a promotion but never a judged-accept of another kind", async () => {
+    const stash = makeStashDir();
+    const promotion = seed(stash, "knowledge/new-note", "consolidate", BIG_LESSON);
+    const fix = seed(stash, "lessons/exact-fix", "distill", VALID_LESSON);
+
+    const result = await drainProposals(
+      baseOpts(stash, { judgment: FAKE_LLM_RUNNER, applyMode: "queue" }),
+      fakeAccept(),
+      fakeReject(),
+      { chat: acceptChat() },
+    );
+
+    expect(result.staged).toEqual([promotion.id]);
+    expect(result.deferred.map((d) => d.id)).toEqual([fix.id]);
+    expect(getProposal(stash, fix.id)?.gateDecision).toMatchObject({ outcome: "deferred" });
+  });
+
+  test("a reject verdict on a non-promotion still rejects it", async () => {
+    const stash = makeStashDir();
+    const fix = seed(stash, "lessons/exact-fix", "distill", VALID_LESSON);
+    const rejectFn = fakeReject();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), fakeAccept(), rejectFn, {
+      chat: mock(async () => JSON.stringify({ decision: "reject", reason: "wrong" })),
+    });
+
+    expect(result.rejected).toEqual([fix.id]);
+  });
+
+  test("a judgment accept staged earlier on a non-promotion is not promoted by a later drain", async () => {
+    const stash = makeStashDir();
+    const fix = seed(stash, "lessons/exact-fix", "distill", VALID_LESSON);
+    recordGateDecision(stash, fix.id, {
+      outcome: "staged",
+      reason: "judgment-accept",
+      contentHash: proposalContentHash(fix),
+      gate: "triage",
+    });
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(result.promoted).toEqual([]);
+    expect(result.deferred.map((d) => d.id)).toEqual([fix.id]);
+  });
+});
+
+// A proposal from the proactive lane has no feedback behind it: it waits for a person (#1147).
+describe("drainProposals — proactive-lane proposals wait for a person (#1147)", () => {
+  test("a judge-passed reflect proposal from the lane is deferred; the same one from feedback is accepted", async () => {
+    const stash = makeStashDir();
+    const proactive = seedJudged(stash, "lessons/lane", "reflect", VALID_LESSON, "proactive");
+    const feedback = seedJudged(stash, "lessons/fed", "reflect", VALID_LESSON, "signal-delta");
+    const scoped = seedJudged(stash, "lessons/scoped", "reflect", VALID_LESSON, "scope");
+    expect(getProposal(stash, proactive.id).eligibilitySource).toBe("proactive");
+
+    const promoteFn = fakeAccept();
+    const result = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+
+    expect(result.promoted.sort()).toEqual([feedback.id, scoped.id].sort());
+    expect(result.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
+    expect(getProposal(stash, proactive.id).gateDecision).toMatchObject({
+      outcome: "deferred",
+      reason: "proactive-needs-review",
+      gate: "triage",
+    });
+  });
+
+  test("the judgment tier never sees or accepts a lane proposal", async () => {
+    const stash = makeStashDir();
+    const proactive = seed(stash, "knowledge/lane-note", "consolidate", BIG_LESSON, "proactive");
+    const chat = mock(async () => JSON.stringify({ decision: "accept", reason: "looks right" }));
+    const promoteFn = fakeAccept();
+
+    const result = await drainProposals(baseOpts(stash, { judgment: FAKE_LLM_RUNNER }), promoteFn, fakeReject(), {
+      chat,
+    });
+
+    expect(chat).not.toHaveBeenCalled();
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(result.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
+  });
+
+  test("a staged accept of a lane proposal is not promoted by a later drain", async () => {
+    const stash = makeStashDir();
+    const proactive = seedJudged(stash, "lessons/lane", "reflect", VALID_LESSON, "proactive");
+    // A staged accept whose stamp matches the content, as a drain before the lane rule left it.
+    expect(getProposal(stash, proactive.id).gateDecision).toMatchObject({ outcome: "staged" });
+    const promoteFn = fakeAccept();
+
+    const first = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+    const second = await drainProposals(baseOpts(stash), promoteFn, fakeReject());
+
+    expect(promoteFn).not.toHaveBeenCalled();
+    expect(first.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
+    expect(second.deferred).toEqual([{ id: proactive.id, reason: "proactive-needs-review" }]);
   });
 });

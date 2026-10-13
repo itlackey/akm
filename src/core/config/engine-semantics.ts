@@ -4,11 +4,16 @@
 
 export const ENGINE_NAME_PATTERN_SOURCE = "^(?!akm-)[a-z][a-z0-9]*(?:-[a-z0-9]+)*$";
 
-export const BUILTIN_IMPROVE_STRATEGY_NAMES = [
-  "default",
+export const BUILTIN_IMPROVE_STRATEGY_NAMES = ["default", "consolidate"] as const;
+
+/**
+ * Built-in strategies removed in 0.10 (#1130, #1129). A user-defined strategy of the
+ * same name still resolves (it inherits `default`); naming one with no such
+ * block fails at resolution, not at config load.
+ */
+export const REMOVED_IMPROVE_STRATEGY_NAMES = [
   "quick",
   "thorough",
-  "consolidate",
   "catchup",
   "reflect-distill",
   "proactive-maintenance",

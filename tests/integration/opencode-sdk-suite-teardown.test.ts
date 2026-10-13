@@ -29,6 +29,7 @@ import { makeSandboxDir } from "../_helpers/sandbox";
 
 const REPO_ROOT = path.resolve(import.meta.dir, "../..");
 const SDK_RUNNER = path.join(REPO_ROOT, "src/integrations/harnesses/opencode-sdk/sdk-runner.ts");
+const VERSION_MODULE = path.join(REPO_ROOT, "src/integrations/harnesses/opencode/version.ts");
 
 async function waitForFile(filePath: string): Promise<void> {
   const deadline = Date.now() + 10_000;
@@ -73,8 +74,10 @@ test("a bun test run closes the opencode servers its tests started and removes i
     [
       `import { expect, test } from "bun:test";`,
       `import { writeFileSync } from "node:fs";`,
+      `import { _setOpencodeVersionProbeForTests } from ${JSON.stringify(VERSION_MODULE)};`,
       `import { __setServeCommand, runOpencodeSdk } from ${JSON.stringify(SDK_RUNNER)};`,
       `test("completes a dispatch and leaves the server cached", async () => {`,
+      `  _setOpencodeVersionProbeForTests(() => "1.18.34");`,
       `  writeFileSync(${JSON.stringify(homeFile)}, process.env.HOME as string);`,
       `  __setServeCommand([process.execPath, ${JSON.stringify(serve)}]);`,
       `  const profile = { name: "sdk-teardown", bin: "unused", args: [], platform: "opencode-sdk" };`,

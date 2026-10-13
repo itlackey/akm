@@ -60,11 +60,12 @@ import type { TaskRunResult, TaskRunStatus } from "./task-result";
 export const DEFAULT_WORKFLOW_TASK_TIMEOUT_MS = 6 * 60 * 60 * 1000;
 
 /**
- * The same unattended default for command and prompt tasks.
+ * The same unattended default for the other scheduled task kinds: `uses: commands/…`
+ * command tasks and native shell/script tasks.
  *
  * The reasoning above is about SCHEDULED runs, not about workflows: nobody is
- * watching, and one wedged run silently stops the schedule. Command tasks
- * defaulted to `null` (no kill timer) and prompt tasks inherited
+ * watching, and one wedged run silently stops the schedule. Native shell/script
+ * tasks defaulted to `null` (no kill timer) and command tasks inherited
  * DEFAULT_AGENT_TIMEOUT_MS, also null — so a hung `curl`, a prompting agent
  * waiting on stdin, or a stuck engine wedged the task forever while the
  * workflow arm was protected. Same value, same opt-out: an explicit

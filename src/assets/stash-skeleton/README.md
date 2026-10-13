@@ -85,7 +85,7 @@ akm feedback <ref> --positive
 # A note that simply did not fit your task gets no negative feedback.
 akm feedback <ref> --negative --reason "<what is wrong and what should change>"
 
-# Once you have verified the correct fact, attach the exact fix: it is checked and queued for review
+# Once you have verified the correct fact, attach the exact fix: it is checked and applied at once
 akm feedback <ref> --negative --reason "<what is wrong>" --replace "<exact current text>" --with "<corrected text>" --source "<URL, command or file>"
 
 # Capture a durable lesson or memory from the current session

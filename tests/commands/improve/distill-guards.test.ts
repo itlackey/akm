@@ -7,11 +7,10 @@
  *
  * Covers:
  *   - buildClsContext: CLS adjacent-lesson context block construction (step 9).
- *   - checkDistillFidelity: heuristic negation-pattern contradiction detection (step 10).
  */
 
 import { describe, expect, test } from "bun:test";
-import { buildClsContext, checkDistillFidelity } from "../../../src/commands/improve/distill-guards";
+import { buildClsContext } from "../../../src/commands/improve/distill-guards";
 
 // ── buildClsContext ───────────────────────────────────────────────────────────
 
@@ -52,54 +51,5 @@ describe("buildClsContext", () => {
     // Only first 600 chars should appear
     expect(ctx).toContain("x".repeat(600));
     expect(ctx).not.toContain("x".repeat(601));
-  });
-});
-
-// ── checkDistillFidelity ──────────────────────────────────────────────────────
-
-describe("checkDistillFidelity", () => {
-  test("returns no contradiction when disabled", () => {
-    const result = checkDistillFidelity("you must never deploy on Friday", ["always deploy on Friday"], {
-      enabled: false,
-    });
-    expect(result.contradictionDetected).toBe(false);
-  });
-
-  test("returns no contradiction when sourceBodies is empty", () => {
-    const result = checkDistillFidelity("you must never fail", [], { enabled: true });
-    expect(result.contradictionDetected).toBe(false);
-  });
-
-  test("returns no contradiction when proposal has no strong claims", () => {
-    const result = checkDistillFidelity("this is a mild suggestion", ["this is a mild suggestion"], { enabled: true });
-    expect(result.contradictionDetected).toBe(false);
-  });
-
-  test("detects contradiction: proposal 'always X' vs source 'never X'", () => {
-    // Proposal: "always deploy" creates positive claim { polarity: positive, term: "deploy" }
-    // Source: "never deploy" creates negative claim for "deploy" → contradiction
-    const result = checkDistillFidelity(
-      "always deploy the latest build immediately",
-      ["never deploy directly without review"],
-      { enabled: true },
-    );
-    expect(result.contradictionDetected).toBe(true);
-    expect(result.reason).toContain("deploy");
-  });
-
-  test("detects contradiction: proposal 'never X' vs source 'always X'", () => {
-    // Proposal: "never push" (negative), source: "always push" (positive) → contradiction
-    const result = checkDistillFidelity("never push to main without CI", ["always push to main when tests pass"], {
-      enabled: true,
-    });
-    expect(result.contradictionDetected).toBe(true);
-  });
-
-  test("no false positive when proposal and source agree", () => {
-    const result = checkDistillFidelity("always test before merging", ["always test before merging your changes"], {
-      enabled: true,
-    });
-    // Both say "always test" — not a contradiction
-    expect(result.contradictionDetected).toBe(false);
   });
 });

@@ -6,6 +6,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { closestMatch } from "../../cli/unknown-flags";
 import { parseBundleRef } from "../../core/asset/asset-ref";
 import { parseFrontmatter } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput, resolveRef, typeNameFromConceptId } from "../../core/asset/resolve-ref";
@@ -15,6 +16,8 @@ import { ConfigError, NotFoundError, rethrowIfTestIsolationError, UsageError } f
 import type { ImproveEligibleRef, ImproveIndexSnapshot } from "../../core/improve-types";
 import { isPathAbsent } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
+import { KNOWN_TYPES } from "../../core/recognition-util";
+import { warn } from "../../core/warn";
 import { deriveInstallations, deriveWritableBundleIds } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveAssetPath } from "../../indexer/walk/path-resolver";
@@ -260,9 +263,11 @@ async function collectEligibleRefsFromIndex(
         indexSnapshot: ready,
       };
     }
-    const entries = getAllEntries(db, scope.mode === "type" ? scope.value : undefined).filter((indexed) =>
-      isCandidateBundle(indexed.bundleId),
-    );
+    const scoped = getAllEntries(db, scope.mode === "type" ? scope.value : undefined);
+    if (scope.mode === "type" && scope.value && scope.value !== "any" && scoped.length === 0) {
+      warnUnmatchedTypeScope(scope.value, getAllEntries(db));
+    }
+    const entries = scoped.filter((indexed) => isCandidateBundle(indexed.bundleId));
     const planned = new Map<string, ImproveEligibleRef>();
     const strategyFiltered = new Map<string, ImproveEligibleRef>();
     let memoryEligible = 0;
@@ -305,6 +310,13 @@ async function collectEligibleRefsFromIndex(
   } finally {
     if (db) closeDatabase(db);
   }
+}
+
+/** A type scope that matches no indexed asset: warn on stderr, naming the nearest real type. */
+function warnUnmatchedTypeScope(value: string, indexed: ReturnType<typeof getAllEntries>): void {
+  const types = [...new Set([...KNOWN_TYPES, ...indexed.map((entry) => entry.entry.type)])];
+  const suggestion = closestMatch(value, types, Math.max(1, Math.floor(value.length / 3)));
+  warn(`Scope "${value}" matches no asset in the stash.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""}`);
 }
 
 /** The parent memory a `--scope <memory ref>` cleanup is restricted to. */

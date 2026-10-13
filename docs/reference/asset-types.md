@@ -40,7 +40,7 @@ my-bundle/
   instructions/   # Project guidance (.md)
   env/            # Environment files (.env) — groups of related config, loaded whole
   secrets/        # Secrets — one sensitive value per file (auth tokens, keys, certs)
-  workflows/      # Peer workflow sources (.md and .yml)
+  workflows/      # Workflow sources (.md)
   lessons/        # Distilled lessons (.md, see akm improve / proposals)
   memories/       # Recalled context fragments (.md, see Memory reference)
   facts/          # Durable bundle-level facts (.md)
@@ -60,10 +60,8 @@ Scripts and knowledge are classified by **what they are**: a `.sh` file is a
 script; a plain `.md` file is knowledge. Commands and agents are classified
 by **how an LLM should use them**: a `.md` file with `$ARGUMENTS`
 placeholders is a command template; one with `tools` in its frontmatter is an
-agent definition. Workflow assets may be `.md` or `.yml`: Markdown is
-classified by `type: workflow` or placement, while the GitHub-shaped YAML
-adapter validates the closed workflow subset. These are peer workflow sources,
-not an md-only surface. Skills are a
+agent definition. Workflow assets are `.md`, classified by `type: workflow`
+or placement. Skills are a
 **packaging convention**: a directory containing a `SKILL.md` file.
 
 See [Classification](../architecture/internals/classification.md) for the

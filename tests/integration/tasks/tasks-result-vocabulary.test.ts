@@ -14,9 +14,9 @@
  * `readTaskHistory()` round-trip SHAPE, including legacy (unmarked) rows.
  * This file is genuinely new coverage that file does not carry:
  *
- *  - the `targetVocab: 2` marker itself, inside the RAW `metadata_json`
- *    column, for every NEW row (§5.3's "NEW history rows store the new
- *    strings and set metadata vocab marker 2");
+ *  - the RAW `metadata_json` column of every NEW row: no `targetVocab`
+ *    marker (dropped in 0.10, #1091; migration 025 backfilled the old
+ *    vocabulary);
  *  - the §5.6 C-7 exit-78 rewire: `src/commands/tasks/tasks.ts`'s
  *    `result.target.kind === "command"` branch must become
  *    `"shell" || "script"`, in the SAME commit as the vocabulary re-code, or
@@ -105,8 +105,8 @@ function rawMetadata(taskId: string): Record<string, unknown> | undefined {
   }
 }
 
-describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker", () => {
-  test('a prepared workflow run stores targetVocab: 2 alongside target_kind "workflow"', async () => {
+describe("F-2 (D8) — every NEW history row stores the result vocabulary and no vocabulary marker", () => {
+  test('a prepared workflow run stores target_kind "workflow"', async () => {
     writeTask("vocab-workflow", "version: 4\nuses: workflows/noop\n");
 
     const result = await runTask("vocab-workflow", {
@@ -129,10 +129,10 @@ describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker",
     });
 
     expect(result.status).toBe("completed");
-    expect(rawMetadata("vocab-workflow")).toMatchObject({ targetVocab: 2 });
+    expect(rawMetadata("vocab-workflow")).not.toHaveProperty("targetVocab");
   });
 
-  test('a prepared command (agent/LLM) run stores targetVocab: 2, target_kind "command", and engine in metadata', async () => {
+  test('a prepared command (agent/LLM) run stores target_kind "command", and engine in metadata', async () => {
     writeTask(
       "vocab-command",
       ["version: 4", "uses: akm/command", "with:", "  content: say hi", "engine: opencode", ""].join("\n"),
@@ -146,10 +146,11 @@ describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker",
 
     expect(result.status).toBe("completed");
     expect(result.target).toEqual({ kind: "command", engine: "opencode" });
-    expect(rawMetadata("vocab-command")).toMatchObject({ targetVocab: 2, engine: "opencode" });
+    expect(rawMetadata("vocab-command")).toMatchObject({ engine: "opencode" });
+    expect(rawMetadata("vocab-command")).not.toHaveProperty("targetVocab");
   });
 
-  test('a prepared shell (run:) run stores targetVocab: 2 and target_kind "shell"', async () => {
+  test('a prepared shell (run:) run stores target_kind "shell"', async () => {
     writeTask("vocab-shell", "version: 4\nrun: printf ok\nshell: sh\n");
 
     const result = await runTask("vocab-shell", {
@@ -160,10 +161,10 @@ describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker",
 
     expect(result.status).toBe("completed");
     expect(result.target.kind).toBe("shell");
-    expect(rawMetadata("vocab-shell")).toMatchObject({ targetVocab: 2 });
+    expect(rawMetadata("vocab-shell")).not.toHaveProperty("targetVocab");
   });
 
-  test('a prepared script run stores targetVocab: 2 and target_kind "script" (distinguishable from shell)', async () => {
+  test('a prepared script run stores target_kind "script" (distinguishable from shell)', async () => {
     fs.writeFileSync(path.join(scriptsDir, "vocab-script.sh"), "#!/bin/sh\nprintf ok\n");
     writeTask("vocab-script", "version: 4\nuses: scripts/vocab-script.sh\n");
 
@@ -175,7 +176,7 @@ describe("F-2 (D8) — every NEW history row carries the targetVocab: 2 marker",
 
     expect(result.status).toBe("completed");
     expect(result.target.kind).toBe("script");
-    expect(rawMetadata("vocab-script")).toMatchObject({ targetVocab: 2 });
+    expect(rawMetadata("vocab-script")).not.toHaveProperty("targetVocab");
   });
 });
 

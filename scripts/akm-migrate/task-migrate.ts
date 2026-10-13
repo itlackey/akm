@@ -17,7 +17,7 @@ import { ConfigError } from "../../src/core/errors";
 import { getDataDir } from "../../src/core/paths";
 import { resolveWritable } from "../../src/core/write-source";
 import { lockContentRootFor } from "../../src/integrations/lockfile";
-import type { TaskToV4MigrationPlan } from "../../src/tasks/source/task-to-v4";
+import type { TaskToV4MigrationPlan } from "./migrate/task-to-v4";
 import { applyTaskFilesPlan, inspectTaskFiles, planTaskFilesMigration, type TaskFileRoot } from "./migrate/task-files";
 
 export interface TaskFileSummary {

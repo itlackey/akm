@@ -250,7 +250,9 @@ akm sync my-skills -m "Update"   # Named writable git bundle
 ```
 
 Push behavior depends on configuration: if the bundle is a git repo with a
-remote and `writable: true`, sync also pushes. Otherwise it commits only.
+remote and `writable: true`, sync first fetches and merges what another host
+pushed, then pushes. A conflicting merge is aborted and the push skipped (your
+commit stays). Otherwise it commits only.
 
 Writes that land on a writable git bundle via an explicit destination flag
 (e.g. `akm remember --bundle my-skills`, proposal accept/revert, consolidate)

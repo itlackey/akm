@@ -40,16 +40,20 @@ import { buildExecution, resolveExecution } from "../../src/integrations/agent/e
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
 import { runExecution } from "../../src/integrations/agent/runner-dispatch";
 import type { AgentRunResult } from "../../src/integrations/agent/spawn";
-import { HARNESS_ID_TABLE } from "../../src/integrations/harnesses/ids";
+import { HARNESS_REGISTRY } from "../../src/integrations/harnesses";
 import { MODEL_WORK_OPENCODE_AGENT } from "../../src/integrations/harnesses/opencode/model-work-agent";
 import {
   __setServerFactory,
   __setTestServer,
   closeServer,
 } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import type { V1Client } from "../../src/integrations/harnesses/opencode-sdk/v1-adapter";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink, withLlmStage } from "../../src/llm/usage-telemetry";
 import { serveLlmStub } from "../_helpers/engine-stubs";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 import { makeSandboxDir, type SandboxedDir, sandboxStashDir } from "../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 const PROVIDER_MESSAGE = "provider exploded: model stub-model not found";
 const REPLY = '{"verdict":"ok"}';
@@ -176,7 +180,7 @@ const LLM: Transport = {
   },
 };
 
-const CLI_HARNESSES: Transport[] = HARNESS_ID_TABLE.filter((entry) => entry.id !== "opencode-sdk").map((entry) => ({
+const CLI_HARNESSES: Transport[] = HARNESS_REGISTRY.filter((entry) => entry.id !== "opencode-sdk").map((entry) => ({
   name: entry.id,
   engine: (scenario) => ({ kind: "agent", platform: entry.id, bin: path.join(bins.dir, scenario) }),
   delivered: (result) => {
@@ -198,7 +202,7 @@ const OPENCODE_SDK: Transport = {
       client: {
         session: {
           create: async () => ({ data: { id: "contract-session" } }),
-          prompt: async (args) => {
+          prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
             sdkBodies.push(args.body as Record<string, unknown>);
             if (reply === SDK_HANG) return new Promise<never>(() => {});
             return (typeof reply === "function" ? reply(sdkBodies.length) : reply) as never;
@@ -248,7 +252,7 @@ const ALL_TRANSPORTS: [string, Transport][] = [LLM, ...CLI_HARNESSES, OPENCODE_S
 
 /** A stage call is model work: it runs on the transports that confine the model-work tool policy. */
 const MODEL_WORK_TRANSPORTS = ALL_TRANSPORTS.filter(
-  ([name]) => name === LLM.name || HARNESS_ID_TABLE.some((entry) => entry.id === name && entry.enforcesModelWorkTools),
+  ([name]) => name === LLM.name || HARNESS_REGISTRY.some((entry) => entry.id === name && entry.capabilities.modelWork),
 );
 
 /** How many times `transport` was called for `scenario` in this test. */
@@ -444,11 +448,11 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       return {
         client: {
           session: {
-            create: async (args) => {
+            create: async (args: Parameters<V1Client["session"]["create"]>[0]) => {
               queries.push(args.query);
               return { data: { id: "contract-session" } };
             },
-            prompt: async (args) => {
+            prompt: async (args: Parameters<V1Client["session"]["prompt"]>[0]) => {
               sdkBodies.push(args.body as Record<string, unknown>);
               return sdkText(REPLY) as never;
             },

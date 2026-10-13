@@ -269,7 +269,7 @@ describe("akm proposal list (CLI)", () => {
     const envelope = JSON.parse(result.stderr);
     expect(envelope.code).toBe("INVALID_FLAG_VALUE");
     expect(envelope.error).toContain('--queue must reference a source name from your config. No source named "ghost"');
-    expect(envelope.error).not.toContain("--target");
+    expect(envelope.error).not.toContain("--bundle");
   });
 
   test("accepts --status=reverted (parser allows reverted status)", async () => {
@@ -684,17 +684,17 @@ describe("accept/reject --generator flag (WS3)", () => {
     expect(result.stderr).not.toContain("deprecated");
   });
 
-  test("proposal accept rejects the retired --source flag (renamed to --generator in 0.9)", async () => {
+  test("proposal accept rejects the retired --source flag as unknown", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
     const result = await runCli(["proposal", "accept", "--source", "reflect", "--yes", "--format=json"], {
       stashDir: stash,
     });
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).code).toBe("INVALID_FLAG_VALUE");
+    expect(result.stderr).toContain('Unknown flag "--source"');
   });
 
-  test("proposal reject rejects the retired --source flag (renamed to --generator in 0.9)", async () => {
+  test("proposal reject rejects the retired --source flag as unknown", async () => {
     const stash = makeStashDir();
     seedProposal(stash);
     const result = await runCli(
@@ -702,7 +702,7 @@ describe("accept/reject --generator flag (WS3)", () => {
       { stashDir: stash },
     );
     expect(result.status).toBe(2);
-    expect(JSON.parse(result.stderr).code).toBe("INVALID_FLAG_VALUE");
+    expect(result.stderr).toContain('Unknown flag "--source"');
   });
 });
 
@@ -974,7 +974,7 @@ describe("akm proposal multi-bundle queues", () => {
       akmProposalAccept({ stashDir: secondary, id: conflicting.id, target: "primary", config }),
     ).rejects.toThrow(/bound.*target.*primary/i);
     const cliConflict = await runCli(
-      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--target", "primary", "--format=json"],
+      ["proposal", "accept", conflicting.id, "--queue", "secondary", "--bundle", "primary", "--format=json"],
       { stashDir: primary },
     );
     expect(cliConflict.status).toBe(2);

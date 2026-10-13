@@ -27,6 +27,12 @@ import {
   userModelMapPath,
 } from "../../integrations/agent/model-map";
 import type { RunnerSpec } from "../../integrations/agent/runner";
+import {
+  detectOpencodeMajor,
+  type OpencodeVersionInfo,
+  resolveOpencodeBin,
+} from "../../integrations/harnesses/opencode/version";
+import { OPENCODE_CLIENT_PACKAGE } from "../../integrations/harnesses/opencode-sdk/wire";
 import { probeEndpointOnce } from "../../llm/client";
 import type { ExtractOutcomeCount } from "../../storage/repositories/extract-sessions-repository";
 import {
@@ -343,19 +349,15 @@ async function runConfiguredEngineProbe(
   const env = deps.env ?? process.env;
   const configuredEngine = config.engines?.[engineName];
   if (configuredEngine?.kind === "agent" && configuredEngine.platform === "opencode-sdk") {
-    let packageAvailable = false;
+    const binary = resolveOpencodeBin(configuredEngine.bin);
+    let detected: OpencodeVersionInfo;
     try {
-      const resolvePackage = deps.resolvePackage ?? ((name: string) => import.meta.resolve(name));
-      resolvePackage("@opencode-ai/sdk");
-      packageAvailable = true;
-    } catch {
-      packageAvailable = false;
-    }
-    const binary = configuredEngine.bin ?? "opencode";
-    let binaryAvailable: boolean;
-    try {
-      const version = (deps.spawnSync ?? spawnSync)(binary, ["--version"], { encoding: "utf8", timeout: 5_000 });
-      binaryAvailable = (version.status ?? 1) === 0;
+      detected = detectOpencodeMajor(binary, {
+        probe: (bin) => {
+          const run = (deps.spawnSync ?? spawnSync)(bin, ["--version"], { encoding: "utf8", timeout: 5_000 });
+          return (run.status ?? 1) === 0 ? String(run.stdout ?? "").trim() : undefined;
+        },
+      });
     } catch {
       return {
         name: checkName,
@@ -365,6 +367,17 @@ async function runConfiguredEngineProbe(
         message: `SDK engine "${engineName}" executable availability could not be checked.`,
         evidence: { engine: engineName, runtimeKind: "sdk", binaryAvailable: false },
       };
+    }
+    const binaryAvailable = detected.runnable;
+    // The client package of the OpenCode major the binary reports; never the other major's.
+    const clientPackage = OPENCODE_CLIENT_PACKAGE[detected.major];
+    let packageAvailable = false;
+    try {
+      const resolvePackage = deps.resolvePackage ?? ((name: string) => import.meta.resolve(name));
+      resolvePackage(clientPackage);
+      packageAvailable = true;
+    } catch {
+      packageAvailable = false;
     }
     const fallbackEngine = configuredEngine.llmEngine;
     let fallback: Extract<RunnerSpec, { kind: "llm" }> | undefined;
@@ -409,7 +422,7 @@ async function runConfiguredEngineProbe(
       ? findSuppliedByEnvAsset(fallbackCredential, deps)
       : null;
     const missing = [
-      !packageAvailable ? "@opencode-ai/sdk package" : undefined,
+      !packageAvailable ? `${clientPackage} package` : undefined,
       !binaryAvailable ? `${binary} binary` : undefined,
       fallbackEngine && !fallback ? "configured fallback LLM connection" : undefined,
       !fallbackCredentialAvailable
@@ -424,7 +437,9 @@ async function runConfiguredEngineProbe(
       runtimeKind: "sdk",
       binary,
       binaryAvailable,
-      package: "@opencode-ai/sdk",
+      package: clientPackage,
+      detectedVersion: detected.version || null,
+      detectedMajor: detected.major,
       packageAvailable,
       model: effectiveModel ?? null,
       configuredModel: configuredModel ?? null,
@@ -842,7 +857,23 @@ export function probeActiveImproveStrategy(
     );
     const availableModelProcessNames = modelProcessNames.filter((name) => plan.processes[name].enabled);
     const allRequiredUnavailable = requiredModelProcessNames.length > 0 && availableModelProcessNames.length === 0;
-    const status = unavailableProcesses.length === 0 ? "pass" : allRequiredUnavailable ? "fail" : "warn";
+    // No engine configured at all (no unavailable item carries a resolved engine)
+    // is "not set up yet", not a broken credential: it keeps the unknown/warn
+    // result it had when the plan threw for it. Engine-free deterministic triage
+    // (#1143) now lets such a plan resolve, so this has to be explicit.
+    const noEngineConfigured = plan.engineUnavailable.length > 0 && plan.engineUnavailable.every((i) => !i.engine);
+    const explicitlyConfigured =
+      config.defaults?.improveStrategy !== undefined || Object.keys(config.improve?.strategies ?? {}).length > 0;
+    const status =
+      unavailableProcesses.length === 0
+        ? "pass"
+        : allRequiredUnavailable
+          ? noEngineConfigured
+            ? explicitlyConfigured
+              ? "warn"
+              : "unknown"
+            : "fail"
+          : "warn";
     return {
       check: {
         name: "active-improve-strategy",

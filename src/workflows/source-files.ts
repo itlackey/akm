@@ -5,11 +5,9 @@
 /**
  * Authoritative workflow-source ownership.
  *
- * Markdown and the bounded GitHub-shaped YAML subset are peer authoring
- * formats, but one canonical workflow ref must have exactly one source file.
- * This module is the shared filesystem arbitration point used before indexing,
- * cache reuse, lookup/show, and runtime load/start. It never chooses one
- * extension by priority: two recognized siblings are a hard collision.
+ * One canonical workflow ref must have exactly one source file. This module
+ * is the shared filesystem arbitration point used before indexing, cache
+ * reuse, lookup/show, and runtime load/start.
  */
 
 import fs from "node:fs";
@@ -19,8 +17,6 @@ import { UsageError, type UsageErrorCode } from "../core/errors";
 import { canonicalizeWorkflowName, WORKFLOW_EXTENSIONS } from "../core/recognition-util";
 import { warnOnce } from "../core/warn";
 
-export type WorkflowSourceFormat = "markdown" | "github-yaml";
-
 export interface WorkflowSourceFile {
   /** Path with its authored filename/extension spelling. */
   path: string;
@@ -29,7 +25,6 @@ export interface WorkflowSourceFile {
   /** Source-root-relative path with POSIX separators. */
   relativePath: string;
   canonicalName: string;
-  format: WorkflowSourceFormat;
 }
 
 interface WorkflowSourceCandidate {
@@ -71,7 +66,7 @@ export class WorkflowSourceCollisionError extends WorkflowSourceRejectionError {
     const sorted = [...sourcePaths].sort(compareCodePoints);
     super(
       `Workflow "${canonicalName}" resolves to multiple workflow source files: ${sorted.join(", ")}. ` +
-        "A canonical workflow ref must be owned by exactly one recognized .md or .yml source; remove or rename the duplicate.",
+        "A canonical workflow ref must be owned by exactly one recognized .md source; remove or rename the duplicate.",
       "RESOURCE_ALREADY_EXISTS",
       sorted,
     );
@@ -97,7 +92,7 @@ export class WorkflowSourceNameError extends WorkflowSourceRejectionError {
   constructor(sourcePath: string, nestedSuffix: string) {
     super(
       `Workflow source filename ${sourcePath} has an extensionless stem ending in recognized workflow suffix "${nestedSuffix}". ` +
-        "Nested workflow suffixes are invalid; remove the inner .md or .yml suffix instead of relying on repeated stripping.",
+        "Nested workflow suffixes are invalid; remove the inner .md suffix instead of relying on repeated stripping.",
       "WORKFLOW_SOURCE_INVALID",
       [sourcePath],
     );
@@ -109,8 +104,8 @@ export class WorkflowSourceNameError extends WorkflowSourceRejectionError {
 export class WorkflowSourceLinkIdentityError extends WorkflowSourceRejectionError {
   constructor(sourcePath: string, targetPath: string) {
     super(
-      `Workflow source ${sourcePath} resolves through a symlink to ${targetPath} with a different source format. ` +
-        "The authored workflow path and resolved source must use the same .md or .yml format.",
+      `Workflow source ${sourcePath} resolves through a symlink to ${targetPath} with a different extension. ` +
+        "The authored workflow path and resolved source must both be .md.",
       "WORKFLOW_SOURCE_INVALID",
       [sourcePath],
     );
@@ -312,17 +307,15 @@ function pickWorkflowSource(
   sources: readonly WorkflowSourceFile[],
 ): WorkflowSourceFile | undefined {
   if (sources.length <= 1) return sources[0];
-  const winner = [...sources].sort((left, right) =>
-    left.format === right.format ? 0 : left.format === "markdown" ? -1 : 1,
-  )[0];
+  const winner = sources[0];
   const shadowed = sources.filter((source) => source !== winner);
   const displayName = adapterId === "akm" ? `workflows/${canonicalName}` : canonicalName;
   warnOnce(
     `workflow-source-collision:${displayName}`,
-    `Workflow "${displayName}" has both a .md and .yml source (${shadowed
+    `Workflow "${displayName}" has several sources (${shadowed
       .map((source) => source.relativePath)
-      .join(", ")} shadowed by ${winner?.relativePath}); using the .md source. Remove the shadowed sibling to ` +
-      "silence this warning.",
+      .join(", ")} shadowed by ${winner?.relativePath}); using ${winner?.relativePath}. Remove the shadowed ` +
+      "sibling to silence this warning.",
   );
   return winner;
 }
@@ -377,7 +370,6 @@ function inspectWorkflowSourceCandidate(
       realPath,
       relativePath: candidate.relativePath,
       canonicalName,
-      format: candidate.lowerExtension === ".md" ? "markdown" : "github-yaml",
     },
   };
 }
@@ -412,8 +404,7 @@ export function assertIndexedWorkflowSourceIdentity(
     throw new WorkflowSourceIdentityError(ref, indexedPath, authoritative.path);
   }
   const indexedExtension = path.extname(indexedPath).toLowerCase();
-  const authoritativeExtension = authoritative.format === "markdown" ? ".md" : ".yml";
-  if (indexedExtension !== authoritativeExtension) {
+  if (indexedExtension !== ".md") {
     throw new WorkflowSourceIdentityError(ref, indexedPath, authoritative.path);
   }
 }

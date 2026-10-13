@@ -15,12 +15,9 @@ afterEach(() => storage.cleanup());
 
 // `createWorkflowAsset({ force: true })` without `from` replaces the file
 // with a fresh template (or an explicit `content` override) — the git/
-// symlink preflight logic below runs regardless. The CLI used to require
-// `--force --reset` together and refuse plain `--force` with no `--from`;
-// that CLI-only requirement is gone (0.9.12) — `--force` alone now means
-// "replace with a fresh template", and `--reset` is a deprecated alias with
-// no independent effect. See workflow-cli.ts's `run()` for the create
-// command.
+// symlink preflight logic below runs regardless. `--force` alone means
+// "replace with a fresh template". See workflow-cli.ts's `run()` for the
+// create command.
 describe("workflow force publication safety", () => {
   test("force atomically replaces an existing workflow", () => {
     const created = createWorkflowAsset({ name: "replace" });

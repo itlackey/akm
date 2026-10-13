@@ -28,15 +28,6 @@ export interface TaskHistoryMetadata {
   durationMs: number;
   detail: TaskHistoryDetail | null;
   engine?: string | null;
-  /**
-   * D8 result-vocabulary marker (spec docs/plans/specs/p1b-model-extraction.md
-   * §5.3): present (always `2`) on every row written by the new
-   * result-vocabulary code, absent on legacy rows written before it. The read
-   * boundary (src/tasks/run/task-history.ts's taskHistoryRowToResult) uses its
-   * presence to choose between the new `target_kind` strings and the legacy
-   * read-mapping table.
-   */
-  targetVocab?: 2;
 }
 
 function metadataError(message: string): never {
@@ -95,13 +86,6 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
   // A malformed `engine` (wrong type) is dropped like any other unrecognized
   // field rather than rejecting the whole row over a non-essential value.
   const engine = parsed.engine === null || typeof parsed.engine === "string" ? parsed.engine : undefined;
-  if (parsed.targetVocab !== undefined && parsed.targetVocab !== 2) {
-    warnOnce(
-      `task-history-target-vocab:${String(parsed.targetVocab)}`,
-      `task_history row has targetVocab ${String(parsed.targetVocab)}, newer than this akm's 2 — falling back to ` +
-        "the legacy target_kind mapping rather than rejecting the row.",
-    );
-  }
   validateDetail(detail);
   const cleanDetail: TaskHistoryDetail | null = detail
     ? {
@@ -116,7 +100,6 @@ export function decodeTaskHistoryMetadata(input: string | unknown): TaskHistoryM
     durationMs: parsed.durationMs,
     detail: cleanDetail,
     ...(engine !== undefined ? { engine } : {}),
-    ...(parsed.targetVocab === 2 ? { targetVocab: 2 as const } : {}),
   };
 }
 

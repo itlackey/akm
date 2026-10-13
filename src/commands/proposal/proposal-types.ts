@@ -13,11 +13,11 @@ import type { FileChange } from "../../core/file-change";
 /**
  * The eligibility lane that selected an asset for an improve run, carried on
  * the invoked/promoted events and the proposal so outcomes can be sliced by
- * lane. When several lanes qualify, the most specific reactive one wins:
- * `scope` > `signal-delta`. `unknown` is only for a lane that genuinely cannot
- * be attributed; `proactive` and `high-salience` (those lanes only score now),
- * `forgetting-safety` and `replay` are retired — none is assigned by anything
- * any more, all appear on rows older releases wrote.
+ * lane. When several lanes qualify, the most specific one wins:
+ * `scope` > `signal-delta` > `proactive`. `unknown` is only for a lane that
+ * genuinely cannot be attributed; `high-salience`, `forgetting-safety` and
+ * `replay` are retired — none is assigned by anything any more, all appear on
+ * rows older releases wrote.
  */
 export type EligibilitySource =
   | "signal-delta"
@@ -121,17 +121,20 @@ export interface ProposalGateDecision {
   /**
    * Stable reason token. The drain (`triage` gate): `empty-diff`,
    * `judge-passed`, `judgment-accept`, `judgment-reject`,
-   * `no-judge-configured`, `judgment-deferred`, `judgment-parse-failure`
+   * `no-judge-configured`, `judgment-deferred`, `judgment-not-promotion` (the judge
+   * would accept, but only a consolidate promotion may be accepted on a
+   * judgment), `judgment-parse-failure`
    * (the judge answered, but not with a verdict), `judgment-error` (the runner
    * failed), `stale-target`. The stage
    * quality judge (`quality-gate`): `quality-judge` on a staged pass,
    * `quality-review` for a human, `distill-review` for a human on a distill
-   * pass, `judge-error` for a human when reflect's
-   * judge gave no verdict. Reflect (`reflect`), for a human:
+   * pass, `distill-update` for a human on a distill update of an existing lesson, `judge-error` for a human when reflect's
+   * judge gave no verdict, `judge-uncertain` when its mean is in reflect's review band. Reflect (`reflect`), for a human:
    * `no-judge-configured`. Also `expired` and `asset-missing`; older
    * releases wrote `body-edit`, `reflect-size-ratio`, `reflect-truncation-leak`,
    * `max-diff-lines`, `min-content-lines`, `policy-accept`, `mid-band` and
-   * `possible-dup`.
+   * `possible-dup`. `akm feedback` (`feedback`) stamps `manual-fix` on the
+   * exact fix a person typed, which it accepts at once.
    */
   reason: string;
   /** What an older threshold gate measured (e.g. the line count in "210 > 200"). */

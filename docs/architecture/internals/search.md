@@ -223,11 +223,10 @@ By default (`--format json`, `--detail brief`), search emits minimal fields:
 `--detail normal` emits `type`, `name`, `description`, `action`, `score`, and
 `estimatedTokens`, plus optional warning, quality, or env-key fields.
 `--detail full` adds `whyMatched`, `origin`, `path`, and timing data.
-`--shape summary` returns metadata only (no content), under 200 tokens.
 
 ### Agent-optimized output
 
-For each materialized local hit, `--shape agent` includes `name`, canonical
+For each materialized local hit, `--detail agent` includes `name`, canonical
 `ref`, `type`, absolute `path`, current-policy `editable`, `description`,
 `action`, `score`, and optional `estimatedTokens`/env keys. `editHint` appears
 only when `editable` is `false`. The hint is supplemental: `action` remains the

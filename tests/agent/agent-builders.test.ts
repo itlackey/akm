@@ -7,6 +7,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentCommandBuilder, AgentDispatchRequest } from "../../src/integrations/agent/builder-shared";
 import type { AgentProfile } from "../../src/integrations/agent/profiles";
+import { fakeOpencodeMajor } from "../_helpers/opencode-version";
 
 // NOTE: this file previously carried a full 13-export mock.module fake of
 // src/core/warn. Nothing under test here (builders and profiles)
@@ -28,7 +29,9 @@ function makeFakeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
   };
 }
 
+// These cases pin the OpenCode 1 argv, so the binary reports 1.x.
 function makeOpencodeProfile(overrides: Partial<AgentProfile> = {}): AgentProfile {
+  fakeOpencodeMajor(1);
   return makeFakeProfile({
     name: "opencode",
     bin: "opencode",

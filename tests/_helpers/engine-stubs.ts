@@ -62,6 +62,8 @@ export function fakeHarness(replies: readonly string[], framing: "plain" | "clau
 const fs = require("node:fs");
 const self = process.argv[1];
 const argv = process.argv.slice(2);
+// akm asks an OpenCode binary which major it is; that probe is not a dispatch and is not recorded.
+if (argv[0] === "--version") { console.log("opencode v2.0.26"); process.exit(0); }
 const countFile = self + ".count";
 const call = (fs.existsSync(countFile) ? Number(fs.readFileSync(countFile, "utf8")) : 0) + 1;
 fs.writeFileSync(countFile, String(call));

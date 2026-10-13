@@ -14,16 +14,17 @@ import { parseFrontmatter, parseFrontmatterBlock, spliceFrontmatterLine } from "
 import { type AssetRef, conceptIdFromTypeName, parseRefInput, typeNameFromConceptId } from "../core/asset/resolve-ref";
 import { isWithin, resolveStashDir, safeRealpath, writeFileAtomic } from "../core/common";
 import { loadConfig } from "../core/config/config";
-import { NotFoundError, UsageError } from "../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../core/errors";
 import { appendEvent } from "../core/events";
 import { resolveMutationTarget } from "../core/mutation-target";
 import { isPathAbsent } from "../core/path-access";
 import { getDbPath } from "../core/paths";
-import { withStateDb } from "../core/state-db";
+import { getStateDbPath, withStateDb } from "../core/state-db";
 import { warn } from "../core/warn";
 import { withWriteTargetMutation } from "../core/write-source";
+import { recomputeUtilityScores } from "../indexer/indexer";
 import { resolveSourceEntries } from "../indexer/search/search-source";
-import { countFeedbackSignals, insertUsageEvent, resolveUsageEventSource } from "../indexer/usage/usage-events";
+import { insertUsageEventStrict, resolveUsageEventSource } from "../indexer/usage/usage-events";
 import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import type { Database } from "../storage/database";
 import { closeDatabase, openExistingDatabase } from "../storage/repositories/index-connection";
@@ -32,10 +33,11 @@ import {
   getEntryFilePathById,
   getItemRefById,
 } from "../storage/repositories/index-entries-repository";
-import { applyFeedbackToUtilityScore } from "../storage/repositories/index-utility-repository";
+import { getUtilityScore } from "../storage/repositories/index-utility-repository";
 import { contentHash } from "./improve/content-hash";
 import { readEdgeList } from "./improve/memory/memory-belief";
-import { createProposal } from "./proposal/repository";
+import { akmProposalAccept } from "./proposal/proposal";
+import { createProposal, recordGateDecision, rejectProposalDurably } from "./proposal/repository";
 
 // ── Tag validation ────────────────────────────────────────────────────────────
 
@@ -168,35 +170,38 @@ function buildLessonStrengthUpdate(rawBytes: Buffer, feedbackRef: string): { str
   return rawBytes.equals(nextBytes) ? { strength: strengthList.length } : { strength: strengthList.length, nextBytes };
 }
 
+/** Utility at or above this is "high"; falling below it after feedback emits `improve_review_needed`. */
+const UTILITY_REVIEW_THRESHOLD = 0.5;
+
 /**
- * Result of {@link recordFeedbackUsage}: the raw utility-policy result (when
- * the update ran) plus whether the ranking update was actually applied, and
- * why not when it wasn't. R-034: the caller could not previously distinguish
- * "no update needed" from "update was skipped" — this makes that explicit so
- * `akm feedback`'s response envelope can report it instead of staying silent.
+ * Result of {@link recordFeedbackUsage}: the entry's utility before and after
+ * (when the recompute ran) plus whether the event counts toward `akm search` /
+ * `akm curate` ranking, and why not when it doesn't. Ranking counts the
+ * recorded user-attributed events themselves, so this does not depend on the
+ * utility update succeeding.
  */
 interface RecordFeedbackUsageResult {
-  utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-  rankingUpdateApplied: boolean;
-  /** Set whenever `rankingUpdateApplied` is false; explains why. */
-  rankingUpdateSkippedReason: string | undefined;
+  utilityResult: { previousUtility: number; nextUtility: number } | undefined;
+  /** True iff the recorded event is user-attributed, i.e. counted by the ranking factor. */
+  countsTowardRanking: boolean;
+  /** Set whenever `countsTowardRanking` is false; explains why. */
+  rankingSkippedReason: string | undefined;
 }
 
 /**
- * Persist the feedback usage-event (state.db) and immediately fold it into the
- * entry's MemRL utility score (index.db). Chunk-8 WI-8.3: usage_events lives in
- * state.db; entries + utility_scores stay in `indexDb`. BOTH positive and
- * negative signals apply the EMA utility update unconditionally and
- * immediately when the source is user-attributed — no `akm index` run is
- * required for either signal to affect search ranking. Uses the bounded-step
- * EMA policy (F-5 / #386, arXiv:2601.03192).
- *
- * The update is intentionally SKIPPED for non-`user` event sources (`improve`,
- * `task`, `audit`, `unknown`) — an anti-self-reinforcement guard that stops an
- * agent or automated pipeline from boosting its own picks. This is by design
- * and must not be removed; R-034 only asks that the skip be surfaced to the
- * caller rather than passing silently. Best-effort: a utility-update failure
- * never fails the feedback record.
+ * Persist the feedback usage-event (state.db) and, for a user-attributed event,
+ * recompute the entry's utility score (index.db) with the same function the
+ * `akm index` finalize pass uses, scoped to this one entry, so there is one
+ * formula and the stored value is what the next index would compute. Chunk-8
+ * WI-8.3: usage_events lives in state.db; entries + utility_scores stay in `indexDb`.
+ * Search ranking does not read the utility score: it counts the recorded
+ * `source='user'` feedback events itself, so a user-attributed event affects
+ * ranking at once and an `improve`/`task`/`audit`/`unknown` one never does — an
+ * anti-self-reinforcement guard that stops an agent or automated pipeline from
+ * boosting its own picks. This is by design and must not be removed. The
+ * utility score is read by improve and metrics only; its update is best-effort
+ * and its failure never fails the feedback record or changes the ranking effect.
+ * A failed usage-event write fails the command (DATA_DIR_NOT_WRITABLE).
  */
 function recordFeedbackUsage(
   indexDb: Database,
@@ -205,35 +210,43 @@ function recordFeedbackUsage(
   signal: "positive" | "negative",
   metadataStr: string | undefined,
 ): RecordFeedbackUsageResult {
-  let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-  let rankingUpdateApplied = false;
-  let rankingUpdateSkippedReason: string | undefined;
+  let utilityResult: RecordFeedbackUsageResult["utilityResult"];
+  let rankingSkippedReason: string | undefined;
   const eventSource = resolveUsageEventSource();
   withStateDb((stateDb) => {
-    insertUsageEvent(stateDb, {
-      event_type: "feedback",
-      entry_ref: durableEntryRef,
-      entry_id: entryId,
-      signal,
-      metadata: metadataStr,
-      source: eventSource,
-    });
+    // The usage event IS the feedback record, so a failed write fails the command
+    // instead of reporting ok while nothing was stored.
+    try {
+      insertUsageEventStrict(stateDb, {
+        event_type: "feedback",
+        entry_ref: durableEntryRef,
+        entry_id: entryId,
+        signal,
+        metadata: metadataStr,
+        source: eventSource,
+      });
+    } catch (err) {
+      throw new ConfigError(
+        `Feedback was not recorded: could not write ${getStateDbPath()} (${err instanceof Error ? err.message : String(err)}).`,
+        "DATA_DIR_NOT_WRITABLE",
+      );
+    }
     if (eventSource !== "user") {
-      rankingUpdateSkippedReason =
-        `feedback source is "${eventSource}", not "user" — ranking updates only apply to user-attributed ` +
-        "feedback (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
+      rankingSkippedReason =
+        `feedback source is "${eventSource}", not "user" — it does not count toward search ranking, which counts ` +
+        "user-attributed feedback only (anti-self-reinforcement guard; set AKM_EVENT_SOURCE=user to record as user demand).";
       return;
     }
     try {
-      const { pos, neg } = countFeedbackSignals(stateDb, entryId);
-      utilityResult = applyFeedbackToUtilityScore(indexDb, entryId, pos, neg);
-      rankingUpdateApplied = true;
+      const previousUtility = getUtilityScore(indexDb, entryId)?.utility ?? 0;
+      recomputeUtilityScores(indexDb, stateDb, entryId);
+      utilityResult = { previousUtility, nextUtility: getUtilityScore(indexDb, entryId)?.utility ?? previousUtility };
     } catch (err) {
-      // best-effort — feedback recording succeeds even if utility update fails
-      rankingUpdateSkippedReason = `utility update failed: ${err instanceof Error ? err.message : String(err)}`;
+      // best-effort — the event is recorded (and ranked) even if the utility update fails
+      warn(`[feedback] utility update failed: ${err instanceof Error ? err.message : String(err)}`);
     }
   });
-  return { utilityResult, rankingUpdateApplied, rankingUpdateSkippedReason };
+  return { utilityResult, countsTowardRanking: eventSource === "user", rankingSkippedReason };
 }
 
 // ── Judged text ──────────────────────────────────────────────────────────────
@@ -496,15 +509,20 @@ export const feedbackCommand = defineJsonCommand({
       'the exact fix: --replace "<exact current text>" --with "<corrected text>" --source "<URL,\n' +
       'command or file that shows it>" (repeat --replace/--with for several edits; use --with=...\n' +
       "for a value that starts with -). akm checks that each --replace text appears exactly once\n" +
-      "and queues the edit as a proposal for review. To mark the asset's history instead, add\n" +
+      "and applies the edit at once, with no review (`akm proposal revert` undoes it). To mark\n" +
+      "the asset's history instead, add\n" +
       "--superseded-by <ref> (the asset that replaces it) or --outdated (it describes a past\n" +
-      "state and nothing replaces it), with --reason and --source: the same proposal sets its\n" +
+      "state and nothing replaces it), with --reason and --source: the same edit sets its\n" +
       "beliefState and, for --superseded-by, adds the ref to supersededBy. `--positive` records\n" +
       "that an asset helped (it raises its ranking) and does not trigger a rewrite.\n\n" +
-      "Both signals adjust the asset's usefulness score right away, in the same\n" +
-      "process: positive feedback raises it, negative lowers it, and recent\n" +
-      "feedback counts for more than old feedback. No reindex is needed — the new\n" +
-      "score affects ranking starting with the very next `akm search`.",
+      "Feedback changes `akm search` and `akm curate` ranking starting with the very\n" +
+      "next search; no reindex is needed. Each recorded positive raises the asset's\n" +
+      "score and each negative lowers it, the same way for every asset: the more\n" +
+      "positives, the higher it ranks (5 outrank 2), and each further vote counts\n" +
+      "for a little less. The effect is small, so it reorders close matches and\n" +
+      "does not override relevance. Only feedback recorded as the user counts, not\n" +
+      "feedback from improve, task or audit runs. Feedback also moves the utility\n" +
+      "score that improve and `akm metrics` read.",
   },
   args: {
     // Optional in citty so run() is invoked even when omitted; we re-validate
@@ -681,9 +699,9 @@ export const feedbackCommand = defineJsonCommand({
     // The lock was originally needed to prevent feedback from racing a
     // background reindex it spawned — now that ensureIndex is removed, holding
     // the lock only causes feedback to block for the full improve run duration.
-    let utilityResult: ReturnType<typeof applyFeedbackToUtilityScore> | undefined;
-    let rankingUpdateApplied = false;
-    let rankingUpdateSkippedReason: string | undefined;
+    let utilityResult: RecordFeedbackUsageResult["utilityResult"];
+    let countsTowardRanking = false;
+    let rankingSkippedReason: string | undefined;
     let durableRef = ref;
     let fix:
       | {
@@ -712,10 +730,10 @@ export const feedbackCommand = defineJsonCommand({
           "ASSET_NOT_FOUND",
         );
       }
-      // Persist the feedback signal into usage_events. Both positive and
-      // negative signals apply the EMA utility update immediately — no
-      // `akm index` run is required for either signal to affect ranking in
-      // search results (see recordFeedbackUsage / applyFeedbackToUtilityScore).
+      // Persist the feedback signal into usage_events. A user-attributed signal
+      // also recomputes the entry's utility at once (see recordFeedbackUsage).
+      // Search ranking reads the recorded events directly, so no `akm index`
+      // run is needed.
       // WI-8.5b: the `feedback` / `improve_review_needed` events key on the
       // resolved entry's fully-qualified item_ref — the SAME durable key the
       // usage_events row carries and the SAME spelling the signal-delta
@@ -770,8 +788,8 @@ export const feedbackCommand = defineJsonCommand({
       const metadataStr = Object.keys(metadataObj).length > 1 ? JSON.stringify(metadataObj) : undefined;
       const recordResult = recordFeedbackUsage(db, entryId, itemRef, signal, metadataStr);
       utilityResult = recordResult.utilityResult;
-      rankingUpdateApplied = recordResult.rankingUpdateApplied;
-      rankingUpdateSkippedReason = recordResult.rankingUpdateSkippedReason;
+      countsTowardRanking = recordResult.countsTowardRanking;
+      rankingSkippedReason = recordResult.rankingSkippedReason;
     } finally {
       closeDatabase(db);
     }
@@ -782,17 +800,38 @@ export const feedbackCommand = defineJsonCommand({
       metadata: metadataObj,
     });
 
-    const fixProposal =
-      fix && reason?.trim() && fixSource
-        ? createProposal(resolveStashDir(), {
-            ref: durableRef,
-            itemRef: durableRef,
-            target: fix.target,
-            source: "feedback",
-            payload: { content: fix.content },
-            feedback: { reason: reason.trim(), source: fixSource },
-          })
-        : undefined;
+    // A person typed the fix, so it is applied now: the proposal is minted for the audit trail, `akm proposal
+    // revert` and reflect's "already acted on" rule, then accepted through the ordinary accept path (the same
+    // checks and git commit). If that refuses, the proposal is rejected and the command fails.
+    let fixProposal: ReturnType<typeof createProposal> | undefined;
+    if (fix && reason?.trim() && fixSource) {
+      const stashDir = resolveStashDir();
+      const minted = createProposal(stashDir, {
+        ref: durableRef,
+        itemRef: durableRef,
+        target: fix.target,
+        source: "feedback",
+        payload: { content: fix.content },
+        feedback: { reason: reason.trim(), source: fixSource },
+      });
+      try {
+        recordGateDecision(stashDir, minted.id, { outcome: "auto-accepted", reason: "manual-fix", gate: "feedback" });
+        fixProposal = (await akmProposalAccept({ stashDir, id: minted.id })).proposal;
+      } catch (err) {
+        try {
+          rejectProposalDurably(
+            stashDir,
+            minted.id,
+            `manual fix not applied: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        } catch (rejectErr) {
+          warn(
+            `[feedback] could not reject proposal ${minted.id}: ${rejectErr instanceof Error ? rejectErr.message : String(rejectErr)}`,
+          );
+        }
+        throw err;
+      }
+    }
 
     // F-5 / #386: When a high-utility asset crosses below the review threshold,
     // auto-create a review-needed escalation proposal so a human can confirm
@@ -802,7 +841,11 @@ export const feedbackCommand = defineJsonCommand({
     // Emit a structured event rather than a proposal so the review-needed
     // signal doesn't risk an accidental asset overwrite if the proposal is
     // accepted.
-    if (utilityResult?.crossedReviewThreshold) {
+    if (
+      utilityResult &&
+      utilityResult.previousUtility >= UTILITY_REVIEW_THRESHOLD &&
+      utilityResult.nextUtility < UTILITY_REVIEW_THRESHOLD
+    ) {
       try {
         appendEvent({
           eventType: "improve_review_needed",
@@ -861,9 +904,9 @@ export const feedbackCommand = defineJsonCommand({
       signal,
       reason: reason?.trim() ?? null,
       tags: validatedTags,
-      rankingUpdate: rankingUpdateApplied
+      rankingUpdate: countsTowardRanking
         ? { applied: true }
-        : { applied: false, reason: rankingUpdateSkippedReason ?? "unknown" },
+        : { applied: false, reason: rankingSkippedReason ?? "unknown" },
       ...(fixProposal
         ? {
             fix: {

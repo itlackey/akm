@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { applyExactReplacements, applyHistoryMark, assertProposalWritesFile } from "../../src/commands/feedback-cli";
 import { writeSupersededEdge } from "../../src/commands/improve/memory/memory-belief";
+import { buildSnapshotManifest } from "../../src/commands/improve/preparation";
 import { getProposal, listProposals } from "../../src/commands/proposal/repository";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
@@ -11,12 +12,14 @@ import { readEvents } from "../../src/core/events";
 import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { runCliCapture } from "../_helpers/cli";
+import { git, makeGitRepo } from "../_helpers/git";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 // `akm feedback --negative ... --replace/--with/--source`: an exact fix for a
-// wrong fact in an asset's text, checked before anything is recorded and filed
-// as a proposal for review. `--superseded-by <ref>` and `--outdated` mark the
-// asset's history the same way, in the same proposal.
+// wrong fact in an asset's text, checked before anything is recorded, filed as
+// a `feedback` proposal and accepted at once (a person typed it: no gate, no
+// judge). `--superseded-by <ref>` and `--outdated` mark the asset's history the
+// same way, in the same proposal.
 
 let storage: IsolatedAkmStorage;
 let stashDir = "";
@@ -84,7 +87,7 @@ const FIX = [
 ];
 
 describe("akm feedback --replace/--with/--source", () => {
-  test("files the exact fix as a proposal and leaves the file alone until it is accepted", async () => {
+  test("applies the fix at once: the file is rewritten and the proposal is accepted as a manual fix", async () => {
     const file = await indexNote();
     const { code, json } = await feedback(FIX);
     expect(code).toBe(0);
@@ -92,19 +95,64 @@ describe("akm feedback --replace/--with/--source", () => {
     expect(fix).toMatchObject({ replacements: 1, source: "https://opencode.ai/docs/server/" });
 
     const proposal = getProposal(stashDir, fix.proposalId);
+    expect(proposal.status).toBe("accepted");
     expect(proposal.source).toBe("feedback");
     expect(proposal.feedback).toEqual({
       reason: "The default port is 4096, not 8000.",
       source: "https://opencode.ai/docs/server/",
     });
-    expect(proposal.payload.content).toContain("listens on port 4096 by default");
-    expect(proposal.payload.content).not.toContain("8000");
-    expect(fs.readFileSync(file, "utf8")).toBe(NOTE);
-    expect(feedbackEvents()).toBe(1);
-
-    const accepted = await runCliCapture(["proposal", "accept", fix.proposalId, "--format=json"]);
-    expect(accepted.code).toBe(0);
+    expect(proposal.gateDecision).toMatchObject({ outcome: "auto-accepted", reason: "manual-fix", gate: "feedback" });
     expect(fs.readFileSync(file, "utf8")).toContain("The server listens on port 4096 by default.");
+    expect(fs.readFileSync(file, "utf8")).not.toContain("8000");
+    expect(listProposals(stashDir, { status: "pending" })).toHaveLength(0);
+    expect(feedbackEvents()).toBe(1);
+  });
+
+  test("in a git-backed stash the fix is committed, and revert restores the original bytes", async () => {
+    makeGitRepo({ dir: stashDir });
+    const file = await indexNote();
+    git(stashDir, ["add", "-A"]);
+    git(stashDir, ["commit", "-q", "-m", "seed"]);
+
+    const { code, json } = await feedback(FIX);
+    expect(code).toBe(0);
+    const id = (json.fix as { proposalId: string }).proposalId;
+    expect(git(stashDir, ["log", "-1", "--format=%s"]).trim()).toBe(
+      `akm accept: feedback ${id.slice(0, 8)} stash//knowledge/opencode-server`,
+    );
+    expect(git(stashDir, ["show", "--name-only", "--format=", "HEAD"]).trim()).toBe("knowledge/opencode-server.md");
+    expect(fs.readFileSync(file, "utf8")).toContain("port 4096");
+
+    const reverted = await runCliCapture(["proposal", "revert", id, "--format=json"]);
+    expect(reverted.code).toBe(0);
+    expect(fs.readFileSync(file, "utf8")).toBe(NOTE);
+  });
+
+  test("the negative that carried the fix does not plan reflect, as before", async () => {
+    await indexNote();
+    const { code } = await feedback(FIX);
+    expect(code).toBe(0);
+    const manifest = buildSnapshotManifest({
+      postCleanupRefs: [
+        { ref: "knowledge/opencode-server", itemRef: "stash//knowledge/opencode-server", reason: "scope-type" },
+      ],
+      validationFailureRefs: new Set(),
+      stashDir,
+    });
+    expect(manifest.latestFeedbackTs.has("knowledge/opencode-server")).toBe(true);
+    expect(manifest.latestNegativeTs.has("knowledge/opencode-server")).toBe(false);
+  });
+
+  test("a fix the accept refuses fails the command, leaves the file untouched and no proposal pending", async () => {
+    // The accept refuses text holding an output-redaction marker, whoever typed it.
+    const file = await indexNote();
+    const { code, json } = await feedback([...FIX.slice(0, 4), "--with", "port [REDACTED]", ...FIX.slice(6)]);
+    expect(code).not.toBe(0);
+    expect(String(json.error)).toContain("failed validation");
+    expect(fs.readFileSync(file, "utf8")).toBe(NOTE);
+    const decided = listProposals(stashDir, { includeArchive: true });
+    expect(decided.map((p) => p.status)).toEqual(["rejected"]);
+    expect(decided[0]?.review?.reason).toContain("manual fix not applied");
   });
 
   test("applies several pairs in order, and takes a value that starts with a dash", async () => {
@@ -218,7 +266,7 @@ describe("akm feedback --superseded-by / --outdated", () => {
     return path.join(stashDir, "knowledge", "opencode-server.md");
   }
 
-  test("--superseded-by files beliefState and supersededBy in one proposal, and the rest of the file is as it was", async () => {
+  test("--superseded-by sets beliefState and supersededBy in one accepted proposal, and the rest of the file is as it was", async () => {
     const file = await indexPair();
     const { code, json } = await feedback([...REASON, ...SOURCE, "--superseded-by", "knowledge/new-note"]);
     expect(code).toBe(0);
@@ -230,14 +278,11 @@ describe("akm feedback --superseded-by / --outdated", () => {
       supersededBy: SUCCESSOR,
     });
 
-    const proposals = listProposals(stashDir, { status: "pending" });
-    expect(proposals).toHaveLength(1);
+    expect(listProposals(stashDir, { status: "pending" })).toHaveLength(0);
     const proposal = getProposal(stashDir, (json.fix as { proposalId: string }).proposalId);
+    expect(proposal.status).toBe("accepted");
     expect(proposal.source).toBe("feedback");
-    expect(proposal.payload.content).toBe(
-      OLD.replace("---\n# OpenCode", `beliefState: superseded\nsupersededBy:\n  - ${SUCCESSOR}\n---\n# OpenCode`),
-    );
-    expect(fs.readFileSync(file, "utf8")).toBe(OLD);
+    expect(proposal.gateDecision).toMatchObject({ reason: "manual-fix" });
     expect(feedbackEvents()).toBe(1);
     expect(
       readEvents({ type: "feedback", ref: "stash//knowledge/opencode-server" }).events.at(-1)?.metadata?.fix,
@@ -247,26 +292,17 @@ describe("akm feedback --superseded-by / --outdated", () => {
       beliefState: "superseded",
       supersededBy: SUCCESSOR,
     });
-
-    const accepted = await runCliCapture(["proposal", "accept", proposal.id, "--format=json"]);
-    expect(accepted.code).toBe(0);
-    expect(parseFrontmatter(fs.readFileSync(file, "utf8")).data).toMatchObject({
-      beliefState: "superseded",
-      supersededBy: [SUCCESSOR],
-    });
+    const text = fs.readFileSync(file, "utf8");
+    expect(parseFrontmatter(text).data).toMatchObject({ beliefState: "superseded", supersededBy: [SUCCESSOR] });
+    expect(text).toContain("# kept comment\n");
+    expect(text.endsWith("---\n# OpenCode\n\nThe server listens on port 8000 by default.\n")).toBe(true);
   });
 
   test("repeating it on an asset that already says so changes nothing and records nothing more", async () => {
     await indexPair();
     const args = [...REASON, ...SOURCE, "--superseded-by", "knowledge/new-note"];
     const first = await feedback(args);
-    const accepted = await runCliCapture([
-      "proposal",
-      "accept",
-      (first.json.fix as { proposalId: string }).proposalId,
-      "--format=json",
-    ]);
-    expect(accepted.code).toBe(0);
+    expect(first.code).toBe(0);
 
     const again = await feedback(args);
     expect(again.code).not.toBe(0);
@@ -285,9 +321,10 @@ describe("akm feedback --superseded-by / --outdated", () => {
       source: "knowledge/new-note",
       beliefState: "deprecated",
     });
-    const proposal = getProposal(stashDir, (json.fix as { proposalId: string }).proposalId);
-    expect(proposal.payload.content).toBe(OLD.replace("---\n# OpenCode", "beliefState: deprecated\n---\n# OpenCode"));
-    expect(fs.readFileSync(file, "utf8")).toBe(OLD);
+    expect(getProposal(stashDir, (json.fix as { proposalId: string }).proposalId).status).toBe("accepted");
+    const text = fs.readFileSync(file, "utf8");
+    expect(parseFrontmatter(text).data).toMatchObject({ beliefState: "deprecated" });
+    expect(parseFrontmatter(text).data.supersededBy).toBeUndefined();
   });
 
   test("--outdated on an asset that is already superseded changes nothing", async () => {
@@ -298,27 +335,19 @@ describe("akm feedback --superseded-by / --outdated", () => {
     expect(feedbackEvents()).toBe(0);
   });
 
-  test("--superseded-by together with --replace makes one proposal holding both changes", async () => {
+  test("--superseded-by together with --replace makes one accepted proposal holding both changes", async () => {
     const file = await indexPair();
     const { code, json } = await feedback([...FIX, "--superseded-by", "knowledge/new-note"]);
     expect(code).toBe(0);
     expect(json.fix).toMatchObject({ replacements: 1, beliefState: "superseded", supersededBy: SUCCESSOR });
 
-    expect(listProposals(stashDir, { status: "pending" })).toHaveLength(1);
+    expect(listProposals(stashDir, { status: "pending" })).toHaveLength(0);
     const proposal = getProposal(stashDir, (json.fix as { proposalId: string }).proposalId);
     expect(proposal.feedback).toEqual({
       reason: "The default port is 4096, not 8000.",
       source: "https://opencode.ai/docs/server/",
     });
-    expect(proposal.payload.content).toContain("listens on port 4096 by default");
-    expect(parseFrontmatter(proposal.payload.content).data).toMatchObject({
-      beliefState: "superseded",
-      supersededBy: [SUCCESSOR],
-    });
     expect(feedbackEvents()).toBe(1);
-
-    const accepted = await runCliCapture(["proposal", "accept", proposal.id, "--format=json"]);
-    expect(accepted.code).toBe(0);
     const text = fs.readFileSync(file, "utf8");
     expect(text).toContain("listens on port 4096 by default");
     expect(parseFrontmatter(text).data).toMatchObject({ beliefState: "superseded", supersededBy: [SUCCESSOR] });

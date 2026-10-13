@@ -52,12 +52,14 @@ import {
   openReadonlyExistingDatabase,
 } from "../../../storage/repositories/index-connection";
 import { getAllEntries, getEntryById } from "../../../storage/repositories/index-entries-repository";
-import { getNeighborsByEntryId } from "../../../storage/repositories/index-vec-repository";
+import { getNeighborsByEntryId, hasStoredEmbedding } from "../../../storage/repositories/index-vec-repository";
 import {
+  EXPIRED_GATE_REASON,
   isRetireProposal,
   PAIR_PASS_GATE,
   type RetirementMetadata,
   type RetireReason,
+  STALE_TARGET_GATE_REASON,
 } from "../../proposal/proposal-types";
 import {
   createRetireProposal,
@@ -66,7 +68,7 @@ import {
   proposalContentHash,
   recordGateDecision,
 } from "../../proposal/repository";
-import { type AkmConsolidateOptions, isHotCapturedMemory } from "../consolidate";
+import type { AkmConsolidateOptions } from "../consolidate";
 import { contentHash, stripFrontmatterBody } from "../content-hash";
 import { loadLedgerSnapshot, PAIR_PASS_LEDGER_SOURCE, recordLedgerAttempt, stripBundle } from "../ledger";
 import { isInRetrievalScope, loadRetrievalScope } from "../retrieval-scope";
@@ -389,6 +391,9 @@ export function loadRejectedPairKeys(stashDir: string, proposalsCtx: ProposalsCo
     for (const status of ["rejected", "reverted"] as const) {
       for (const p of listProposalsReadOnly(stashDir, { status, includeArchive: true }, proposalsCtx)) {
         if (!isRetireProposal(p) || !p.retirement) continue;
+        // Expiry and a stale target are procedural, not a person saying no: the pair may be judged again.
+        const autoReason = p.gateDecision?.outcome === "auto-rejected" ? p.gateDecision.reason : undefined;
+        if (autoReason === EXPIRED_GATE_REASON || autoReason === STALE_TARGET_GATE_REASON) continue;
         keys.add(
           rejectedPairKey(
             p.retirement.retiredRef,
@@ -450,12 +455,23 @@ export function selectInitiators(
  * apart from a fully-judged one). S2: fetches `PAIR_NEIGHBOR_FETCH_K` (20)
  * raw neighbours and keeps the first `PAIR_NEIGHBOR_K` (5) that clear every
  * filter, so a few self/twin/bundle/tier misses in the raw top-5 no longer
- * starve an initiator down to zero real candidates.
+ * starve an initiator down to zero real candidates. An initiator with no
+ * stored vector (embeddings off, or not embedded yet) cannot be queried at
+ * all; its ref is added to `unvectored` so the caller does not settle it.
  */
-export function selectCandidates(db: Database, initiators: Initiator[], bundleId: string): PairCandidate[] {
+export function selectCandidates(
+  db: Database,
+  initiators: Initiator[],
+  bundleId: string,
+  unvectored?: Set<string>,
+): PairCandidate[] {
   const candidates: PairCandidate[] = [];
   const seenPairs = new Set<string>();
   for (const initiator of initiators) {
+    if (!hasStoredEmbedding(db, initiator.entryId)) {
+      unvectored?.add(initiator.ref);
+      continue;
+    }
     // S1: a changed-content or new-material initiator judges at T_PAIR; the
     // rest of the backlog (no row, not recently git-added) needs the higher
     // BACKFILL_FLOOR.
@@ -557,7 +573,13 @@ function orderByAge(x: PairSide, y: PairSide): { older: PairSide; newer: PairSid
 
 /** The user message: dates decide "A (older)" / "B (newer)" (plan Appendix A), matching the calibration sample's own ordering. */
 export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
-  return [...sideSection("A (older)", older), ...sideSection("B (newer)", newer)].join("\n");
+  // Equal dates (a batch added in one commit, notes from one file time) make neither side newer: say so, or the judge
+  // reads "B (newer)" as proof that B replaces A (#1134).
+  const tied = Date.parse(older.createdIso) === Date.parse(newer.createdIso);
+  return [
+    ...sideSection(tied ? "A (same age as B)" : "A (older)", older),
+    ...sideSection(tied ? "B (same age as A)" : "B (newer)", newer),
+  ].join("\n");
 }
 
 /** The tombstone-vocabulary reason a judge label maps to (`supersedes` -> `superseded`; the rest unchanged). */
@@ -741,9 +763,6 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   }
 
   // Guards (plan §5.2 step 4 / brief §A "Guards").
-  if (retired.asset.type === "memory" && isHotCapturedMemory(retired.asset.filePath)) {
-    return { failed: false }; // never propose retiring a captureMode: hot memory — leave the pair alone
-  }
   if (retired.asset.type === "memory" && retired.asset.name.endsWith(DERIVED_SUFFIX)) {
     // S3: derive the parent path from the FULL file path, not from name +
     // dirname — for a subfolder memory (e.g. memories/sub/foo.derived) the
@@ -899,13 +918,14 @@ export async function runConsolidatePairPass(
   let candidates: PairCandidate[];
   let gitFirstAdded: ReadonlyMap<string, number> | undefined;
   let db: ReturnType<typeof openExistingDatabase> | undefined;
+  const unvectored = new Set<string>();
   try {
     db = opts.dryRun ? openReadonlyExistingDatabase(undefined, { isolatedSnapshot: true }) : openExistingDatabase();
     if (!db) return empty;
     gitFirstAdded = loadGitFirstAddedMap(stashDir);
     const pool = loadPairPassPool(db, bundleId);
     initiators = selectInitiators(pool, opts, stashDir, gitFirstAdded).initiators;
-    candidates = selectCandidates(db, initiators, bundleId);
+    candidates = selectCandidates(db, initiators, bundleId, unvectored);
   } catch (error) {
     warnings.push(
       `Pair pass: index unavailable — skipped (${error instanceof Error ? error.message : String(error)}).`,
@@ -915,6 +935,11 @@ export async function runConsolidatePairPass(
     if (db) closeDatabase(db);
   }
   const initiatorsBacklog = initiators.filter((i) => i.backlog).length;
+  if (unvectored.size > 0) {
+    warnings.push(
+      `Pair pass: ${unvectored.size} asset(s) have no stored embedding, so their neighbours cannot be found and they were not judged. The pair pass needs stored embeddings (set semanticSearchMode to "auto" in the config, then run akm index).`,
+    );
+  }
 
   // Never judge a pair when either side already has a pending retire
   // proposal, as the retired ref OR its successor (B2 widens this from the
@@ -1032,6 +1057,8 @@ export async function runConsolidatePairPass(
     const admittedRefs = new Set(judgeable.map((c) => c.initiator.ref));
     const ledgerInputs = initiators
       .filter((i) => {
+        // No stored vector: the neighbour query never ran, so nothing was judged. Leave it unsettled.
+        if (unvectored.has(i.ref)) return false;
         const hasCandidates = byInitiator.has(i.ref);
         if (!hasCandidates) return true;
         if (!admittedRefs.has(i.ref)) return false;

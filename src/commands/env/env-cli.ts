@@ -69,7 +69,7 @@ const envCreateCommand = defineJsonCommand({
       description: "Exclude this env file from env list output and the search index",
       default: false,
     },
-    target: {
+    bundle: {
       type: "string",
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
@@ -78,8 +78,8 @@ const envCreateCommand = defineJsonCommand({
   async run({ args }) {
     const { createEnv, writeEnv } = await import("./env.js");
     // `create` always targets env/, never the frozen vaults/ copy. `--path` is
-    // the subdirectory; `--target` selects the writable destination source.
-    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.target, {
+    // the subdirectory; `--bundle` selects the writable destination source.
+    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.name, args.bundle, {
       subPath: getStringArg(args, "path"),
     });
 
@@ -353,14 +353,14 @@ const envRemoveCommand = defineJsonCommand({
   args: {
     ref: { type: "positional", description: "Env ref", required: true },
     yes: { type: "boolean", alias: "y", description: "Skip confirmation prompt", default: false },
-    target: {
+    bundle: {
       type: "string",
       description:
         "Override the write destination. Accepts a source name from your config; falls back to defaultWriteTarget then the working bundle.",
     },
   },
   async run({ args }) {
-    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.ref, args.target);
+    const { name, absPath, target, ref } = resolveEnvWriteTarget(args.ref, args.bundle);
     const { confirmDestructive } = await import("../../cli/confirm.js");
     const confirmed = await confirmDestructive(`Remove env "${args.ref}"? This cannot be undone.`, {
       yes: args.yes === true,

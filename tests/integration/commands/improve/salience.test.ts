@@ -32,11 +32,8 @@ import {
   resetConsecutiveNoOps,
   upsertAssetSalience,
   W_ENCODING,
-  W_ENCODING_PARITY,
   W_OUTCOME,
-  W_OUTCOME_PARITY,
   W_RETRIEVAL,
-  W_RETRIEVAL_PARITY,
 } from "../../../../src/commands/improve/salience";
 import { openStateDatabase } from "../../../../src/core/state-db";
 
@@ -60,45 +57,7 @@ describe("WS-1/WS-2 weight contract", () => {
   });
 
   test("W_OUTCOME constant is 0.15 (WS-2 target value)", () => {
-    // The constant reflects the WS-2 opt-in target. The weight is only
-    // applied in the rankScore projection when outcomeWeightEnabled=true.
     expect(W_OUTCOME).toBe(0.15);
-  });
-
-  test("W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY = 1.0", () => {
-    expect(W_ENCODING_PARITY + W_OUTCOME_PARITY + W_RETRIEVAL_PARITY).toBeCloseTo(1.0, 9);
-  });
-
-  test("parity constants reflect WS-1 two-way split (w_e=0.30, w_r=0.70, w_o=0)", () => {
-    expect(W_ENCODING_PARITY).toBe(0.3);
-    expect(W_OUTCOME_PARITY).toBe(0);
-    expect(W_RETRIEVAL_PARITY).toBe(0.7);
-  });
-
-  test("opt-out ranking uses parity constants (no bare literals in else branch)", () => {
-    // With outcomeWeightEnabled=false (explicit opt-out), rankScore must match
-    // the formula using parity constants. Verify by computing with high
-    // outcomeSalience: the outcome term must be zeroed (W_OUTCOME_PARITY=0).
-    const vHigh = computeSalience({
-      ref: "skills/foo",
-      type: "skill",
-      retrievalFreq: 5,
-      lastUseMs: NOW,
-      outcomeSalience: 1.0,
-      outcomeWeightEnabled: false,
-      now: NOW,
-    });
-    const vZero = computeSalience({
-      ref: "skills/foo",
-      type: "skill",
-      retrievalFreq: 5,
-      lastUseMs: NOW,
-      outcomeSalience: 0,
-      outcomeWeightEnabled: false,
-      now: NOW,
-    });
-    // rankScore must be identical since W_OUTCOME_PARITY=0 zeros the outcome term.
-    expect(vHigh.rankScore).toBe(vZero.rankScore);
   });
 });
 
@@ -182,9 +141,8 @@ describe("computeSalience — outcome sub-score", () => {
     expect(v.outcome).toBe(1.0);
   });
 
-  test("outcome affects rankScore by DEFAULT (R1 loop closure) and not on explicit opt-out", () => {
-    // Default: outcomeWeightEnabled absent → WS-2 weights (w_o=0.15) — the
-    // outcome signal shapes ranking out of the box.
+  test("outcome affects rankScore (R1 loop closure)", () => {
+    // The outcome signal shapes ranking: a higher outcomeSalience ranks higher.
     const vHigh = computeSalience({
       ref: "skills/foo",
       type: "skill",
@@ -200,84 +158,9 @@ describe("computeSalience — outcome sub-score", () => {
       now: NOW,
     });
     expect(vHigh.rankScore).toBeGreaterThan(vZero.rankScore);
-
-    // Explicit opt-out: outcomeWeightEnabled=false → WS-1 parity (w_o=0);
-    // outcomeSalience is stored in the vector but does not change rankScore.
-    const vHighOff = computeSalience({
-      ref: "skills/foo",
-      type: "skill",
-      retrievalFreq: 0,
-      outcomeSalience: 1.0,
-      outcomeWeightEnabled: false,
-      now: NOW,
-    });
-    const vZeroOff = computeSalience({
-      ref: "skills/foo",
-      type: "skill",
-      retrievalFreq: 0,
-      outcomeSalience: 0,
-      outcomeWeightEnabled: false,
-      now: NOW,
-    });
-    expect(vHighOff.rankScore).toBe(vZeroOff.rankScore);
-    // outcome sub-score is still stored in the vector for observability.
-    expect(vHighOff.outcome).toBe(1.0);
-    expect(vZeroOff.outcome).toBe(0);
-  });
-
-  test("opt-out rankScore matches WS-1 parity formula exactly (ranking-invariance assertion)", () => {
-    // Integration invariant: outcomeWeightEnabled=false must produce rankScore
-    // equal to (W_ENCODING_PARITY * encoding + W_RETRIEVAL_PARITY * retrieval) *
-    // sizePenalty, clamped to [0,1].  This test uses deterministic inputs and
-    // replicates the sizePenalty computation inline so any future accidental drift
-    // of the parity weights (e.g. changing a literal in the else branch) fails here.
-    const SIZE_BYTES = 4_000;
-    const v = computeSalience({
-      ref: "lessons/invariance-check",
-      type: "lesson",
-      retrievalFreq: 8,
-      lastUseMs: NOW - 3 * DAY_MS,
-      sizeBytes: SIZE_BYTES,
-      outcomeSalience: 0.85, // non-zero; must NOT appear in the opt-out rankScore
-      outcomeWeightEnabled: false,
-      now: NOW,
-    });
-
-    // Replicate the sizePenalty the same way salience.ts does it.
-    const SIZE_FLOOR_BYTES = 200;
-    const sizePenalty = 1 / Math.log10(Math.max(SIZE_FLOOR_BYTES, SIZE_BYTES));
-    // Expected rankScore using the WS-1 parity formula (w_o=0 → outcome term absent).
-    const expected = Math.min(
-      1,
-      Math.max(0, (W_ENCODING_PARITY * v.encoding + W_RETRIEVAL_PARITY * v.retrieval) * sizePenalty),
-    );
-
-    expect(v.rankScore).toBeCloseTo(expected, 12);
-    // Confirm the outcome sub-score IS non-zero (proves we tested a non-trivial input).
-    expect(v.outcome).toBeCloseTo(0.85, 9);
-  });
-
-  test("outcome is W_OUTCOME-weighted in rankScore when outcomeWeightEnabled=true", () => {
-    // With outcomeWeightEnabled=true and outcomeSalience = 1.0 and no retrieval,
-    // the outcome term raises rankScore above the zero-outcome baseline.
-    const vHigh = computeSalience({
-      ref: "skills/foo",
-      type: "skill",
-      retrievalFreq: 0,
-      outcomeSalience: 1.0,
-      outcomeWeightEnabled: true,
-      now: NOW,
-    });
-    const vZero = computeSalience({
-      ref: "skills/foo",
-      type: "skill",
-      retrievalFreq: 0,
-      outcomeSalience: 0,
-      outcomeWeightEnabled: true,
-      now: NOW,
-    });
-    // rankScore with high outcomeSalience should exceed rankScore with zero.
-    expect(vHigh.rankScore).toBeGreaterThan(vZero.rankScore);
+    // The outcome sub-score is stored in the vector.
+    expect(vHigh.outcome).toBe(1.0);
+    expect(vZero.outcome).toBe(0);
   });
 });
 

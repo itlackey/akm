@@ -6,7 +6,14 @@ run of the exact commit that will be published.
 
 ## 1. Freeze the candidate
 
-1. Finish the version, changelog, migration-note, and release-PR changes.
+1. Finish the version, changelog, migration-note, and release-PR changes. From
+   0.10 the version is a monthly release number, `0.10.YYMMNN` (see step 4):
+   `bun scripts/release-version.ts next` prints the next free one for this
+   month (UTC). Every release, whatever its stage, takes the next number.
+   Commit it in `package.json` and cut the CHANGELOG as
+   `## [0.10.YYMMNN] - YYYY-MM-DD`. A prerelease stage is not committed: it is
+   chosen when the Release workflow runs, and the release's CHANGELOG section
+   covers it.
 2. Record `git rev-parse HEAD`. This is the full 40-character release-candidate SHA.
 3. Run `bun run release:check` locally. If Docker is unavailable, run
    `./tests/release-check.sh --skip-docker` and rely on the gated Docker job
@@ -101,3 +108,28 @@ After the exact-SHA gated run and local release check are green, trigger the
 Release workflow with the version already committed in `package.json`. Keep the
 candidate SHA and Gated CI run URL in the release record so the published
 artifact's validation can be audited later.
+
+0.10 and later use monthly release numbers, `0.10.YYMMNN`: `YY` the UTC year,
+`MM` the month and `NN` the release in that month (`01` to `99`), two digits
+each (see [`STABILITY.md`](../../STABILITY.md)). The first release of 2026-10 is
+`0.10.261001`. `bun scripts/release-version.ts next` takes `NN` as one above the
+highest release already on npm for this UTC month, with or without a stage
+(`npm view akm-cli versions`), so numbering follows what was published, not
+what was committed. The retired 8-digit daily builds (`0.10.26101001-alpha` to
+`0.10.26101202-alpha`) are not counted.
+
+The workflow has two inputs:
+
+- `version`: the version committed in `package.json`, as before. The workflow
+  rejects a malformed one (`scripts/release-version.ts`, tested in
+  `tests/release-version.test.ts`): two digits each for `YY`, `MM`, `NN`, a
+  month 01 to 12, `NN` 01 to 99; the old 8-digit daily form is rejected. For
+  0.9 and older it is the `X.Y.Z` as before.
+- `stage`: `none` publishes `<version>` to the npm `latest` tag and as a GitHub
+  release. `alpha`, `beta` or `rc` publishes `<version>-<stage>` to `next` as a
+  GitHub prerelease (no `.N`: every release has its own number). There is no
+  promoting one build through stages: the next release, at any stage, commits
+  the next number (`0.10.261001-alpha`, then `0.10.261002-beta`, then
+  `0.10.261003`).
+
+`bun scripts/release-version.ts validate <version>` checks a version by hand.

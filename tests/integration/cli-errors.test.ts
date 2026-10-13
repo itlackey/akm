@@ -240,53 +240,38 @@ describe("CLI envelope coverage for P1a's diagnostic codes (COMPOSITION_INVALID,
     expect(parsed.hint).toContain("akm migrate apply --dry-run");
   });
 
-  test("akm workflow run of a step passing with: to a task target emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
+  test("akm workflow run of a workflow that composes itself emits {ok:false,code:COMPOSITION_INVALID} on stderr, exit 2", async () => {
     const stash = makeStashDir();
     disposers.push(stash);
-    fs.mkdirSync(path.join(stash.dir, "tasks"), { recursive: true });
     fs.mkdirSync(path.join(stash.dir, "workflows"), { recursive: true });
     fs.writeFileSync(
-      path.join(stash.dir, "commands", "review.md"),
-      "Review the workflow-composed task target.\n",
-      "utf8",
-    );
-    fs.writeFileSync(
-      path.join(stash.dir, "tasks", "nightly.yml"),
-      ["version: 4", "uses: commands/review", ""].join("\n"),
-    );
-    // Lane A's with-rejection (P1a, taskDispatch's head guard): a workflow
-    // step composing a task target with a with: block.
-    fs.writeFileSync(
-      path.join(stash.dir, "workflows", "with-on-task.yml"),
+      path.join(stash.dir, "workflows", "loop.md"),
       [
-        "name: With on task",
-        "on:",
-        "  workflow_dispatch:",
-        "jobs:",
-        "  main:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: dispatch",
-        "        uses: tasks/nightly",
-        "        with:",
-        "          scope: all",
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: again",
+        "    unit: { workflow: workflows/loop }",
+        "---",
+        "",
+        "## again",
+        "",
+        "Run myself.",
         "",
       ].join("\n"),
     );
 
     await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () => runCli("index", "--full"));
     const { stderr, status } = await withEnv({ AKM_BUNDLE_DIR: stash.dir }, () =>
-      runCli("workflow", "run", "workflows/with-on-task"),
+      runCli("workflow", "run", "workflows/loop"),
     );
 
     expect(status).toBe(2);
     const parsed = JSON.parse(stderr.trim());
     expect(parsed.ok).toBe(false);
     expect(parsed.code).toBe("COMPOSITION_INVALID");
-    expect(parsed.error).toBe(
-      "Workflow step dispatch cannot pass with: to task target tasks/nightly; tasks/nightly declares no inputs.",
-    );
-    expect(parsed.hint).toBe(new UsageError("x", "COMPOSITION_INVALID").hint());
+    expect(parsed.error).toContain("composition cycle");
+    expect(parsed.hint).toContain("Break the cycle");
   });
 });
 
@@ -348,10 +333,7 @@ describe("error class hints", () => {
       "Pick one of: json, jsonl, yaml, text, md, html.",
     );
     expect(new UsageError("bad detail", "INVALID_DETAIL_VALUE").hint()).toBe(
-      "Pick one of: brief, normal, full. For agent/summary projections use --shape.",
-    );
-    expect(new UsageError("bad shape", "INVALID_SHAPE_VALUE").hint()).toBe(
-      "Pick one of: human, agent, summary (summary falls back to agent, with a warning, on commands with no summary projection).",
+      "Pick one of: brief, normal, full, agent.",
     );
     expect(new UsageError("bad json", "INVALID_JSON_CONFIG_VALUE").hint()).toContain("Quote JSON values");
     expect(new UsageError("bad target", "MISSING_OR_AMBIGUOUS_TARGET").hint()).toContain("akm bundle update --all");
@@ -394,14 +376,15 @@ describe("config path subcommand", () => {
     expect(stdout.trim()).toContain("config.json");
   });
 
-  test("config path --all returns all path keys", async () => {
-    const { stdout, status } = await runCli("config", "path", "--all", "--format=json");
+  test("config path --all is an unknown flag; `info` reports the directories", async () => {
+    const all = await runCli("config", "path", "--all");
+    expect(all.status).toBe(2);
+    const { stdout, status } = await runCli("info");
     expect(status).toBe(0);
     const parsed = JSON.parse(stdout.trim());
-    expect(parsed).toHaveProperty("config");
-    expect(parsed).toHaveProperty("bundle");
-    expect(parsed).toHaveProperty("cache");
-    expect(parsed).toHaveProperty("index");
+    for (const key of ["bundleDir", "configDir", "dataDir", "cacheDir", "stateDir"]) {
+      expect(parsed).toHaveProperty(key);
+    }
   });
 });
 
@@ -633,76 +616,53 @@ describe("R-032: citty CLIError family exits 2, not 1", () => {
     expect(parsed.hint).toBe("Run `akm --help` for usage.");
   });
 
-  // Retired 0.9-overhaul spellings get their REPLACEMENT, never a
-  // did-you-mean: edit distance steers agents into the wrong command
-  // (`init`→`info`, `update`→`upgrade` — the latter replaces the binary).
-  test("retired top-level spellings hint the replacement, not did-you-mean", () => {
-    const cases: Array<[string[], string]> = [
-      [["init"], "akm bundle create"],
-      [["update"], "akm bundle update"],
-      [["tasks", "doctor"], "akm task <subcommand>"],
-      [["history"], "akm log --ref"],
-      [["mv", "a", "b"], "rekey-asset-ref.ts"],
-      [["extract"], "akm proposal extract"],
-      // The removed `akm vault ...` family (0.9.0 release-notes headline)
-      // falls through to a generic did-you-mean without this hint.
-      [["vault", "list"], "akm env list"],
-      [["vault", "get", "x"], "akm secret set"],
+  // The did-you-mean threshold is floor(len / 3): real typos keep their
+  // suggestion, unrelated (or retired) command names get none.
+  test("did-you-mean suggests real typos and stays silent for unrelated or retired names", () => {
+    const table: Array<[argv: string[], suggestion: string | undefined]> = [
+      [["tasks"], "task"],
+      [["propose"], "proposal"],
+      [["serach"], "search"],
+      [["improv"], "improve"],
+      [["reflect"], undefined],
+      [["mv"], undefined],
+      [["accept"], undefined],
+      [["events"], undefined],
+      [["extract"], undefined],
+      [["history"], undefined],
+      [["init"], undefined],
+      [["update"], undefined],
+      [["workflow", "start"], undefined],
     ];
-    for (const [argv, expected] of cases) {
+    for (const [argv, suggestion] of table) {
       const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
       expect(status, argv.join(" ")).toBe(2);
-      const parsed = JSON.parse(stderr.trim());
-      expect(parsed.code, argv.join(" ")).toBe("UNKNOWN_COMMAND");
-      expect(parsed.hint, argv.join(" ")).toContain(expected);
-      expect(parsed.hint, argv.join(" ")).not.toContain("Did you mean");
-      // Every retired-spelling hint routes to the in-CLI rename table.
-      expect(parsed.hint, argv.join(" ")).toContain("akm help migrate 0.9.0");
+      const hint: string = JSON.parse(stderr.trim()).hint ?? "";
+      if (suggestion) expect(hint, argv.join(" ")).toContain(`Did you mean \`${suggestion}\`?`);
+      else expect(hint, argv.join(" ")).not.toContain("Did you mean");
     }
   });
 
-  test("retired group-scoped spellings resolve against their parent group", () => {
-    const cases: Array<[string[], string]> = [
-      [["env", "set", "prod", "KEY"], "edit the `.env` file"],
-      [["registry", "search", "x"], "akm search --from registry"],
-      [["workflow", "watch", "run-1"], "akm log --run"],
-      [["config", "show"], "akm config list"],
-      [["task", "show", "t1"], "akm show"],
-      [["log", "tail"], "@offset:"],
-    ];
-    for (const [argv, expected] of cases) {
+  // Spellings an earlier release retired are ordinary unknown commands and
+  // flags: the usual UNKNOWN_COMMAND / UNKNOWN_FLAG exit 2, with a did-you-mean
+  // only when one is close and no migration hint.
+  test("retired spellings are plain unknown commands and flags", () => {
+    for (const argv of [["init"], ["vault", "list"], ["env", "set", "prod", "KEY"], ["log", "tail"]]) {
       const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
       expect(status, argv.join(" ")).toBe(2);
       const parsed = JSON.parse(stderr.trim());
-      expect(parsed.hint, argv.join(" ")).toContain(expected);
+      expect(parsed.hint, argv.join(" ")).not.toContain("akm help migrate");
     }
-  });
-
-  // Removed 0.9 flags (as opposed to removed commands) get no hint at all
-  // today — just a generic "unknown flag" from src/cli/unknown-flags.ts.
-  // `retiredFlagHint` (src/cli/retired-commands.ts) closes that gap. Uses a
-  // real subprocess (like the retired-spellings tests above), not the
-  // `runCli` in-process harness: a `UsageError` thrown by `assertKnownFlags`
-  // — BEFORE citty's own `runCommand` ever starts — escapes the harness's
-  // replicated startup contract without going through `emitJsonError`, so it
-  // lands in `stderr` as a raw message instead of the JSON envelope the real
-  // CLI always produces here (verified directly: `bun src/cli.ts index
-  // --background` prints the proper `{"ok":false,...}` envelope).
-  test("retired flags on their current command hint the replacement procedure", () => {
-    const cases: Array<[string[], string]> = [
-      [["index", "--background"], "--quiet"],
-      [["setup", "--detect-only"], "akm setup"],
-      [["setup", "--reset-recommended"], "recommended defaults"],
-      [["proposal", "extract", "--watch"], "proposal extract --auto"],
-      [["proposal", "extract", "--debounce-ms"], "proposal extract --auto"],
-    ];
-    for (const [argv, expected] of cases) {
+    for (const argv of [
+      ["index", "--background"],
+      ["setup", "--detect-only"],
+      ["proposal", "extract", "--watch"],
+    ]) {
       const { status, stderr } = spawnCli(argv, { cwd: repoRoot });
       expect(status, argv.join(" ")).toBe(2);
       const parsed = JSON.parse(stderr.trim());
       expect(parsed.code, argv.join(" ")).toBe("UNKNOWN_FLAG");
-      expect(parsed.hint, argv.join(" ")).toContain(expected);
-      expect(parsed.hint, argv.join(" ")).toContain("akm help migrate 0.9.0");
+      expect(parsed.hint ?? "", argv.join(" ")).not.toContain("akm help migrate");
     }
   });
 });
@@ -929,18 +889,5 @@ describe("GLOBAL_OUTPUT_ARGS coverage guard (R-051)", () => {
         expect(argKeys.has(key)).toBe(true);
       }
     }
-  });
-});
-
-// R-050(c) (S11: R-050(b)'s own "--detail is a no-op on info/list/remember"
-// boilerplate was dropped from the canonical wording — `list` doesn't exist
-// as a bare command any more (folded into `akm bundle list`, S7), and a
-// caveat naming stale commands is worse than no caveat). `--shape summary`
-// is still a hard usage error everywhere except `akm show`, and that caveat
-// should still be visible from a leaf's own `--help`, not only the root's.
-describe("GLOBAL_OUTPUT_ARGS help text is scoped honestly (R-050c)", () => {
-  test("--shape repeats the 'summary is show-only' caveat root help documents", () => {
-    expect(GLOBAL_OUTPUT_ARGS.shape.description).toContain("summary");
-    expect(GLOBAL_OUTPUT_ARGS.shape.description).toContain("akm show");
   });
 });

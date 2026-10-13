@@ -100,7 +100,6 @@ import { TASK_V3_MAX_SCHEDULES } from "../../src/tasks/source-v3";
 import {
   TASK_RUN_BOOLEAN_FLAGS,
   TASK_RUN_RESERVED_FLAG_NAMES,
-  TASK_RUN_SELF_DIAGNOSED_FLAGS,
   TASK_RUN_VALUE_FLAGS,
 } from "../../src/tasks/task-run-reserved-flags";
 import { detectSecretShapedParams } from "../../src/workflows/exec/param-secrets";
@@ -818,35 +817,6 @@ describe("task source v4 — inputs: names that collide with akm task's own flag
         expect(error.message, name).toContain("must match the input name pattern");
       }
     }
-  });
-
-  // 0.9.2 review round 2. `target` is reserved from the DIAGNOSTIC side, not
-  // the declared-arg side: it is in neither scanner set, so
-  // `parseTaskInputFlags` (src/commands/tasks/tasks-cli.ts) happily captured
-  // `--target=<value>` as an input flag — but
-  // `rejectRetiredTaskTargetFlag` throws the 0.9 `--target` -> `--bundle`
-  // rename hint for EVERY spelling of the name before that scanner ever runs,
-  // so a task declaring an input named `target` had no reachable way to be
-  // given one. Reserving the NAME here makes the unusable declaration
-  // impossible to author instead of narrowing the rejecter (which would
-  // reopen the silently-ignored `--target=team` that round 1 closed).
-  test("`target` is reserved even though it is in neither scanner set, and its message names the retired spelling", () => {
-    expect(TASK_RUN_SELF_DIAGNOSED_FLAGS).toEqual(["target"]);
-    expect(TASK_RUN_VALUE_FLAGS).not.toContain("target");
-    expect(TASK_RUN_BOOLEAN_FLAGS).not.toContain("target");
-    expect(TASK_RUN_RESERVED_FLAG_NAMES.has("target")).toBe(true);
-
-    const error = expectTaskSourceInvalid(
-      () =>
-        parseTaskSourceV4Document(
-          v4Doc({ run: "echo hi", inputs: { target: { type: "string", default: "staging" } } }),
-          {
-            filePath: "/x.yml",
-          },
-        ),
-      /inputs\.target/,
-    );
-    expect(error.message).toContain("collides with the retired `akm task --target` spelling");
   });
 
   test("a name that is merely SIMILAR to a reserved flag still parses — the check is exact-name, not fuzzy", () => {

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { stringify as stringifyYaml } from "yaml";
 import type { AkmConfig } from "../../src/core/config/config";
 import { captureFrozenDirectoryIdentity } from "../../src/execution/directory-identity";
 import type { ExecutionJsonObject } from "../../src/execution/json";
@@ -89,7 +90,7 @@ export function freezeWorkflow(
   const defaults = compiled.plan.defaults;
   const steps: WorkflowPlanStep[] = compiled.plan.steps.map((step) => {
     const { spec, ...base } = step;
-    const root = step.route || !spec ? undefined : freezeRoot(step, config, defaults);
+    const root = spec ? freezeRoot(step, config, defaults) : undefined;
     const frozenJudge =
       step.gate.criteria.length > 0
         ? freezeCommandTarget(step.gate.criteria.join("\n"), { engine: config.workflow?.judgeEngine }, config)
@@ -175,15 +176,11 @@ function targetConcurrency(runner: RunnerSpec, config: AkmConfig): number | unde
   );
 }
 
-function frozenEnvironment(exec: WorkflowExec | undefined, literals: Readonly<Record<string, unknown>> | undefined) {
-  const bindings: FrozenWorkflowEnvironmentBinding[] = [
-    ...Object.entries(literals ?? {}).map(([name, value]) => ({
-      kind: "literal" as const,
-      name,
-      value: String(value),
-    })),
-    ...(exec?.passEnv ?? []).map((name) => ({ kind: "pass-through" as const, name })),
-  ];
+function frozenEnvironment(exec: WorkflowExec | undefined) {
+  const bindings: FrozenWorkflowEnvironmentBinding[] = (exec?.passEnv ?? []).map((name) => ({
+    kind: "pass-through" as const,
+    name,
+  }));
   return Object.freeze(bindings);
 }
 
@@ -193,7 +190,7 @@ function freezeRoot(step: WorkflowPlanStep, config: AkmConfig, defaults: Workflo
   const unit = spec.unit;
   if (unit?.env?.length)
     throw new Error("freezeWorkflow test fixtures do not resolve env assets; use a v4 source test");
-  const environment = frozenEnvironment(spec.exec, spec.env);
+  const environment = frozenEnvironment(spec.exec);
   const instructions = workflowStepInstructions(step);
   let frozenTarget: FrozenWorkflowCommandTarget | FrozenWorkflowShellTarget;
   if (spec.exec) {
@@ -230,7 +227,6 @@ function freezeRoot(step: WorkflowPlanStep, config: AkmConfig, defaults: Workflo
     ...(unit?.retry ? { retry: unit.retry } : {}),
     onError: unit?.onError ?? defaults?.onError ?? "fail",
     ...(unit?.env ? { env: unit.env } : {}),
-    isolation: unit?.isolation ?? "none",
     source: spec.source,
     frozenTarget,
     environment,
@@ -364,4 +360,24 @@ export function plantRunLock(runId: string, pid: number = process.pid): () => vo
   fs.mkdirSync(path.dirname(lockPath), { recursive: true });
   fs.writeFileSync(lockPath, JSON.stringify({ pid, startedAt: new Date().toISOString() }), { flag: "wx" });
   return () => fs.rmSync(lockPath, { force: true });
+}
+
+/** One step of a markdown parent that runs a child workflow (`unit.workflow`, optional `with`). */
+export interface ChildStepFixture {
+  readonly id: string;
+  readonly workflow: string;
+  readonly with?: Record<string, unknown>;
+}
+
+/** A markdown workflow whose every step runs a child workflow. */
+export function childParentDoc(steps: readonly ChildStepFixture[]): string {
+  const frontmatter = {
+    type: "workflow",
+    steps: steps.map((step) => ({
+      id: step.id,
+      unit: { workflow: step.workflow, ...(step.with ? { with: step.with } : {}) },
+    })),
+  };
+  const body = steps.map((step) => `## ${step.id}\n\nRun ${step.workflow}.\n`).join("\n");
+  return `---\n${stringifyYaml(frontmatter)}---\n\n${body}`;
 }

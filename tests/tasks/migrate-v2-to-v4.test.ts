@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pure task-source migration planner (`src/tasks/source/task-to-v4.ts`),
+ * The pure task-source migration planner (`scripts/akm-migrate/migrate/task-to-v4.ts`),
  * v2 side: every v2 fixture and inline case, planned straight to v4 with no
  * intermediate v3 file ever written or reported. Mirrors
  * `tests/tasks/migrate-v3-to-v4.test.ts`'s style, driven off the same v2
@@ -18,9 +18,9 @@ import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";
-import { parseTaskV3Yaml } from "../../src/tasks/source/task-source-v3-frozen";
+import { parseTaskV3Yaml } from "../../scripts/akm-migrate/migrate/task-source-v3-frozen";
+import { planTaskToV4File, type TaskToV4FileInput } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { parseTaskSourceV4 } from "../../src/tasks/source/task-source-v4";
-import { planTaskToV4File, type TaskToV4FileInput } from "../../src/tasks/source/task-to-v4";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,

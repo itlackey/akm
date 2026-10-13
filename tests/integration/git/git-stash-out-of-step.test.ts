@@ -4,9 +4,9 @@
 
 /**
  * `saveGitStash` (the end-of-run sync and `akm sync`) always commits the paths it
- * is given. A branch it cannot push — no upstream, or behind or diverged from it —
- * only skips the push, and the result says why. A branch that is ahead of its
- * upstream (an accept commits locally) is pushed along with the new commit.
+ * is given. A branch it cannot push — no upstream — only skips the push, and the result says
+ * why. A branch that is ahead of its upstream (an accept commits locally) is pushed along with
+ * the new commit. Behind or diverged branches fetch and merge first (git-sync-two-host.test.ts).
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -56,14 +56,13 @@ function setup(track: boolean): void {
   if (track) git(workDir, "push", "-u", "origin", "main");
 }
 
-/** The remote moves on without the work tree, which then fetches (so it knows it is behind). */
+/** The remote moves on without the work tree, which has not fetched. */
 function advanceRemote(): void {
   const other = tempDir("akm-oos-other-");
   git(other, "clone", remoteDir, ".");
   configure(other);
   commitFile(other, "elsewhere.md", "pushed from elsewhere");
   git(other, "push", "origin", "main");
-  git(workDir, "fetch", "origin");
 }
 
 const save = () => {
@@ -92,28 +91,17 @@ describe("saveGitStash with a branch it cannot push", () => {
     expect(git(workDir, "log", "-1", "--format=%s")).toBe("end of run");
   });
 
-  test("behind its upstream: commits and skips the push, leaving the remote as it is", () => {
+  test("behind its upstream: fetches, merges, and pushes the merge", () => {
     setup(true);
     advanceRemote();
 
     const result = save();
 
-    expect(result).toMatchObject({ committed: true, pushed: false, skipped: false });
-    expect(result.reason).toContain("behind");
-    expect(git(workDir, "log", "-1", "--format=%s")).toBe("end of run");
-    expect(remoteSubject()).toBe("pushed from elsewhere");
-  });
-
-  test("diverged from its upstream: commits and skips the push", () => {
-    setup(true);
-    commitFile(workDir, "local.md", "local commit");
-    advanceRemote();
-
-    const result = save();
-
-    expect(result).toMatchObject({ committed: true, pushed: false });
-    expect(result.reason).toContain("diverged");
-    expect(remoteSubject()).toBe("pushed from elsewhere");
+    expect(result).toMatchObject({ committed: true, pushed: true, skipped: false });
+    expect(result.reason).toBeUndefined();
+    expect(remoteSubject()).toContain("merge");
+    expect(git(remoteDir, "log", "--format=%s", "main")).toContain("pushed from elsewhere");
+    expect(git(workDir, "log", "--format=%s", "main")).toContain("end of run");
   });
 
   test("ahead of its upstream: pushes the new commit together with the unpushed ones", () => {

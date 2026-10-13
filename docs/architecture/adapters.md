@@ -101,23 +101,21 @@ interface BundleAdapter {
   // reading authored bytes or walking the bundle.
   readCandidates?(c: BundleComponent, conceptId: string): Array<{ path: string; conceptId: string }>;
 
-  // OPTIONAL — placement / discovery.
-  placeNew?(c: BundleComponent, conceptId: string): string;   // where a new item would live
+  // OPTIONAL — discovery.
   directoryList?(c: BundleComponent): string[];               // owned dirs; feeds git exact-path staging
   looksLikeRoot?(root: string): boolean;                      // install-time probe
 }
 ```
 
 `recognize` and `validate` are required on every adapter; `index`,
-`affectedItems`, `readCandidates`, `placeNew`, `directoryList`, and
+`affectedItems`, `readCandidates`, `directoryList`, and
 `looksLikeRoot` are optional capability methods. An adapter overriding `index()` must keep
 `recognize()` coherent with it (conformance: `index()` == fold of
 `recognize()` over the core walk) or declare component-level
 incrementality.
 
-`readCandidates` is intentionally distinct from both `extensions` and
-`placeNew`: extensions are non-exhaustive walk hints, while placement is a
-write-normalization policy. Read candidates preserve canonical directory
+`readCandidates` is intentionally distinct from `extensions`: extensions are
+non-exhaustive walk hints. Read candidates preserve canonical directory
 manifests (for example `skills/<name>/SKILL.md`) so lookup, index-backed show, and workflow runtime share one
 physical-owner decision. Each candidate carries its canonical concept identity,
 so a byte-denying ownership probe never has to infer identity from the query.
@@ -145,30 +143,21 @@ concern.
 
 ---
 
-## `placeNew()` wiring status
+## Placement
 
-The interface declares `placeNew()` as an optional capability method, and 9
-of the 11 built-in adapters already implement it — all but `okf` and
-`website-snapshot` (`claude` and `opencode` inherit theirs from the shared
-tool-dir factory). **Nothing in the write path calls it yet**: AKM-native
-writes still resolve through AKM's own flat type→directory placement table
-(`src/core/asset/asset-placement.ts`'s `PLACEMENT_SPECS`), not through the
-owning adapter's `placeNew()`.
-
-Placement for every existing bundle is already correct today — this is a
-deliberately sequenced routing change, not unfinished behavior. It's
-scoped out of 0.9.0 by
-[D12](../architecture/specs/0.9.0-decisions.md#d12--bundleadapterplacenew-stays-unwired-until-010)
-and deferred to 0.10; nothing user-visible changes in 0.10 for this alone.
-See [STABILITY.md](../../STABILITY.md) ("On the horizon") for the
-up-to-date status if this changes.
+Adapters do not place new items. AKM-native writes resolve through AKM's own
+flat type→directory placement table (`src/core/asset/asset-placement.ts`'s
+`PLACEMENT_SPECS`), which is correct for akm-layout bundles — the only bundles
+the write commands touch in practice. A per-adapter `placeNew()` existed
+through 0.9 but nothing called it, and it was removed in 0.10. Supporting
+writable bundles in another layout would need it back: see
+[#1163](https://github.com/itlackey/akm/issues/1163).
 
 ---
 
 ## Write allowlists
 
-`placeNew()` wiring is a separate question from **which bundles AKM-native
-write commands are allowed to touch at all** — that's decided today by a
+Which bundles AKM-native write commands are allowed to touch at all is decided by a
 small allowlist check, `assertAkmAssetWrite` (`src/core/write-source.ts`),
 run before any write command touches the filesystem. It compares the target
 bundle's detected (or configured) adapter id against an allowlist and throws
@@ -181,12 +170,10 @@ The default allowlist is `["akm"]`. Two command families widen it explicitly:
 | `akm env create` / `env remove` / `secret set` | `dotenv` |
 | `akm workflow create` | `akm-workflow` |
 
-Every other adapter — including every adapter that already implements
-`placeNew()` (`agent-skills`, `claude`, `opencode`, `akm-task`,
-`generic-files`) — is rejected by every AKM-native write command in 0.9.0.
+Every other adapter (`agent-skills`, `claude`, `opencode`, `akm-task`,
+`generic-files`, and so on) is rejected by every AKM-native write command.
 `akm task add` in particular uses the *default* allowlist (`akm` only), so a
-standalone `akm-task` bundle is read-only through AKM-native write commands
-even though `akm-task`'s own `placeNew()` is implemented.
+standalone `akm-task` bundle is read-only through AKM-native write commands.
 
 Reading, searching, and `akm lint` are unaffected by this allowlist — only
 creating, editing, or deleting through AKM's own commands is restricted.
@@ -197,8 +184,7 @@ This allowlist boundary is also where AKM's [execution
 boundary](../guides/concepts.md) principle shows up on the write side: AKM
 retrieves and validates every supported format, but it only lets its own
 write commands mutate a narrow, explicitly-declared set of targets — it
-does not widen write access to a format just because that format's adapter
-happens to expose a `placeNew()` implementation.
+does not widen write access to a format just because it can read it.
 
 ---
 

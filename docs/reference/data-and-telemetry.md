@@ -79,6 +79,12 @@ mode and owner, and the uid you are running as. They do **not** report an empty
 index. `akm health` stays runnable in that state and reports it as a failing
 `state-db-readable` check, so it remains the command to reach for.
 
+If akm can read this directory but **cannot write** it — an agent sandbox that
+only allows writes inside the workspace, for instance — `akm feedback` fails with
+a `DATA_DIR_NOT_WRITABLE` config error (exit 78) and records nothing, instead of
+reporting success for feedback it could not store. Add the data directory to the
+sandbox's writable paths.
+
 > **0.9.1 note.** A pre-release build briefly chmodded this directory to `0700`
 > and the databases to `0600` on every open. That was reverted: it silently
 > changed the permissions of directories akm did not create, which broke installs
@@ -163,7 +169,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `sync` | `akm sync` | `name`, `message`, `ok` |
 | `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `index_completed` | `akm index`, once when a run finishes | `mode`, `totalMs`, `walkMs`, `llmMs`, `embedMs`, `ftsMs`, `finalizeMs` (phase timings in milliseconds) |
-| `stash_synced` | `akm improve`'s internal auto-sync pass (the `sync.push` feature), **distinct from** the `akm sync` command above | `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
+| `stash_synced` | `akm improve`'s internal sync passes (the `sync.push` feature), before the run and at its end, **distinct from** the `akm sync` command above | `phase` (`pre-run` or `end-of-run`), `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
 | `env_access` | `akm env run <name> -- <command>` (audit trail: key **names** only, values never recorded) | `ref`, `keys` |
 | `secret_access` | `akm secret run <ref> <VAR> -- <command>` (audit trail: var **name** only, value never recorded) | `ref`, `var` |
 
@@ -189,7 +195,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `improve_invoked` | Start of an `akm improve` run | `ref` (scope); `strategy`, `scope`, `dryRun`, `eligibleCount` |
 | `improve_completed` | `akm improve` run finished | run stats |
 | `improve_failed` | `akm improve` run errored | error |
-| `improve_skipped` | `akm improve` left a ref, a lane, or a group of refs out | `reason` (`no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `pool_below_min_size`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`, `distill_deprecated_or_superseded`); `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
+| `improve_skipped` | `akm improve` left a ref, a lane, or a group of refs out | `reason` (`no_new_signal`, `not_retrieved`, `distill_no_new_signal`, `budget_exhausted`, `budget_exhausted_batch`, `asset_missing_on_disk`, `strategy_filtered_all_passes`, `autonomy_gated`, `engine_unavailable`, `consolidation_no_memory_updates`, `below_min_new_sessions`, `derived_memory_reflect_skipped`, `memory_distill_requires_feedback`, `distill_flagged_wrong`, `distill_positive_without_reason`, `distill_deprecated_or_superseded`); `count`, `remaining`, `strategy`, `lane` or `configKey` where they apply |
 | `improve_lock_recovered` | Stale improve lock cleared at startup | |
 | `improve_review_needed` | `akm feedback` pushed a high-utility asset's utility below the review threshold — a review-needed escalation is recorded (not a proposal, so it can't accidentally overwrite the asset) | `ref`, `previousUtility`, `nextUtility` |
 | `reflect_invoked` | Start of reflect phase in `akm improve` | `ref`, engine |

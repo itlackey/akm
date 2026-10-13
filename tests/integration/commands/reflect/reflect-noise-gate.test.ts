@@ -112,6 +112,15 @@ describe("classifyReflectChange — substantive changes pass through", () => {
     expect(classifyReflectChange("# Doc\n\nUse the old flag.\n", "# Doc\n\nUse the new flag.\n")).toBe("substantive");
   });
 
+  test("a small prose rewrite is substantive (the low-value tier is gone, #1131)", () => {
+    expect(
+      classifyReflectChange(
+        "---\ndescription: d\n---\n\nIt is faster and respects .gitignore by default.\n",
+        "---\ndescription: d\n---\n\nIt runs faster and respects .gitignore by defaults.\n",
+      ),
+    ).toBe("substantive");
+  });
+
   test("prose merged INTO a heading line → substantive (rendering changes)", () => {
     expect(classifyReflectChange("# Title\nprose after\n", "# Title prose after\n")).toBe("substantive");
   });

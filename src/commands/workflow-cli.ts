@@ -5,8 +5,8 @@
 /**
  * `akm workflow` command family. `run` is the canonical start/resume/execute
  * surface; the former public `start`, `next`, and `complete` lifecycle is gone.
- * `create --print` emits Markdown; execution accepts peer `.md` and
- * GitHub-shaped `.yml` workflow sources. Validate with `akm lint --type workflows`.
+ * `create --print` emits Markdown, the only workflow source format. Validate
+ * with `akm lint --type workflows`.
  */
 
 import { getStringArg } from "../cli/parse-args";
@@ -147,11 +147,6 @@ const workflowCreateCommand = defineJsonCommand({
       type: "boolean",
       description:
         "Overwrite an existing workflow. Combined with --from, replaces its content; alone, replaces it with a fresh template.",
-      default: false,
-    },
-    reset: {
-      type: "boolean",
-      description: "Deprecated alias for --force with no --from (replaces an existing workflow with a fresh template).",
       default: false,
     },
     print: {

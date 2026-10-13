@@ -7,17 +7,18 @@
  *
  * Ranking is two candidate channels fused by reciprocal rank (`ranking.ts`):
  * BM25 over whole documents matching any query word, and the nearest document
- * vectors to the query embedding. Filters narrow the fused list; nothing else
+ * vectors to the query embedding. The fused score is then scaled by the
+ * asset's recorded user feedback. Filters narrow the list; nothing else
  * reorders it.
  */
 
 import path from "node:path";
-import { stashDirFor } from "../../core/asset/asset-placement";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { compareCodePoints } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config";
 import { classifyPathAccess } from "../../core/path-access";
 import { getDbPath } from "../../core/paths";
+import { withStateDbTelemetry } from "../../core/state-db";
 import { systemErrorCode } from "../../core/system-error";
 import { presentationFor } from "../../core/type-presentation";
 import { embed } from "../../llm/embedder";
@@ -49,8 +50,15 @@ import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
 import { ensureIndex } from "../ensure-index";
 import { type IndexDocument, isProposedQuality, type StashEntryScope } from "../passes/metadata";
-import { ftsQueryTokens, parseRefPrefixQuery, parseRetiredTypePrefixQuery } from "./fts-query";
-import { type FusedCandidate, type RankedRef, reciprocalRankFusion } from "./ranking";
+import { countFeedbackSignalsByRef } from "../usage/usage-events";
+import { ftsQueryTokens, parseRefPrefixQuery } from "./fts-query";
+import {
+  applyFeedback,
+  type FeedbackCounts,
+  type FusedCandidate,
+  type RankedRef,
+  reciprocalRankFusion,
+} from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
 import { enrichSearchHit } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
@@ -118,20 +126,21 @@ function resolveSearchHitRef(entry: IndexDocument, provenance: IndexedProvenance
 // ── Main search entrypoint ───────────────────────────────────────────────────
 
 /**
- * Whether an embedding provider is actually configured.
+ * Whether `auto` has a usable embedding provider.
  *
- * A remote provider needs BOTH endpoint and model. A LOCAL provider needs
- * neither — `embedding.localModel` selects a transformers model that runs in
- * process. Checking only the remote pair told every local-provider user that
- * "no embedding provider is configured" and pointed them at
- * `akm config set embedding '{"endpoint":...}'`, which is the wrong remedy and
- * hid the real diagnostic recorded in the semantic status.
+ * `auto` with no (or no remote) embedding settings falls back to the built-in
+ * local model (`DEFAULT_LOCAL_MODEL`, or `embedding.localModel`), so semantic
+ * search works without any configuration. The only config that can never
+ * succeed is a remote `endpoint` without a `model` — `RemoteEmbedder` throws on
+ * construction. Treating "no endpoint+model pair" as unconfigured warned every
+ * default install that semantic search had no provider while it worked.
  */
 function hasConfiguredEmbeddingProvider(config: {
   embedding?: { endpoint?: string; model?: string; localModel?: string };
 }): boolean {
-  if (config.embedding?.localModel) return true;
-  return Boolean(config.embedding?.endpoint && config.embedding?.model);
+  const embedding = config.embedding;
+  if (!embedding?.endpoint) return true;
+  return Boolean(embedding.model);
 }
 
 export interface SearchLocalInput {
@@ -179,16 +188,16 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   /** Actual ranking mode, including a failed semantic attempt. */
   mode: SearchExecutionMode;
 }> {
-  const { query, stashDir, config } = input;
+  const { stashDir, config } = input;
   const warnings: string[] = [];
   // Semantic search is attempted fresh on every query (see `startVectorChannel`);
   // there is no cached readiness verdict to consult here. The only thing
   // worth flagging ahead of the attempt is a config that can never succeed.
   if (config.semanticSearchMode === "auto" && !hasConfiguredEmbeddingProvider(config)) {
     warnings.push(
-      "Semantic search is enabled (semanticSearchMode='auto') but no embedding provider is configured. " +
-        'Either: (a) `akm config set embedding \'{"endpoint":"...","model":"..."}\'`, or ' +
-        "(b) `akm config set semanticSearchMode off` to use keyword-only search.",
+      "Semantic search is enabled (semanticSearchMode='auto') but embedding.endpoint is set without embedding.model. " +
+        "Either: (a) set embedding.model, or (b) remove embedding.endpoint to use the built-in local model, or " +
+        "(c) `akm config set semanticSearchMode off` to use keyword-only search.",
     );
   }
 
@@ -227,11 +236,12 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     const staleHint = buildStaleIndexHint(db);
     if (staleHint) warnings.push(staleHint);
 
-    const { hits, embedMs, rankMs, mode, semanticWarning } = await searchDatabase(db, input);
+    const { hits, embedMs, rankMs, mode, semanticWarning, feedbackWarning } = await searchDatabase(db, input);
     if (semanticWarning) warnings.push(semanticWarning);
+    if (feedbackWarning) warnings.push(feedbackWarning);
     return {
       hits,
-      tip: hits.length === 0 ? emptyResultTip(query) : undefined,
+      tip: hits.length === 0 ? EMPTY_RESULT_TIP : undefined,
       warnings: warnings.length > 0 ? warnings : undefined,
       embedMs,
       rankMs,
@@ -255,6 +265,7 @@ async function searchDatabase(
   rankMs?: number;
   mode: SearchExecutionMode;
   semanticWarning?: string;
+  feedbackWarning?: string;
 }> {
   const { query, searchType, limit, stashDir, sources, config, filters } = input;
   const filterOptions = {
@@ -322,7 +333,9 @@ async function searchDatabase(
 
   const tRank0 = Date.now();
   const vectorCandidates = vector.neighbors ? keepAllowedTypes(db, vector.neighbors, typeFilter, defaultExcludes) : [];
-  const fused = reciprocalRankFusion([lexical, vectorCandidates]);
+  const rrf = reciprocalRankFusion([lexical, vectorCandidates]);
+  const feedback = readFeedback(rrf);
+  const fused = applyFeedback(rrf, feedback.counts);
   const selected = selectFusedEntries(db, fused, limit, filterOptions);
   const rankMs = Date.now() - tRank0;
 
@@ -345,7 +358,30 @@ async function searchDatabase(
   );
 
   const mode: SearchExecutionMode = vector.warning ? "fts-fallback" : vector.neighbors ? "semantic" : "keyword";
-  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning };
+  return { embedMs, rankMs, hits, mode, semanticWarning: vector.warning, feedbackWarning: feedback.warning };
+}
+
+/**
+ * User feedback counts of the fused candidates, from state.db in one query.
+ * A search never creates state.db, and one that cannot read it ranks without
+ * feedback and says so.
+ */
+function readFeedback(fused: readonly FusedCandidate[]): { counts: Map<string, FeedbackCounts>; warning?: string } {
+  let counts = new Map<string, FeedbackCounts>();
+  try {
+    withStateDbTelemetry((stateDb) => {
+      counts = countFeedbackSignalsByRef(
+        stateDb,
+        fused.map((candidate) => candidate.itemRef),
+      );
+    });
+  } catch (error) {
+    return {
+      counts: new Map(),
+      warning: `Feedback was not applied to the ranking: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+  return { counts };
 }
 
 type HydratedEntry = NonNullable<ReturnType<typeof getEntryById>> & { id: number };
@@ -419,19 +455,7 @@ function describeRanks(candidate: FusedCandidate): string[] {
   ];
 }
 
-/**
- * The no-hits tip. A query in the retired `<type>:` / `<type>:<prefix>/` browse
- * grammar gets the conceptId spelling that replaces it: without this it comes
- * back empty and silent, which is the failure D4 removed the grammar to avoid.
- */
-function emptyResultTip(query: string): string {
-  const generic = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
-  const retired = parseRetiredTypePrefixQuery(query);
-  if (!retired) return generic;
-  const root = stashDirFor(retired.type);
-  if (!root) return generic;
-  return `No matching stash assets were found. The '<type>:' browse grammar was removed in 0.9.0 — use the conceptId spelling: 'akm search "${root}/${retired.rest}"'.`;
-}
+const EMPTY_RESULT_TIP = "No matching stash assets were found. Try a different query or run 'akm index' to rebuild.";
 
 // ── Enumeration (browse) path ────────────────────────────────────────────────
 

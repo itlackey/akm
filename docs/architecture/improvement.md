@@ -32,15 +32,16 @@ everything else routes through `akm proposal accept`.
 
 ## Components
 
-- **Utility policy** (`src/indexer/feedback/utility-policy.ts`) — pure
-  domain math that turns accumulated feedback counts into a new utility
-  score. No database access; unit-testable in isolation.
+- **Utility recompute** (`recomputeUtilityScores`, `src/indexer/indexer.ts`) —
+  the one place utility is computed from `usage_events`; `akm index` runs it
+  for every entry and `akm feedback` for the entry it touched.
 - **Strategies** (`src/commands/improve/improve-strategies.ts`,
   `src/assets/improve-strategies/*.json`) — named presets that decide which
   improve processes run and with what engine/model/limits.
 - **Autonomy gate** (`src/commands/improve/autonomy-gate.ts`) — downgrades
-  the handful of processes that would otherwise mutate assets without review,
-  unless `experimental.improveAutonomy` is explicitly set.
+  the handful of processes that would otherwise mutate assets without review
+  (memory inference, memory cleanup, and a judged triage promote), unless
+  `experimental.improveAutonomy` is explicitly set.
 - **Reflect / distill / consolidate subprocesses** — the improve pipeline's
   proposal generators, invoked per asset (reflect, distill) or across the
   whole memory corpus (consolidate). See
@@ -49,7 +50,7 @@ everything else routes through `akm proposal accept`.
 - **Proposal queue** (`state.db`) — written by `createProposal` (reflect,
   distill, consolidate's promote operations, and the other proposal producers)
   and by `createRetireProposal` (the pair pass's retire proposals).
-- **Auto-sync** — the end-of-run commit/push step for git-backed bundles.
+- **Auto-sync** — the pre-run sync and the end-of-run commit/push step for git-backed bundles.
 - **Session extraction** (`akm proposal extract`) — a separate entry point
   that mines coding-agent session transcripts for durable insights and queues
   them the same way.
@@ -62,13 +63,16 @@ everything else routes through `akm proposal accept`.
    `--negative --reason "<what is wrong and what should change>"` flags the
    asset: the next improve run may repair its frontmatter from the reason.
    `--replace`/`--with`/`--source` attach an exact fix of its text once the
-   agent has verified the correct fact, which akm checks at once and queues as
-   a `feedback` proposal.
+   agent has verified the correct fact, which akm checks and applies at once
+   through a `feedback` proposal it accepts on the spot (no review).
    `--positive` records that the asset helped (it raises its ranking) and does
    not trigger a rewrite.
-2. The feedback event is appended to `state.db`, and the asset's utility
-   score is updated immediately via the bounded-step formula (below) — no
-   reindex required.
+2. The feedback event is appended to `state.db`. `akm search` and `akm curate`
+   count a user's recorded positives and negatives per asset and scale the
+   fused score by them (logarithmic in each count, the same for every asset),
+   so ranking moves at once with no reindex. The asset's utility score, which
+   improve and metrics read, is recomputed immediately by the same formula
+   `akm index` uses (below).
 3. `akm improve` selects assets from the one bundle it writes to. A rewrite
    (reflect) is planned only for an asset with negative feedback in the last
    30 days that is newer than the stage's last attempt, or for an explicit ref;
@@ -80,10 +84,11 @@ everything else routes through `akm proposal accept`.
    reason or note, which gives the writer nothing to distil (10 of the 11
    lessons made from such memories were rejected). Unless
    `--require-feedback-signal` is set, the
-   fallback lanes (high salience, and proactive maintenance where the strategy
-   enables it) pick what the retrieval scope below admits, for scoring only:
-   they plan nothing, so improve does not rewrite assets on a proactive
-   cadence. It ranks the selected assets by salience, applies the limit, then
+   proactive-maintenance lane (where the strategy enables it, as `default`
+   does) adds the stable assets due for a revisit that the retrieval scope below
+   admits, and plans them with the feedback-bearing ones. At most `maxPerRun`
+   (15) assets are picked per run, an asset is due only if not reflected or
+   distilled for `dueDays` (30), and reflect's `limit` (25) bounds the run. It ranks the selected assets by salience, applies the limit, then
    runs whichever processes the selected strategy enables against each one (see
    [Improve Workflow](internals/improve-workflow.md#ledger-pre-filter-signal-delta)).
 4. Reflect and distill each emit at most one proposal per asset per run;
@@ -119,36 +124,39 @@ everything else routes through `akm proposal accept`.
    retires, go in the same commit. A commit that fails warns and the accept
    stands.
 8. For a git-backed bundle, `akm improve`'s end-of-run auto-sync commits the
-   rest of the run's changes as a single batch and pushes (see below).
+   rest of the run's changes as a single batch and pushes (see below). The run
+   began with the same sync, so it started from what other hosts had pushed.
+
 
 ## Current decisions
 
 ### Utility scoring
 
-Utility moves by the MemRL bounded-step EMA formula (arXiv:2601.03192),
-implemented in `computeNextUtility` (`src/indexer/feedback/utility-policy.ts`):
+Utility has one formula and one implementation, `recomputeUtilityScores`
+(`src/indexer/indexer.ts`), counting only user-attributed (`source='user'`)
+events:
 
 ```text
-reward   = weighted average of positive (1.0) and negative (0.0) feedback in the batch
-nextUtil = clamp(currentUtil + FEEDBACK_LR * (reward - currentUtil), 0, 1)
+rate     = max(selectRate, max(0, positives - negatives) / (positives + negatives))
+nextUtil = prevUtil * 0.7^days + rate * (1 - 0.7^days)
 ```
 
-`FEEDBACK_LR` is `0.1`, so a single feedback batch moves utility by at most
-0.1 in either direction regardless of how lopsided the batch is — `reward` is
-a proportion of the counts, not their magnitude. When a previously
-high-utility asset (utility ≥ 0.5) crosses back below 0.5, the update is
-flagged as a review-threshold crossing so callers can escalate it. Decay is
-time-proportional rather than tied to index frequency, and usage history
-(and the utility it drives) is preserved across schema resets and full index
-rebuilds — see [Architecture: Utility Scoring](architecture.md#utility-scoring)
+`akm index` runs it for every entry. `akm feedback` runs the same function for
+the one entry it touched, so the value it stores is the one the next index
+would compute at that moment (a one-entry call skips the usage-event purge
+and leaves the recompute watermark alone). `days` is the time since the last
+full recompute, at least 1, so decay is time-proportional rather than tied to
+index frequency. When a previously high-utility asset (utility >= 0.5) falls
+below 0.5 after feedback, an `improve_review_needed` event is emitted. Usage
+history (and the utility it drives) is preserved across schema resets and full
+index rebuilds - see [Architecture: Utility Scoring](architecture.md#utility-scoring)
 for the storage-level summary.
 
 ### Strategy inheritance
 
 Improve presets live under `improve.strategies` (config) and the built-in
-set: `default`, `quick`, `thorough`, `consolidate`, `catchup`,
-`reflect-distill`, and `proactive-maintenance`
-(`src/assets/improve-strategies/*.json`). Selection
+set: `default` and `consolidate` (`src/assets/improve-strategies/*.json`). The removed `quick`, `thorough`,
+`catchup`, `reflect-distill` and `proactive-maintenance` still work as user-defined strategies. Selection
 order is `--strategy`, then `defaults.improveStrategy`, then `default`.
 
 Resolution is a two-step deep merge (`resolveImproveStrategy`): a named
@@ -157,16 +165,16 @@ any user-defined override for that same name (under `improve.strategies` in
 config) is merged on top. So a strategy — built-in or user-defined — that
 omits a field, or an entire process block, inherits it from `default`; an
 explicit `enabled: true`/`false` in the more specific layer always wins. This
-is why, for example, `proactiveMaintenance` stays off in `default` and
-`reflect-distill`, but a preset that doesn't mention it at all still inherits
-that "off" rather than defaulting to on.
+is why, for example, `proactiveMaintenance` is on in `default` and off in
+`consolidate`, and a preset that doesn't mention it at all inherits the
+`default` value. A user-defined strategy named `proactive-maintenance` (the name
+of the retired built-in) resolves the same way, merged onto `default`.
 
 ### Retrieval scope
 
 Improve reworks only what gets read (#986). Fresh feedback and an explicit ref
 scope (`akm improve skills/x`) are usage evidence of their own. Every other
-pick — the proactive-maintenance and high-salience lanes (which only score what
-they pick), and the memories consolidation judges — must be in the retrieval
+pick — the proactive-maintenance lane, and the memories consolidation judges — must be in the retrieval
 scope (`src/commands/improve/retrieval-scope.ts`):
 
 - **Retrieved:** a user-attributed `search`, `curate` or `show` returned the
@@ -207,7 +215,13 @@ Content passes only when **every** criterion scores 4 or more (a lesson's
 grounding is judged apart, see
 [distill](internals/improve-workflow.md#distill-akmdistill)); a mean of 3.5
 passed it before. A verdict that does not pass is a review when its mean is 2.5
-or more and a rejection below that. The rubric and the rule were chosen on 90
+or more and a rejection below that. Reflect narrows that band: a revision whose
+mean is 3.5 or more is queued for a person (reason `judge-uncertain`, with the
+`scores` and `judgeReason`) and records no rejection window, and a lower mean is
+refused. On 113 reviewed frontmatter-only proposals (lab 27B Q2, the shipped
+judge) the non-passing ones at 3.5 or more were 17 good and 9 bad, the rest 1
+good and 2 bad; on 396 labelled body rewrites a mean below 3.5 was good 6 times
+in 291 (the constant and its sources are in `src/commands/improve/reflect.ts`). The rubric and the rule were chosen on 90
 labelled real rewrites, where judging on the mean let rewrites that only
 reworded a correct asset through.
 
@@ -217,7 +231,10 @@ both stay on the proposal when the drain accepts it, so a later audit can read
 why it passed (`akm proposal show --format json`). A distill pass is not staged:
 the lesson or promotion is minted `deferred` for a person (reason
 `distill-review`, same gate) with the same `scores` and `judgeReason`, and the
-triage drain and its judgment tier leave it alone. On 2026-10-05 the gate had
+triage drain and its judgment tier leave it alone. A lesson that repeats an existing
+lesson may instead be proposed as an update of that lesson (reason
+`distill-update`, same gate), with only what the memory adds; the drain leaves
+it for a person too. On 2026-10-05 the gate had
 staged 12 lessons and 10 were bad (they restated the memory, claimed what it
 does not say, or filed a dated status as a lesson), and no score separated them
 from the two good ones. Reflect revises only an asset's
@@ -225,34 +242,34 @@ from the two good ones. Reflect revises only an asset's
 those that fixed a frontmatter defect and left the body alone were good 24
 times in 26, and those that also rewrote the body were bad 175 times in 224.
 
-### Retrieval regression gate
+### Judgment tier: promotions only
 
-Reflect refuses a revision of an existing asset that grades lower on the
-asset's own retrieval queries (#722, `src/commands/improve/retrieval-gate.ts`).
-After the quality judge passes, up to five distinct user `search`/`curate`
-queries that returned the asset (envelopes, the stash README line and inputs
-over 2,000 characters dropped) are each graded 0–3 against the old and the new
-content with the retrieval eval's prompt, `retrieval-relevance-judge.md`, and
-its document shape: type, ref, name, description and the first 1,500 body
-characters. A lower mean for the new content is a `quality_rejected` refusal
-with the reflect rejection window. A grade that cannot be obtained refuses the
-rewrite, as the quality judge fails closed. An asset with no such queries is
-not graded.
+The triage drain's judgment tier (`processes.triage.judgment`, off in every
+built-in strategy) may accept only a consolidate promotion, a memory proposed as
+a new knowledge note. A retirement or a reflect revision it would
+accept is left for a person (`judgment-not-promotion`); it may still reject.
+Measured on the nightly eval with `experimental.improveAutonomy` (#1132, #1094),
+judging every kind solved 0.49 (gpt-5.6-terra) and 0.53 (qwen3.8-27b) of the
+items, harmed 14 and 11, and changed 18 and 21 notes outside the planted set.
+Judging promotions alone: precision 0.87, recall 0.78 and 4.8% of bad promotions
+accepted on qwen3.8-27b; precision 1.0, recall 0.17 on gpt-5.6-terra.
 
-The gate exists because it was measured first. Of 60 accepted reflect rewrites
-(since 2026-07-01, stratified by lane) judged this way, 14 graded lower (23%,
-95% CI 14–35%) and 12 higher. Grading the same content twice flipped 11 of 174
-query grades, which puts 3 of 60 rewrites in the "lower" bucket by noise
-alone. The threshold for building it was fixed before judging: a lower bound of
-at least 10%.
+### Proactive-lane proposals wait for a person
+
+A proposal planned by the proactive-maintenance lane (`eligibilitySource:
+"proactive"`, an asset with no feedback behind it) is never accepted by the
+drain, whether a deterministic gate (a staged quality-judge pass), the judgment
+tier or an accept staged by an earlier drain would take it. It is left for a
+person with reason `proactive-needs-review`, and the judgment tier does not see
+it. An empty diff is still rejected. Proposals driven by feedback (`signal-delta`,
+`scope`) follow the one rule unchanged (#1147).
 
 ### Retirement continuity
 
 Before the consolidate pair pass mints a `retire` proposal (rule R3,
 `src/commands/improve/consolidate/continuity-check.ts`), it replays up to five
 of the retired asset's own past `search`/`curate` queries
-(`loadRetrievalQueries`, the same cleaned set `../retrieval-gate.ts` replays
-for the retrieval regression gate — boilerplate, harness/tool envelopes,
+(`loadRetrievalQueries`, `../retrieval-queries.ts` — boilerplate, harness/tool envelopes,
 pastes and near-duplicates dropped before replay, S3a) through akm's own
 search, in-process — the ranking a user actually gets, no LLM. For every
 query where the retired asset ranked in the top 10, the successor must too
@@ -297,8 +314,7 @@ but nothing assigns or emits it any more.
 ### Dry-run planning boundary
 
 Dry and live improve runs call the same selectors for signal-delta eligibility,
-the fallback lanes (proactive maintenance and high salience, which score and
-plan nothing), the retrieval scope, salience ranking, disk presence, and the
+the proactive-maintenance lane, the retrieval scope, salience ranking, disk presence, and the
 final cap, and resolve the bundle they plan the same way: `--bundle`, else
 `defaultWriteTarget`, else the working bundle (`AKM_BUNDLE_DIR`, else
 `defaultBundle`). Each invocation reports a best-effort observation assembled
@@ -337,13 +353,20 @@ equals `effective`. When the run is unbounded, `totalCeiling` is omitted.
 candidates, validation, and proactive-maintenance selection are proposal-only
 and never write assets directly regardless of this gate.
 Three specific lanes *would* mutate assets without review and are downgraded
-unless `experimental.improveAutonomy` is explicitly set to `true`:
+unless `experimental.improveAutonomy` is explicitly set to `true` (the triage
+lane only when its judgment tier is on; see below):
 
 | Lane | What it does when enabled | With autonomy off |
 | --- | --- | --- |
 | `memoryInference` | Writes `.derived.md` children and rewrites parent frontmatter | disabled |
 | memory cleanup | Belief-state frontmatter rewrites, archive moves | analyzed but not applied |
-| `triage` `applyMode: "promote"` | Auto-accepts queued proposals into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+| `triage` `applyMode: "promote"` **with judgment on** | The judgment tier auto-accepts consolidate promotions into the bundle | downgraded to `queue` — triage still runs, it just does not auto-accept |
+
+A deterministic-only `promote` (triage with judgment off) is not gated (#1143):
+the `default` strategy drains the queue through the deterministic gates, up to
+`maxAcceptsPerRun` (200) per run, with no opt-in. The nightly eval's baseline is
+exactly this path (`proposal drain --promote` without judgment): 0.91 (terra) and
+0.89 (qwen) of items solved, 0 to 1 harmed.
 
 Every downgrade is reported, not silent: it warns on stderr, appends an
 `improve_skipped` event with `reason: "autonomy_gated"`, and is counted in
@@ -358,18 +381,34 @@ explicit promote surface independent of this gate.
 
 ### Auto-sync
 
-For git-backed bundles (detected by a `.git` directory), `akm improve`
-automatically commits its changes as a single batch at the end of the run —
-the same operation as `akm sync` — and pushes if the bundle is writable, per
-the active strategy's `sync` setting. The `reflect-distill` and
-`proactive-maintenance` strategies skip sync entirely, so an interrupted run
-does not leave an uncommitted backlog. `--no-sync` disables sync for a single
-run; `--no-push` commits without pushing. Strategy sync behavior is
-configured via the `sync` block under `improve.strategies.<name>`.
+For git-backed bundles (detected by a `.git` directory), `akm improve` syncs
+twice: once **before** the run and once at the end. Both are the same operation
+as `akm sync` — fetch and merge the upstream, commit, and push if the bundle is
+writable, per the active strategy's `sync` setting. A user-defined strategy can
+turn sync off, so an interrupted run does not leave an uncommitted backlog.
+`--no-sync` disables both for a single run; `--no-push` commits without pushing.
+Strategy sync behavior is configured via the `sync` block under
+`improve.strategies.<name>`.
 
-The sync always commits the paths it is given. A branch it cannot push (no
-upstream branch, or behind or diverged from its upstream) only skips the push,
-and the result says why: `sync.reason` reads `not pushed: ...`. A branch that is
+The pre-run sync runs right after the run takes its lock and before the index
+and plan stages, so they see what another host pushed. It stages what `akm sync`
+stages (the managed paths, or the content subdirectory of a repo whose content
+lives in one), which means pending hand edits there are committed (and pushed)
+before the run starts, not mistaken for the run's own writes. It never aborts
+the run: a merge that conflicts (aborted, local commit kept), a failed fetch, or
+any other error is a warning, and the run continues on the local state. The
+outcome is `preRunSync` on the result (same shape as `sync`) and a `stash_synced`
+event with `phase: "pre-run"`. A dry run does not sync. Scheduled `core/improve`
+and `akm-improve-consolidate` runs go through the same `akm improve` entry, so
+they get it too.
+
+The sync always commits the paths it is given. It then fetches the remote and
+brings the upstream in (a fast-forward when it can, otherwise git's default
+merge) before it pushes, so a second host that pushed first does not stop the
+push. A branch it cannot push (no upstream branch, a failed fetch, or a merge
+that conflicts, which is aborted with the local commit kept) only skips the push,
+and the result says why: `sync.reason` reads `not pushed: ...`. A push the remote
+refuses after the commit landed still reports `sync.committed: true`. A branch that is
 ahead of its upstream, as it is after the accept commits above, is pushed with
 the sync commit. A clean tree that is ahead is not pushed: the sync pushes what
 it commits.

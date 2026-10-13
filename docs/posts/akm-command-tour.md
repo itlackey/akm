@@ -99,7 +99,7 @@ Use this to inspect or change settings.
 ```sh
 akm config get output.format
 akm config set output.detail full
-akm config path --all
+akm info
 ```
 
 Real-world use: your agent prefers text output in one repo and JSON in another, or you want to set a default write target for memories and imports.
@@ -404,12 +404,12 @@ akm help migrate latest
 
 Real-world use: you upgraded `akm` and want the release-specific migration notes without leaving the terminal.
 
-### `akm help agents`
+### `akm hints`
 
 Print instructions you can drop into `AGENTS.md` or `CLAUDE.md`.
 
 ```sh
-akm help agents
+akm hints
 ```
 
 Real-world use: you want every project to tell its coding agent how to use the local `akm` installation.

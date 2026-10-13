@@ -3,16 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Real-subprocess entrypoint test for the global `--shape` pre-execution gate.
+ * Real-subprocess entrypoint test for the removed global `--shape` flag.
  *
- * WHY THIS NEEDS A REAL SUBPROCESS: `--shape summary` is rejected for every
- * non-`show` command by an early, pre-execution gate in the guarded startup
- * block of src/cli.ts (before any command runs). The in-process harness
- * (tests/_helpers/cli.ts `runCliCapture`) intentionally skips that startup
- * block, so it only enforces the later, post-execution `shapeForCommand()`
- * gate — by which point a write command like `remember` would already have
- * run. This test asserts the write did NOT happen, which only holds for the
- * real subprocess entry point, so it lives in tests/integration/ on spawnSync.
+ * `--shape` (0.10 folded `agent` into `--detail agent`) is an ordinary unknown
+ * flag now. It must fail before any command runs, so a write command like
+ * `remember` leaves nothing behind; that only holds for the real subprocess
+ * entry point, so it lives in tests/integration/ on spawnSync.
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -47,14 +43,15 @@ function runEntrypointSpawn(args: string[]) {
   });
 }
 
-describe("entrypoint global --shape=summary on a non-show command", () => {
-  test("warns and still performs the write, falling back to the agent shape", () => {
+describe("entrypoint removed --shape flag", () => {
+  test("is an unknown flag (exit 2) and the write does not happen", () => {
     const storage = useStorage();
 
     const result = runEntrypointSpawn(["--format=json", "--shape=summary", "remember", "write me anyway"]);
 
-    expect(result.status).toBe(0);
-    expect(result.stderr).toContain("not supported for 'akm remember'");
-    expect(fs.readdirSync(path.join(storage.stashDir, "memories"))).not.toEqual([]);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("UNKNOWN_FLAG");
+    const memories = path.join(storage.stashDir, "memories");
+    expect(fs.existsSync(memories) ? fs.readdirSync(memories) : []).toEqual([]);
   });
 });

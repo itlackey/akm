@@ -197,8 +197,7 @@ Important details:
 
 - `curate` has a dedicated output shaper now
 - `brief` still keeps `followUp` and `reason`
-- `--shape agent` trims fields down for agent use
-- `--shape summary` is rejected on `curate`
+- `--detail agent` trims fields down for agent use
 - text output prints fixed `Next steps:` guidance that assumes `akm show <ref>` is the next action
 
 ## Telemetry And Retrieval Signal

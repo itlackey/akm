@@ -8,7 +8,7 @@
  * The only module that branches on `source.kind` for writes. It does two
  * things:
  *
- *  1. Resolve the destination: `--target` → `defaultWriteTarget` → working
+ *  1. Resolve the destination: `--bundle` → `defaultWriteTarget` → working
  *     stash (`defaultBundle`). `writable` defaults to true on `filesystem` and
  *     false on `git`; `website` / `npm` are never writable (the config loader
  *     rejects `writable: true` on them).
@@ -97,16 +97,14 @@ export interface WriteTargetOptions {
   requireWritable?: boolean;
   /**
    * The flag that named the explicit target, spelled in the errors below
-   * (default `--target`). A command whose destination flag is `--bundle`, like
-   * `akm improve`, passes that instead of telling its user to use `--target`.
-   * A target that came from a ref's bundle qualifier rather than a flag passes
+   * (default `--bundle`). A target that came from a ref's bundle qualifier rather than a flag passes
    * how the user knows it, such as "The task ref's bundle".
    */
   flag?: string;
 }
 
 /**
- * Resolve the destination for a write: explicit `--target`, then
+ * Resolve the destination for a write: explicit `--bundle`, then
  * `defaultWriteTarget`, then the working stash (`defaultBundle`). There is no
  * fallback to the first writable source.
  */
@@ -118,7 +116,7 @@ export function resolveWriteTarget(
   const allConfiguredSources = resolveConfiguredSources(akmConfig);
   const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
-  const flag = options.flag ?? "--target";
+  const flag = options.flag ?? "--bundle";
 
   if (explicitTarget) {
     const match = configuredSources.find((s) => s.name === explicitTarget);

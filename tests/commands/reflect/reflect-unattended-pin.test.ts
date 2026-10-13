@@ -20,7 +20,10 @@ import { akmReflect } from "../../../src/commands/improve/reflect";
 import type { AkmConfig, LlmConnectionConfig } from "../../../src/core/config/config";
 import type { SpawnedSubprocess, SpawnFn } from "../../../src/core/subprocess";
 import { reflectReply } from "../../_helpers/factories";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 let storage: IsolatedAkmStorage;
 

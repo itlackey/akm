@@ -493,7 +493,7 @@ export function assertBoundedTaskYamlDocument(
  * P4 (docs/plans/specs/p4-deletions-closeout.md §3.2) deleted task v3
  * acceptance from `src` entirely — `parseTaskV3Yaml` and its `"task v3
  * source"` label no longer exist here (the grammar survives only in the
- * vendored, frozen `src/tasks/source/task-source-v3-frozen.ts`
+ * vendored, frozen `scripts/akm-migrate/migrate/task-source-v3-frozen.ts`
  * copy, which does not call this function). The two live `src` callers
  * today: `parseTaskSourceV4`'s standalone YAML-string entry
  * (`task-source-v4.ts:790`) passes `sourceLabel: "task source v4"`; the

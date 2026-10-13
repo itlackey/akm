@@ -67,7 +67,7 @@ describe("parseWorkflow", () => {
     expect(plan.steps[1]!.gate.criteria).toEqual([]);
   });
 
-  test("bare `- id:` with no map/route/unit is a complete minimal unit step", () => {
+  test("bare `- id:` with no map/unit is a complete minimal unit step", () => {
     const minimal = `---
 type: workflow
 steps:
@@ -84,7 +84,6 @@ Do the one thing.
     expect(result.plan.steps[0]!.stepId).toBe("only");
     expect(result.plan.steps[0]!.spec?.unit).toBeUndefined();
     expect(result.plan.steps[0]!.spec?.map).toBeUndefined();
-    expect(result.plan.steps[0]!.route).toBeUndefined();
   });
 
   test("accepts canonical opaque xrefs in workflow frontmatter", () => {
@@ -222,16 +221,14 @@ And this line.
     expect(result.errors.some((e) => e.message.includes('"## deploy" body section'))).toBe(true);
   });
 
-  test("a route step MAY omit its body section", () => {
-    const routeOnly = `---
+  test("`route` is no longer a step key", () => {
+    const routed = `---
 type: workflow
 steps:
   - id: intake
-  - id: triage
     route:
       input: steps.intake.output.status
       when: [{ match: pass, step: done }]
-      default: done
   - id: done
 ---
 
@@ -243,9 +240,10 @@ Do the intake work.
 
 Post the summary.
 `;
-    const result = parse(routeOnly);
-    expectOk(result);
-    expect(step(result, "triage").spec?.instructions).toBeUndefined();
+    const result = parse(routed);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.errors.some((e) => e.message.includes('Unknown Step "intake" key "route"'))).toBe(true);
   });
 
   test("every level-2 heading must exactly match a declared step id", () => {

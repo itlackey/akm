@@ -219,7 +219,7 @@ function parseWriteRefs(rawRefs: string[], flag: "--xref" | "--supersedes"): Par
  *
  *   1. the resolved write target (mutable),
  *   2. the primary working stash when it is a different directory (mutable) —
- *      a `--target`/`defaultWriteTarget` write must still see working-stash
+ *      a `--bundle`/`defaultWriteTarget` write must still see working-stash
  *      assets, which `resolveSourceEntries(writeTarget)` alone omits,
  *   3. every other configured source (read-only for demotion purposes).
  *
@@ -623,7 +623,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string, ta
         : {
             reason: namedWritableSource
               ? `resolves outside the write target and the working stash, in writable source "${namedWritableSource}" at ${root}; ` +
-                `re-run with ${targetFlag ?? "--target"} ${namedWritableSource} to demote it there`
+                `re-run with ${targetFlag ?? "--bundle"} ${namedWritableSource} to demote it there`
               : `resolves outside the write target and the working stash, in a read-only source at ${root}; ` +
                 "demotion only applies to assets in the write target or the working stash",
           }),
@@ -641,7 +641,7 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string, ta
 /**
  * Write a markdown asset (knowledge or memory) to the resolved write target.
  *
- * Resolves the write target via the v1 precedence chain (`--target` →
+ * Resolves the write target via the v1 precedence chain (`--bundle` →
  * `defaultWriteTarget` → working stash), validates the path is within the
  * type root, enforces `--force` semantics, and delegates the actual write
  * to `writeAssetToSource`.
@@ -653,9 +653,9 @@ export async function writeMarkdownAsset(options: {
   fallbackPrefix: string;
   preferredName?: string;
   force?: boolean;
-  /** Optional explicit `--target` override naming a configured source. */
+  /** Optional explicit `--bundle` override naming a configured source. */
   target?: string;
-  /** The flag that carried `target`, as the caller's command spells it in errors (default `--target`). */
+  /** The flag that carried `target`, as the caller's command spells it in errors (default `--bundle`). */
   targetFlag?: string;
   /**
    * Optional `--path`: a relative directory under the type root in which to
@@ -797,7 +797,7 @@ export async function writeMarkdownAsset(options: {
   // Write-path indexing: the asset is searchable immediately. Fail-open; reads
   // no longer trigger reindexes, so keeping the index current is the writer's
   // job. Demoted files reindex under their own containing root (usually the
-  // write target itself; the working stash when writing to a --target) so
+  // write target itself; the working stash when writing to a --bundle) so
   // `--belief current` filtering takes effect without waiting for the next
   // full index. (alpha.4 removed belief weights from ranking; `--belief` is
   // the only reader of `beliefState` today.)

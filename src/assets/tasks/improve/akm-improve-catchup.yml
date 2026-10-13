@@ -1,6 +1,0 @@
-version: 4
-run: akm improve --strategy catchup --skip-if-locked --require-engines
-description: Manual recovery — consolidation + triage drain (run on demand via `akm task run akm-improve-catchup`)
-# Manual-recovery task: setup offers it disabled by default. `akm task run`
-# still works manually; `akm task enable` opts this host into the schedule.
-schedule: "0 4 * * *"

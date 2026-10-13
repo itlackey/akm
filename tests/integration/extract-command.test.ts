@@ -569,6 +569,45 @@ describe("akmExtract — subagent transcripts are never extracted as their own s
     expect(capturedPrompt).not.toContain("[subagent:");
   });
 
+  test("a real session file flows through the real provider and prompt into a pending proposal (#1133)", async () => {
+    const stash = makeStashDir();
+    const { parentId } = seedParentAndSubagent(storage.sessionLogsDir);
+
+    const result = await akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config: configEnabled(stash),
+      harnesses: [new ClaudeCodeProvider()],
+      since: "24h",
+      chat: async (_cfg, msgs) => {
+        // The model sees the session read from disk, then answers with one candidate.
+        expect(msgs[0]?.content).toContain("release-branch audit");
+        return JSON.stringify({
+          candidates: [
+            {
+              type: "lesson",
+              name: "audit-release-branches-via-subagent",
+              description:
+                "Delegate the release-branch audit to a subagent; it reports back when every branch is clean.",
+              when_to_use: "When a release needs every branch audited before cutting.",
+              body: "The release-branch audit runs well as a delegated subagent task and reports back on completion.",
+              confidence: 0.9,
+              evidence: "parent session: delegated, subagent reported, audit done",
+            },
+          ],
+        });
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.sessions.map((s) => s.sessionId)).toEqual([parentId]);
+    expect(result.candidatesCreated).toBe(1);
+    const pending = listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract");
+    // The session's project scope places the lesson under its project slug.
+    expect(pending).toHaveLength(1);
+    expect(pending[0]?.ref).toMatch(/lessons\/.*audit-release-branches-via-subagent$/);
+  });
+
   test("--session-id agent-<hash> returns the not-found result, not an extraction", async () => {
     const stash = makeStashDir();
     const { subagentId } = seedParentAndSubagent(storage.sessionLogsDir);

@@ -5,10 +5,8 @@
 /**
  * Pure freeze-time binding of a composing step's inputs.
  * {@link freezeTaskInputBindings} classifies an authored `with:` against a
- * contract; {@link rebindTaskInputBindings} re-binds already-classified
- * bindings by name against another contract (a task's effective inputs
- * against a child workflow's `params:`) without re-deriving their kind. A
- * reference's resolved value is validated before each attempt (`exec/step-work.ts`).
+ * child workflow's `params:` contract. A reference's resolved value is
+ * validated before each attempt (`exec/step-work.ts`).
  * See docs/architecture/decisions/0008-task-binding-normalization.md.
  */
 
@@ -30,17 +28,6 @@ export interface FreezeTaskInputBindingsInput {
   readonly earlierStepIds: ReadonlySet<string>;
   /** THIS workflow's own declared param names — never an outer composing task's. */
   readonly declaredParamNames: ReadonlySet<string>;
-}
-
-export interface RebindTaskInputBindingsInput {
-  /** The composing step's own id — for diagnostics only. */
-  readonly stepId: string;
-  /** The child's authored ref (e.g. "workflows/inner") — for diagnostics only. */
-  readonly targetRef: string;
-  /** An ALREADY-NORMALIZED binding set — a v4 task's own effective inputs, classified once against the TASK's own `inputs:` contract. */
-  readonly bindings: readonly TaskInputBinding[] | undefined;
-  /** The NEW contract to re-bind `bindings` against by name — the child workflow's declared `params:`, never the task's own. */
-  readonly contract: InputContract;
 }
 
 function inputBindingInvalid(message: string): UsageError {
@@ -78,36 +65,6 @@ export function freezeTaskInputBindings(input: FreezeTaskInputBindingsInput): re
     byName.set(
       name,
       normalizeOneEntry(stepId, targetRef, name, value, declaration.schema, earlierStepIds, declaredParamNames),
-    );
-  }
-
-  return finalizeBindings(stepId, targetRef, contract, byName);
-}
-
-/**
- * Re-bind already-normalized bindings by name against a different contract,
- * keeping each entry's kind (a literal shaped like `{from}` stays a literal).
- * A literal is validated against the new contract; a reference keeps its
- * `from` and takes the new contract's schema; undeclared names are
- * `INPUT_BINDING_INVALID`; missing keys are defaulted or required as usual.
- */
-export function rebindTaskInputBindings(input: RebindTaskInputBindingsInput): readonly TaskInputBinding[] {
-  const { stepId, targetRef, contract } = input;
-  const declaredNames = Object.keys(contract).sort();
-
-  const byName = new Map<string, TaskInputBinding>();
-  for (const binding of input.bindings ?? []) {
-    if (!Object.hasOwn(contract, binding.name)) {
-      throw unknownBindingNameError(stepId, targetRef, binding.name, declaredNames);
-    }
-    const declaration = contract[binding.name];
-    if (!declaration)
-      throw inputBindingInvalid(`Workflow step ${stepId} targets ${targetRef} with.${binding.name} is invalid.`);
-    byName.set(
-      binding.name,
-      binding.kind === "literal"
-        ? binding
-        : Object.freeze({ kind: "reference", name: binding.name, from: binding.from, schema: declaration.schema }),
     );
   }
 

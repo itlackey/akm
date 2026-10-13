@@ -50,7 +50,7 @@ printf '%s' "$TOKEN" | akm secret set secrets/deploy-token
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
 
 # Write into a specific source instead of the working bundle:
-akm secret set secrets/deploy-token --target team --from-file ./token
+akm secret set secrets/deploy-token --bundle team --from-file ./token
 ```
 
 `env export --out <file>` writes a safe, sourceable `export KEY='value'`
@@ -73,7 +73,7 @@ output and from the search index entirely; the value remains usable via
 
 Env/secret **mutations** (`env create`, `env remove`, `secret set`) choose
 their write destination like every other write command: an explicit
-`--target <source>` wins, else `defaultWriteTarget`, else the working
+`--bundle <source>` wins, else `defaultWriteTarget`, else the working
 bundle. The chosen source must be writable — a non-writable target fails
 with a `ConfigError` before anything is written — and a git-backed writable
 target commits the mutation at a single operation boundary. Reads (`list`,

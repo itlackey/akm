@@ -45,9 +45,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { _resetParsedInvocationForTests } from "../src/cli/invocation";
 import { resetConfigCache } from "../src/core/config/config";
 import { clearLogFile, resetVerbose, setQuiet } from "../src/core/warn";
 import { _setAssetMutationLeaseSyncTimingForTests } from "../src/indexer/index-writer-lock";
+import { _setOpencodeVersionProbeForTests } from "../src/integrations/harnesses/opencode/version";
 import { closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { resetAllSeams } from "./_helpers/seams";
@@ -315,6 +317,10 @@ function resetSingletons(): void {
   clearEmbeddingCache();
   resetLocalEmbedder();
   _setAssetMutationLeaseSyncTimingForTests(undefined);
+  _setOpencodeVersionProbeForTests(undefined);
+  // A test that ran `src/cli.ts`'s entry in-process minted the argv singleton; the in-process harness
+  // (tests/_helpers/cli.ts) and every leaf-command test read process.argv through its fallback instead.
+  _resetParsedInvocationForTests();
   // Enable quiet mode by default in tests so production [improve]/warn/info
   // lines do not flood stderr and bury bun's "(fail) <test name>" output.
   // Individual tests that need to assert on log output can call setQuiet(false)

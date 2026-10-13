@@ -124,46 +124,16 @@ describe("decodeTaskHistoryMetadata", () => {
     ).toEqual({ metadataVersion: 2, durationMs: 1, detail: { exitCode: 0 } });
   });
 
-  // P1b (D8, spec §5.3/§6 F-2): the result-vocabulary marker rides the
-  // metadata as `targetVocab`, validated as 2 | undefined. RED until the
-  // Implement step teaches the decoder the field (today it rejects it as an
-  // unknown field); a later phase never widens the accepted values.
-  test("accepts targetVocab 2 and metadata without targetVocab (P1b vocabulary marker)", () => {
-    expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null, targetVocab: 2 })).toEqual({
-      metadataVersion: 2,
-      durationMs: 1,
-      detail: null,
-      targetVocab: 2,
-    });
-    expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null })).toEqual({
-      metadataVersion: 2,
-      durationMs: 1,
-      detail: null,
-    });
-  });
-
-  test("decodes a non-2 targetVocab by dropping it (falls back to the legacy mapping) instead of rejecting", () => {
-    _resetWarnOnceForTests();
-    const messages: string[] = [];
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") messages.push(args.map(String).join(" "));
-    });
-    try {
-      expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null, targetVocab: 3 })).toEqual({
+  // Releases up to 0.9.x stamped `targetVocab: 2` on every row; nothing reads it (migration 025 backfilled the
+  // old vocabulary), so it decodes like any other unrecognized key: ignored.
+  test("ignores a stored targetVocab marker", () => {
+    for (const targetVocab of [2, 3, "2"]) {
+      expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null, targetVocab })).toEqual({
         metadataVersion: 2,
         durationMs: 1,
         detail: null,
       });
-      expect(messages.some((message) => message.includes("targetVocab 3"))).toBe(true);
-    } finally {
-      _setWarnSinkForTests(undefined);
-      _resetWarnOnceForTests();
     }
-    expect(decodeTaskHistoryMetadata({ metadataVersion: 2, durationMs: 1, detail: null, targetVocab: "2" })).toEqual({
-      metadataVersion: 2,
-      durationMs: 1,
-      detail: null,
-    });
   });
 });
 

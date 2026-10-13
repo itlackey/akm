@@ -177,7 +177,10 @@ function resolveChain(words: string[]): { chain: CmdNode[]; badToken?: string } 
       node = child;
       continue;
     }
-    if (node.children.size > 0 && WORD_SHAPED.test(w)) return { chain, badToken: w };
+    // A command that takes a positional beside its subcommands (`akm improve
+    // <scope>` beside `akm improve report`): a word that names none is that positional.
+    const takesPositional = Object.values(node.args).some((def) => def.type === "positional");
+    if (node.children.size > 0 && !takesPositional && WORD_SHAPED.test(w)) return { chain, badToken: w };
     break;
   }
   return { chain };

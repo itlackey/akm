@@ -195,46 +195,7 @@ describe("secret list", () => {
 // point — the in-process harness used throughout this file maps it to a
 // different code) lives in tests/integration/secret-path-run.test.ts.
 
-describe("colon ref spelling removed (Q-08)", () => {
-  // Exercised via `secret run` (still a live subcommand) rather than the now-
-  // removed `secret path` — both routed the ref through the same
-  // parseSecretRef/assertNotColonRef check (src/core/env-secret-ref.ts), so
-  // the rejection behaviour under test is unchanged by the D-49 removal.
-  test("`secret:<name>` fails loudly naming the slash replacement, instead of a confusing not-found", async () => {
-    const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from("the-actual-secret-value"));
-
-    const { status, stderr, stdout } = await runCli(["secret", "run", "secret:deploy-key", "TOKEN", "--", "true"], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
-
-    expect(status).toBe(2);
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("secret:");
-    expect(parsed.error).toContain("was removed");
-    expect(parsed.error).toContain("secrets/deploy-key");
-    // Never silently resolves to nothing: no value leaked, nothing spawned.
-    expect(stdout.trim()).toBe("");
-    expect(stderr).not.toContain("the-actual-secret-value");
-  });
-
-  test("`secrets:<name>` (plural colon variant) is rejected the same way", async () => {
-    const stashDir = makeStash();
-    setSecret(path.join(stashDir, "secrets", "deploy-key"), Buffer.from("v"));
-
-    const { status, stderr } = await runCli(["secret", "run", "secrets:deploy-key", "TOKEN", "--", "true"], {
-      AKM_BUNDLE_DIR: stashDir,
-    });
-
-    expect(status).toBe(2);
-    const parsed = JSON.parse(stderr.trim());
-    expect(parsed.ok).toBe(false);
-    expect(parsed.code).toBe("INVALID_FLAG_VALUE");
-    expect(parsed.error).toContain("secrets/deploy-key");
-  });
-
+describe("secret slash ref form", () => {
   test("the slash form `secrets/<name>` still resolves normally", async () => {
     // Uses `secret set` (not `secret run`) for this positive-resolution check:
     // `secret run`'s success path ends in an unconditional `process.exit`,

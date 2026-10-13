@@ -19,10 +19,12 @@
  * Claude Code's 'claude' vs 'claude'), so no alias bridge is needed.
  */
 
+import { OPENCODE_ENV_PASSTHROUGH } from "../../../core/spawn-env";
 import type { SessionLogHarness } from "../../session-logs/types";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
 import { opencodeBuilder } from "./agent-builder";
+import { openCodeImporter } from "./config-import";
 import { OpenCodeProvider } from "./session-log";
 
 export { opencodeBuilder } from "./agent-builder";
@@ -41,6 +43,8 @@ export class OpencodeHarness extends BaseHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".config/opencode";
   readonly agentBuilder = opencodeBuilder;
+  readonly configImporter = openCodeImporter;
+  readonly profile = { bin: "opencode", args: ["run"], envPassthrough: OPENCODE_ENV_PASSTHROUGH };
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker for run attribution.
   readonly identityEnv = ["OPENCODE_SESSION_ID"] as const;
@@ -49,6 +53,8 @@ export class OpencodeHarness extends BaseHarness {
     sessionLogs: true,
     agentDispatch: true,
     detection: true,
+    modelWork: true,
+    nativeAgent: true,
     configImport: true,
   });
 }

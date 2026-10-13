@@ -8,9 +8,8 @@
  *
  * Detects a Claude Code installation (filesystem only, no network) and reads
  * its config to extract LLM connection details. API key VALUES are never
- * stored — only the env var name that holds them. The pluggable registry
- * (`HARNESS_CONFIG_IMPORTERS`) and the OpenCode importer stay in
- * `setup/harness-config-import.ts`, which imports this importer back.
+ * stored — only the env var name that holds them. `ClaudeHarness` declares it
+ * as its `configImporter`.
  *
  * Behaviour-preserving relocation.
  */

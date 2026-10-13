@@ -16,7 +16,7 @@ type AnyCmd = Record<string, any>;
  * A completion rule for one flag, optionally scoped to a set of exact
  * command paths (the same `"<root> <subcommand...>"` shape `walkCommandTree`
  * produces below, e.g. `"akm search"`, `"akm curate"`). Most flags
- * (`--format`, `--detail`, `--shape`, `--type`, `--shell`) mean the same
+ * (`--format`, `--detail`, `--type`, `--shell`) mean the same
  * thing on every command that declares them, so they're declared with no
  * `paths` (global — the rule applies wherever the flag appears).
  *
@@ -40,8 +40,7 @@ interface FlagValueRule {
 
 const FLAG_VALUES: Record<string, FlagValueRule[]> = {
   "--format": [{ values: ["json", "jsonl", "yaml", "text", "md", "html"] }],
-  "--detail": [{ values: ["brief", "normal", "full"] }],
-  "--shape": [{ values: ["human", "agent", "summary"] }],
+  "--detail": [{ values: ["brief", "normal", "full", "agent"] }],
   "--type": [{ values: () => [...placementTypes(), "any"] }],
   "--shell": [{ values: ["bash"] }],
   "--from": [{ paths: ["akm search", "akm curate"], values: ["local", "registry", "all"] }],

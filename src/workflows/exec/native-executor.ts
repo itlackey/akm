@@ -21,8 +21,6 @@
  *    gate loops journal under `~r<n>` / `~l<n>`.
  *  - `onError: "fail"` fails on any unit failure, `"continue"` lets the gate
  *    decide; `retry: { max, on }` re-dispatches listed failure reasons.
- *  - `isolation: worktree` runs each attempt of an agent/sdk unit in a fresh
- *    detached worktree (removed when clean, kept when dirty); llm units reject it.
  *  - Run `budget` ceilings are consumed per actual dispatch and abort the step
  *    when crossed, regardless of `on_error`.
  */
@@ -39,8 +37,7 @@ import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import type { TaskV3ScriptInterpreter } from "../../tasks/prepare/prepared-execution";
-import type { WorkflowBudget, WorkflowPlanStep, WorkflowUnitNode } from "../plan";
+import type { WorkflowBudget, WorkflowPlanStep } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 // The ONE child-workflow drive — publishes and drives a
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
@@ -80,9 +77,7 @@ import {
 
 export type { UnitDispatcher, UnitDispatchRequest, UnitDispatchResult } from "./unit-dispatch";
 
-import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../../tasks/frozen-script";
 import { enqueueUnitWrite } from "./unit-writer";
-import { assertGitWorkTree, cleanupUnitWorktree, createUnitWorktree } from "./worktree";
 
 export interface StepExecutionContext {
   runId: string;
@@ -126,21 +121,11 @@ export interface StepExecutionContext {
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
   /**
-   * The engine invocation's working directory. Two uses:
-   *   - the git repository `isolation: worktree` mints its per-attempt
-   *     detached worktrees from;
-   *   - the base directory a NON-isolated `exec` unit spawns in (an isolated
-   *     one spawns in its worktree instead).
-   * Defaults to `process.cwd()`; injected by tests so no chdir is needed.
+   * The engine invocation's working directory: the base directory an `exec`
+   * unit spawns in. Defaults to `process.cwd()`; injected by tests so no chdir
+   * is needed.
    */
   workDir?: string;
-  /**
-   * Worktree-isolation preflight seam (defaults to {@link assertGitWorkTree}).
-   * Only invoked when a unit will ACTUALLY dispatch, so a fully-journaled step
-   * resumes even when its cwd is no longer a git worktree or git is missing.
-   * Injected by tests to simulate those conditions deterministically.
-   */
-  preflightWorktree?: (dir: string) => string | undefined;
 }
 
 export interface StepExecutionResult {
@@ -327,20 +312,17 @@ type StepDispatchPrerequisites =
       ok: true;
       env?: Record<string, string>;
       sensitiveValues?: readonly string[];
-      worktreeBase?: string;
     }
   | { ok: false; result: StepExecutionResult };
 
 /** Resolve the live-at-dispatch prerequisites once, after durable-row reuse is known. */
 async function prepareStepDispatchPrerequisites(input: {
   plan: WorkflowPlanStep;
-  template: WorkflowUnitNode;
   workUnits: readonly StepWorkUnit[];
-  ctx: StepExecutionContext;
   willDispatch: boolean;
   dispatched: number;
 }): Promise<StepDispatchPrerequisites> {
-  const { plan, template, workUnits, ctx, willDispatch, dispatched } = input;
+  const { plan, workUnits, willDispatch, dispatched } = input;
   let env: Record<string, string> | undefined;
   let sensitiveValues: readonly string[] | undefined;
   const frozenEnvironment = workUnits[0]?.environment;
@@ -364,38 +346,10 @@ async function prepareStepDispatchPrerequisites(input: {
     }
   }
 
-  let worktreeBase: string | undefined;
-  if (willDispatch && template.isolation === "worktree") {
-    if (template.frozenTarget.kind === "command" && template.frozenTarget.runner.kind === "llm") {
-      return {
-        ok: false,
-        result: failedStep(
-          dispatched,
-          `Step "${plan.stepId}" declares isolation: worktree on an llm unit — the llm runner has no ` +
-            `working directory to isolate. Use the agent or sdk runner for worktree-isolated units.`,
-        ),
-      };
-    }
-    const target = workUnits[0]?.frozenTarget;
-    const frozenCwd = target && "cwdIdentity" in target ? target.cwdIdentity : undefined;
-    if (frozenCwd) assertFrozenDirectoryContained(frozenCwd);
-    const base = frozenCwd?.realRoot ?? ctx.workDir ?? process.cwd();
-    const preflightWorktree = ctx.preflightWorktree ?? assertGitWorkTree;
-    const gitError = preflightWorktree(base);
-    if (gitError !== undefined) {
-      return {
-        ok: false,
-        result: failedStep(dispatched, `Step "${plan.stepId}" cannot use isolation: worktree: ${gitError}`),
-      };
-    }
-    worktreeBase = base;
-  }
-
   return {
     ok: true,
     ...(env ? { env } : {}),
     ...(sensitiveValues ? { sensitiveValues } : {}),
-    ...(worktreeBase !== undefined ? { worktreeBase } : {}),
   };
 }
 
@@ -434,22 +388,20 @@ async function executeStepPlanInConnection(
     await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(ctx.runId, plan.stepId)),
   );
 
-  // Env resolution and worktree preflight run only when some unit will
-  // dispatch, so a fully-journaled step resumes even if an env asset or git is
-  // gone. Every unit is classified once; the preflight and dispatch share it.
+  // Env resolution runs only when some unit will dispatch, so a fully-journaled
+  // step resumes even if an env asset is gone. Every unit is classified once;
+  // the preflight and dispatch share it.
   const reuseDecisions = workUnits.map((unit) => classifyUnitReuse(unit, completedRows));
   const willDispatch = reuseDecisions.some((decision) => decision.kind === "dispatch");
 
   const prerequisites = await prepareStepDispatchPrerequisites({
     plan,
-    template,
     workUnits,
-    ctx,
     willDispatch,
     dispatched,
   });
   if (!prerequisites.ok) return prerequisites.result;
-  const { env, sensitiveValues, worktreeBase } = prerequisites;
+  const { env, sensitiveValues } = prerequisites;
 
   // Budget ceilings + lifetime-cap accounting, and the budget-chained abort
   // signal they trip. Extracted verbatim (behavior-identical) — see
@@ -457,11 +409,6 @@ async function executeStepPlanInConnection(
   const { signal, budget, unchainSignal } = openDispatchBudget(ctx, dispatched);
 
   let outcomes: Array<UnitOutcome | undefined>;
-  // Worktree removals started by finished units and awaited below, before this
-  // step reports anything. Cleanup is best-effort, but "the step resolved" must
-  // still mean "its clean worktrees are gone" — only the WAIT moves off the
-  // unit's scheduler slot, not the guarantee.
-  const pendingWorktreeCleanups: Array<Promise<void>> = [];
   const frozenTargetConcurrency =
     template.frozenTarget.kind === "command" ? template.frozenTarget.concurrency : undefined;
   try {
@@ -473,12 +420,10 @@ async function executeStepPlanInConnection(
           workUnit,
           env,
           sensitiveValues,
-          ...(worktreeBase !== undefined ? { worktreeBase } : {}),
           ctx,
           signal,
           dispatcher,
           reuse: reuseDecisions[index]!,
-          pendingWorktreeCleanups,
           budget,
         }),
       {
@@ -490,9 +435,6 @@ async function executeStepPlanInConnection(
     );
   } finally {
     unchainSignal?.();
-    // The barrier. `allSettled` because each task already swallowed its own
-    // failure into a warn — nothing here can fail the step.
-    await Promise.allSettled(pendingWorktreeCleanups);
   }
 
   // Capture live-only diagnostics BEFORE any hard reduction replaces the unit
@@ -552,8 +494,6 @@ interface RunUnitInput {
   env?: Record<string, string>;
   /** Current values sampled from frozen env descriptors, for terminal scrub. */
   sensitiveValues?: readonly string[];
-  /** Git repo worktrees are minted from — set exactly when the unit declares `isolation: worktree`. */
-  worktreeBase?: string;
   ctx: StepExecutionContext;
   /**
    * Effective dispatch signal: `ctx.signal`, or the budget-chained
@@ -566,8 +506,6 @@ interface RunUnitInput {
    * gate that consumes the same array — never re-derived here.
    */
   reuse: UnitReuseDecision;
-  /** The step's worktree-removal barrier — see {@link JournaledAttemptInput}. */
-  pendingWorktreeCleanups: Array<Promise<void>>;
   /** Shared lifetime-cap budget; consumed once per actual dispatch attempt. */
   budget: DispatchBudget;
 }
@@ -593,11 +531,9 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     prompt,
     frozenTarget: workUnit.frozenTarget,
     ...(workUnit.execContext ? { execContext: workUnit.execContext } : {}),
-    // A NON-isolated exec unit spawns in the engine invocation's working
-    // directory. `dispatchJournaledAttempt` overwrites this with the unit's
-    // fresh worktree when `isolation: worktree` is in play. Only exec units get
-    // it: handing an agent unit a cwd it never had would change harness
-    // behavior, and the agent path already takes its cwd from its profile.
+    // An exec unit spawns in the engine invocation's working directory. Only
+    // exec units get it: handing an agent unit a cwd it never had would change
+    // harness behavior, and the agent path already takes its cwd from its profile.
     ...(workUnit.frozenTarget.kind !== "command" && ctx.workDir !== undefined ? { cwd: ctx.workDir } : {}),
     timeoutMs: workUnit.timeoutMs,
     ...(workUnit.schema ? { schema: workUnit.schema } : {}),
@@ -605,7 +541,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     ...(sensitiveValues ? { sensitiveValues } : {}),
     ...(input.signal ? { signal: input.signal } : {}),
     // F-1: forwarded to exec-unit.ts's childEnv for a
-    // "script"/"shell" unit, and to dispatchWorkflowExecution's
+    // "shell" unit, and to dispatchWorkflowExecution's
     // runExecution eventSource option (unit-dispatch.ts)
     // for a "command" unit — both arms observe it.
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
@@ -666,8 +602,6 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
       request: { ...request, unitId: attemptId },
       attemptId,
       inputHash,
-      ...(input.worktreeBase !== undefined ? { worktreeBase: input.worktreeBase } : {}),
-      pendingWorktreeCleanups: input.pendingWorktreeCleanups,
     });
     // Attempts use `~r<n>` journal suffixes while durable step evidence remains
     // attached to the content-derived base identity.
@@ -695,14 +629,6 @@ interface JournaledAttemptInput {
   /** Journal id of this attempt: `<unitId>` or `<unitId>~r<n>` for retries. */
   attemptId: string;
   inputHash: string;
-  /** Git repo to mint this attempt's isolation worktree from (`isolation: worktree`). */
-  worktreeBase?: string;
-  /**
-   * Where this attempt parks its worktree removal for the step to await. See
-   * the barrier in {@link executeStepPlanInConnection} for why it is not
-   * awaited here.
-   */
-  pendingWorktreeCleanups: Array<Promise<void>>;
 }
 
 /**
@@ -719,42 +645,8 @@ function journaledUnitResultJson(outcome: UnitOutcome): string | null {
   return JSON.stringify(clip(parts.join("\n--- unit output ---\n"), WORKFLOW_UNIT_DIAGNOSTIC_CLIP));
 }
 
-type PreparedAttemptWorktree =
-  | { ok: true; request: UnitDispatchRequest; worktreePath?: string }
-  | { ok: false; outcome: UnitOutcome };
-
-async function prepareAttemptWorktree(input: JournaledAttemptInput): Promise<PreparedAttemptWorktree> {
-  if (input.worktreeBase === undefined) return { ok: true, request: input.request };
-  const created = await createUnitWorktree(
-    input.worktreeBase,
-    input.ctx.runId,
-    input.attemptId,
-    // A child-workflow target has no commit of its own (its prepared worktree goes unused).
-    input.workUnit.frozenTarget.kind === "child-workflow" ? undefined : input.workUnit.frozenTarget.gitCommitOid,
-  );
-  if (created.preservedLeftover !== undefined) {
-    warn(
-      `Workflow unit ${input.attemptId}: a previous attempt left uncollected work in its isolation worktree; ` +
-        `preserved at ${created.preservedLeftover}`,
-    );
-  }
-  if (!created.ok) {
-    return {
-      ok: false,
-      outcome: {
-        unitId: input.request.unitId,
-        ok: false,
-        failureReason: "worktree_failed",
-        error: created.error,
-      },
-    };
-  }
-  return { ok: true, request: { ...input.request, cwd: created.path }, worktreePath: created.path };
-}
-
 async function reserveJournaledDispatch(
   input: JournaledAttemptInput,
-  worktreePath: string | undefined,
   startedAt: string,
 ): Promise<WorkflowRunUnitAttemptRowV4> {
   const { plan, workUnit, ctx, attemptId, inputHash } = input;
@@ -773,7 +665,6 @@ async function reserveJournaledDispatch(
         engine: target.kind === "command" ? target.request.engine.name : null,
         model: target.kind === "command" ? (target.request.model?.resolved ?? null) : null,
         inputHash,
-        worktreePath: worktreePath ?? null,
         now: startedAt,
       }).attempt;
     });
@@ -820,51 +711,21 @@ async function finishJournaledDispatch(input: {
   );
 }
 
-function queueAttemptWorktreeCleanup(input: JournaledAttemptInput, worktreePath: string | undefined): void {
-  if (worktreePath === undefined || input.worktreeBase === undefined) return;
-  const worktreeBase = input.worktreeBase;
-  input.pendingWorktreeCleanups.push(
-    (async () => {
-      try {
-        const cleanup = await cleanupUnitWorktree(worktreeBase, worktreePath);
-        if (cleanup.dirty) {
-          warn(
-            `Workflow unit ${input.attemptId} left uncommitted changes in its isolation worktree; retained at ${worktreePath}`,
-          );
-        } else if (!cleanup.removed) {
-          warn(
-            `Workflow unit ${input.attemptId}: could not clean up isolation worktree ${worktreePath}: ${cleanup.error}`,
-          );
-        }
-      } catch (err) {
-        warn(
-          `Workflow unit ${input.attemptId}: could not clean up isolation worktree ${worktreePath}: ${message(err)}`,
-        );
-      }
-    })(),
-  );
-}
-
 /** Journal one dispatch attempt: insert row, events, dispatch, finish row. */
 async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<UnitOutcome> {
   const { workUnit, ctx, dispatcher, attemptId } = input;
-  const prepared = await prepareAttemptWorktree(input);
-  if (!prepared.ok) return prepared.outcome;
-  let { request } = prepared;
-  const { worktreePath } = prepared;
+  let { request } = input;
 
   const startedAt = new Date().toISOString();
   let durableAttempt: WorkflowRunUnitAttemptRowV4;
   try {
-    durableAttempt = await reserveJournaledDispatch(input, worktreePath, startedAt);
+    durableAttempt = await reserveJournaledDispatch(input, startedAt);
   } catch (err) {
     // A failed dispatch-row insert means NOTHING dispatched (the row is the
     // dispatch's precondition) — fail the unit with the real cause instead of
     // letting the throw escape into the scheduler, where a swallowed worker
     // error is indistinguishable from "never claimed" and used to be
     // misreported as an aborted, never-dispatched unit.
-    if (worktreePath !== undefined && input.worktreeBase !== undefined)
-      await cleanupUnitWorktree(input.worktreeBase, worktreePath);
     return {
       unitId: request.unitId,
       ok: false,
@@ -924,10 +785,6 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   } catch (err) {
     journalError = err;
   }
-
-  // A clean worktree is removed, a dirty one kept and logged. Cleanup starts
-  // here and is awaited at the step barrier, never holding this scheduler slot.
-  queueAttemptWorktreeCleanup(input, worktreePath);
 
   // A journal-write failure AFTER a successful dispatch is its own loud
   // failure class: the unit's work ran (and may have succeeded), but its
@@ -1092,46 +949,6 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
  */
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
   const frozenTarget = request.frozenTarget;
-  if (frozenTarget.kind === "script") {
-    assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    const materialized = materializeFrozenScript({
-      sourceRef: frozenTarget.ref,
-      interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
-      extension: frozenTarget.extension,
-      bytesBase64: frozenTarget.bytesBase64,
-      byteLength: frozenTarget.byteLength,
-      sha256: frozenTarget.contentHash,
-    });
-    try {
-      const command = frozenScriptCommand(
-        {
-          sourceRef: frozenTarget.ref,
-          interpreter: frozenTarget.interpreter as TaskV3ScriptInterpreter,
-          extension: frozenTarget.extension,
-          bytesBase64: frozenTarget.bytesBase64,
-          byteLength: frozenTarget.byteLength,
-          sha256: frozenTarget.contentHash,
-        },
-        materialized.file,
-      );
-      return await runExecUnit({
-        unitId: request.unitId,
-        exec: {
-          ...frozenTarget.exec,
-          command: command as [string, ...string[]],
-        },
-        baseDir: request.cwd ?? frozenTarget.cwdIdentity.realCwd,
-        ...(request.env ? { env: request.env } : {}),
-        ...(request.execContext ? { context: request.execContext } : {}),
-        ...(request.schema ? { hasOutputSchema: true } : {}),
-        timeoutMs: request.timeoutMs,
-        ...(request.signal ? { signal: request.signal } : {}),
-        ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
-      });
-    } finally {
-      cleanupFrozenScript(materialized);
-    }
-  }
   if (frozenTarget.kind === "shell") {
     if (frozenTarget.cwdIdentity) assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
     return runExecUnit({

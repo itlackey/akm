@@ -237,10 +237,10 @@ describe("akm improve CLI result storage", () => {
   });
 
   test("--strategy appears in stdout without persistence", () => {
-    const result = runCli(["improve", "--dry-run", "--strategy", "quick"], stashDir);
+    const result = runCli(["improve", "--dry-run", "--strategy", "consolidate"], stashDir);
     expect(result.status).toBe(0);
 
-    expect(JSON.parse(result.stdout).strategy).toBe("quick");
+    expect(JSON.parse(result.stdout).strategy).toBe("consolidate");
     expect(readImproveRuns(result.xdgData)).toEqual([]);
     expect(snapshotRoots(result.roots)).toEqual(result.artifactBefore);
   });

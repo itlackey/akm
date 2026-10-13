@@ -2,6 +2,7 @@
 
 Authoritative reference documentation for the akm CLI and its data.
 
+- [Programmatic API](api.md) -- `akm-cli/api`: in-process `curate()` for the akm plugins
 - [Bundle Types](bundle-types.md) -- Supported bundle formats and compatibility
 - [CLI](cli.md) -- All `akm` commands and flags
 - [Configuration](configuration.md) -- Engines, strategies, bundles, and settings

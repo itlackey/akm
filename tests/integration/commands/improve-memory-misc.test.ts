@@ -7,7 +7,9 @@ import { saveConfig } from "../../../src/core/config/config";
 import { ConfigError } from "../../../src/core/errors";
 import { appendEvent, readEvents } from "../../../src/core/events";
 import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
+import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
+import { recordImproveLedger } from "../../../src/storage/repositories/improve-ledger-repository";
 import { writeMemory } from "../../_helpers/assets";
 import { makeProposal } from "../../_helpers/factories";
 import { withTestImproveLlm } from "../../_helpers/improve-config";
@@ -111,6 +113,19 @@ describe("O-2: --scope <ref> bypasses reflect/distill cooldowns (#365)", () => {
       { eventType: "reflect_invoked", ref: durableRef("memories/auth-tips-2") },
       { now: () => now - 60 * 1000 },
     );
+    // The cooldown is the improve ledger's: a recent reflect attempt keeps the proactive lane off the ref too.
+    const db = openStateDatabase();
+    try {
+      recordImproveLedger(db, {
+        stashDir,
+        ref: durableRef("memories/auth-tips-2"),
+        source: "reflect",
+        outcome: "unchanged",
+        at: new Date(now - 60 * 1000).toISOString(),
+      });
+    } finally {
+      db.close();
+    }
 
     await akmImprove({
       scope: "memory",

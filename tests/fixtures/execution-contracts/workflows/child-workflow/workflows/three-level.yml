@@ -1,9 +1,0 @@
-name: Child workflow three-level composition
-on:
-  workflow_dispatch:
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: dispatch
-        uses: workflows/mid

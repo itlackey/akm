@@ -76,56 +76,11 @@ export function listEnvsRecursive(
   return result;
 }
 
-/**
- * The `vault` asset type was removed in 0.9.0. The env/secret input path no
- * longer routes through the legacy stored-ref parser (which carries the removal
- * signpost), so a `vault:`/`vault/` leading token would otherwise be silently
- * qualified into an `env/vault:…` not-found. Detect it here and re-emit the
- * migration signpost so 0.8→0.9 muscle memory still gets pointed at env/secret.
- */
-function assertNotRemovedVaultRef(ref: string): void {
-  const boundary = ref.indexOf("//");
-  const bare = boundary >= 0 ? ref.slice(boundary + 2) : ref;
-  if (/^vault[:/]/.test(bare.trim())) {
-    throw new UsageError(
-      "The `vault` asset type was removed in 0.9.0 — use `env/` (whole .env config) or `secrets/` (a single value).",
-      "INVALID_FLAG_VALUE",
-    );
-  }
-}
-
-/**
- * Q-08 ruling: the pre-0.9.0 `type:name` ref grammar taught `env:<name>` /
- * `secret:<name>` (help text and docs also implied `environment:`/`secrets:`
- * variants) as the way to address a single env/secret. That grammar is GONE —
- * NO alias, no re-acceptance (same rule as the retired `vault:` prefix above).
- * Left unchecked, a colon-prefixed ref does not error here at all: it falls
- * through to the "bare name" convenience below and gets silently qualified
- * into a literal `env/env:name` (or `secrets/secret:name`) file that can never
- * exist — a confusing not-found that hides the real mistake instead of naming
- * it. Reject it here, loudly, before that happens.
- */
-function assertNotColonRef(ref: string, aliases: readonly string[], replacement: "env/" | "secrets/"): void {
-  const boundary = ref.indexOf("//");
-  const bare = (boundary >= 0 ? ref.slice(boundary + 2) : ref).trim();
-  const colon = bare.indexOf(":");
-  if (colon <= 0) return;
-  const head = bare.slice(0, colon).toLowerCase();
-  if (!aliases.includes(head)) return;
-  const name = bare.slice(colon + 1);
-  throw new UsageError(
-    `The \`${head}:\` ref spelling was removed in 0.9.0 — use the slash form instead: \`${replacement}${name}\`.`,
-    "INVALID_FLAG_VALUE",
-  );
-}
-
 export function parseEnvRef(ref: string): AssetRef {
   // Accept a bare env name (`prod`, `sub/prod`) or the new-grammar
   // `[bundle//]env/name` conceptId. A bare name's leading segment maps to no
   // asset type, so it is qualified with the `env/` conceptId prefix; anything
   // already a full new-grammar ref is parsed as-is.
-  assertNotRemovedVaultRef(ref);
-  assertNotColonRef(ref, ["env", "environment"], "env/");
   return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
 }
 
@@ -167,10 +122,8 @@ export function makeEnvRef(name: string, source?: IndexSearchSource, config: Akm
 
 /**
  * Resolve an env ref to an absolute `.env` path. Accepts the `env/<name>`
- * conceptId (or a bare name, auto-qualified into it) — the retired
- * `env:`/`environment:` colon spelling is rejected loudly (Q-08), never
- * silently resolved. The path is returned even when the file does not yet
- * exist (so `create` writes under `env/`).
+ * conceptId (or a bare name, auto-qualified into it). The path is returned
+ * even when the file does not yet exist (so `create` writes under `env/`).
  */
 export function resolveEnvPath(ref: string): {
   name: string;
@@ -201,8 +154,6 @@ export function resolveEnvPath(ref: string): {
 export function parseSecretRef(ref: string): AssetRef {
   // Same bare-name-vs-full-ref rule as parseEnvRef; a bare name is qualified
   // with the `secrets/` conceptId prefix (secret's stash subdir).
-  assertNotRemovedVaultRef(ref);
-  assertNotColonRef(ref, ["secret", "secrets"], "secrets/");
   return parseRefInput(isFullRefInput(ref) ? ref : `secrets/${ref}`);
 }
 
@@ -257,9 +208,9 @@ export function resolveSecretPath(
 // silently name different files for the same ref; `resolveSecretPath` below
 // still exists and is still exercised by `secret run`.) WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
-// (remember/import/tasks/knowledge) shares: explicit `--target` wins, else
+// (remember/import/tasks/knowledge) shares: explicit `--bundle` wins, else
 // `defaultWriteTarget`, else the working stash, and the chosen source must be
-// writable (a non-writable `--target`/`defaultWriteTarget` fails fast with the
+// writable (a non-writable `--bundle`/`defaultWriteTarget` fails fast with the
 // shared typed ConfigError). Env/secret VALUES are still never read or surfaced
 // here — these helpers only resolve the write target and the absolute path.
 

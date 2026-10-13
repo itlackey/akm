@@ -124,7 +124,7 @@ describe("probeLock separates 'cannot read' from 'holder is dead' (#791)", () =>
     fs.chmodSync(lockPath, 0o000);
 
     try {
-      const probe = probeLock(lockPath, { staleAfterMs: 1 });
+      const probe = probeLock(lockPath);
       // "stale" would invite reclaimStaleLock to steal a possibly-live lease.
       expect(probe.state).toBe("inaccessible");
       expect(probe.state === "inaccessible" && probe.code).toBe("EACCES");
@@ -139,7 +139,7 @@ describe("probeLock separates 'cannot read' from 'holder is dead' (#791)", () =>
     expect(probeLock(lockPath).state).toBe("absent");
 
     fs.writeFileSync(lockPath, JSON.stringify({ pid: process.ppid, startedAt: new Date().toISOString() }));
-    expect(probeLock(lockPath, { staleAfterMs: 60_000 }).state).toBe("held");
+    expect(probeLock(lockPath).state).toBe("held");
   });
 });
 

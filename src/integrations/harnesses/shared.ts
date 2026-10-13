@@ -18,7 +18,7 @@
  */
 
 /**
- * The three capability flags that vary independently of `sessionLogs` (which
+ * The capability flags that vary independently of `sessionLogs` (which
  * is split out below into a discriminant — see {@link HarnessCapabilities}).
  */
 interface HarnessCapabilityFlags {
@@ -28,6 +28,18 @@ interface HarnessCapabilityFlags {
   readonly detection: boolean;
   /** Can import an existing harness LLM/config into akm config. */
   readonly configImport: boolean;
+  /**
+   * Confines the model-work tool policy (`MODEL_WORK_POLICY_ID`), so unattended
+   * model work may run on it. The one copy of this fact: the config schema and
+   * the shared request lowerer both read it.
+   */
+  readonly modelWork: boolean;
+  /**
+   * Can run a named agent of its own (`opencode run --agent`, `claude --agent`,
+   * the SDK's per-prompt `agent`). Read by the shared lowerer and by the engine
+   * schema's `agent` field.
+   */
+  readonly nativeAgent: boolean;
 }
 
 /**
@@ -71,6 +83,8 @@ export function caps(c: Partial<HarnessCapabilityFlags> & { sessionLogs?: boolea
     agentDispatch: false,
     detection: false,
     configImport: false,
+    modelWork: false,
+    nativeAgent: false,
     ...c,
   } as HarnessCapabilities;
 }
@@ -80,19 +94,10 @@ export function homeDir(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? "";
 }
 
-// ── Harness config-import contract (chunk 9 WI-9.8 KILL 8) ─────────────────
+// ── Harness config-import contract ─────────────────────────────────────────
 //
-// `HarnessLLMConfig`/`HarnessConfigImporter` used to live in
-// `setup/harness-config-import.ts`, which imports the per-harness importers
-// (`claude/config-import.ts`, `opencode/config-import.ts`) BY VALUE to build
-// `HARNESS_CONFIG_IMPORTERS`. Those importer modules, in turn, needed the
-// `HarnessConfigImporter` TYPE to annotate their exported importer object —
-// a type-only import back into `harness-config-import.ts` that still formed
-// a 3-file static-graph cycle (import type does not sever a cycle; only
-// moving the type does). Both types have zero external type deps, so they
-// live here — this module is a dependency SINK (see the file-level doc
-// comment above) — instead of a separate leaf. `harness-config-import.ts`
-// re-exports both so existing import sites are unaffected.
+// Lives here (a dependency sink) so the per-harness importers can type their
+// exported object without importing `setup/`.
 
 /**
  * LLM/provider config extracted from an agent harness.

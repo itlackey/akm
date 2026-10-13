@@ -9,8 +9,8 @@
  * no network) and, if so, reads its config to extract LLM connection details.
  * API key VALUES are never stored — only the env var names that hold them.
  *
- * To add a new harness: implement {@link HarnessConfigImporter} and append it
- * to {@link HARNESS_CONFIG_IMPORTERS}.
+ * To add a new harness importer: declare `configImporter` on the harness
+ * descriptor (`integrations/harnesses/<id>/index.ts`).
  *
  * NOTE: The `detect()` method in each importer overlaps intentionally with
  * `detectAgentPlatforms()` in `detect.ts`. That function scans for harness
@@ -19,22 +19,13 @@
  * purposes and should not be deduplicated.
  */
 
-import { claudeCodeImporter } from "../integrations/harnesses/claude/config-import";
-import { openCodeImporter } from "../integrations/harnesses/opencode/config-import";
+import { HARNESS_REGISTRY } from "../integrations/harnesses";
 import type { HarnessConfigImporter, HarnessLLMConfig } from "../integrations/harnesses/shared";
 
-// The Claude Code importer was migrated to its harness directory in #563
-// (`harnesses/claude/config-import.ts`) and the OpenCode importer in #564
-// (`harnesses/opencode/config-import.ts`). Both are imported back into
-// HARNESS_CONFIG_IMPORTERS below so detection order is unchanged.
-
-// ── Registry ─────────────────────────────────────────────────────────────────
-
-/**
- * Registry of all supported harness config importers.
- * To add a new harness: implement {@link HarnessConfigImporter} and append here.
- */
-export const HARNESS_CONFIG_IMPORTERS: HarnessConfigImporter[] = [claudeCodeImporter, openCodeImporter];
+/** Importers declared by the registered harnesses, in registry order. */
+export const HARNESS_CONFIG_IMPORTERS: HarnessConfigImporter[] = HARNESS_REGISTRY.flatMap((h) =>
+  h.configImporter ? [h.configImporter] : [],
+);
 
 /**
  * Run all importers whose `detect()` returns `true` and collect their configs.

@@ -2,8 +2,6 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { isRecord } from "./common";
-
 export const EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS = [
   "model",
   "messages",
@@ -36,8 +34,7 @@ const CREDENTIAL_KEYS = new Set<string>(EXTRA_PARAMS_CREDENTIAL_KEYS);
 // `EXTRA_PARAMS_PROTECTED_TOP_LEVEL_KEYS` rightly stops a provider extra from
 // shadowing an AKM-managed field, but naming the rule without naming the fix
 // leaves the reader stuck (#852). Every protected key gets a one-line remedy
-// baked into its issue message; keys with a genuine scalar first-class field
-// are also eligible for the automatic config-load lift below.
+// baked into its issue message.
 
 /** normalizeExtraParamKey(key) -> the first-class engine field it shadows. */
 const LEGACY_EXTRA_PARAMS_FIELD: Readonly<Record<string, string>> = {
@@ -48,17 +45,7 @@ const LEGACY_EXTRA_PARAMS_FIELD: Readonly<Record<string, string>> = {
   reasoningeffort: "reasoningEffort",
 };
 
-/**
- * Subset of {@link LEGACY_EXTRA_PARAMS_FIELD} that {@link liftLegacyEngineExtraParams}
- * will move onto the first-class field automatically. `model` is deliberately
- * excluded: unlike the others it was never a "no first-class field yet"
- * workaround (`model` has always been required on an LLM engine), so a
- * mismatch is far more likely a genuine mistake than a stale 0.9.1 config —
- * it stays a hard rejection rather than being silently reinterpreted.
- */
-const LIFTABLE_EXTRA_PARAMS_KEYS = new Set<string>(["temperature", "maxtokens", "enablethinking", "reasoningeffort"]);
-
-/** Remedies for protected keys with no scalar first-class field to lift onto. */
+/** Remedies for protected keys with no scalar first-class field. */
 const EXTRA_PARAMS_NO_FIELD_REMEDY: Readonly<Record<string, string>> = {
   messages: "AKM builds the request messages internally — remove it from extraParams",
   responseformat: "AKM controls the response format internally — remove it from extraParams",
@@ -131,106 +118,4 @@ export function validateExtraParams(value: unknown): ExtraParamsIssue[] {
 export function formatExtraParamsIssue(label: string, issue: ExtraParamsIssue): string {
   const suffix = issue.path.map((part) => (typeof part === "number" ? `[${part}]` : `.${part}`)).join("");
   return `${label}${suffix} ${issue.message}`;
-}
-
-// ── Legacy extraParams -> first-class field lift (#852) ─────────────────────
-
-/** One `engines.<name>.extraParams.<key>` vs `engines.<name>.<field>` mismatch found during the lift. */
-export interface ExtraParamsLiftConflict {
-  engine: string;
-  key: string;
-  field: string;
-  extraParamsValue: unknown;
-  fieldValue: unknown;
-}
-
-export interface LiftLegacyExtraParamsResult {
-  /** The raw config, with liftable keys moved onto their first-class field. Same object when nothing changed. */
-  config: Record<string, unknown>;
-  /** One human-readable line per key actually lifted (or dropped as a redundant duplicate). */
-  lifted: string[];
-  /**
-   * Engines where an `extraParams` key and its first-class field were both
-   * set to different values. Non-empty means `config` was left untouched for
-   * that engine — the caller should reject rather than guess which value wins.
-   */
-  conflicts: ExtraParamsLiftConflict[];
-}
-
-/**
- * Compute the legacy `extraParams` -> first-class-field lift for a raw
- * parsed config object: a 0.9.1-shaped config using (e.g.)
- * `extraParams.reasoning_effort` now needs `reasoningEffort` set instead,
- * since that field became first-class — and therefore protected — in 0.9.2
- * (#852, following #815).
- *
- * Pure: never touches the filesystem. Two callers use this differently:
- * `akm migrate apply` (scripts/akm-migrate/migrate/config-extra-params.ts) uses the
- * returned `config` to persist the rewrite to disk, once; `parseAndValidateConfigText`
- * (src/core/config/config.ts) calls this only to detect whether a lift is
- * needed and discards `config` — an unmigrated config fails closed there
- * with a pointer to `akm migrate apply` rather than silently drifting from
- * what's on disk. `conflicts` (an extraParams key and its first-class field
- * set to different values) is a genuine authoring error in both callers and
- * is never auto-resolved.
- */
-export function liftLegacyEngineExtraParams(raw: Record<string, unknown>): LiftLegacyExtraParamsResult {
-  const lifted: string[] = [];
-  const conflicts: ExtraParamsLiftConflict[] = [];
-  const rawEngines = raw.engines;
-  if (!isRecord(rawEngines)) {
-    return { config: raw, lifted, conflicts };
-  }
-
-  const engines: Record<string, unknown> = {};
-  let anyEngineChanged = false;
-
-  for (const [name, engineValue] of Object.entries(rawEngines)) {
-    if (!isRecord(engineValue) || !isRecord(engineValue.extraParams)) {
-      engines[name] = engineValue;
-      continue;
-    }
-    const engine: Record<string, unknown> = { ...engineValue };
-    const extraParams: Record<string, unknown> = { ...(engineValue.extraParams as Record<string, unknown>) };
-    let engineChanged = false;
-
-    for (const [rawKey, value] of Object.entries(engineValue.extraParams as Record<string, unknown>)) {
-      const normalized = normalizeExtraParamKey(rawKey);
-      if (!LIFTABLE_EXTRA_PARAMS_KEYS.has(normalized)) continue;
-      const field = LEGACY_EXTRA_PARAMS_FIELD[normalized];
-      if (!field) continue;
-      const existing = engine[field];
-      if (existing !== undefined && existing !== value) {
-        conflicts.push({ engine: name, key: rawKey, field, extraParamsValue: value, fieldValue: existing });
-        continue;
-      }
-      delete extraParams[rawKey];
-      engineChanged = true;
-      if (existing === value) {
-        lifted.push(
-          `engines.${name}.extraParams.${rawKey} is redundant — engines.${name}.${field} is already set to the same value; dropped the extraParams entry`,
-        );
-        continue;
-      }
-      engine[field] = value;
-      lifted.push(`engines.${name}.extraParams.${rawKey} -> engines.${name}.${field}`);
-    }
-
-    if (!engineChanged) {
-      engines[name] = engineValue;
-      continue;
-    }
-    anyEngineChanged = true;
-    if (Object.keys(extraParams).length > 0) {
-      engine.extraParams = extraParams;
-    } else {
-      delete engine.extraParams;
-    }
-    engines[name] = engine;
-  }
-
-  if (!anyEngineChanged) {
-    return { config: raw, lifted, conflicts };
-  }
-  return { config: { ...raw, engines }, lifted, conflicts };
 }

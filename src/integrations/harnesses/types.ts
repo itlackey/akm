@@ -5,32 +5,34 @@
 /**
  * Unified harness descriptor (#562).
  *
- * Before this module, adding a new agent harness to akm required edits to ~16
- * locations across 10+ files, kept in sync by hand across three disconnected
- * registries:
- *
- *   - session-logs index   (`src/integrations/session-logs/index.ts`)
- *   - agent profiles        (`src/integrations/agent/profiles.ts`)
- *   - config/setup platform strings (`config-schema.ts`, `config-types.ts`, ...)
- *
- * `AkmHarness` collapses those into ONE descriptor per harness. The
+ * One `AkmHarness` per harness, defined in `harnesses/<id>/index.ts`. The
  * `HARNESS_REGISTRY` array in `./index.ts` is the single registration point;
- * every subsystem derives its membership from the capability flags here.
+ * every subsystem (config schema, agent profiles, builders, setup, session
+ * logs, run attribution, docs) derives its membership from the descriptor.
+ * Adding a harness is one folder plus one registry line; removing is deleting both.
  *
- * This issue (#562) is ADDITIVE scaffolding: the registry is the source of
- * truth for *ids and capability membership*, and existing call sites are wired
- * to derive from / validate against it. The concrete session-log / agent
- * implementations are migrated under each harness in #563/#564.
+ * Registry-reachable modules must not import `core/config` at runtime (the
+ * config schema derives its platform enum from the registry).
  */
 
 import type { AgentCommandBuilder, AgentRequestLowerer, AgentResultExtractor } from "../agent/builder-shared";
 import type { SessionLogHarness } from "../session-logs/types";
-import type { HarnessCapabilities } from "./shared";
+import type { HarnessCapabilities, HarnessConfigImporter } from "./shared";
 
 // `HarnessCapabilities` lives in `./shared` (a cycle-free dependency sink —
 // see that module's doc comment) and is re-exported here so this file stays
 // the interface home for existing import sites.
 export type { HarnessCapabilities } from "./shared";
+
+/** The CLI defaults `agent/profiles.ts` lowers into this harness's built-in `AgentProfile`. */
+export interface HarnessProfileDefaults {
+  /** Command looked up on PATH. */
+  readonly bin: string;
+  /** Base args prepended to the dispatch args. */
+  readonly args: readonly string[];
+  /** Env var names passed through to the child on top of the common set. */
+  readonly envPassthrough: readonly string[];
+}
 
 /**
  * Fields every harness descriptor carries regardless of its `sessionLogs`
@@ -71,6 +73,19 @@ interface AkmHarnessCommon {
    * wrong-flag-shape default (see `getCommandBuilder`).
    */
   readonly agentBuilder?: AgentCommandBuilder;
+
+  /**
+   * Built-in CLI profile defaults (`agent/profiles.ts` DERIVES its built-in
+   * profiles from this). Absent for a harness with no spawned CLI of its own
+   * (opencode-sdk).
+   */
+  readonly profile?: HarnessProfileDefaults;
+
+  /**
+   * LLM-config importer for `akm setup` (requires `capabilities.configImport`).
+   * `setup/harness-config-import.ts` DERIVES its importer list from this.
+   */
+  readonly configImporter?: HarnessConfigImporter;
 
   /** Resolved-request lowering for non-argv transports such as OpenCode SDK. */
   readonly executionLowerer?: AgentRequestLowerer;
@@ -198,6 +213,8 @@ export abstract class BaseHarness implements AkmHarnessCommon {
   abstract readonly capabilities: HarnessCapabilities;
   readonly setupDetectionDir?: string;
   readonly agentBuilder?: AgentCommandBuilder;
+  readonly profile?: HarnessProfileDefaults;
+  readonly configImporter?: HarnessConfigImporter;
   readonly executionLowerer?: AgentRequestLowerer;
   readonly identityEnv?: readonly string[];
   readonly presenceEnv?: readonly string[];

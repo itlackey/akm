@@ -28,7 +28,7 @@ Every akm feature, with its status. Status meanings are in
 - [`akm improve` and proposals](guides/improve-the-library.md): reviewable changes from feedback and usage. *Evolving*
 - Improve settings and strategies other than `default` and `consolidate`. *Experimental*
 - Automatic acceptance (opt-in). *Experimental*
-- Session extraction. *Experimental*
+- Session extraction. *Evolving*
 
 ## Monitor
 

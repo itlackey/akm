@@ -7,7 +7,7 @@
  * whole-run lock (`commands/improve/locks.ts`) and the index rebuild lock
  * (`indexer/index-rebuild-lock.ts`, #956).
  *
- * No `staleAfterMs`: only a verifiably dead holder is ever reclaimed. This is
+ * Only a verifiably dead holder is ever reclaimed, never an old one. This is
  * the #872 lesson encoded at the mechanics layer so every future caller gets
  * it for free — an age-based stale window let a live-but-wedged holder's
  * lease survive forever from the holder's own point of view while stranding

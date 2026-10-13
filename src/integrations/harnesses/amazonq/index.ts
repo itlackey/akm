@@ -32,6 +32,7 @@ export class AmazonqHarness extends BaseHarness {
   readonly id = "amazonq" as const;
   readonly displayName = "Amazon Q Developer CLI";
   readonly agentBuilder = amazonqBuilder;
+  readonly profile = { bin: "q", args: [], envPassthrough: ["AWS_PROFILE", "AWS_REGION"] };
   readonly resultExtractor = amazonqResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // No `identityEnv`: the matrix lists Q's identity markers as uncertain, and

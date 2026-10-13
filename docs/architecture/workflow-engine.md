@@ -9,9 +9,9 @@ exact frontmatter/body syntax that produces the plan, see
 [Workflow Schema](../reference/workflow-schema.md). For the day-to-day
 commands that drive a run, see [Running Workflows](../guides/run-workflows.md).
 
-> **`akm workflow run` is Stable, ungated, and the only execution surface.**
-> It is the canonical start/resume/execute command; there is no separate
-> external-driver protocol.
+> **`akm workflow run` is Experimental (see `STABILITY.md`), ungated, and the only
+> execution surface.** It is the canonical start/resume/execute command; there is
+> no separate external-driver protocol.
 
 ## Frozen plans
 
@@ -81,7 +81,7 @@ existing retry loop, after the parent unit's attempt row is already claimed
 `running` (so a crash between claiming that row and publishing the child
 leaves a recoverable `running` parent unit and no orphaned child) and
 **before** the ordinary post-dispatch journaling (redaction, attempt
-finishing, the worktree epilogue), which runs unchanged either way — a
+finishing), which runs unchanged either way — a
 child-workflow unit is journaled exactly like any other.
 
 **The drive contract.** `driveChildWorkflowUnit` validates and resolves the
@@ -127,28 +127,9 @@ preimage already covers everything the child drive depends on — the frozen
 target carries the child's ref, plan hash, content hash, binding mode, and
 its entire embedded plan, so any change anywhere in the child changes the
 parent unit's own input hash transitively. The child run id (minted at
-dispatch) and its exported result are unit *outputs*, not inputs, so neither
+dispatch) and its result (the child's last step output) are unit *outputs*, not inputs, so neither
 belongs in the preimage — adding either would be a hashing-boundary
 violation, not a fix.
-
-### Run outputs
-
-A workflow may declare `outputs:` — a run-level export projected from its
-steps' own artifacts once every step has finished (see [Workflow Schema:
-Workflow outputs](../reference/workflow-schema.md#workflow-outputs) for the
-authoring grammar). Resolution happens inside the same write transaction
-that completes the run's final step, immediately after the run's terminal
-status is derived: each declared output is resolved from the persisted step
-evidence and, if declared, validated against its schema. If resolution or
-validation fails for any entry, the **whole completion rolls back** — the
-run stays `active`, its final step stays `pending`, and no completion event
-is emitted — rather than leaving a run `completed` with missing or invalid
-exports. A run with no `outputs:` declaration exports `{runId, status}`
-instead, synthesized on read and never persisted. This exported result is
-exactly what a parent composing this workflow as a child promotes as the
-composing unit's own result on `completed` — the same value, read through
-the same function, whether the caller is `akm workflow status` or a parent
-unit's dispatch.
 
 ## Resume skips completed units
 
@@ -197,38 +178,6 @@ against a run another live process holds refuses up front with
 dead is reclaimed at once, so a crashed engine never wedges a run; nothing
 expires by age and nothing renews. `workflow status` and `list` never take
 the lock.
-
-## Worktree isolation
-
-A file-mutating unit can declare `isolation: worktree` in its `unit:` bag
-(agent and sdk runners) — see
-[Workflow Schema: Frontmatter keys](../reference/workflow-schema.md#frontmatter-keys).
-Each unit attempt gets a fresh **detached git worktree** of the run's base
-repository under a run-scoped temp directory; the worktree path is journaled
-on the unit row and passed to the harness as its working directory, so
-parallel fan-out units can never trample each other's working tree. After the
-unit finishes, a clean worktree (`git status --porcelain` empty) is removed
-automatically; a dirty one is retained and its path logged, so uncollected
-work is never destroyed. Declaring worktree isolation in a non-git directory
-fails the step cleanly before anything dispatches.
-
-> **Warning — outputs matched by `.gitignore` are treated as disposable.** A
-> worktree-isolated unit's output survives only if it lands on a
-> **collectible path**: a tracked file, or an untracked file your repository
-> does **not** `.gitignore`. Anything a unit writes to a `.gitignore`d path —
-> build outputs, caches, logs, dependency directories like
-> `node_modules`/`dist`, or a scratch file under an ignored directory — is
-> **discarded** when its clean worktree is auto-removed. If a unit produces an
-> artifact that must survive, write it to a non-ignored path, or report it as
-> a result (a structured `output` / free-text result), before the unit
-> returns.
-
-The clean probe deliberately does **not** pass `--ignored`, so "uncollected
-work" means tracked or untracked-*unignored* changes only. A worktree whose
-only residue is files your repository's own `.gitignore` matches is treated
-as clean and removed: those files are disposable by the repo's own
-declaration, and retaining a worktree after every package install or build
-would blow up disk under the temp root.
 
 ## Concurrency limits
 

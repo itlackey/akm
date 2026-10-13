@@ -19,7 +19,6 @@
  * fallback).
  */
 
-import { warnOnce } from "../core/warn";
 import type { DetailLevel, ShapeMode } from "./context";
 import { curateShapes } from "./shapes/curate";
 import { envListShapes } from "./shapes/env-list";
@@ -88,13 +87,6 @@ registerOutputShapes(BUILT_IN_OUTPUT_SHAPES);
  */
 export type OutputCommandName = string;
 
-/**
- * Commands whose shape handler implements the `summary` projection. For every
- * other command, `--shape summary` is a usage error (v1 §5 — honest rejection
- * for a soon-frozen contract, not a silent fallback to `human`).
- */
-const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
-
 // ── `results` collection alias ──────────────────────────────────────────────
 //
 // Every list-returning command names its collection differently (`hits`,
@@ -105,8 +97,8 @@ const SHAPE_SUMMARY_COMMANDS = new Set(["show"]);
 //
 // This maps each list-returning command to the field already holding its
 // collection, and `withResultsAlias` below adds a `results` key pointing at
-// that SAME array (not a copy) to the shaped output — in every `--shape` /
-// `--detail` combination, `human` included, so `--shape agent` needs no
+// that SAME array (not a copy) to the shaped output — in every
+// `--detail` combination, `agent` included, so `--detail agent` needs no
 // separate handling to "guarantee" it. A new list-returning command MUST add
 // an entry here; there is no way to detect a missed one automatically, so the
 // survey deliberately lives in this one place rather than scattered per
@@ -146,17 +138,9 @@ export function shapeForCommand(
   detail: DetailLevel,
   shape: ShapeMode = "human",
 ): unknown {
-  let effectiveShape = shape;
-  if (shape === "summary" && !SHAPE_SUMMARY_COMMANDS.has(command)) {
-    warnOnce(
-      `shape-summary-unsupported:${command}`,
-      `[output] '--shape summary' is not supported for 'akm ${command}' (only 'akm show' has a summary projection); falling back to 'agent'.`,
-    );
-    effectiveShape = "agent";
-  }
   const handler = getOutputShapeHandler(command);
   if (handler) {
-    return withResultsAlias(command, handler(result, detail, effectiveShape));
+    return withResultsAlias(command, handler(result, detail, shape));
   }
   // v1 spec §9 (output-shape registry exhaustive): no silent JSON.stringify
   // fallback. A missing case here is a registration bug — fail loudly so

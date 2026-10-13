@@ -118,17 +118,6 @@ export const genericFilesAdapter: BundleAdapter = {
       : [{ path: path.join(c.root, posix), conceptId: posix }, ...documentCandidates];
   },
 
-  /**
-   * IDENTITY placement (open-question-5): a conceptId that carries an extension
-   * (`script`/`file`) places to itself; an extension-less conceptId (a
-   * `document`) appends `.md`.
-   */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    const hasExt = path.extname(posix) !== "";
-    return path.join(c.root, hasExt ? posix : `${posix}.md`);
-  },
-
   /** generic-files is EXPLICIT-CONFIG ONLY — never auto-selected (§1.2), so this never fires. */
   looksLikeRoot(): boolean {
     return false;

@@ -25,12 +25,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { resolveImproveScope } from "../../src/commands/improve/eligibility";
 import { resetConfigCache } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
 import { resolveAssetPath } from "../../src/indexer/walk/path-resolver";
 import { type ProposalRow, proposalRowToProposal } from "../../src/storage/repositories/proposals-repository";
-import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
 
 function write(root: string, rel: string, content: string): void {

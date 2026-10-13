@@ -2,13 +2,16 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { type AkmProposeOptions, akmPropose } from "../src/commands/proposal/propose";
 import { listProposals } from "../src/commands/proposal/repository";
 import type { AkmConfig } from "../src/core/config/config";
 import { buildProposePrompt, PROPOSAL_JSON_SCHEMA } from "../src/integrations/agent/prompts";
 import { __setTestServer, closeServer } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { fakeOpencodeMajor } from "./_helpers/opencode-version";
 import { makeStashDir, mutateScopedEnv, type SandboxedDir, withEnv, withMockedFetch } from "./_helpers/sandbox";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 const sandboxes: SandboxedDir[] = [];
 

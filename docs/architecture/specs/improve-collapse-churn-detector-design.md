@@ -5,8 +5,8 @@
 > `scripts/refresh-canary-set.ts` were deleted with the improve ledger change
 > (migration 028 drops the tables); recorded telemetry shows no alert ever fired. The
 > generation and lexical-diversity merge checks, which never refused a merge,
-> went with it; only the random-cluster injection in
-> `src/commands/improve/anti-collapse.ts` remains. The history below is kept
+> went with it, and so did the random-cluster injection
+> (`consolidate.antiCollapse`, removed in 0.10, #1131). The history below is kept
 > for reference.
 >
 > **Earlier status:** Partially implemented. The COLLAPSE alert class (§1, three

@@ -58,12 +58,14 @@ export interface AkmImproveOptions {
   strategy?: string;
   /** Attempt LLM schema repair after structural validation (default true). */
   repairValidationFailures?: boolean;
-  /** Only refs with recent feedback; disables the fallback lanes. */
+  /** Only refs with recent feedback; disables the proactive-maintenance lane. */
   requireFeedbackSignal?: boolean;
   /** End-of-run auto-sync override (`--no-sync` / `--no-push`). */
   sync?: { enabled?: boolean; push?: boolean };
   /** `--require-engines` probe outcomes, recorded on the result. */
   engineProbe?: readonly EngineProbeOutcome[];
+  /** Called once before the budget watchdog force-exits a run that did not drain (the CLI records the terminated run). */
+  onBudgetHardKill?: () => void;
   // Test seams.
   collectEligibleRefsFn?: typeof collectEligibleRefs;
   runImprovePreparationStageFn?: typeof import("./preparation").runImprovePreparationStage;

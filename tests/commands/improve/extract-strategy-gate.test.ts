@@ -152,11 +152,11 @@ describe("#593/#594 extract gate respects the active improve strategy", () => {
   );
 
   test(
-    "built-in quick profile (extract.enabled: false) gates the extract pass",
+    "built-in consolidate profile (extract.enabled: false) gates the extract pass",
     async () => {
-      // No user override for "quick" — the built-in profile JSON disables extract.
+      // No user override for "consolidate" — the built-in profile JSON disables extract.
       const { config } = makeConfig({ defaultExtractEnabled: true });
-      expect(await countGateOpens(config, "quick")).toBe(0);
+      expect(await countGateOpens(config, "consolidate")).toBe(0);
     },
     TIMEOUT_MS,
   );

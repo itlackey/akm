@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The pure task v3 -> task source v4 planner (`src/tasks/source/task-to-v4.ts`):
+ * The pure task v3 -> task source v4 planner (`scripts/akm-migrate/migrate/task-to-v4.ts`):
  * the translation table, the blocked catalog, and classification/generation
  * determinism, driven off the fixture corpus at
  * tests/fixtures/execution-contracts/tasks/v3-to-v4/ (deterministic|blocked
@@ -18,8 +18,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";
+import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { parseTaskSourceV4 } from "../../src/tasks/source/task-source-v4";
-import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   assertFixtureBytesUnchanged,
   captureFixtureBytes,

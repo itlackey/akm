@@ -11,6 +11,7 @@
 
 import { rethrowIfTestIsolationError } from "../../core/errors";
 import type { Database } from "../../storage/database";
+import { SQLITE_CHUNK_SIZE } from "../../storage/repositories/index-sql";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -99,45 +100,56 @@ export function ensureUsageEventsSchema(db: Database): void {
  */
 export function insertUsageEvent(db: Database, event: UsageEvent): void {
   try {
-    db.prepare(
-      `INSERT INTO usage_events (event_type, query, entry_id, entry_ref, signal, metadata, source)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ).run(
-      event.event_type,
-      event.query ?? null,
-      event.entry_id ?? null,
-      event.entry_ref ?? null,
-      event.signal ?? null,
-      event.metadata ?? null,
-      event.source ?? "unknown",
-    );
+    insertUsageEventStrict(db, event);
   } catch (error) {
     rethrowIfTestIsolationError(error);
     /* fire-and-forget: silently ignore errors */
   }
 }
 
+/** Insert a usage event and let a failed write throw, for callers whose record is the event itself. */
+export function insertUsageEventStrict(db: Database, event: UsageEvent): void {
+  db.prepare(
+    `INSERT INTO usage_events (event_type, query, entry_id, entry_ref, signal, metadata, source)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    event.event_type,
+    event.query ?? null,
+    event.entry_id ?? null,
+    event.entry_ref ?? null,
+    event.signal ?? null,
+    event.metadata ?? null,
+    event.source ?? "unknown",
+  );
+}
+
 // ── Query ────────────────────────────────────────────────────────────────────
 
 /**
- * Aggregate positive/negative feedback counts for a single entry.
- *
- * Lifted verbatim from `akm feedback` (feedback-cli.ts) where the same
- * SUM(CASE …) query was hand-rolled inline. Returns plain numbers (NULL SUMs
- * over an empty set are coalesced to 0) so the result fully materialises before
- * any owning connection closes.
+ * User feedback counts for many assets at once, keyed by durable `entry_ref`.
+ * Refs with no user feedback are absent from the map. Read in one query per
+ * chunk of refs.
  */
-export function countFeedbackSignals(db: Database, entryId: number): { pos: number; neg: number } {
-  const counts = db
-    .prepare(
-      `SELECT
-         SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
-         SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
-       FROM usage_events
-       WHERE event_type = 'feedback' AND entry_id = ? AND source = 'user'`,
-    )
-    .get(entryId) as { pos: number | null; neg: number | null } | undefined;
-  return { pos: counts?.pos ?? 0, neg: counts?.neg ?? 0 };
+export function countFeedbackSignalsByRef(
+  db: Database,
+  refs: readonly string[],
+): Map<string, { pos: number; neg: number }> {
+  const counts = new Map<string, { pos: number; neg: number }>();
+  for (let i = 0; i < refs.length; i += SQLITE_CHUNK_SIZE) {
+    const chunk = refs.slice(i, i + SQLITE_CHUNK_SIZE);
+    const rows = db
+      .prepare(
+        `SELECT entry_ref,
+           SUM(CASE WHEN signal = 'positive' THEN 1 ELSE 0 END) AS pos,
+           SUM(CASE WHEN signal = 'negative' THEN 1 ELSE 0 END) AS neg
+         FROM usage_events
+         WHERE event_type = 'feedback' AND source = 'user' AND entry_ref IN (${chunk.map(() => "?").join(",")})
+         GROUP BY entry_ref`,
+      )
+      .all(...chunk) as Array<{ entry_ref: string; pos: number; neg: number }>;
+    for (const row of rows) counts.set(row.entry_ref, { pos: row.pos, neg: row.neg });
+  }
+  return counts;
 }
 
 /**
@@ -155,7 +167,7 @@ export function countUsageEventsByType(db: Database, eventType: string): number 
 /**
  * Durable refs a user-attributed `search`, `curate` or `show` returned, or a
  * user `feedback` named, at or after `sinceIso`. Machine traffic (`improve`,
- * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignals}.
+ * `task`, `audit`, `unknown`) is not demand, as in {@link countFeedbackSignalsByRef}.
  */
 export function listUsedEntryRefs(db: Database, sinceIso: string): string[] {
   const rows = db

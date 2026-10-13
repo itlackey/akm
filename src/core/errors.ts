@@ -35,6 +35,10 @@ export type ConfigErrorCode =
   // "not built yet" precisely so a read can fail loudly instead of returning an
   // empty-but-successful result for an index that is sitting right there (#791).
   | "DATA_DIR_UNREADABLE"
+  // A write the command exists to make (e.g. `akm feedback`'s record) could not
+  // be stored because the data directory is read-only to this process, such as
+  // an agent sandbox that only allows writes inside the workspace.
+  | "DATA_DIR_NOT_WRITABLE"
   | "INDEX_SCHEMA_INCOMPATIBLE"
   | "LLM_NOT_CONFIGURED"
   | "INVALID_CONFIG_FILE"
@@ -72,7 +76,6 @@ export type UsageErrorCode =
   | "INVALID_SOURCE_VALUE"
   | "INVALID_FORMAT_VALUE"
   | "INVALID_DETAIL_VALUE"
-  | "INVALID_SHAPE_VALUE"
   | "INVALID_JSON_CONFIG_VALUE"
   | "INVALID_JSON_ARGUMENT"
   | "MISSING_REQUIRED_ARGUMENT"
@@ -217,6 +220,8 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
   STASH_DIR_UNREADABLE: "Check the path exists and your user has read permission, or update the default bundle path.",
   DATA_DIR_UNREADABLE:
     "The data directory is not readable by the user running akm. Check its owner and mode, or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user owns.",
+  DATA_DIR_NOT_WRITABLE:
+    "Nothing was recorded. Make the akm data directory writable for this process (for an agent sandbox, add it to the writable paths), or point AKM_DATA_DIR / XDG_DATA_HOME somewhere this user can write, then retry.",
   INDEX_SCHEMA_INCOMPATIBLE:
     "Run `akm index --full` to rebuild the derived index from the currently materialized sources.",
   LLM_NOT_CONFIGURED:
@@ -255,9 +260,7 @@ const USAGE_HINTS: Partial<Record<UsageErrorCode, string>> = {
   INVALID_FLAG_VALUE: "Run `akm <command> --help` to see accepted values.",
   INVALID_SOURCE_VALUE: "Pick one of: local, registry, all, or a configured source name.",
   INVALID_FORMAT_VALUE: "Pick one of: json, jsonl, yaml, text, md, html.",
-  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full. For agent/summary projections use --shape.",
-  INVALID_SHAPE_VALUE:
-    "Pick one of: human, agent, summary (summary falls back to agent, with a warning, on commands with no summary projection).",
+  INVALID_DETAIL_VALUE: "Pick one of: brief, normal, full, agent.",
   INVALID_JSON_CONFIG_VALUE:
     'Quote JSON values in your shell, for example: akm config set embedding \'{"endpoint":"http://localhost:11434/v1/embeddings","model":"nomic-embed-text"}\'.',
   MISSING_OR_AMBIGUOUS_TARGET:

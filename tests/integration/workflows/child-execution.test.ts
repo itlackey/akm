@@ -537,7 +537,6 @@ describe("A-16 — a gate loop's changed gateFeedback yields a NEW child", () =>
         id: "compose",
         instructions: "Compose the child workflow.",
         onError: "fail",
-        isolation: "none",
         frozenTarget: target as FrozenWorkflowTarget,
         environment: [],
       },
@@ -607,21 +606,19 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
     expect(childRow?.status).toBe("completed");
   });
 
-  test("A-19: the parent unit completes with the child's exported {runId, status} result (no outputs: declared)", async () => {
+  test("A-19: the parent unit completes with the child's last step output as its result", async () => {
     const parent = await seedParentRun();
     const target = buildChildTarget(leafChildPlan());
 
     const outcome = await driveChildWorkflowUnit(buildDriveInput({ parent, target, dispatcher: successDispatcher() }));
 
     expect(outcome.ok).toBe(true);
-    const childRunId = outcome.childRun?.runId as string;
-    expect(childRunId).toBeDefined();
-    // §4.4: a child with no `outputs:` declaration exports {runId, status}
-    // metadata only — synthesized, never stored.
-    expect(outcome.result).toEqual({ runId: childRunId, status: "completed" });
+    expect(outcome.childRun?.runId).toBeDefined();
+    // The leaf child's one step produced the dispatcher's free text; that is the child's output.
+    expect(outcome.result).toBe("done");
   });
 
-  test("A-19b: the composing step's persisted evidence_json and the unit's result_json both carry {runId, status}, with no childRun key", async () => {
+  test("A-19b: the composing step's persisted evidence_json and the unit's result_json both carry the child's output, with no childRun key", async () => {
     // A direct driveChildWorkflowUnit call (as A-19 above uses) returns only a
     // UnitOutcome — it never touches workflow_run_steps/workflow_run_units. Only
     // a full parent drive (finalizeExecutedStep -> completeWorkflowStep, on the
@@ -644,7 +641,6 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
             id: parentStepId,
             instructions: "Compose the child workflow.",
             onError: "fail",
-            isolation: "none",
             frozenTarget: target as FrozenWorkflowTarget,
             environment: [],
           },
@@ -693,8 +689,7 @@ describe("A-18, A-19 — an active child is driven to completion; the exported r
 
     const children = await withWorkflowRunsRepo((repo) => repo.childRunsOf(parentRunId));
     expect(children).toHaveLength(1);
-    const childRunId = children[0]!.id;
-    const expectedArtifact = { runId: childRunId, status: "completed" };
+    const expectedArtifact = "done";
 
     const parentStep = await withWorkflowRunsRepo((repo) => repo.getStep(parentRunId, parentStepId));
     expect(parentStep?.evidence_json).not.toBeNull();
@@ -769,7 +764,6 @@ describe("A-21 — a blocked child blocks the parent RUN, with the exact resume 
             id: parentStepId,
             instructions: "Compose the gated child workflow.",
             onError: "fail",
-            isolation: "none",
             frozenTarget: target as FrozenWorkflowTarget,
             environment: [],
           },
@@ -1051,7 +1045,6 @@ describe("A-24, A-25 — the child drive passes a no-op disposeDispatchResources
             id: parentStepId,
             instructions: "Compose the child workflow.",
             onError: "fail",
-            isolation: "none",
             frozenTarget: target as FrozenWorkflowTarget,
             environment: [],
           },
@@ -1157,7 +1150,6 @@ describe("A-26 — a composing step consumes exactly one parent maxSteps allowan
             id: parentStepId,
             instructions: "Compose the 4-step child workflow.",
             onError: "fail",
-            isolation: "none",
             frozenTarget: target as FrozenWorkflowTarget,
             environment: [],
           },

@@ -31,6 +31,11 @@ export class AiderHarness extends BaseHarness {
   readonly id = "aider" as const;
   readonly displayName = "Aider";
   readonly agentBuilder = aiderBuilder;
+  readonly profile = {
+    bin: "aider",
+    args: ["--no-auto-commits"],
+    envPassthrough: ["OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
+  };
   readonly resultExtractor = aiderResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // No flag-shaped resume: Aider persists context in chat-history files

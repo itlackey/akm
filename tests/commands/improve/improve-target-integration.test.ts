@@ -16,6 +16,7 @@ import {
   mutateScopedEnv,
   type SandboxedDir,
   sandboxXdgDataHome,
+  withMockedFetch,
 } from "../../_helpers/sandbox";
 
 const sandboxes: SandboxedDir[] = [];
@@ -26,6 +27,13 @@ function stash(): string {
   sandboxes.push(sb);
   return sb.dir;
 }
+
+/** A model that finds nothing to do: every judged memory is "no action". */
+const noOperations = () =>
+  new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ operations: [] }) } }] }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
 
 function targetConfig(primary: string, team: string, readonly: string): AkmConfig {
   return withTestImproveLlm({
@@ -189,22 +197,16 @@ describe("improve named target integration", () => {
     ] as const) {
       const file = path.join(root, "memories", `${duplicateName}.md`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(
-        file,
-        `---\ndescription: ${marker} duplicate\ncaptureMode: hot\n---\n\n${marker} source body.\n`,
-        "utf8",
-      );
+      fs.writeFileSync(file, `---\ndescription: ${marker} duplicate\n---\n\n${marker} source body.\n`, "utf8");
     }
 
     const profile = {
       processes: { consolidate: { enabled: true } },
     } as ImproveProfileConfig;
-    const result = await akmConsolidate({
-      target: "team",
-      stashDir: primary,
-      config,
-      improveProfile: profile,
-    });
+    const result = await withMockedFetch(
+      () => akmConsolidate({ target: "team", stashDir: primary, config, improveProfile: profile }),
+      noOperations,
+    );
 
     expect(result.processed).toBe(1);
     expect(result.judgedNoAction).toBe(1);
@@ -283,15 +285,21 @@ describe("improve named target integration", () => {
     for (const root of [primary, team]) {
       const file = path.join(root, "memories", `${duplicateName}.md`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, "---\ndescription: duplicate\ncaptureMode: hot\n---\n\nSame body.\n", "utf8");
+      fs.writeFileSync(file, "---\ndescription: duplicate\n---\n\nSame body.\n", "utf8");
     }
     const config = targetConfig(primary, team, vendor);
     const profile = {
       processes: { consolidate: { enabled: true } },
     } as ImproveProfileConfig;
 
-    const first = await akmConsolidate({ target: "primary", config, improveProfile: profile });
-    const second = await akmConsolidate({ target: "team", config, improveProfile: profile });
+    const first = await withMockedFetch(
+      () => akmConsolidate({ target: "primary", config, improveProfile: profile }),
+      noOperations,
+    );
+    const second = await withMockedFetch(
+      () => akmConsolidate({ target: "team", config, improveProfile: profile }),
+      noOperations,
+    );
 
     expect(first.judgedNoAction).toBe(1);
     expect(second.judgedNoAction).toBe(1);

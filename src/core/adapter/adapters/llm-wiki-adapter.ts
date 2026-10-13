@@ -420,11 +420,6 @@ export const llmWikiAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, `${canonical}.md`), conceptId: canonical }];
   },
 
-  /** `<c.root>/<conceptId>.md` — the conceptId already carries its `pages/`/`raw/` prefix (placement golden). */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    return path.join(c.root, `${conceptId}.md`);
-  },
-
   /** The wiki owns its whole root (schema/index/log at root plus pages/ + raw/); one component. */
   directoryList(_c: BundleComponent): string[] {
     return ["."];

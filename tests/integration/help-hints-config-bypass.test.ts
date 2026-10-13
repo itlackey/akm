@@ -61,7 +61,6 @@ describe("shouldBypassConfigStartup allowlists help and hints", () => {
       ["bun", "cli.ts", "help"],
       ["bun", "cli.ts", "help", "migrate", "0.9.0"],
       ["bun", "cli.ts", "help", "search"],
-      ["bun", "cli.ts", "help", "agents"],
       ["bun", "cli.ts", "hints"],
       ["bun", "cli.ts", "hints", "--detail", "brief"],
     ]) {

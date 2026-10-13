@@ -10,17 +10,11 @@ it's written, see [Running Workflows](../guides/run-workflows.md).
 
 ## Start from the template
 
-Authors can choose peer Markdown or GitHub-shaped YAML sources. Markdown is
-the full AKM authoring format: OKF-conformant frontmatter carries the
-orchestration graph and its body carries instructions and gate rubrics.
-GitHub-shaped YAML is a strict local subset for interoperability. Read the
-[authoritative YAML subset](../reference/workflow-schema.md#github-shaped-yaml-subset)
-before translating an Actions-shaped file; AKM does not accept arbitrary
-GitHub semantics. `.yaml` is not recognized—use `.yml`.
+A workflow is a Markdown file: OKF-conformant frontmatter carries the
+orchestration graph and the body carries instructions and gate rubrics.
 
-Use `akm workflow create --print` to print a valid Markdown starter, then edit
-it and register it with `akm workflow create`. Author a YAML source directly
-under `workflows/<name>.yml` and validate either source with `akm lint`:
+Use `akm workflow create --print` to print a valid starter, then edit it and
+register it with `akm workflow create`. Validate with `akm lint`:
 
 ```sh
 akm workflow create my-release --print   # Print the template, without writing
@@ -417,70 +411,46 @@ blast radius before running it.
    [Workflow Schema: Gates and verification](../reference/workflow-schema.md#gates-and-verification)),
    so this is worth confirming once per workflow rather than assuming.
 
-## Composing a task with typed inputs
+## Running a child workflow (Experimental)
 
-A `uses: tasks/<ref>` step in the GitHub-shaped YAML format can bind a task
-source v4 target's declared `inputs:` through `with:`. Given this task:
+A step can run another workflow and use its result. The step names the child
+in its `unit:` bag and binds the child's `params:` with `with:`:
 
-```yaml
-# tasks/ticket-review.yml
-version: 4
-name: Ticket review
-inputs:
-  ticket:
-    type: string
-    required: true
-  scope:
-    type: string
-    enum: [changed, all]
-    default: changed
-uses: commands/review
+```markdown
+---
+type: workflow
+params:
+  topic: { type: string }
+steps:
+  - id: investigate
+    unit:
+      workflow: workflows/research
+      with:
+        topic: { from: params.topic }
+  - id: report
+    inputs: [steps.investigate.output]
+---
+
+## investigate
+
+Runs the research workflow as a child run.
+
+## report
+
+Summarise the research finding.
 ```
 
-a workflow step can bind `ticket` from an EARLIER step's output, and override
-`scope` with a literal:
+A `with:` value is a literal (checked against the child's param type when the
+workflow is frozen) or `{ from: <reference> }`, where the reference is
+`params.<name>` or `steps.<id>.output(.<segment>)*`, resolved just before the
+step runs. The child's **last step output** is the composing step's output, so
+`report` reads it through `inputs:`. Inspect what a step would pass, without
+running anything, with `akm workflow plan workflows/<name> --format json`; the
+per-step `inputBindings` show each literal and each unresolved reference.
 
-```yaml
-# workflows/nightly.yml
-name: Nightly review
-on:
-  workflow_dispatch: {}
-jobs:
-  main:
-    runs-on: [self-hosted]
-    steps:
-      - id: pick
-        run: echo T-42
-      - id: dispatch
-        uses: tasks/ticket-review
-        with:
-          ticket: { from: "steps.pick.output" }
-          scope: all
-```
-
-`{from: "steps.<id>.output(.<segment>)*"}` and `{from: "params.<name>"}` are
-the only two reference roots; anything else, or an object carrying `from`
-plus any other key, is `INPUT_BINDING_INVALID` at freeze — never silently
-reinterpreted as a literal. `pick`'s output is resolved just before the
-`dispatch` unit dispatches, then validated against `ticket`'s declared
-schema; a literal (like `scope: all` here) is validated at freeze instead,
-before the plan is ever published.
-
-The composed target — `commands/review` here — receives the resolved
-bindings on whichever delivery surface matches its kind: an
-`akm/command`/`commands/<ref>` target gets a `## Task inputs` block appended
-to its prompt; a `run:` shell or `scripts/<ref>` target gets one
-`AKM_TASK_INPUTS` environment variable (canonical JSON of the resolved
-bindings). Inspect exactly what each step's `with:` would deliver, without
-running anything, with `akm workflow plan workflows/nightly --format json`
-— its per-step `inputBindings` show `dispatch`'s `scope` as the literal
-`all` and `ticket` as the unresolved reference `steps.pick.output`, the
-same shape freezing a real run would produce. `akm task explain` is not a
-substitute here: it only reflects a task's OWN CLI flags, declared
-defaults, and `schedule[].inputs` — it never reads a workflow step's
-`with:` binding at all, so pointing it at `tasks/ticket-review` prints
-`scope`'s task-level default (`changed`), not the `all` this step actually
-sends.
+Child workflows are Experimental. See
+[Workflow Schema: Child workflows](../reference/workflow-schema.md#child-workflows)
+for blocked-child recovery and the limits.
 
 ## Troubleshooting
 

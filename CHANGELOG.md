@@ -6,12 +6,454 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm feedback` fails when it cannot record the feedback** (also in 0.9.32). When `state.db` was read-only to the
+  process, as it is inside an agent sandbox that only allows writes in the workspace, the feedback row was silently
+  dropped and the command still printed `"ok": true`. It now fails with a `DATA_DIR_NOT_WRITABLE` config error (exit
+  78) and records nothing. Add akm's data directory to the sandbox's writable paths.
+
+## [0.10.261003] - 2026-10-12
+
+### Fixed
+
+- **`akm upgrade` now keeps the OpenCode 2 plugin (`akm-opencode-v2`) current.** Three things stopped it:
+  `--next` refused with "pins akm-cli ... older than the ... that @latest pins" because npm's `latest` for
+  `akm-opencode-v2` is a retired daily alpha whose 8-digit pin sorts above every monthly build (and the lockstep
+  reported that as "could not read the akm-cli pin"); `--next` now follows the `next` tag and no longer compares it with
+  `@latest`, for OpenCode 1 as well. The refresh trashed the cache and deferred whenever an OpenCode process ran, which
+  on a host with a standing `opencode serve` was always. It now runs OpenCode 2's own `opencode plugin update <spec>`,
+  which installs the new build beside the old one for the running service to pick up at its next restart, so it is
+  neither trashed nor deferred. OpenCode 1 is unchanged.
+
+- **`akm upgrade --next` no longer says the Claude Code and Codex plugins have "no prerelease channel" and work "with
+  any 0.9.x akm".** akm-plugins now has a `next` branch for prereleases, and the plugins require akm 0.10.261001 or
+  newer. The `--next` note now names the ref the `akm-plugins` marketplace follows (read from `claude plugin marketplace
+  list` and Codex's `config.toml`) and, when it is the stable default branch, how to switch to `next`. `akm upgrade`
+  still only updates the ref the marketplace follows.
+
+## [0.10.261002] - 2026-10-12
+
+### Fixed
+
+- **`akm sync` and improve's pre-run sync no longer fail on tracked files under a git-ignored directory.** A stash whose
+  `.gitignore` lists `.akm/evals/runs/` after files under it were committed has tracked, ignored files that change
+  with every eval run (the `latest` symlink). The sync picked them with the managed paths and git refused to stage them
+  ("The following paths are ignored by one of your .gitignore files"), so the whole sync stopped: no fetch, merge,
+  commit or push. Sync now leaves any path a `.gitignore` rule matches out of the paths it picks, tracked or not; those
+  edits stay uncommitted in the working tree. An explicit `paths` request naming an ignored path still fails.
+
+## [0.10.261001] - 2026-10-12
+
+### Changed
+
+- **0.10 release numbers are monthly, `0.10.YYMMNN`, not daily (#1089).** The patch is the UTC year, the month and the
+  release within that month (`NN`, `01` to `99`), two digits each. Every release takes the next `NN`, whatever its
+  stage (`0.10.261001-alpha`, then `0.10.261002-beta`, then `0.10.261003`); a build is no longer promoted through
+  `-alpha`, `-beta` and `-rc` under one number. `bun scripts/release-version.ts next` now counts the month's releases on
+  npm, and the Release workflow rejects the old 8-digit `YYMMDDNN` form for a new release. **Known, accepted break:**
+  semver compares the patch numerically, so every `0.10.YYMMNN` sorts below the 0.10 daily alphas
+  (`0.10.26101001-alpha` to `0.10.26101202-alpha`), and `akm upgrade` will not offer it from one. The next release is
+  `0.10.261001-beta`; if you are on a 0.10 daily alpha, install it explicitly once
+  (`npm install -g akm-cli@0.10.261001-beta`), after which `akm upgrade` works as before.
+
+### Deprecated
+
+- **The `opencode` CLI dispatch path.** An agent engine with `platform: "opencode"`, which runs `opencode run` for each
+  call, still works on OpenCode 1 and 2 throughout 0.10, but is deprecated: use an `opencode-sdk` engine, which covers
+  it, including a default agent (#1098). It may be removed in 0.11 or later (STABILITY.md).
+
+## [0.10.26101202] - 2026-10-12
+
+### Fixed
+
+- **A signal to `akm agent` no longer leaves the CLI harness running (#1049).** `akm agent` on the `opencode`,
+  `claude` and `codex` CLI engines runs the harness in its own process group, so SIGTERM or SIGINT to akm ended akm and
+  left `opencode run` (and, on OpenCode 2, its `serve --stdio` child) running. The managed-subprocess primitive now runs
+  the timeout kill ladder on every live group child when akm gets such a signal with no handler of its own, then
+  re-raises it so akm still ends by the signal.
+- **An OpenCode 2 SDK dispatch ends when akm rejects a permission request (#1049).** OpenCode 2 interrupts the step
+  (`aborted`, "Step interrupted") and goes idle without writing the closing `idle` message, so the dispatch waited out
+  its whole deadline. It now returns at once with `reason: "aborted"` and the declined tool call in `error`.
+- **Documented: OpenCode permission defaults in a dispatch (#1049).** OpenCode 1 asks before reading or writing outside
+  the project directory; OpenCode 2 does not unless its config says `ask`, so akm's permission rejection only happens
+  on OpenCode 2 once you add that rule. akm changes no default. See [Configuration](docs/reference/configuration.md#engines).
+
+## [0.10.26101201] - 2026-10-12
+
+### Removed
+
+- **Reflect's retrieval regression gate (#1171).** After the quality judge passed a revision, reflect graded the old and the new text against up to five of the asset's own retrieval queries and refused the revision (`quality_rejected`, a 14-day window) when the mean grade fell at all. Re-measured on 0.10 it refused 12-17% of the revisions the judge had passed and lowered defects fixed from 84 to 77 (35B) and from 92 to 77 (27B) of 96, now that reflect edits frontmatter only. A judge-passed revision is now minted as a proposal with no further check. This also removes the `retrieval-ungraded` review reason, the `retrievalRegression`/`retrievalUngraded` event metadata and the `retrieval-relevance-judge.md` prompt. No config key existed for the gate, so no config changes.
+
+## [0.10.26101101] - 2026-10-11
+
+### Changed
+
+- **A manual fix to an asset applies at once.** `akm feedback --negative ... --replace/--with/--source`, `--superseded-by` and `--outdated` used to queue a `feedback` proposal that waited for `akm proposal accept` and expired after 90 days. The command now files the proposal and accepts it in the same run, through the ordinary accept (a git-backed bundle gets the usual commit; `akm proposal revert` undoes it), with gate decision `manual-fix` and no judge. If the accept refuses, the proposal is rejected, the file is untouched and the command fails. The edited asset stays eligible for every improve process.
+- **`akm improve` syncs before it runs, not only after (#1091).** A live run on a git-backed bundle now does the same
+  fetch / fast-forward-or-merge / commit / push as `akm sync` right after taking its lock and before the index and plan
+  stages, so it plans from what other hosts pushed. It honours `--no-sync` and `--no-push`. A conflict or fetch failure
+  warns and the run continues on the local state; the outcome is `preRunSync` on the result and a `stash_synced` event
+  with `phase: "pre-run"`. Pending hand edits in the managed paths are committed by it, as `akm sync` would.
+- **Reflect no longer locks an asset for 14 days over an uncertain verdict; it asks a person.** A reflect revision the
+  quality judge does not pass but scores 3.5 or more (the judge's own review label begins at 2.5) is now queued as a
+  pending proposal for a person (`judge-uncertain`, with the per-criterion scores and the judge's reason) and records
+  no `quality_rejected` window; a lower score is refused as before. Likewise a retrieval check that cannot grade a
+  revision (transport error, timeout, unreadable reply) queues it for a person (`retrieval-ungraded`) instead of
+  refusing it as a regression, and a distill lesson or promotion whose judge is missing at judge time is queued for
+  review instead of recording a 30-day `quality_rejected` window. Triage never accepts any of these. `akm proposal
+  list` shows the reason as `gate=deferred:<reason>`.
+- **Feedback now changes `akm search` and `akm curate` ranking, as `akm feedback` always said it did.** The fused
+  score is scaled by `1 + 0.03 x (ln(1 + positives) - ln(1 + negatives))`, counting the user's recorded feedback
+  events for the asset (improve, task and audit feedback does not count). The rule is the same for every asset, rises
+  with each positive and falls with each negative, and gains less per vote as votes pile up: about +2% / +3% / +5% /
+  +9% for 1 / 2 / 5 / 20 positives, so an asset with 5 positives outranks one with 2, and the effect reorders close
+  matches without overriding relevance. The counts are read from `state.db` in one query per search. `utility_scores`
+  is still written and read by improve and metrics, but search does not use it.
+- **`akm feedback` reports the real ranking effect.** `rankingUpdate.applied` in its output used to mean the utility
+  EMA write succeeded, which no longer has anything to do with ranking. It is now `true` exactly when the recorded
+  event is user-attributed (the events search counts) and `false` with a reason for improve, task, audit or unknown
+  attribution; a utility-write failure only warns and no longer flips it.
+- **Utility has one formula and one implementation.** `akm feedback` used to move utility with its own bounded step
+  toward the cumulative positive share while `akm index` recomputed the same table with a different formula, so the
+  stored value depended on which ran last. `akm feedback` now calls the indexer's `recomputeUtilityScores` for the one
+  entry (user-attributed events only), so the value it stores is the one `akm index` would compute at that moment; the
+  bounded-step code (`utility-policy.ts`) is removed. A first positive on an entry with no utility row now gives 0.3
+  (the old start was 0.5). Search still does not read utility.
+
+### Fixed
+
+- **The 02:00 nightly `akm improve` can no longer lose its night to the consolidate task's lock.** The shipped
+  `akm-improve-consolidate` task (`20 */4 * * *`) kept the default 2-hour budget, so a 00:20 run could still hold
+  `improve.lock` at 02:00 and the nightly (deliberately without `--skip-if-locked`) failed with `IMPROVE_LOCK_HELD`.
+  The consolidate task now passes `--timeout-ms 3600000`; the nightly is unchanged.
+- **Scheduled command tasks (`uses: commands/…`) get the 6-hour unattended default timeout.** Only workflow and native
+  shell/script tasks had it, so a wedged engine call could hold a command task forever. An explicit task `timeout:`,
+  an engine timeout, or `timeout: null` still wins.
+- **`akm search` no longer warns "no embedding provider is configured" on a default install.** With
+  `semanticSearchMode: auto` and no embedding settings, search uses the built-in local model, so the warning was
+  false on every query. It now fires only for a remote `embedding.endpoint` set without `embedding.model` (the one
+  config that cannot work), and the remedy names that field.
+- **`akm sync` fetches the remote and brings other hosts' changes in before it pushes.** It used to check the stale
+  local tracking ref, so once another host had pushed, the lease push failed and `akm sync` exited 70 instead of
+  committing, and a two-host filesystem bundle never converged. A writable bundle with a remote now fetches, then
+  fast-forwards (or merges with git's default merge) the upstream, then pushes; a host with nothing to commit still
+  receives the upstream. A merge that conflicts is aborted, your commit stays, the push is skipped, and
+  `reason` reads `not pushed: merging upstream conflicts in <files> ...`. A failed fetch likewise only skips the push.
+  `--no-push` and read-only bundles never touch the network.
+- **The end-of-run improve sync reports `committed: true` when only the push failed.** The commit had landed, but the
+  result and the `stash_synced` event said `committed: false`.
+- **The extract per-session lock no longer reclaims a live holder.** It was reclaimed once its file was five minutes
+  old, but one session can hold it across two extraction attempts and the summary call, so a session-end hook racing
+  the improve run processed the session twice. Only a lock whose holder process is dead is reclaimed, as with the
+  improve run lock.
+- **Memory inference writes to the default bundle, not the first bundle in the list.** The pass took `sources[0]`, so
+  it relied on list order and did nothing, silently, when that entry was not an akm bundle. It now selects the source
+  flagged as the default bundle and warns when there is none or when it is not an akm bundle.
+- **Memory inference no longer reverts a parent memory's frontmatter edit.** The `inferenceProcessed` stamp rewrote
+  frontmatter parsed before the model call, so an edit made to the memory in the meantime (accepted proposal,
+  feedback hash) was lost. The stamp now adds its key to the file's current frontmatter.
+- **The session summary prompt fences the transcript as untrusted.** Extract's summary call sent the raw, unfiltered
+  event stream with no boundary, so a crafted session could steer the text written into the session asset. It now
+  uses the same pre-filter and the same `UNTRUSTED SESSION TRANSCRIPT` fence, with forged fence markers neutralised,
+  as the extraction call.
+- **`akm proposal revert` of a retirement still works after the 30-day archive purge.** When the graced purge has
+  deleted the archived copy, the primary is restored byte for byte from the proposal's recorded `backupContent`
+  instead of the revert refusing. A file that now occupies the path is still never overwritten.
+- **Retire proposals can no longer become permanent.** They now expire by age like every other proposal (`akm proposal
+  reopen` brings one back, so the old "never expires" rationale is gone), a staged one whose file or successor is gone
+  or changed is auto-rejected once as `stale-target` instead of failing every drain run, and an expired or stale-target
+  retire proposal no longer counts as a person's rejection that settles its pair.
+- **The consolidate pair pass no longer marks assets judged when they have no stored embedding.** With
+  `semanticSearchMode: off` (or before an asset is embedded) the neighbour query could not run, yet the pass wrote a
+  `judged_no_action` row that held the asset until its body changed. It now writes no row for such an asset, so
+  enabling embeddings reconsiders it, and warns once per run that the pair pass needs stored embeddings.
+- **A transient reflect failure no longer consumes the feedback that planned it.** A transport error, parse error,
+  timeout, budget abort or crash wrote a `failed` ledger row that advanced the signal cursor, so the ref was not
+  retried until new feedback arrived. Like distill, these now write no row; guard rejections and quality rejections
+  are unchanged.
+- **The per-run `akm improve` and `akm index` log files are now purged by the retention pass.**
+  `$CACHE/logs/improve/<ISO>.log` and `$CACHE/logs/index/<ISO>.log` were outside the purge and grew without bound;
+  they now follow `improve.eventRetentionDays` like the task log files.
+- **A run hard-killed by the budget watchdog now leaves a record and banks its writes.** The forced `process.exit(0)`
+  (exit code unchanged) skipped every finally block, so the run left no `improve_runs` row and the files it had
+  written were never committed. Before exiting, the watchdog now records the run as terminated
+  (`budget_exhausted`) and makes the same provenance-scoped auto-sync commit, without pushing.
+
+### Changed
+
+- **`captureMode: hot` memories are consolidated like any other memory.** The pair pass may now retire one, the promote
+  pass may promote one (accepting archives the source, as for any memory), and a chunk of only hot memories goes to the
+  model instead of being skipped as judged no-action. The hot-specific retire guard, chunk skip and promote-prompt
+  annotation are gone; `akm remember` still writes `captureMode: hot`.
+
+## [0.10.26101002] - 2026-10-10
+
+### Changed
+
+- **Triage accepts up to 200 proposals per run by default, up from 25.** The consolidate pair pass stages about 90
+  pairs a night on a real stash, so a lower cap let the review queue grow every night. `maxAcceptsPerRun` still bounds
+  a run, and `akm proposal drain` uses the same default.
+- **`akm improve <scope>` warns when the scope matches no asset.** A type scope that matches nothing in the stash
+  (`akm improve typo`, `improve skills`, `improve memorys`) prints one warning on stderr naming the scope and, for a
+  near-miss of a real type, the likely intended one. The exit code and the empty plan are unchanged, and a valid scope
+  with nothing eligible does not warn.
+
+## [0.10.26101001] - 2026-10-10
+
+### Added
+
+- **OpenCode 2 is the primary OpenCode integration; OpenCode 1 keeps working (#1049).** akm detects the major from
+  the engine's binary (`<bin> --version`, once per binary per process; `opencode2` is preferred when it is on PATH)
+  and drives it through a per-major adapter for SDK dispatch (`opencode-sdk`, on `@opencode/client` 2.0.26 or
+  `@opencode-ai/sdk` 1.2.20), CLI dispatch (`opencode run`, which adds `--standalone` on OpenCode 2 so no background
+  service is left running), session history (chosen from `opencode.db`'s own tables, read-only, with retained
+  OpenCode 1 rows still readable after a native upgrade) and native config import. OpenCode 1 warns once that
+  upgrading is recommended; a binary of an unknown major is driven as OpenCode 2 with a warning, never refused.
+  `akm upgrade` and `akm health` know the `akm-opencode-v2` plugin beside `akm-opencode`.
+- **`akm-cli/api`: the one supported programmatic entry point.** `curate(query, { limit, type, format })` returns
+  exactly the stdout of `akm --detail agent -q curate …`, computed in-process, and rejects with the CLI's message and
+  `code`. It is for in-process recall by the akm plugins; everything else stays CLI-only. `package.json` gains an
+  `exports` map (`./api`, `./package.json`, `./dist/*`); `bin` and `files` behave as before. See
+  [`docs/reference/api.md`](docs/reference/api.md).
+- **Distill extends an existing lesson that a memory repeats (#1090).** When the writer's lesson repeats one the library
+  holds (the judge scores its non-redundancy 2 or below), or the writer answers `NONE` with a lesson nearby, distill
+  asks for that lesson's body again with the lines the memory adds. If every existing line is kept, and the judge
+  passes the added lines against the lesson and the memory, the update is a pending proposal on the lesson's own
+  ref (reason `distill-update`, with the lesson's before-hash), left for a person: the triage drain does not accept
+  it. Otherwise nothing is proposed and the outcome is what it was. The result and the `distill_invoked` event carry
+  `updatesExisting: true`. No new setting; it needs the quality gate.
+
+### Removed
+
+- **The GitHub-shaped YAML workflow format (#1096).** A `.yml` workflow (`name`/`on`/`jobs`, one job, `uses:` and `run:`
+  steps) is gone, with everything that existed only to carry it: workflow-step `uses: tasks/<ref>` (task composition),
+  `uses: scripts/<ref>` and `uses: commands/<ref>` targets, the `with:` rejection classifier for them, YAML `on.schedule`
+  triggers (and the scheduler sync of them), and the `script` frozen target. `.yml` under `workflows/` is skipped at
+  index time with a message saying it must use `.md`. Nothing in the owner's bundle or in OpenPalm used it. **Kept:** a
+  task that runs a workflow (`uses: workflows/<ref>`, or a `run:` calling `akm workflow run`) is a task feature and is
+  unchanged. A stored run whose plan has a `script` target can no longer be decoded and is abandoned like any other
+  undecodable plan.
+- **Top-level workflow `outputs:` (#1096).** Its only consumer was a parent reading a child's exports. A completed
+  child workflow now returns the output of its last step, so `outputs:` is a lint error and the child-output reference
+  check at freeze is gone; a parent reads `steps.<composing-step>.output`. The `outputs_json` column stays readable.
+- **Workflow `route` steps (#1096).** A step can no longer declare `route:` (branch on a value to a later step). It was
+  unused by any workflow found, and its cost was the replay journal for route decisions and cascaded skips. Branching is
+  an `exec` step or an agent step that reads its inputs, plus a gate for "go back and fix it". `route` is now an
+  unknown-key lint error; a stored plan that still has a route step cannot be decoded, so that run is abandoned.
+- **`unit.isolation: worktree` (#1096).** A workflow unit can no longer declare per-attempt git-worktree isolation
+  (`exec/worktree.ts` and the attempt prepare/cleanup in the native executor). It was unused by any workflow found, and
+  the largest standalone block in the engine. `unit.isolation` is now an unknown-key lint error; a stored plan that
+  still carries it decodes and runs the unit in the engine's working directory. The `worktree_path` columns stay readable.
+- **Runtime conversion of config older than 0.9.15 (#1091).** 0.10 reads what 0.9.15 and later wrote; an install on an
+  earlier release runs `akm migrate apply` under akm 0.9.x first. Removed: the in-memory `stashDir`/`sources[]`/
+  `installed[]` to `bundles` conversion (`legacy-source-shape-shim.ts`), the `engines.*.extraParams` lift onto
+  `temperature`/`maxTokens`/`enableThinking`/`reasoningEffort`, and the `{kind, ref, sourceId}` write-back of
+  `scheduler.enabled` that kept 0.9.16 able to read what a newer release wrote (0.10 writes plain refs, still reads the
+  object form). A config with a retired source key now fails to load with one message naming `akm migrate apply` under
+  akm 0.9.x; a legacy `extraParams` key is refused with the first-class field to set. Kept, because 0.9.15 or 0.9.16
+  wrote them: scheduler adoption for a config with no `scheduler.enabled`, the `{kind, ref, sourceId}` reader, and the
+  irVersion 5 frozen-plan reader (there was no separate irVersion 4 reader to remove). `akm migrate apply` and
+  `akm migrate status` are unchanged for 0.9.15 and later data; the task-source migrator moved to
+  `scripts/akm-migrate/migrate/`. See `STABILITY.md` and `docs/architecture/persisted-data-compat.md`.
+- **The `quick`, `reflect-distill`, `thorough` and `catchup` built-in improve strategies, and the `akm-improve-frequent`
+  and `akm-improve-catchup` task templates (#1130).** Measured (nightly eval, n=3, `gpt-5.6-terra` and `qwen3.8-27b`):
+  `quick` solved 0.76 / 0.75 items against `default`'s 0.92 / 0.89, `reflect-distill` 0.78 / 0.77, and `thorough` (the
+  judged triage drain) 0.67 / 0.70 with harmed items at 9 / 6.3 (unsafe retirements accepted, an exact fix applied
+  unreviewed); `catchup` was identical to `consolidate` on the pool (it differed only in the judged triage drain, `maxChunkSize` 50 instead of 25, and `minPoolSize: 0`, which is already the default). An `improve.strategies.<name>` block with one of
+  these names stays valid as an ordinary user-defined strategy, but it now inherits `default` and no longer carries the
+  old built-in's settings (for example the triage drain). `--strategy` or `defaults.improveStrategy` naming one with no
+  such block fails at resolution with an error that names `default`; config load still succeeds. The shipped
+  `akm-improve-nightly` task would now run `default` at 02:15, the same as the `core/improve` task at 02:00, and the
+  hourly `akm-improve-frequent` task would only repeat that pass; `akm-improve-catchup` ran the same `consolidate` as
+  `akm-improve-consolidate`. All three are gone, and setup's server-install preselection now suggests `core/improve`. A task copied from
+  any of them into a bundle keeps its `--strategy` and must be changed to `default` or `consolidate`. (#1130)
+- **The high-salience improve lane and `improve.salience.salienceThreshold` (#1129).** The lane admitted nothing in
+  the measurement and was reachable only by back-dating feedback. The key still loads from an old config with a
+  warning and does nothing; `akm migrate apply` drops it. The `high-salience` lane name stays valid on rows older releases wrote.
+- **The `proactive-maintenance` built-in improve strategy (#1129).** The lane now lives in `default`. A
+  `improve.strategies.proactive-maintenance` block in your config keeps working as a user-defined strategy, merged
+  onto `default`; `defaults.improveStrategy: "proactive-maintenance"` without such a block still loads and fails
+  when improve runs, with the same "removed in 0.10" error as `quick` and the other removed strategies (#1130).
+- **`BundleAdapter.placeNew()` (internal, #1091).** The optional adapter method, its nine implementations and their
+  tests were never called: every write already resolves through the fixed type-to-directory table. No behaviour
+  change. Writable bundles in a layout other than akm's own would need it back; see #1163.
+
+### Changed
+
+- **Child workflows are kept in a simple form (#1096).** A markdown step declares `unit: { workflow: workflows/<name>,
+  with: { <param>: <literal or { from: <reference> }> } }` and the engine starts the child as its own run and drives it
+  to completion; the child's last step output is the composing step's output. The form is Experimental. The freeze,
+  idempotent publish, resume, blocked-child recovery, cycle check and `workflow list --children` behaviour of the existing
+  child executor is unchanged.
+- **`default` drains the proposal queue through the deterministic gates (#1143).** The `default` strategy now runs
+  triage in `promote` mode with judgment off, up to `maxAcceptsPerRun: 25` accepts per run, so the backlog drains
+  without `experimental.improveAutonomy`. The nightly eval's baseline is exactly this path (`proposal drain --promote`
+  without judgment): 0.91 (terra) and 0.89 (qwen) of items solved, 0 to 1 harmed; the judged drain is what caused
+  harm (#1132). The autonomy gate's `triagePromote` lane is now gated only when the triage stage has judgment on: a
+  promote with judgment on and no opt-in is still downgraded to `queue` and reported (`improve_skipped`,
+  `akm task doctor`). Memory inference and memory cleanup stay gated. No new setting. (#1143)
+- **`akm improve` plans the proactive-maintenance lane's picks again, and the lane is on in `default` (#1129).**
+  Measured on assets with silent defects and no feedback (8 planted): 0 fixed with the picks scored only, 6 to 7 with
+  them planned, no harm, about five times the model calls. The picks carry the `proactive` lane on their
+  proposals. The cap against a proposal flood already existed and is now consistent: `maxPerRun` limits the picks per
+  run, `dueDays` (30) admits only an asset not reflected or distilled for 30 days, and reflect's `limit` (25) bounds
+  the run. The code fallback for `maxPerRun` is 15, the shipped value, where it was 25. No new setting.
+  `--require-feedback-signal` turns the lane off for a run.
+- **The judged drain accepts only consolidate promotions, and no built-in strategy turns judgment on (#1132).** On the
+  nightly eval, judging every proposal kind with `experimental.improveAutonomy` solved about half the items
+  (0.49 gpt-5.6-terra, 0.53 qwen3.8-27b) and harmed 14 and 11, changing 18 and 21 notes outside the planted set: it
+  accepted unsafe retirements and applied exact fixes unreviewed. Judging promotions alone was reasonable. The judgment
+  tier now accepts only a consolidate promotion; any other kind it would accept (a retirement, an exact fix, a reflect
+  revision) is left for a person with reason `judgment-not-promotion`, whatever the strategy says. `thorough`, `catchup`,
+  `reflect-distill` and `proactive-maintenance` no longer enable triage judgment. Deterministic promote gates are
+  unchanged. (#1132)
+- **Built-in improve strategies are patches onto `default`, not "complete presets" (#1130).** `docs/reference/configuration.md`
+  said otherwise; the strategy list in the docs, the `--strategy` help and the hints now name only `default`
+  and `consolidate`. (#1130)
+- **A proposal from the proactive lane waits for a person (#1147).** With the lane on in `default` and the default
+  drain promoting through the deterministic gates, a reflect edit on an asset with no feedback was accepted unattended
+  once reflect's judge passed it (the nightly eval showed `when_to_use`, `type` and provenance stamps and a title
+  heading added to assets no one had asked about). `proposal drain` now never accepts a proposal whose
+  `eligibilitySource` is `proactive`, through a deterministic gate, the judgment tier or an earlier staged accept: it is
+  left for review with reason `proactive-needs-review` (and is not sent to the judgment tier). Feedback-driven
+  proposals (`signal-delta`, `scope`) are unchanged. No new setting. (#1147)
+- **0.10 releases are daily builds, `0.10.YYMMDDNN`, with `-alpha`, `-beta` and `-rc` stages (#1089).** The patch
+  number is the UTC year, month and day plus the build that day (`NN`, `01` to `99`), two digits each: the first build
+  on 2026-10-10 is `0.10.26101001`. A prerelease carries its stage only (`0.10.26101001-alpha`, no `.N`), so one build
+  is promoted `-alpha` < `-beta` < `-rc` < `0.10.26101001`; prereleases publish to the npm `next` tag and stable builds
+  to `latest`. The Release workflow validates the format and takes a new `stage` input (`scripts/release-version.ts`);
+  `bun scripts/release-version.ts next` prints the next free build number for today from the versions on npm. Versions
+  sort by date across months and years, so `akm upgrade` and semver ranges order them correctly. The 0.9 line keeps
+  `0.9.N`. See `STABILITY.md`. (#1089)
+
+### Removed
+
+- **Six improve knobs that measured no effect (#1131).** Each is removed with the code that served only it; a config
+  that still sets one loads (named once by the unknown-key warning, dropped by `akm migrate apply`).
+  - `processes.consolidate.antiCollapse`: the random cluster-member injection. Identical results with it off on an
+    80-memory pool.
+  - `processes.consolidate.p90ChunkSecondsDefault`: the up-front budget cap on the consolidation pool keeps its
+    behaviour with a fixed 30 s per chunk. Identical at 10, 30 and 90 s under a 180 s budget.
+  - `processes.consolidate.minPoolSize`: the minimum-pool skip, its `pool_below_min_size` `improve_skipped` reason and
+    the `minPoolSize` / `gates.minimumPool` fields of the consolidation plan. It was bypassed by `--strategy`, and the
+    documented default (500) differed from the code's (0). `improve_runs` rows that carry the plan fields still read.
+  - `processes.distill.fidelityCheck`: the negation-pattern contradiction check. No difference at n=3.
+  - `processes.reflect.lowValueFilter`: the low-value tier of the reflect noise classifier. Reflect edits only
+    frontmatter, which the filter always passes. No-op and cosmetic edits are still refused.
+  - `improve.salience.outcomeWeightEnabled`: the toggle and its parity weights. The outcome term stays on
+    (w_e 0.25, w_o 0.15, w_r 0.60), as it was by default.
+
+- **`akm workflow create --reset` (#1091).** Declared since 0.9.12 as a deprecated alias of `--force`, never read.
+  `--force` alone replaces a workflow with a fresh template; `--force --from <file>` replaces it from the file.
+- **`akm improve --plan` (#1091).** An exact alias of `--dry-run` with no other callers. Use `--dry-run`; it prints the
+  same `plan.processes` routing table.
+- **`akm task list` (#1091).** A delegating alias of `akm search --type task` (added in 0.9.15, #951) with no callers
+  in the plugins, akm-eval or OpenPalm. Use `akm search --type task`.
+- **Improve config keys nothing read (#1091).** `processes.distill.limit`, `processes.memoryInference.cls`,
+  `processes.proactiveMaintenance.limit` (an alias of `maxPerRun`) and `triage.policy` (set in the shipped `default`
+  strategy, read by no code) are gone from the schema and the shipped strategy. A config that still sets one loads
+  (named once by the unknown-key warning). `plan.triage.maxDiffLines` leaves the plan type; stored runs that carry it,
+  or `plan.proactive.configured.limit`, still decode. `processes.distill.cls` is read and stays. OpenPalm's improve
+  editor writes the strategy-level `limit`, not per-process ones, so the process `limit` of reflect and consolidate
+  stays.
+- **The `targetVocab: 2` marker on `task_history` rows, and the `"mcp"` package keyword (#1091).** Nothing read the
+  marker since migration 025 backfilled the old result vocabulary, so new rows no longer carry it and a stored one is
+  ignored; its newer-than-2 warning is gone. akm has no MCP code left, so `package.json` no longer lists `mcp`.
+- **The hard-error and bespoke-warning hints for old config keys (#1091).** `defaults.llm`, `defaults.agent` and
+  `defaults.improve` (rejected since 0.9), the `feedbackDistillation` process (rejected since 0.8.0), and the engine
+  settings under `index.<pass>` and `index.stalenessDetection` (dropped with a bespoke message) now load like any other
+  unknown key: named once by the unknown-key warning, ignored, and dropped by `akm migrate apply`.
+- **`akm improve --auto-accept` is a hard error (#1091).** It was removed in 0.9.0 and has been accepted-and-warned
+  since; it is now an unknown flag like any other (exit 2), and `--auto-accept 90` no longer reaches the scope. Use
+  `akm improve && akm proposal drain --promote --yes`, or a `triage` block with `applyMode: "promote"`.
+- **The hint tables for the 0.9.0 renames (#1091).** `RETIRED_COMMAND_HINTS` (39 entries), `RETIRED_FLAG_HINTS` (5) and
+  `SELF_DIAGNOSED_FLAGS` (`src/cli/retired-commands.ts` is gone), the per-command `--target`, `--source`, `--scope`,
+  `--enrich`/`--re-enrich` and `proposal drain --profile` rejections, the `akm improve canary` scope rejection, the
+  `akm show` colon-ref tip and the `<type>:` search tip. A retired command is now an ordinary `UNKNOWN_COMMAND` (with a
+  did-you-mean when one is close, within a third of the name's length) and a retired flag an ordinary `UNKNOWN_FLAG`
+  (exit 2), with no migration pointer. The same goes for the `--from stash|both` rename error (a bundle may now be named
+  `stash`), the `vault:`/`env:`/`secret:` ref rejections (`env/`, `secrets/`, `secret://` and `${secret:NAME}` are
+  unchanged), the `config get` replacement hints for `stashDir`, `sources`, `installed`, `wiki`, `wikiName` and `llm`,
+  and the retired-spelling notes in the agent hints.
+  `task run`/`task explain` no longer reserve the input name `target`, so a task may declare an input of that name.
+  `akm improve canary` is now an asset-type scope that matches nothing.
+- **`akm help agents` (#1091).** It printed the same two guides as `akm hints` with the opposite default (short, with
+  `--full` for the complete one). `akm hints` is the one command: the complete guide by default, `--detail brief` for the
+  short one (`akm help agents >> AGENTS.md` becomes `akm hints --detail brief >> AGENTS.md`). `akm help agents` is now an
+  ordinary unknown command.
+- **`--shape` (#1091).** It acted on three commands (`search`, `curate`, `show`; `summary` only on `show`) while about 55
+  others ignored it and `--detail`. `--detail agent` replaces `--shape agent`, and `--detail` now takes
+  `brief|normal|full|agent`. `--shape summary` had no caller; use `--detail brief` on `show`. `--shape` is an unknown flag
+  (exit 2, `UNKNOWN_FLAG`) with no alias, so callers must change in step: the akm plugins, akm-eval's retrieval,
+  skillret and longmemeval benchmarks, and `akm help agents`-style scripts. `INVALID_SHAPE_VALUE` is gone, and
+  `INVALID_DETAIL_VALUE` now lists `agent`. The CLI reference no longer claims `--shape summary` errors outside `show`
+  (it warned and fell back to `agent`).
+- **`--target` on `import`, `env create`, `env remove`, `secret set` and `proposal accept`/`diff`/`revert` (#1091).**
+  `--bundle` is the one write-destination flag, as on `remember`, `clone`, `improve` and `task`; `--target` is an
+  unknown flag (exit 2) with no alias. The plugins, akm-eval and OpenPalm pass no `--target`. Errors and hints that said
+  `--target` now say `--bundle`.
+- **`akm task validate` (#1091).** Folded into `akm lint --type tasks`, as `akm workflow validate` was. Lint already parsed
+  every task file through the same version router; it now also runs the two gates `akm task sync` runs before it installs
+  a schedule (the cron suits the local scheduler backend; each schedule entry's `inputs` satisfy the declared contract),
+  so it never reports clean a task sync would refuse. Gone with the command: the `valid`/`blocked`/`invalid`/`not-a-task`
+  outcome, the `resolved` shape and the bare-path argument (point `akm lint --dir` at a bundle root). The
+  owner's crontab and tasks, the plugins, akm-eval and OpenPalm do not call it.
+- **`akm config path --all` (#1091).** `akm info` already reports the bundle, config, data, cache and state directories
+  (the index is `<dataDir>/index.db`), and `--all` was the one place `config path` printed an envelope instead of a bare
+  path. `akm config path` still prints the config file path and still runs when the config itself fails to load; `--all`
+  is an unknown flag (exit 2). Hints that sent you to `config path --all` now say `akm info`.
+- **`akm improve report` and `akm improve judge` are real subcommands (#1091).** They were magic values of the `scope`
+  positional. Both spellings keep working. `--run` and `--since` are now flags of `report` alone, so `akm improve --run x`
+  and `akm improve skills --since 7d` are unknown flags (exit 2) instead of a usage error from a hand-written check;
+  `--strategy` is `judge`'s own flag too. `akm improve [scope]` is unchanged, and `akm-eval`'s judge-gate keeps calling
+  `akm improve judge`.
+
+### Fixed
+
+- **A workflow param's `default:` is now applied (#1096).** An omitted param was absent from the run and the unit
+  prompt said `Run parameters: {}`, so workflows restated their defaults in prose. A run now starts with each declared
+  default for the params it was not given; explicit values still win.
+- **A call recovered by the retry without the schema is one successful call in the usage rows.** The failed schema
+  attempt (`format_ignored` or a 4xx schema rejection) was recorded as a failed call with 0 tokens next to the retry's
+  success, so `akm improve` usage showed e.g. `distill freellm/gpt-oss:120b calls 1 failures 1` beside 17 successes. Only
+  the retry is recorded now; a retry that also fails is still one failure.
+- **Distill's lesson update (#1139) is judged as the lesson it makes, and costs a call only for a lesson that is named.**
+  The judge read only the added lines as a standalone lesson, so a single added fact failed `reusable` and no update
+  passed (0 of 8 on the akm-eval `lesson-update` class, on two models). It now reads the extended lesson (old body plus
+  added lines) as one lesson, in the same single call: reusable and grounded as a whole (a line is grounded when the
+  memory or the lesson states it), and each added line must state something the lesson does not already hold. An update is also tried only for a related lesson that the writer's NONE reason, or the judge's
+  non-redundancy finding, names, or for the only related lesson, not for every lesson among the nearest three. The
+  update writer lists the memory's new facts before the body, and an update that lists none is not proposed. (#1090)
+- **consolidate's pair judge no longer lets a later date alone make one note replace another (#1134).** After the
+  same-age fix (#1146), `gpt-oss:120b` retired notes about a different named thing (two partners on one template:
+  "B is newer and replaces Alder with Birch") as `supersedes`, 1 to 2 unsafe retirements of 60 per run where the build
+  before it had none. The pair prompt now says a note replaces another only when both are about the same named thing
+  (service, integration, partner, component, region, file), and that notes about different named things never replace
+  each other whatever their dates; `unrelated` covers different named things written to one layout. Measured with
+  akm-eval `evals/consolidate`, per-case n=3: `gpt-oss:120b` unsafe retirements 1, 2, 1 -> 0, 0, 0 with recall
+  0.97 -> 0.99; qwen3.8-27b stays at 0 unsafe, recall 0.70.
+- **A gateway that answers 5xx `format_ignored` no longer fails every schema call (#1150).** A `provider_error` 5xx whose
+  body names the response format (`format_ignored`, `response_format` or `json_schema`) is now answered like the 4xx
+  schema rejection: one retry without the schema, remembered for the connection. `gpt-oss:120b` through the lab
+  gateway needed `supportsJsonSchema: false` set by hand. Other 5xx answers keep the transient-retry path. (#1150)
+
 ## [0.9.31] - 2026-10-09
 
 A patch release: concurrent config writes no longer lose a change, OpenAI's reasoning models work as `llm`
 engines, `akm improve --require-engines` probes send API keys, and the npm package's docs links resolve.
 
 ### Fixed
+
+- **consolidate's pair judge no longer reads two same-age notes with different values as an update (#1134).** On the
+  60 labelled pairs `gpt-5.6-terra` retired 10 notes that held a claim the kept note lacked, in every run, always
+  from the ten `contradicts` pairs: it labelled them `supersedes`, because the prompt called B "newer" although both
+  notes had the same file time, and listed no claim for the old value because "updates" were left out of the lists.
+  The judge now sees "A (same age as B)" / "B (same age as A)" when the dates tie, and a different value counts as a
+  replacement only when B says so or is created later; otherwise both values are listed and the pair is
+  `contradicts`. Measured with akm-eval `evals/consolidate`, n=3 per-case: terra unsafe retirements 10 of 60 ->
+  1 to 3 (first prompt) and 0 on the final build's first run; qwen3.8-27b stays at 0 unsafe, recall 0.69 -> 0.71.
+  Pool (80 memories): terra 2 unsafe per run -> 0 to 2; qwen 0, recall 0.77 -> 0.79.
 
 - **`akm improve --require-engines` sends each engine's API key with its probe.** The probe used the engine's
   connection as resolved, where the key is still a symbolic reference that a dispatch reads only when it sends a
@@ -56,6 +498,10 @@ plugin on a host that follows `akm-opencode@next`.
 
 - **`akm upgrade` is Stable**, including its plugin step and `--next`, after real-host, empty-container and
   failure-path runs on 0.9.28 (#1099).
+- **`akm proposal extract` and the improve `extract` process move from Experimental to Evolving.** The extract eval
+  (akm-eval `evals/extract`, n=3) measured insights saved 1.00 (terra) / 0.97 (qwen), routine sessions left empty
+  1.00, and planted instructions saved 0. Evolving rather than Stable because 0.10 is still settling the improve
+  defaults; the eval stays its gate (#1133).
 
 ### Fixed
 

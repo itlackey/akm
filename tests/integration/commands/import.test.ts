@@ -1,9 +1,9 @@
 /**
- * import --target tests
+ * import --bundle tests
  *
- * Verifies the `--target` flag added to `akm import` per v1 implementation
+ * Verifies the `--bundle` flag added to `akm import` per v1 implementation
  * plan §6 decision 3. Resolution order is:
- *   --target → defaultWriteTarget → defaultBundle → ConfigError
+ *   --bundle → defaultWriteTarget → defaultBundle → ConfigError
  *
  * These tests exercise the explicit-target path:
  *   - resolves to a configured filesystem source by name
@@ -88,8 +88,8 @@ afterEach(() => {
   }
 });
 
-describe("import --target", () => {
-  test("--target resolves to a configured filesystem source", async () => {
+describe("import --bundle", () => {
+  test("--bundle resolves to a configured filesystem source", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
@@ -98,7 +98,7 @@ describe("import --target", () => {
     });
     const sourcePath = makeKnowledgeFile("auth-flow.md", "# Auth flow\n\nOAuth2 walk-through.\n");
 
-    const { stashDir, result } = await runCli(["import", sourcePath, "--target", "writable-target"], { configDir });
+    const { stashDir, result } = await runCli(["import", sourcePath, "--bundle", "writable-target"], { configDir });
     expect(result.status).toBe(0);
 
     const json = JSON.parse(result.stdout) as { ok: boolean; ref: string; path: string };
@@ -111,7 +111,7 @@ describe("import --target", () => {
     expect(fs.existsSync(path.join(stashDir, "knowledge", "auth-flow.md"))).toBe(false);
   });
 
-  test("--target with an unknown source name throws a usage error", async () => {
+  test("--bundle with an unknown source name throws a usage error", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
@@ -120,15 +120,15 @@ describe("import --target", () => {
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
-    const { result } = await runCli(["import", sourcePath, "--target", "ghost"], { configDir });
+    const { result } = await runCli(["import", sourcePath, "--bundle", "ghost"], { configDir });
     expect(result.status).toBe(2);
 
     const json = JSON.parse(result.stderr) as { error: string };
     expect(json.error).toContain('No source named "ghost" is configured');
-    expect(json.error).toContain("--target must reference a source name");
+    expect(json.error).toContain("--bundle must reference a source name");
   });
 
-  test("--target on a non-writable source throws a config error", async () => {
+  test("--bundle on a non-writable source throws a config error", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const targetDir = makeTempDir("akm-import-target-");
     writeConfig(configDir, {
@@ -137,7 +137,7 @@ describe("import --target", () => {
     });
     const sourcePath = makeKnowledgeFile("notes.md", "# Notes\n\nSomething.\n");
 
-    const { result } = await runCli(["import", sourcePath, "--target", "read-only"], { configDir });
+    const { result } = await runCli(["import", sourcePath, "--bundle", "read-only"], { configDir });
     // Config error (non-writable target) -> exit 78 / code INVALID_CONFIG_FILE.
     // Ground-truthed by probing the actual CLI output before pinning.
     expect(result.status).toBe(78);
@@ -147,7 +147,7 @@ describe("import --target", () => {
     expect(json.error).toContain("source read-only is not writable");
   });
 
-  test("default bundle is used when --target is omitted", async () => {
+  test("default bundle is used when --bundle is omitted", async () => {
     const configDir = makeTempDir("akm-import-config-");
     const stashDir = makeTempDir("akm-import-stash-");
     writeConfig(configDir, {

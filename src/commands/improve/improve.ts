@@ -40,6 +40,7 @@ import { collectEngineCredentialValues } from "../../integrations/agent/engine-r
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
 import { type LlmUsageRecord, withLlmStage } from "../../llm/usage-telemetry";
 import {
+  GitStashPushError,
   isGitBackedStash,
   listGitChangedPaths,
   resolveWritableOverride,
@@ -141,7 +142,8 @@ export const FIRST_ENGINE_RESPONSE_HEARTBEAT_MS = 5_000;
 
 /**
  * Abort the run at the budget; force-exit (0 — budget exhaustion is a normal
- * scheduled-task outcome) only if the drain overruns the grace period.
+ * scheduled-task outcome) only if the drain overruns the grace period, after
+ * `onHardKill` has persisted what the killed run left behind.
  * Returns an idempotent disposer.
  */
 export function armBudgetWatchdog(
@@ -152,6 +154,8 @@ export function armBudgetWatchdog(
     clearTimeoutFn?: typeof clearTimeout;
     exitFn?: (code: number) => void;
     hardKillGraceMs?: number;
+    /** Best-effort persistence run once before the forced exit (never throws out of the watchdog). */
+    onHardKill?: () => void;
   },
 ): () => void {
   const setTimeoutFn = deps?.setTimeoutFn ?? setTimeout;
@@ -161,7 +165,14 @@ export function armBudgetWatchdog(
   let hardKillTimer: ReturnType<typeof setTimeout> | undefined;
   const budgetTimer = setTimeoutFn(() => {
     controller.abort("improve budget exhausted");
-    hardKillTimer = setTimeoutFn(() => exitFn(0), hardKillGraceMs);
+    hardKillTimer = setTimeoutFn(() => {
+      try {
+        deps?.onHardKill?.();
+      } catch {
+        // Best-effort: the forced exit must still happen.
+      }
+      exitFn(0);
+    }, hardKillGraceMs);
     hardKillTimer.unref?.();
   }, budgetMs);
   return () => {
@@ -182,6 +193,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
   // Set by the usage sink when any engine call terminates, prepass included.
   let firstEngineResponseSeen = false;
   let initialGitPaths = new Set<string>();
+  let preRunSync: ImproveSyncOutcome | undefined;
   // The write-provenance journal (#652) spans exactly the window this run holds the lock.
   let journal: WriteProvenanceJournal | undefined;
   const closeJournal = () => {
@@ -236,7 +248,19 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
 
   if (!options.dryRun) {
     const remainingBudget = (budgetAbortController.signal as { remainingBudgetMs?: number }).remainingBudgetMs;
-    clearBudgetTimer = armBudgetWatchdog(Math.max(1, remainingBudget ?? budgetMs), budgetAbortController);
+    clearBudgetTimer = armBudgetWatchdog(Math.max(1, remainingBudget ?? budgetMs), budgetAbortController, {
+      // The forced exit skips every finally and the CLI catch: leave a terminated
+      // run record and bank the files this run wrote (journal is in memory) first.
+      // Local commit only — a push to a dead remote must not hang the exit.
+      onHardKill: () => {
+        try {
+          options.onBudgetHardKill?.();
+        } catch {
+          // best-effort
+        }
+        commitStashBatch({ scope, plannedRefs: collected?.plannedRefs ?? [], runId: options.runId }, { push: false });
+      },
+    });
   }
 
   try {
@@ -259,6 +283,9 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
       );
       exitBackstop = releaseRunLock;
       process.on("exit", exitBackstop);
+      // Pull in what another host pushed before anything reads the bundle (#1091). This also commits
+      // pending managed-path changes, as `akm sync` does, so they are not mistaken for this run's writes.
+      preRunSync = syncBeforeRun(setup, eventsCtx);
       initialGitPaths =
         syncRepoDir && isGitBackedStash(syncRepoDir) ? new Set(listGitChangedPaths(syncRepoDir)) : new Set<string>();
       journal = beginWriteProvenance();
@@ -334,6 +361,7 @@ export async function akmImprove(options: AkmImproveOptions = {}): Promise<AkmIm
     const writtenPaths = describeRunWrittenPaths(setup, journal?.writtenPaths() ?? []);
     if (writtenPaths.length > 0) result.writtenPaths = writtenPaths;
     result.sync = commitStashBatch(result);
+    if (preRunSync) result.preRunSync = preRunSync;
     return result;
   } catch (err) {
     recordImproveFailure(err, setup, eventsCtx);
@@ -813,7 +841,7 @@ function buildResultExecutionPlan(
       enabled: scope.mode !== "ref" && resolvedPlan.processes.triage.enabled,
       configuredMode: configuredTriage?.applyMode ?? "queue",
       mode: improveProfile.processes?.triage?.applyMode ?? "queue",
-      maxAcceptsPerRun: configuredTriage?.maxAcceptsPerRun ?? 25,
+      maxAcceptsPerRun: configuredTriage?.maxAcceptsPerRun ?? 200,
     },
   });
 }
@@ -836,7 +864,7 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
           ...(options.target ? { target: options.target } : {}),
           config: options.config,
           applyMode: triageConfig?.applyMode ?? "queue",
-          maxAccepts: triageConfig?.maxAcceptsPerRun ?? 25,
+          maxAccepts: triageConfig?.maxAcceptsPerRun ?? 200,
           dryRun: false,
           excludeIds: new Set<string>(),
           judgment: resolvedPlan.triageJudgment,
@@ -884,6 +912,97 @@ export function resolveSyncPathSet(input: {
   };
 }
 
+type ImproveSyncOutcome = NonNullable<AkmImproveResult["sync"]>;
+
+/**
+ * One `saveGitStash` call for the run's write-target bundle, shared by the
+ * pre-run sync and the auto-sync commit: never throws, records a `stash_synced`
+ * event, and returns undefined when the bundle is not git-backed, there is no
+ * primary stash, or sync is disabled (`--no-sync` / `sync.enabled: false`).
+ * `scopePaths` runs inside the guard; leaving `paths` undefined means what
+ * `akm sync` stages (the managed paths).
+ */
+function runStashSync(
+  run: ImproveRunSetup,
+  eventsCtx: EventsContext,
+  phase: "pre-run" | "end-of-run",
+  input: {
+    message: string;
+    push?: boolean;
+    scopePaths: (target: { repoDir: string; assetRoot: string }) => { paths?: string[]; unattributed?: number };
+  },
+): ImproveSyncOutcome | undefined {
+  const { writeTarget, primaryStashDir, effectiveSync, options, config, improveProfile } = run;
+  const repoDir = writeTarget?.source.repoPath ?? primaryStashDir;
+  if (!primaryStashDir || !repoDir || effectiveSync.enabled === false || !isGitBackedStash(repoDir)) {
+    return undefined;
+  }
+  const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
+  const writableOverride = writeTarget ? resolveWritable(writeTarget.config) : resolveWritableOverride(config);
+  const push = input.push ?? options.sync?.push ?? improveProfile.sync?.push ?? true;
+  const record = (metadata: Record<string, unknown>) =>
+    appendEvent({ eventType: "stash_synced", metadata: { phase, ...metadata } }, eventsCtx);
+  try {
+    const { paths, unattributed } = input.scopePaths({
+      repoDir,
+      assetRoot: writeTarget?.source.path ?? primaryStashDir,
+    });
+    const syncResult = saveGitStashFn(undefined, input.message, writableOverride, {
+      push,
+      repoDir,
+      ...(paths ? { paths } : {}),
+    });
+    record({
+      committed: syncResult.committed,
+      pushed: syncResult.pushed,
+      skipped: syncResult.skipped,
+      reason: syncResult.reason ?? null,
+      ...(paths ? { attributed: paths.length, unattributed: unattributed ?? 0 } : {}),
+    });
+    return {
+      committed: syncResult.committed,
+      pushed: syncResult.pushed,
+      skipped: syncResult.skipped,
+      ...(syncResult.reason !== undefined ? { reason: syncResult.reason } : {}),
+    };
+  } catch (syncErr) {
+    const reason = errMessage(syncErr);
+    warn(`improve: stash sync failed (non-fatal): ${reason}`);
+    // A push that failed after the commit landed still left the commit in the repo.
+    const committed = syncErr instanceof GitStashPushError;
+    record({ committed, pushed: false, skipped: true, reason });
+    return { committed, pushed: false, skipped: true, reason };
+  }
+}
+
+/**
+ * The pre-run sync (#1091): the same fetch / fast-forward-or-merge / commit /
+ * push `akm sync` runs for the write-target bundle, before the index and plan
+ * stages so they see what another host pushed. A conflict or fetch failure is
+ * a warning, never an abort: the run continues on the local state.
+ */
+function syncBeforeRun(run: ImproveRunSetup, eventsCtx: EventsContext): ImproveSyncOutcome | undefined {
+  const outcome = runStashSync(run, eventsCtx, "pre-run", {
+    message: "akm improve pre-run sync",
+    scopePaths: ({ repoDir, assetRoot }) => {
+      // A bundle whose content sits in a subdirectory of the repo stages only that subdirectory, as
+      // `akm sync` does for a content root; a root-level bundle leaves `paths` to the managed-path default.
+      const assetPrefix = path.relative(repoDir, assetRoot).replaceAll(path.sep, "/");
+      if (!assetPrefix) return {};
+      return resolveSyncPathSet({
+        repoDir,
+        assetPrefix,
+        changedPaths: listGitChangedPaths(repoDir),
+        initialPaths: new Set(),
+        writtenPaths: [],
+        provenance: false,
+      });
+    },
+  });
+  if (outcome?.reason) warn(`[improve] pre-run sync: ${outcome.reason}; continuing on the local state`);
+  return outcome;
+}
+
 /**
  * The auto-sync commit (#662), used at end of run and from the crash path:
  * idempotent and never throws. The getters read bindings reassigned after this
@@ -894,61 +1013,38 @@ function makeCommitStashBatch(deps: {
   getInitialGitPaths: () => Set<string>;
   getWriteJournal: () => WriteProvenanceJournal | undefined;
   getEventsCtx: () => EventsContext;
-}): (messageContext: Parameters<typeof renderSyncCommitMessage>[1]) => AkmImproveResult["sync"] | undefined {
-  const { writeTarget, primaryStashDir, effectiveSync, options, config, improveProfile } = deps.run;
-  return (messageContext) => {
-    const eventsCtx = deps.getEventsCtx();
+}): (
+  messageContext: Parameters<typeof renderSyncCommitMessage>[1],
+  override?: { push?: boolean },
+) => AkmImproveResult["sync"] | undefined {
+  const { effectiveSync } = deps.run;
+  return (messageContext, override) => {
     const writeJournal = deps.getWriteJournal();
-    const repoDir = writeTarget?.source.repoPath ?? primaryStashDir;
-    if (!primaryStashDir || !repoDir || effectiveSync.enabled === false || !isGitBackedStash(repoDir)) {
-      return undefined;
-    }
-    const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
-    const writableOverride = writeTarget ? resolveWritable(writeTarget.config) : resolveWritableOverride(config);
-    const push = options.sync?.push ?? improveProfile.sync?.push ?? true;
     const message = renderSyncCommitMessage(
       effectiveSync.message ?? "akm improve auto-sync",
       messageContext,
       Date.now(),
     );
-    const record = (metadata: Record<string, unknown>) =>
-      appendEvent({ eventType: "stash_synced", metadata }, eventsCtx);
-    try {
-      const assetRoot = writeTarget?.source.path ?? primaryStashDir;
-      const { paths, unattributed } = resolveSyncPathSet({
-        repoDir,
-        assetPrefix: path.relative(repoDir, assetRoot).replaceAll(path.sep, "/"),
-        changedPaths: listGitChangedPaths(repoDir),
-        initialPaths: deps.getInitialGitPaths(),
-        writtenPaths: writeJournal?.writtenPaths() ?? [],
-        provenance: writeJournal !== undefined,
-      });
-      if (unattributed.length > 0) {
-        warnVerbose(
-          `[improve] auto-sync left ${unattributed.length} path(s) uncommitted — not written by this run: ${unattributed.join(", ")}`,
-        );
-      }
-      const syncResult = saveGitStashFn(undefined, message, writableOverride, { push, repoDir, paths });
-      record({
-        committed: syncResult.committed,
-        pushed: syncResult.pushed,
-        skipped: syncResult.skipped,
-        reason: syncResult.reason ?? null,
-        attributed: paths.length,
-        unattributed: unattributed.length,
-      });
-      return {
-        committed: syncResult.committed,
-        pushed: syncResult.pushed,
-        skipped: syncResult.skipped,
-        ...(syncResult.reason !== undefined ? { reason: syncResult.reason } : {}),
-      };
-    } catch (syncErr) {
-      const reason = errMessage(syncErr);
-      warn(`improve: stash sync failed (non-fatal): ${reason}`);
-      record({ committed: false, pushed: false, skipped: true, reason });
-      return { committed: false, pushed: false, skipped: true, reason };
-    }
+    return runStashSync(deps.run, deps.getEventsCtx(), "end-of-run", {
+      message,
+      push: override?.push,
+      scopePaths: ({ repoDir, assetRoot }) => {
+        const { paths, unattributed } = resolveSyncPathSet({
+          repoDir,
+          assetPrefix: path.relative(repoDir, assetRoot).replaceAll(path.sep, "/"),
+          changedPaths: listGitChangedPaths(repoDir),
+          initialPaths: deps.getInitialGitPaths(),
+          writtenPaths: writeJournal?.writtenPaths() ?? [],
+          provenance: writeJournal !== undefined,
+        });
+        if (unattributed.length > 0) {
+          warnVerbose(
+            `[improve] auto-sync left ${unattributed.length} path(s) uncommitted — not written by this run: ${unattributed.join(", ")}`,
+          );
+        }
+        return { paths, unattributed: unattributed.length };
+      },
+    });
   };
 }
 

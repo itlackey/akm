@@ -139,90 +139,12 @@ describe("task runner mutation boundary", () => {
     expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
   });
 
-  test("a multi-job workflow target fails the 0.9.2 runtime boundary before attempt reservation", async () => {
-    const workflowsDir = path.join(storage.stashDir, "workflows");
-    fs.mkdirSync(workflowsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(workflowsDir, "multi.yml"),
-      [
-        "name: Multi",
-        "on:",
-        "  workflow_dispatch: {}",
-        "jobs:",
-        "  first:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: one",
-        "        run: echo one",
-        "  second:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: two",
-        "        run: echo two",
-        "",
-      ].join("\n"),
-    );
-    // P4 (docs/plans/specs/p4-deletions-closeout.md §3.2.7, F-A2.5): the
-    // wrapping task fixture converts to task source v4 — task source version
-    // is orthogonal to this rejection, which fires at workflow compilation.
-    // FLIPPED in P4 (§3.3, row B-34, F-A3.5): the rejection now fires at
-    // PARSE (multi-job-unsupported), not at compileWorkflowPlan's deleted
-    // "exactly one source-IR job" check — this document never reaches it.
-    writeTask("multi", 'version: 4\nuses: workflows/multi\nschedule: "@daily"\n');
-
-    await expect(
-      runTask("multi", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled: true }),
-    ).rejects.toThrow(/requires exactly one job/i);
-    expect(readTaskHistory({ id: "multi" })).toEqual([]);
-    expect(logFiles()).toEqual([]);
-  });
-
-  test("unsupported workflow services fail before attempt reservation", async () => {
-    const workflowsDir = path.join(storage.stashDir, "workflows");
-    fs.mkdirSync(workflowsDir, { recursive: true });
-    fs.writeFileSync(
-      path.join(workflowsDir, "services.yml"),
-      [
-        "name: Services",
-        "on:",
-        "  workflow_dispatch: {}",
-        "jobs:",
-        "  only:",
-        "    runs-on: [self-hosted]",
-        "    services:",
-        "      database:",
-        "        image: postgres:latest",
-        "    steps:",
-        "      - id: one",
-        "        run: echo one",
-        "",
-      ].join("\n"),
-    );
-    writeTask("services", 'version: 4\nuses: workflows/services\nschedule: "@daily"\n');
-
-    await expect(
-      runTask("services", { bundleDir: storage.stashDir, bundleName: "fixture", scheduled: true }),
-    ).rejects.toThrow(/services/i);
-    expect(readTaskHistory({ id: "services" })).toEqual([]);
-    expect(logFiles()).toEqual([]);
-  });
-
   test("workflow task env: is dropped (with a warning) and the workflow still dispatches", async () => {
     const workflowsDir = path.join(storage.stashDir, "workflows");
     fs.mkdirSync(workflowsDir, { recursive: true });
     fs.writeFileSync(
-      path.join(workflowsDir, "env-target.yml"),
-      [
-        "name: Env target",
-        "on: { workflow_dispatch: null }",
-        "jobs:",
-        "  main:",
-        "    runs-on: [self-hosted]",
-        "    steps:",
-        "      - id: run",
-        "        run: echo ok",
-        "",
-      ].join("\n"),
+      path.join(workflowsDir, "env-target.md"),
+      ["---", "type: workflow", "steps:", "  - id: run", "---", "", "## run", "", "Run it.", ""].join("\n"),
     );
     writeTask(
       "workflow-env",

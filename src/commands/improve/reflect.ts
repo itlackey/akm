@@ -67,7 +67,6 @@ import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
 import { classifyReflectChange, findReflectDefect, type ReflectDefectFilter, splitFrontmatter } from "./reflect-noise";
-import { loadRetrievalQueries, runRetrievalRegressionGate } from "./retrieval-gate";
 import {
   callStageOnce,
   errMessage,
@@ -110,8 +109,6 @@ export interface AkmReflectOptions {
   config?: AkmConfig;
   /** `"improve"` tags agent subprocess events so they stay out of user history. */
   eventSource?: "user" | "improve";
-  /** Defer "low-value" micro-rewrites like no-op/cosmetic ones (`processes.reflect.lowValueFilter`). */
-  lowValueFilter?: boolean;
   /** The wording lists of the pre-judge defect rules (`processes.reflect.defectFilter`); a list left out takes its default. */
   defectFilter?: ReflectDefectFilter;
   /** Self-refine passes (default 1; each later pass critiques the prior draft). */
@@ -1004,14 +1001,29 @@ async function runReflectRefineIterations(args: {
   return result;
 }
 
+/**
+ * The judge's review band for a reflect revision: a non-pass whose mean is at or above this goes to a
+ * person (`judge-uncertain`); a lower one is refused. The judge's own review label starts at 2.5, but
+ * nothing labelled below 3.5 is worth a person's time. Labelled runs of the judge (akm-eval judge-gate,
+ * lab 27B Q2; ~/akm/eval/judge-gate/tuning), good / bad among non-passing verdicts:
+ *   mean >= 3.5, frontmatter-only proposals Opus reviewed: 17 / 9 (shipped judge, 113 proposals),
+ *     15 / 0, 18 / 9 and 15 / 5 (earlier rubric, three runs);
+ *   mean >= 3.5, public corpus of body rewrites: 12 / 35;
+ *   mean < 3.5, 396 labelled body rewrites: 6 / 285 (Q4 judge 5 / 177, Q2 judge 1 / 108);
+ *     public corpus 3 / 37; frontmatter-only proposals: 1 / 2 (shipped judge), 5 / 1 (earlier runs).
+ * Mean 4.0 with one criterion at 2 was good 14 / 0; mean 3.67 was 3 / 8. A rule on the lowest
+ * criterion did not help: a criterion at 3 or more is rare in a non-pass, and a 2 is the usual
+ * shape of a good one.
+ */
+const REFLECT_REVIEW_MIN_SCORE = 3.5;
+
 const NOISE_SUBREASONS = {
   noop: "reflect_skipped_noop",
   cosmetic: "reflect_skipped_cosmetic",
-  "low-value": "reflect_skipped_low_value",
 } as const;
 
 /**
- * Apply the patch, drop a no-op/cosmetic (and optionally low-value) change,
+ * Apply the patch, drop a no-op/cosmetic change,
  * judge the exact content that would be persisted, then mint. A revision with a
  * deterministic defect is refused before the judge runs, whether or not the
  * gate is on.
@@ -1032,18 +1044,12 @@ async function finalizeReflectProposal(args: {
   const content = patched?.content ?? assetContent;
 
   const changeKind = classifyReflectChange(assetContent, content);
-  if (
-    changeKind === "noop" ||
-    changeKind === "cosmetic" ||
-    (changeKind === "low-value" && options.lowValueFilter === true)
-  ) {
+  if (changeKind === "noop" || changeKind === "cosmetic") {
     run.emitFailed("no_change", NOISE_SUBREASONS[changeKind], options.ref, { changeKind, ...telemetry });
     const what =
       changeKind === "noop"
         ? "identical to the current asset (empty diff)"
-        : changeKind === "low-value"
-          ? "a low-value prose micro-rewrite (few changed tokens, no structural changes)"
-          : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
+        : "a cosmetic-only reformat of the current asset (whitespace/fence/YAML-folding changes)";
     return reflectFailure(
       run,
       result,
@@ -1082,6 +1088,7 @@ async function finalizeReflectProposal(args: {
   if (defect) return refuse(defect, { reflectDefect: defect }, `Reflect proposal refused before the judge: ${defect}`);
   let verdict: QualityJudgeResult | undefined;
   let judgeFailed = false;
+  let judgeUncertain = false;
   if (judge.enabled) {
     verdict = await runReflectQualityJudge(run.config, content, assetContent, feedback, options.chat, {
       runnerSelectionFrozen: true,
@@ -1093,7 +1100,9 @@ async function finalizeReflectProposal(args: {
     });
     // A judge that timed out, errored or replied unparseably gave no verdict: a person reviews the revision.
     judgeFailed = verdict.reviewNeeded === true && verdict.score === -1;
-    if (!verdict.pass && !judgeFailed) {
+    // A real score in the band is uncertain, not bad: a person decides, and no window is recorded.
+    judgeUncertain = verdict.reviewNeeded === true && verdict.score >= REFLECT_REVIEW_MIN_SCORE;
+    if (!verdict.pass && !judgeFailed && !judgeUncertain) {
       return refuse(
         verdict.reason,
         {
@@ -1105,37 +1114,13 @@ async function finalizeReflectProposal(args: {
       );
     }
   }
-  // #722: a revision of an existing asset must not grade lower on its own retrieval queries.
-  if (verdict?.pass && judge.runner) {
-    const retrieval = await runRetrievalRegressionGate({
-      ref: payload.ref,
-      before: assetContent,
-      after: content,
-      queries: loadRetrievalQueries({ proposalsCtx: options.ctx, eventsCtx: options.eventsCtx }, payload.ref),
-      runner: judge.runner,
-      ...(options.chat ? { chat: options.chat } : {}),
-      ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
-      ...(options.signal ? { signal: options.signal } : {}),
-      onNotices: run.notices.add,
-    });
-    if (!retrieval.pass) {
-      return refuse(
-        retrieval.reason,
-        {
-          retrievalRegression: true,
-          retrievalQueries: retrieval.queries,
-          ...(retrieval.oldMean !== undefined ? { retrievalGradeBefore: retrieval.oldMean } : {}),
-          ...(retrieval.newMean !== undefined ? { retrievalGradeAfter: retrieval.newMean } : {}),
-        },
-        `Reflect proposal refused: ${retrieval.reason}`,
-      );
-    }
-  }
 
   const reviewReasons = [
     ...(judge.skippedNoJudge ? ["no-judge-configured"] : []),
     ...(judgeFailed ? ["judge-error"] : []),
+    ...(judgeUncertain ? ["judge-uncertain"] : []),
   ];
+  const gateReview = judgeFailed || judgeUncertain;
   const proposal = mintProposal(
     run.stash,
     options.ctx,
@@ -1154,7 +1139,9 @@ async function finalizeReflectProposal(args: {
           review: {
             reason: reviewReasons.join("+"),
             // The quality gate's hand-off to a person, as distill's: the triage drain leaves it alone.
-            gate: judgeFailed ? "quality-gate" : "reflect",
+            gate: gateReview ? "quality-gate" : "reflect",
+            ...(gateReview && verdict?.criteria ? { scores: verdict.criteria } : {}),
+            ...(gateReview && verdict?.reason ? { judgeReason: verdict.reason } : {}),
           },
         }
       : { judged: verdict },
@@ -1168,7 +1155,8 @@ async function finalizeReflectProposal(args: {
         source: "reflect",
         engine: run.engineName,
         ...(judge.skippedNoJudge ? { qualityGateSkippedNoJudge: true } : {}),
-        ...(judgeFailed ? { qualityReason: verdict?.reason } : {}),
+        ...(judgeFailed || judgeUncertain ? { qualityReason: verdict?.reason } : {}),
+        ...(judgeUncertain ? { qualityScore: verdict?.score } : {}),
         ...telemetry,
       },
     },

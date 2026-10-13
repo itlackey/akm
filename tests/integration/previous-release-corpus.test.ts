@@ -56,10 +56,8 @@
  *     instead of double-enumerating and throwing `duplicate task migration
  *     file path`.
  *   - a real-shaped 0.8 config carrying the retired `stashDir`/`sources[]`/
- *     `installed[]` trio together (#863) — read via the in-memory bundles
- *     shim (`legacy-source-shape-shim.ts`), with
- *     `akm migrate apply` as the on-disk rewrite path rather than a
- *     precondition for reading.
+ *     `installed[]` trio together (#863) — below the 0.9.15 floor (#1091):
+ *     refused with a message naming `akm migrate apply` under akm 0.9.x.
  *   - downstream-consumer fixtures for OpenPalm (a real, if unofficial,
  *     integration point, #880): a `config.json` `bundles` shape and four
  *     task source v4 files exercising its grammar (`run:`/`shell:`,
@@ -97,6 +95,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { planTaskToV4File } from "../../scripts/akm-migrate/migrate/task-to-v4";
 import { inspectTaskFilesMigration } from "../../scripts/akm-migrate/task-migrate";
 import { akmHealth } from "../../src/commands/health";
 import { createProposal as createProposalImpl } from "../../src/commands/proposal/repository";
@@ -132,7 +131,6 @@ import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import { readTaskHistory } from "../../src/tasks/run/task-history";
 import { parseTaskSource } from "../../src/tasks/source/parse-task-source";
-import { planTaskToV4File } from "../../src/tasks/source/task-to-v4";
 import {
   type IsolatedAkmStorage,
   sandboxStashDir,
@@ -697,20 +695,15 @@ describe("previous-release corpus — AKM_BUNDLE_DIR duplicate 'stash' bundle (#
 
 // ── Retired 0.8 source-config keys (`stashDir`/`sources[]`/`installed[]`) ──
 //
-// This was the worst config-load break in the repo: `stashDir`/`sources[]`/
-// `installed[]` fully predate the 0.9.0 `bundles` + `defaultBundle` shape
-// (spec §10.1) and no migrator ever existed for them, so a real 0.8-era
-// config.json failed EVERY akm command with no working command left to
-// recover with. `legacy-source-shape-shim.ts` is the in-memory read shim
-// (same pattern as the task-source v2/v3 and configVersion shims elsewhere
-// in this file): a known-old shape converts to the current one, in memory,
-// with a one-line deprecation warning, and `akm migrate apply` is the on-disk
-// rewrite path rather than a precondition for reading.
-describe("previous-release corpus — retired 0.8 source-config keys (configVersion shim territory, #863)", () => {
+// These fully predate the 0.9.0 `bundles` + `defaultBundle` shape. They are
+// older than the 0.9.15 floor (#1091): 0.10 converts nothing, and a real
+// 0.8-era config.json is refused with one message naming `akm migrate apply`
+// under akm 0.9.x rather than being silently misread.
+describe("previous-release corpus — retired 0.8 source-config keys (below the 0.9.15 floor, #1091)", () => {
   beforeEach(() => resetConfigCache());
   afterEach(() => resetConfigCache());
 
-  test("a real-shaped 0.8 config (stashDir + sources[] + installed[] together) loads via the in-memory bundles shim", () => {
+  test("a real-shaped 0.8 config (stashDir + sources[] + installed[] together) is refused, naming akm migrate apply under akm 0.9.x", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
     fs.writeFileSync(
@@ -731,37 +724,42 @@ describe("previous-release corpus — retired 0.8 source-config keys (configVers
       }),
     );
 
-    const config = loadConfig();
-    // `stashDir` becomes the `stash` bundle and the default write target.
-    expect(config.defaultBundle).toBe("stash");
-    expect(config.bundles?.stash).toMatchObject({ path: "/home/user/.akm-stash", writable: true });
-    // The duplicate `sources[]` entry is folded into the canonical stash
-    // entry so the compatibility shim cannot synthesize a config the current
-    // physical-owner invariant rejects.
-    expect(config.bundles?.primary).toBeUndefined();
-    // `installed[]` has no 0.9 equivalent (the index tracks installed assets
-    // now) and is dropped rather than guessed at.
-    expect((config as unknown as Record<string, unknown>).installed).toBeUndefined();
-    expect((config as unknown as Record<string, unknown>).stashDir).toBeUndefined();
-    expect((config as unknown as Record<string, unknown>).sources).toBeUndefined();
+    expect(() => loadConfig()).toThrow(/predates akm 0\.9\.15.*akm migrate apply.* with akm 0\.9\.x/);
   });
+});
 
-  test("an empty sources[] (what 0.8.9's `akm source remove` wrote after removing the last source) loads without an Unknown-config-key warning", () => {
+describe("previous-release corpus — a config as 0.9.15/0.9.16 wrote it", () => {
+  beforeEach(() => resetConfigCache());
+  afterEach(() => resetConfigCache());
+
+  test("bundles + first-class engine fields + a 0.9.16 {kind, ref, sourceId} scheduler entry load as written, the entry read as its ref", () => {
     const configPath = getConfigPath();
     fs.mkdirSync(path.dirname(configPath), { recursive: true });
-    fs.writeFileSync(configPath, JSON.stringify({ configVersion: "0.9.0", sources: [] }));
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({
+        configVersion: "0.9.0",
+        defaultBundle: "stash",
+        bundles: { stash: { path: "/home/user/.akm-stash", writable: true } },
+        engines: {
+          fast: {
+            kind: "llm",
+            endpoint: "https://example.test/v1/chat/completions",
+            model: "test",
+            temperature: 0.2,
+            reasoningEffort: "low",
+          },
+        },
+        scheduler: {
+          enabled: [{ kind: "task", ref: "stash//tasks/nightly", sourceId: `sha256:${"a".repeat(64)}` }],
+        },
+      }),
+    );
 
-    const warnings: string[] = [];
-    _resetWarnOnceForTests();
-    _setWarnSinkForTests((level, args) => {
-      if (level === "warn") warnings.push(args.map(String).join(" "));
-    });
-    try {
-      expect(() => loadConfig()).not.toThrow();
-    } finally {
-      _setWarnSinkForTests(undefined);
-    }
-    expect(warnings.some((w) => w.includes("Unknown config key") && w.includes("sources"))).toBe(false);
+    const config = loadConfig();
+    expect(config.defaultBundle).toBe("stash");
+    expect(config.engines?.fast).toMatchObject({ temperature: 0.2, reasoningEffort: "low" });
+    expect(config.scheduler?.enabled).toEqual(["stash//tasks/nightly"]);
   });
 });
 

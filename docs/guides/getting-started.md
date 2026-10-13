@@ -162,7 +162,7 @@ your agent the payload; running it is a deliberate next step.
 ## 7. Tell your agent about akm
 
 ```sh
-akm help agents >> AGENTS.md
+akm hints --detail brief >> AGENTS.md
 ```
 
 **Success check:** `AGENTS.md` now has a block of agent-facing usage

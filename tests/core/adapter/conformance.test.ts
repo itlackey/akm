@@ -315,7 +315,6 @@ describe("conformance — read candidates and recognition are two-way canonical 
       expect(dotenvAdapter.recognize(dotenvComponent, buildFileContext(dotenvRoot, defaultEnv))?.conceptId).toBe(
         "env/default",
       );
-      expect(dotenvAdapter.placeNew?.(dotenvComponent, "env/default")).toBe(defaultEnv);
       expect(dotenvAdapter.readCandidates?.(dotenvComponent, "env/default")[0]).toEqual({
         path: defaultEnv,
         conceptId: "env/default",

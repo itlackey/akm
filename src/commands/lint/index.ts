@@ -12,7 +12,6 @@ import {
   ORPHANED_STUB_DETAIL,
   taskDiagnostics,
   workflowFrontendDiagnostics,
-  workflowYamlSourceDiagnostics,
 } from "../../core/adapter/adapters/akm-lint";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { adapterForId } from "../../core/adapter/registry";
@@ -125,7 +124,7 @@ function collectMarkdownFiles(dir: string, caseInsensitive = false): string[] {
   return results;
 }
 
-/** Peer workflow sources accepted by the source-IR compiler; `.yaml` remains unsupported. */
+/** Workflow sources: Markdown only. */
 function collectWorkflowFiles(dir: string): string[] {
   if (!fs.existsSync(dir)) return [];
   const results: string[] = [];
@@ -141,7 +140,7 @@ function collectWorkflowFiles(dir: string): string[] {
     }
     if (!entry.isFile() && !entry.isSymbolicLink()) continue;
     const extension = path.extname(entry.name).toLowerCase();
-    if (extension === ".md" || extension === ".yml") results.push(full);
+    if (extension === ".md") results.push(full);
   }
   return results.sort(compareCodePoints);
 }
@@ -609,8 +608,8 @@ function lintAkmSweep(
 
   for (const subdir of dirsToScan) {
     const dirPath = path.join(stashRoot, subdir);
-    // Tasks have their own `.yml` plus near-miss collector. Workflows accept
-    // peer `.md`/`.yml` sources; every remaining AKM subdir is Markdown.
+    // Tasks have their own `.yml` plus near-miss collector; every other AKM
+    // subdir is Markdown.
     const files =
       subdir === "tasks"
         ? collectTaskFiles(dirPath)
@@ -655,21 +654,6 @@ function lintAkmSweep(
       try {
         raw = fs.readFileSync(filePath, "utf8");
       } catch {
-        continue;
-      }
-
-      // GitHub-shaped YAML is a peer workflow source, not a Markdown document:
-      // no frontmatter/base/stub checks and no `--fix` mutation apply. Compile
-      // once through the shared source-IR frontend and route its findings.
-      if (subdir === "workflows" && path.extname(filePath).toLowerCase() === ".yml") {
-        const frontend = workflowYamlSourceDiagnostics(relPath, raw, filePath, stashRoot);
-        for (const finding of [...frontend.errors, ...frontend.warnings]) {
-          if (isAdvisoryLintIssue(finding)) {
-            warnings.push(finding);
-          } else {
-            flagged.push(finding);
-          }
-        }
         continue;
       }
 

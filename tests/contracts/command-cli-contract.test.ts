@@ -69,17 +69,6 @@ describe("canonical task CLI surface", () => {
     expect(explain?.args?.ref).toMatchObject({ type: "positional", required: true });
     expect(explain?.args?.format).toMatchObject({ type: "string" });
   });
-
-  // #951: `task list` is a pure delegating alias for `akm search --type task`
-  // (0.9.0 removed it as redundant LOGIC — a zero-logic alias re-adds the
-  // spelling operators reach for without reintroducing a second
-  // implementation). It shares `search`'s own positional/limit/from args.
-  test("registers task list with search's query/limit/from args", () => {
-    const list = (taskCommand as unknown as DynamicCommand).subCommands?.list;
-    expect(list?.args?.query).toMatchObject({ type: "positional", required: false });
-    expect(list?.args?.limit).toMatchObject({ type: "string" });
-    expect(list?.args?.from).toMatchObject({ type: "string" });
-  });
 });
 
 // P3b Lane B (spec docs/plans/specs/p3b-child-executor.md §1.2 binding, §6

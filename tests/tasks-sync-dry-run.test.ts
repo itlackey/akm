@@ -24,7 +24,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { akmTasksSync, akmTasksSyncPlan } from "../src/commands/tasks/tasks";
-import { taskSyncDryRunExitCode, taskValidateExitCode } from "../src/commands/tasks/tasks-cli";
+import { taskSyncDryRunExitCode } from "../src/commands/tasks/tasks-cli";
 import { loadConfig, resetConfigCache, saveConfig } from "../src/core/config/config";
 import { shapeForCommand } from "../src/output/shapes";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../src/tasks/activation-config";
@@ -284,26 +284,6 @@ describe("taskSyncDryRunExitCode — CLI exit-code contract", () => {
 
   test("is undefined when the plan has no removals and no failures", () => {
     expect(taskSyncDryRunExitCode({ hasRemovals: false, failures: [] })).toBeUndefined();
-  });
-});
-
-// #907: `akm task validate`'s exit-code contract — only current-schema
-// `valid` succeeds; migration-required and invalid inputs are non-zero.
-describe("taskValidateExitCode — CLI exit-code contract", () => {
-  test("is undefined (leaves the default success exit code) for 'valid'", () => {
-    expect(taskValidateExitCode({ outcome: "valid" })).toBeUndefined();
-  });
-
-  test("is EXIT_CODES.GENERAL (non-zero) for 'blocked'", () => {
-    expect(taskValidateExitCode({ outcome: "blocked" })).toBe(1);
-  });
-
-  test("is EXIT_CODES.GENERAL (non-zero) for 'invalid'", () => {
-    expect(taskValidateExitCode({ outcome: "invalid" })).toBe(1);
-  });
-
-  test("is EXIT_CODES.GENERAL (non-zero) for 'not-a-task'", () => {
-    expect(taskValidateExitCode({ outcome: "not-a-task" })).toBe(1);
   });
 });
 

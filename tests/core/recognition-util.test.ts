@@ -54,13 +54,13 @@ describe("recognition-util — relocated symbol values (behavior-preserving move
     }
   });
 
-  test("WORKFLOW_EXTENSIONS keeps Markdown first and adds strict GitHub-shaped .yml", () => {
-    expect(WORKFLOW_EXTENSIONS).toEqual([".md", ".yml"]);
+  test("WORKFLOW_EXTENSIONS is Markdown only", () => {
+    expect(WORKFLOW_EXTENSIONS).toEqual([".md"]);
   });
 
   test("canonicalizeWorkflowName strips the recognized workflow extension, else passes through", () => {
     expect(canonicalizeWorkflowName("foo.md")).toBe("foo");
-    expect(canonicalizeWorkflowName("foo.yml")).toBe("foo");
+    expect(canonicalizeWorkflowName("foo.yml")).toBe("foo.yml");
     expect(canonicalizeWorkflowName("foo")).toBe("foo");
     expect(canonicalizeWorkflowName("foo.FOO")).toBe("foo.FOO");
   });

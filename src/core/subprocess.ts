@@ -154,6 +154,61 @@ export function scheduleKillLadder(
   if (typeof sigkillTimer !== "number") sigkillTimer.unref?.();
 }
 
+/**
+ * One captured, own-process-group child that a termination signal to THIS
+ * process must take down with it.
+ */
+interface LiveGroupChild {
+  proc: SpawnedSubprocess;
+  /** Run the same SIGTERM→SIGKILL ladder the timeout and abort paths run. */
+  terminate: () => void;
+}
+
+const liveGroupChildren = new Set<LiveGroupChild>();
+let signalGuardHandlers: Array<[NodeJS.Signals, () => void]> | undefined;
+
+function removeSignalGuard(): void {
+  for (const [signal, handler] of signalGuardHandlers ?? []) process.off(signal, handler);
+  signalGuardHandlers = undefined;
+}
+
+/**
+ * A captured child runs in its own process group, so the terminal's Ctrl-C and
+ * a `kill <akm-pid>` no longer reach it: without this, SIGTERM/SIGINT to akm
+ * ended akm and left the harness CLI (and everything it started) running. Each
+ * live child is registered here and, on the first such signal, takes the same
+ * ladder as a timeout; once every child is gone the signal is re-raised so akm
+ * still ends by the signal itself.
+ *
+ * The listeners are installed only while a child is live and only when nothing
+ * else handles the signal. A command that handles it itself (`workflow run`,
+ * `improve`, task runs) unwinds through its own cleanup, which already aborts
+ * its children, and must not have its handling pre-empted by a re-raise.
+ */
+function registerLiveGroupChild(child: LiveGroupChild): () => void {
+  liveGroupChildren.add(child);
+  if (!signalGuardHandlers && process.listenerCount("SIGINT") === 0 && process.listenerCount("SIGTERM") === 0) {
+    const handlers: Array<[NodeJS.Signals, () => void]> = [];
+    for (const signal of ["SIGINT", "SIGTERM"] as const) {
+      const handler = (): void => {
+        const children = [...liveGroupChildren];
+        for (const live of children) live.terminate();
+        removeSignalGuard();
+        void Promise.allSettled(children.map((live) => live.proc.exited)).then(() => {
+          process.kill(process.pid, signal);
+        });
+      };
+      process.once(signal, handler);
+      handlers.push([signal, handler]);
+    }
+    signalGuardHandlers = handlers;
+  }
+  return () => {
+    liveGroupChildren.delete(child);
+    if (liveGroupChildren.size === 0) removeSignalGuard();
+  };
+}
+
 /** Result of draining one captured pipe. */
 export interface StreamReadResult {
   text: string;
@@ -547,6 +602,10 @@ export async function runManagedSubprocess(
     else abortSignal.addEventListener("abort", onAbort, { once: true });
   }
 
+  // A termination signal to this process takes the own-group child down too.
+  const unregisterLiveChild =
+    capture && spawnsOwnProcessGroup() ? registerLiveGroupChild({ proc, terminate: onAbort }) : () => {};
+
   // Stream-drain timeout: a short grace once nothing living owns the pipe any
   // more, or a one-hour safety bound when execution itself is unbounded.
   //
@@ -599,6 +658,7 @@ export async function runManagedSubprocess(
   } catch (err) {
     if (timer !== undefined) clearTimeoutImpl(timer);
     abortSignal?.removeEventListener("abort", onAbort);
+    unregisterLiveChild();
     // Drain readers so they don't surface as unhandled rejections. The streams
     // carry their own drain timeout so this cannot block indefinitely.
     await Promise.allSettled([stdoutPromise, stderrPromise]);
@@ -615,6 +675,7 @@ export async function runManagedSubprocess(
   }
   clearTimeoutImpl(timer);
   abortSignal?.removeEventListener("abort", onAbort);
+  unregisterLiveChild();
 
   const [stdoutRead, stderrRead] = await Promise.all([stdoutPromise, stderrPromise]);
   return {

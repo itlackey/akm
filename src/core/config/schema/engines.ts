@@ -8,17 +8,17 @@
  * no behavior change.
  */
 import { z } from "zod";
-// Harness ids come straight from the dependency-free `harnesses/ids` leaf (the
-// same source `config-types.ts` re-exports them from). Importing them here
-// rather than via `../config-types` keeps `schema/*` free of any edge to
-// `config-types`, which type-derives from this barrel via
-// `typeof import("./config-schema")` — routing through config-types would mint
-// a config-schema ↔ config-types type cycle that collapses inference.
+// Harness ids come straight from the harness registry (the same source
+// `config-types.ts` re-exports them from). Importing them here rather than via
+// `../config-types` keeps `schema/*` free of any edge to `config-types`, which
+// type-derives from this barrel via `typeof import("./config-schema")` —
+// routing through config-types would mint a config-schema ↔ config-types type
+// cycle that collapses inference.
 import {
   HARNESS_AGENT_DISPATCH_IDS,
   HARNESS_NATIVE_AGENT_IDS,
   VALID_HARNESS_IDS,
-} from "../../../integrations/harnesses/ids";
+} from "../../../integrations/harnesses";
 import { WORKFLOW_MAX_TIMEOUT_MS } from "../../../workflows/resource-limits";
 import {
   chatCompletionsEndpoint,

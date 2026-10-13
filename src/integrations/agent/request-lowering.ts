@@ -6,7 +6,7 @@ import { ConfigError } from "../../core/errors";
 import { withSchemaInstruction } from "../../core/structured";
 import type { LoweringNotice, ResolvedExecutionRequestV1 } from "../../execution/resolved-request";
 import { MODEL_WORK_POLICY_ID, type ToolSelection } from "../../execution/source";
-import { HARNESS_MODEL_WORK_IDS, HARNESS_NATIVE_AGENT_IDS } from "../harnesses/ids";
+import { getHarness } from "../harnesses";
 import type { AgentDispatchRequest, LoweredAgentDispatch } from "./builder-shared";
 import { composeConversationFallbackPrompt } from "./conversation-fallback";
 import { composePersonaFallbackPrompt } from "./persona-fallback";
@@ -94,7 +94,7 @@ export function createAgentRequestLowerer(
         notices.push(...composed.notices);
       }
     } else if (typeof request.agent === "string") {
-      if (!HARNESS_NATIVE_AGENT_IDS.has(options.adapter)) {
+      if (!getHarness(options.adapter)?.capabilities.nativeAgent) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot consume native agent selector ${JSON.stringify(request.agent)}.`,
           "INVALID_CONFIG_FILE",
@@ -117,7 +117,7 @@ export function createAgentRequestLowerer(
       }
     }
     if (modelWork) {
-      if (!HARNESS_MODEL_WORK_IDS.has(options.adapter)) {
+      if (!getHarness(options.adapter)?.capabilities.modelWork) {
         throw new ConfigError(
           `The ${options.adapter} transport cannot enforce the model-work tool policy.`,
           "INVALID_CONFIG_FILE",

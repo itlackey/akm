@@ -488,10 +488,6 @@ describe("okf adapter — OKF link resolution, both forms (§9)", () => {
 // ── authoring / directoryList / looksLikeRoot ────────────────────────────────
 
 describe("okf adapter — placement / probe", () => {
-  test("is consumer-only (no adapter-owned placement/authoring)", () => {
-    expect(okfAdapter.placeNew).toBeUndefined();
-  });
-
   test("directoryList => ['.']", () => {
     expect(okfAdapter.directoryList?.(component())).toEqual(["."]);
   });
@@ -677,16 +673,6 @@ describe("okf adapter — recognition golden", () => {
       expect(doc.links).toEqual(expected.links as string[] | undefined);
     });
   }
-});
-
-describe("okf adapter — placement golden (consumer-only, no placeNew)", () => {
-  test("placeNew is undefined for every type — the adapter never places a new concept", () => {
-    const golden = loadGolden("placement");
-    const byType = golden.byType as Record<string, { readOnly: boolean; placeNew: null }>;
-    expect(byType["*"]?.readOnly).toBe(true);
-    expect(byType["*"]?.placeNew).toBeNull();
-    expect(okfAdapter.placeNew).toBeUndefined();
-  });
 });
 
 describe("okf adapter — renderer golden (presentationFor is adapter-agnostic, keyed on the open type string)", () => {

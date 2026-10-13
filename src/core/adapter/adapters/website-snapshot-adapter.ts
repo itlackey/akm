@@ -16,8 +16,8 @@
  * `stash/knowledge/` prefix. `manifest.json` is snapshot PROVENANCE
  * (`{url, fetchedAt}`), read by the probe but never indexed as a concept.
  *
- * Read-only ⇒ NO `placeNew` (Mode B export routes content through the
- * DESTINATION adapter, which owns placement). `validate` runs base checks only
+ * Read-only (Mode B export routes content through the DESTINATION adapter,
+ * which owns placement). `validate` runs base checks only
  * (a mirror the adapter does not author has no native validators); `updated`
  * never appears on a snapshot page, so `missing-updated` is filtered out.
  *
@@ -146,8 +146,8 @@ export const websiteSnapshotAdapter: BundleAdapter = {
     return [{ path: path.join(c.root, PAGES_PREFIX, `${canonical}.md`), conceptId: canonical }];
   },
 
-  // No placeNew: the snapshot is READ-ONLY (Mode A). Export (Mode B) routes
-  // content through the DESTINATION adapter, which owns placement.
+  // The snapshot is READ-ONLY (Mode A). Export (Mode B) routes content through
+  // the DESTINATION adapter, which owns placement.
 
   /**
    * Install-time probe (§1.2): a root carrying the snapshot provenance

@@ -146,25 +146,36 @@ export const TRANSCRIPT_FENCE_BEGIN = "=== BEGIN UNTRUSTED SESSION TRANSCRIPT ==
 export const TRANSCRIPT_FENCE_END = "=== END UNTRUSTED SESSION TRANSCRIPT ===";
 
 /**
- * Format pre-filtered events as a transcript snippet. Each event becomes:
- *   [<role> @ <iso>] <text>
- * Events are already truncated/cleaned by the pre-filter; this is purely
- * a render step.
+ * Wrap transcript text in the untrusted fence.
  *
  * Anti-spoof: any occurrence of the fence markers inside the transcript text is
  * neutralised so a crafted session cannot forge the boundary and "escape" the
  * fence to inject trusted-looking instructions.
  */
+export function fenceTranscript(text: string): string {
+  const body = text
+    .split(TRANSCRIPT_FENCE_BEGIN)
+    .join("=== (fence) ===")
+    .split(TRANSCRIPT_FENCE_END)
+    .join("=== (fence) ===");
+  return `${TRANSCRIPT_FENCE_BEGIN}\n${body}\n${TRANSCRIPT_FENCE_END}`;
+}
+
+/**
+ * Format pre-filtered events as a transcript snippet. Each event becomes:
+ *   [<role> @ <iso>] <text>
+ * Events are already truncated/cleaned by the pre-filter; this is purely
+ * a render step.
+ */
 function formatTranscript(events: SessionEvent[]): string {
   if (events.length === 0) return "(empty — pre-filter removed all events as noise)";
-  const body = events
+  return events
     .map((e) => {
       const tsLabel = e.ts ? new Date(e.ts).toISOString() : "unknown-ts";
       const roleLabel = e.role ?? "unknown";
       return `[${roleLabel} @ ${tsLabel}] ${e.text}`;
     })
     .join("\n\n");
-  return body.split(TRANSCRIPT_FENCE_BEGIN).join("=== (fence) ===").split(TRANSCRIPT_FENCE_END).join("=== (fence) ===");
 }
 
 /**
@@ -189,7 +200,7 @@ export function buildExtractPrompt(input: ExtractPromptInput): string {
     .replace("{{PROJECT_HINT}}", ref.projectHint ?? "(no project hint)")
     .replace("{{ALREADY_PRESERVED}}", formatAlreadyPreserved(input.inlineRefs))
     .replace("{{STANDARDS}}", standards)
-    .replace("{{TRANSCRIPT}}", `${TRANSCRIPT_FENCE_BEGIN}\n${formatTranscript(input.events)}\n${TRANSCRIPT_FENCE_END}`);
+    .replace("{{TRANSCRIPT}}", fenceTranscript(formatTranscript(input.events)));
 }
 
 // ── Parser ──────────────────────────────────────────────────────────────────

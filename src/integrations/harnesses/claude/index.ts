@@ -22,6 +22,7 @@ import type { SessionLogHarness } from "../../session-logs/types";
 import { caps } from "../shared";
 import { BaseHarness } from "../types";
 import { claudeBuilder } from "./agent-builder";
+import { claudeCodeImporter } from "./config-import";
 import { claudeResultExtractor } from "./result-extractor";
 import { ClaudeCodeProvider } from "./session-log";
 
@@ -42,7 +43,9 @@ export class ClaudeHarness extends BaseHarness {
   // session-log provider, so offering it as a stash source is functional.
   readonly setupDetectionDir = ".claude";
   readonly agentBuilder = claudeBuilder;
+  readonly profile = { bin: "claude", args: [], envPassthrough: ["ANTHROPIC_API_KEY", "CLAUDE_CONFIG"] };
   readonly resultExtractor = claudeResultExtractor;
+  readonly configImporter = claudeCodeImporter;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker: presence of a concrete session id (not the bare
   // "running under Claude Code" flag) attributes a run to this harness.
@@ -52,6 +55,8 @@ export class ClaudeHarness extends BaseHarness {
     sessionLogs: true,
     agentDispatch: true,
     detection: true,
+    modelWork: true,
+    nativeAgent: true,
     configImport: true,
   });
 }

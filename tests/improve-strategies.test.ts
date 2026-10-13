@@ -10,10 +10,38 @@ import {
   resolveImproveStrategy,
   shouldSkipRef,
 } from "../src/commands/improve/improve-strategies";
-import type { AkmConfig } from "../src/core/config/config";
+import type { AkmConfig, ImproveProfileConfig } from "../src/core/config/config";
+import { deepMergeConfig } from "../src/core/config/deep-merge";
 import { ConfigError } from "../src/core/errors";
 import { asLlmRunner } from "./_helpers/llm-runner";
 import { withEnvSync } from "./_helpers/sandbox";
+
+// The built-in `quick` and `reflect-distill` strategies were removed (#1130).
+// These are their old definitions as user-defined strategies, so the tests
+// below keep exercising the same process shapes through `improve.strategies`.
+const QUICK = {
+  processes: {
+    reflect: { enabled: true },
+    extract: { enabled: false },
+    distill: { enabled: false },
+    consolidate: { enabled: false },
+    memoryInference: { enabled: false },
+    triage: { enabled: false },
+    validation: { enabled: false },
+    proactiveMaintenance: { enabled: false },
+  },
+};
+const REFLECT_DISTILL = {
+  processes: {
+    consolidate: { enabled: false },
+    validation: { enabled: false },
+    triage: { enabled: true, applyMode: "promote", maxAcceptsPerRun: 15, judgment: true },
+  },
+};
+/** `base` with `overrides` deep-merged on top, typed as an `improve.strategies` entry. */
+function strategy(base: object, overrides: object = {}): ImproveProfileConfig {
+  return deepMergeConfig(base as never, overrides as never) as ImproveProfileConfig;
+}
 
 describe("resolveImproveStrategy", () => {
   test("deep-merges the default baseline, selected built-in, and user override in order", () => {
@@ -22,9 +50,7 @@ describe("resolveImproveStrategy", () => {
       semanticSearchMode: "auto",
       improve: {
         strategies: {
-          quick: {
-            processes: { reflect: { enabled: false, allowedTypes: ["memory"] } },
-          },
+          quick: strategy(QUICK, { processes: { reflect: { enabled: false, allowedTypes: ["memory"] } } }),
         },
       },
     });
@@ -53,14 +79,14 @@ describe("resolveImproveStrategy", () => {
     const quick = resolveImproveStrategy("quick", {
       semanticSearchMode: "off",
       improve: {
-        strategies: { quick: { processes: { extract: { enabled: true } } } },
+        strategies: { quick: strategy(QUICK, { processes: { extract: { enabled: true } } }) },
       },
     });
     const reflectDistill = resolveImproveStrategy("reflect-distill", {
       semanticSearchMode: "off",
       improve: {
         strategies: {
-          "reflect-distill": { processes: { proactiveMaintenance: { enabled: true } } },
+          "reflect-distill": strategy(REFLECT_DISTILL, { processes: { proactiveMaintenance: { enabled: true } } }),
         },
       },
     });
@@ -76,6 +102,7 @@ describe("resolveImproveStrategy", () => {
       configVersion: "0.9.0",
       semanticSearchMode: "auto",
       defaults: { improveStrategy: "quick" },
+      improve: { strategies: { quick: strategy(QUICK) } },
     });
     expect(selected.name).toBe("quick");
   });
@@ -197,7 +224,9 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       engines: { default: llm, validation: { ...llm, model: "repair" } },
       defaults: { llmEngine: "default" },
-      improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "validation" } } } } },
+      improve: {
+        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true, engine: "validation" } } }) },
+      },
     });
 
     expect(plan.strategy.name).toBe("quick");
@@ -266,6 +295,7 @@ describe("resolveImprovePlan", () => {
           },
         },
         defaults: { llmEngine: "default" },
+        improve: { strategies: { quick: strategy(QUICK) } },
       });
 
       expect(asLlmRunner(plan.processes.reflect.runner).credential).toEqual({
@@ -288,7 +318,9 @@ describe("resolveImprovePlan", () => {
       defaults: { llmEngine: "default" },
       improve: {
         strategies: {
-          "reflect-distill": { processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } } },
+          "reflect-distill": strategy(REFLECT_DISTILL, {
+            processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } },
+          }),
         },
       },
     });
@@ -391,7 +423,9 @@ describe("resolveImprovePlan", () => {
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
-        improve: { strategies: { quick: { processes: { reflect: { model: "model-without-engine" } } } } },
+        improve: {
+          strategies: { quick: strategy(QUICK, { processes: { reflect: { model: "model-without-engine" } } }) },
+        },
       }),
     ).toThrow('"reflect" requires an engine that is not configured');
     expect(() =>
@@ -400,6 +434,7 @@ describe("resolveImprovePlan", () => {
         semanticSearchMode: "auto",
         engines: { wrong: { kind: "agent", platform: "pi" } },
         defaults: { llmEngine: "wrong" },
+        improve: { strategies: { quick: strategy(QUICK) } },
       }),
     ).toThrow("The pi transport cannot enforce the model-work tool policy.");
   });
@@ -410,6 +445,7 @@ describe("resolveImprovePlan", () => {
       semanticSearchMode: "auto",
       engines: { agent: { kind: "agent", platform: "claude" } },
       defaults: { llmEngine: "agent" },
+      improve: { strategies: { quick: strategy(QUICK) } },
     });
     expect(plan.processes.reflect.runner).toMatchObject({ kind: "agent", engine: "agent" });
     expect(plan.engineUnavailable).toEqual([]);
@@ -420,8 +456,20 @@ describe("resolveImprovePlan", () => {
       resolveImprovePlan("quick", {
         configVersion: "0.9.0",
         semanticSearchMode: "auto",
+        improve: { strategies: { quick: strategy(QUICK) } },
       }),
     ).toThrow('"reflect" requires an engine that is not configured');
+  });
+
+  test("proactiveMaintenance uses no engine, so enabling it alone does not keep a plan with no engine alive (#1129)", () => {
+    expect(() =>
+      resolveImprovePlan("default", {
+        configVersion: "0.9.0",
+        semanticSearchMode: "auto",
+        // default's deterministic triage (#1143) also needs no engine and would keep the plan alive.
+        improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
+      } as AkmConfig),
+    ).toThrow("No improve process can run");
   });
 
   test("disables just the processes with no usable LLM engine, instead of aborting the whole plan", () => {
@@ -433,7 +481,8 @@ describe("resolveImprovePlan", () => {
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
-          default: { processes: { proactiveMaintenance: { enabled: true } } },
+          // A process that needs no engine keeps the plan alive; proactiveMaintenance alone would not.
+          default: { processes: { triage: { enabled: true } } },
         },
       },
     } as AkmConfig);
@@ -443,7 +492,7 @@ describe("resolveImprovePlan", () => {
       expect(plan.processes[name].runner).toBeNull();
       expect(plan.strategy.config.processes?.[name]?.enabled).toBe(false);
     }
-    expect(plan.processes.proactiveMaintenance.enabled).toBe(true);
+    expect(plan.processes.triage.enabled).toBe(true);
 
     const disabledNames: string[] = plan.engineUnavailable.map((item) => item.process).sort();
     expect(disabledNames).toEqual(
@@ -512,6 +561,9 @@ describe("resolveImprovePlan", () => {
             },
           },
           defaults: { llmEngine: "private" },
+          // The default strategy's deterministic triage needs no engine, so it
+          // is switched off here: the case is every engine-backed process gone.
+          improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
         } as AkmConfig,
         { env: {} },
       ),
@@ -533,11 +585,15 @@ describe("resolveImprovePlan", () => {
           },
         },
         defaults: { llmEngine: "private" },
+        // Deterministic triage needs no engine; switched off (see the case above).
+        improve: { strategies: { default: { processes: { triage: { enabled: false } } } } },
       } as AkmConfig,
       { env: {}, allowAllDisabled: true },
     );
 
-    expect(Object.values(plan.processes).some((process) => process.enabled)).toBe(false);
+    // Every process that uses an engine is off; proactiveMaintenance (on in `default`) uses none.
+    const { proactiveMaintenance: _selector, ...engineProcesses } = plan.processes;
+    expect(Object.values(engineProcesses).some((process) => process.enabled)).toBe(false);
     const disabledNames = plan.engineUnavailable.map((item) => item.process).sort();
     expect(disabledNames).toEqual(["consolidate", "distill", "reflect", "validation"]);
     for (const item of plan.engineUnavailable) {
@@ -572,9 +628,9 @@ describe("resolveImprovePlan", () => {
       defaults: { llmEngine: "llm" },
       improve: {
         strategies: {
-          "reflect-distill": {
+          "reflect-distill": strategy(REFLECT_DISTILL, {
             processes: { triage: { judgment: { engine: "reviewer", llm: { temperature: 0 } } } },
-          },
+          }),
         },
       },
     });
@@ -594,7 +650,9 @@ describe("projectResolvedProcessRouting (#947)", () => {
       semanticSearchMode: "auto",
       engines: { default: llm, validation: { ...llm, model: "repair" } },
       defaults: { llmEngine: "default" },
-      improve: { strategies: { quick: { processes: { validation: { enabled: true, engine: "validation" } } } } },
+      improve: {
+        strategies: { quick: strategy(QUICK, { processes: { validation: { enabled: true, engine: "validation" } } }) },
+      },
     });
 
     const rows = projectResolvedProcessRouting(plan);
@@ -635,7 +693,7 @@ describe("projectResolvedProcessRouting (#947)", () => {
       experimental: { improveAutonomy: true },
       improve: {
         strategies: {
-          default: { processes: { proactiveMaintenance: { enabled: true } } },
+          default: { processes: { triage: { enabled: true } } },
         },
       },
     } as AkmConfig);
@@ -671,7 +729,9 @@ describe("projectResolvedProcessRouting (#947)", () => {
         defaults: { llmEngine: "default" },
         improve: {
           strategies: {
-            "reflect-distill": { processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } } },
+            "reflect-distill": strategy(REFLECT_DISTILL, {
+              processes: { triage: { judgment: { engine: "reviewer", timeoutMs: null } } },
+            }),
           },
         },
       }),

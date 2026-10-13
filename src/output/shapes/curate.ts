@@ -6,8 +6,8 @@
  * `curate` output shape.
  *
  * Previously `curate` rode the identity-passthrough handler, which made
- * `--detail`/`--shape` inert. This dedicated handler projects each curated
- * item by detail (verbosity) and shape (projection) the same way
+ * `--detail` inert. This dedicated handler projects each curated
+ * item by detail (verbosity) and shape (`--detail agent`) the same way
  * `shapeSearchOutput` projects search hits, so curate honors the global
  * output contract.
  */

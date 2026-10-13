@@ -57,7 +57,7 @@ import { classifyTargetRef } from "../../execution/target-ref";
 import { detectSecretShapedParams } from "../../workflows/exec/param-secrets";
 import { WORKFLOW_ENV_VAR_NAME_PATTERN, WORKFLOW_MAX_SCHEMA_BYTES } from "../../workflows/resource-limits";
 import { TASK_V3_HOST_SHELLS, TASK_V3_MAX_SCHEDULES, type TaskV3Environment, type TaskV3HostShell } from "../source-v3";
-import { TASK_RUN_RESERVED_FLAG_NAMES, TASK_RUN_SELF_DIAGNOSED_FLAGS } from "../task-run-reserved-flags";
+import { TASK_RUN_RESERVED_FLAG_NAMES } from "../task-run-reserved-flags";
 import {
   asRecord,
   type BoundedDocumentContext,
@@ -522,21 +522,11 @@ function parseInputDeclarations(value: ExecutionJsonValue, ctx: BoundedDocumentC
     // checked against this same contract below, so a banned name can never
     // reach compileTaskSchedulerBindings's invocation tail either) — see
     // ../task-run-reserved-flags.ts's own header.
-    //
-    // 0.9.2 review round 2: `target` joins that set from the CLI's DIAGNOSTIC
-    // side rather than its declared-arg side. `rejectRetiredTaskTargetFlag`
-    // (../../commands/tasks/tasks-cli.ts) throws the 0.9 `--target` ->
-    // `--bundle` rename hint for every spelling of the name, before
-    // parseTaskInputFlags scans argv at all, so an input declared under that
-    // name could never be supplied either — it is the same unusable
-    // declaration, reached by a different route (TASK_RUN_SELF_DIAGNOSED_FLAGS).
     if (TASK_RUN_RESERVED_FLAG_NAMES.has(name)) {
       sourceError(
         ctx,
         ["inputs", name],
-        TASK_RUN_SELF_DIAGNOSED_FLAGS.includes(name)
-          ? `collides with the retired \`akm task --${name}\` spelling, which every task subcommand still rejects with a rename hint, so no --${name} flag can ever reach this input; declare the input under a different name.`
-          : `collides with akm task run's own --${name} flag; declare the input under a different name.`,
+        `collides with akm task run's own --${name} flag; declare the input under a different name.`,
       );
     }
     result[name] = parseInputDeclaration(name, input[name] as ExecutionJsonValue, ctx);

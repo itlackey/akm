@@ -9,7 +9,7 @@
  * the four authored goldens under
  * `tests/fixtures/format-family-goldens/website-snapshot/`. Exercises the GATED
  * re-type to `type: website` (open-question-3), the `stash/knowledge/` prefix
- * strip, the preserved `sourceRef`, the READ-ONLY (no placeNew) contract, and
+ * strip, the preserved `sourceRef`, the READ-ONLY contract, and
  * the generic-fallback presentation (`website` is not a KNOWN_TYPE).
  *
  * NOTE (golden cross-reference): the recognition golden pins the STRIPPED ref
@@ -61,10 +61,9 @@ const ctx: ValidateContext = {
 };
 
 describe("website-snapshot adapter — metadata", () => {
-  test("id / version / read-only (no placeNew)", () => {
+  test("id / version", () => {
     expect(websiteSnapshotAdapter.id).toBe("website-snapshot");
     expect(websiteSnapshotAdapter.version).toBe("0.9.0");
-    expect(websiteSnapshotAdapter.placeNew).toBeUndefined();
   });
 
   test("looksLikeRoot fires on the snapshot root (manifest.json), not on a bare dir", () => {
@@ -96,15 +95,6 @@ describe("website-snapshot adapter — recognition golden (gated re-type)", () =
       expect(extras?.sourceRef).toBe(expected.sourceRef as string);
     });
   }
-});
-
-describe("website-snapshot adapter — placement golden (read-only)", () => {
-  test("website is read-only: placeNew is null/undefined (Mode B routes to the destination adapter)", () => {
-    const byType = loadGolden("placement").byType as Record<string, { placeNew: null; readOnly: boolean }>;
-    expect(byType.website!.placeNew).toBeNull();
-    expect(byType.website!.readOnly).toBe(true);
-    expect(websiteSnapshotAdapter.placeNew).toBeUndefined();
-  });
 });
 
 describe("website-snapshot adapter — renderer golden (generic fallback, `website` is not a KNOWN_TYPE)", () => {

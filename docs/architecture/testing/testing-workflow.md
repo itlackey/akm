@@ -360,7 +360,7 @@ not a side-by-side install. It then runs the CANDIDATE against that home
 (`migrate status`/`apply`, `bundle list` with every bundle confirmed enabled,
 `search`/`show`, `task sync` dry-run and real — plain, no `--rebind`, as an
 upgrading user actually runs it — executing the generated cron command and
-confirming it ran the candidate, `task run`, `health`, `improve --plan`), and
+confirming it ran the candidate, `task run`, `health`, `improve --dry-run`), and
 finally installs a separate untouched copy of the PREVIOUS release and runs
 it back against the candidate-written home to prove read-back still works.
 It exists because no other suite drives a real prior release against a real

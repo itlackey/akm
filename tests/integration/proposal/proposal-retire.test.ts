@@ -842,8 +842,9 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted");
     });
 
-    test("a REAL purge sweep past grace deletes the archived bytes — revert then refuses with 'archived copy ... is missing', status stays accepted, the tombstone survives, and a second sweep is a no-op (S5)", async () => {
+    test("a REAL purge sweep past grace deletes the archived bytes — revert still restores the primary byte for byte from the proposal's backupContent, and a second sweep is a no-op (S5)", async () => {
       const parentPath = writeAsset("memories/parent.md", "description: parent");
+      const original = fs.readFileSync(parentPath, "utf8");
       const newPath = writeAsset("memories/new-note.md", "description: a new note");
       const config = makeConfig(storage.stashDir);
       const proposal = createRetireProposal(storage.stashDir, {
@@ -881,15 +882,14 @@ describe("akm proposal revert on a retire proposal", () => {
       expect(fs.existsSync(entry.archivedAbs)).toBe(false);
       expect(fs.existsSync(tombstonePath)).toBe(true); // the tombstone is never purged
 
-      await expect(akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
-        /archived copy .* is missing/,
-      );
-      expect(getProposal(storage.stashDir, proposal.id).status).toBe("accepted"); // the failed revert changed nothing
-      expect(fs.existsSync(tombstonePath)).toBe(true); // still kept after the failed revert attempt
-
       // A second sweep finds nothing left under this retirement to purge.
       const sweep2 = purgeGracedArchive(storage.stashDir, pastGrace);
       expect(sweep2).toEqual({ purgedDirs: 0, purgedFiles: 0 });
+
+      const result = await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+      expect(result.proposal.status).toBe("reverted");
+      expect(fs.readFileSync(parentPath, "utf8")).toBe(original);
+      expect(fs.existsSync(tombstonePath)).toBe(false); // removed once the revert is recorded
     });
   });
 });
@@ -996,6 +996,41 @@ describe("triage auto-accepts only a retire proposal the pair pass staged", () =
     await drainProposals({ stashDir: storage.stashDir, config, applyMode: "queue", maxAccepts: 25, dryRun: false });
     expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
     expect(fs.existsSync(oldPath)).toBe(true);
+  });
+
+  test("a staged retire proposal whose file is gone is auto-rejected once as stale-target, not failed every run", async () => {
+    const { proposal, oldPath } = stagedDuplicate();
+    fs.rmSync(oldPath);
+    const run = () =>
+      drainProposals({
+        stashDir: storage.stashDir,
+        config: makeConfig(storage.stashDir),
+        applyMode: "promote",
+        maxAccepts: 25,
+        dryRun: false,
+      });
+    const first = await run();
+    expect(first.failed).toEqual([]);
+    expect(first.rejected).toContain(proposal.id);
+    const archived = getProposal(storage.stashDir, proposal.id);
+    expect(archived.status).toBe("rejected");
+    expect(archived.gateDecision?.reason).toBe("stale-target");
+    expect((await run()).failed).toEqual([]);
+  });
+
+  test("a staged retire proposal whose successor is gone is auto-rejected as stale-target", async () => {
+    const { proposal } = stagedDuplicate();
+    fs.rmSync(path.join(storage.stashDir, "memories", "new-note.md"));
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(result.failed).toEqual([]);
+    expect(result.rejected).toContain(proposal.id);
+    expect(getProposal(storage.stashDir, proposal.id).gateDecision?.reason).toBe("stale-target");
   });
 
   test("a staged duplicate with a continuity risk waits for a person", async () => {

@@ -19,7 +19,7 @@
  *      per-test timeout.
  */
 
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, beforeEach, expect, test } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -29,6 +29,9 @@ import {
   closeServer,
   runOpencodeSdk,
 } from "../src/integrations/harnesses/opencode-sdk/sdk-runner";
+import { fakeOpencodeMajor } from "./_helpers/opencode-version";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 const cleanups: Array<() => void> = [];
 

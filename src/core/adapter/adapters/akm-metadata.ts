@@ -56,13 +56,12 @@
  * distinction never triggers.
  */
 
-import { type ParsedBuiltinCommandAction, parseBuiltinCommandAction } from "../../../commands/command/builtin-action";
+import type { ParsedBuiltinCommandAction } from "../../../commands/command/builtin-action";
 import { scanEnvKeyNames } from "../../../commands/env/env";
 import type { IndexDocument } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource, workflowStepInstructions } from "../../../workflows/compile";
-import type { WorkflowStepSpec } from "../../../workflows/plan";
 import { parseFrontmatter } from "../../asset/frontmatter";
 import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
@@ -147,18 +146,6 @@ function applyFrontmatterDescriptionAndTags(fm: Record<string, unknown>, out: Fo
 /** The command a stored `akm/command` action runs; inline content names no asset. */
 function storedCommandRef(action: ParsedBuiltinCommandAction | undefined): string | undefined {
   return action?.kind === "stored" ? action.ref : undefined;
-}
-
-/** The asset a workflow step targets: its `uses:` ref, or the ref of a stored `akm/command`. Prose and `run:` steps target none. */
-function workflowStepTarget(spec: WorkflowStepSpec | undefined): string | undefined {
-  if (!spec?.uses) return undefined;
-  if (spec.uses !== "akm/command") return spec.uses;
-  if (spec.commandMode !== "stored-ref") return undefined;
-  try {
-    return storedCommandRef(parseBuiltinCommandAction(spec.with));
-  } catch {
-    return undefined;
-  }
 }
 
 /** Collect + finalize a searchHints set the way every contributor does (`Array.from(hints).filter(Boolean)`, assigned only when non-empty). */
@@ -348,8 +335,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
           hints.add(step.stepId);
           hints.add(workflowStepInstructions(step));
           if (step.gate.criteria[0]) hints.add(step.gate.criteria[0]);
-          const used = workflowStepTarget(step.spec);
-          if (used) uses.add(used);
+          if (step.spec?.workflow) uses.add(step.spec.workflow);
         }
         out.searchHints = Array.from(hints).filter(Boolean);
         if (uses.size > 0) out.uses = [...uses];

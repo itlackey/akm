@@ -32,7 +32,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
-import { assetPathCandidatesForName, assetPathForName, typeForStashDir } from "../../asset/asset-placement";
+import { assetPathCandidatesForName, typeForStashDir } from "../../asset/asset-placement";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -181,26 +181,6 @@ export const dotenvAdapter: BundleAdapter = {
         : [primary, `${primary}.sensitive`, `${primary}.lock`],
     );
     return expanded.map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
-  },
-
-  /**
-   * env places to `env/<name>.env`, secret to `secrets/<name>` (identity join,
-   * no extension logic) — reusing the shared `assetPathForName` so the env
-   * default-alias / already-suffixed / nested-secret edge cases match the akm
-   * placement convention exactly.
-   */
-  placeNew(c: BundleComponent, conceptId: string): string {
-    const posix = toPosix(conceptId);
-    const slash = posix.indexOf("/");
-    if (slash > 0) {
-      const head = posix.slice(0, slash);
-      const rest = posix.slice(slash + 1);
-      const type = typeForStashDir(head);
-      if ((type === "env" || type === "secret") && rest.length > 0) {
-        return assetPathForName(type, path.join(c.root, head), rest);
-      }
-    }
-    return path.join(c.root, posix);
   },
 
   /** The dotenv bundle owns its `env/` + `secrets/` dirs. */

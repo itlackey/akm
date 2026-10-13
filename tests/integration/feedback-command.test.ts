@@ -5,9 +5,12 @@ import path from "node:path";
 import { renderReflectPromptPreview } from "../../src/commands/improve/reflect";
 import { loadConfig, saveConfig } from "../../src/core/config/config";
 import { readEvents } from "../../src/core/events";
-import { openStateDatabase } from "../../src/core/state-db";
-import { akmIndex } from "../../src/indexer/indexer";
+import { getDbPath } from "../../src/core/paths";
+import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
+import { akmIndex, recomputeUtilityScores } from "../../src/indexer/indexer";
 import { resolveSourceEntries } from "../../src/indexer/search/search-source";
+import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
+import { getUtilityScore, upsertUtilityScore } from "../../src/storage/repositories/index-utility-repository";
 import { runCliCapture } from "../_helpers/cli";
 import { withTestImproveLlm } from "../_helpers/improve-config";
 import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -417,6 +420,124 @@ describe("akm feedback", () => {
     const rankingUpdate = parsed.rankingUpdate as { applied: boolean; reason: string };
     expect(rankingUpdate.reason).toMatch(/not "user"/);
     expect(rankingUpdate.reason).toMatch(/anti-self-reinforcement/);
+  });
+
+  test("rankingUpdate follows the recorded event's attribution, not the utility update (improve source)", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+
+    const result = await withEnv({ AKM_EVENT_SOURCE: "improve" }, () =>
+      runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]),
+    );
+    expect(result.status).toBe(0);
+    const rankingUpdate = parseJsonOutput(result).rankingUpdate as { applied: boolean; reason: string };
+    expect(rankingUpdate.applied).toBe(false);
+    expect(rankingUpdate.reason).toMatch(/"improve", not "user"/);
+    expect(rankingUpdate.reason).toMatch(/does not count toward search ranking/);
+  });
+
+  test("rankingUpdate.applied stays true for a user event when the utility update cannot run", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+
+    // Search ranking counts the recorded events, not utility_scores, so breaking the utility
+    // table must not change what the output says about ranking.
+    const db = openIndexDatabase(getDbPath());
+    try {
+      db.exec("DROP TABLE utility_scores");
+    } finally {
+      closeDatabase(db);
+    }
+
+    const result = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
+    expect(result.status).toBe(0);
+    expect(parseJsonOutput(result).rankingUpdate).toEqual({ applied: true });
+  });
+
+  // ── One utility formula: `akm feedback` stores what `akm index` would compute ─
+  for (const signal of ["positive", "negative"] as const) {
+    test(`a ${signal} feedback stores the utility the index finalize pass would compute`, async () => {
+      writeFile(
+        path.join(stashDir, "memories", "deployment-notes.md"),
+        "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+      );
+      await buildIndex();
+
+      const db = openIndexDatabase(getDbPath());
+      const stateDb = openStateDatabase();
+      try {
+        const entryId = (db.prepare("SELECT id FROM entries LIMIT 1").get() as { id: number }).id;
+        const seed = (): void => {
+          upsertUtilityScore(db, entryId, { utility: 0.6, showCount: 0, searchCount: 0, selectRate: 0 });
+        };
+        seed();
+
+        const result = await runCli([
+          "feedback",
+          "memories/deployment-notes",
+          `--${signal}`,
+          ...(signal === "negative" ? ["--reason", "the VPN step is wrong"] : []),
+          "--format=json",
+        ]);
+        expect(result.status).toBe(0);
+        const fromFeedback = getUtilityScore(db, entryId)?.utility;
+
+        // Same starting point, but let the indexer's finalize recompute run instead.
+        seed();
+        recomputeUtilityScores(db, stateDb);
+        const fromIndex = getUtilityScore(db, entryId)?.utility;
+
+        expect(fromIndex).toBeDefined();
+        expect(fromFeedback).toBe(fromIndex as number);
+        // Not the retired bounded-step EMA (0.64 / 0.54 from a 0.6 start).
+        expect(fromFeedback).toBeCloseTo(signal === "positive" ? 0.72 : 0.42, 2);
+      } finally {
+        closeDatabase(db);
+        stateDb.close();
+      }
+    });
+  }
+
+  // A sandbox that leaves state.db read-only used to get ok:true while the
+  // feedback row was silently dropped. chmod does not restrict root or Windows.
+  const canMakeReadOnly = process.platform !== "win32" && process.getuid?.() !== 0;
+  test.skipIf(!canMakeReadOnly)("fails with DATA_DIR_NOT_WRITABLE when state.db is read-only", async () => {
+    writeFile(
+      path.join(stashDir, "memories", "deployment-notes.md"),
+      "---\ndescription: deployment memory\n---\nRemember the VPN before deploy.\n",
+    );
+    await buildIndex();
+    const first = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
+    expect(first.status).toBe(0);
+
+    const statePath = getStateDbPath();
+    const countRows = () => {
+      const db = openStateDatabase();
+      try {
+        return (
+          db.prepare("SELECT COUNT(*) AS n FROM usage_events WHERE event_type = 'feedback'").get() as { n: number }
+        ).n;
+      } finally {
+        db.close();
+      }
+    };
+    expect(countRows()).toBe(1);
+
+    fs.chmodSync(statePath, 0o444);
+    try {
+      const result = await runCli(["feedback", "memories/deployment-notes", "--positive", "--format=json"]);
+      expect(result.status).toBe(78);
+      expect(parseJsonOutput(result)).toMatchObject({ ok: false, code: "DATA_DIR_NOT_WRITABLE" });
+    } finally {
+      fs.chmodSync(statePath, 0o644);
+    }
+    expect(countRows()).toBe(1);
   });
 
   // ── Which text each feedback judged ──────────────────────────────────────

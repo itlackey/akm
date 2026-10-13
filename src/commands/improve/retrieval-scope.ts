@@ -60,8 +60,8 @@ export function loadRetrievalScope(
       // Blocker 1 (second review round): a pair-pass ledger row must NOT mark
       // an asset "processed" — unlike every other stage, the pair pass judges
       // material against its NEIGHBOURS, not on its own merits, so its own
-      // attempt is not usage evidence the fallback lanes (proactive,
-      // high-salience) or promotion retries should be starved by. Left in
+      // attempt is not usage evidence the proactive lane
+      // or promotion retries should be starved by. Left in
       // the ledger for the pair pass's OWN eligibility
       // (selectInitiators reads content_hash directly, never this scope).
       // Proposal rows are untouched: a MINTED retire proposal is real

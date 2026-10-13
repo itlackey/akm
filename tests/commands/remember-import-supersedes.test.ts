@@ -623,7 +623,7 @@ describe("import --supersedes", () => {
     expect(oldParsedAfter.content).toBe(oldParsedBefore.content);
   });
 
-  test("old doc in a WRITABLE non-target source: demotion skipped with a --target remedy (import's own flag)", async () => {
+  test("old doc in a WRITABLE non-target source: demotion skipped with a --bundle remedy", async () => {
     const teamDir = makeDir("akm-import-supersedes-writable-team");
     const oldPath = seedAsset(teamDir, "knowledge/team-guide.md", "Team guide from the shared writable stash.\n");
     const oldRaw = fs.readFileSync(oldPath, "utf8");
@@ -646,8 +646,7 @@ describe("import --supersedes", () => {
     const json = JSON.parse(stdout) as WriteOutput;
     expect(json.superseded?.[0]?.applied).toBe(false);
     const reason = json.superseded?.[0]?.reason ?? "";
-    expect(reason).toContain("--target team");
-    expect(reason).not.toContain("--bundle");
+    expect(reason).toContain("--bundle team");
     expect(fs.readFileSync(oldPath, "utf8")).toBe(oldRaw);
   });
 

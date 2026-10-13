@@ -58,14 +58,13 @@ describe("akm show view-mode grammar is removed", () => {
     });
   }
 
-  test("the hidden --akmView flag no longer selects a view", async () => {
+  test("the hidden --akmView flag is an unknown flag", async () => {
     seedGuide();
 
     const result = await runEntrypoint(["show", "knowledge/guide", "--akmView=toc", "--format=json"]);
 
-    expect(result.status).toBe(0);
-    const json = JSON.parse(result.stdout) as Record<string, unknown>;
-    expect(json.content).toBe(GUIDE);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('Unknown flag "--akmView"');
   });
 
   test("the ref keeps resolving when a view keyword is its own conceptId", async () => {
@@ -81,60 +80,26 @@ describe("akm show view-mode grammar is removed", () => {
   });
 });
 
-// E-3: `akm show <ref> --scope ...` must fail LOUDLY (exit 2) for BOTH
-// spellings of the removed `--scope` flag, and must diagnose the ACTUAL
-// mistake (stale --scope flag, use --filter) rather than blaming the
-// unrelated removed view-mode grammar.
-//
-// `--scope` is deliberately not a declared flag on `show` (R-047, guardrail
-// 6 — no alias, no re-acceptance), which means citty's default handling of an
-// undeclared flag applies, and that default is SILENT ACCEPTANCE — not a
-// uniform error — depending on spelling:
-//   - space form (`--scope user=x`): citty treats `--scope` as boolean and
-//     pushes `user=x` into `args._` as a stray positional, which incidentally
-//     trips the arity check and exits 2 — but (pre-fix) with the wrong
-//     diagnosis, blaming the unrelated retired
-//     toc|section|lines|frontmatter|full view-mode grammar.
-//   - equals form (`--scope=user=x`): citty consumes it as the unknown flag's
-//     own inline value. It never reaches `args._`, so (pre-fix) NOTHING
-//     downstream ever noticed — the command ran to completion and exited 0,
-//     silently ignoring the caller's scope request entirely. This is the
-//     dangerous case a caller could mistake for "my read was scoped" when it
-//     was not, and it directly violated guardrail 6's "must fail loudly, not
-//     silently".
-// Both spellings must now be rejected explicitly and identically, before
-// either could produce a different (or no) error.
-describe("akm show --scope fails loudly for both spellings, diagnosing the removed flag", () => {
+// `--scope` was removed in favor of `--filter` and is not a declared flag on
+// `show`: both spellings must fail loudly as an unknown flag (exit 2), never
+// run unscoped.
+describe("akm show --scope fails loudly for both spellings", () => {
   function seedGuide(): void {
     const storage = useStorage();
     writeSandboxConfig({ semanticSearchMode: "off" });
     writeFixture(path.join(storage.stashDir, "knowledge", "guide.md"), "# Intro\nWelcome.\n");
   }
 
-  function assertScopeDiagnosis(error: Record<string, unknown>): void {
-    expect(error.ok).toBe(false);
-    expect(String(error.error)).toContain("--scope");
-    expect(String(error.error)).toContain("--filter");
-    expect(String(error.error)).not.toContain("view-mode grammar");
+  for (const scopeArgs of [["--scope", "user=x"], ["--scope=user=x"]]) {
+    test(`${scopeArgs.join(" ")} exits 2 as an unknown flag`, async () => {
+      seedGuide();
+
+      const result = await runEntrypoint(["show", "knowledge/guide", ...scopeArgs, "--format=json"]);
+
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('Unknown flag "--scope"');
+    });
   }
-
-  test("space form (--scope user=x) exits 2 and points at --filter", async () => {
-    seedGuide();
-
-    const result = await runEntrypoint(["show", "knowledge/guide", "--scope", "user=x", "--format=json"]);
-
-    expect(result.status).toBe(2);
-    assertScopeDiagnosis(JSON.parse(result.stderr) as Record<string, unknown>);
-  });
-
-  test("equals form (--scope=user=x) exits 2 instead of silently succeeding", async () => {
-    seedGuide();
-
-    const result = await runEntrypoint(["show", "knowledge/guide", "--scope=user=x", "--format=json"]);
-
-    expect(result.status).toBe(2);
-    assertScopeDiagnosis(JSON.parse(result.stderr) as Record<string, unknown>);
-  });
 
   test("--filter (the real spelling) still works and is unaffected", async () => {
     seedGuide();
@@ -145,30 +110,6 @@ describe("akm show --scope fails loudly for both spellings, diagnosing the remov
     expect(result.status).toBe(1);
     const error = JSON.parse(result.stderr) as Record<string, unknown>;
     expect(String(error.error)).toContain("out of scope");
-  });
-});
-
-describe("entrypoint global --shape=summary ordering", () => {
-  test("allows global --shape=summary before show", async () => {
-    const storage = useStorage();
-    // Semantic off keeps stderr empty as asserted below: with the default
-    // ("auto") the local embedder fetches its model from huggingface.co
-    // during auto-index, and an offline/blocked fetch warns on stderr.
-    writeSandboxConfig({ semanticSearchMode: "off" });
-    writeFixture(
-      path.join(storage.stashDir, "commands", "release.md"),
-      "---\ndescription: Release\n---\nRun release {{version}}\n",
-    );
-
-    const result = await runEntrypoint(["--format=json", "--shape=summary", "show", "commands/release.md"]);
-
-    expect(result.status).toBe(0);
-    expect(result.stderr).toBe("");
-    const json = JSON.parse(result.stdout) as Record<string, unknown>;
-    expect(json.type).toBe("command");
-    expect(json.name).toBe("release");
-    expect(json.description).toBe("Release");
-    expect(json).not.toHaveProperty("template");
   });
 });
 

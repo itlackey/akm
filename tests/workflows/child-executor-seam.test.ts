@@ -129,7 +129,6 @@ function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "compose"): W
       id: stepId,
       instructions: "Compose the child workflow.",
       onError: "fail",
-      isolation: "none",
       frozenTarget: target,
       environment: [],
     },

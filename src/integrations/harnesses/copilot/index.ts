@@ -32,6 +32,7 @@ export class CopilotHarness extends BaseHarness {
   readonly id = "copilot" as const;
   readonly displayName = "GitHub Copilot CLI";
   readonly agentBuilder = copilotBuilder;
+  readonly profile = { bin: "copilot", args: [], envPassthrough: ["GH_TOKEN", "GITHUB_TOKEN"] };
   readonly resultExtractor = copilotResultExtractor;
   // ── Workflow-engine descriptor (plan §"Capability matrix", P2) ────────────
   // Session-id env marker only. The matrix's other candidates (GH_TOKEN,

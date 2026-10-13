@@ -166,27 +166,6 @@ export function recognizeToolDir(layout: ToolDirLayout, c: BundleComponent, file
   return doc;
 }
 
-/**
- * placeNew() for a tool-dir adapter (spec §7: "AKM workspace layout IS the tool
- * dir minus the prefix"). Writes NORMALIZE to the canonical plural subdir
- * (open-question-6): a `command/foo` concept still places at `commands/foo.md`.
- * The instruction file is fixed at the component root.
- */
-export function placeNewToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string): string {
-  const posix = toPosix(conceptId);
-  if (posix === layout.instructionConceptId) return path.join(c.root, layout.instructionFile);
-
-  const segs = posix.split("/").filter((s) => s.length > 0);
-  const head = segs[0];
-  const rest = segs.slice(1).join("/");
-  if (rest.length > 0) {
-    if (layout.skillDirs.has(head!)) return path.join(c.root, CANONICAL_SKILL_DIR, rest, SKILL_MANIFEST);
-    if (layout.commandDirs.has(head!)) return path.join(c.root, CANONICAL_COMMAND_DIR, `${rest}.md`);
-    if (layout.agentDirs.has(head!)) return path.join(c.root, CANONICAL_AGENT_DIR, `${rest}.md`);
-  }
-  return path.join(c.root, `${posix}.md`);
-}
-
 /** List native read spellings. */
 export function readCandidatesToolDir(layout: ToolDirLayout, c: BundleComponent, conceptId: string) {
   const posix = toPosix(conceptId);
@@ -322,7 +301,6 @@ export function makeToolDirAdapter(layout: ToolDirLayout, looksLikeRoot: (root: 
     renderExecutionSource: (c, file) => renderToolDirExecutionSource(layout, c, file),
     validate: (c, changes, ctx) => validateToolDir(layout, c, changes, ctx),
     readCandidates: (c, conceptId) => readCandidatesToolDir(layout, c, conceptId),
-    placeNew: (c, conceptId) => placeNewToolDir(layout, c, conceptId),
     directoryList: () => [CANONICAL_COMMAND_DIR, CANONICAL_AGENT_DIR, CANONICAL_SKILL_DIR],
     looksLikeRoot,
   };

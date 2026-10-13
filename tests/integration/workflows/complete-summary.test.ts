@@ -15,8 +15,11 @@ import {
   getWorkflowStatus,
   type SummaryValidationFailure,
 } from "../../../src/workflows/runtime/runs";
+import { fakeOpencodeMajor } from "../../_helpers/opencode-version";
 import { type Cleanup, sandboxEnvDir, sandboxXdgConfigHome, withEnv } from "../../_helpers/sandbox";
 import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
+
+beforeEach(() => fakeOpencodeMajor(1));
 
 /**
  * In-process tests for summary capture + the completion-criteria validation

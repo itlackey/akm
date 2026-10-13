@@ -483,17 +483,6 @@ function normalizeLimit(limit?: number): number {
 export function parseSearchSource(source: SearchSource | string | undefined): SearchSource | string {
   if (source === "local" || source === "registry" || source === "all") return source;
   if (typeof source === "undefined") return "local";
-  // 0.9.0 (S8): `--source stash`/`--source both` renamed to `--from
-  // local`/`--from all`. Reject the retired values explicitly — otherwise
-  // they fall through to the named-source lookup below and surface as a
-  // misleading "no source named stash/both" error instead of naming the
-  // rename.
-  if (source === "stash") {
-    throw new UsageError('"stash" was renamed to "local" in 0.9. Use `--from local` instead.', "INVALID_FLAG_VALUE");
-  }
-  if (source === "both") {
-    throw new UsageError('"both" was renamed to "all" in 0.9. Use `--from all` instead.', "INVALID_FLAG_VALUE");
-  }
   // Pass through unknown strings — they may be valid named sources.
   // `akmSearch` will validate against config.sources and throw a UsageError
   // with a helpful message if the name isn't found.

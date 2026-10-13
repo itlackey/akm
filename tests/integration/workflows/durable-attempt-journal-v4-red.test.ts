@@ -69,7 +69,6 @@ interface ReserveUnitAttemptV4Input {
   engine: string | null;
   model: string | null;
   inputHash: string;
-  worktreePath?: string | null;
   now: string;
 }
 

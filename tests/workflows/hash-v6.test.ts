@@ -184,7 +184,6 @@ function stepPlanWithTarget(target: FrozenWorkflowTarget, stepId = "spawn"): Wor
       id: `${stepId}.unit`,
       instructions: "Spawn the child workflow.",
       onError: "fail",
-      isolation: "none",
       frozenTarget: target,
       environment: [],
     },
