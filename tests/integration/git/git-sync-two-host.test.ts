@@ -233,6 +233,18 @@ describe("saveGitStash across two hosts", () => {
       expect(git(remote, "rev-parse", "main")).toBe(remoteBefore);
     });
 
+    test("a detached HEAD is left alone and does not throw", () => {
+      const { remote, a } = setup();
+      const remoteBefore = git(remote, "rev-parse", "main");
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+      git(a, "checkout", "--detach");
+
+      const result = saveGitStash(undefined, "host A sync", true, { repoDir: a });
+
+      expect(result).toMatchObject({ committed: false, pushed: false, skipped: false });
+      expect(git(remote, "rev-parse", "main")).toBe(remoteBefore);
+    });
+
     test("a rejected push throws GitStashPushError naming the unpushed head", () => {
       const { remote, a } = setup();
       const hook = path.join(remote, "hooks", "pre-receive");

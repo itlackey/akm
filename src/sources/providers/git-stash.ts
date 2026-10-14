@@ -454,7 +454,8 @@ function nothingToCommit(repoDir: string, output: string, syncWithRemote: boolea
   if (integration && "blocked" in integration) {
     return { committed: false, pushed: false, skipped: false, reason: `not pushed: ${integration.blocked}`, output };
   }
-  const head = syncWithRemote ? readOptionalHead(repoDir) : undefined;
+  // readUpstreamConfig is undefined on a detached HEAD or a branch with no upstream: nothing to push.
+  const head = syncWithRemote && readUpstreamConfig(repoDir) ? readOptionalHead(repoDir) : undefined;
   const upstream = head ? readActualUpstream(repoDir, head) : undefined;
   if (head && typeof upstream === "object" && upstream.upstreamHead !== head) {
     const pushOutput = pushToUpstream(repoDir, upstream, head, head);
