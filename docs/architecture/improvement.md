@@ -117,9 +117,12 @@ everything else routes through `akm proposal accept`.
 7. `akm proposal accept` promotes the proposal into the bundle; `akm proposal
    revert` restores the prior content from the backup captured at promotion
    time, if the proposal overwrote an existing asset. When the bundle is a git
-   repository (a `.git` directory, whatever its source kind), each accept is
-   committed as it happens, locally and with exactly the paths it wrote or
-   removed: `akm accept: <generator> <proposal-id-8> <ref>`. A retirement's
+   repository (a `.git` directory, whatever its source kind), an accept is
+   committed locally with exactly the paths it wrote or removed:
+   `akm accept: <generator> <proposal-id-8> <ref>`. A process that accepts
+   several (`akm proposal drain`, a bulk accept, `accept <id> <id>`) commits them
+   once at its end, with a summary subject and one body line per proposal; in
+   `akm improve` the triage accepts join the end-of-run batch commit. A retirement's
    archived copy and tombstone, and the source memory a consolidate promotion
    retires, go in the same commit. A commit that fails warns and the accept
    stands.
@@ -438,7 +441,7 @@ tombstone `retiredAt` is more than 30 days old (`RETIRE_GRACE_DAYS`) AND
 whose archive directory is entirely git-tracked and clean (`git ls-files`
 plus `git status --porcelain -uall`, both checked once per sweep, not once
 per directory). `.git` presence alone does not guarantee a retirement was
-ever committed: an accept commits its own paths (`commitAcceptedPaths` in
+ever committed: an accept commits its own paths, once per process (`commitAcceptedPaths` in
 `src/core/write-source.ts`), on a `kind: "filesystem"` source with a `.git`
 directory too, but a commit that failed only warned, and a retirement accepted
 by an older akm left archived bytes sitting on disk with no commit behind them

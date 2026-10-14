@@ -53,6 +53,7 @@ import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../.
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
 import { type DrainResult, drainProposals } from "../proposal/drain";
 import type { EligibilitySource } from "../proposal/proposal-types";
+import { type AcceptCommitCollector, commitCollectedAccepts } from "../proposal/repository";
 import { type AutonomyLane, describeGatedLanes, isAutonomyLaneAllowed } from "./autonomy-gate";
 import { akmDistill } from "./distill";
 import {
@@ -854,12 +855,16 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
     warn("[improve] triage pre-pass skipped (single-ref scope never drains the whole queue)");
     return undefined;
   }
+  // Triage accepts are journaled, so the end-of-run batch commit covers them; the drain does not commit
+  // them one by one (#1185). Without that batch (--no-sync, no git repository) they are committed here.
+  const commitCollector: AcceptCommitCollector = [];
   try {
     const triageConfig = improveProfile.processes?.triage;
     return await withLlmStage(
       "triage",
       () =>
         run.drainProposalsFn({
+          commitCollector,
           stashDir: primaryStashDir,
           ...(options.target ? { target: options.target } : {}),
           config: options.config,
@@ -874,6 +879,8 @@ async function runTriagePrePass(run: ImproveRunSetup): Promise<DrainResult | und
   } catch (err) {
     warn(`[improve] triage pre-pass failed (non-fatal): ${errMessage(err)}`);
     return undefined;
+  } finally {
+    if (!syncsStash(run)) commitCollectedAccepts(commitCollector, "akm improve triage");
   }
 }
 
@@ -914,6 +921,12 @@ export function resolveSyncPathSet(input: {
 
 type ImproveSyncOutcome = NonNullable<AkmImproveResult["sync"]>;
 
+/** True when the run's end-of-run sync will commit what it wrote: sync is on and the write target is a git repository. */
+function syncsStash(run: ImproveRunSetup): boolean {
+  const repoDir = run.writeTarget?.source.repoPath ?? run.primaryStashDir;
+  return Boolean(run.primaryStashDir && repoDir && run.effectiveSync.enabled !== false && isGitBackedStash(repoDir));
+}
+
 /**
  * One `saveGitStash` call for the run's write-target bundle, shared by the
  * pre-run sync and the auto-sync commit: never throws, records a `stash_synced`
@@ -932,11 +945,9 @@ function runStashSync(
     scopePaths: (target: { repoDir: string; assetRoot: string }) => { paths?: string[]; unattributed?: number };
   },
 ): ImproveSyncOutcome | undefined {
-  const { writeTarget, primaryStashDir, effectiveSync, options, config, improveProfile } = run;
+  const { writeTarget, primaryStashDir, options, config, improveProfile } = run;
   const repoDir = writeTarget?.source.repoPath ?? primaryStashDir;
-  if (!primaryStashDir || !repoDir || effectiveSync.enabled === false || !isGitBackedStash(repoDir)) {
-    return undefined;
-  }
+  if (!primaryStashDir || !repoDir || !syncsStash(run)) return undefined;
   const saveGitStashFn = options.saveGitStashFn ?? saveGitStash;
   const writableOverride = writeTarget ? resolveWritable(writeTarget.config) : resolveWritableOverride(config);
   const push = input.push ?? options.sync?.push ?? improveProfile.sync?.push ?? true;

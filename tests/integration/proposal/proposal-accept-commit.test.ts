@@ -15,7 +15,13 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
+import { stageJudgedProposal } from "../../../src/commands/improve/stage";
+import { drainProposals } from "../../../src/commands/proposal/drain";
+import {
+  akmProposalAccept,
+  akmProposalAcceptMany,
+  bulkAdjudicateProposals,
+} from "../../../src/commands/proposal/proposal";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
 import { saveGitStash } from "../../../src/sources/providers/git";
@@ -63,10 +69,10 @@ function initRepo(options: { remote?: boolean } = {}): string | undefined {
   return remoteDir;
 }
 
-function propose(ref: string) {
+function propose(ref: string, source = "reflect") {
   return createProposal(storage.stashDir, {
     ref,
-    source: "reflect",
+    source,
     target: { source: "stash", root: storage.stashDir },
     payload: { content: LESSON, frontmatter: { description: "Use ripgrep before grep" } },
   });
@@ -87,6 +93,7 @@ describe("an accept into a stash that is a git repository", () => {
     expect(git("log", "-1", "--format=%s")).toBe(`akm accept: reflect ${proposal.id.slice(0, 8)} ${result.ref}`);
     expect(git("show", "--name-only", "--format=", "HEAD")).toBe("lessons/rg.md");
     expect(git("status", "--porcelain").split("\n").sort()).toEqual([" M README.md", "?? scratch.txt"]);
+    expect(git("rev-list", "--count", "HEAD")).toBe("2");
   });
 
   test("commits locally: the remote only sees the accept once the end-of-run sync pushes it", async () => {
@@ -123,6 +130,97 @@ describe("an accept into a stash that is a git repository", () => {
     expect(fs.existsSync(path.join(storage.stashDir, "lessons", "rg.md"))).toBe(true);
     expect(warnings.join("\n")).toContain("could not commit the accept");
     expect(git("log", "-1", "--format=%s")).toBe("seed");
+  });
+});
+
+/** The commit subjects after the seed commit, newest first. */
+const subjectsSinceSeed = () => git("log", "--format=%s", "seed..HEAD").split("\n").filter(Boolean);
+
+describe("a process that accepts several proposals commits once (#1185)", () => {
+  test("accepting several ids is one commit whose body lists each proposal", async () => {
+    initRepo();
+    git("tag", "seed");
+    const proposals = [propose("lessons/a"), propose("lessons/b"), propose("lessons/c", "distill")];
+
+    const results = await akmProposalAcceptMany({
+      ids: proposals.map((proposal) => proposal.id),
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+    });
+
+    expect(results.map((result) => result.ok)).toEqual([true, true, true]);
+    expect(subjectsSinceSeed()).toEqual(["akm proposal accept: 3 accepted (reflect 2, distill 1)"]);
+    expect(git("show", "--name-only", "--format=", "HEAD").split("\n").sort()).toEqual([
+      "lessons/a.md",
+      "lessons/b.md",
+      "lessons/c.md",
+    ]);
+    const body = git("log", "-1", "--format=%b").split("\n").filter(Boolean);
+    expect(body.sort()).toEqual(
+      proposals.map((proposal) => `${proposal.id.slice(0, 8)} ${proposal.source} ${proposal.ref}`).sort(),
+    );
+    expect(git("status", "--porcelain")).toBe("");
+  });
+
+  test("an id that fails is reported and the others are still committed", async () => {
+    initRepo();
+    git("tag", "seed");
+    const first = propose("lessons/a");
+    const second = propose("lessons/b");
+
+    const results = await akmProposalAcceptMany({
+      ids: [first.id, "00000000-0000-4000-8000-000000000000", second.id],
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+    });
+
+    expect(results.map((result) => result.ok)).toEqual([true, false, true]);
+    expect(results[1]).toMatchObject({ id: "00000000-0000-4000-8000-000000000000", ok: false });
+    expect((results[1] as { error: string }).error).not.toBe("");
+    expect(subjectsSinceSeed()).toEqual(["akm proposal accept: 2 accepted (reflect 2)"]);
+    expect(git("show", "--name-only", "--format=", "HEAD").split("\n").sort()).toEqual([
+      "lessons/a.md",
+      "lessons/b.md",
+    ]);
+  });
+
+  test("a bulk accept by generator is one commit", async () => {
+    initRepo();
+    git("tag", "seed");
+    propose("lessons/a");
+    propose("lessons/b");
+
+    const { count } = await bulkAdjudicateProposals({
+      action: "accept",
+      generator: "reflect",
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+    });
+
+    expect(count).toBe(2);
+    expect(subjectsSinceSeed()).toEqual(["akm proposal accept: 2 accepted (reflect 2)"]);
+  });
+
+  test("a drain is one commit, and a remote sees one push", async () => {
+    const remoteDir = initRepo({ remote: true });
+    git("tag", "seed");
+    const proposals = ["lessons/a", "lessons/b", "lessons/c"].map((ref, index) =>
+      stageJudgedProposal(storage.stashDir, propose(ref, index === 2 ? "distill" : "reflect")),
+    );
+
+    const result = await drainProposals({
+      stashDir: storage.stashDir,
+      config: makeConfig(storage.stashDir),
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+
+    expect(result.promoted.sort()).toEqual(proposals.map((proposal) => proposal.id).sort());
+    expect(subjectsSinceSeed()).toEqual(["akm proposal drain: 3 accepted (reflect 2, distill 1)"]);
+    expect(git("log", "-1", "--format=%b").split("\n").filter(Boolean)).toHaveLength(3);
+    // The stash is a filesystem source here, so the commit stays local, as for a single accept.
+    expect(run(remoteDir as string, "log", "-1", "--format=%s", "main")).toBe("seed");
   });
 });
 

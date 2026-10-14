@@ -305,6 +305,28 @@ describe("akm proposal accept/reject/diff (CLI)", () => {
     const parsed = JSON.parse(result.stdout);
     expect(parsed.ok).toBe(true);
   });
+
+  test("several ids: one batch envelope; a failing id is reported, exits 1 and the others are still accepted", async () => {
+    const stash = makeStashDir();
+    const first = seedProposal(stash, "lessons/rg-over-grep");
+    const second = seedProposal(stash, "lessons/docker-cleanup");
+    const missing = "00000000-0000-4000-8000-000000000000";
+
+    const result = await runCli(["proposal", "accept", first.id, missing, second.id, "--format=json"], {
+      stashDir: stash,
+    });
+
+    expect(result.status).toBe(1);
+    const parsed = JSON.parse(result.stdout);
+    expect(parsed).toMatchObject({ accepted: 2, failed: 1, shape: "proposal-accept-batch" });
+    expect(parsed.results.map((r: { id: string; ok: boolean }) => [r.id, r.ok])).toEqual([
+      [first.id, true],
+      [missing, false],
+      [second.id, true],
+    ]);
+    expect(getProposal(stash, first.id).status).toBe("accepted");
+    expect(getProposal(stash, second.id).status).toBe("accepted");
+  });
 });
 
 /** A `consolidate-pair` retire proposal over two real memories in `stash` (real body hashes: accept refuses a stale pair). */

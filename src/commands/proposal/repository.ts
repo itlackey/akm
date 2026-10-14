@@ -1296,6 +1296,8 @@ export async function promoteProposal(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
+    commitCollector?: AcceptCommitCollector;
   } = {},
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1462,6 +1464,54 @@ function acceptCommitMessage(proposal: Proposal): string {
 }
 
 /**
+ * Accepts whose commit waits for the end of the process (#1185). A loop of
+ * accepts (a drain, a bulk accept, `accept <id> <id>`) passes one collector to
+ * every accept, then commits the lot once with {@link commitCollectedAccepts};
+ * without a collector an accept commits as it happens.
+ */
+export type AcceptCommitCollector = Array<{ target: ResolvedWriteTarget; proposal: Proposal; paths: string[] }>;
+
+function commitAccept(
+  collector: AcceptCommitCollector | undefined,
+  target: ResolvedWriteTarget,
+  proposal: Proposal,
+  paths: string[],
+): void {
+  if (collector) collector.push({ target, proposal, paths });
+  else commitAcceptedPaths(target, acceptCommitMessage(proposal), paths);
+}
+
+/**
+ * Commit everything `collector` holds, one commit per target repository: a lone
+ * accept keeps its own subject; several get `<label>: N accepted (source count,
+ * ...)` with one `<id8> <source> <ref>` body line per proposal. Empties the
+ * collector. A failed commit only warns, as for a single accept.
+ */
+export function commitCollectedAccepts(collector: AcceptCommitCollector, label: string): void {
+  const byRepo = new Map<string, AcceptCommitCollector>();
+  for (const entry of collector.splice(0)) {
+    const key = path.resolve(entry.target.source.repoPath ?? entry.target.source.path);
+    byRepo.set(key, [...(byRepo.get(key) ?? []), entry]);
+  }
+  for (const entries of byRepo.values()) {
+    const first = entries[0] as AcceptCommitCollector[number];
+    if (entries.length === 1) {
+      commitAcceptedPaths(first.target, acceptCommitMessage(first.proposal), first.paths);
+      continue;
+    }
+    const counts = new Map<string, number>();
+    for (const { proposal } of entries) counts.set(proposal.source, (counts.get(proposal.source) ?? 0) + 1);
+    const bySource = [...counts].sort((a, b) => b[1] - a[1]).map(([source, count]) => `${source} ${count}`);
+    commitAcceptedPaths(
+      first.target,
+      `${label}: ${entries.length} accepted (${bySource.join(", ")})`,
+      entries.flatMap((entry) => entry.paths),
+      entries.map(({ proposal }) => `${proposal.id.slice(0, 8)} ${proposal.source} ${proposal.ref}`),
+    );
+  }
+}
+
+/**
  * O1 (alpha.9): an accepted consolidate PROMOTION retires its source memory
  * (and its `.derived` twin), so promotion no longer leaves a memory/
  * knowledge duplicate behind. Runs whether a person accepted the promotion
@@ -1538,6 +1588,8 @@ async function promoteProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
+    commitCollector?: AcceptCommitCollector;
   },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1593,7 +1645,7 @@ async function promoteProposalWithLease(
   const paths = [assetPath];
   if (accepted.status === "accepted" && accepted.source === "consolidate")
     retirePromotionSource(mutationTarget, accepted, paths);
-  commitAcceptedPaths(mutationTarget, acceptCommitMessage(accepted), paths);
+  commitAccept(options.commitCollector, mutationTarget, accepted, paths);
   return { proposal: accepted, assetPath, ref: accepted.ref };
 }
 
@@ -1798,6 +1850,8 @@ async function retireProposalWithLease(
     queueTarget?: ResolvedWriteTarget;
     eventMetadata?: Record<string, unknown>;
     gateDecision?: GateDecisionInput;
+    /** Defer the commit to the caller (see {@link AcceptCommitCollector}). */
+    commitCollector?: AcceptCommitCollector;
   },
   ctx?: ProposalsContext,
 ): Promise<PromoteResult> {
@@ -1918,7 +1972,7 @@ async function retireProposalWithLease(
       path.join(mutationTarget.source.path, twinRecord.auditPath),
     );
   }
-  if (paths.length > 0) commitAcceptedPaths(mutationTarget, acceptCommitMessage(proposal), paths);
+  if (paths.length > 0) commitAccept(options.commitCollector, mutationTarget, proposal, paths);
 
   if (archiveDirs.length === 0) {
     // Recorded intent, but neither file is at its original location NOR

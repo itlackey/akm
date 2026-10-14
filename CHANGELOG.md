@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- **A process that accepts several proposals commits once, not once per proposal.** `akm proposal drain`,
+  `akm proposal accept --generator` and the triage drain inside `akm improve` used to make one commit (and, on a git-kind
+  bundle, one push) per accepted proposal. They now commit once when they finish, with a subject such as
+  `akm proposal drain: 37 accepted (consolidate-pair 30, consolidate 7)` and one `<id8> <source> <ref>` body line per
+  proposal. In `akm improve`, triage accepts join the run's end-of-run batch commit. A single `akm proposal accept <id>`
+  is still one commit, and `akm proposal accept <id> <id> ...` now accepts several ids in one process and commits them
+  once; an id that fails is reported in the batch result (exit 1) and the others still land.
+
 ### Fixed
 
 - **`akm sync` pushes commits that were made earlier.** With a clean working tree it fetched and merged the upstream
