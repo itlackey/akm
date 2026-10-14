@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261005] - 2026-10-14
+
 ### Changed
 
 - **A process that accepts several proposals commits once, not once per proposal.** `akm proposal drain`,
