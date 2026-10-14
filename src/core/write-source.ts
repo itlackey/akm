@@ -598,9 +598,10 @@ export function commitWriteTargetBoundary(
     if (saved.reason) warn(`warning: "${target.source.name}" ${saved.reason}`);
   } catch (error) {
     if (error instanceof GitStashPushError) {
-      throw new Error(`Changes were committed as ${error.commit}, but publication failed: ${error.message}`, {
-        cause: error,
-      });
+      const what = error.committedNow
+        ? `Changes were committed as ${error.commit}`
+        : `Nothing new to commit; earlier commits up to ${error.commit} are unpushed`;
+      throw new Error(`${what}, but publication failed: ${error.message}`, { cause: error });
     }
     throw error;
   }

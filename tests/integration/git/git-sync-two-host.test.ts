@@ -260,6 +260,8 @@ describe("saveGitStash across two hosts", () => {
 
       expect(error).toBeInstanceOf(GitStashPushError);
       expect((error as GitStashPushError).commit).toBe(git(a, "rev-parse", "HEAD"));
+      // Nothing was committed by this call, so callers must not report a new commit.
+      expect((error as GitStashPushError).committedNow).toBe(false);
     });
   });
 

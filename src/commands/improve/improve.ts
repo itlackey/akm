@@ -969,7 +969,7 @@ function runStashSync(
     const reason = errMessage(syncErr);
     warn(`improve: stash sync failed (non-fatal): ${reason}`);
     // A push that failed after the commit landed still left the commit in the repo.
-    const committed = syncErr instanceof GitStashPushError;
+    const committed = syncErr instanceof GitStashPushError && syncErr.committedNow;
     record({ committed, pushed: false, skipped: true, reason });
     return { committed, pushed: false, skipped: true, reason };
   }

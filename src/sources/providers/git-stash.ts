@@ -153,11 +153,14 @@ export interface SaveGitStashResult {
 
 export class GitStashPushError extends Error {
   readonly commit: string;
+  /** False when the push was of commits made earlier (nothing was committed by this call). */
+  readonly committedNow: boolean;
 
-  constructor(message: string, commit: string) {
+  constructor(message: string, commit: string, committedNow = true) {
     super(message);
     this.name = "GitStashPushError";
     this.commit = commit;
+    this.committedNow = committedNow;
   }
 }
 
@@ -426,6 +429,7 @@ function pushToUpstream(
   target: { remote: string; mergeRef: string; upstreamHead: string },
   head: string,
   commit: string,
+  committedNow = true,
 ): string {
   const pushResult = runGit(
     [
@@ -439,7 +443,11 @@ function pushToUpstream(
     { timeout: GIT_PUSH_TIMEOUT_MS },
   );
   if (pushResult.status !== 0) {
-    throw new GitStashPushError(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`, commit);
+    throw new GitStashPushError(
+      `git push failed: ${pushResult.stderr?.trim() || "unknown error"}`,
+      commit,
+      committedNow,
+    );
   }
   return pushResult.stdout.trim();
 }
@@ -458,7 +466,7 @@ function nothingToCommit(repoDir: string, output: string, syncWithRemote: boolea
   const head = syncWithRemote && readUpstreamConfig(repoDir) ? readOptionalHead(repoDir) : undefined;
   const upstream = head ? readActualUpstream(repoDir, head) : undefined;
   if (head && typeof upstream === "object" && upstream.upstreamHead !== head) {
-    const pushOutput = pushToUpstream(repoDir, upstream, head, head);
+    const pushOutput = pushToUpstream(repoDir, upstream, head, head, false);
     return {
       committed: false,
       pushed: true,
