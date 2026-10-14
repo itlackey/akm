@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm sync` pushes commits that were made earlier.** With a clean working tree it fetched and merged the upstream
+  but never pushed, so a commit made outside `akm sync` (an `akm proposal accept` on a filesystem bundle, an improve
+  run killed before its end-of-run sync, a manual commit) stayed ahead of the remote and `akm sync` reported
+  `pushed: false`. It now pushes those commits when the bundle is writable, has an upstream and push is allowed, and
+  reports `pushed: true`. `--no-push`, read-only bundles and branches without an upstream are unchanged.
+
 ## [0.10.261004] - 2026-10-13
 
 ### Fixed
