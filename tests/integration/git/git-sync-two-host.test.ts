@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { saveGitStash } from "../../../src/sources/providers/git";
+import { GitStashPushError, saveGitStash } from "../../../src/sources/providers/git";
 
 const tempDirs: string[] = [];
 
@@ -161,5 +161,103 @@ describe("saveGitStash across two hosts", () => {
     expect(result).toMatchObject({ committed: true, pushed: false });
     expect(fs.existsSync(path.join(a, "from-b.md"))).toBe(false);
     expect(git(remote, "log", "-1", "--format=%s", "main")).toBe("host B change");
+  });
+
+  describe("a clean tree with a commit made earlier and never pushed", () => {
+    test("is pushed, and reported as pushed", () => {
+      const { remote, a } = setup();
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+
+      const result = saveGitStash(undefined, "host A sync", true, { repoDir: a });
+
+      expect(result).toMatchObject({ committed: false, pushed: true, skipped: false });
+      expect(result.output).toBeTruthy();
+      expect(git(remote, "rev-parse", "main")).toBe(git(a, "rev-parse", "HEAD"));
+      expect(git(a, "status", "-sb")).not.toContain("ahead");
+    });
+
+    test("is pushed with the paths-scoped form the improve and accept callers use", () => {
+      const { remote, a } = setup();
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+
+      const result = saveGitStash(undefined, "host A sync", true, { repoDir: a, paths: ["nothing-changed.md"] });
+
+      expect(result).toMatchObject({ committed: false, pushed: true });
+      expect(git(remote, "rev-parse", "main")).toBe(git(a, "rev-parse", "HEAD"));
+    });
+
+    test("is pushed after a merge brings in another host's commit", () => {
+      const { remote, a, b } = setup();
+      commitFile(b, "from-b.md", "b\n", "host B change");
+      git(b, "push", "origin", "main");
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+
+      const result = saveGitStash(undefined, "host A sync", true, { repoDir: a });
+
+      expect(result).toMatchObject({ committed: false, pushed: true });
+      expect(git(remote, "rev-parse", "main")).toBe(git(a, "rev-parse", "HEAD"));
+      expect(git(remote, "log", "--format=%s", "main")).toContain("committed outside akm sync");
+    });
+
+    test("--no-push (push: false) leaves it unpushed", () => {
+      const { remote, a } = setup();
+      const remoteBefore = git(remote, "rev-parse", "main");
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+
+      const result = saveGitStash(undefined, "host A sync", true, { repoDir: a, push: false });
+
+      expect(result).toMatchObject({ committed: false, pushed: false });
+      expect(git(remote, "rev-parse", "main")).toBe(remoteBefore);
+    });
+
+    test("a read-only bundle leaves it unpushed", () => {
+      const { remote, a } = setup();
+      const remoteBefore = git(remote, "rev-parse", "main");
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+
+      const result = saveGitStash(undefined, "host A sync", false, { repoDir: a });
+
+      expect(result).toMatchObject({ committed: false, pushed: false });
+      expect(git(remote, "rev-parse", "main")).toBe(remoteBefore);
+    });
+
+    test("a branch with no upstream is left alone", () => {
+      const { remote, a } = setup();
+      const remoteBefore = git(remote, "rev-parse", "main");
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+      git(a, "branch", "--unset-upstream");
+
+      const result = saveGitStash(undefined, "host A sync", true, { repoDir: a });
+
+      expect(result).toMatchObject({ committed: false, pushed: false, skipped: false });
+      expect(git(remote, "rev-parse", "main")).toBe(remoteBefore);
+    });
+
+    test("a rejected push throws GitStashPushError naming the unpushed head", () => {
+      const { remote, a } = setup();
+      const hook = path.join(remote, "hooks", "pre-receive");
+      fs.writeFileSync(hook, "#!/bin/sh\necho rejected >&2\nexit 1\n", { mode: 0o755 });
+      commitFile(a, "earlier.md", "x\n", "committed outside akm sync");
+
+      let error: unknown;
+      try {
+        saveGitStash(undefined, "host A sync", true, { repoDir: a });
+      } catch (caught) {
+        error = caught;
+      }
+
+      expect(error).toBeInstanceOf(GitStashPushError);
+      expect((error as GitStashPushError).commit).toBe(git(a, "rev-parse", "HEAD"));
+    });
+  });
+
+  test("a clean tree that is not ahead pushes nothing", () => {
+    const { remote, a } = setup();
+    const remoteBefore = git(remote, "rev-parse", "main");
+
+    const result = saveGitStash(undefined, "host A sync", true, { repoDir: a });
+
+    expect(result).toMatchObject({ committed: false, pushed: false, skipped: false });
+    expect(git(remote, "rev-parse", "main")).toBe(remoteBefore);
   });
 });

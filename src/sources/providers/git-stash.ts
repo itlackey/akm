@@ -398,26 +398,13 @@ export function saveGitStash(
     };
   }
 
-  const pushResult = runGit(
-    [
-      "-C",
-      repoDir,
-      "push",
-      `--force-with-lease=${pushTarget.mergeRef}:${pushTarget.upstreamHead}`,
-      pushTarget.remote,
-      `${readOptionalHead(repoDir) ?? exactCommit}:${pushTarget.mergeRef}`,
-    ],
-    { timeout: GIT_PUSH_TIMEOUT_MS },
-  );
-  if (pushResult.status !== 0) {
-    throw new GitStashPushError(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`, exactCommit);
-  }
+  const pushOutput = pushToUpstream(repoDir, pushTarget, readOptionalHead(repoDir) ?? exactCommit, exactCommit);
 
   return {
     committed: true,
     pushed: true,
     skipped: false,
-    output: pushResult.stdout.trim() || "changes committed and pushed",
+    output: pushOutput || "changes committed and pushed",
     commit: exactCommit,
   };
 }
@@ -430,11 +417,53 @@ function readHasRemote(repoDir: string): boolean {
   return remoteResult.stdout.trim().length > 0;
 }
 
-/** Nothing to commit still brings in the upstream, so a host with no changes of its own keeps up. */
+/**
+ * Push `head` to the upstream, leased on the upstream head just read. Throws {@link GitStashPushError}
+ * (carrying `commit`) when git refuses. Returns git's stdout.
+ */
+function pushToUpstream(
+  repoDir: string,
+  target: { remote: string; mergeRef: string; upstreamHead: string },
+  head: string,
+  commit: string,
+): string {
+  const pushResult = runGit(
+    [
+      "-C",
+      repoDir,
+      "push",
+      `--force-with-lease=${target.mergeRef}:${target.upstreamHead}`,
+      target.remote,
+      `${head}:${target.mergeRef}`,
+    ],
+    { timeout: GIT_PUSH_TIMEOUT_MS },
+  );
+  if (pushResult.status !== 0) {
+    throw new GitStashPushError(`git push failed: ${pushResult.stderr?.trim() || "unknown error"}`, commit);
+  }
+  return pushResult.stdout.trim();
+}
+
+/**
+ * Nothing to commit still brings in the upstream, so a host with no changes of its own keeps up. Commits
+ * made earlier and never pushed (a proposal accept, a killed improve run) are pushed here, once the
+ * branch is up to date with its upstream and ahead of it.
+ */
 function nothingToCommit(repoDir: string, output: string, syncWithRemote: boolean): SaveGitStashResult {
   const integration = syncWithRemote ? integrateUpstream(repoDir) : undefined;
   if (integration && "blocked" in integration) {
     return { committed: false, pushed: false, skipped: false, reason: `not pushed: ${integration.blocked}`, output };
+  }
+  const head = syncWithRemote ? readOptionalHead(repoDir) : undefined;
+  const upstream = head ? readActualUpstream(repoDir, head) : undefined;
+  if (head && typeof upstream === "object" && upstream.upstreamHead !== head) {
+    const pushOutput = pushToUpstream(repoDir, upstream, head, head);
+    return {
+      committed: false,
+      pushed: true,
+      skipped: false,
+      output: pushOutput || `pushed ${upstream.upstreamHead.slice(0, 7)}..${head.slice(0, 7)}`,
+    };
   }
   return { committed: false, pushed: false, skipped: false, output: integration?.integrated ?? output };
 }
