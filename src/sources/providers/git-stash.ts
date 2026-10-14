@@ -175,6 +175,8 @@ export interface SaveGitStashOptions {
   transactionId?: string;
   /** Exact post-mutation blobs the commit must contain. */
   expectedSnapshots?: GitExactPathSnapshots;
+  /** Lines appended to the commit message after a blank line, each sanitized to one line. */
+  body?: string[];
 }
 
 const GIT_PUSH_TIMEOUT_MS = 120_000;
@@ -258,7 +260,11 @@ export function saveGitStash(
   // Co-Authored-By: someone-else"` and forge trailers in the commit log.
   // Empty result falls back to the timestamped default.
   const sanitized = message ? sanitizeCommitMessage(message) : "";
-  const commitMessage = sanitized || `akm save ${timestamp}`;
+  const bodyLines = (options?.body ?? []).map(sanitizeCommitMessage).filter(Boolean);
+  const commitMessage = [
+    sanitized || `akm save ${timestamp}`,
+    ...(bodyLines.length > 0 ? ["", ...bodyLines] : []),
+  ].join("\n");
   const transactionId = options?.transactionId;
   if (transactionId !== undefined && !/^[A-Za-z0-9._-]{1,128}$/.test(transactionId)) {
     throw new Error("Invalid Git transaction identifier.");

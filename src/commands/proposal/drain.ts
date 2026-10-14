@@ -57,6 +57,8 @@ import { errMessage, noticeSet } from "../improve/stage";
 import { akmProposalAccept, akmProposalReject, type ProposalRejectResult } from "./proposal";
 import { isRetireProposal, PAIR_PASS_GATE, STALE_TARGET_GATE_REASON } from "./proposal-types";
 import {
+  type AcceptCommitCollector,
+  commitCollectedAccepts,
   listProposals,
   listProposalsReadOnly,
   type Proposal,
@@ -89,6 +91,12 @@ export interface DrainOptions {
   /** The judgment tier's runner; absent leaves undecided proposals for review. */
   judgment?: RunnerSpec | null;
   eventsCtx?: EventsContext;
+  /**
+   * Where this run's accepts wait for their commit. A caller that commits them
+   * itself (`akm improve`'s end-of-run batch) passes one; without it the drain
+   * commits them once when it ends (#1185).
+   */
+  commitCollector?: AcceptCommitCollector;
 }
 
 export interface DrainResult {
@@ -180,6 +188,7 @@ async function acceptProposal(
         id,
         ...(opts.target ? { target: opts.target } : {}),
         ...(opts.config ? { config: opts.config } : {}),
+        ...(opts.commitCollector ? { commitCollector: opts.commitCollector } : {}),
         gateDecision,
       });
     } else if (opts.config) {
@@ -555,6 +564,21 @@ export async function drainProposals(
   promoteFn: PromoteFn = akmProposalAccept,
   rejectFn: RejectFn = akmProposalReject,
   judgmentSeams: JudgmentSeams = {},
+): Promise<DrainResult> {
+  if (opts.commitCollector) return drainPending(opts, promoteFn, rejectFn, judgmentSeams);
+  const commitCollector: AcceptCommitCollector = [];
+  try {
+    return await drainPending({ ...opts, commitCollector }, promoteFn, rejectFn, judgmentSeams);
+  } finally {
+    commitCollectedAccepts(commitCollector, "akm proposal drain");
+  }
+}
+
+async function drainPending(
+  opts: DrainOptions,
+  promoteFn: PromoteFn,
+  rejectFn: RejectFn,
+  judgmentSeams: JudgmentSeams,
 ): Promise<DrainResult> {
   const exclude = opts.excludeIds ?? new Set<string>();
   // A judgment runner's credentials are validated before any live state

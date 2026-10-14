@@ -23,7 +23,8 @@
  * {@link commitWriteTargetBoundary} once — or wrap a custom mutation in
  * {@link withWriteTargetMutation}, which does both under the asset lease. An
  * accepted proposal commits its own paths ({@link commitAcceptedPaths}), on a
- * filesystem stash that is a git repository too.
+ * filesystem stash that is a git repository too. A process that accepts many
+ * proposals collects them and commits once at its boundary (#1185).
  */
 
 import fs from "node:fs";
@@ -567,7 +568,7 @@ export function withWriteTargetMutation<T>(
 export function commitWriteTargetBoundary(
   target: ResolvedWriteTarget,
   message: string,
-  options?: { push?: boolean; paths?: string[]; filesystem?: boolean },
+  options?: { push?: boolean; paths?: string[]; filesystem?: boolean; body?: string[] },
 ): void {
   if (target.source.kind !== "git" && !options?.filesystem) return;
   const repoDir = repoDirFor(target.source);
@@ -593,6 +594,7 @@ export function commitWriteTargetBoundary(
     const saved = saveGitStash(undefined, message, resolveWritable(target.config), {
       repoDir,
       paths: committable,
+      ...(options?.body ? { body: options.body } : {}),
       ...(options?.push === undefined ? {} : { push: options.push }),
     });
     if (saved.reason) warn(`warning: "${target.source.name}" ${saved.reason}`);
@@ -612,10 +614,16 @@ export function commitWriteTargetBoundary(
  * boundary commit skips, locally (the end-of-run sync pushes). A failed commit
  * only warns, since the accept already landed.
  */
-export function commitAcceptedPaths(target: ResolvedWriteTarget, message: string, paths: string[]): void {
+export function commitAcceptedPaths(
+  target: ResolvedWriteTarget,
+  message: string,
+  paths: string[],
+  body?: string[],
+): void {
   try {
     commitWriteTargetBoundary(target, message, {
       paths,
+      ...(body ? { body } : {}),
       filesystem: true,
       ...(target.source.kind === "git" ? {} : { push: false }),
     });

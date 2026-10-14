@@ -16,7 +16,7 @@
  */
 
 import { parsePositiveIntFlag } from "../../cli/parse-args";
-import { defineGroupCommand, defineJsonCommand, output } from "../../cli/shared";
+import { defineGroupCommand, defineJsonCommand, EXIT_CODES, output } from "../../cli/shared";
 import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { UsageError } from "../../core/errors";
@@ -29,6 +29,7 @@ import { resolveImproveStrategy } from "../improve/improve-strategies";
 import { drainProposals } from "./drain";
 import {
   akmProposalAccept,
+  akmProposalAcceptMany,
   akmProposalDiff,
   akmProposalList,
   akmProposalReject,
@@ -114,12 +115,16 @@ const proposalListCommand = defineJsonCommand({
 });
 
 const proposalAcceptCommand = defineJsonCommand({
-  meta: { name: "accept", description: "Accept a proposal and promote it into the bundle" },
+  meta: {
+    name: "accept",
+    description:
+      "Accept proposals and promote them into the bundle. Several ids are accepted in one process and committed once.",
+  },
   args: {
     id: {
       type: "positional",
       description:
-        "Proposal id (uuid / prefix) or asset ref (e.g. skills/akm-dream). Optional when --generator is provided.",
+        "Proposal id (uuid / prefix) or asset ref (e.g. skills/akm-dream); repeat it to accept several at once. Optional when --generator is provided.",
       required: false,
     },
     queue: { type: "string", description: "Select the proposal queue by source name" },
@@ -189,12 +194,25 @@ const proposalAcceptCommand = defineJsonCommand({
     }
     if (!args.id) {
       throw new UsageError(
-        "Usage: akm proposal accept <id>  OR  akm proposal accept --generator <generator>",
+        "Usage: akm proposal accept <id> [<id> ...]  OR  akm proposal accept --generator <generator>",
         "MISSING_REQUIRED_ARGUMENT",
       );
     }
+    // citty keeps every positional token in `_`, though it declares only `id`.
+    const ids = (Array.isArray(args._) && args._.length > 0 ? args._ : [args.id]).map(String);
+    if (ids.length > 1) {
+      const results = await akmProposalAcceptMany({
+        ids,
+        queue: args.queue as string | undefined,
+        target: args.bundle as string | undefined,
+      });
+      const failed = results.filter((result) => !result.ok).length;
+      output("proposal-accept-batch", { accepted: results.length - failed, failed, results });
+      if (failed > 0) process.exitCode = EXIT_CODES.GENERAL;
+      return;
+    }
     const result = await akmProposalAccept({
-      id: args.id as string,
+      id: ids[0] as string,
       queue: args.queue as string | undefined,
       target: args.bundle as string | undefined,
     });

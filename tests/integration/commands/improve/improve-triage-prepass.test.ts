@@ -17,10 +17,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { akmImprove } from "../../../../src/commands/improve/improve";
-import type { DrainResult } from "../../../../src/commands/proposal/drain";
+import type { DrainOptions, DrainResult } from "../../../../src/commands/proposal/drain";
+import { akmProposalAccept } from "../../../../src/commands/proposal/proposal";
+import { createProposal } from "../../../../src/commands/proposal/repository";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { saveConfig } from "../../../../src/core/config/config";
 import { readEvents } from "../../../../src/core/events";
@@ -539,4 +542,98 @@ describe("akm improve — triage pre-pass", () => {
     },
     TIMEOUT_MS,
   );
+
+  describe("accepts made by the drain (#1185)", () => {
+    const git = (...args: string[]): string => {
+      const result = spawnSync("git", ["-C", stashDir, ...args], { encoding: "utf8" });
+      expect(result.status).toBe(0);
+      return result.stdout.replace(/\n$/, "");
+    };
+
+    function initGitStash(): void {
+      expect(spawnSync("git", ["init", "--initial-branch=main", stashDir], { encoding: "utf8" }).status).toBe(0);
+      git("config", "user.email", "test@akm.local");
+      git("config", "user.name", "akm test");
+      fs.writeFileSync(path.join(stashDir, ".gitignore"), ".akm/\n");
+      git("add", ".gitignore");
+      git("commit", "-m", "seed");
+      git("tag", "seed");
+    }
+
+    /** A drain that accepts two real proposals through the collector it was handed. */
+    function drainAcceptingTwo(): (opts: DrainOptions) => Promise<DrainResult> {
+      return async (opts) => {
+        const result = emptyDrainResult();
+        for (const name of ["a", "b"]) {
+          const proposal = createProposal(stashDir, {
+            ref: `lessons/${name}`,
+            source: "reflect",
+            target: { source: "stash", root: stashDir },
+            payload: {
+              content: `---\ndescription: Lesson ${name}\nwhen_to_use: Testing\n---\n\nBody ${name}.\n`,
+              frontmatter: { description: `Lesson ${name}` },
+            },
+          });
+          await akmProposalAccept({
+            stashDir,
+            id: proposal.id,
+            config: opts.config,
+            ...(opts.commitCollector ? { commitCollector: opts.commitCollector } : {}),
+          });
+          result.promoted.push(proposal.id);
+        }
+        return result;
+      };
+    }
+
+    test(
+      "triage accepts join the run's end-of-run batch commit instead of committing one by one",
+      async () => {
+        writeMemory("alpha", "Remember alpha details.");
+        await akmIndex({ stashDir, full: true });
+        initGitStash();
+
+        const result = await akmImprove({
+          scope: "memory",
+          stashDir,
+          config: { ...triageEnabledConfig(true), stashDir },
+          drainProposalsFn: drainAcceptingTwo() as never,
+        });
+
+        expect(result.ok).toBe(true);
+        const subjects = git("log", "--format=%s", "seed..HEAD").split("\n").filter(Boolean);
+        expect(subjects.filter((subject) => subject.startsWith("akm accept:"))).toEqual([]);
+        // The pre-run sync commits the memory written before the repository existed; the batch commit is the last.
+        expect(subjects).toHaveLength(2);
+        expect(subjects[1]).toContain("pre-run sync");
+        expect(git("show", "--name-only", "--format=", "HEAD").split("\n").sort()).toEqual([
+          "lessons/a.md",
+          "lessons/b.md",
+        ]);
+      },
+      TIMEOUT_MS,
+    );
+
+    test(
+      "with sync disabled the triage accepts are still committed once, when the pre-pass ends",
+      async () => {
+        writeMemory("alpha", "Remember alpha details.");
+        await akmIndex({ stashDir, full: true });
+        initGitStash();
+
+        const result = await akmImprove({
+          scope: "memory",
+          stashDir,
+          config: { ...triageEnabledConfig(true), stashDir },
+          sync: { enabled: false },
+          drainProposalsFn: drainAcceptingTwo() as never,
+        });
+
+        expect(result.ok).toBe(true);
+        const subjects = git("log", "--format=%s", "seed..HEAD").split("\n").filter(Boolean);
+        expect(subjects).toEqual([expect.stringMatching(/^akm improve triage: 2 accepted \(reflect 2\)$/)]);
+      },
+      TIMEOUT_MS,
+    );
+  });
 });

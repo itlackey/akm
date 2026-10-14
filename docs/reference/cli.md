@@ -3058,6 +3058,7 @@ UUID, an 8-character UUID prefix, or an asset ref.
 
 ```sh
 akm proposal accept <id>
+akm proposal accept <id> <id> <id>             # several at once: one commit
 akm proposal accept 7c115132                  # 8-char UUID prefix
 akm proposal accept skills/akm-dream           # Asset ref
 akm proposal accept <id> --queue team-bundle
@@ -3081,10 +3082,19 @@ Bulk-accept all pending proposals from one generator with `--generator <name>`
 (e.g. `reflect`, `distill`) and no positional id. Bulk accept requires
 `-y`/`--yes` in non-interactive shells.
 
+Several ids accept in one process and return one `proposal-accept-batch`
+envelope (`accepted`, `failed`, and a `results` list in argument order). An id
+that fails appears as `{ ok: false, id, error }`, the command exits 1, and the
+others are still accepted and committed.
+
 When the destination bundle is a git repository (a `.git` directory, whatever
-its source kind), each accept is committed as it happens, with exactly the paths
-it wrote or removed and the subject `akm accept: <generator> <proposal-id-8>
-<ref>`. A retirement's archived copy and tombstone, and the source memory a
+its source kind), one accept is committed with exactly the paths it wrote or
+removed and the subject `akm accept: <generator> <proposal-id-8> <ref>`. A
+process that accepts several proposals (several ids, `--generator`, or
+`akm proposal drain`) commits them once at its end: the subject is
+`akm proposal accept: N accepted (<generator> n, ...)` (`akm proposal drain: ...`
+for a drain) and the body has one `<proposal-id-8> <generator> <ref>` line per
+proposal. A retirement's archived copy and tombstone, and the source memory a
 consolidate promotion retires, are part of the same commit. The commit is local:
 `akm sync`, or the end-of-run sync of `akm improve`, pushes it. A commit that
 fails warns and the accept stands.
