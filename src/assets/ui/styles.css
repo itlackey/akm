@@ -19,6 +19,8 @@
   --info-bg: #e0eefb;
   --add-bg: #dff3e6;
   --del-bg: #fbe0e2;
+  --add-strong: #a8e0bb;
+  --del-strong: #f5b3b9;
   --hunk-bg: #e6edfc;
   --grid: #dde1e8;
   --s1: #2f64d0;
@@ -51,6 +53,8 @@
     --info-bg: #14283f;
     --add-bg: #153020;
     --del-bg: #3d1a1c;
+    --add-strong: #24663b;
+    --del-strong: #7d2b30;
     --hunk-bg: #1c2a4a;
     --grid: #2b3340;
     --s1: #6e9cff;
@@ -1034,6 +1038,158 @@ button {
   color: var(--bg);
   font-weight: 600;
   cursor: pointer;
+}
+
+/* Aligned diff: side by side (two scrolling panes) or inline (one). Rows are one line high so the panes stay in step. */
+.diff-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.seg button {
+  padding: 5px 14px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.seg button + button {
+  border-left: 1px solid var(--border);
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+
+.sbs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.sbs-head {
+  padding: 4px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.dcol {
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  font: 0.85rem / 1.5 var(--mono);
+}
+
+.dcol-body {
+  min-width: max-content;
+  padding: 4px 0;
+}
+
+.drow {
+  display: flex;
+  min-height: 1.5em;
+  white-space: pre;
+  tab-size: 4;
+}
+
+.drow .ln {
+  flex: none;
+  width: calc(5ch + 12px);
+  padding: 0 8px 0 4px;
+  text-align: right;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+
+.drow .sign {
+  flex: none;
+  width: 2ch;
+  color: var(--muted);
+  user-select: none;
+}
+
+.drow .code {
+  flex: 1;
+  padding-right: 14px;
+}
+
+.drow.add {
+  background: var(--add-bg);
+}
+
+.drow.del {
+  background: var(--del-bg);
+}
+
+.drow.fill {
+  background: var(--surface-2);
+}
+
+.drow.add .sign {
+  color: var(--ok);
+}
+
+.drow.del .sign {
+  color: var(--fail);
+}
+
+.drow .w {
+  border-radius: 3px;
+}
+
+.drow.add .w {
+  background: var(--add-strong);
+}
+
+.drow.del .w {
+  background: var(--del-strong);
+}
+
+.drow.gap {
+  background: var(--hunk-bg);
+  padding: 0 14px;
+  align-items: center;
+}
+
+.gap-label {
+  color: var(--muted);
+}
+
+.gap-btn {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+}
+
+.dcol.inline {
+  margin-top: 0;
+}
+
+@media (max-width: 799px) {
+  .sbs {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 :focus-visible {

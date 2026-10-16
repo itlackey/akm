@@ -275,7 +275,11 @@ describe("pages", () => {
     const recent = (await (await view("proposals.js", "renderList"))(ctx("status=recent"))).text;
     expect(recent).toContain("No decided proposals yet.");
     const detail = (await (await view("proposals.js", "renderDetail"))(ctx("", proposalId))).text;
-    expect(detail).toContain('<span class="dl add">');
+    // A new asset is shown alone, every line added, with its line numbers.
+    expect(detail).toContain(
+      '<div class="drow add"><span class="ln"></span><span class="ln">1</span><span class="sign">+</span>',
+    );
+    expect(detail).not.toContain("data-diff-mode");
     expect(detail).toContain("&lt;b&gt;bold?&lt;/b&gt;");
     expect(detail).not.toContain("<b>bold?</b>");
 
@@ -332,6 +336,93 @@ describe("pages", () => {
     expect(decided).not.toContain("data-actions");
     expect(decided).not.toContain('data-act="accept"');
     expect(decided).toContain("&lt;b&gt;no&lt;/b&gt;");
+  });
+
+  test("an update's diff is aligned: side by side by default, inline on request, word highlights, escaped text", async () => {
+    await seed();
+    const long = `---\ndescription: Long\n---\n${Array.from({ length: 40 }, (_, i) => `row ${i + 1}`).join("\n")}\n`;
+    fs.writeFileSync(path.join(storage.stashDir, "knowledge", "long.md"), long);
+    const edited = long
+      .replace("row 20\n", "row <i>20</i> changed\n")
+      .replace("description: Long\n", "description: Long\nwhen_to_use: Often\n");
+    const created = createProposal(storage.stashDir, {
+      ref: "knowledge/long",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: edited, frontmatter: { when_to_use: "Often" } },
+    });
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const g = globalThis as Record<string, unknown>;
+    const saved: string[] = [];
+    g.localStorage = { getItem: () => null, setItem: (_k: string, v: string) => saved.push(v) };
+    try {
+      const pageCtx = ctx("", created.id);
+      const side = (await (await view("proposals.js", "renderDetail"))(pageCtx)).text;
+      expect(side).toContain('<div class="sbs">');
+      expect(side).toContain('<div class="sbs-head">Current</div>');
+      expect(side).toContain('<div class="sbs-head">Proposed</div>');
+      expect(side).toContain('data-diff-mode="side" aria-pressed="true"');
+      expect(side).toContain('data-diff-mode="inline" aria-pressed="false"');
+      // The added frontmatter line is one added row with a blank filler on the left; the file is not rewritten.
+      expect(side).toContain('<div class="drow fill" aria-hidden="true">');
+      expect(side).toContain("when_to_use: Often");
+      expect(side.match(/class="drow add"/g)?.length).toBeGreaterThanOrEqual(1);
+      expect(side.match(/class="drow del"/g)?.length).toBe(1);
+      expect(side).toContain('<span class="w">');
+      expect(side).toContain("&lt;i&gt;");
+      expect(side).not.toContain("<i>");
+      expect(side).toMatch(/Show \d+ unchanged lines/);
+      expect(side).not.toContain('class="dl ');
+
+      // Wire it to a stand-in for the page: the toggle redraws inline and remembers the choice, a gap control expands.
+      let drawn = "";
+      const handlers: Array<(event: unknown) => void> = [];
+      const region = {
+        set innerHTML(value: string) {
+          drawn = value;
+        },
+        addEventListener: (_type: string, fn: (event: unknown) => void) => handlers.push(fn),
+        querySelector: () => null,
+      };
+      for (const after of pageCtx.after)
+        after({ querySelector: (sel: string) => (sel === "[data-diffview]" ? region : null) });
+      const click = (match: Record<string, Record<string, string>>) =>
+        handlers[0]?.({ target: { closest: (sel: string) => (match[sel] ? { dataset: match[sel] } : null) } });
+      click({ "[data-diff-mode]": { diffMode: "inline" } });
+      expect(saved).toEqual(["inline"]);
+      expect(drawn).toContain('data-diff-mode="inline" aria-pressed="true"');
+      expect(drawn).toContain('<div class="dcol inline"');
+      expect(drawn).not.toContain('<div class="sbs">');
+      // Inline lists a block's removed line before its added line (the row 20 edit comes after the frontmatter additions).
+      const adds = [...drawn.matchAll(/class="drow add"/g)].map((m) => m.index as number);
+      expect(drawn.indexOf('class="drow del"')).toBeGreaterThan(adds[0] as number);
+      expect(drawn.indexOf('class="drow del"')).toBeLessThan(adds[adds.length - 1] as number);
+      const gapsBefore = drawn.match(/data-gap="/g)?.length ?? 0;
+      click({ "[data-gap]": { gap: /data-gap="(\d+)"/.exec(drawn)?.[1] as string } });
+      expect(drawn.match(/data-gap="/g)?.length).toBe(gapsBefore - 1);
+
+      // A remembered choice wins on the next load.
+      g.localStorage = { getItem: () => "inline", setItem: () => undefined };
+      const inline = (await (await view("proposals.js", "renderDetail"))(ctx("", created.id))).text;
+      expect(inline).toContain('<div class="dcol inline"');
+      expect(inline).not.toContain('<div class="sbs">');
+      // Blocked storage falls back to the default.
+      g.localStorage = {
+        getItem: () => {
+          throw new Error("blocked");
+        },
+        setItem: () => {
+          throw new Error("blocked");
+        },
+      };
+      expect((await (await view("proposals.js", "renderDetail"))(ctx("", created.id))).text).toContain(
+        '<div class="sbs">',
+      );
+    } finally {
+      delete g.localStorage;
+    }
   });
 
   test("post() sends the token in a header and JSON, and a server refusal becomes an error the page can explain", async () => {

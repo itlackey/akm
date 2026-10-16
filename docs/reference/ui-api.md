@@ -313,7 +313,11 @@ pending one, or an asset ref (URL-encode it). Unknown: `404` `PROPOSAL_NOT_FOUND
     "diff": {
       "unified": "--- /dev/null\n+++ stash//lessons/rg (proposed, new asset)\n@@ 0,0 1,9 @@\n+---\n...",
       "isNew": true,
-      "targetPath": "/home/me/akm/lessons/rg.md"
+      "targetPath": "/home/me/akm/lessons/rg.md",
+      "before": null,
+      "after": "---\ndescription: Use ripgrep\n---\n\nPrefer rg over grep.\n",
+      "truncated": false,
+      "redacted": false
     },
     "diffError": null
   }
@@ -321,9 +325,16 @@ pending one, or an asset ref (URL-encode it). Unknown: `404` `PROPOSAL_NOT_FOUND
 ```
 
 - `proposal` carries the full metadata (everything `akm proposal show` prints) except content: the proposed text is in
-  `diff.unified`, `payload.content` is omitted, and `changes` lists `{ op, path }` only. The prior content kept for
+  `diff.unified` and `diff.after`, `payload.content` is omitted, and `changes` lists `{ op, path }` only. The prior content kept for
   `akm proposal revert` is never returned. The summary fields from the list are repeated, and `retirement` is the full
   record (with content hashes) on a retire proposal.
+- `diff.before` and `diff.after` are the two texts the unified diff compares, read the same way (same target
+  resolution as accept): the asset as it is now (`null` when the proposal creates it) and the content accept would
+  write. The page lines them up itself, because the unified text pairs lines by position and so shows one inserted
+  line as a rewrite of everything after it. Each is cut at 512 K characters; when either was, `truncated` is `true` and
+  the page shows `unified` instead. For a retire proposal both are `null` (the file leaves; nothing is proposed). For an
+  env or secret target both are `null`, `redacted` is `true` and `unified` is a one-line notice: their content is never
+  returned.
 - `diff` is `null` and `diffError` says why when the target cannot be resolved (for example the bundle is no longer
   configured). For a retire proposal `unified` shows the file leaving and `retirement` has the successor.
 - `validation` is the proposal validator's result; it does not run the accept preflight `akm proposal show` adds.

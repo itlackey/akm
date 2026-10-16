@@ -423,14 +423,64 @@ function proposals(query: Query) {
   );
 }
 
+/** Most characters of either side the detail view returns; a larger file is cut and flagged `truncated`. */
+export const DIFF_SIDE_MAX_CHARS = 512 * 1024;
+
+/** True when the proposal's target is an env or secret asset, whose content never leaves the machine's files via the UI. */
+function targetsSensitiveAsset(proposal: Proposal): boolean {
+  try {
+    const type = typeNameFromConceptId(parseBundleRef(proposal.ref).conceptId)?.type;
+    return type === "env" || type === "secret";
+  } catch {
+    return false;
+  }
+}
+
+function capSide(text: string | null): { text: string | null; truncated: boolean } {
+  if (text === null || text.length <= DIFF_SIDE_MAX_CHARS) return { text, truncated: false };
+  return { text: text.slice(0, DIFF_SIDE_MAX_CHARS), truncated: true };
+}
+
+/**
+ * The diff for the detail view: akm's unified text plus both sides, so the client can line them up itself.
+ * `before`/`after` come from the same read as `unified` ({@link diffLoadedProposal}); they are `null` for a retire
+ * proposal (the file leaves, nothing is proposed) and, with `redacted`, for an env or secret target.
+ */
+function proposalDiffView(proposal: Proposal) {
+  const result = diffLoadedProposal(loadConfig(), proposal);
+  const base = { isNew: result.isNew, targetPath: result.targetPath ?? null };
+  if (targetsSensitiveAsset(proposal)) {
+    return {
+      unified: "Env and secret values are never shown in the UI.",
+      ...base,
+      before: null,
+      after: null,
+      truncated: false,
+      redacted: true,
+    };
+  }
+  if (isRetireProposal(proposal)) {
+    return { unified: result.unified, ...base, before: null, after: null, truncated: false, redacted: false };
+  }
+  const before = capSide(result.existing);
+  const after = capSide(result.proposed);
+  return {
+    unified: result.unified,
+    ...base,
+    before: before.text,
+    after: after.text,
+    truncated: before.truncated || after.truncated,
+    redacted: false,
+  };
+}
+
 function proposalDetail(id: string) {
   const detail = withReadonlyStateDb((db) => {
     const proposal = resolveProposalIdIn(db, resolveStashDir(), id);
-    let diff: { unified: string; isNew: boolean; targetPath: string | null } | null = null;
+    let diff: ReturnType<typeof proposalDiffView> | null = null;
     let diffError: string | null = null;
     try {
-      const result = diffLoadedProposal(loadConfig(), proposal);
-      diff = { unified: result.unified, isNew: result.isNew, targetPath: result.targetPath ?? null };
+      diff = proposalDiffView(proposal);
     } catch (error) {
       diffError = error instanceof Error ? error.message : String(error);
     }

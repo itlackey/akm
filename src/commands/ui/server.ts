@@ -28,6 +28,8 @@ import bundlesJs from "../../assets/ui/bundles.js" with { type: "text" };
 import changesJs from "../../assets/ui/changes.js" with { type: "text" };
 import chartsJs from "../../assets/ui/charts.js" with { type: "text" };
 import configJs from "../../assets/ui/config.js" with { type: "text" };
+import diffJs from "../../assets/ui/diff.js" with { type: "text" };
+import diffViewJs from "../../assets/ui/diff-view.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
 import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
@@ -65,6 +67,8 @@ export const EMBEDDED_UI: Record<string, string> = {
   "changes.js": changesJs as unknown as string,
   "charts.js": chartsJs as unknown as string,
   "config.js": configJs as unknown as string,
+  "diff-view.js": diffViewJs as unknown as string,
+  "diff.js": diffJs as unknown as string,
   "lib.js": libJs as unknown as string,
   "markdown.js": markdownJs as unknown as string,
   "overview.js": overviewJs as unknown as string,
