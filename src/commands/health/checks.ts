@@ -68,7 +68,7 @@ export interface HealthCheckContext {
   /** Required tables absent from {@link tableNames}. */
   missingTables: string[];
   /** Result of the append/read round-trip probe. */
-  probe: { ok: boolean; durationMs: number | null; error?: string };
+  probe: { ok: boolean; durationMs: number | null; error?: string; skipped?: boolean };
   /** R0: `PRAGMA integrity_check` result, read-only, computed once for `state-db-integrity`. */
   stateDbIntegrity: StateDbIntegrityResult;
   /** R0: freelist/page-count reading, computed once for `state-db-integrity`'s reclaimable-space report. */
@@ -1261,9 +1261,11 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       kind: "deterministic",
       status: ctx.probe.ok ? "pass" : "fail",
       confidence: "high",
-      message: ctx.probe.ok
-        ? "state.db append/read round-trip succeeded."
-        : `state.db round-trip failed: ${ctx.probe.error}`,
+      message: ctx.probe.skipped
+        ? "state.db append/read round-trip skipped: this run is read-only."
+        : ctx.probe.ok
+          ? "state.db append/read round-trip succeeded."
+          : `state.db round-trip failed: ${ctx.probe.error}`,
       evidence: { path: ctx.stateDbPath, durationMs: ctx.probe.durationMs },
     }),
   },

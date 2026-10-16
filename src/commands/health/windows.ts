@@ -205,10 +205,11 @@ export function buildImproveWindowSummary(
   stateDbPath: string,
   since: string,
   until: string,
+  readOnly = false,
 ): ImproveWindowSummary {
   const untilMs = new Date(until).getTime();
   const eventsBeforeUntil = (type: string) =>
-    readEvents({ since, type }, { dbPath: stateDbPath }).events.filter(
+    readEvents({ since, type }, { dbPath: stateDbPath, readOnly }).events.filter(
       (event) => new Date(event.ts ?? since).getTime() < untilMs,
     );
   const { metrics: improve, runCount } = summarizeImproveRuns(db, since, until);
@@ -234,6 +235,7 @@ export function buildWindowMetrics(
   since: string,
   until: string,
   now: () => number = () => Date.now(),
+  readOnly = false,
 ): WindowMetricsBundle {
   const untilMs = new Date(until).getTime();
   const taskRows = queryTaskHistory(db, { since }).filter((row) => {
@@ -241,14 +243,14 @@ export function buildWindowMetrics(
     return !Number.isFinite(untilMs) || startMs < untilMs;
   });
   const rates = computeTaskWindowRates(taskRows, now);
-  const { improve, runCount } = buildImproveWindowSummary(db, stateDbPath, since, until);
+  const { improve, runCount } = buildImproveWindowSummary(db, stateDbPath, since, until, readOnly);
 
   const metrics: HealthMetrics = {
     taskFailRate: roundRate(rates.taskFailRate),
     agentFailureRate: roundRate(rates.agentFailureRate),
     agentFailureReasonCounts: rates.agentFailureReasonCounts,
     stuckActiveRuns: rates.stuckActiveRuns,
-    llmUsage: readLlmUsageAggregate(stateDbPath, since, until),
+    llmUsage: readLlmUsageAggregate(stateDbPath, since, until, readOnly),
   };
 
   return { improve, metrics, runs: runCount };

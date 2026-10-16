@@ -676,35 +676,35 @@ function requireProposal(db: Database, stashDir: string, id: string): Proposal {
  * proposal (then most recent archived); else by a unique pending id prefix.
  */
 export function resolveProposalId(stashDir: string, idOrRef: string, ctx?: ProposalsContext): Proposal {
-  return withProposalsDb(ctx, (db) => {
-    const exact = getStateProposal(db, idOrRef, stashDir);
-    if (exact) return exact;
-    if (idOrRef.includes(":") || idOrRef.includes("/")) {
-      const wantRef = filterRefIdentity(idOrRef);
-      // Should-fix 7: by-ref resolution never picks a retire proposal — the
-      // newest pending proposal for a ref could be a `consolidate-pair`
-      // retirement rather than the reflect/distill edit a person typed the
-      // ref to accept, and accepting it archives the asset instead. A retire
-      // is reached by its own proposal id, or by the explicit generator
-      // `consolidate-pair` (bulk accept/reject).
-      const newest = (status?: string): Proposal | undefined =>
-        listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
-          .filter((p) => proposalMatchesRef(p.ref, wantRef) && !isRetireProposal(p))
-          .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
-      const found = newest("pending") ?? newest();
-      if (found) return found;
-      throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "PROPOSAL_NOT_FOUND");
-    }
-    const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
-    if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
-    if (prefixMatches.length > 1) {
-      throw new UsageError(
-        `Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "PROPOSAL_NOT_FOUND");
-  });
+  return withProposalsDb(ctx, (db) => resolveProposalIdIn(db, stashDir, idOrRef));
+}
+
+/** {@link resolveProposalId} over a connection the caller holds (`akm ui` reads state.db read-only). */
+export function resolveProposalIdIn(db: Database, stashDir: string, idOrRef: string): Proposal {
+  const exact = getStateProposal(db, idOrRef, stashDir);
+  if (exact) return exact;
+  if (idOrRef.includes(":") || idOrRef.includes("/")) {
+    const wantRef = filterRefIdentity(idOrRef);
+    // Should-fix 7: by-ref resolution never picks a retire proposal — the
+    // newest pending proposal for a ref could be a `consolidate-pair`
+    // retirement rather than the reflect/distill edit a person typed the
+    // ref to accept, and accepting it archives the asset instead. A retire
+    // is reached by its own proposal id, or by the explicit generator
+    // `consolidate-pair` (bulk accept/reject).
+    const newest = (status?: string): Proposal | undefined =>
+      listStateProposals(db, { stashDir, ...(status !== undefined ? { status } : {}) })
+        .filter((p) => proposalMatchesRef(p.ref, wantRef) && !isRetireProposal(p))
+        .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())[0];
+    const found = newest("pending") ?? newest();
+    if (found) return found;
+    throw new NotFoundError(`No proposal found for ref "${idOrRef}".`, "PROPOSAL_NOT_FOUND");
+  }
+  const prefixMatches = listStateProposalIdsByPrefix(db, stashDir, idOrRef);
+  if (prefixMatches.length === 1) return requireProposal(db, stashDir, prefixMatches[0]!);
+  if (prefixMatches.length > 1) {
+    throw new UsageError(`Ambiguous prefix "${idOrRef}" — matches: ${prefixMatches.join(", ")}`, "INVALID_FLAG_VALUE");
+  }
+  throw new NotFoundError(`Proposal "${idOrRef}" not found.`, "PROPOSAL_NOT_FOUND");
 }
 
 /**
@@ -2503,7 +2503,15 @@ export function diffProposal(
   options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
   ctx?: ProposalsContext,
 ): ProposalDiff {
-  const proposal = getProposal(stashDir, id, ctx);
+  return diffLoadedProposal(config, getProposal(stashDir, id, ctx), options);
+}
+
+/** {@link diffProposal} for a proposal the caller already read (`akm ui` reads state.db read-only). */
+export function diffLoadedProposal(
+  config: AkmConfig,
+  proposal: Proposal,
+  options: { target?: string; queueTarget?: ResolvedWriteTarget } = {},
+): ProposalDiff {
   const target = resolveProposalWriteTarget(config, proposal, options.target, options.queueTarget);
   const targetPath = resolveAssetFilePathSafe(target.source, parseRefInput(proposal.ref));
   const existing = targetPath && fs.existsSync(targetPath) ? fs.readFileSync(targetPath, "utf8") : null;

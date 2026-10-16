@@ -65,11 +65,18 @@ export function summarizeLlmUsage(events: ReturnType<typeof readEvents>["events"
   return aggregate;
 }
 
-export function readLlmUsageAggregate(stateDbPath: string, since: string, until?: string): LlmUsageAggregate {
-  const events = readEvents({ since, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events.filter((event) => {
-    if (until === undefined) return true;
-    return new Date(event.ts ?? since).getTime() < new Date(until).getTime();
-  });
+export function readLlmUsageAggregate(
+  stateDbPath: string,
+  since: string,
+  until?: string,
+  readOnly = false,
+): LlmUsageAggregate {
+  const events = readEvents({ since, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath, readOnly }).events.filter(
+    (event) => {
+      if (until === undefined) return true;
+      return new Date(event.ts ?? since).getTime() < new Date(until).getTime();
+    },
+  );
   return summarizeLlmUsage(events);
 }
 

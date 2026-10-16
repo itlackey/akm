@@ -66,6 +66,7 @@ function duplicateConceptWarnings(hits: SourceSearchHit[], defaultBundle?: strin
 
 interface SearchEventLoggingInput {
   skipLogging?: boolean;
+  readOnly?: boolean;
   eventSource?: UsageEventSource;
   attributionProjection?: AttributionProjection;
 }
@@ -109,6 +110,12 @@ export async function akmSearch(input: {
    * search history with programmatic lookups.
    */
   skipLogging?: boolean;
+  /**
+   * Read without side effects (`akm ui`): no usage events and no inline index
+   * build, so the search never counts as demand and never writes `index.db`
+   * or `state.db`. Implies `skipLogging`.
+   */
+  readOnly?: boolean;
   /**
    * Event source for usage logging. Defaults to `"user"`. Set to
    * `"improve"` when called from improve's reflect/distill agents
@@ -209,6 +216,7 @@ export async function akmSearch(input: {
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,
           includeExcludedTypes: input.includeSessions === true,
+          readOnly: input.readOnly,
         });
 
   const registryResult =
@@ -301,7 +309,7 @@ function maybeLogSearchEvent(
   response: SearchResponse,
   mode?: "semantic" | "keyword",
 ): void {
-  if (input.skipLogging) return;
+  if (input.skipLogging || input.readOnly) return;
   logSearchEvent(query, response, mode, input.eventSource, input.attributionProjection);
 }
 

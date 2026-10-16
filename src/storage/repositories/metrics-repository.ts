@@ -46,6 +46,29 @@ export function listUsageEventRows(db: Database, filter: MetricsQueryFilter): Us
     .all(filter.sinceIso, untilBound, ...sourceParams) as UsageEventRow[];
 }
 
+/** One asset's feedback rows (`entry_ref` is the durable `bundle//conceptId`), newest first (`akm ui`'s asset view). */
+export function listFeedbackEventRows(db: Database, entryRef: string, limit: number): UsageEventRow[] {
+  return db
+    .prepare(
+      `SELECT id, event_type, query, entry_id, entry_ref, signal, metadata, source, created_at
+       FROM usage_events
+       WHERE event_type = 'feedback' AND entry_ref = ?
+       ORDER BY datetime(created_at) DESC, id DESC LIMIT ?`,
+    )
+    .all(entryRef, limit) as UsageEventRow[];
+}
+
+/** Feedback counts by signal for one asset, all sources (`akm ui`'s asset view). */
+export function countFeedbackBySignal(db: Database, entryRef: string): Record<string, number> {
+  const rows = db
+    .prepare(
+      `SELECT COALESCE(signal, 'none') AS signal, COUNT(*) AS n FROM usage_events
+       WHERE event_type = 'feedback' AND entry_ref = ? GROUP BY signal`,
+    )
+    .all(entryRef) as Array<{ signal: string; n: number }>;
+  return Object.fromEntries(rows.map((row) => [row.signal, row.n]));
+}
+
 /**
  * `select` events (a show within 60 s of a search that returned the ref) in the
  * window. The events stream stores the ref as the user typed it (often

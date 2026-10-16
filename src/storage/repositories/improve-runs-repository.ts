@@ -246,6 +246,15 @@ export function getLatestImproveRun(db: Database): ImproveRunRow | undefined {
     .get() as ImproveRunRow | undefined;
 }
 
+/** The `limit` most recent real (non-dry-run) improve runs, newest first (`akm ui`'s run list). */
+export function listRecentImproveRuns(db: Database, limit: number): ImproveRunSummaryRow[] {
+  return db
+    .prepare(
+      "SELECT id, started_at, completed_at, ok, scope_mode, scope_value, strategy, result_json FROM improve_runs WHERE dry_run = 0 ORDER BY started_at DESC LIMIT ?",
+    )
+    .all(limit) as ImproveRunSummaryRow[];
+}
+
 /**
  * #950: count real (non-dry-run) improve_runs rows whose `started_at` falls
  * in `[since, now)` — same filter as {@link queryImproveRuns}, but a `SELECT

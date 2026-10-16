@@ -177,6 +177,11 @@ export interface SearchLocalInput {
    * `session`). No effect when an explicit `--type` is supplied.
    */
   includeExcludedTypes?: boolean;
+  /**
+   * Serve the index as it is: skip the inline bootstrap build `ensureIndex`
+   * would run for a stash the index cannot serve yet (`akm ui` never writes).
+   */
+  readOnly?: boolean;
 }
 
 export async function searchLocal(input: SearchLocalInput): Promise<{
@@ -204,7 +209,7 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
   // Bootstrap-only: builds the index inline when it cannot serve this stash.
   // Content freshness is the writers' job (indexWrittenAssets + full runs);
   // reads serve the existing index as-is.
-  await ensureIndex(stashDir);
+  if (!input.readOnly) await ensureIndex(stashDir);
 
   const dbPath = getDbPath();
   // An index we cannot READ is not an index that does not exist (#791). Saying
