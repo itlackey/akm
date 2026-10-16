@@ -65,16 +65,11 @@ export class ApiError extends Error {
   }
 }
 
-/** GET `path` with optional query values (empty ones are dropped); resolves to the response's `data`. */
-export async function api(path, query = {}) {
-  const search = new URLSearchParams();
-  for (const [key, value] of Object.entries(query)) {
-    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
-  }
-  const url = search.size > 0 ? `${path}?${search}` : path;
+/** Send one request and resolve to the response's `data`; failures are an {@link ApiError} with the server's `code`. */
+async function request(url, init) {
   let response;
   try {
-    response = await fetch(url, { headers: { "X-Akm-Ui-Token": token ?? "" }, cache: "no-store" });
+    response = await fetch(url, init);
   } catch {
     throw new ApiError(0, "NETWORK", "Could not reach the akm ui server. It may have stopped; run `akm ui` again.");
   }
@@ -95,6 +90,26 @@ export async function api(path, query = {}) {
     );
   }
   return body.data;
+}
+
+/** GET `path` with optional query values (empty ones are dropped); resolves to the response's `data`. */
+export function api(path, query = {}) {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== "") search.set(key, String(value));
+  }
+  const url = search.size > 0 ? `${path}?${search}` : path;
+  return request(url, { headers: { "X-Akm-Ui-Token": token ?? "" }, cache: "no-store" });
+}
+
+/** POST `body` as JSON to `path`. Only the proposal accept/reject routes take one; the token goes in the header, never the URL. */
+export function post(path, body = {}) {
+  return request(path, {
+    method: "POST",
+    headers: { "X-Akm-Ui-Token": token ?? "", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
 }
 
 let metaPromise = null;

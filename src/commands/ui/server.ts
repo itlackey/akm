@@ -10,7 +10,11 @@
  * by default, every `/api/` request must carry the per-launch token, and the
  * `Host` header must be the address the server is bound to, which stops a web
  * page from reaching it through DNS rebinding. Static UI files are served
- * without the token and embed no data. Only GET (and HEAD) is accepted.
+ * without the token and embed no data. Only GET (and HEAD) is accepted, except
+ * for the three proposal writes (accept, reject, accept several): a POST to one
+ * of those must carry the token in the `X-Akm-Ui-Token` header (never the
+ * query string), a JSON content type and an `Origin` that is this server's own,
+ * so another web page cannot make the browser send one.
  */
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
@@ -28,15 +32,20 @@ import indexHtml from "../../assets/ui/index.html" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
 import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
 import overviewJs from "../../assets/ui/overview.js" with { type: "text" };
+import proposalActionsJs from "../../assets/ui/proposal-actions.js" with { type: "text" };
 import proposalsJs from "../../assets/ui/proposals.js" with { type: "text" };
 import searchJs from "../../assets/ui/search.js" with { type: "text" };
 import stylesCss from "../../assets/ui/styles.css" with { type: "text" };
 import { AkmError } from "../../core/errors";
 import { getDirname } from "../../runtime";
 import { handleApiRequest, NO_SUCH_ROUTE, type UiServerInfo } from "./api";
+import { classifyProposalError, handleWriteRequest, matchWriteRoute } from "./proposal-actions";
 import { scrubUrlCredentials } from "./redact";
 
 export const TOKEN_HEADER = "x-akm-ui-token";
+
+/** Largest request body a write route reads. */
+export const MAX_BODY_BYTES = 64 * 1024;
 
 const UI_DIR = path.join(getDirname(import.meta.url), "../../assets/ui");
 
@@ -59,6 +68,7 @@ export const EMBEDDED_UI: Record<string, string> = {
   "lib.js": libJs as unknown as string,
   "markdown.js": markdownJs as unknown as string,
   "overview.js": overviewJs as unknown as string,
+  "proposal-actions.js": proposalActionsJs as unknown as string,
   "proposals.js": proposalsJs as unknown as string,
   "search.js": searchJs as unknown as string,
   "styles.css": stylesCss as unknown as string,
@@ -170,6 +180,37 @@ function sendError(
   sendJson(req, res, status, { ok: false, error, code }, extra);
 }
 
+/** Whether `origin` is this server's own origin: the validated `Host` over plain http. */
+function originAllowed(origin: string | undefined, hostHeader: string | undefined): boolean {
+  if (!origin || !hostHeader) return false;
+  return origin.toLowerCase() === `http://${hostHeader.toLowerCase()}`;
+}
+
+function isJsonContentType(header: string | undefined): boolean {
+  return (header ?? "").split(";")[0]?.trim().toLowerCase() === "application/json";
+}
+
+/** The request body as text, or `null` when it is larger than {@link MAX_BODY_BYTES}. */
+function readBody(req: http.IncomingMessage): Promise<string | null> {
+  return new Promise((resolve, reject) => {
+    const declared = Number(req.headers["content-length"]);
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      resolve(null);
+      return;
+    }
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let tooLarge = false;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) tooLarge = true;
+      else chunks.push(chunk);
+    });
+    req.on("end", () => resolve(tooLarge ? null : Buffer.concat(chunks).toString("utf8")));
+    req.on("error", reject);
+  });
+}
+
 /** HTTP status for an error thrown by an API handler: the CLI's error classes, mapped. */
 function statusFor(error: unknown): number {
   if (!(error instanceof AkmError)) return 500;
@@ -234,6 +275,12 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     const url = new URL(req.url ?? "/", "http://akm-ui.invalid");
     const isApi = url.pathname === "/api" || url.pathname.startsWith("/api/");
 
+    const writeRoute = req.method === "POST" ? matchWriteRoute(url.pathname) : null;
+    if (writeRoute) {
+      await handleWrite(req, res, writeRoute);
+      return;
+    }
+
     // Only a GET of a static file is open; the API, and anything that is not a GET, needs the token.
     const readMethod = req.method === "GET" || req.method === "HEAD";
     if (isApi || !readMethod) {
@@ -247,9 +294,16 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       }
     }
     if (!readMethod) {
-      sendError(req, res, 405, "METHOD_NOT_ALLOWED", "akm ui is read-only: only GET is accepted.", {
-        Allow: "GET, HEAD",
-      });
+      sendError(
+        req,
+        res,
+        405,
+        "METHOD_NOT_ALLOWED",
+        "Only GET is accepted here. akm ui writes only through POST /api/proposals/:id/accept, /reject and /api/proposals/accept.",
+        {
+          Allow: "GET, HEAD",
+        },
+      );
       return;
     }
 
@@ -280,6 +334,51 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       "Content-Security-Policy": STATIC_CSP,
     });
     res.end(req.method === "HEAD" ? undefined : asset.body);
+  }
+
+  /** The three proposal writes. Every check runs before the body is read. */
+  async function handleWrite(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    route: NonNullable<ReturnType<typeof matchWriteRoute>>,
+  ): Promise<void> {
+    // The header only: a token in the URL ends up in history and logs, and a link can carry it.
+    const given = req.headers[TOKEN_HEADER];
+    if (!tokenMatches(Array.isArray(given) ? given[0] : given, token)) {
+      sendError(req, res, 401, "UNAUTHORIZED", "Writes need the session token in the X-Akm-Ui-Token header.", {
+        "WWW-Authenticate": "X-Akm-Ui-Token",
+      });
+      return;
+    }
+    if (!originAllowed(req.headers.origin, req.headers.host)) {
+      sendError(req, res, 403, "ORIGIN_NOT_ALLOWED", "The Origin header must be the address akm ui is serving.");
+      return;
+    }
+    if (!isJsonContentType(req.headers["content-type"])) {
+      sendError(req, res, 415, "UNSUPPORTED_MEDIA_TYPE", "Writes must be sent as Content-Type: application/json.");
+      return;
+    }
+    const text = await readBody(req);
+    if (text === null) {
+      sendError(req, res, 413, "BODY_TOO_LARGE", `The request body is larger than ${MAX_BODY_BYTES} bytes.`, {
+        Connection: "close",
+      });
+      return;
+    }
+    let body: unknown;
+    try {
+      body = text.trim() === "" ? undefined : JSON.parse(text);
+    } catch {
+      sendError(req, res, 400, "INVALID_JSON_ARGUMENT", "The request body is not valid JSON.");
+      return;
+    }
+    try {
+      const data = await handleWriteRequest(route, body);
+      sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
+    } catch (error) {
+      const { status, code, message } = classifyProposalError(error);
+      sendError(req, res, status, code, message);
+    }
   }
 
   await new Promise<void>((resolve, reject) => {

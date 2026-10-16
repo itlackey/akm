@@ -106,6 +106,10 @@ describe("what the page may load and do", () => {
     }
   });
 
+  test("decisions use inline confirmation only: no window.confirm, alert or prompt anywhere", () => {
+    for (const file of jsFiles) expect(read(file), file).not.toMatch(/\b(?:confirm|alert|prompt)\s*\(/);
+  });
+
   test("external links are noopener and carry no unvetted scheme", () => {
     for (const file of jsFiles) {
       for (const match of read(file).matchAll(/<a\b[^>]*target="_blank"[^>]*>/g)) {
@@ -224,8 +228,15 @@ describe("pages", () => {
     g.history = { replaceState: () => undefined };
     realFetch ??= globalThis.fetch;
     const target = realFetch;
+    // A browser adds Origin to a same-origin POST by itself.
     globalThis.fetch = ((input: string, init?: RequestInit) =>
-      target(`http://${s.host}:${s.port}${input}`, init)) as typeof fetch;
+      target(`http://${s.host}:${s.port}${input}`, {
+        ...init,
+        headers: {
+          ...(init?.headers as Record<string, string>),
+          ...(init?.method === "POST" ? { Origin: `http://${s.host}:${s.port}` } : {}),
+        },
+      })) as typeof fetch;
     ((await load("lib.js")).initToken as () => void)();
   }
 
@@ -287,6 +298,70 @@ describe("pages", () => {
     for (const unsafe of ["<script", "<img", "<b>", "<i>", 'href="javascript:']) {
       expect(asset, unsafe).not.toContain(unsafe);
     }
+  });
+
+  test("a pending proposal's page has Accept and Reject; the list has a checkbox per row and a group select, all through html``", async () => {
+    const { proposalId } = await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+
+    const list = (await (await view("proposals.js", "renderList"))(ctx())).text;
+    expect(list).toContain(`<input type="checkbox" data-select value="${proposalId}" data-ref="stash//lessons/rg"`);
+    expect(list).toContain('aria-label="Select stash//lessons/rg"');
+    expect(list).toContain("select all in this group");
+    expect(list).toContain('<section data-group="reflect">');
+    expect(list).toContain('<div class="batch-bar" data-batch-bar hidden></div>');
+    // The recent list has no selection.
+    expect((await (await view("proposals.js", "renderList"))(ctx("status=recent"))).text).not.toContain("data-select");
+
+    const pageCtx = ctx("", proposalId);
+    const detail = (await (await view("proposals.js", "renderDetail"))(pageCtx)).text;
+    expect(detail).toContain('<button type="button" data-act="accept">Accept</button>');
+    expect(detail).toContain('<button type="button" class="btn-secondary" data-act="reject">Reject</button>');
+    expect(detail).toContain("data-actions");
+    expect(detail).toContain("data-status");
+    // The page wires its own buttons once mounted; nothing is attached before that.
+    expect(pageCtx.after).toHaveLength(1);
+
+    // Once decided, the page offers no buttons.
+    const lib = await load("lib.js");
+    await (lib.post as (p: string, b: unknown) => Promise<unknown>)(`/api/proposals/${proposalId}/reject`, {
+      reason: "<b>no</b>",
+    });
+    const decided = (await (await view("proposals.js", "renderDetail"))(ctx("", proposalId))).text;
+    expect(decided).not.toContain("data-actions");
+    expect(decided).not.toContain('data-act="accept"');
+    expect(decided).toContain("&lt;b&gt;no&lt;/b&gt;");
+  });
+
+  test("post() sends the token in a header and JSON, and a server refusal becomes an error the page can explain", async () => {
+    const { proposalId } = await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const { post } = (await load("lib.js")) as { post: (p: string, b?: unknown) => Promise<{ ok: boolean }> };
+    const { describeError } = (await load("proposal-actions.js")) as {
+      describeError: (e: unknown) => { text: string; message: string; code: string };
+    };
+
+    const rejected = await post(`/api/proposals/${proposalId}/reject`, { reason: "later" });
+    expect(rejected).toMatchObject({ ok: true, id: proposalId });
+    const again = await post(`/api/proposals/${proposalId}/accept`).catch((e) => e);
+    expect(again).toMatchObject({ status: 409, code: "PROPOSAL_NOT_PENDING" });
+    expect(describeError(again).text).toBe("This proposal has already been decided.");
+    expect(describeError(again).message).toContain("is not pending");
+
+    const noReason = await post(`/api/proposals/${proposalId}/reject`, { reason: " " }).catch((e) => e);
+    expect(noReason).toMatchObject({ status: 400 });
+
+    const { ApiError } = (await load("lib.js")) as {
+      ApiError: new (status: number, code: string, message: string) => Error;
+    };
+    const stale = new ApiError(409, "PROPOSAL_STALE", "Proposal target changed after proposal x was created");
+    expect(describeError(stale).text).toBe("The asset changed since this proposal was made; it can't be accepted.");
+    expect(describeError(stale).code).toBe("PROPOSAL_STALE");
+
+    await signIn("not-the-token");
+    expect(await post("/api/proposals/x/accept").catch((e) => e)).toMatchObject({ status: 401, code: "UNAUTHORIZED" });
   });
 
   test("a missing asset and a wrong token surface as errors the app can show", async () => {

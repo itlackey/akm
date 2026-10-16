@@ -1,7 +1,9 @@
 # `akm ui` API
 
-The read-only JSON API behind [`akm ui`](cli.md#ui). The page that `akm ui` serves reads only this API, and everything it
-returns comes from the function the matching CLI command renders, so it never disagrees with the CLI.
+The JSON API behind [`akm ui`](cli.md#ui). The page that `akm ui` serves uses only this API, and everything it
+returns comes from the function the matching CLI command renders, so it never disagrees with the CLI. The API is
+read-only apart from three proposal decisions: [accept](#post-apiproposalsidaccept), [reject](#post-apiproposalsidreject)
+and [accept several](#post-apiproposalsaccept).
 
 **Experimental** (see [STABILITY.md](../../STABILITY.md)). The shapes below are what 0.10 ships; they may change in any
 release, and nothing outside the page should script against them. Use the CLI's `--format json` for that.
@@ -15,7 +17,8 @@ release, and nothing outside the page should script against them. Use the CLI's 
   served without a token and embed no data.
 - **Host.** The `Host` header must be the address the server is bound to (`127.0.0.1:<port>` by default); anything else is
   a `403`. A server bound to a wildcard address (`--host 0.0.0.0`) also accepts IP-literal hosts on its port.
-- **Methods.** `GET` (and `HEAD`) only. Anything else is a `405` (after the token check).
+- **Methods.** `GET` (and `HEAD`) only, except the three `POST` routes under
+  [Deciding proposals](#deciding-proposals-the-only-writes). Anything else is a `405` (after the token check).
 - **Envelope.** Every response is JSON, `Cache-Control: no-store`:
 
   ```json
@@ -24,17 +27,20 @@ release, and nothing outside the page should script against them. Use the CLI's 
   ```
 
   Errors raised by akm keep their stable `code` (`PROPOSAL_NOT_FOUND`, `ASSET_NOT_FOUND`, `INVALID_FLAG_VALUE`, ...).
-  Status codes: `400` usage error (bad parameter), `401` token, `403` host, `404` not found, `405` method, `503`
-  transient (another akm process holds a lock; retry), `500` anything else. Codes the server itself raises:
-  `UNAUTHORIZED`, `HOST_NOT_ALLOWED`, `METHOD_NOT_ALLOWED`, `NOT_FOUND`, `INTERNAL_ERROR`.
+  Status codes: `400` usage error (bad parameter), `401` token, `403` host or origin, `404` not found, `405` method,
+  `409` conflict (writes only), `413` body too large, `415` content type, `503` transient (another akm process holds a
+  lock; retry), `500` anything else. Codes the server itself raises: `UNAUTHORIZED`, `HOST_NOT_ALLOWED`,
+  `ORIGIN_NOT_ALLOWED`, `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`, `BODY_TOO_LARGE`, `INVALID_JSON_ARGUMENT`,
+  `NOT_FOUND`, `INTERNAL_ERROR`.
 - **Redaction.** Config values under secret-like keys (`apiKey`, `token`, `password`, `secret`, `credential`,
   `authorization`, anything under `env` or `secrets`) are `"[redacted]"`; symbolic references (`$VAR`, `secret://name`)
   are kept. Credentials inside any URL in any response (userinfo, `token=`, `api_key=`, `sig=`, ...) are masked. Env and
   secret assets are never read; see `/api/asset`.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
-- **Read-only.** `state.db` and `index.db` are opened read-only and are never created or migrated: a missing or
-  behind-on-migrations `state.db` makes the sections that need it empty (and `health` report it as a failing check), not
-  an error. Searching and showing record no usage events and build no index. Nothing is written to a bundle or config.
+- **Read-only, except the three proposal writes.** Every `GET` opens `state.db` and `index.db` read-only and never
+  creates or migrates them: a missing or behind-on-migrations `state.db` makes the sections that need it empty (and
+  `health` report it as a failing check), not an error. Searching and showing record no usage events and build no index.
+  Browsing writes nothing to a bundle, config or database.
 
 The limit parameters (`limit`) are positive integers capped at 200.
 
@@ -55,8 +61,7 @@ The running server and where it reads from.
     "indexDbPath": "/home/me/.local/share/akm/index.db",
     "startedAt": "2026-10-16T15:41:15.716Z",
     "host": "127.0.0.1",
-    "port": 39829,
-    "readOnly": true
+    "port": 39829
   }
 }
 ```
@@ -322,6 +327,109 @@ pending one, or an asset ref (URL-encode it). Unknown: `404` `PROPOSAL_NOT_FOUND
 - `diff` is `null` and `diffError` says why when the target cannot be resolved (for example the bundle is no longer
   configured). For a retire proposal `unified` shows the file leaving and `retirement` has the successor.
 - `validation` is the proposal validator's result; it does not run the accept preflight `akm proposal show` adds.
+
+## Deciding proposals (the only writes)
+
+Three `POST` routes accept or reject proposals. Each calls the function the CLI command calls (`akmProposalAccept`,
+`akmProposalReject`, `akmProposalAcceptMany`) with the arguments the CLI passes, so a decision made here is recorded
+exactly like `akm proposal accept` / `reject`: the same state.db rows and events, the same asset write and the same git
+commit. No other path accepts anything but `GET`.
+
+A write is refused unless **all** of these hold, checked in this order before the body is read:
+
+| Requirement | Otherwise |
+| --- | --- |
+| The launch token in the `X-Akm-Ui-Token` **header**. A `?token=` query parameter does not count for writes. | `401 UNAUTHORIZED` |
+| An `Origin` header equal to the server's own origin, `http://<host>:<port>` (the validated `Host`). A missing, `null`, other-host, other-port or `https` origin is refused, so another web page cannot make the browser send one. | `403 ORIGIN_NOT_ALLOWED` |
+| `Content-Type: application/json` (a `charset` parameter is fine). | `415 UNSUPPORTED_MEDIA_TYPE` |
+| A body of at most 65536 bytes (64 KB). | `413 BODY_TOO_LARGE` |
+| A body that is valid JSON. | `400 INVALID_JSON_ARGUMENT` |
+
+The `Host` guard applies as for every request (`403 HOST_NOT_ALLOWED`). The `X-Akm-Ui-Token` and `Origin` requirements are
+the reason the page's own `fetch` works and a cross-site form post or script does not.
+
+Failures from the decision itself keep the usual envelope. Codes and statuses:
+
+| Status | `code` | When |
+| --- | --- | --- |
+| `400` | `MISSING_REQUIRED_ARGUMENT`, `INVALID_JSON_ARGUMENT`, `INVALID_FLAG_VALUE`, `INVALID_PROPOSAL`, ... | Bad input: no or empty reason, an `ids` list outside 1 to 200, a non-object body, a proposal that fails validation. |
+| `404` | `PROPOSAL_NOT_FOUND` | No proposal has that id (or an ambiguous or unknown prefix). |
+| `409` | `PROPOSAL_STALE` | The asset changed (or was created) after the proposal was made, so accepting would overwrite newer content. Nothing is written. |
+| `409` | `PROPOSAL_NOT_PENDING` | The proposal was already accepted, rejected or reverted. |
+| `409` | `ASSET_MUTATION_LEASE_HELD` | Another akm process (an `improve` run, the CLI) or request holds the write lease. Retry in a moment; the request does not wait. |
+| `500` | `INTERNAL_ERROR`, other akm codes | Anything else. |
+
+### `POST /api/proposals/:id/accept`
+
+Accept one pending proposal. `:id` is a proposal id or unambiguous prefix. The body is `{}` (or empty).
+
+```json
+{
+  "ok": true,
+  "data": {
+    "schemaVersion": 1,
+    "ok": true,
+    "id": "d6bb7f94-69aa-48cf-9084-5dba2fa1afb3",
+    "ref": "stash//lessons/rg",
+    "assetPath": "/home/me/akm/lessons/rg.md",
+    "proposal": { "id": "d6bb7f94-...", "status": "accepted", "ref": "stash//lessons/rg", "...": "summary fields as in GET /api/proposals" },
+    "commit": { "sha": "9f1c...", "time": "2026-10-16T16:02:11-05:00", "subject": "akm accept: reflect d6bb7f94 stash//lessons/rg", "repo": "/home/me/akm" }
+  }
+}
+```
+
+- `data` is `akmProposalAccept`'s result, with `proposal` reduced to the list summary (the prior content kept for
+  `akm proposal revert` is never returned) and `commit` added.
+- `commit` is the commit the accept just made in the bundle's repository, or `null` when the bundle is not a git
+  repository (or the commit did not happen; a failed commit only warns, as in the CLI).
+
+### `POST /api/proposals/:id/reject`
+
+Reject one pending proposal. The body is `{"reason": "..."}`: required, a string, trimmed, 1 to 2000 characters, else
+`400 MISSING_REQUIRED_ARGUMENT` (or `INVALID_FLAG_VALUE` when too long). The asset and the repository are untouched.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "schemaVersion": 1,
+    "ok": true,
+    "id": "d6bb7f94-69aa-48cf-9084-5dba2fa1afb3",
+    "ref": "stash//lessons/rg",
+    "reason": "Duplicates lessons/ripgrep.",
+    "proposal": { "id": "d6bb7f94-...", "status": "rejected", "review": { "outcome": "rejected", "reason": "Duplicates lessons/ripgrep." } }
+  }
+}
+```
+
+A rejection can be undone with `akm proposal reopen`.
+
+### `POST /api/proposals/accept`
+
+Accept several pending proposals and commit them **once** (`akmProposalAcceptMany`, the call behind
+`akm proposal accept <id> <id> ...`). The body is `{"ids": ["<id>", ...]}`: 1 to 200 non-empty strings; repeats are
+dropped. An id that fails is reported and the rest carry on; what was accepted is committed either way. There is no
+batch reject.
+
+```json
+{
+  "ok": true,
+  "data": {
+    "accepted": 3,
+    "failed": 1,
+    "results": [
+      { "schemaVersion": 1, "ok": true, "id": "...", "ref": "stash//lessons/a", "assetPath": "/home/me/akm/lessons/a.md", "proposal": { "status": "accepted" } },
+      { "schemaVersion": 1, "ok": false, "id": "...", "error": "Proposal target changed after proposal ... was created; refusing to overwrite newer content.", "code": "PROPOSAL_STALE" }
+    ],
+    "commit": { "sha": "...", "time": "...", "subject": "akm proposal accept: 3 accepted (reflect 3)", "repo": "/home/me/akm" }
+  }
+}
+```
+
+- `results` follows the order of `ids`. A failed entry has `error` (akm's message) and a `code`: `PROPOSAL_STALE`,
+  `PROPOSAL_NOT_PENDING`, `PROPOSAL_NOT_FOUND`, `ASSET_MUTATION_LEASE_HELD`, or `ACCEPT_FAILED` for anything else. The
+  response is `200` even when some ids failed; a held lease fails the whole request with `409`.
+- `commit` is the single commit for the batch (`null` when nothing was accepted or the bundle is not a git repository).
 
 ## `GET /api/changes`
 

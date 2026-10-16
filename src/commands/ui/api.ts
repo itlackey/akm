@@ -3,7 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The read-only JSON API behind `akm ui`. Every handler calls the function the
+ * The read-only JSON API behind `akm ui`. (The three proposal writes live in
+ * `proposal-actions.ts`; nothing in this file writes.) Every handler calls the function the
  * matching CLI command renders (`akmHealth`, `akmMetrics`, `akmSearch`,
  * `akmShowUnified`, the proposal repository, ...), so the UI and the CLI never
  * disagree and there is no second data layer. Documented in
@@ -134,7 +135,6 @@ function meta(_query: Query, info: UiServerInfo) {
     startedAt: info.startedAt,
     host: info.host,
     port: info.port,
-    readOnly: true,
   };
 }
 
@@ -361,7 +361,7 @@ function config() {
 
 // ── /api/proposals ───────────────────────────────────────────────────────────
 
-function proposalSummary(proposal: Proposal) {
+export function proposalSummary(proposal: Proposal) {
   const retirement = proposal.retirement;
   return {
     id: proposal.id,

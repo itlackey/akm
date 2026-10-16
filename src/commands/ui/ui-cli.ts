@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm ui` — a read-only local web UI over the same data the CLI reports:
+ * `akm ui` — a local web UI, read-only apart from accepting and rejecting proposals, over the same data the CLI reports:
  * health and metrics, bundles, config, the proposal queue, recent changes and
  * search. See `docs/reference/ui-api.md` for the API the page reads.
  */
@@ -30,7 +30,7 @@ export const uiCommand = defineJsonCommand({
   meta: {
     name: "ui",
     description:
-      "Experimental: serve a read-only local web UI (health, bundles, config, proposals, recent changes, search) and open it in your browser. The URL carries a per-launch token. Press Ctrl-C to stop.",
+      "Experimental: serve a local web UI (health, bundles, config, proposals, recent changes, search) and open it in your browser. It is read-only except that you can accept and reject proposals in it. The URL carries a per-launch token. Press Ctrl-C to stop.",
   },
   args: {
     port: { type: "string", description: "Port to listen on (default: a random free port)" },

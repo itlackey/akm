@@ -71,6 +71,11 @@ declare module "*/assets/ui/overview.js" {
   export default content;
 }
 
+declare module "*/assets/ui/proposal-actions.js" {
+  const content: string;
+  export default content;
+}
+
 declare module "*/assets/ui/proposals.js" {
   const content: string;
   export default content;

@@ -1122,3 +1122,138 @@ button {
   padding: 0;
   background: none;
 }
+
+/* ---- proposal actions ---- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+a.btn {
+  display: inline-block;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+button.btn-secondary,
+a.btn.btn-secondary {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+button.btn-danger {
+  background: var(--fail);
+  border-color: var(--fail);
+  color: var(--bg);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.actions {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+
+.btn-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 0;
+}
+
+.actions textarea {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  resize: vertical;
+}
+
+.field-error {
+  margin: 6px 0 0;
+  color: var(--fail);
+}
+
+.notice {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.notice p {
+  margin: 0 0 4px;
+}
+
+.notice-ok {
+  border-color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.notice-fail {
+  border-color: var(--fail);
+  background: var(--fail-bg);
+}
+
+.select {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.select-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.batch-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.12);
+}
+
+.batch-bar[hidden] {
+  display: none;
+}
+
+.batch-results {
+  flex: 1 1 100%;
+}
+
+.batch-results ul {
+  margin: 8px 0 0;
+}
