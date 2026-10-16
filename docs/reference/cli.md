@@ -500,6 +500,18 @@ Serve a read-only local web UI over your whole akm environment and open it in yo
 diffs, recent changes to the write-target stash, and search with an asset view. Every page reads through the functions
 the matching CLI commands use, so the UI and the CLI report the same numbers.
 
+| Page | Shows |
+| --- | --- |
+| Overview | Overall health, failing and warning check counts and the akm version; the health checks grouped by status with expandable evidence; metrics tiles; the last 10 improve runs (result, duration, model calls and failures, sync, triage) with bars; and a 14-day stacked usage chart (search, curate, show, feedback). |
+| Bundles | One card per bundle: kind, path or source, writable, git branch, ahead/behind, last commit time and asset counts by type; plus the index state. |
+| Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the engines table and the `AKM_*` environment. |
+| Proposals | The pending queue grouped by source (filter by source) with age and gate decision, a Recent tab of accepted, rejected and reverted proposals with reasons, and a detail page with the unified diff and, for retirements, the pair judgment. |
+| Changes | Recent stash commits as a timeline by day, each tagged by origin (`improve-sync`, `accept`, `remember`, `sync`, `other`) with its changed paths. |
+| Search | A query box with type and bundle filters. A result opens the asset view: frontmatter, the body as safe markdown, links, and feedback counts and history. |
+
+The pages are plain HTML, CSS and JavaScript modules in `src/assets/ui/`: no framework, no build step, and no request
+beyond the local server. All text from the API is escaped before it reaches the page.
+
 ```sh
 akm ui
 akm ui --port 8123 --no-open

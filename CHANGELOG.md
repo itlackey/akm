@@ -11,8 +11,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`akm ui` serves a read-only local web UI.** It listens on `127.0.0.1` (a random free port unless `--port` is given),
   prints a URL that carries a per-launch token and opens your browser; `--no-open` only prints it. It reads health and
   metrics, bundles with git status, the effective config, the proposal queue, recent changes and search through the
-  functions the CLI uses, and writes nothing: no usage events, no index build, no config or database writes. This
-  release ships the server and its JSON API (`docs/reference/ui-api.md`) with a placeholder page. Experimental.
+  functions the CLI uses, and writes nothing: no usage events, no index build, no config or database writes. The page
+  has Overview (health, metrics, recent improve runs, 14-day usage), Bundles, Config (with a source badge per key),
+  Proposals (with diffs), Changes and Search with an asset view. It is plain HTML, CSS and JavaScript with no external
+  requests, backed by a JSON API (`docs/reference/ui-api.md`). Experimental.
 
 ## [0.10.261005] - 2026-10-14
 

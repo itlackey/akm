@@ -19,7 +19,17 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import appJs from "../../assets/ui/app.js" with { type: "text" };
+import assetJs from "../../assets/ui/asset.js" with { type: "text" };
+import bundlesJs from "../../assets/ui/bundles.js" with { type: "text" };
+import changesJs from "../../assets/ui/changes.js" with { type: "text" };
+import chartsJs from "../../assets/ui/charts.js" with { type: "text" };
+import configJs from "../../assets/ui/config.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
+import libJs from "../../assets/ui/lib.js" with { type: "text" };
+import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
+import overviewJs from "../../assets/ui/overview.js" with { type: "text" };
+import proposalsJs from "../../assets/ui/proposals.js" with { type: "text" };
+import searchJs from "../../assets/ui/search.js" with { type: "text" };
 import stylesCss from "../../assets/ui/styles.css" with { type: "text" };
 import { AkmError } from "../../core/errors";
 import { getDirname } from "../../runtime";
@@ -38,9 +48,19 @@ const UI_DIR = path.join(getDirname(import.meta.url), "../../assets/ui");
  * `src/output/html-render.ts`. A file the standalone binary must serve has to be
  * imported above and listed here.
  */
-const EMBEDDED_UI: Record<string, string> = {
+export const EMBEDDED_UI: Record<string, string> = {
   "index.html": indexHtml as unknown as string,
   "app.js": appJs as unknown as string,
+  "asset.js": assetJs as unknown as string,
+  "bundles.js": bundlesJs as unknown as string,
+  "changes.js": changesJs as unknown as string,
+  "charts.js": chartsJs as unknown as string,
+  "config.js": configJs as unknown as string,
+  "lib.js": libJs as unknown as string,
+  "markdown.js": markdownJs as unknown as string,
+  "overview.js": overviewJs as unknown as string,
+  "proposals.js": proposalsJs as unknown as string,
+  "search.js": searchJs as unknown as string,
   "styles.css": stylesCss as unknown as string,
 };
 

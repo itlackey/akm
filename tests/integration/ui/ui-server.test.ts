@@ -196,7 +196,7 @@ function requestWithHost(
 }
 
 describe("server and guards", () => {
-  test("starts on a random port, serves the placeholder UI without a token, and embeds no data", async () => {
+  test("starts on a random port, serves the UI without a token, and embeds no data", async () => {
     await seed();
     const s = await start();
     expect(s.port).toBeGreaterThan(0);
