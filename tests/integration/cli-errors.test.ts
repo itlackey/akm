@@ -705,6 +705,7 @@ describe("S11: sectioned root help", () => {
         "lint",
         "health",
         "metrics",
+        "ui",
         "config",
         "models",
         "registry",
