@@ -10,7 +10,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { applyReflectPatch } from "../../../src/commands/improve/reflect";
-import { isFrontmatterOrMissingH1Edit, splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
+import { splitFrontmatter } from "../../../src/commands/improve/reflect-noise";
 import { parseFrontmatter } from "../../../src/core/asset/frontmatter";
 
 const REF = "knowledge/patched";
@@ -137,7 +137,6 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
     const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}${body}`, REF);
 
     expect(patched?.content).toBe(`${frontmatter}\n\n\n# Release runbook\n\nSome prose.\n\n  indented\n`);
-    expect(isFrontmatterOrMissingH1Edit(`${frontmatter}${body}`, patched?.content ?? "")).toBe(true);
   });
 
   test("a body that starts right after the fence is not given an extra blank line before the heading", () => {
@@ -153,7 +152,6 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
     expect(splitFrontmatter(patched?.content ?? "").body).toBe(
       "\r\n# Release runbook\r\n\r\nLine one.\r\n\r\nLine two.\r\n",
     );
-    expect(isFrontmatterOrMissingH1Edit(source, patched?.content ?? "")).toBe(true);
   });
 
   test("a source with no frontmatter gets the heading and no frontmatter block", () => {
@@ -214,46 +212,5 @@ describe("applyReflectPatch — frontmatter the parser reads only in part", () =
     const source = "---\ndescription: A note about deployment steps\nsource: memories/note.derived---\n\nBody.\n";
 
     expect(applyReflectPatch({ when_to_use: "When deploying." }, source, REF)).toBeUndefined();
-  });
-});
-
-describe("isFrontmatterOrMissingH1Edit — frontmatter, plus at most a missing level-1 heading (#1183)", () => {
-  const fm = (description: string) => `---\ndescription: ${description}\n---\n`;
-
-  test("a frontmatter-only edit is true", () => {
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\nProse.\n`, `${fm("New")}\nProse.\n`)).toBe(true);
-  });
-
-  test("an inserted heading and its blank line on a body with no H1 is true", () => {
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\nProse.\n`, `${fm("New")}\n# Title\n\nProse.\n`)).toBe(true);
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\n## Steps\n`, `${fm("Old")}\n# Title\n\n## Steps\n`)).toBe(true);
-    expect(isFrontmatterOrMissingH1Edit("Prose.\n", "# Title\n\nProse.\n")).toBe(true);
-  });
-
-  test("a body that gains a frontmatter block is still frontmatter-only", () => {
-    expect(isFrontmatterOrMissingH1Edit("Prose.\n", `${fm("New")}\nProse.\n`)).toBe(true);
-  });
-
-  test("a heading inserted without its blank line is false", () => {
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\nProse.\n`, `${fm("Old")}\n# Title\nProse.\n`)).toBe(false);
-  });
-
-  test("a heading added to a body that already has an H1 is false", () => {
-    expect(
-      isFrontmatterOrMissingH1Edit(`${fm("Old")}\n# Mine\n\nProse.\n`, `${fm("Old")}\n# Title\n\n# Mine\n\nProse.\n`),
-    ).toBe(false);
-  });
-
-  test("a heading plus any other body change is false", () => {
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\nProse.\n`, `${fm("Old")}\n# Title\n\nProse, reworded.\n`)).toBe(
-      false,
-    );
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\nProse.\n`, `${fm("Old")}\n# Title\n\nProse.\nMore.\n`)).toBe(
-      false,
-    );
-  });
-
-  test("a body change with no heading is false", () => {
-    expect(isFrontmatterOrMissingH1Edit(`${fm("Old")}\nProse.\n`, `${fm("Old")}\nOther prose.\n`)).toBe(false);
   });
 });

@@ -194,23 +194,6 @@ export function bodyHasH1(body: string): boolean {
   return /^#[ \t]+\S/m.test(body);
 }
 
-/**
- * True when `after` differs from `before` in frontmatter only, or in frontmatter
- * plus one inserted `# <title>` heading and the blank line after it, on a body
- * that had no level-1 heading: the only body change reflect may make (#1183).
- * Leading blank lines do not count as body, so the heading is looked for at the
- * first non-blank line. Any other body difference is false.
- */
-export function isFrontmatterOrMissingH1Edit(before: string, after: string): boolean {
-  const leadingBlank = /^(?:\r?\n)+/;
-  const beforeBody = splitFrontmatter(before).body.replace(leadingBlank, "");
-  const afterBody = splitFrontmatter(after).body.replace(leadingBlank, "");
-  if (afterBody === beforeBody) return true;
-  if (bodyHasH1(beforeBody)) return false;
-  const heading = afterBody.match(/^#[ \t]+\S[^\r\n]*(\r?\n)\1/);
-  return heading !== null && afterBody.slice(heading[0].length) === beforeBody;
-}
-
 /** Frontmatter text, fenced code blocks, and prose lines (an unclosed fence counts as prose). */
 function parseSections(text: string): { frontmatter: string; codeFences: string[]; proseLines: string[] } {
   const { fmText, body } = splitFrontmatter(normalizeTrailingWhitespace(text));

@@ -12,8 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   and the body had no level-1 heading, reflect inserted `# <title>` but also stripped every leading blank line of the
   body, so reviewers and gates reading the rules as "frontmatter only" rejected those proposals as body edits.
   Reflect now inserts only the heading and one blank line, at the body's first non-blank line and in its line ending;
-  the rest of the body is unchanged. `isFrontmatterOrMissingH1Edit` tests for that edit, and the rules doc says reflect
-  edits frontmatter plus at most a missing H1.
+  the rest of the body is unchanged. The rules doc now says reflect edits frontmatter
+  plus at most a missing H1.
 - **`akm health` no longer prints credentials carried in configured URLs.** The `egress-endpoints` advisory listed
   every registry, source, LLM and embedding URL verbatim, so a `?token=…` query or a `user:password@` in a git URL
   appeared in the health output, its JSON and the HTML/markdown reports. Each entry now goes through the shared
