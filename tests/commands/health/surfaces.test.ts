@@ -93,4 +93,17 @@ describe("collectEgressAdvisory (08 surfaces 3/9)", () => {
     expect(collectEgressAdvisory({ bundles: { local: { path: "/stash" } } })).toBeUndefined();
     expect(collectEgressAdvisory(undefined)).toBeUndefined();
   });
+
+  test("never prints a credential carried in a configured URL", () => {
+    const adv = collectEgressAdvisory({
+      bundles: { team: { git: "https://bot:hunter2secret@git.example.com/team/stash.git" } },
+      engines: { lab: { kind: "llm", endpoint: "https://llm.example.com/v1?token=tok-abc123secret&x=1" } },
+      embedding: { endpoint: "https://embed.example.com/v1?api_key=key-zz9secret" },
+    });
+    const text = JSON.stringify(adv);
+    for (const secret of ["hunter2secret", "tok-abc123secret", "key-zz9secret"]) expect(text).not.toContain(secret);
+    // The destinations themselves stay readable.
+    for (const host of ["git.example.com/team/stash.git", "llm.example.com/v1", "embed.example.com/v1"])
+      expect(text).toContain(host);
+  });
 });
