@@ -24,3 +24,15 @@ declare module "*.yml" {
   const content: string;
   export default content;
 }
+
+/** Bun text imports of the `akm ui` client files: `import js from "./app.js" with { type: "text" }` */
+declare module "*/assets/ui/app.js" {
+  const content: string;
+  export default content;
+}
+
+/** Bun text imports of the `akm ui` stylesheet: `import css from "./styles.css" with { type: "text" }` */
+declare module "*/assets/ui/styles.css" {
+  const content: string;
+  export default content;
+}

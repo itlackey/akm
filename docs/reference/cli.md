@@ -490,6 +490,39 @@ Notes you may see:
 - Selects are read from the events stream, which records no source, so they are
   counted whatever the usage source is.
 
+### ui
+
+**Experimental** (see [STABILITY.md](../../STABILITY.md)): the command, the page and the API it reads may change in any
+release.
+
+Serve a read-only local web UI over your whole akm environment and open it in your browser: health and metrics, bundles
+(with git status and asset counts), the effective config with where each value comes from, the proposal queue with
+diffs, recent changes to the write-target stash, and search with an asset view. Every page reads through the functions
+the matching CLI commands use, so the UI and the CLI report the same numbers.
+
+```sh
+akm ui
+akm ui --port 8123 --no-open
+```
+
+| Flag | Description |
+| --- | --- |
+| `--port <n>` | Port to listen on. Default: a random free port. |
+| `--host <addr>` | Address to bind. Default `127.0.0.1`. Anything else is reachable from other machines and prints a warning. |
+| `--no-open` | Print the URL without opening a browser. A failed open also falls back to printing it. |
+
+The command prints `akm ui: http://127.0.0.1:<port>/?token=<token>` and keeps serving until Ctrl-C (SIGINT or SIGTERM).
+Each launch generates a new random token. Every `/api/` request must send it as the `X-Akm-Ui-Token` header or a `token`
+query parameter, otherwise it gets a 401; the page keeps it in `sessionStorage`. The `Host` header must be the address
+the server is bound to, which stops a web page from reaching it through DNS rebinding.
+
+Read-only: `state.db` and `index.db` are opened read-only and never created or migrated, searching and showing in the UI
+record no usage events (so browsing is never counted as demand) and build no index, and nothing is written to a bundle
+or to config. Each request is a short read; the server holds no lock between requests, so it never blocks
+`akm improve`, `akm index` or `akm sync`. Secrets are redacted: config values under secret-like keys and URL credentials
+are masked, and env and secret assets are shown as a stub, never with their values. The endpoints are documented in
+[ui-api.md](ui-api.md). `--format` has no effect on this command.
+
 ### search
 
 Search bundle assets, registries, or both.

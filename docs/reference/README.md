@@ -5,6 +5,7 @@ Authoritative reference documentation for the akm CLI and its data.
 - [Programmatic API](api.md) -- `akm-cli/api`: in-process `curate()` for the akm plugins
 - [Bundle Types](bundle-types.md) -- Supported bundle formats and compatibility
 - [CLI](cli.md) -- All `akm` commands and flags
+- [UI API](ui-api.md) -- The read-only JSON API behind `akm ui`
 - [Configuration](configuration.md) -- Engines, strategies, bundles, and settings
 - [Supported Formats](supported-formats.md) -- Formats akm can index, from its own bundle layout to other tools' existing asset directories
 - [Tasks](tasks.md) -- Task source v4 grammar, executable targets, scheduling, migration, and scheduler operations
