@@ -19,6 +19,7 @@ import path from "node:path";
 import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
+import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
 import { MAX_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
@@ -394,6 +395,9 @@ describe("endpoints", () => {
     expect(detail.diffError).toBeNull();
     expect(detail.diff.isNew).toBe(true);
     expect(detail.diff.unified).toContain("Prefer rg over grep.");
+    // A new asset has no earlier text; the proposed text comes back whole.
+    expect(detail.diff).toMatchObject({ before: null, truncated: false, redacted: false });
+    expect(detail.diff.after).toContain("Prefer rg over grep.");
     // A ref resolves to its newest pending proposal, like `akm proposal show`.
     expect((await data(s, `/api/proposals/${encodeURIComponent("stash//lessons/rg")}`)).proposal.id).toBe(created.id);
     // An id prefix resolves like `akm proposal show`.
@@ -404,6 +408,71 @@ describe("endpoints", () => {
     expect(await missing.json()).toMatchObject({ ok: false, code: "PROPOSAL_NOT_FOUND" });
     const bad = await api(s, "/api/proposals?status=bogus");
     expect(bad.status).toBe(400);
+  });
+
+  test("GET /api/proposals/:id returns both sides of an update, and nothing for an env or secret target", async () => {
+    await seed();
+    const proposed = GUIDE.replace("description: Deploy guide\n", "description: Deploy guide\nwhen_to_use: Shipping\n");
+    const update = createProposal(storage.stashDir, {
+      ref: "knowledge/guide",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: proposed, frontmatter: { when_to_use: "Shipping" } },
+    });
+    const envProposal = createProposal(storage.stashDir, {
+      ref: "env/prod",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: "API_TOKEN=proposed-env-value-0006\n" },
+    });
+    const secretProposal = createProposal(storage.stashDir, {
+      ref: "secrets/deploy-key",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: "proposed-secret-value-0007" },
+    });
+    const s = await start();
+    const stateBefore = sha1(getStateDbPath());
+
+    const detail = await data(s, `/api/proposals/${update.id}`);
+    expect(detail.diffError).toBeNull();
+    expect(detail.diff).toMatchObject({ isNew: false, before: GUIDE, truncated: false, redacted: false });
+    // The stored proposal is the payload with akm's frontmatter normalisation, so `after` is what accept would write.
+    expect(detail.diff.after).toContain("when_to_use: Shipping");
+    expect(detail.diff.after).toContain("Run the deploy script.");
+    expect(detail.diff.unified).toContain("+when_to_use: Shipping");
+
+    for (const [id, leaked] of [
+      [envProposal.id, ["proposed-env-value-0006", PLANTED_ENV_VALUE]],
+      [secretProposal.id, ["proposed-secret-value-0007", PLANTED_SECRET_FILE]],
+    ] as const) {
+      const sensitive = await data(s, `/api/proposals/${id}`);
+      expect(sensitive.diff).toMatchObject({ before: null, after: null, redacted: true, truncated: false });
+      const text = JSON.stringify(sensitive);
+      for (const value of leaked) expect(text).not.toContain(value);
+    }
+    // Reading wrote nothing.
+    expect(sha1(getStateDbPath())).toBe(stateBefore);
+  });
+
+  test("GET /api/proposals/:id cuts a very large side and says so", async () => {
+    await seed();
+    const huge = `---\ndescription: Big\n---\n${"x".repeat(DIFF_SIDE_MAX_CHARS + 10)}\n`;
+    const created = createProposal(storage.stashDir, {
+      ref: "knowledge/big",
+      source: "reflect",
+      sourceRun: "run-1",
+      target: { source: "stash", root: storage.stashDir },
+      payload: { content: huge },
+    });
+    const s = await start();
+    const detail = await data(s, `/api/proposals/${created.id}`);
+    expect(detail.diff.truncated).toBe(true);
+    expect(detail.diff.after).toHaveLength(DIFF_SIDE_MAX_CHARS);
+    expect(detail.diff.unified).toContain("xxxx");
   });
 
   test("GET /api/changes: recent commits of the write-target stash, classified by origin", async () => {

@@ -1,5 +1,6 @@
 // Proposals: the pending queue grouped by source, recent decisions, and a detail view with the diff.
 
+import { diffSection } from "./diff-view.js";
 import {
   api,
   assetHref,
@@ -122,17 +123,6 @@ export async function renderList(ctx) {
 
 // ---- detail ----------------------------------------------------------------
 
-function diffLines(unified) {
-  return unified.split("\n").map((line) => {
-    let cls = "ctx";
-    if (line.startsWith("+++") || line.startsWith("---")) cls = "meta";
-    else if (line.startsWith("@@")) cls = "hunk";
-    else if (line.startsWith("+")) cls = "add";
-    else if (line.startsWith("-")) cls = "del";
-    return html`<span class="dl ${cls}">${line === "" ? " " : line}</span>`;
-  });
-}
-
 function retirementBlock(r) {
   const list = (items) =>
     items && items.length > 0
@@ -176,6 +166,8 @@ export async function renderDetail(ctx) {
   const findings = data.validation?.findings ?? [];
   const pending = p.status === "pending";
   const nextId = pending ? await nextPendingId(p.id) : null;
+  const diff = data.diff ? diffSection(data.diff) : null;
+  if (diff?.wire) ctx.after.push((root) => diff.wire(root));
   if (pending) {
     ctx.after.push((root) =>
       wireDetailActions(root, {
@@ -219,8 +211,8 @@ export async function renderDetail(ctx) {
     ${p.retirement ? retirementBlock(p.retirement) : ""}
     ${findings.length > 0 ? html`<section><h2>Validation</h2><ul class="plain">${findings.map((f) => html`<li>${badge(f.severity ?? "info", f.severity === "error" ? "fail" : "warn")} <span class="mono small">${f.kind}</span> ${f.message}</li>`)}</ul></section>` : ""}
     <section><h2>Diff</h2>${
-      data.diff
-        ? html`<p class="muted small">${data.diff.isNew ? "New asset. " : ""}Target <span class="mono wrap">${data.diff.targetPath ?? ""}</span></p><pre class="diff" tabindex="0">${diffLines(data.diff.unified ?? "")}</pre>`
+      diff
+        ? html`<p class="muted small">${data.diff.isNew ? "New asset. " : ""}Target <span class="mono wrap">${data.diff.targetPath ?? ""}</span></p>${diff.markup}`
         : emptyState("No diff available.", data.diffError ?? "")
     }</section>
     <p><a href="${assetHref(p.ref)}">View the asset as it is now</a></p>`;

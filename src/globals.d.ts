@@ -56,6 +56,16 @@ declare module "*/assets/ui/config.js" {
   export default content;
 }
 
+declare module "*/assets/ui/diff-view.js" {
+  const content: string;
+  export default content;
+}
+
+declare module "*/assets/ui/diff.js" {
+  const content: string;
+  export default content;
+}
+
 declare module "*/assets/ui/lib.js" {
   const content: string;
   export default content;

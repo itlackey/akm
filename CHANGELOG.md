@@ -21,6 +21,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `akm proposal accept` and `reject` call, so a decision is recorded and committed exactly as on the command line.
   A write needs the token in the `X-Akm-Ui-Token` header (not the URL), a JSON content type and an `Origin` that is the
   server's own address; a stale target, an already-decided proposal and a held write lease come back as `409`.
+- **`akm ui` shows a proposal's diff side by side.** The proposal page lines the current asset up against the proposed
+  text (current on the left, proposed on the right, line numbers on both, changed words highlighted inside a changed
+  line) and collapses long unchanged runs behind "Show N unchanged lines". A "Side by side | Inline" switch above the
+  diff picks the layout; the choice is remembered in the browser, and a narrow screen starts inline. The unified diff
+  `akm proposal diff` prints pairs lines by position, so one frontmatter field added near the top used to read as a
+  rewrite of the whole file; the page now aligns the two texts itself. `GET /api/proposals/:id` returns `diff.before`
+  and `diff.after` for this (never for env or secret assets); `diff.unified` is unchanged.
 
 ### Fixed
 
