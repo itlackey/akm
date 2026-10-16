@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261006] - 2026-10-16
+
 ### Added
 
 - **`akm ui` serves a local web UI.** It listens on `127.0.0.1` (a random free port unless `--port` is given),
