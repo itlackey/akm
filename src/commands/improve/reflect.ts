@@ -66,7 +66,13 @@ import { contentHash } from "./content-hash";
 import { findAssetFilePath } from "./eligibility";
 import { resolveImproveExecution } from "./execution";
 import { recordLedgerAttempt } from "./ledger";
-import { classifyReflectChange, findReflectDefect, type ReflectDefectFilter, splitFrontmatter } from "./reflect-noise";
+import {
+  bodyHasH1,
+  classifyReflectChange,
+  findReflectDefect,
+  type ReflectDefectFilter,
+  splitFrontmatter,
+} from "./reflect-noise";
 import {
   callStageOnce,
   errMessage,
@@ -234,10 +240,18 @@ interface ReflectPatch {
   title?: string;
 }
 
+/** The body with `# title` and one blank line inserted at its first non-blank line; the rest is untouched. */
+function withH1(body: string, title: string): string {
+  const eol = body.match(/\r?\n/)?.[0] ?? "\n";
+  const leading = body.match(/^(?:\r?\n)*/)?.[0] ?? "";
+  return `${leading}# ${title}${eol}${eol}${body.slice(leading.length)}`;
+}
+
 /**
  * The asset with the patch applied, or `undefined` when the patch changes
  * nothing (or there is no asset to patch). The body is the source's own, byte
- * for byte; the one thing akm adds to it is a `# title` heading it lacks. A
+ * for byte; the one thing akm adds to it is a `# title` heading it lacks, with
+ * one blank line after it (#1183). A
  * required description that neither the source nor the patch has is derived
  * from the asset's own text (#636). Only the changed keys' frontmatter lines are
  * rewritten: every other line is kept as it is, so a source whose YAML the
@@ -255,8 +269,10 @@ export function applyReflectPatch(
   if (fmText === null && /^---\r?\n/.test(sourceContent)) return undefined;
   const sourceFm = fmText !== null ? parseFrontmatter(sourceContent).data : {};
   const { title, ...changes } = patch as Record<string, unknown> & { title?: string };
-  const addTitle = title !== undefined && !/^#[ \t]+\S/m.test(sourceBody);
-  const body = addTitle ? `# ${title}\n\n${sourceBody.replace(/^(\r?\n)+/, "")}` : sourceBody;
+  const addTitle = title !== undefined && !bodyHasH1(sourceBody);
+  // The heading and one blank line go in at the body's first non-blank line, in
+  // the body's own line ending; every other byte of the body stays where it was.
+  const body = addTitle ? withH1(sourceBody, title) : sourceBody;
 
   // Only a source that already has frontmatter but no description gets one:
   // injecting a whole block, or overwriting an authored one, is out of scope.
@@ -282,7 +298,7 @@ export function applyReflectPatch(
     const content = `---\n${serializeFrontmatter(changes)}\n---\n\n${body}`;
     return { content, frontmatter: parseFrontmatter(content).data };
   }
-  const content = `---\n${patchFrontmatterLines(fmText, changes)}\n---\n${addTitle ? "\n" : ""}${body}`;
+  const content = `---\n${patchFrontmatterLines(fmText, changes)}\n---\n${body}`;
   return { content, frontmatter: parseFrontmatter(content).data };
 }
 
