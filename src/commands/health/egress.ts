@@ -10,6 +10,7 @@
  * advisories' pattern.
  */
 
+import { redactCredentialPatterns } from "../../core/redaction";
 import { formatRegistryUrl } from "../../core/registry-url";
 import type { HealthCheckResult } from "./types";
 
@@ -55,6 +56,9 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
   if (config.embedding?.endpoint) endpoints.push(`embedding: ${config.embedding.endpoint}`);
 
   if (endpoints.length === 0) return undefined;
+  // A configured URL can carry a credential (`?token=…`, `user:pass@`); the list is for eyeballing destinations, so
+  // print the host and path and never the secret.
+  const safe = endpoints.map(redactCredentialPatterns);
   return {
     name: "egress-endpoints",
     kind: "deterministic",
@@ -63,6 +67,6 @@ export function collectEgressAdvisory(config: EgressConfigView | undefined): Hea
     message:
       `${endpoints.length} remote endpoint(s) in the effective config (registries/sources/LLM/embedding) — ` +
       "review the evidence list for unexpected destinations.",
-    evidence: { endpoints },
+    evidence: { endpoints: safe },
   };
 }

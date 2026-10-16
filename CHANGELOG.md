@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm health` no longer prints credentials carried in configured URLs.** The `egress-endpoints` advisory listed
+  every registry, source, LLM and embedding URL verbatim, so a `?token=…` query or a `user:password@` in a git URL
+  appeared in the health output, its JSON and the HTML/markdown reports. Each entry now goes through the shared
+  credential redaction, which keeps the host and path and replaces the secret with `[REDACTED]`.
+
 ## [0.10.261005] - 2026-10-14
 
 ### Changed
