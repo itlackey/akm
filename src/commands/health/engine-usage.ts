@@ -39,9 +39,13 @@ export function engineLastUsedSince(now: () => number): string {
  * `engine` field (pre-#576 rows, or a call outside any resolved engine) is
  * skipped rather than bucketed under a synthetic key.
  */
-export function readLastEngineUsage(stateDbPath: string, now: () => number): Map<string, EngineLastUsed> {
+export function readLastEngineUsage(
+  stateDbPath: string,
+  now: () => number,
+  readOnly = false,
+): Map<string, EngineLastUsed> {
   const since = engineLastUsedSince(now);
-  const events = readEvents({ since, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath }).events;
+  const events = readEvents({ since, type: LLM_USAGE_EVENT }, { dbPath: stateDbPath, readOnly }).events;
   const lastUsed = new Map<string, EngineLastUsed>();
   for (const event of events) {
     const record = decodeLlmUsageRecord(event.metadata);

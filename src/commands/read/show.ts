@@ -100,6 +100,12 @@ export async function akmShowUnified(input: {
   eventSource?: UsageEventSource;
   /** Internal nested reads can render without recording a second user consumption row. */
   skipLogging?: boolean;
+  /**
+   * Read without side effects (`akm ui`): no usage events, no index refresh and
+   * no workflow-run lookup, so the show never counts as demand and never writes
+   * `index.db` or `state.db`. Implies `skipLogging`.
+   */
+  readOnly?: boolean;
 }): Promise<ShowResponse> {
   const ref = input.ref.trim();
   validateFragmentContextRequest(input);
@@ -110,7 +116,7 @@ export async function akmShowUnified(input: {
   //     resolved here before the index lookup; meta docs are not asset refs.
   {
     const metaRef = parseMetaRef(ref);
-    if (metaRef) return showStashMeta(metaRef);
+    if (metaRef) return showStashMeta(metaRef, input.readOnly === true);
   }
 
   // Env/secret bodies have no safe fragment surface, and a fragment cannot
@@ -124,7 +130,7 @@ export async function akmShowUnified(input: {
   // safe substrate below is its source of truth. Friendly heading selectors
   // intentionally retain the normal source-live read behavior.
   const parsedRef = parseBundleRef(ref);
-  if (!parsedRef.fragment?.startsWith("akm-fragment-")) {
+  if (!input.readOnly && !parsedRef.fragment?.startsWith("akm-fragment-")) {
     const { primarySource } = resolveReadSources();
     await ensurePrimaryIndexForRead(primarySource);
   }
@@ -139,7 +145,7 @@ export async function akmShowUnified(input: {
     enforceScopeOrThrow(result.path, ref, input.scope);
   }
   // Count prior shows of this ref before logging the current one.
-  if (!input.skipLogging) {
+  if (!input.skipLogging && !input.readOnly) {
     const consumedRef = result.ref ?? makeBundleRef(undefined, parseBundleRef(ref).conceptId);
     const priorShowCount = recentShowCount(consumedRef);
     recordShowUsage(consumedRef, result.type, result.name, input.eventSource, result.path);
@@ -159,7 +165,7 @@ export async function akmShowUnified(input: {
  * to that stash; an uninstalled origin yields an actionable "not installed"
  * error. The file is read directly from disk — `.meta/` is never indexed.
  */
-async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
+async function showStashMeta(metaRef: MetaRef, readOnly = false): Promise<ShowResponse> {
   const allSources = resolveSourceEntries();
   const sources = resolveSourcesForOrigin(metaRef.origin, allSources);
 
@@ -175,7 +181,9 @@ async function showStashMeta(metaRef: MetaRef): Promise<ShowResponse> {
     const metaFile = readMetaFile(source.path, metaRef.name);
     if (!metaFile) continue;
     const editable = isEditable(metaFile.path, config, allSources);
-    appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
+    if (!readOnly) {
+      appendEvent({ eventType: "show", ref: `meta:${metaRef.name}`, metadata: { type: "meta", name: metaRef.name } });
+    }
     return {
       type: "meta",
       name: metaRef.name,
@@ -270,6 +278,7 @@ export async function showLocal(input: {
   stashDir?: string;
   contextMode?: FragmentContextMode;
   maxContextChars?: number;
+  readOnly?: boolean;
 }): Promise<ShowResponse> {
   validateFragmentContextRequest(input);
   const parsed = parseBundleRef(input.ref);
@@ -460,7 +469,7 @@ export async function showLocal(input: {
     ...showLinks(indexedEntry.itemRef, displayDefaultBundle),
   };
 
-  const activeRun = await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
+  const activeRun = input.readOnly ? null : await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
   if (activeRun) {
     (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
   }

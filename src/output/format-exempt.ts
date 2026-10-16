@@ -43,6 +43,9 @@ const EXEMPT_COMMANDS: ReadonlySet<string> = new Set([
   "help",
   // Embedded agent guide document (`src/output/cli-hints.ts`).
   "hints",
+  // Prints the URL it is serving and then runs until interrupted; the data is
+  // the web UI's own JSON API, not a result envelope.
+  "ui",
 ]);
 
 /**

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>akm ui</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <div class="shell">
+    <nav class="sidebar" aria-label="Main">
+      <a class="brand" href="#/overview">akm <span>ui</span></a>
+      <ul class="nav-links">
+        <li><a data-route="overview" href="#/overview">Overview</a></li>
+        <li><a data-route="bundles" href="#/bundles">Bundles</a></li>
+        <li><a data-route="config" href="#/config">Config</a></li>
+        <li><a data-route="proposals" href="#/proposals">Proposals</a></li>
+        <li><a data-route="changes" href="#/changes">Changes</a></li>
+        <li><a data-route="search" href="#/search">Search</a></li>
+      </ul>
+      <div class="nav-meta" id="nav-meta"></div>
+    </nav>
+    <main id="app" aria-live="polite">
+      <noscript><p>akm ui needs JavaScript. It makes no network requests beyond its own local server.</p></noscript>
+    </main>
+  </div>
+</body>
+</html>

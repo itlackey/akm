@@ -115,6 +115,7 @@ import { renderMigrationHelp } from "./commands/sources/migration-help";
 import { cloneCommand, syncCommand, upgradeCommand } from "./commands/sources/sources-cli";
 import { importKnowledgeCommand, indexCommand, infoCommand } from "./commands/sources/stash-cli";
 import { taskCommand } from "./commands/tasks/tasks-cli";
+import { uiCommand } from "./commands/ui/ui-cli";
 import { workflowCommand } from "./commands/workflow-cli";
 import { DEFAULT_CONFIG, loadConfig } from "./core/config/config";
 import { UsageError, type UsageErrorCode } from "./core/errors";
@@ -496,6 +497,7 @@ const commands = {
   index: indexCommand,
   health: healthCommand,
   metrics: metricsCommand,
+  ui: uiCommand,
   info: infoCommand,
   bundle: bundleCommand,
   upgrade: upgradeCommand,
@@ -852,6 +854,7 @@ const HELP_SECTIONS: ReadonlyArray<{
       "lint",
       "health",
       "metrics",
+      "ui",
       "config",
       "models",
       "registry",

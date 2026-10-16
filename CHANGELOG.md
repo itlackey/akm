@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm ui` serves a local web UI.** It listens on `127.0.0.1` (a random free port unless `--port` is given),
+  prints a URL that carries a per-launch token and opens your browser; `--no-open` only prints it. It reads health and
+  metrics, bundles with git status, the effective config, the proposal queue, recent changes and search through the
+  functions the CLI uses, and browsing writes nothing: no usage events, no index build, no config or database writes.
+  The page has Overview (health, metrics, recent improve runs, 14-day usage), Bundles, Config (with a source badge per
+  key), Proposals (with diffs), Changes and Search with an asset view. It is plain HTML, CSS and JavaScript with no
+  external requests, backed by a JSON API (`docs/reference/ui-api.md`). Experimental.
+- **`akm ui` can accept and reject proposals.** A proposal's page has Accept (after an inline confirmation) and Reject
+  (with a required reason); the pending list has a checkbox per row and an "Accept selected" bar that accepts several
+  proposals in one commit. These are the UI's only writes, through three `POST` routes that call the functions
+  `akm proposal accept` and `reject` call, so a decision is recorded and committed exactly as on the command line.
+  A write needs the token in the `X-Akm-Ui-Token` header (not the URL), a JSON content type and an `Origin` that is the
+  server's own address; a stale target, an already-decided proposal and a held write lease come back as `409`.
+
 ### Fixed
 
 - **Reflect's missing-H1 title is now a valid, byte-preserving edit (#1183).** When a reflect patch carried a title

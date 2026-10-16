@@ -88,6 +88,7 @@ enumeration of the whole `proposal` noun group.
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
+| `akm ui` | Experimental | New in 0.10. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Read-only except that proposals can be accepted (singly or in a batch) and rejected from it. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
@@ -403,6 +404,14 @@ for scripted use.
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
   `--format html` dashboard may change in any release; do not script against
   them.
+- **`akm ui`** — new in 0.10. A local web UI over the same data
+  `akm health`, `akm metrics`, `akm config`, `akm proposal`, `akm search` and
+  `akm show` report. It is read-only except that proposals can be accepted
+  (singly or several at once, one commit) and rejected from it, through the
+  same functions `akm proposal accept` / `reject` call. The command's flags, the page, and the `/api/` JSON the
+  page reads (documented in `docs/reference/ui-api.md`) may change in any
+  release; do not script against the API. The CLI's JSON output remains the
+  scriptable surface.
 - **`lesson` asset type** — schema (`when_to_use`, `description`) is
   stable, but lesson-distillation triggers and ranking are tuning targets.
 - **`--detail agent`** — the agent projection, implemented on `search`, `show`,
