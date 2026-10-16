@@ -189,6 +189,11 @@ export function splitFrontmatter(raw: string): { fmText: string | null; body: st
   return m ? { fmText: m[1] ?? "", body: m[2] ?? "" } : { fmText: null, body: raw };
 }
 
+/** A level-1 heading line (`# text`) anywhere in a body: what reflect's title adds only when none is there. */
+export function bodyHasH1(body: string): boolean {
+  return /^#[ \t]+\S/m.test(body);
+}
+
 /** Frontmatter text, fenced code blocks, and prose lines (an unclosed fence counts as prose). */
 function parseSections(text: string): { frontmatter: string; codeFences: string[]; proseLines: string[] } {
   const { fmText, body } = splitFrontmatter(normalizeTrailingWhitespace(text));

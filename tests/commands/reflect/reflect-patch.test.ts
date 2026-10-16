@@ -132,6 +132,28 @@ describe("applyReflectPatch — a title is a level-1 heading, added only to a bo
     expect(patched?.content).toBe(`---\ndescription: ${NEW_DESCRIPTION}\n---\n\n# Release runbook\n\nSome prose.\n`);
   });
 
+  test("the body's leading blank lines are kept, with the heading after them (#1183)", () => {
+    const body = "\n\n\nSome prose.\n\n  indented\n";
+    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}${body}`, REF);
+
+    expect(patched?.content).toBe(`${frontmatter}\n\n\n# Release runbook\n\nSome prose.\n\n  indented\n`);
+  });
+
+  test("a body that starts right after the fence is not given an extra blank line before the heading", () => {
+    const patched = applyReflectPatch({ title: "Release runbook" }, `${frontmatter}Some prose.\n`, REF);
+
+    expect(patched?.content).toBe(`${frontmatter}# Release runbook\n\nSome prose.\n`);
+  });
+
+  test("a CRLF body gets a CRLF heading and keeps every other byte", () => {
+    const source = "---\r\ndescription: Old description text\r\n---\r\n\r\nLine one.\r\n\r\nLine two.\r\n";
+    const patched = applyReflectPatch({ title: "Release runbook" }, source, REF);
+
+    expect(splitFrontmatter(patched?.content ?? "").body).toBe(
+      "\r\n# Release runbook\r\n\r\nLine one.\r\n\r\nLine two.\r\n",
+    );
+  });
+
   test("a source with no frontmatter gets the heading and no frontmatter block", () => {
     const patched = applyReflectPatch({ title: "Release runbook" }, "Some prose.\n", REF);
 

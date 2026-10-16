@@ -241,7 +241,8 @@ it for a person too. On 2026-10-05 the gate had
 staged 12 lessons and 10 were bad (they restated the memory, claimed what it
 does not say, or filed a dated status as a lesson), and no score separated them
 from the two good ones. Reflect revises only an asset's
-`description`, `when_to_use` and title, never its body. On 396 labelled edits,
+`description`, `when_to_use` and title, and edits the body only to add a missing level-1
+heading; the rest of the body stays byte for byte. On 396 labelled edits,
 those that fixed a frontmatter defect and left the body alone were good 24
 times in 26, and those that also rewrote the body were bad 175 times in 224.
 
