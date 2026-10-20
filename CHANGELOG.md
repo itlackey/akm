@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261007] - 2026-10-20
+
 ### Added
 
 - **`akm proposal new --bundle <name>` queues a new-asset proposal for another configured bundle.** The bundle must be
