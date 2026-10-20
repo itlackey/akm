@@ -17,6 +17,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm ui` searches and asset views never open the index for write.** In read-only mode, `akm search` and
+  `akm show` still opened `index.db` read-write; closing that connection can checkpoint the WAL into the main file,
+  so browsing could change `index.db` even though nothing was written (seen as an intermittent CI failure). They now
+  use read-only connections.
 - **`akm clone` works on flat skill repos and website pages, and records where the clone came from.** A ref whose
   concept id is not under a type directory (`my-repo//domain-name-brainstormer`, a page from a `bundle add <url>`
   source) failed with `TypeError: paths[1] must be string`. The source is now found through the bundle's adapter and

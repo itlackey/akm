@@ -1715,6 +1715,18 @@ export async function lookupBundleRefWithResolution(ref: BundleRef): Promise<Bun
   return lookupBundleRefWithResolutionUsing(ref, openExistingDatabase);
 }
 
+/**
+ * {@link lookupBundleRefWithResolution} on a plain read-only connection (`akm ui`): a read-write one can checkpoint
+ * the WAL into the main file when it closes, changing the file although nothing was written.
+ */
+export async function lookupBundleRefWithResolutionReadonly(ref: BundleRef): Promise<BundleRefLookupResolution> {
+  return lookupBundleRefWithResolutionUsing(ref, (dbPath) => {
+    const db = openReadonlyExistingDatabase(dbPath);
+    if (!db) throw new Error(`Index database not found at ${dbPath}. Run 'akm index' to build it.`);
+    return db;
+  });
+}
+
 /** Resolve an adapter-owned `[bundle//]conceptId` without interpreting its path as an AKM type. */
 export async function lookupBundleRef(ref: BundleRef): Promise<IndexEntry | null> {
   const resolution = await lookupBundleRefWithResolution(ref);

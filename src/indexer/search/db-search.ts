@@ -36,6 +36,7 @@ import {
   assertIndexPathReadable,
   closeDatabase,
   openExistingDatabase,
+  openReadonlyExistingDatabase,
 } from "../../storage/repositories/index-connection";
 import {
   getAllEntries,
@@ -226,7 +227,10 @@ export async function searchLocal(input: SearchLocalInput): Promise<{
     };
   }
 
-  const db = openExistingDatabase(dbPath);
+  // A read-only search (`akm ui`) must not open the index for write: closing a
+  // read-write connection can checkpoint the WAL into the main file, which
+  // changes it even though nothing was written.
+  const db = input.readOnly ? (openReadonlyExistingDatabase(dbPath) as Database) : openExistingDatabase(dbPath);
   try {
     const entryCount = getEntryCount(db);
     if (entryCount === 0) {

@@ -39,7 +39,11 @@ import { appendEvent } from "../../core/events";
 import { SCRIPT_EXTENSIONS } from "../../core/recognition-util";
 import { presentationFor } from "../../core/type-presentation";
 import { warn, warnOnce } from "../../core/warn";
-import { lookupBundleRef, lookupBundleRefWithResolution } from "../../indexer/indexer";
+import {
+  lookupBundleRef,
+  lookupBundleRefWithResolution,
+  lookupBundleRefWithResolutionReadonly,
+} from "../../indexer/indexer";
 import type { StashEntryScope } from "../../indexer/passes/metadata";
 import { projectMarkdownFragmentContent } from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
@@ -290,7 +294,9 @@ export async function showLocal(input: {
 
   const allSourceDirs = searchSources.map((s) => s.path);
 
-  const resolution = await lookupBundleRefWithResolution(parsed);
+  const resolution = input.readOnly
+    ? await lookupBundleRefWithResolutionReadonly(parsed)
+    : await lookupBundleRefWithResolution(parsed);
   if (resolution.indexError !== undefined) throw resolution.indexError;
   const indexedEntry = resolution.entry;
   const assetPath = indexedEntry?.filePath;
@@ -353,7 +359,9 @@ export async function showLocal(input: {
   // or when the caller explicitly opts into indexed-safe contextual output.
   const indexedFragment =
     parsed.fragment && (opaqueFragmentSelector || input.contextMode === "lead")
-      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!))
+      ? withIndexDb((db) => getIndexedMarkdownFragment(db, indexedEntry.itemRef, parsed.fragment!), {
+          readOnly: input.readOnly === true,
+        })
       : undefined;
   const indexedFragmentContent = opaqueFragmentSelector ? indexedFragment?.content : undefined;
   const indexedRenderer = rendererForIndexedEntry(indexedEntry, fileCtx);
@@ -466,7 +474,7 @@ export async function showLocal(input: {
     origin: source?.registryId ?? null,
     editable,
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
-    ...showLinks(indexedEntry.itemRef, displayDefaultBundle),
+    ...showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true),
   };
 
   const activeRun = input.readOnly ? null : await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
@@ -493,10 +501,10 @@ const LINKS_PER_KIND = 10;
  * authored order, incoming by ref, and unresolved tokens as authored. Empty
  * parts are omitted, and the field when nothing links either way.
  */
-function showLinks(itemRef: string, defaultBundle: string | undefined): Pick<ShowResponse, "links"> {
+function showLinks(itemRef: string, defaultBundle: string | undefined, readOnly = false): Pick<ShowResponse, "links"> {
   let rows: ReturnType<typeof readEntryLinks>;
   try {
-    rows = withIndexDb((db) => readEntryLinks(db, itemRef));
+    rows = withIndexDb((db) => readEntryLinks(db, itemRef), { readOnly });
   } catch (err) {
     rethrowIfTestIsolationError(err);
     rethrowIfDataDirUnreadable(err);
