@@ -340,8 +340,12 @@ function opaqueRefParts(conceptId: string, allowRoot = false): AssetRefParts | u
  *     that `resolveSourcesForOrigin` matches on `registryId`. The SHORT form (no
  *     bundle) leaves `origin` undefined = search-all-sources.
  *   - `#fragment` → rejected. No input boundary consumes an export fragment.
+ *
+ * `originGiven` — the caller already split a (non-slug) origin off the ref, so a
+ * single-segment conceptId (a flat skill repo's `domain-name-brainstormer`) is
+ * qualified and parses as opaque, exactly as it does behind a slug `bundle//`.
  */
-export function parseRefInput(raw: string): AssetRef {
+export function parseRefInput(raw: string, originGiven = false): AssetRef {
   const ref = parseBundleRef(raw);
   if (ref.fragment !== undefined) {
     throw new UsageError(
@@ -349,7 +353,8 @@ export function parseRefInput(raw: string): AssetRef {
       "INVALID_FLAG_VALUE",
     );
   }
-  const parts = typeNameFromConceptId(ref.conceptId) ?? opaqueRefParts(ref.conceptId, ref.bundle !== undefined);
+  const parts =
+    typeNameFromConceptId(ref.conceptId) ?? opaqueRefParts(ref.conceptId, originGiven || ref.bundle !== undefined);
   if (parts === undefined) {
     throw new NotFoundError(
       `Unrecognized asset ref "${raw.trim()}": conceptId "${ref.conceptId}" has no known asset-type prefix.`,
@@ -380,7 +385,7 @@ export function parseQualifiedRefInput(raw: string): AssetRef {
   if (boundary > 0) {
     const origin = trimmed.slice(0, boundary);
     if (!isBundleSlug(origin)) {
-      return { ...parseRefInput(trimmed.slice(boundary + 2)), origin };
+      return { ...parseRefInput(trimmed.slice(boundary + 2), true), origin };
     }
   }
   return parseRefInput(trimmed);
