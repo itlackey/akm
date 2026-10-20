@@ -3030,11 +3030,13 @@ akm proposal new <type> <name> --file ./prompt.md
 akm proposal new skill code-review --task "PR-style review skill"
 akm proposal new lesson docker-cleanup --file ./prompts/docker-cleanup.md
 akm proposal new skill code-review --path team --task "PR-style review skill"  # writes under skills/team/
+akm proposal new skill code-review --bundle team --task "PR-style review skill"  # queued for the `team` bundle
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--path` | Relative subdirectory under the type dir to place the proposed asset in (e.g. `release`). The filename comes from `<name>`. |
+| `--bundle` | Configured writable bundle to queue the proposal for. The prompt takes its convention facts from that bundle, the proposal records it as its target (so `akm proposal accept` writes there), and it is queued in that bundle's queue (`akm proposal list --queue <bundle>`). An unknown, disabled or read-only bundle is refused, as for `akm remember --bundle`. Default: the working bundle |
 | `--task` | Inline task text |
 | `--file` | Read task text from a UTF-8 file |
 | `--engine` | Override the default execution engine. Any kind works: an LLM engine, an agent CLI or `opencode-sdk` |

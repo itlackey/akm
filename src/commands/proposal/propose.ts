@@ -26,6 +26,7 @@ import { redactSensitiveText } from "../../core/redaction";
 import { resolveStandardsContext } from "../../core/standards/resolve-standards-context";
 import { type RunStructuredResult, runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
+import { resolveWriteTarget } from "../../core/write-source";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { deriveEntryProvenance } from "../../indexer/installations";
 import type { AgentFailureReason, AgentRunResult, RunAgentOptions } from "../../integrations/agent";
@@ -58,6 +59,8 @@ export interface AkmProposeOptions {
   task: string;
   engine?: string;
   timeoutMs?: number;
+  /** Configured bundle to queue the proposal for (`--bundle`); default: the working bundle. */
+  bundle?: string;
   stashDir?: string;
   runAgentOptions?: Pick<RunAgentOptions, "spawn" | "setTimeoutFn" | "clearTimeoutFn" | "envSource">;
   agentConfig?: AkmConfig;
@@ -239,11 +242,14 @@ export async function akmPropose(options: AkmProposeOptions): Promise<AkmPropose
     );
   }
 
-  const stash = options.stashDir ?? resolveStashDir();
-
   // 1. Resolve the write target. Engine/model/inference resolution happens
-  // exactly once below through the shared execution cascade.
+  // exactly once below through the shared execution cascade. `--bundle` names a
+  // configured, writable bundle (same resolver and errors as `akm remember
+  // --bundle`); its root becomes the stash the proposal is queued for and the
+  // prompt's standards are read from.
   const config = options.agentConfig ?? (await import("../../core/config/config.js")).loadConfig();
+  const stash =
+    options.stashDir ?? (options.bundle ? resolveWriteTarget(config, options.bundle).source.path : resolveStashDir());
   const target = resolveProposalQueueTarget(stash, config);
 
   // 2. Build terminal user content.

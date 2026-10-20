@@ -52,6 +52,11 @@ export const proposeCommand = defineCommand({
     },
     task: { type: "string", description: "Task description for the agent (what should the asset do?)" },
     file: { type: "string", description: "Read the task or prompt text from a UTF-8 file" },
+    bundle: {
+      type: "string",
+      description:
+        "Configured writable bundle to queue the proposal for and draw convention facts from (default: the working bundle)",
+    },
     engine: { type: "string", description: "Engine to use (defaults to defaults.engine)" },
     "timeout-ms": { type: "string", description: "Override the engine timeout in milliseconds" },
   },
@@ -82,6 +87,7 @@ export const proposeCommand = defineCommand({
         name: proposedName,
         task: taskText,
         engine: getStringArg(args, "engine"),
+        bundle: getStringArg(args, "bundle"),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
       output("proposal-new", result);
