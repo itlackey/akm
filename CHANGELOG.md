@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261008] - 2026-10-20
+
 ### Fixed
 
 - **`akm remember`, config saves and other writes work on filesystems that refuse chmod.** On a CIFS/SMB mount
