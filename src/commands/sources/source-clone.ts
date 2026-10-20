@@ -360,7 +360,10 @@ function slugName(conceptId: string): string {
 
 /**
  * Record where a cloned markdown asset came from by merging the origin ref into
- * its `xrefs:` frontmatter. Only the `xrefs` block is rewritten; every other
+ * its `sources:` frontmatter. `sources:` is free-form provenance that `akm lint` does
+ * not resolve, unlike `xrefs:`: the origin bundle is often not installed where the
+ * clone is read (a shared domain bundle), and an `xrefs:` entry would be reported as
+ * a missing ref there. Only the `sources` block is rewritten; every other
  * byte stays as written. A file whose frontmatter cannot be edited that way
  * (and still parse back to exactly the intended mapping) is left untouched.
  */
@@ -368,17 +371,17 @@ function stampCloneOrigin(filePath: string, originRef: string | undefined): void
   if (!originRef) return;
   const raw = fs.readFileSync(filePath, "utf8");
   const parsed = parseFrontmatter(raw);
-  const existing = parsed.data.xrefs;
+  const existing = parsed.data.sources;
   const prior = Array.isArray(existing) ? existing : typeof existing === "string" ? [existing] : [];
   if (existing !== undefined && prior.length === 0) return;
   if (prior.includes(originRef)) return;
-  const xrefs = [...prior, originRef];
+  const sources = [...prior, originRef];
   let next: string | null;
   if (parsed.frontmatter === null) {
-    next = `---\n${serializeFrontmatter({ xrefs })}\n---\n${raw}`;
+    next = `---\n${serializeFrontmatter({ sources })}\n---\n${raw}`;
   } else {
-    next = replaceFrontmatterBlocks(raw, ["xrefs"], serializeFrontmatter({ xrefs }).split("\n"));
-    if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, { ...parsed.data, xrefs })) return;
+    next = replaceFrontmatterBlocks(raw, ["sources"], serializeFrontmatter({ sources }).split("\n"));
+    if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, { ...parsed.data, sources })) return;
   }
   fs.writeFileSync(filePath, next);
 }

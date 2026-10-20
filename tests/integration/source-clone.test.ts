@@ -694,7 +694,7 @@ describe("akmClone opaque refs and provenance", () => {
     configure();
   });
 
-  test("clones a skill from a flat skills repo into skills/<name>/ with an xrefs origin", async () => {
+  test("clones a skill from a flat skills repo into skills/<name>/ with a sources origin", async () => {
     const result = await akmClone({ sourceRef: "flat//domain-name-brainstormer" });
 
     const dest = path.join(stashDir, "skills", "domain-name-brainstormer");
@@ -702,51 +702,51 @@ describe("akmClone opaque refs and provenance", () => {
     expect(fs.existsSync(path.join(dest, "reference", "FORMS.md"))).toBe(true);
     const skill = fs.readFileSync(path.join(dest, "SKILL.md"), "utf8");
     expect(skill).toContain("description: Brainstorm domain names");
-    expect(skill).toContain("xrefs:\n  - flat//domain-name-brainstormer\n");
+    expect(skill).toContain("sources:\n  - flat//domain-name-brainstormer\n");
     expect(skill).toEndWith("# Brainstormer\n");
     // The origin is not touched.
     expect(fs.readFileSync(path.join(flatSkillsDir, "domain-name-brainstormer", "SKILL.md"), "utf8")).not.toContain(
-      "xrefs",
+      "sources:",
     );
     // Non-markdown / other markdown files in the skill directory are copied verbatim.
     expect(fs.readFileSync(path.join(dest, "reference", "FORMS.md"), "utf8")).toBe("# Forms\n");
   });
 
-  test("clones a website page into knowledge/<slug>.md with an xrefs origin", async () => {
+  test("clones a website page into knowledge/<slug>.md with a sources origin", async () => {
     const result = await akmClone({ sourceRef: "site//example-test/docs/Getting Started" });
 
     const dest = path.join(stashDir, "knowledge", "getting-started.md");
     expect(result.destination.path).toBe(dest);
     const page = fs.readFileSync(dest, "utf8");
     expect(page).toContain("sourceUrl: https://example.test/docs/start");
-    expect(page).toContain("xrefs:\n  - site//example-test/docs/Getting Started\n");
+    expect(page).toContain("sources:\n  - site//example-test/docs/Getting Started\n");
     expect(page).toEndWith("# Getting started\n");
   });
 
   test("clones a flat doc from a generic-files bundle into knowledge/ and honors --name", async () => {
     await akmClone({ sourceRef: "docs//patterns/retry-backoff" });
     expect(fs.readFileSync(path.join(stashDir, "knowledge", "retry-backoff.md"), "utf8")).toStartWith(
-      "---\nxrefs:\n  - docs//patterns/retry-backoff\n---\n# Retry with backoff",
+      "---\nsources:\n  - docs//patterns/retry-backoff\n---\n# Retry with backoff",
     );
 
     await akmClone({ sourceRef: "docs//patterns/retry-backoff", newName: "backoff" });
     expect(fs.existsSync(path.join(stashDir, "knowledge", "backoff.md"))).toBe(true);
   });
 
-  test("merges the origin into an existing xrefs list and is idempotent per origin", async () => {
+  test("merges the origin into an existing sources list and is idempotent per origin", async () => {
     writeFile(
       path.join(docsDir, "patterns", "linked.md"),
-      "---\ntitle: Linked\nxrefs:\n  - knowledge/other\n---\nBody\n",
+      "---\ntitle: Linked\nsources:\n  - knowledge/other\n---\nBody\n",
     );
 
     await akmClone({ sourceRef: "docs//patterns/linked" });
     const cloned = fs.readFileSync(path.join(stashDir, "knowledge", "linked.md"), "utf8");
     expect(cloned).toContain("title: Linked");
-    expect(cloned).toContain("xrefs:\n  - knowledge/other\n  - docs//patterns/linked\n");
+    expect(cloned).toContain("sources:\n  - knowledge/other\n  - docs//patterns/linked\n");
     expect(cloned).toEndWith("---\nBody\n");
   });
 
-  test("known-type refs keep their paths and gain the origin in xrefs", async () => {
+  test("known-type refs keep their paths and gain the origin in sources", async () => {
     writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "---\nname: review\n---\n# Review\n");
     writeFile(path.join(searchPathDir, "knowledge", "http-caching.md"), "# Caching\n");
     writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
@@ -756,10 +756,10 @@ describe("akmClone opaque refs and provenance", () => {
     const script = await akmClone({ sourceRef: "searchpath//scripts/deploy.sh" });
 
     expect(skill.destination.path).toBe(path.join(stashDir, "skills", "review", "SKILL.md"));
-    expect(fs.readFileSync(skill.destination.path, "utf8")).toContain("xrefs:\n  - searchpath//skills/review\n");
+    expect(fs.readFileSync(skill.destination.path, "utf8")).toContain("sources:\n  - searchpath//skills/review\n");
     expect(knowledge.destination.path).toBe(path.join(stashDir, "knowledge", "http-caching.md"));
     expect(fs.readFileSync(knowledge.destination.path, "utf8")).toStartWith(
-      "---\nxrefs:\n  - searchpath//knowledge/http-caching\n---\n# Caching",
+      "---\nsources:\n  - searchpath//knowledge/http-caching\n---\n# Caching",
     );
     // Non-markdown content is copied byte for byte.
     expect(fs.readFileSync(script.destination.path, "utf8")).toBe("#!/bin/bash\necho deploy\n");
@@ -782,7 +782,9 @@ describe("akmClone opaque refs and provenance", () => {
 
     expect(result.destination.path).toBe(path.join(customDest, "skills", "domain-name-brainstormer", "SKILL.md"));
     expect(result.destination.ref).toBeUndefined();
-    expect(fs.readFileSync(result.destination.path, "utf8")).toContain("xrefs:\n  - flat//domain-name-brainstormer\n");
+    expect(fs.readFileSync(result.destination.path, "utf8")).toContain(
+      "sources:\n  - flat//domain-name-brainstormer\n",
+    );
   });
 
   test("an opaque ref behind a non-slug origin parses (flat skill from a path origin)", async () => {

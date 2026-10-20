@@ -1569,7 +1569,9 @@ points to `akm import <path>`.
 
 **Provenance.** A cloned markdown asset (a skill's `SKILL.md` included) records
 where it came from: the origin ref, `<bundle>//<concept-id>`, is added to its
-`xrefs:` frontmatter, keeping any refs already listed. Other bytes of the file
+`sources:` frontmatter, keeping any entries already listed. `sources:` is free-form
+provenance that `akm lint` does not resolve, so a clone shared where the origin
+bundle is not installed does not report a missing ref. Other bytes of the file
 stay as written, non-markdown files and workflows are copied unchanged, and the
 origin is never modified.
 
