@@ -1,0 +1,306 @@
+{
+  "eval": "consolidate",
+  "corpus": "custom",
+  "corpus_folder": null,
+  "label": "1195-baseline-controls",
+  "date": "2026-10-20T23:21:02.743Z",
+  "status": "complete",
+  "aborted_reason": null,
+  "git_commit": "4d14d45-dirty",
+  "model": "fast/qwen3.6-35b-a3b",
+  "akm_version": "0.10.261008",
+  "akm_bin": "bun /tmp/akm-1195-baseline/src/cli.ts",
+  "akm_build": null,
+  "akm_build_fingerprint": null,
+  "embedder": "real",
+  "limit": null,
+  "strategy": "consolidate",
+  "config_patch": {
+    "path": "../../../akm-1195-evidence/lab-embedding.json",
+    "sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a"
+  },
+  "config": {
+    "configVersion": "0.9.0",
+    "semanticSearchMode": "auto",
+    "registries": [],
+    "engines": {
+      "consolidate": {
+        "kind": "llm",
+        "provider": "openai",
+        "endpoint": "<MODEL_BASE_URL>/chat/completions",
+        "model": "fast/qwen3.6-35b-a3b",
+        "apiKey": "$MODEL_API_KEY",
+        "timeoutMs": 600000,
+        "temperature": 0,
+        "enableThinking": false
+      }
+    },
+    "defaults": {
+      "llmEngine": "consolidate"
+    },
+    "embedding": {
+      "localModel": "Xenova/bge-small-en-v1.5",
+      "queryTimeoutMs": 120000,
+      "endpoint": "<EMBEDDING_ENDPOINT>",
+      "model": "embed/qwen3-embedding-0.6b",
+      "apiKey": "$MODEL_API_KEY"
+    }
+  },
+  "engine": {
+    "engine": "consolidate",
+    "model": "fast/qwen3.6-35b-a3b",
+    "endpoint": "http://127.0.0.1:39813",
+    "temperature": 0,
+    "enableThinking": false,
+    "timeoutMs": 600000,
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "http://127.0.0.1:39813",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "assets_sha256": "57d43bc85194e35f521b01ddb75b2abb10d3d303623d4e165ab99446f83f2e0f",
+  "seed": null,
+  "n_cases": 3,
+  "n_run": 3,
+  "n_scored": 3,
+  "n_errored": 0,
+  "timeouts": 0,
+  "n_paired": 3,
+  "served_models": {
+    "qwen3.6-35b-a3b": 9
+  },
+  "metrics": {
+    "unsafe": {
+      "n": 1,
+      "of": 3,
+      "staged": 1
+    },
+    "staged": {
+      "n": 3,
+      "safe": 2
+    },
+    "precision": {
+      "value": 0.6667,
+      "safe": 2,
+      "retired": 3
+    },
+    "recall": {
+      "value": 0.6667,
+      "retired_safe": 2,
+      "of": 3
+    },
+    "classes": {
+      "duplicate": {
+        "n": 2,
+        "error": 0,
+        "paired": 2,
+        "judged_as": {
+          "duplicate": 2,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 2,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "subsumed": {
+        "n": 1,
+        "error": 0,
+        "paired": 1,
+        "judged_as": {
+          "duplicate": 1,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 1,
+        "kept": 0
+      },
+      "supersedes": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "contradicts": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "overlap": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "unrelated": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      }
+    }
+  },
+  "model_calls": {
+    "calls": 9,
+    "errors": 0,
+    "prompt_tokens": 4138.1,
+    "completion_tokens": 30.2,
+    "seconds": 2.44,
+    "output_tokens_per_second": 12.4
+  },
+  "semantic_verification": {
+    "index_checks": 3,
+    "indexed_entries": 6,
+    "embedded_entries": 6,
+    "searches": {
+      "semantic": 0,
+      "non_semantic": 0,
+      "unknown": 0
+    },
+    "telemetry_errors": 0,
+    "failures": 0
+  },
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "consolidate",
+    "corpus": "custom",
+    "collection": null,
+    "mode": null,
+    "harness_version": 3,
+    "collector": {
+      "version": "0.2"
+    },
+    "scorer": {
+      "version": "0.2"
+    },
+    "cases": {
+      "independent-long-duplicate": {
+        "input_sha256": "3c49ef1ba474f41c674f13370cf0724a35b8dad55e177b27f26ebc4764f57e63",
+        "label_sha256": "d66678924c2cddae2ab4d95fe4f812a8e2ea45947df3f6c95254d0f4dcf90204"
+      },
+      "independent-long-tail": {
+        "input_sha256": "cc556e7c5a987a5458baa52389b30b93772bf98ec3dae96d066836bccc362a41",
+        "label_sha256": "61adb5e8dfe61cf75fc674195f7abfa5a9b7bfea364319021339687b8a595a5e"
+      },
+      "long-exact-duplicate": {
+        "input_sha256": "3a14b48ef5326425b682691022b766596d83f2278b715a9b820eabda6cf7ab43",
+        "label_sha256": "910f1a24bfd0a1f5142b606471398062e774dfe8930c4cba94d8f28d177138e0"
+      }
+    },
+    "akm": {
+      "version": "0.10.261008",
+      "bin": "bun /tmp/akm-1195-baseline/src/cli.ts",
+      "build": null,
+      "build_fingerprint": null
+    },
+    "config": {
+      "redacted": {
+        "configVersion": "0.9.0",
+        "semanticSearchMode": "auto",
+        "registries": [],
+        "engines": {
+          "consolidate": {
+            "kind": "llm",
+            "provider": "openai",
+            "apiKey": "$MODEL_API_KEY"
+          }
+        },
+        "defaults": {
+          "llmEngine": "consolidate"
+        },
+        "embedding": {
+          "localModel": "Xenova/bge-small-en-v1.5",
+          "queryTimeoutMs": 120000,
+          "endpoint": "<EMBEDDING_ENDPOINT>",
+          "model": "embed/qwen3-embedding-0.6b",
+          "apiKey": "$MODEL_API_KEY"
+        }
+      }
+    },
+    "settings": {
+      "strategy": "consolidate",
+      "config_patch_sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a",
+      "timeout_ms": null,
+      "seed": null
+    },
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "http://127.0.0.1:39813",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    },
+    "treatment_hints": {
+      "embedder": "real"
+    },
+    "completion": {
+      "selected": [
+        "independent-long-duplicate",
+        "independent-long-tail",
+        "long-exact-duplicate"
+      ],
+      "scored": [
+        "independent-long-duplicate",
+        "independent-long-tail",
+        "long-exact-duplicate"
+      ],
+      "errored": []
+    }
+  },
+  "wall_seconds": 24.536
+}
