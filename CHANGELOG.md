@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm remember`, config saves and other writes work on filesystems that refuse chmod.** On a CIFS/SMB mount
+  such as an Azure Files share, chmod fails with `EPERM`, and akm treated that as fatal: every atomic write
+  (`akm remember`, `akm setup`, `akm env`, `akm secret`) and every config backup failed. akm now keeps the mode the
+  file was created with when the filesystem refuses chmod (`EPERM`, `ENOTSUP`, `EINVAL`); the mount options decide
+  it there, so `env/`, `secrets/` and config backups are not guaranteed owner-only on such a share. Any other chmod
+  error still fails the write.
+
 ## [0.10.261007] - 2026-10-20
 
 ### Added

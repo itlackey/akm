@@ -2193,7 +2193,8 @@ service's config; reach for `secret` when one value *is* an auth credential.
 Manage `.env`-backed **environment files** — a group of related **configuration**
 for an app or service (URLs, feature flags, and any credentials it needs),
 loaded together. Each `env` asset is an entire `.env` file stored under `env/`
-in your bundle (mode 0600). Values may or may not be sensitive; **akm protects
+in your bundle (mode 0600; on a filesystem without POSIX permissions, such as a
+CIFS/Azure Files share, the mount options decide the mode instead). Values may or may not be sensitive; **akm protects
 them all the same** — key *names* are discoverable; values and comment text
 never appear in structured output (comments routinely contain commented-out
 credentials, so they are treated like values). akm does **not** manage
@@ -2353,7 +2354,9 @@ Manage **secrets** — a single sensitive value used on its own for
 service-account JSON. Where an [env](#env) file holds a *group* of related
 configuration and exposes key *names*, a secret is *one* value and its **entire
 file is the value**, so only the secret's *name* is ever surfaced. Each secret
-is a mode-0600 file under `secrets/` in your bundle.
+is a mode-0600 file under `secrets/` in your bundle (on a filesystem without
+POSIX permissions, such as a CIFS/Azure Files share, the mount options decide
+the mode instead).
 
 This mirrors Docker's secret model (one value per file, mounted at
 `/run/secrets/<name>`, read at runtime, never baked into the image or env at
