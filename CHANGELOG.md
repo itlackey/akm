@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Consolidation assesses complete note bodies in both retirement checks instead of silently
+  cutting each at 12,000 characters. Requests exceeding the selected engine's context window fail conservatively;
+  failed second checks leave proposals pending and unstaged. Before unattended proposal drain,
+  review and reject/reassess pending or staged retirements produced by older builds when either
+  body exceeded the former cutoff. An upgrade does not revalidate those decisions. No storage
+  migration is needed; accepted retirements remain recoverable with `akm proposal revert <id>`.
+
+### Changed
+
+- The consolidation pair judge reports claim differences; AKM derives `duplicate`, `subsumed`,
+  or `overlap` and the redundant side from those lists. It no longer asks the model to repeat
+  that decision in relation/pointer fields. Replacement retirements use `subsumed`; historical
+  queued labels remain readable. Lexical attention hints accompany complete bodies and never
+  substitute for assessing their meaning.
+
 ## [0.10.261008] - 2026-10-20
 
 ### Fixed

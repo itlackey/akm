@@ -6,15 +6,13 @@
  * The consolidate pair pass (0.9.17-alpha.9 plan §5.2, brief §A): runs
  * alongside the existing promote pass inside `akmConsolidate`, over new and
  * changed memory-tier assets. Judges each near-duplicate/superseding pair
- * with the calibrated relation prompt and mints a reviewed `retire` proposal
- * for the `duplicate` / `subsumed` / `supersedes` classes — never merges,
- * never writes belief edges for `contradicts`, and is never auto-accepted by
- * triage (`drain.ts`).
+ * with complete claim comparisons and mints a reviewed `retire` proposal
+ * for derived `duplicate` / `subsumed` outcomes — never merges,
+ * never writes belief edges. A staged retirement can be accepted unattended
+ * by triage (`drain.ts`); an unstaged one stays pending.
  *
- * Calibration (owner grades, 2026-09-28; see the plan's "Human calibration,
- * O5" section): the combined retire class (duplicate ∪ subsumed ∪
- * supersedes) is 20/22 = 0.91 precision against the owner. `T_PAIR` is 0.93,
- * not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).
+ * Pair-selection calibration (owner grades, 2026-09-28): `T_PAIR` stays
+ * 0.93, not the initial 0.90, because the 0.90–0.93 band alone graded 3/4 (R1).
  *
  * Initiator eligibility and dating (post-review, alpha.9): "created" is the
  * asset's git first-add time (one `git log` per run, {@link loadGitFirstAddedMap}),
@@ -32,6 +30,8 @@ import fs from "node:fs";
 import path from "node:path";
 import consolidatePairPrompt from "../../../assets/prompts/consolidate-pair.md" with { type: "text" };
 import consolidatePairCheckPrompt from "../../../assets/prompts/consolidate-pair-check.md" with { type: "text" };
+import consolidatePairSameAge from "../../../assets/prompts/consolidate-pair-same-age.md" with { type: "text" };
+import consolidatePairTerms from "../../../assets/prompts/consolidate-pair-terms.md" with { type: "text" };
 import { parseFrontmatter } from "../../../core/asset/frontmatter";
 import { conceptIdFromTypeName } from "../../../core/asset/resolve-ref";
 import { asNonEmptyString } from "../../../core/common";
@@ -93,16 +93,12 @@ export const BACKFILL_FLOOR = 0.95;
 export const NEW_MATERIAL_DAYS = 7;
 /** Pairs judged per run, highest cosine first (plan §7's nightly cost budget). */
 export const MAX_PAIRS_PER_RUN = 300;
-/** Body characters sent to the judge per side: enough for nearly every note, so a retirement is judged on the whole text. */
-const PAIR_BODY_TRUNCATE_CHARS = 12_000;
 const MS_PER_DAY = 86_400_000;
-
-const RELATION_LABELS = ["duplicate", "subsumed", "supersedes", "contradicts", "overlap", "unrelated"] as const;
 
 type RetireJudgeLabel = "duplicate" | "subsumed" | "supersedes";
 const RETIRE_LABELS: ReadonlySet<string> = new Set<RetireJudgeLabel>(["duplicate", "subsumed", "supersedes"]);
 
-/** The classes that mint a `retire` proposal (the calibrated combined retire class, 20/22 precision). */
+/** The labels represented by the existing retirement metadata. */
 function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLabel {
   return RETIRE_LABELS.has(label);
 }
@@ -110,16 +106,13 @@ function isRetireLabel(label: ConsolidatePairJudgeLabel): label is RetireJudgeLa
 /** Exported, with {@link buildPairUserPrompt}, so a replay can drive the exact judge call. */
 export const PAIR_JUDGE_JSON_SCHEMA: Record<string, unknown> = {
   type: "object",
-  required: ["onlyInA", "onlyInB", "relation", "redundant", "stale", "confidence", "reason"],
+  required: ["reason", "onlyInA", "onlyInB", "confidence"],
   additionalProperties: false,
   properties: {
+    reason: { type: "string", maxLength: 400 },
     onlyInA: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
     onlyInB: { type: "array", items: { type: "string", maxLength: 200 }, maxItems: 20 },
-    relation: { type: "string", enum: [...RELATION_LABELS] },
-    redundant: { type: ["string", "null"], enum: ["A", "B", null] },
-    stale: { type: ["string", "null"], enum: ["A", null] },
     confidence: { type: "number", minimum: 0, maximum: 1 },
-    reason: { type: "string", maxLength: 400 },
   },
 };
 
@@ -133,8 +126,6 @@ export const PAIR_CHECK_JSON_SCHEMA: Record<string, unknown> = {
 interface RawPairJudgeResponse {
   onlyInA?: unknown;
   onlyInB?: unknown;
-  relation?: unknown;
-  redundant?: unknown;
   confidence?: unknown;
   reason?: unknown;
 }
@@ -150,22 +141,24 @@ export interface PairJudgeVerdict {
   reason: string;
 }
 
-/** Hand-validates the judge's JSON, independent of whatever the provider's own schema enforcement did. */
+/** Validate both claim lists, then derive the outcome instead of asking the model to duplicate that decision. */
 export function parsePairJudgeResponse(raw: string): PairJudgeVerdict | undefined {
   const parsed = parseEmbeddedJsonResponse<RawPairJudgeResponse>(raw);
   if (!parsed) return undefined;
-  if (typeof parsed.relation !== "string" || !(RELATION_LABELS as readonly string[]).includes(parsed.relation)) {
-    return undefined;
-  }
-  const redundant = parsed.redundant;
-  if (redundant !== "A" && redundant !== "B" && redundant !== null) return undefined;
   if (typeof parsed.confidence !== "number" || !Number.isFinite(parsed.confidence)) return undefined;
   const confidence = Math.max(0, Math.min(1, parsed.confidence));
   const reason = typeof parsed.reason === "string" ? parsed.reason : "";
   const onlyInA = claimList(parsed.onlyInA);
   const onlyInB = claimList(parsed.onlyInB);
   if (!onlyInA || !onlyInB) return undefined;
-  return { onlyInA, onlyInB, relation: parsed.relation as ConsolidatePairJudgeLabel, redundant, confidence, reason };
+  const relation =
+    onlyInA.length === 0 && onlyInB.length === 0
+      ? "duplicate"
+      : onlyInA.length === 0 || onlyInB.length === 0
+        ? "subsumed"
+        : "overlap";
+  const redundant = onlyInA.length === 0 ? "A" : onlyInB.length === 0 ? "B" : null;
+  return { onlyInA, onlyInB, relation, redundant, confidence, reason };
 }
 
 function claimList(value: unknown): string[] | undefined {
@@ -557,10 +550,26 @@ function sideSection(label: string, side: PairSide): string[] {
     `Description: ${asNonEmptyString(side.frontmatter.description) ?? "(none)"}`,
     "Content:",
     "```",
-    stripFrontmatterBody(side.raw).slice(0, PAIR_BODY_TRUNCATE_CHARS),
+    stripFrontmatterBody(side.raw),
     "```",
     "",
   ];
+}
+
+/** Lexical attention hints only: equal token sets do not prove equal claims. */
+function exclusiveTerms(side: PairSide, other: PairSide): string {
+  const tokens = (note: PairSide) =>
+    new Set(
+      `${asNonEmptyString(note.frontmatter.description) ?? ""}\n${stripFrontmatterBody(note.raw)}`
+        .split(/\s+/)
+        .filter(Boolean),
+    );
+  const otherTerms = tokens(other);
+  return JSON.stringify([...tokens(side)].filter((term) => !otherTerms.has(term)));
+}
+
+function termHints(lines: string[]): string {
+  return consolidatePairTerms.replace("{{DIFFERENCES}}", lines.join("\n"));
 }
 
 /** Orders two loaded sides by date (older/newer) for the "A (older)"/"B (newer)" labelling the prompt requires. */
@@ -579,6 +588,11 @@ export function buildPairUserPrompt(older: PairSide, newer: PairSide): string {
   return [
     ...sideSection(tied ? "A (same age as B)" : "A (older)", older),
     ...sideSection(tied ? "B (same age as A)" : "B (newer)", newer),
+    termHints([
+      `Tokens only in A: ${exclusiveTerms(older, newer)}`,
+      `Tokens only in B: ${exclusiveTerms(newer, older)}`,
+    ]),
+    ...(tied ? [consolidatePairSameAge] : []),
   ].join("\n");
 }
 
@@ -595,8 +609,7 @@ export interface PairDecision {
 /**
  * The calibrated outcome table (owner grades, replacing plan §5.2's
  * "shorter body" rule): `duplicate`/`supersedes` keep the newer copy;
- * `subsumed` keeps the side the judge did NOT name `redundant` (no proposal
- * if that pointer is missing or invalid). A side is retired only when the
+ * `subsumed` keeps the side opposite the derived `redundant` pointer. A side is retired only when the
  * judge listed nothing that it alone holds.
  */
 export function decideRetirement(
@@ -667,7 +680,7 @@ function checkSection(label: string, side: PairSide): string {
     `Description: ${asNonEmptyString(side.frontmatter.description) ?? "(none)"}`,
     "Content:",
     "```",
-    stripFrontmatterBody(side.raw).slice(0, PAIR_BODY_TRUNCATE_CHARS),
+    stripFrontmatterBody(side.raw),
     "```",
     "",
   ].join("\n");
@@ -684,7 +697,7 @@ async function confirmNothingLost(ctx: PairPassContext, retired: PairSide, succe
     feature: "memory_consolidation",
     runner: ctx.llmRunner,
     system: consolidatePairCheckPrompt,
-    prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}`,
+    prompt: `${checkSection("X (to delete)", retired)}\n${checkSection("Y (kept)", successor)}\n${termHints([`Tokens only in X: ${exclusiveTerms(retired, successor)}`])}${Date.parse(retired.createdIso) === Date.parse(successor.createdIso) ? `\n${consolidatePairSameAge}` : ""}`,
     gate: { config: ctx.config, enabled: true },
     request: {
       responseSchema: PAIR_CHECK_JSON_SCHEMA,

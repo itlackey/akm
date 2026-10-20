@@ -317,9 +317,10 @@ describe("akm proposal accept on a retire proposal", () => {
   });
 
   describe("S5 crash recovery (second review round: intent-based, resume-safe)", () => {
-    test("intent recorded but no file moved yet — accept resumes from it and finishes", async () => {
-      const oldPath = writeAsset("memories/old-note.md", "description: an old note");
-      const newPath = writeAsset("memories/new-note.md", "description: a new note");
+    test("intent recorded but no file moved yet — accept resumes with complete long bodies and finishes", async () => {
+      const body = `${"Backup recovery instructions.\n".repeat(600)}Offline recovery needs key K-1195.\n`;
+      const oldPath = writeAsset("memories/old-note.md", "description: an old note", body);
+      const newPath = writeAsset("memories/new-note.md", "description: a new note", body);
       const config = makeConfig(storage.stashDir);
       const proposal = createRetireProposal(storage.stashDir, {
         ref: "memories/old-note",
