@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -343,6 +343,20 @@ describe("saveConfig", () => {
     for (const name of timestamped) {
       expect(fs.statSync(path.join(backupDir, name)).mode & 0o777).toBe(0o600);
     }
+  });
+
+  test("config saves still work on a filesystem that refuses chmod (CIFS / Azure Files)", () => {
+    const refuse = () => {
+      throw Object.assign(new Error("EPERM: operation not permitted, chmod"), { code: "EPERM" });
+    };
+    spyOn(fs, "chmodSync").mockImplementation(refuse);
+    spyOn(fs, "fchmodSync").mockImplementation(refuse);
+
+    saveConfig({ semanticSearchMode: "off" });
+    saveConfig({ semanticSearchMode: "auto" });
+
+    expect(loadConfig().semanticSearchMode).toBe("auto");
+    expect(fs.existsSync(path.join(getCacheDir(), "config-backups", "config.latest.json"))).toBe(true);
   });
 
   test("prunes config backups to the 5 most-recent (#459)", () => {
