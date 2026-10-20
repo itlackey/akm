@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`akm clone` works on flat skill repos and website pages, and records where the clone came from.** A ref whose
+  concept id is not under a type directory (`my-repo//domain-name-brainstormer`, a page from a `bundle add <url>`
+  source) failed with `TypeError: paths[1] must be string`. The source is now found through the bundle's adapter and
+  placed by what the file is: a skill into `skills/<name>/`, other markdown into `knowledge/<name>.md`, and an asset
+  that cannot be placed fails with a usage error that points to `akm import`. Cloned markdown gains the origin ref in
+  its `sources:` frontmatter.
 - **`akm ui`'s Overview no longer stalls while another process writes the index.** Its metrics resolved refs through
   a disposable copy of `index.db`, which retried for several seconds and printed a "could not take a non-mutating
   snapshot" warning whenever the index was being written. The UI now reads `index.db` directly in read-only mode;

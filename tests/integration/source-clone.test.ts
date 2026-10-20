@@ -381,7 +381,7 @@ describe("akmClone", () => {
 
     expect(result.overwritten).toBe(true);
     expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
-    expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toBe("# Updated\n");
+    expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toEndWith("# Updated\n");
     expect(fs.readFileSync(path.join(victimDir, "SKILL.md"), "utf8")).toBe("# Victim\n");
     expect(fs.readFileSync(path.join(victimDir, "keep.md"), "utf8")).toBe("keep\n");
   });
@@ -642,5 +642,154 @@ describe("akmClone remote", () => {
     } finally {
       fs.rmSync(customDest, { recursive: true, force: true });
     }
+  });
+});
+
+describe("akmClone opaque refs and provenance", () => {
+  let flatSkillsDir: string;
+  let siteDir: string;
+  let docsDir: string;
+
+  const configure = () =>
+    saveConfig({
+      semanticSearchMode: "off",
+      bundles: {
+        stash: { path: stashDir, writable: true },
+        searchpath: { path: searchPathDir },
+        flat: { path: flatSkillsDir },
+        site: { path: siteDir },
+        docs: { path: docsDir, components: { main: { root: ".", adapter: "generic-files" } } },
+      },
+      defaultBundle: "stash",
+    });
+
+  beforeEach(() => {
+    // A flat agent-skills repo: <name>/SKILL.md at the root, no skills/ dir.
+    flatSkillsDir = createStashDir("akm-clone-flat-");
+    for (const sub of ["skills", "commands", "agents", "knowledge", "scripts"]) {
+      fs.rmSync(path.join(flatSkillsDir, sub), { recursive: true, force: true });
+    }
+    writeFile(
+      path.join(flatSkillsDir, "domain-name-brainstormer", "SKILL.md"),
+      "---\nname: domain-name-brainstormer\ndescription: Brainstorm domain names\n---\n# Brainstormer\n",
+    );
+    writeFile(path.join(flatSkillsDir, "domain-name-brainstormer", "reference", "FORMS.md"), "# Forms\n");
+
+    // A website snapshot: pages under stash/knowledge/, plus the provenance manifest.
+    siteDir = createStashDir("akm-clone-site-");
+    fs.rmSync(path.join(siteDir, "knowledge"), { recursive: true, force: true });
+    writeFile(
+      path.join(siteDir, "manifest.json"),
+      JSON.stringify({ url: "https://example.test/", fetchedAt: "2026-01-01T00:00:00Z" }),
+    );
+    writeFile(
+      path.join(siteDir, "stash", "knowledge", "example-test", "docs", "Getting Started.md"),
+      "---\ntitle: Getting Started\nsourceUrl: https://example.test/docs/start\ntags:\n  - website\n---\n# Getting started\n",
+    );
+
+    // A flat docs folder (generic-files): plain markdown and a non-markdown file.
+    docsDir = createStashDir("akm-clone-docs-");
+    writeFile(path.join(docsDir, "patterns", "retry-backoff.md"), "# Retry with backoff\n");
+    writeFile(path.join(docsDir, "patterns", "diagram.png"), "not really a png");
+    configure();
+  });
+
+  test("clones a skill from a flat skills repo into skills/<name>/ with a sources origin", async () => {
+    const result = await akmClone({ sourceRef: "flat//domain-name-brainstormer" });
+
+    const dest = path.join(stashDir, "skills", "domain-name-brainstormer");
+    expect(result.destination.path).toBe(path.join(dest, "SKILL.md"));
+    expect(fs.existsSync(path.join(dest, "reference", "FORMS.md"))).toBe(true);
+    const skill = fs.readFileSync(path.join(dest, "SKILL.md"), "utf8");
+    expect(skill).toContain("description: Brainstorm domain names");
+    expect(skill).toContain("sources:\n  - flat//domain-name-brainstormer\n");
+    expect(skill).toEndWith("# Brainstormer\n");
+    // The origin is not touched.
+    expect(fs.readFileSync(path.join(flatSkillsDir, "domain-name-brainstormer", "SKILL.md"), "utf8")).not.toContain(
+      "sources:",
+    );
+    // Non-markdown / other markdown files in the skill directory are copied verbatim.
+    expect(fs.readFileSync(path.join(dest, "reference", "FORMS.md"), "utf8")).toBe("# Forms\n");
+  });
+
+  test("clones a website page into knowledge/<slug>.md with a sources origin", async () => {
+    const result = await akmClone({ sourceRef: "site//example-test/docs/Getting Started" });
+
+    const dest = path.join(stashDir, "knowledge", "getting-started.md");
+    expect(result.destination.path).toBe(dest);
+    const page = fs.readFileSync(dest, "utf8");
+    expect(page).toContain("sourceUrl: https://example.test/docs/start");
+    expect(page).toContain("sources:\n  - site//example-test/docs/Getting Started\n");
+    expect(page).toEndWith("# Getting started\n");
+  });
+
+  test("clones a flat doc from a generic-files bundle into knowledge/ and honors --name", async () => {
+    await akmClone({ sourceRef: "docs//patterns/retry-backoff" });
+    expect(fs.readFileSync(path.join(stashDir, "knowledge", "retry-backoff.md"), "utf8")).toStartWith(
+      "---\nsources:\n  - docs//patterns/retry-backoff\n---\n# Retry with backoff",
+    );
+
+    await akmClone({ sourceRef: "docs//patterns/retry-backoff", newName: "backoff" });
+    expect(fs.existsSync(path.join(stashDir, "knowledge", "backoff.md"))).toBe(true);
+  });
+
+  test("merges the origin into an existing sources list and is idempotent per origin", async () => {
+    writeFile(
+      path.join(docsDir, "patterns", "linked.md"),
+      "---\ntitle: Linked\nsources:\n  - knowledge/other\n---\nBody\n",
+    );
+
+    await akmClone({ sourceRef: "docs//patterns/linked" });
+    const cloned = fs.readFileSync(path.join(stashDir, "knowledge", "linked.md"), "utf8");
+    expect(cloned).toContain("title: Linked");
+    expect(cloned).toContain("sources:\n  - knowledge/other\n  - docs//patterns/linked\n");
+    expect(cloned).toEndWith("---\nBody\n");
+  });
+
+  test("known-type refs keep their paths and gain the origin in sources", async () => {
+    writeFile(path.join(searchPathDir, "skills", "review", "SKILL.md"), "---\nname: review\n---\n# Review\n");
+    writeFile(path.join(searchPathDir, "knowledge", "http-caching.md"), "# Caching\n");
+    writeFile(path.join(searchPathDir, "scripts", "deploy.sh"), "#!/bin/bash\necho deploy\n");
+
+    const skill = await akmClone({ sourceRef: "searchpath//skills/review" });
+    const knowledge = await akmClone({ sourceRef: "searchpath//knowledge/http-caching.md" });
+    const script = await akmClone({ sourceRef: "searchpath//scripts/deploy.sh" });
+
+    expect(skill.destination.path).toBe(path.join(stashDir, "skills", "review", "SKILL.md"));
+    expect(fs.readFileSync(skill.destination.path, "utf8")).toContain("sources:\n  - searchpath//skills/review\n");
+    expect(knowledge.destination.path).toBe(path.join(stashDir, "knowledge", "http-caching.md"));
+    expect(fs.readFileSync(knowledge.destination.path, "utf8")).toStartWith(
+      "---\nsources:\n  - searchpath//knowledge/http-caching\n---\n# Caching",
+    );
+    // Non-markdown content is copied byte for byte.
+    expect(fs.readFileSync(script.destination.path, "utf8")).toBe("#!/bin/bash\necho deploy\n");
+  });
+
+  test("an opaque asset that cannot be placed fails with a UsageError and a hint, not a TypeError", async () => {
+    const error = await akmClone({ sourceRef: "docs//patterns/diagram.png" }).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as Error).message).toContain("cannot clone docs//patterns/diagram.png");
+    expect((error as Error).message).toContain("akm import <path>");
+    expect(fs.existsSync(path.join(stashDir, "knowledge", "diagram.png"))).toBe(false);
+  });
+
+  test("--dest clones an opaque skill into a plain directory", async () => {
+    const customDest = fs.mkdtempSync(path.join(os.tmpdir(), "akm-clone-opaque-dest-"));
+    fixtureDirs.push(customDest);
+
+    const result = await akmClone({ sourceRef: "flat//domain-name-brainstormer", dest: customDest });
+
+    expect(result.destination.path).toBe(path.join(customDest, "skills", "domain-name-brainstormer", "SKILL.md"));
+    expect(result.destination.ref).toBeUndefined();
+    expect(fs.readFileSync(result.destination.path, "utf8")).toContain(
+      "sources:\n  - flat//domain-name-brainstormer\n",
+    );
+  });
+
+  test("an opaque ref behind a non-slug origin parses (flat skill from a path origin)", async () => {
+    const result = await akmClone({ sourceRef: `${flatSkillsDir}//domain-name-brainstormer` });
+
+    expect(result.destination.path).toBe(path.join(stashDir, "skills", "domain-name-brainstormer", "SKILL.md"));
   });
 });

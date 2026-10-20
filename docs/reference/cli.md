@@ -1558,6 +1558,23 @@ akm clone "npm:@scope/pkg//scripts/deploy.sh" --dest /tmp/preview
 
 Skills (directories) are copied recursively. Other types copy a single file.
 
+**Refs outside the type directories.** A ref whose concept id is not under a
+type directory (a skill in a flat skills repo, `my-repo//domain-name-brainstormer`;
+a page from a website or wiki bundle) is placed by what the source file is: a
+`SKILL.md` directory clones to `skills/<name>/`, any other recognized type to its
+own directory, and markdown of any other type to `knowledge/<name>.md`. `<name>`
+is the last segment of the concept id, slugified; `--name` overrides it. An asset
+that is not markdown and has no place in a bundle fails with a usage error that
+points to `akm import <path>`.
+
+**Provenance.** A cloned markdown asset (a skill's `SKILL.md` included) records
+where it came from: the origin ref, `<bundle>//<concept-id>`, is added to its
+`sources:` frontmatter, keeping any entries already listed. `sources:` is free-form
+provenance that `akm lint` does not resolve, so a clone shared where the origin
+bundle is not installed does not report a missing ref. Other bytes of the file
+stay as written, non-markdown files and workflows are copied unchanged, and the
+origin is never modified.
+
 **Remote clone:** When the origin in the ref points to a package that is not
 installed locally (e.g. an npm package or local path not in your bundle
 sources), akm fetches it to the cache automatically and extracts the
