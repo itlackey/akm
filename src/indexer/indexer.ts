@@ -1741,11 +1741,14 @@ export async function lookupBundleRefReadonly(ref: BundleRef): Promise<IndexEntr
  * index, which is copied once rather than once per ref. A ref that does not
  * resolve, or an index that cannot be read, gives `null` for that ref.
  */
-export async function lookupBundleRefsReadonly(refs: readonly BundleRef[]): Promise<Array<IndexEntry | null>> {
+export async function lookupBundleRefsReadonly(
+  refs: readonly BundleRef[],
+  options: { isolatedSnapshot?: boolean } = {},
+): Promise<Array<IndexEntry | null>> {
   if (refs.length === 0) return [];
   let db: Database | undefined;
   try {
-    db = openReadonlyExistingDatabase(getDbPath(), { isolatedSnapshot: true });
+    db = openReadonlyExistingDatabase(getDbPath(), { isolatedSnapshot: options.isolatedSnapshot ?? true });
   } catch {
     // Unreadable index: every ref stays unresolved.
   }

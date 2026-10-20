@@ -235,7 +235,9 @@ async function overview(query: Query) {
     );
     return { ...base, ...(report ? { report } : {}) };
   });
-  const metrics = await section(errors, "metrics", () => akmMetrics({ since: query.get("metricsSince") || "30d" }));
+  const metrics = await section(errors, "metrics", () =>
+    akmMetrics({ since: query.get("metricsSince") || "30d", indexSnapshot: false }),
+  );
   const stateReads = await section(errors, "state", () =>
     withReadonlyStateDb(
       (db) => ({

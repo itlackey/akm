@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`akm ui`'s Overview no longer stalls while another process writes the index.** Its metrics resolved refs through
+  a disposable copy of `index.db`, which retried for several seconds and printed a "could not take a non-mutating
+  snapshot" warning whenever the index was being written. The UI now reads `index.db` directly in read-only mode;
+  `akm metrics` from the CLI is unchanged.
+
 ## [0.10.261006] - 2026-10-16
 
 ### Added
