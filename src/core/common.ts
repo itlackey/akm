@@ -175,7 +175,17 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
   try {
     fd = fs.openSync(tmp, "wx", fileMode);
     tempOwned = true;
-    if (process.platform !== "win32") fs.fchmodSync(fd, fileMode);
+    if (process.platform !== "win32") {
+      try {
+        fs.fchmodSync(fd, fileMode);
+      } catch (error) {
+        // Filesystems without POSIX modes (CIFS/SMB, some FUSE mounts) refuse
+        // chmod; the mount decides the mode there, so keep the open() mode.
+        if (!hasErrnoCode(error, "EPERM") && !hasErrnoCode(error, "ENOTSUP") && !hasErrnoCode(error, "EINVAL")) {
+          throw error;
+        }
+      }
+    }
     let offset = 0;
     while (offset < data.byteLength) {
       const written = fs.writeSync(fd, data, offset, data.byteLength - offset);
