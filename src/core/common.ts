@@ -179,11 +179,7 @@ export function writeFileAtomic(target: string, content: string | Buffer, mode?:
       try {
         fs.fchmodSync(fd, fileMode);
       } catch (error) {
-        // Filesystems without POSIX modes (CIFS/SMB, some FUSE mounts) refuse
-        // chmod; the mount decides the mode there, so keep the open() mode.
-        if (!hasErrnoCode(error, "EPERM") && !hasErrnoCode(error, "ENOTSUP") && !hasErrnoCode(error, "EINVAL")) {
-          throw error;
-        }
+        if (!isChmodUnsupported(error)) throw error;
       }
     }
     let offset = 0;
@@ -376,6 +372,15 @@ export function compareCodePoints(left: string, right: string): number {
 export function hasErrnoCode(error: unknown, code: string): boolean {
   if (typeof error !== "object" || error === null || !("code" in error)) return false;
   return (error as Record<string, unknown>).code === code;
+}
+
+/**
+ * True when a chmod failed because the filesystem has no settable POSIX modes
+ * (CIFS/SMB such as an Azure Files share, some FUSE mounts). The mount options
+ * decide the mode there, so callers keep going with whatever mode the file got.
+ */
+export function isChmodUnsupported(error: unknown): boolean {
+  return hasErrnoCode(error, "EPERM") || hasErrnoCode(error, "ENOTSUP") || hasErrnoCode(error, "EINVAL");
 }
 
 /**

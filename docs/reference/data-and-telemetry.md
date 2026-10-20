@@ -97,7 +97,7 @@ Everything in the cache is regenerable. It is safe to delete the entire cache di
 
 | Path | Contents | Safe to delete? |
 |---|---|---|
-| `config-backups/config-<timestamp>.json` | Pre-save config snapshots (5 retained; owner-only permissions — file `0600`, dir `0700`, since 08-F4) | Yes |
+| `config-backups/config-<timestamp>.json` | Pre-save config snapshots (5 retained; owner-only permissions — file `0600`, dir `0700`, since 08-F4; on a filesystem without POSIX permissions, such as a CIFS/Azure Files share, the mount options decide them instead) | Yes |
 | `config-backups/config.latest.json` | Latest backup alias (owner-only `0600`) | Yes |
 | `registry/` | Downloaded registry tarballs (bundle packages from npm, GitHub, etc.) | Yes — re-downloaded on next `akm bundle add` or `akm bundle update` |
 | `registry-index/` | Legacy per-URL JSON cache (v0.7 artifact) | Yes — fully replaced by `index.db` in 0.8.0 |
