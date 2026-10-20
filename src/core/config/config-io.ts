@@ -16,7 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { sleepSync } from "../../runtime";
-import { readTextFile, stripJsonComments, writeFileAtomic } from "../common";
+import { isChmodUnsupported, readTextFile, stripJsonComments, writeFileAtomic } from "../common";
 import { ConfigError } from "../errors";
 import { createLockPayload, probeLock, reclaimStaleLock, releaseLock, tryAcquireLockSync } from "../file-lock";
 import { getCacheDir, getConfigDir } from "../paths";
@@ -116,7 +116,7 @@ export function backupExistingConfig(configPath: string, now = new Date()): Conf
   // env.ts/secret.ts convention — so no other local user can traverse in during
   // the copy→chmod window. chmod again to tighten a dir from an older version.
   fs.mkdirSync(backupDir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(backupDir, 0o700);
+  chmodIfSupported(backupDir, 0o700);
 
   const timestamp = now.toISOString().replace(/[.:]/g, "-");
   let sequence = 0;
@@ -136,12 +136,21 @@ export function backupExistingConfig(configPath: string, now = new Date()): Conf
   // 08-F4: a config backup carries the same sensitive fields as the live config
   // (endpoints, tokens). `copyFileSync` inherits the source's (often 0644) mode,
   // so tighten the backups to owner-only — mirrors the env-cli 0600 write floor.
-  fs.chmodSync(timestamped, 0o600);
-  fs.chmodSync(latest, 0o600);
+  chmodIfSupported(timestamped, 0o600);
+  chmodIfSupported(latest, 0o600);
 
   pruneOldBackups(backupDir);
 
   return { timestamped, latest };
+}
+
+/** chmod, skipped on a filesystem without POSIX modes (CIFS), where the mount sets them. */
+function chmodIfSupported(target: string, mode: number): void {
+  try {
+    fs.chmodSync(target, mode);
+  } catch (error) {
+    if (!isChmodUnsupported(error)) throw error;
+  }
 }
 
 function pruneOldBackups(backupDir: string): void {
