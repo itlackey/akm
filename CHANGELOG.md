@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`akm proposal new --bundle <name>` queues a new-asset proposal for another configured bundle.** The bundle must be
+  configured and writable; an unknown, disabled or read-only one is refused with the same error `akm remember --bundle`
+  gives. The generation prompt draws its convention facts from that bundle, and the proposal records it as its target,
+  so `akm proposal accept` writes there. Without the flag the proposal goes to the working bundle, as before.
+
 ### Fixed
 
 - **`akm ui`'s Overview no longer stalls while another process writes the index.** Its metrics resolved refs through
