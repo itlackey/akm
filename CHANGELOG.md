@@ -20,7 +20,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   source) failed with `TypeError: paths[1] must be string`. The source is now found through the bundle's adapter and
   placed by what the file is: a skill into `skills/<name>/`, other markdown into `knowledge/<name>.md`, and an asset
   that cannot be placed fails with a usage error that points to `akm import`. Cloned markdown gains the origin ref in
-  its `sources:` frontmatter.
+  its `sources:` frontmatter. A `knowledge/<name>` ref given without `.md` now clones to `<name>.md`; it used to
+  be written with no extension and left out of the index.
 - **`akm ui`'s Overview no longer stalls while another process writes the index.** Its metrics resolved refs through
   a disposable copy of `index.db`, which retried for several seconds and printed a "could not take a non-mutating
   snapshot" warning whenever the index was being written. The UI now reads `index.db` directly in read-only mode;

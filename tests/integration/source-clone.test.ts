@@ -765,6 +765,15 @@ describe("akmClone opaque refs and provenance", () => {
     expect(fs.readFileSync(script.destination.path, "utf8")).toBe("#!/bin/bash\necho deploy\n");
   });
 
+  test("a knowledge ref named without its extension clones to <name>.md", async () => {
+    writeFile(path.join(searchPathDir, "knowledge", "retry-policy.md"), "# Retry policy\n");
+
+    const result = await akmClone({ sourceRef: "searchpath//knowledge/retry-policy" });
+
+    expect(result.destination.path).toBe(path.join(stashDir, "knowledge", "retry-policy.md"));
+    expect(fs.existsSync(path.join(stashDir, "knowledge", "retry-policy"))).toBe(false);
+  });
+
   test("an opaque asset that cannot be placed fails with a UsageError and a hint, not a TypeError", async () => {
     const error = await akmClone({ sourceRef: "docs//patterns/diagram.png" }).catch((e: unknown) => e);
 

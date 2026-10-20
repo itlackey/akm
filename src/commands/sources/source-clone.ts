@@ -174,8 +174,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
   const defaultName = known ? parsed.name : slugName(parsed.name);
   const destName = options.newName ?? defaultName;
   const typeDir = stashDirFor(cloneType) as string;
-  // A known-type name already carries its extension; an opaque one is a slug.
-  const destFileName = known || path.extname(destName) ? destName : destName + sourceExt;
+  // A ref's name often omits its extension (`knowledge/<name>` names `<name>.md`), and an opaque one is a slug:
+  // either way the copy keeps the source file's extension, or it would be written as a file the index ignores.
+  const destFileName = path.extname(destName) ? destName : destName + sourceExt;
   const isSkill = cloneType === "skill";
   // A concept id is the path without its markdown extension.
   const originConceptId = (known ? conceptIdFromTypeName(parsed.type, parsed.name) : parsed.name).replace(/\.md$/i, "");
