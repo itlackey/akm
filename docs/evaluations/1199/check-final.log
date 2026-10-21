@@ -1,0 +1,345 @@
+$ bun run lint && bunx tsc --noEmit && bun run test:unit && bun run test:integration
+$ bunx biome check src/ tests/ scripts/ && bun scripts/lint-secret-resolver-boundary.ts && bun scripts/lint-shipped-assets.ts && bun scripts/lint-doc-examples.ts
+tests/core/adapter/execution-source-rendering.test.ts:334:24 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    332 │     expect(inference?.temperature).toBe(0);
+    333 │     expect(Object.hasOwn(inference ?? {}, "__proto__")).toBe(true);
+  > 334 │     expect(inference?.["__proto__"]).toEqual({ polluted: true });
+        │                        ^^^^^^^^^^^
+    335 │     expect(inference?.["constructor"]).toEqual({ prototype: { polluted: true } });
+    336 │   });
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    334 │ ····expect(inference?.["__proto__"]).toEqual({·polluted:·true·});
+        │                       --         --                              
+
+tests/core/adapter/execution-source-rendering.test.ts:335:24 lint/complexity/useLiteralKeys  FIXABLE  ━━━━━━━━━━
+
+  i The computed expression can be simplified without the use of a string literal.
+  
+    333 │     expect(Object.hasOwn(inference ?? {}, "__proto__")).toBe(true);
+    334 │     expect(inference?.["__proto__"]).toEqual({ polluted: true });
+  > 335 │     expect(inference?.["constructor"]).toEqual({ prototype: { polluted: true } });
+        │                        ^^^^^^^^^^^^^
+    336 │   });
+    337 │ });
+  
+  i Unsafe fix: Use a literal key instead.
+  
+    335 │ ····expect(inference?.["constructor"]).toEqual({·prototype:·{·polluted:·true·}·});
+        │                       --           --                                             
+
+tests/embedder-batching.test.ts:645:16 lint/complexity/noFlatMapIdentity  FIXABLE  ━━━━━━━━━━━━━━━━━
+
+  i Avoid unnecessary callback in flatMap call.
+  
+    643 │         const committed: number[][] = [];
+    644 │         await embedder.embedBatch(["a", "b", "c", "d"], undefined, undefined, (indices) => committed.push(indices));
+  > 645 │         expect(committed.flatMap((i) => i).sort()).toEqual([0, 1, 2, 3]);
+        │                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    646 │         expect(committed.length).toBe(2); // batchSize 2 → two provider batches
+    647 │       },
+  
+  i You can just use flat to flatten the array.
+  
+  i Unsafe fix: Replace unnecessary flatMap call to flat instead.
+  
+    643 643 │           const committed: number[][] = [];
+    644 644 │           await embedder.embedBatch(["a", "b", "c", "d"], undefined, undefined, (indices) => committed.push(indices));
+    645     │ - ········expect(committed.flatMap((i)·=>·i).sort()).toEqual([0,·1,·2,·3]);
+        645 │ + ········expect(committed.flat().sort()).toEqual([0,·1,·2,·3]);
+    646 646 │           expect(committed.length).toBe(2); // batchSize 2 → two provider batches
+    647 647 │         },
+  
+
+scripts/package-install.ts:598:99 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    596 │         'createRequire(import.meta.url).resolve("akm-cli/package.json");',
+    597 │         'const err = await curate("").then(() => undefined, (e) => e);',
+  > 598 │         'if (err?.code !== "MISSING_REQUIRED_ARGUMENT") throw new Error(`curate("") rejected with ${err?.code}`);',
+        │                                                                                                   ^^^^^^^^^^^^
+    599 │         "",
+    600 │       ].join("\n"),
+  
+  i Turn the string into a template string.
+  
+
+src/core/adapter/adapters/akm-task-adapter.ts:186:10 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    184 │   }
+    185 │   const keys = LEGACY_TASK_TARGET_KEYS[peekTaskSourceVersion(root) ?? 0];
+  > 186 │   return keys !== undefined && keys.some((key) => Object.hasOwn(root as object, key));
+        │          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    187 │ }
+    188 │ 
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    184 184 │     }
+    185 185 │     const keys = LEGACY_TASK_TARGET_KEYS[peekTaskSourceVersion(root) ?? 0];
+    186     │ - ··return·keys·!==·undefined·&&·keys.some((key)·=>·Object.hasOwn(root·as·object,·key));
+        186 │ + ··return·keys?.some((key)·=>·Object.hasOwn(root·as·object,·key));
+    187 187 │   }
+    188 188 │   
+  
+
+src/core/config/config-walker.ts:247:76 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    245 │           : {
+    246 │               success: false as const,
+  > 247 │               error: { issues: [{ path: [], message: "apiKey must be $VAR, ${VAR}, or secret://<name>" }] },
+        │                                                                            ^^^^^^
+    248 │             }
+    249 │         : isUnknownKey
+  
+  i Turn the string into a template string.
+  
+
+src/tasks/scheduler-invocation.ts:282:9 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━━━━━━━━
+
+  ! Change to an optional chain.
+  
+    280 │   while (index < tail.length) {
+    281 │     const token = tail[index];
+  > 282 │     if (!token || !token.startsWith("--")) return false;
+        │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    283 │     const body = token.slice(2);
+    284 │     const equalsAt = body.indexOf("=");
+  
+  i Unsafe fix: Change to an optional chain.
+  
+    280 280 │     while (index < tail.length) {
+    281 281 │       const token = tail[index];
+    282     │ - ····if·(!token·||·!token.startsWith("--"))·return·false;
+        282 │ + ····if·(!token?.startsWith("--"))·return·false;
+    283 283 │       const body = token.slice(2);
+    284 284 │       const equalsAt = body.indexOf("=");
+  
+
+tests/commands/agent-dispatch-engine.test.ts:379:29 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    377 │   const promptsThatUsedToBeRejected = [
+    378 │     'Summarise this payload: {"outer":{"inner":1}}',
+  > 379 │     "Explain what $HOME and ${EDITOR} do in this snippet",
+        │                             ^^^^^^^^^
+    380 │     "Why does $(git rev-parse HEAD) differ here?",
+    381 │     "Review @src/core/state-db.ts for me",
+  
+  i Turn the string into a template string.
+  
+
+tests/config-sanitize-secrets.test.ts:134:38 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    132 │     });
+    133 │     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
+  > 134 │     expect(persisted).not.toContain("${OPENAI_API_KEY:-fallback}");
+        │                                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    135 │     expect(warnings.some((w) => w.includes("embedding.apiKey"))).toBe(true);
+    136 │   });
+  
+  i Turn the string into a template string.
+  
+
+tests/contracts/command-invocation-contract.test.ts:64:28 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    62 │     ["positional", "Review $1 and $0"],
+    63 │     ["named", "Review $TARGET"],
+  > 64 │     ["expression", "Review ${TARGET}"],
+       │                            ^^^^^^^^^
+    65 │     ["legacy", "Review {{0}}"],
+    66 │     ["native expression", "Review ${{ inputs.target }}"],
+  
+  i Turn the string into a template string.
+  
+
+tests/contracts/command-invocation-contract.test.ts:66:35 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    64 │     ["expression", "Review ${TARGET}"],
+    65 │     ["legacy", "Review {{0}}"],
+  > 66 │     ["native expression", "Review ${{ inputs.target }}"],
+       │                                   ^^^^^^^^^^^^^^^^^^^
+    67 │     ["native shell interpolation", "Review !`git status`"],
+    68 │     ["native fenced shell interpolation", "Review\n```!\ngit status\n```"],
+  
+  i Turn the string into a template string.
+  
+
+tests/engine-resolution.test.ts:480:72 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    478 │   });
+    479 │ 
+  > 480 │   test("a literal (non-reference) apiKey is still rejected — only $VAR/${VAR}/secret:// are accepted here", () => {
+        │                                                                        ^^^^^^
+    481 │     expect(() =>
+    482 │       resolveLlmEngineUse(withSecretRefEngine("sk-literal-not-a-reference"), [{ engine: "secreted" }]),
+  
+  i Turn the string into a template string.
+  
+
+tests/integration/commands/improve-memory.test.ts:1:51 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+  > 1 │ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
+      │                                                   ^^^^^
+    2 │ import fs from "node:fs";
+    3 │ import path from "node:path";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+    1 │ import·{·afterEach,·beforeEach,·describe,·expect,·spyOn,·test·}·from·"bun:test";
+      │                                                   -------                       
+
+tests/integration/commands/improve-memory.test.ts:10:8 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! This import is unused.
+  
+     8 │ import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
+     9 │ import { getDbPath } from "../../../src/core/paths";
+  > 10 │ import { setQuiet } from "../../../src/core/warn";
+       │        ^^^^^^^^^^^^
+    11 │ import { akmIndex } from "../../../src/indexer/indexer";
+    12 │ import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+       8    8 │   import type { AkmDistillResult, AkmReflectResult } from "../../../src/core/improve-types";
+       9    9 │   import { getDbPath } from "../../../src/core/paths";
+      10      │ - import·{·setQuiet·}·from·"../../../src/core/warn";
+      11   10 │   import { akmIndex } from "../../../src/indexer/indexer";
+      12   11 │   import type { MemoryInferenceResult } from "../../../src/indexer/passes/memory-inference";
+  
+
+tests/integration/curate-command.test.ts:13:3 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    11 │   sandboxXdgConfigHome,
+    12 │   withEnv,
+  > 13 │   writeSandboxConfig,
+       │   ^^^^^^^^^^^^^^^^^^
+    14 │ } from "../_helpers/sandbox";
+    15 │ 
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+     11  11 │     sandboxXdgConfigHome,
+     12  12 │     withEnv,
+     13     │ - ··writeSandboxConfig,
+     14  13 │   } from "../_helpers/sandbox";
+     15  14 │   
+  
+
+tests/integration/env/env-path-run.test.ts:149:71 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    147 │     const stashDir = makeStash();
+    148 │     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+  > 149 │     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secret:absent}\n", "utf8");
+        │                                                                       ^^^^^^^^^^^^^^^^
+    150 │ 
+    151 │     const { stdout, stderr, status } = await runCli(["env", "run", "env/prod", "--", "true"], {
+  
+  i Turn the string into a template string.
+  
+
+tests/integration/env/env-run.test.ts:75:21 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    73 │   });
+    74 │ 
+  > 75 │   test("substitutes ${secret:NAME} tokens with the sibling secret value", () => {
+       │                     ^^^^^^^^^^^^^^
+    76 │     const stashDir = makeStash();
+    77 │     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+  
+  i Turn the string into a template string.
+  
+
+tests/integration/env/env-run.test.ts:80:78 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    78 │     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
+    79 │     fs.writeFileSync(path.join(stashDir, "secrets", "my_api_token"), "s3cr3t", "utf8");
+  > 80 │     fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secret:my_api_token}\n", "utf8");
+       │                                                                              ^^^^^^^^^^^^^^^^^^^^^^
+    81 │ 
+    82 │     const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
+  
+  i Turn the string into a template string.
+  
+
+tests/integration/env/env-run.test.ts:90:68 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    88 │   });
+    89 │ 
+  > 90 │   test("substitutes multiple tokens embedded in a value and leaves ${HOME} untouched", () => {
+       │                                                                    ^^^^^^^
+    91 │     const stashDir = makeStash();
+    92 │     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+  
+  i Turn the string into a template string.
+  
+
+tests/workflows/grammar-contract.test.ts:15:33 lint/correctness/noUnusedImports  FIXABLE  ━━━━━━━━━━
+
+  ! Several of these imports are unused.
+  
+    13 │ import os from "node:os";
+    14 │ import path from "node:path";
+  > 15 │ import { compileWorkflowSource, workflowStepInstructions } from "../../src/workflows/compile";
+       │                                 ^^^^^^^^^^^^^^^^^^^^^^^^
+    16 │ import type { WorkflowPlan, WorkflowStepSpec } from "../../src/workflows/plan";
+    17 │ 
+  
+  i Unused imports might be the result of an incomplete refactoring.
+  
+  i Unsafe fix: Remove the unused imports.
+  
+    15 │ import·{·compileWorkflowSource,·workflowStepInstructions·}·from·"../../src/workflows/compile";
+       │                                 -------------------------                                     
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 26.
+Checked 1605 files in 1210ms. No fixes applied.
+Found 42 warnings.
+Found 4 infos.
+lint-secret-resolver-boundary: OK - every materializing source refresh injects a SecretResolver.
+lint-shipped-assets: OK - 0 dead `type:name` ref token(s) in shipped assets.
+lint-doc-examples: OK - 0 doc-example violations found.
+$ bash scripts/test-unit.sh
+── unit: 8 shards over 504 files; live logs: /tmp/akm-unit-shards.Ale62F/shard-N.log
+── unit: 7213 pass / 4 skip / 0 fail across 8 process-shards (504/504 files)
+$ bash scripts/test-integration.sh
+── integration: 8 shards over 343 files; live logs: /tmp/akm-integration-shards.bFueV1/shard-N.log
+── integration: 3887 pass / 81 skip / 0 fail across 8 process-shards (343/343 files)

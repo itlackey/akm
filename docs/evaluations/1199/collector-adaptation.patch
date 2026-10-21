@@ -1,0 +1,13 @@
+diff --git a/evals/retrieval/src/akm.ts b/evals/retrieval/src/akm.ts
+index 915ec1a..b5ed6e1 100644
+--- a/evals/retrieval/src/akm.ts
++++ b/evals/retrieval/src/akm.ts
+@@ -134,7 +134,7 @@ export const CALL_TIMEOUT_MS = 120_000;
+  * say is taken as it comes.
+  */
+ export async function ask(sb: Sandbox, system: "search" | "curate", query: string, limit = LIMIT, mode: "keyword" | "semantic" = "keyword", timeoutMs = CALL_TIMEOUT_MS, searchArgs: readonly string[] = []): Promise<Answer> {
+-  const { stdout, stderr, code, ms, timedOut } = await runAkm(sb, [system, "--limit", String(limit), ...(await agentDetailArgs(sb)), "--format", "json", ...(system === "search" ? searchArgs : []), "--", query], { timeoutMs }).catch((e: Error) => ({ stdout: "", stderr: e.message, code: 127, ms: 0, timedOut: false }));
++  const { stdout, stderr, code, ms, timedOut } = await runAkm(sb, [system, "--limit", String(limit), ...(await agentDetailArgs(sb)), "--format", "json", ...searchArgs, "--", query], { timeoutMs }).catch((e: Error) => ({ stdout: "", stderr: e.message, code: 127, ms: 0, timedOut: false }));
+   const seconds = () => Number((ms / 1000).toFixed(2));
+   const failed = (error: string, extra: { timedOut?: true } = {}): Answer => ({ refs: [], assets: [], mode: null, seconds: seconds(), error, ...extra });
+   if (timedOut) return failed(`akm ${system} timed out after ${+(timeoutMs / 1000).toFixed(1)}s`, { timedOut: true });

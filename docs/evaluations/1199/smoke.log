@@ -1,0 +1,5 @@
+smoke --contract: akm 0.10.261008 (bun /tmp/akm-1199-baseline/src/cli.ts), a stub model that answers each call with a reply that fits its schema
+
+ok      retrieval         2.9s  success: reached
+
+smoke --contract: 1 run, 1 reached their outcomes, 0 skipped

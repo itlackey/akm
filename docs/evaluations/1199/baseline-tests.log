@@ -1,0 +1,60 @@
+bun test v1.4.1 (4661e494f)
+
+tests/integration/search-candidate-eligibility.test.ts:
+(pass) lexical eligibility before the channel depth > scope user [40.33ms]
+(pass) lexical eligibility before the channel depth > scope agent [15.10ms]
+(pass) lexical eligibility before the channel depth > scope run [14.42ms]
+(pass) lexical eligibility before the channel depth > scope channel [12.90ms]
+(pass) lexical eligibility before the channel depth > explicit type [12.77ms]
+(pass) lexical eligibility before the channel depth > default excluded type [13.67ms]
+(pass) lexical eligibility before the channel depth > proposed quality [14.25ms]
+(pass) lexical eligibility before the channel depth > current belief [16.85ms]
+(pass) lexical eligibility before the channel depth > historical belief [14.03ms]
+(pass) lexical eligibility before the channel depth > source narrowing [13.35ms]
+(pass) lexical eligibility before the channel depth > derived twins inherit the demoted base from their own bundle [20.60ms]
+(pass) vector eligibility before the channel depth > scope user [13.97ms]
+(pass) vector eligibility before the channel depth > scope agent [12.43ms]
+(pass) vector eligibility before the channel depth > scope run [12.94ms]
+(pass) vector eligibility before the channel depth > scope channel [12.81ms]
+(pass) vector eligibility before the channel depth > explicit type [15.22ms]
+(pass) vector eligibility before the channel depth > default excluded type [13.47ms]
+(pass) vector eligibility before the channel depth > proposed quality [12.69ms]
+(pass) vector eligibility before the channel depth > current belief [12.65ms]
+(pass) vector eligibility before the channel depth > historical belief [12.76ms]
+(pass) vector eligibility before the channel depth > source narrowing [14.18ms]
+(pass) vector eligibility before the channel depth > derived twins inherit the demoted base from their own bundle [22.22ms]
+(pass) combined eligibility before the channel depth > scope user [12.97ms]
+(pass) combined eligibility before the channel depth > scope agent [14.64ms]
+(pass) combined eligibility before the channel depth > scope run [15.06ms]
+(pass) combined eligibility before the channel depth > scope channel [16.51ms]
+(pass) combined eligibility before the channel depth > explicit type [12.50ms]
+(pass) combined eligibility before the channel depth > default excluded type [13.00ms]
+(pass) combined eligibility before the channel depth > proposed quality [16.65ms]
+(pass) combined eligibility before the channel depth > current belief [16.80ms]
+(pass) combined eligibility before the channel depth > historical belief [24.42ms]
+(pass) combined eligibility before the channel depth > source narrowing [16.37ms]
+(pass) combined eligibility before the channel depth > derived twins inherit the demoted base from their own bundle [26.20ms]
+(pass) zero/multiple eligible, compound scopes, browse and prefix semantics [28.37ms]
+(pass) missing embeddings and an actual failed embedding retain filtered keyword hits [13.45ms]
+(pass) explicit hidden-type/proposed opt-ins and normalized CLI scopes retain their contracts [31.63ms]
+
+tests/integration/parent-eligibility-final.test.ts:
+(pass) compound eligibility crosses multiple candidate batches (off) [28.60ms]
+(pass) compound eligibility crosses multiple candidate batches (auto) [31.91ms]
+
+tests/integration/api/curate-api.test.ts:
+(pass) curate() equals the CLI's stdout > --format text [654.35ms]
+(pass) curate() equals the CLI's stdout > --format json [516.98ms]
+(pass) curate() equals the CLI's stdout > json is the default format, as in the CLI [498.51ms]
+(pass) curate() equals the CLI's stdout > --limit and --type [499.61ms]
+(pass) curate() equals the CLI's stdout > a query with no match is the same empty result [445.06ms]
+(pass) curate() rejects the way the CLI fails > empty query [438.86ms]
+(pass) curate() rejects the way the CLI fails > invalid --limit [444.67ms]
+(pass) curate() rejects the way the CLI fails > invalid config.json [432.15ms]
+(pass) repeated calls inside one long-lived process > see config edits on disk and leave the host's state alone [837.21ms]
+(pass) repeated calls inside one long-lived process > a rejected call does not leave quiet set [259.74ms]
+
+ 48 pass
+ 0 fail
+ 139 expect() calls
+Ran 48 tests across 3 files. [5.83s]

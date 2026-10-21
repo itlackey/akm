@@ -616,7 +616,7 @@ kept.
 | `--assets` | flag | `false` | Include asset-level registry results (only meaningful with `--from registry\|all`; folds in the retired `akm registry search --assets`) |
 | `--filter` | `<key>=<value>` | _(none)_ | Scope filter — repeatable. Valid keys: `user`, `agent`, `run`, `channel`. Example: `--filter user=alice --filter channel=ops`. Narrows the result set; ranking is unchanged. |
 | `--include-proposed` | flag | `false` | Include entries with `quality: "proposed"` in the result set. Default search excludes them; `generated` and `curated` quality entries are always included. Unknown quality values warn once and remain searchable. |
-| `--belief` | `all`, `current`, `historical` | `all` | Memory belief filter. `current` keeps active memory beliefs; `historical` keeps contradicted/superseded/archived ones. |
+| `--belief` | `all`, `current`, `historical` | `current` | Belief filter on any asset. `current` keeps unflagged/active/asserted assets; `historical` keeps deprecated/contradicted/superseded/archived assets. Labels do not establish truth. |
 | `--include-sessions` | flag | `false` | Include session assets, which are excluded from default results via `config.search.defaultExcludeTypes` |
 | `--format` | `json`, `jsonl`, `yaml`, `text`, `md`, `html` | `json` | Output format |
 | `--detail` | `brief`, `normal`, `full`, `agent` | `brief` | Output verbosity level, or the `agent` projection |
@@ -669,6 +669,10 @@ ranking.
 > registries with different scoring formulas. See
 > `docs/architecture/architecture.md` for the current type-level distinction.
 
+Ordinary search defaults to current evidence. Use `--belief all` to enumerate
+or compare every belief state, and `--belief historical` to investigate old
+records. These modes also apply to empty and prefix queries.
+
 ### curate
 
 Pick the assets worth loading for a task. Unlike `akm search`, curate attaches
@@ -680,13 +684,20 @@ akm curate "plan a release"
 akm curate "deploy a Bun app" --limit 3
 akm curate "review an architecture proposal" --type skill
 akm curate "learn the release workflow" --from all --format text
+akm curate "deploy the service" --from team --filter user=alice --filter channel=ops
+akm curate "investigate the previous deployment port" --belief historical
+akm curate "compare deployment decisions" --belief all
+akm curate "deploy the service" --filter user=alice --pack 4000
 ```
 
 | Flag | Values | Default | Description |
 | --- | --- | --- | --- |
 | `--type` | `skill`, `command`, `agent`, `knowledge`, `instruction`, `workflow`, `script`, `memory`, `env`, `secret`, `lesson`, `task`, `session`, `fact`, `any` | `any` | Filter curated results by asset type |
 | `--limit` | number | `4` | Maximum curated results |
-| `--from` | `local`, `registry`, `all` | `local` | Where to search before curating |
+| `--from` | `local`, `registry`, `all`, bundle name | `local` | Where to search before curating |
+| `--filter` | `<key>=<value>` | _(none)_ | Repeatable exact scope filter: user, agent, run, channel; supplied keys are AND-joined |
+| `--belief` | `all`, `current`, `historical` | `current` | Current keeps unflagged and active/asserted assets; historical keeps deprecated/contradicted/superseded/archived assets |
+| `--pack` | positive token budget | _(none)_ | Pack eligible local content in rank order; drop tail items before truncating the first oversized item |
 
 `akm curate` takes the top `--limit` hits of one search, in search order, and
 enriches each with a preview, run details and up to two support refs: the
@@ -700,6 +711,15 @@ commands such as `akm show <ref>` or `akm bundle add <ref>` so you can
 immediately inspect or install what it found.
 `--detail` (including `agent`) works on curate output.
 Curate preserves the underlying search's `searchMode` and warnings.
+Scope, named source, type and belief controls also constrain derived surfaces,
+support refs and packed content; an empty eligible pool stays empty. Missing or
+newly ineligible content is omitted instead of falling back to unchecked text.
+Explicit all/historical results and support refs expose `beliefState` and label
+historical context; packed historical items also carry a label (including text
+output). Direct `show <ref>` remains available for deliberate inspection.
+Ordinary knowledge without a belief label stays usable. Belief labels are
+metadata, not evidence of factual truth. Existing prose within an eligible
+asset is preserved; filters select assets rather than fact-checking their body.
 Agent-shaped local items include `ref`, `path`, and `editable`, plus `editHint`
 only for read-only items. Their `followUp` remains `akm show <ref>` rather than
 being replaced by clone guidance.

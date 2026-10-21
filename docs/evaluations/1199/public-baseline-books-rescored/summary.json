@@ -1,0 +1,358 @@
+{
+  "eval": "retrieval",
+  "corpus": "public",
+  "corpus_folder": null,
+  "collection": "books",
+  "label": "1199-public-baseline-rescored",
+  "date": "2026-10-21T04:27:57.473Z",
+  "git_commit": "27f5240-dirty",
+  "akm_version": "0.10.261008",
+  "akm_bin": "bun /tmp/akm-1199-baseline/src/cli.ts",
+  "akm_build": null,
+  "akm_build_fingerprint": null,
+  "search_mode": {
+    "keyword": "keyword",
+    "semantic": "semantic"
+  },
+  "semantic_model": "embed/qwen3-embedding-0.6b",
+  "semantic_index": "cold",
+  "semantic_index_built_by": {
+    "version": "0.10.261008",
+    "akm_bin": "bun /tmp/akm-1199-baseline/src/cli.ts",
+    "akm_build": null,
+    "builtAt": "2026-10-21T04:26:43.912Z"
+  },
+  "semantic_flag": "on",
+  "depth": 10,
+  "relevant_from_grade": 2,
+  "limit": null,
+  "n_assets": 93,
+  "index_seconds": {
+    "keyword": 0.7,
+    "semantic": 3.8
+  },
+  "status": "complete",
+  "aborted_reason": null,
+  "n_queries": 51,
+  "n_scored": 51,
+  "n_errored": 0,
+  "errored": {
+    "search": 0,
+    "curate": 0,
+    "semantic_search": 0,
+    "semantic_curate": 0
+  },
+  "timeouts": 0,
+  "metrics": {
+    "search": {
+      "n": 51,
+      "ndcg_10": 0.8243,
+      "ndcg_10_condensed": 0.8243,
+      "p_5": 0.4,
+      "success_5": 1,
+      "mrr": 0.8954,
+      "recall_10": 0.9223,
+      "judged_10": 1,
+      "banned_above": 0.3529,
+      "banned_above_first": 0.1765
+    },
+    "curate": {
+      "n": 51,
+      "ndcg_10": 0.8243,
+      "ndcg_10_condensed": 0.8243,
+      "p_5": 0.4,
+      "success_5": 1,
+      "mrr": 0.8954,
+      "recall_10": 0.9223,
+      "judged_10": 1,
+      "banned_above": 0.3529,
+      "banned_above_first": 0.1765
+    },
+    "semantic_search": {
+      "n": 51,
+      "ndcg_10": 0.8988,
+      "ndcg_10_condensed": 0.9013,
+      "p_5": 0.4471,
+      "success_5": 0.9804,
+      "mrr": 0.9534,
+      "recall_10": 0.9849,
+      "judged_10": 0.8863,
+      "banned_above": 0.2353,
+      "banned_above_first": 0.0784
+    },
+    "semantic_curate": {
+      "n": 51,
+      "ndcg_10": 0.899,
+      "ndcg_10_condensed": 0.9015,
+      "p_5": 0.4471,
+      "success_5": 0.9804,
+      "mrr": 0.9534,
+      "recall_10": 0.9849,
+      "judged_10": 0.8863,
+      "banned_above": 0.2353,
+      "banned_above_first": 0.0784
+    }
+  },
+  "abstention": {
+    "non_task": {
+      "search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      }
+    },
+    "no_answer": {
+      "search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      }
+    }
+  },
+  "config": {
+    "keyword": {
+      "configVersion": "0.9.0",
+      "semanticSearchMode": "off",
+      "registries": []
+    },
+    "semantic": {
+      "configVersion": "0.9.0",
+      "semanticSearchMode": "auto",
+      "registries": [],
+      "embedding": {
+        "provider": "openai",
+        "endpoint": "https://ai.lab.fwdslsh.dev/v1/embeddings",
+        "model": "embed/qwen3-embedding-0.6b",
+        "apiKey": "$LAB_API_KEY",
+        "dimension": 1024,
+        "queryTimeoutMs": 600000,
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "engine": {
+    "engine": null,
+    "model": null,
+    "endpoint": null,
+    "temperature": null,
+    "enableThinking": null,
+    "timeoutMs": null,
+    "engines": {}
+  },
+  "assets_sha256": "0c8630ffd29c9c5cc3a007c0ca440128e4922b1e0e67695b74529ba318e1528a",
+  "assets": {
+    "library_sha256": "097131eefcd4f795b8cbfcbc22585efea45070b5396877f6f545c6d042833d65",
+    "bundles_sha256": null,
+    "queries_sha256": "839ece655d544c1594c65771c8ae69c4cfe8dd68c1601b964ab39b38ab2ff0c1",
+    "qrels_sha256": "4edef077082944ec77b728dbb2a320c028d59de3624152dbccab98003878eb6b"
+  },
+  "seed": null,
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "retrieval",
+    "corpus": "public",
+    "collection": "books",
+    "mode": null,
+    "harness_version": 3,
+    "collector": {
+      "version": "0.3"
+    },
+    "scorer": {
+      "version": "0.3"
+    },
+    "akm": {
+      "version": "0.10.261008",
+      "bin": "bun /tmp/akm-1199-baseline/src/cli.ts",
+      "build": null,
+      "build_fingerprint": null
+    },
+    "config": {
+      "redacted": {
+        "keyword": {
+          "configVersion": "0.9.0",
+          "semanticSearchMode": "off",
+          "registries": []
+        },
+        "semantic": {
+          "configVersion": "0.9.0",
+          "semanticSearchMode": "auto",
+          "registries": [],
+          "embedding": {
+            "provider": "openai",
+            "endpoint": "https://ai.lab.fwdslsh.dev/v1/embeddings",
+            "model": "embed/qwen3-embedding-0.6b",
+            "apiKey": "$LAB_API_KEY",
+            "dimension": 1024,
+            "queryTimeoutMs": 600000,
+            "timeoutMs": 600000
+          }
+        }
+      }
+    },
+    "settings": {
+      "strategy": null,
+      "config_patch_sha256": null,
+      "timeout_ms": 120000,
+      "seed": null
+    },
+    "engines": {},
+    "eval_settings": {},
+    "completion": {
+      "selected": [
+        "culinary-sear-steaming-not-browning",
+        "legal-standard-deduction-current",
+        "medical-cardiac-cycle-heart-sounds",
+        "culinary-chicken-safe-temp",
+        "legal-extension-payment-deadline",
+        "medical-cpr-compression-rate-memory-gate",
+        "culinary-steak-searing-best-method",
+        "legal-counteroffer-effect",
+        "medical-scene-safety-lesson",
+        "culinary-mise-en-place-exact-name",
+        "legal-citation-convention",
+        "medical-normal-vital-signs-fact",
+        "culinary-pasta-from-scratch-dispatch",
+        "legal-practice-scope",
+        "medical-blood-type-compatibility-fact",
+        "culinary-plate-dessert-dispatch",
+        "legal-tax-filing-checklist-exact",
+        "medical-exact-name-renal-nephron",
+        "culinary-sous-chef-service-timing",
+        "legal-estimate-tax-liability",
+        "medical-exact-name-first-aid-response-skill",
+        "culinary-dinner-party-menu-planning",
+        "legal-tax-compliance-review",
+        "medical-patient-vitals-charting-skill",
+        "culinary-knife-sharpening-maintenance",
+        "legal-return-intake-workflow",
+        "medical-triage-symptoms-command",
+        "culinary-mother-sauces-five",
+        "legal-nexus-general-rule",
+        "medical-clinical-educator-agent",
+        "culinary-convert-units-script",
+        "legal-demand-letter-draft",
+        "medical-first-aid-incident-response-workflow",
+        "culinary-brine-salt-percentage",
+        "legal-privilege-investigation-memos",
+        "medical-wound-care-general-principle",
+        "culinary-knife-skills-cutting-technique",
+        "legal-rmd-start-age-adversarial",
+        "medical-hydration-guidance-query",
+        "culinary-bone-stock-from-scratch",
+        "legal-mailbox-rule-adversarial",
+        "medical-adv-belief-state-bp-threshold",
+        "culinary-onion-caramelization-belief-state",
+        "legal-statute-overview-exact-adversarial",
+        "medical-adv-lesson-strength-delayed-head-injury",
+        "culinary-spice-toasting-lesson-strength",
+        "legal-conflict-check-adversarial",
+        "medical-adv-exact-name-renal-nephron-vs-stuffed-distractor",
+        "culinary-beurre-noisette-exact-name",
+        "medical-adv-pinned-fact-cpr-ratio",
+        "culinary-kitchen-fire-pinned-fact"
+      ],
+      "scored": [
+        "culinary-sear-steaming-not-browning",
+        "legal-standard-deduction-current",
+        "medical-cardiac-cycle-heart-sounds",
+        "culinary-chicken-safe-temp",
+        "legal-extension-payment-deadline",
+        "medical-cpr-compression-rate-memory-gate",
+        "culinary-steak-searing-best-method",
+        "legal-counteroffer-effect",
+        "medical-scene-safety-lesson",
+        "culinary-mise-en-place-exact-name",
+        "legal-citation-convention",
+        "medical-normal-vital-signs-fact",
+        "culinary-pasta-from-scratch-dispatch",
+        "legal-practice-scope",
+        "medical-blood-type-compatibility-fact",
+        "culinary-plate-dessert-dispatch",
+        "legal-tax-filing-checklist-exact",
+        "medical-exact-name-renal-nephron",
+        "culinary-sous-chef-service-timing",
+        "legal-estimate-tax-liability",
+        "medical-exact-name-first-aid-response-skill",
+        "culinary-dinner-party-menu-planning",
+        "legal-tax-compliance-review",
+        "medical-patient-vitals-charting-skill",
+        "culinary-knife-sharpening-maintenance",
+        "legal-return-intake-workflow",
+        "medical-triage-symptoms-command",
+        "culinary-mother-sauces-five",
+        "legal-nexus-general-rule",
+        "medical-clinical-educator-agent",
+        "culinary-convert-units-script",
+        "legal-demand-letter-draft",
+        "medical-first-aid-incident-response-workflow",
+        "culinary-brine-salt-percentage",
+        "legal-privilege-investigation-memos",
+        "medical-wound-care-general-principle",
+        "culinary-knife-skills-cutting-technique",
+        "legal-rmd-start-age-adversarial",
+        "medical-hydration-guidance-query",
+        "culinary-bone-stock-from-scratch",
+        "legal-mailbox-rule-adversarial",
+        "medical-adv-belief-state-bp-threshold",
+        "culinary-onion-caramelization-belief-state",
+        "legal-statute-overview-exact-adversarial",
+        "medical-adv-lesson-strength-delayed-head-injury",
+        "culinary-spice-toasting-lesson-strength",
+        "legal-conflict-check-adversarial",
+        "medical-adv-exact-name-renal-nephron-vs-stuffed-distractor",
+        "culinary-beurre-noisette-exact-name",
+        "medical-adv-pinned-fact-cpr-ratio",
+        "culinary-kitchen-fire-pinned-fact"
+      ],
+      "errored": []
+    },
+    "rescored_from": {
+      "results": "2026-10-21-1199-public-baseline-books",
+      "scorer": {
+        "version": "0.3"
+      },
+      "at": "2026-10-21T04:37:15.185Z",
+      "dropped": []
+    }
+  },
+  "wall_seconds": 78.058,
+  "scoring_version": "0.3",
+  "rescored_from": {
+    "results": "2026-10-21-1199-public-baseline-books",
+    "scorer": {
+      "version": "0.3"
+    },
+    "at": "2026-10-21T04:37:15.185Z",
+    "dropped": []
+  }
+}

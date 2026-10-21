@@ -1,0 +1,1022 @@
+{
+  "settings": "Explicit lab provider only; semanticSearchMode, queryTimeoutMs, curateRerank and default belief omitted. Three sequential cold/warm process observations. Pack uses same recall flags.",
+  "results": [
+    {
+      "build": "baseline",
+      "job": "current",
+      "flags": [],
+      "indexMs": 263.692638,
+      "indexVerification": {
+        "ok": true,
+        "message": "Keyword index ready. Semantic search is disabled.",
+        "semanticSearchEnabled": false,
+        "semanticSearchMode": "off",
+        "semanticStatus": "disabled",
+        "embeddingProvider": "remote",
+        "entryCount": 11,
+        "embeddingCount": 0
+      },
+      "calls": [
+        {
+          "repeat": 0,
+          "ms": 246.37093099999998,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015625
+            }
+          ],
+          "packedTokens": 264,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n"
+            },
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n"
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n"
+            }
+          ]
+        },
+        {
+          "repeat": 1,
+          "ms": 248.88672099999997,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015625
+            }
+          ],
+          "packedTokens": 264,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n"
+            },
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n"
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n"
+            }
+          ]
+        },
+        {
+          "repeat": 2,
+          "ms": 241.446731,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-RrCHhf/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015625
+            }
+          ],
+          "packedTokens": 264,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n"
+            },
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n"
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "build": "baseline",
+      "job": "historical",
+      "flags": [
+        "--belief",
+        "historical"
+      ],
+      "indexMs": 263.692638,
+      "indexVerification": {
+        "ok": true,
+        "message": "Keyword index ready. Semantic search is disabled.",
+        "semanticSearchEnabled": false,
+        "semanticSearchMode": "off",
+        "semanticStatus": "disabled",
+        "embeddingProvider": "remote",
+        "entryCount": 11,
+        "embeddingCount": 0
+      },
+      "calls": [
+        {
+          "repeat": 0,
+          "ms": 208.61555199999998,
+          "code": 2,
+          "packedTokens": 0,
+          "packed": [],
+          "error": "{\n  \"ok\": false,\n  \"error\": \"Unknown flag \\\"--belief\\\".\",\n  \"code\": \"UNKNOWN_FLAG\",\n  \"hint\": \"Run the command with `--help` to see its accepted flags.\"\n}\n"
+        },
+        {
+          "repeat": 1,
+          "ms": 195.40392599999996,
+          "code": 2,
+          "packedTokens": 0,
+          "packed": [],
+          "error": "{\n  \"ok\": false,\n  \"error\": \"Unknown flag \\\"--belief\\\".\",\n  \"code\": \"UNKNOWN_FLAG\",\n  \"hint\": \"Run the command with `--help` to see its accepted flags.\"\n}\n"
+        },
+        {
+          "repeat": 2,
+          "ms": 209.00027499999987,
+          "code": 2,
+          "packedTokens": 0,
+          "packed": [],
+          "error": "{\n  \"ok\": false,\n  \"error\": \"Unknown flag \\\"--belief\\\".\",\n  \"code\": \"UNKNOWN_FLAG\",\n  \"hint\": \"Run the command with `--help` to see its accepted flags.\"\n}\n"
+        }
+      ]
+    },
+    {
+      "build": "baseline",
+      "job": "all",
+      "flags": [
+        "--belief",
+        "all"
+      ],
+      "indexMs": 263.692638,
+      "indexVerification": {
+        "ok": true,
+        "message": "Keyword index ready. Semantic search is disabled.",
+        "semanticSearchEnabled": false,
+        "semanticSearchMode": "off",
+        "semanticStatus": "disabled",
+        "embeddingProvider": "remote",
+        "entryCount": 11,
+        "embeddingCount": 0
+      },
+      "calls": [
+        {
+          "repeat": 0,
+          "ms": 195.26769699999977,
+          "code": 2,
+          "packedTokens": 0,
+          "packed": [],
+          "error": "{\n  \"ok\": false,\n  \"error\": \"Unknown flag \\\"--belief\\\".\",\n  \"code\": \"UNKNOWN_FLAG\",\n  \"hint\": \"Run the command with `--help` to see its accepted flags.\"\n}\n"
+        },
+        {
+          "repeat": 1,
+          "ms": 200.53040099999998,
+          "code": 2,
+          "packedTokens": 0,
+          "packed": [],
+          "error": "{\n  \"ok\": false,\n  \"error\": \"Unknown flag \\\"--belief\\\".\",\n  \"code\": \"UNKNOWN_FLAG\",\n  \"hint\": \"Run the command with `--help` to see its accepted flags.\"\n}\n"
+        },
+        {
+          "repeat": 2,
+          "ms": 207.88488199999983,
+          "code": 2,
+          "packedTokens": 0,
+          "packed": [],
+          "error": "{\n  \"ok\": false,\n  \"error\": \"Unknown flag \\\"--belief\\\".\",\n  \"code\": \"UNKNOWN_FLAG\",\n  \"hint\": \"Run the command with `--help` to see its accepted flags.\"\n}\n"
+        }
+      ]
+    },
+    {
+      "build": "candidate",
+      "job": "current",
+      "flags": [],
+      "indexMs": 266.3648780000003,
+      "indexVerification": {
+        "ok": true,
+        "message": "Keyword index ready. Semantic search is disabled.",
+        "semanticSearchEnabled": false,
+        "semanticSearchMode": "off",
+        "semanticStatus": "disabled",
+        "embeddingProvider": "remote",
+        "entryCount": 11,
+        "embeddingCount": 0
+      },
+      "calls": [
+        {
+          "repeat": 0,
+          "ms": 264.9638449999993,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "beliefState": "asserted",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-other",
+              "ref": "memories/quartz-other",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-other.md",
+              "editable": true,
+              "description": "Quartz production rollout port 5555 for Bob only.",
+              "beliefState": "active",
+              "followUp": "akm show memories/quartz-other",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            }
+          ],
+          "packedTokens": 196,
+          "packed": [
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n",
+              "beliefState": "asserted"
+            },
+            {
+              "ref": "memories/quartz-other",
+              "tokens": 65,
+              "content": "---\nname: \"quartz-other\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 5555 for Bob only.\"\nbeliefState: \"active\"\nscope: {\"user\": \"bob\", \"agent\": \"other\", \"run\": \"r3\", \"channel\": \"private\"}\n---\n\nQuartz production rollout port 5555 for Bob only.\n",
+              "beliefState": "active"
+            }
+          ]
+        },
+        {
+          "repeat": 1,
+          "ms": 270.4938260000008,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "beliefState": "asserted",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-other",
+              "ref": "memories/quartz-other",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-other.md",
+              "editable": true,
+              "description": "Quartz production rollout port 5555 for Bob only.",
+              "beliefState": "active",
+              "followUp": "akm show memories/quartz-other",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            }
+          ],
+          "packedTokens": 196,
+          "packed": [
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n",
+              "beliefState": "asserted"
+            },
+            {
+              "ref": "memories/quartz-other",
+              "tokens": 65,
+              "content": "---\nname: \"quartz-other\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 5555 for Bob only.\"\nbeliefState: \"active\"\nscope: {\"user\": \"bob\", \"agent\": \"other\", \"run\": \"r3\", \"channel\": \"private\"}\n---\n\nQuartz production rollout port 5555 for Bob only.\n",
+              "beliefState": "active"
+            }
+          ]
+        },
+        {
+          "repeat": 2,
+          "ms": 259.4799149999999,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "beliefState": "asserted",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-other",
+              "ref": "memories/quartz-other",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-other.md",
+              "editable": true,
+              "description": "Quartz production rollout port 5555 for Bob only.",
+              "beliefState": "active",
+              "followUp": "akm show memories/quartz-other",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            }
+          ],
+          "packedTokens": 196,
+          "packed": [
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n",
+              "beliefState": "asserted"
+            },
+            {
+              "ref": "memories/quartz-other",
+              "tokens": 65,
+              "content": "---\nname: \"quartz-other\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 5555 for Bob only.\"\nbeliefState: \"active\"\nscope: {\"user\": \"bob\", \"agent\": \"other\", \"run\": \"r3\", \"channel\": \"private\"}\n---\n\nQuartz production rollout port 5555 for Bob only.\n",
+              "beliefState": "active"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "build": "candidate",
+      "job": "historical",
+      "flags": [
+        "--belief",
+        "historical"
+      ],
+      "indexMs": 266.3648780000003,
+      "indexVerification": {
+        "ok": true,
+        "message": "Keyword index ready. Semantic search is disabled.",
+        "semanticSearchEnabled": false,
+        "semanticSearchMode": "off",
+        "semanticStatus": "disabled",
+        "embeddingProvider": "remote",
+        "entryCount": 11,
+        "embeddingCount": 0
+      },
+      "calls": [
+        {
+          "repeat": 0,
+          "ms": 248.07347000000027,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016129
+            }
+          ],
+          "packedTokens": 133,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            }
+          ]
+        },
+        {
+          "repeat": 1,
+          "ms": 252.88702599999942,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016129
+            }
+          ],
+          "packedTokens": 133,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            }
+          ]
+        },
+        {
+          "repeat": 2,
+          "ms": 274.4401509999998,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016129
+            }
+          ],
+          "packedTokens": 133,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "build": "candidate",
+      "job": "all",
+      "flags": [
+        "--belief",
+        "all"
+      ],
+      "indexMs": 266.3648780000003,
+      "indexVerification": {
+        "ok": true,
+        "message": "Keyword index ready. Semantic search is disabled.",
+        "semanticSearchEnabled": false,
+        "semanticSearchMode": "off",
+        "semanticStatus": "disabled",
+        "embeddingProvider": "remote",
+        "entryCount": 11,
+        "embeddingCount": 0
+      },
+      "calls": [
+        {
+          "repeat": 0,
+          "ms": 268.8665469999996,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "beliefState": "asserted",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015625
+            }
+          ],
+          "packedTokens": 264,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            },
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n",
+              "beliefState": "asserted"
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            }
+          ]
+        },
+        {
+          "repeat": 1,
+          "ms": 295.9516989999993,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "beliefState": "asserted",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015625
+            }
+          ],
+          "packedTokens": 264,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            },
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n",
+              "beliefState": "asserted"
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            }
+          ]
+        },
+        {
+          "repeat": 2,
+          "ms": 254.53285999999935,
+          "code": 0,
+          "mode": "keyword",
+          "items": [
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old",
+              "ref": "memories/quartz-old",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.016393
+            },
+            {
+              "source": "local",
+              "type": "knowledge",
+              "name": "quartz-guide",
+              "ref": "knowledge/quartz-guide",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/knowledge/quartz-guide.md",
+              "editable": true,
+              "description": "Quartz production rollout authentication and rollback reference.",
+              "followUp": "akm show knowledge/quartz-guide",
+              "reason": "Strong reference document match for \"Quartz production rollout\".",
+              "score": 0.016129
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-now",
+              "ref": "memories/quartz-now",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-now.md",
+              "editable": true,
+              "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+              "beliefState": "asserted",
+              "followUp": "akm show memories/quartz-now",
+              "reason": "Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015873
+            },
+            {
+              "source": "local",
+              "type": "memory",
+              "name": "quartz-old.derived",
+              "ref": "memories/quartz-old.derived",
+              "path": "/tmp/akm-eval-1199-defaults-N202Xi/bundle/memories/quartz-old.derived.md",
+              "editable": true,
+              "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+              "beliefState": "superseded",
+              "followUp": "akm show memories/quartz-old.derived",
+              "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+              "score": 0.015625
+            }
+          ],
+          "packedTokens": 264,
+          "packed": [
+            {
+              "ref": "memories/quartz-old",
+              "tokens": 72,
+              "content": "---\nname: \"quartz-old\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Superseded rollout record.\"\nbeliefState: \"superseded\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r1\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 7000. Superseded rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            },
+            {
+              "ref": "knowledge/quartz-guide",
+              "tokens": 48,
+              "content": "---\nname: \"quartz-guide\"\ntype: \"knowledge\"\ndescription: \"Quartz production rollout authentication and rollback reference.\"\n---\n\nQuartz production rollout authentication and rollback reference.\n"
+            },
+            {
+              "ref": "memories/quartz-now",
+              "tokens": 83,
+              "content": "---\nname: \"quartz-now\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 9443. Current rollout procedure and rollback checklist.\"\nbeliefState: \"asserted\"\nscope: {\"user\": \"alice\", \"agent\": \"worker\", \"run\": \"r2\", \"channel\": \"ops\"}\n---\n\nQuartz production rollout port 9443. Current rollout procedure and rollback checklist.\n",
+              "beliefState": "asserted"
+            },
+            {
+              "ref": "memories/quartz-old.derived",
+              "tokens": 61,
+              "content": "---\nname: \"quartz-old.derived\"\ntype: \"memory\"\ndescription: \"Quartz production rollout port 7000. Historical distilled rollout record.\"\nsource: \"memories/quartz-old\"\n---\n\nQuartz production rollout port 7000. Historical distilled rollout record.\n",
+              "beliefState": "superseded",
+              "reason": "Historical context; not current supporting authority."
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -62,7 +62,7 @@ import {
   reciprocalRankFusion,
 } from "./ranking";
 import { attachSearchHitAttribution } from "./search-attribution";
-import { enrichSearchHit } from "./search-hit-enrichers";
+import { enrichSearchHit, type SearchHitContext } from "./search-hit-enrichers";
 import { buildEditHint, findSourceForPath, isEditable, type SearchSource } from "./search-source";
 
 /**
@@ -369,6 +369,7 @@ async function searchDatabase(
         sources,
         config,
         db,
+        eligible: (row) => applyEntryFilters([row], filterOptions).length > 0,
       }),
     ),
   );
@@ -548,6 +549,7 @@ async function enumerateEntries(
         sources,
         config,
         db,
+        eligible: (row) => applyEntryFilters([row], opts).length > 0,
       }),
     ),
   );
@@ -567,7 +569,7 @@ interface EntryFilterOptions {
  * source-narrowing → scope → proposed-quality → derived-twin belief
  * inheritance → belief filter.
  */
-function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
+export function applyEntryFilters<T extends { id: number; entry: IndexDocument; filePath: string }>(
   items: T[],
   opts: EntryFilterOptions,
 ): T[] {
@@ -627,7 +629,7 @@ function inheritDerivedTwinBeliefStates(db: Database, items: Array<{ id: number;
   }
 }
 
-function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
+export function matchBeliefFilter(beliefState: string | undefined, filter: BeliefFilterMode): boolean {
   if (filter === "all") return true;
   // 03: the belief filter applies to ANY flagged entry, not just memories, so
   // `current`/`historical` filters catch contradicted/superseded KNOWLEDGE too.
@@ -756,6 +758,7 @@ export async function buildDbHit(input: {
    * hits without a DB — the enricher then skips that step.
    */
   db?: Database;
+  eligible?: SearchHitContext["eligible"];
 }): Promise<SourceSearchHit> {
   const absolutePath = path.resolve(input.path);
   const source = findSourceForPath(absolutePath, input.sources);
@@ -803,6 +806,7 @@ export async function buildDbHit(input: {
     stashDir: entryStashDir,
     bundleId: input.bundleId,
     db: input.db,
+    eligible: input.eligible,
   });
 
   return hit;

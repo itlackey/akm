@@ -1,0 +1,954 @@
+{
+  "eval": "retrieval",
+  "eval_version": "0.3",
+  "scoring_version": "0.3",
+  "corpus": "custom",
+  "collection": "own",
+  "mode": null,
+  "a": {
+    "dir": "/tmp/akm-eval-1199/private/retrieval/results/2026-10-21-1199-baseline-own",
+    "label": "1199-baseline"
+  },
+  "b": {
+    "dir": "/tmp/akm-eval-1199/private/retrieval/results/2026-10-21-1199-candidate-own",
+    "label": "1199-candidate"
+  },
+  "changes": [
+    {
+      "field": "akm",
+      "a": {
+        "version": "0.10.261008",
+        "bin": "bun /tmp/akm-1199-baseline/src/cli.ts",
+        "build": null,
+        "build_fingerprint": null
+      },
+      "b": {
+        "version": "0.10.261008",
+        "bin": "bun ~/.codex/worktrees/1199-curate-recall-controls/akm/src/cli.ts",
+        "build": "v0.9.0-beta.60-2846-g79cf3236a-dirty",
+        "build_fingerprint": "9dd5c9ab6eef4776d78fd160f1d6d14b78a1a933c9a730368f93382b0e536dca"
+      }
+    },
+    {
+      "field": "semantic_index",
+      "a": "warm",
+      "b": "cold"
+    }
+  ],
+  "warnings": [
+    "/tmp/akm-eval-1199/private/retrieval/results/2026-10-21-1199-baseline-own: status aborted: 10 semantic calls failed, or answered with keyword search. Their queries are left out of the semantic columns: see the errors in samples.jsonl..",
+    "Several settings changed; these differences do not isolate the effect of any one change."
+  ],
+  "rows": [
+    {
+      "key": "label",
+      "label": "Run",
+      "group": "Run",
+      "unit": "",
+      "a": "1199-baseline",
+      "b": "1199-candidate",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "suite",
+      "label": "Test",
+      "group": "Run",
+      "unit": "",
+      "a": "retrieval",
+      "b": "retrieval",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "collection",
+      "label": "Collection",
+      "group": "Run",
+      "unit": "",
+      "a": "own",
+      "b": "own",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "date",
+      "label": "Collected (UTC)",
+      "group": "Run",
+      "unit": "",
+      "a": "2026-10-21T04:21:54.239Z",
+      "b": "2026-10-21T04:23:09.777Z",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "quality_percent",
+      "label": "Quality %",
+      "group": "Quality",
+      "unit": "%",
+      "a": 97.64,
+      "b": 97.64,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "quality_metric",
+      "label": "Quality metric",
+      "group": "Quality",
+      "unit": "",
+      "a": "Keyword ranking · nDCG@10",
+      "b": "Keyword ranking · nDCG@10",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "quality_cases",
+      "label": "Quality cases",
+      "group": "Quality",
+      "unit": "",
+      "a": 13,
+      "b": 13,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "recorded",
+      "label": "Cases recorded",
+      "group": "Quality",
+      "unit": "",
+      "a": 14,
+      "b": 14,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "scored",
+      "label": "Cases scored",
+      "group": "Quality",
+      "unit": "",
+      "a": 4,
+      "b": 14,
+      "delta": 10,
+      "note": ""
+    },
+    {
+      "key": "errors",
+      "label": "Errors",
+      "group": "Quality",
+      "unit": "",
+      "a": 10,
+      "b": 0,
+      "delta": -10,
+      "note": ""
+    },
+    {
+      "key": "timeouts",
+      "label": "Timeouts",
+      "group": "Quality",
+      "unit": "",
+      "a": 0,
+      "b": 0,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "run_wall_s",
+      "label": "Run wall time (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 15.747,
+      "b": 18.351,
+      "delta": 2.603999999999999,
+      "note": ""
+    },
+    {
+      "key": "run_wall_basis",
+      "label": "Run wall time basis",
+      "group": "Performance",
+      "unit": "",
+      "a": "Runner elapsed",
+      "b": "Runner elapsed",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "keyword_mean_s",
+      "label": "Keyword query mean (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.2471428571428571,
+      "b": 0.2621428571428571,
+      "delta": 0.015000000000000013,
+      "note": ""
+    },
+    {
+      "key": "keyword_p50_s",
+      "label": "Keyword query p50 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.24,
+      "b": 0.25,
+      "delta": 0.010000000000000009,
+      "note": ""
+    },
+    {
+      "key": "keyword_p95_s",
+      "label": "Keyword query p95 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.294,
+      "b": 0.33749999999999997,
+      "delta": 0.04349999999999998,
+      "note": ""
+    },
+    {
+      "key": "keyword_timed",
+      "label": "Keyword query timed",
+      "group": "Performance",
+      "unit": "",
+      "a": 14,
+      "b": 14,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "semantic_mean_s",
+      "label": "Semantic query mean (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.28214285714285714,
+      "b": 0.28214285714285714,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "semantic_p50_s",
+      "label": "Semantic query p50 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.28,
+      "b": 0.26,
+      "delta": -0.020000000000000018,
+      "note": ""
+    },
+    {
+      "key": "semantic_p95_s",
+      "label": "Semantic query p95 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.31,
+      "b": 0.36599999999999994,
+      "delta": 0.05599999999999994,
+      "note": ""
+    },
+    {
+      "key": "semantic_timed",
+      "label": "Semantic query timed",
+      "group": "Performance",
+      "unit": "",
+      "a": 14,
+      "b": 14,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "keyword_index_s",
+      "label": "Keyword index (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.3,
+      "b": 0.3,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "semantic_index_s",
+      "label": "Semantic index (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.2,
+      "b": 0.8,
+      "delta": 0.6000000000000001,
+      "note": ""
+    },
+    {
+      "key": "akm_version",
+      "label": "AKM version",
+      "group": "Settings",
+      "unit": "",
+      "a": "0.10.261008",
+      "b": "0.10.261008",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "measurement",
+      "label": "Eval version",
+      "group": "Settings",
+      "unit": "",
+      "a": "0.3",
+      "b": "0.3",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "scoring_version",
+      "label": "Scoring version",
+      "group": "Settings",
+      "unit": "",
+      "a": "0.3",
+      "b": "0.3",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "search_method",
+      "label": "Search methods",
+      "group": "Settings",
+      "unit": "",
+      "a": "keyword; semantic",
+      "b": "keyword; semantic",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "embedding_model",
+      "label": "Embedding model",
+      "group": "Settings",
+      "unit": "",
+      "a": "embed/qwen3-embedding-0.6b",
+      "b": "embed/qwen3-embedding-0.6b",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "top_k",
+      "label": "Retrieval depth",
+      "group": "Settings",
+      "unit": "",
+      "a": 10,
+      "b": 10,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "semantic_index",
+      "label": "Semantic index state",
+      "group": "Settings",
+      "unit": "",
+      "a": "warm",
+      "b": "cold",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "source_commit",
+      "label": "Collector commit",
+      "group": "Provenance",
+      "unit": "",
+      "a": "27f5240-dirty",
+      "b": "27f5240-dirty",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "akm_build",
+      "label": "AKM build",
+      "group": "Provenance",
+      "unit": "",
+      "a": null,
+      "b": "v0.9.0-beta.60-2846-g79cf3236a-dirty",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword banned result above first relevant",
+      "label": "Keyword banned result above first relevant %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 14.29,
+      "b": 14.29,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword banned result above relevant",
+      "label": "Keyword banned result above relevant %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 14.29,
+      "b": 14.29,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword hit rate@5",
+      "label": "Keyword hit rate@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword judged nDCG@10",
+      "label": "Keyword judged nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9764,
+      "b": 0.9764,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword MRR",
+      "label": "Keyword MRR",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9615,
+      "b": 0.9615,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword precision@5",
+      "label": "Keyword precision@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 27.689999999999998,
+      "b": 27.689999999999998,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword ranking · nDCG@10",
+      "label": "Keyword ranking · nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9764,
+      "b": 0.9764,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword recall@10",
+      "label": "Keyword recall@10 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword results with judgments",
+      "label": "Keyword results with judgments %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic banned result above first relevant",
+      "label": "Semantic banned result above first relevant %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 14.29,
+      "b": 14.29,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic banned result above relevant",
+      "label": "Semantic banned result above relevant %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 14.29,
+      "b": 14.29,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic hit rate@5",
+      "label": "Semantic hit rate@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic judged nDCG@10",
+      "label": "Semantic judged nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9697,
+      "b": 0.9697,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic MRR",
+      "label": "Semantic MRR",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9615,
+      "b": 0.9615,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic precision@5",
+      "label": "Semantic precision@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 27.689999999999998,
+      "b": 27.689999999999998,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic ranking · nDCG@10",
+      "label": "Semantic ranking · nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9697,
+      "b": 0.9697,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic recall@10",
+      "label": "Semantic recall@10 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic results with judgments",
+      "label": "Semantic results with judgments %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.n",
+      "label": "metrics.search.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 13,
+      "b": 13,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.ndcg_10",
+      "label": "metrics.search.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9764,
+      "b": 0.9764,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.ndcg_10_condensed",
+      "label": "metrics.search.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9764,
+      "b": 0.9764,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.p_5",
+      "label": "metrics.search.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.2769,
+      "b": 0.2769,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.success_5",
+      "label": "metrics.search.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.mrr",
+      "label": "metrics.search.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9615,
+      "b": 0.9615,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.recall_10",
+      "label": "metrics.search.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.judged_10",
+      "label": "metrics.search.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.banned_above",
+      "label": "metrics.search.banned_above",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.1429,
+      "b": 0.1429,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.banned_above_first",
+      "label": "metrics.search.banned_above_first",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.1429,
+      "b": 0.1429,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.n",
+      "label": "metrics.curate.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 4,
+      "b": 13,
+      "delta": 9,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.ndcg_10",
+      "label": "metrics.curate.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9234,
+      "b": 1,
+      "delta": 0.0766,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.ndcg_10_condensed",
+      "label": "metrics.curate.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9234,
+      "b": 1,
+      "delta": 0.0766,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.p_5",
+      "label": "metrics.curate.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.25,
+      "b": 0.2769,
+      "delta": 0.02689999999999998,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.success_5",
+      "label": "metrics.curate.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.mrr",
+      "label": "metrics.curate.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.875,
+      "b": 1,
+      "delta": 0.125,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.recall_10",
+      "label": "metrics.curate.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.judged_10",
+      "label": "metrics.curate.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.banned_above",
+      "label": "metrics.curate.banned_above",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.3333,
+      "b": 0,
+      "delta": -0.3333,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.banned_above_first",
+      "label": "metrics.curate.banned_above_first",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.3333,
+      "b": 0,
+      "delta": -0.3333,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.n",
+      "label": "metrics.semantic_search.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 13,
+      "b": 13,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.ndcg_10",
+      "label": "metrics.semantic_search.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9697,
+      "b": 0.9697,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.ndcg_10_condensed",
+      "label": "metrics.semantic_search.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9697,
+      "b": 0.9697,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.p_5",
+      "label": "metrics.semantic_search.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.2769,
+      "b": 0.2769,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.success_5",
+      "label": "metrics.semantic_search.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.mrr",
+      "label": "metrics.semantic_search.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9615,
+      "b": 0.9615,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.recall_10",
+      "label": "metrics.semantic_search.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.judged_10",
+      "label": "metrics.semantic_search.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.banned_above",
+      "label": "metrics.semantic_search.banned_above",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.1429,
+      "b": 0.1429,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.banned_above_first",
+      "label": "metrics.semantic_search.banned_above_first",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.1429,
+      "b": 0.1429,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.n",
+      "label": "metrics.semantic_curate.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 4,
+      "b": 13,
+      "delta": 9,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.ndcg_10",
+      "label": "metrics.semantic_curate.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9127,
+      "b": 0.9904,
+      "delta": 0.07769999999999999,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.ndcg_10_condensed",
+      "label": "metrics.semantic_curate.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9127,
+      "b": 0.9904,
+      "delta": 0.07769999999999999,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.p_5",
+      "label": "metrics.semantic_curate.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.25,
+      "b": 0.2769,
+      "delta": 0.02689999999999998,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.success_5",
+      "label": "metrics.semantic_curate.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.mrr",
+      "label": "metrics.semantic_curate.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.875,
+      "b": 1,
+      "delta": 0.125,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.recall_10",
+      "label": "metrics.semantic_curate.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.judged_10",
+      "label": "metrics.semantic_curate.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.banned_above",
+      "label": "metrics.semantic_curate.banned_above",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.3333,
+      "b": 0,
+      "delta": -0.3333,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.banned_above_first",
+      "label": "metrics.semantic_curate.banned_above_first",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.3333,
+      "b": 0,
+      "delta": -0.3333,
+      "note": ""
+    },
+    {
+      "key": "status",
+      "label": "status",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": "aborted",
+      "b": "complete",
+      "delta": null,
+      "note": ""
+    }
+  ]
+}

@@ -19,7 +19,7 @@ import type { OutputShapeEntry } from "./registry";
 // Curation is a small, high-signal top-N. Even at `brief` we keep `followUp`
 // (the actionable `akm show <ref>` command) and `reason` (why this asset was
 // selected) — these are the point of curate, unlike a bulk search listing.
-const BRIEF_FIELDS = ["source", "type", "name", "ref", "id", "supportRefs", "followUp", "reason"];
+const BRIEF_FIELDS = ["source", "type", "name", "ref", "id", "supportRefs", "beliefState", "followUp", "reason"];
 const NORMAL_FIELDS = [
   "source",
   "type",
@@ -35,6 +35,7 @@ const NORMAL_FIELDS = [
   "parameters",
   "run",
   "supportRefs",
+  "beliefState",
   "followUp",
   "reason",
   "score",
@@ -51,6 +52,7 @@ const AGENT_FIELDS = [
   "id",
   "description",
   "supportRefs",
+  "beliefState",
   "followUp",
   "reason",
   "score",

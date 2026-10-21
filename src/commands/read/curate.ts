@@ -26,7 +26,7 @@ import { appendEvent } from "../../core/events";
 import { nonTaskInput } from "../../core/non-task-input";
 import { redactCredentialPatterns } from "../../core/redaction";
 import { withStateDbTelemetry } from "../../core/state-db";
-import { searchHitContent } from "../../indexer/search/db-search";
+import { matchBeliefFilter, searchHitContent } from "../../indexer/search/db-search";
 import {
   type AttributionProjection,
   copySearchHitAttribution,
@@ -39,6 +39,7 @@ import { isLlmFeatureEnabled, tryLlmFeature } from "../../llm/feature-gate";
 import { rerankDocuments } from "../../llm/rerank-client";
 import { truncateDescription } from "../../output/shapes/helpers";
 import type {
+  RecallOptions,
   RegistrySearchResultHit,
   SearchExecutionMode,
   SearchResponse,
@@ -46,14 +47,19 @@ import type {
   SourceSearchHit,
 } from "../../sources/types";
 import { TELEMETRY_BUSY_TIMEOUT_MS, withIndexDb } from "../../storage/repositories/index-db";
-import { findEntryIdByRef, getItemRefById } from "../../storage/repositories/index-entries-repository";
-import { akmSearch, parseSearchSource } from "./search";
+import {
+  findEntryIdByRef,
+  getEntryIdByFilePath,
+  getItemRefById,
+} from "../../storage/repositories/index-entries-repository";
+import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
 export type CurateSupportRef = {
   ref: string;
   type?: string;
   reason: string;
+  beliefState?: string;
 };
 
 export type CuratedStashItem = {
@@ -73,6 +79,7 @@ export type CuratedStashItem = {
   followUp: string;
   reason: string;
   score?: number;
+  beliefState?: string;
 };
 
 export type CuratedRegistryItem = {
@@ -97,7 +104,7 @@ export interface CurateResponse {
   tip?: string;
 }
 
-export interface CurateOptions {
+export interface CurateOptions extends RecallOptions {
   query: string;
   type?: string;
   limit?: number;
@@ -126,6 +133,8 @@ export interface CurateOptions {
   skipLogging?: boolean;
 }
 
+// Keep the effective policy with the result through packing without changing JSON.
+const recallPolicies = new WeakMap<CurateResponse, RecallOptions>();
 const DEFAULT_CURATE_LIMIT = 4;
 const MAX_CURATE_SUPPORT_REFS = 2;
 /** Fused candidates the reranker reorders when `search.curateRerank.topN` is unset. */
@@ -207,6 +216,12 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
     );
   }
 
+  const recall: RecallOptions = {
+    type: options.type,
+    source: options.source ?? "local",
+    filters: normalizeScopeFilters(options.filters),
+    belief: parseBeliefFilterMode(options.belief ?? "current"),
+  };
   const nonTask = nonTaskInput(trimmedQuery);
   if (nonTask) {
     const abstained: CurateResponse = {
@@ -231,9 +246,19 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       // An enabled reranker reorders the top fused candidates, not just the final `limit`.
       limit: Math.max(limit, rerankTopN(loadConfig())),
       source,
+      filters: recall.filters,
+      belief: recall.belief,
       skipLogging: true,
     }));
-  const result = await curateSearchResults(options.query, searchResponse, limit, options.type, options.eventSource);
+  const result = await curateSearchResults(
+    options.query,
+    searchResponse,
+    limit,
+    options.type,
+    options.eventSource,
+    options.searchResponse ? undefined : recall,
+  );
+  recallPolicies.set(result, recall);
   if (!options.skipLogging) {
     logCurateEvent(options.query, result, options.eventSource, options.attributionProjection);
   }
@@ -246,6 +271,7 @@ export async function curateSearchResults(
   limit: number,
   selectedType?: string,
   eventSource?: UsageEventSource,
+  recall?: RecallOptions,
 ): Promise<CurateResponse> {
   const allStashHits = result.hits.filter((hit): hit is SourceSearchHit => hit.type !== "registry");
   const registryHits = result.registryHits ?? [];
@@ -263,12 +289,14 @@ export async function curateSearchResults(
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
   const selectedRegistryHits =
     selectedStashHits.length >= limit ? [] : registryHits.slice(0, limit - selectedStashHits.length);
-  const selectedRefs = new Set(selectedStashHits.map((hit) => hit.ref));
+  const selectedRefs = new Set(selectedStashHits.flatMap((hit) => (recall ? [hit.ref, evidenceRef(hit)] : [hit.ref])));
 
   const items = [
-    ...(await Promise.all(
-      selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource)),
-    )),
+    ...(
+      await Promise.all(
+        selectedStashHits.map((hit) => enrichCuratedStashHit(query, hit, selectedRefs, eventSource, recall)),
+      )
+    ).filter((item): item is CuratedStashItem => item !== undefined),
     ...selectedRegistryHits.map((hit) => buildCuratedRegistryItem(query, hit)),
   ].slice(0, limit);
   return {
@@ -285,6 +313,8 @@ export interface PackedCurateItem {
   ref: string;
   tokens: number;
   content: string;
+  beliefState?: string;
+  reason?: string;
 }
 
 export interface CuratePackResult {
@@ -317,15 +347,24 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   for (const item of stashItems) {
     let shown: ShowResponse | undefined;
     try {
-      shown = await akmShowUnified({ ref: item.ref, skipLogging: true });
+      shown = await akmShowUnified({
+        ref: evidenceRef(item),
+        skipLogging: true,
+        recall: recallPolicies.get(result) ?? { belief: "current" },
+      });
     } catch {
       continue;
     }
+    const historical = matchBeliefFilter(shown.beliefState, "historical");
+    const context = {
+      ...(shown.beliefState ? { beliefState: shown.beliefState } : {}),
+      ...(historical ? { reason: "Historical context; not current supporting authority." } : {}),
+    };
     const content = shown.content ?? shown.template ?? shown.prompt ?? "";
     const tokens = estimateTokenCount(content);
 
     if (used + tokens <= budgetTokens) {
-      packed.push({ ref: item.ref, tokens, content });
+      packed.push({ ref: item.ref, tokens, content, ...context });
       used += tokens;
       continue;
     }
@@ -334,7 +373,7 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
       const remaining = budgetTokens - used;
       if (remaining > 0) {
         const truncated = content.slice(0, remaining * 4);
-        packed.push({ ref: item.ref, tokens: estimateTokenCount(truncated), content: truncated });
+        packed.push({ ref: item.ref, tokens: estimateTokenCount(truncated), content: truncated, ...context });
         used += estimateTokenCount(truncated);
       }
     }
@@ -344,28 +383,44 @@ export async function packCuratedHits(result: CurateResponse, budgetTokens: numb
   return { query: result.query, budget: budgetTokens, tokens: used, items: packed };
 }
 
+function evidenceRef(item: { ref: string; path: string }): string {
+  return withIndexDb((db) => {
+    const id = getEntryIdByFilePath(db, item.path);
+    const ref = id === undefined ? undefined : getItemRefById(db, id);
+    if (!ref) {
+      if (item.path) throw new UsageError(`Indexed asset no longer available: ${item.ref}`);
+      return item.ref;
+    }
+    const fragment = parseBundleRef(item.ref).fragment;
+    return fragment ? `${ref}#${fragment}` : ref;
+  });
+}
+
 async function enrichCuratedStashHit(
   query: string,
   hit: SourceSearchHit,
   selectedRefs: Set<string>,
   eventSource?: UsageEventSource,
-): Promise<CuratedStashItem> {
+  recall?: RecallOptions,
+): Promise<CuratedStashItem | undefined> {
   let shown: ShowResponse | undefined;
   try {
-    shown = await akmShowUnified({ ref: hit.ref, eventSource, skipLogging: true });
+    shown = await akmShowUnified({ ref: recall ? evidenceRef(hit) : hit.ref, eventSource, skipLogging: true, recall });
   } catch {
+    if (recall) return undefined;
     shown = undefined;
   }
 
+  const ref = shown?.selectedRef ?? shown?.ref ?? hit.ref;
   const description = shown?.description ?? hit.description;
   const preview = buildCuratedPreview(shown, hit);
-  const supportRefs = buildCurateSupportRefs(shown?.links, selectedRefs, hit.ref);
+  const supportRefs = await buildCurateSupportRefs(shown?.links, selectedRefs, ref, recall);
 
   const item: CuratedStashItem = {
     source: "local",
     type: shown?.type ?? hit.type,
     name: shown?.name ?? hit.name,
-    ref: hit.ref,
+    ref,
     path: shown?.path ?? hit.path,
     editable: shown?.editable ?? hit.editable ?? false,
     ...((shown?.editable ?? hit.editable ?? false) === false
@@ -377,8 +432,9 @@ async function enrichCuratedStashHit(
     ...(shown?.parameters?.length ? { parameters: shown.parameters } : {}),
     ...(shown?.run ? { run: shown.run } : {}),
     ...(supportRefs.length > 0 ? { supportRefs } : {}),
-    followUp: `akm show ${hit.ref}`,
-    reason: buildCuratedReason(query, shown?.type ?? hit.type),
+    followUp: `akm show ${ref}`,
+    ...(shown?.beliefState ? { beliefState: shown.beliefState } : {}),
+    reason: `${matchBeliefFilter(shown?.beliefState, "historical") ? "Historical context. " : ""}${buildCuratedReason(query, shown?.type ?? hit.type)}`,
     ...(hit.score !== undefined ? { score: hit.score } : {}),
   };
   copySearchHitAttribution(hit, item, item.description);
@@ -492,11 +548,12 @@ function rerankDocumentTexts(hits: SourceSearchHit[]): string[] {
  * it, in the order `akm show` lists them. The LLM entity graph's `related`
  * list no longer feeds them.
  */
-function buildCurateSupportRefs(
+async function buildCurateSupportRefs(
   links: ShowResponse["links"],
   selectedRefs: Set<string>,
   ownerRef: string,
-): CurateSupportRef[] {
+  recall?: RecallOptions,
+): Promise<CurateSupportRef[]> {
   const supportRefs: CurateSupportRef[] = [];
   for (const [part, direction] of [
     ["outgoing", "from"],
@@ -505,11 +562,21 @@ function buildCurateSupportRefs(
     for (const [kind, group] of Object.entries(links?.[part] ?? {})) {
       for (const ref of group.refs) {
         if (ref === ownerRef || selectedRefs.has(ref) || supportRefs.some((existing) => existing.ref === ref)) continue;
+        let shown: ShowResponse | undefined;
+        if (recall) {
+          try {
+            shown = await akmShowUnified({ ref, recall, skipLogging: true });
+          } catch {
+            continue;
+          }
+        }
+        const historical = matchBeliefFilter(shown?.beliefState, "historical");
         const type = supportRefType(ref);
         supportRefs.push({
           ref,
           ...(type ? { type } : {}),
-          reason: `Declared link (${kind}) ${direction} this asset.`,
+          ...(shown?.beliefState ? { beliefState: shown.beliefState } : {}),
+          reason: `${historical ? "Historical context; " : ""}Declared link (${kind}) ${direction} this asset.`,
         });
         if (supportRefs.length >= MAX_CURATE_SUPPORT_REFS) return supportRefs;
       }

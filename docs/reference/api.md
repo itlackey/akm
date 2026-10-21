@@ -18,7 +18,12 @@ const text = await curate("deploy to prod", { limit: 4, type: "skill", format: "
 ```ts
 function curate(
   query: string,
-  options?: { limit?: number; type?: string; format?: "text" | "json" },
+  options?: {
+    limit?: number; type?: string; source?: string;
+    filters?: { user?: string; agent?: string; run?: string; channel?: string };
+    belief?: "all" | "current" | "historical";
+    format?: "text" | "json";
+  },
 ): Promise<string>;
 ```
 
@@ -28,6 +33,19 @@ function curate(
   `"json"`, as the CLI does. It runs the same code as the command (argument
   validation, search, ranking, shaping and rendering are shared, not copied), so
   the two cannot drift.
+- **Recall controls.** `source` is CLI `--from` (local, registry, all, or a named
+  bundle); `filters` uses the same normalized scope keys and exact AND semantics
+  as repeated CLI `--filter key=value`. `belief` defaults to `"current"`, keeping
+  unflagged reference knowledge and active/asserted assets. These labels do not
+  prove factual truth. Explicit `"all"` and `"historical"` support investigations.
+  The policy also applies to derived surfaces, support refs and content reads;
+  historical evidence is labelled. Registry catalogs have no local scope/belief
+  metadata and stay separate.
+
+  ```ts
+  await curate("deploy to prod", { source: "team", filters: { user: "alice" } });
+  await curate("investigate the old deployment port", { belief: "historical" });
+  ```
 - **Failure.** It rejects with an `Error` whose `message` is the CLI's error
   text and whose `code` is the CLI's error code (`MISSING_REQUIRED_ARGUMENT`,
   `INVALID_FLAG_VALUE`, `INVALID_CONFIG_FILE`, ...) wherever the CLI would have
