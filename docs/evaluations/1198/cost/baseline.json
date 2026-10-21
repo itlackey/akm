@@ -1,0 +1,83 @@
+{
+  "root": "/tmp/akm-coordination-baseline",
+  "indexMs": 2157.712,
+  "rss": 161738752,
+  "cases": [
+    {
+      "mode": "off",
+      "user": "unfiltered",
+      "coldMs": 22.322,
+      "warmMs": [
+        11.46,
+        11.289,
+        13.284
+      ],
+      "hits": [
+        "note-00000"
+      ],
+      "actualMode": "keyword"
+    },
+    {
+      "mode": "off",
+      "user": "alice",
+      "coldMs": 15.913,
+      "warmMs": [
+        18.108,
+        13.846,
+        16.509
+      ],
+      "hits": [],
+      "actualMode": "keyword"
+    },
+    {
+      "mode": "off",
+      "user": "nobody",
+      "coldMs": 17.445,
+      "warmMs": [
+        16.852,
+        17.351,
+        17.376
+      ],
+      "hits": [],
+      "actualMode": "keyword"
+    },
+    {
+      "mode": "auto",
+      "user": "unfiltered",
+      "coldMs": 76.038,
+      "warmMs": [
+        79.964,
+        69.708,
+        65.674
+      ],
+      "hits": [
+        "note-00000"
+      ],
+      "actualMode": "semantic"
+    },
+    {
+      "mode": "auto",
+      "user": "alice",
+      "coldMs": 68.757,
+      "warmMs": [
+        71.715,
+        71.372,
+        82.177
+      ],
+      "hits": [],
+      "actualMode": "semantic"
+    },
+    {
+      "mode": "auto",
+      "user": "nobody",
+      "coldMs": 75.841,
+      "warmMs": [
+        80.417,
+        99.84,
+        87.166
+      ],
+      "hits": [],
+      "actualMode": "semantic"
+    }
+  ]
+}

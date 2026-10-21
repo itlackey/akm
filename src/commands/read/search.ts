@@ -81,7 +81,7 @@ export async function akmSearch(input: {
    * whose `entry.scope.<key>` exactly equals the supplied value. Unfiltered
    * queries match entries with or without scope metadata.
    *
-   * Filtering narrows the result set; ranking is unchanged.
+   * Eligibility is applied before each channel's candidate budget.
    */
   filters?: StashEntryScope;
   /**
@@ -211,7 +211,7 @@ export async function akmSearch(input: {
           beliefFilter: belief,
           // When `--from <name>` narrowed the source list above, propagate
           // that intent down to the database layer so FTS/vector hits from
-          // sources outside the narrowed set are filtered out post-ranking.
+          // sources outside the narrowed set cannot consume candidate budgets.
           // Without this, the index (which spans every configured source)
           // would leak hits from sources the caller did not request.
           restrictToSources: namedSourceName !== undefined,

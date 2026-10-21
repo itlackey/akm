@@ -1,0 +1,602 @@
+bun test v1.4.1 (4661e494f)
+
+tests/integration/search-candidate-eligibility.test.ts:
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > scope user [33.64ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > scope agent [28.00ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > scope run [32.37ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > scope channel [28.51ms]
+(pass) lexical eligibility before the channel depth > explicit type [28.70ms]
+(pass) lexical eligibility before the channel depth > default excluded type [19.28ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > proposed quality [21.60ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > current belief [30.28ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > historical belief [21.48ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) lexical eligibility before the channel depth > source narrowing [20.07ms]
+113 |         put(`reject-${n}.derived`, {}, false);
+114 |       }
+115 |       // Same concept in another bundle must not inherit the archived base.
+116 |       put("reject-0.derived", {}, true, "other");
+117 |       const result = await search(channel, { beliefFilter: "current" });
+118 |       expect(result.hits.map((hit) => hit.ref)).toEqual(["other//memories/reject-0.derived"]);
+                                                      ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "other//memories/reject-0.derived",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:118:49)
+(fail) lexical eligibility before the channel depth > derived twins inherit the demoted base from their own bundle [38.39ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > scope user [37.41ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > scope agent [36.89ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > scope run [32.17ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > scope channel [33.66ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > explicit type [27.13ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > default excluded type [43.42ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > proposed quality [34.06ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > current belief [27.32ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > historical belief [30.77ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) vector eligibility before the channel depth > source narrowing [28.81ms]
+113 |         put(`reject-${n}.derived`, {}, false);
+114 |       }
+115 |       // Same concept in another bundle must not inherit the archived base.
+116 |       put("reject-0.derived", {}, true, "other");
+117 |       const result = await search(channel, { beliefFilter: "current" });
+118 |       expect(result.hits.map((hit) => hit.ref)).toEqual(["other//memories/reject-0.derived"]);
+                                                      ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "other//memories/reject-0.derived",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:118:49)
+(fail) vector eligibility before the channel depth > derived twins inherit the demoted base from their own bundle [43.77ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > scope user [22.73ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > scope agent [27.82ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > scope run [23.94ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > scope channel [29.03ms]
+(pass) combined eligibility before the channel depth > explicit type [25.36ms]
+(pass) combined eligibility before the channel depth > default excluded type [30.72ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > proposed quality [29.19ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > current belief [29.51ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > historical belief [39.12ms]
+101 |         for (let n = 0; n < 120; n++) put(`reject-${n}`, scenario.rejected, false, scenario.rejectedBundle);
+102 |         put("accepted", scenario.accepted, true);
+103 |         const options = { ...scenario.options };
+104 |         if (scenario.rejectedBundle) options.sources = [{ path: path.join(storage.stashDir, "stash") }];
+105 |         const result = await search(channel, options);
+106 |         expect(result.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                         ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:106:52)
+(fail) combined eligibility before the channel depth > source narrowing [32.06ms]
+113 |         put(`reject-${n}.derived`, {}, false);
+114 |       }
+115 |       // Same concept in another bundle must not inherit the archived base.
+116 |       put("reject-0.derived", {}, true, "other");
+117 |       const result = await search(channel, { beliefFilter: "current" });
+118 |       expect(result.hits.map((hit) => hit.ref)).toEqual(["other//memories/reject-0.derived"]);
+                                                      ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "other//memories/reject-0.derived",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:118:49)
+(fail) combined eligibility before the channel depth > derived twins inherit the demoted base from their own bundle [43.00ms]
+124 |   for (let n = 0; n < 120; n++) put(`reject-${n}`, { scope: { user: "bob", run: "run" } }, false);
+125 |   put("accepted-a", { scope: { user: "alice", run: "run" } }, true);
+126 |   put("accepted-b", { scope: { user: "alice", run: "run" } }, true);
+127 |   for (const query of ["quartz", "", ".", "memories/", "stash//memories/"]) {
+128 |     const result = await search("combined", { query, limit: 2, filters: { user: "alice", run: "run" } });
+129 |     expect(result.hits.map((hit) => hit.name).sort()).toEqual(["accepted-a", "accepted-b"]);
+                                                            ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted-a",
+-   "accepted-b",
+- ]
++ []
+
+- Expected  - 4
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:129:55)
+(fail) zero/multiple eligible, compound scopes, browse and prefix semantics [37.29ms]
+135 |   for (let n = 0; n < 120; n++) put(`reject-${n}`, { scope: { user: "bob" } }, false, "stash", false);
+136 |   put("accepted", { scope: { user: "alice" } }, true, "stash", false);
+137 |   const options = { filters: { user: "alice" } };
+138 |   const keyword = await search("combined", options);
+139 |   expect(keyword.mode).toBe("keyword");
+140 |   expect(keyword.hits.map((hit) => hit.name)).toEqual(["accepted"]);
+                                                    ^
+error: expect(received).toEqual(expected)
+
+- [
+-   "accepted",
+- ]
++ []
+
+- Expected  - 3
++ Received  + 1
+
+      at <anonymous> (/tmp/akm-coordination-baseline/tests/integration/search-candidate-eligibility.test.ts:140:47)
+(fail) missing embeddings and an actual failed embedding retain filtered keyword hits [31.14ms]
+
+ 4 pass
+ 31 fail
+ 40 expect() calls
+Ran 35 tests across 1 file. [1259.00ms]

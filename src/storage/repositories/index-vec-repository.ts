@@ -17,7 +17,7 @@ import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
-import type { DbVecResult } from "./index-entry-types";
+import type { CandidateFilter, DbVecResult } from "./index-entry-types";
 import { getMeta, setMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
@@ -119,7 +119,13 @@ export interface VecScope {
  * scanned: the `k` nearest of those, not the `k` nearest of everything filtered
  * afterwards.
  */
-export function searchVec(db: Database, query: ArrayLike<number>, k: number, scope?: VecScope): DbVecResult[] {
+export function searchVec(
+  db: Database,
+  query: ArrayLike<number>,
+  k: number,
+  scope?: VecScope,
+  filterCandidates?: CandidateFilter,
+): DbVecResult[] {
   const dim = query.length;
   const q = Float64Array.from(query);
   let queryNorm = 0;
@@ -156,10 +162,23 @@ export function searchVec(db: Database, query: ArrayLike<number>, k: number, sco
 
   const order = ids.map((_, index) => index);
   order.sort((a, b) => similarities[b]! - similarities[a]! || ids[a]! - ids[b]!);
-  return order.slice(0, k).map((index) => ({
+  const result = (index: number): DbVecResult => ({
     id: ids[index]!,
     distance: Math.sqrt(2 * Math.max(0, 1 - similarities[index]!)),
-  }));
+  });
+  if (!filterCandidates) return order.slice(0, k).map(result);
+  // Filter in similarity order, a batch at a time, so only the rows near the
+  // top are loaded and checked — not every embedded entry.
+  const results: DbVecResult[] = [];
+  for (let start = 0; start < order.length && results.length < k; start += 100) {
+    const batch = order.slice(start, start + 100);
+    const eligible = filterCandidates(batch.map((index) => ids[index]!));
+    for (const index of batch) {
+      if (results.length === k) break;
+      if (eligible.has(ids[index]!)) results.push(result(index));
+    }
+  }
+  return results;
 }
 
 /**
