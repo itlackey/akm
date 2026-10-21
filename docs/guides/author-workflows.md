@@ -22,7 +22,7 @@ akm workflow create my-release --from ./my-release.md
 akm lint --type workflows                # Check for structural errors before using it
 ```
 
-Both formats compile to source IR version 1. Choose Markdown for maps, routes,
+Both formats compile to source IR version 1. Choose Markdown for maps,
 gates, typed artifacts, and prose-rich agent instructions. Choose the bounded
 YAML subset for a single local self-hosted job made of token-safe `run` and
 supported local `uses` steps.
@@ -60,14 +60,14 @@ attached to this unit as input. Fix any failures before proceeding.
 ```
 
 Walking through it: `validate` and `build` are both bare unit steps — neither
-declares `unit:`, `map:`, or `route:`, so each is "still a unit step," the
+declares `unit:` or `map:`, so each is "still a unit step," the
 minimal declaration. `build` names `steps.validate.output` in `inputs:`, so
 the engine attaches `validate`'s result to `build`'s dispatched context, and
 `build`'s own re-dispatch on a resumed run is keyed to that exact slice — not
 the whole run. `validate` has a `### gate`; `build` does not, so `build`
 completes as soon as its unit succeeds, with no verification pass.
 
-For a richer example — fan-out with `map`, `route`-based branching, retries,
+For a richer example — fan-out with `map`, retries,
 and a run `budget` — see
 [Workflow Schema: Richer example](../reference/workflow-schema.md#richer-example).
 
@@ -288,8 +288,7 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
   step declared in frontmatter exactly — no titles, no `Step:`/`Step ID:`
   lines, no `# Workflow:` prefix on the H1.
 - **A `unit`/`map` step with no body section.** Its instructions (or, for a
-  map step, its per-item template) are required — a `route`-only step is the
-  one case a body section is optional.
+  map step, its per-item template) are required.
 - **Misplaced or misspelled `### gate`.** It is the format's single reserved
   marker, and it must be a `###` sub-heading inside the step's own section.
   An empty `### gate` section is the same as omitting it — no verification
@@ -297,10 +296,6 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
 - **Referencing an item outside a map unit.** `item`/`item_index` are not
   part of the reference language anywhere — they only arrive as attached
   context inside that map step's own unit template.
-- **Backward routes.** Every `route` target (`when.step`, `default`) must be
-  a step declared *later* in the workflow; "loop back until it passes" is a
-  bounded `### gate` on the step doing the work, not a route back to an
-  earlier step.
 - **Referencing an unknown step or param.** `akm lint --type workflows`
   checks every bare reference statically (unknown step, unknown param, bad
   path) — run it before you rely on a workflow working.
@@ -435,7 +430,7 @@ blast radius before running it.
    ```
 
    This catches the body-rule violations above, plus every static reference
-   check (unknown step, unknown param, bad path, backward route).
+   check (unknown step, unknown param, bad path).
 
 2. **Run it for real.** A dry inspection of the markdown doesn't tell you
    whether a gate actually rejects bad output or an `output` schema actually

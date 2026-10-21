@@ -261,7 +261,7 @@ Fan-out, retries, gates, and a run budget:
 ```markdown
 ---
 type: workflow
-description: Review changed files and triage the outcome
+description: Review changed files and give an overall verdict
 params:
   changed_files: { type: array, description: Files to review }
 defaults: { engine: reviewer, model: balanced, timeout: 10m, on_error: fail }
@@ -289,11 +289,6 @@ steps:
     inputs: [steps.review.output]
     unit:
       output: { type: object, properties: { verdict: { type: string } }, required: [verdict] }
-  - id: triage
-    inputs: [steps.aggregate.output]
-  - id: ship
-  - id: rework
-  - id: manual-triage
 ---
 
 # Review Changes
@@ -323,25 +318,6 @@ Every changed file has a verdict of `pass` or `fail`.
 Combine the per-file review verdicts — attached to this unit as input via
 `inputs: [steps.review.output]` above — into one overall verdict, `pass` or
 `fail`.
-
-## triage
-
-Read the verdict `aggregate` reported (attached as input) and decide whether
-the change should ship, be reworked, or go to manual triage; later steps act on
-that decision.
-
-## ship
-
-Ship the change.
-
-## rework
-
-Address the review findings. Confirming the fix is a fresh `akm workflow run`
-of this workflow, not a step this run goes back to.
-
-## manual-triage
-
-Summarize the ambiguous verdict for a human to triage.
 ```
 
 ## The reference grammar
