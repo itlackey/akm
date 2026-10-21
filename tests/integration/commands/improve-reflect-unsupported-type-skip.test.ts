@@ -337,6 +337,7 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           splitParents: 0,
           writtenFacts: 0,
           retiredParents: 0,
+          noChange: 0,
           skippedNoFacts: 0,
           skippedConflict: 0,
           skippedRateLimited: 0,

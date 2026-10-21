@@ -52,6 +52,22 @@ export interface DerivedMemoryDraft {
 }
 
 /**
+ * The model's explicit, successful decision that the memory needs no derived
+ * memory (a tool-count or checkpoint note, or a note already adequate as it is).
+ * This is a result, not a failure: failures (malformed or HTML replies, timeouts,
+ * aborts, transport errors, a disabled pass) all stay `undefined`.
+ */
+export interface MemoryInferNoChange {
+  noChange: true;
+}
+
+export const MEMORY_INFER_NO_CHANGE: Readonly<MemoryInferNoChange> = Object.freeze({ noChange: true });
+
+export function isMemoryInferNoChange(value: unknown): value is MemoryInferNoChange {
+  return typeof value === "object" && value !== null && (value as { noChange?: unknown }).noChange === true;
+}
+
+/**
  * Mutable telemetry sink for the memory-inference pass. `compressMemoryToDerivedMemory`
  * does not carry a telemetry struct of its own, so the caller passes a small
  * sink that the helper bumps when it categorizes a distinct failure class
@@ -67,31 +83,32 @@ export interface MemoryInferTelemetry {
  * unless the engine sets `supportsJsonSchema: false`; the client drops it once
  * for a provider that rejects it.
  *
- * Extends the responseSchema lift (PR 1, asset-writers-investigation §5) to
- * the memory-inference path. Mirrors the validation gate below
- * (title/description/content + non-empty tags/searchHints) so a
- * schema-compliant response is guaranteed to pass the downstream check
- * — no more "incomplete derived memory payload from LLM; skipping memory"
- * for shape-only failures.
+ * Every property is required (a strict provider refuses otherwise), so the
+ * explicit no-change decision is `noChange: true` with the other fields empty.
+ * That also means the schema cannot demand non-empty fields: the parser below
+ * is the gate that requires a complete payload whenever `noChange` is false.
  */
 export const DERIVED_MEMORY_JSON_SCHEMA = {
   type: "object",
   properties: {
-    title: { type: "string", minLength: 1 },
-    description: { type: "string", minLength: 1 },
-    content: { type: "string", minLength: 1 },
-    tags: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 8 },
-    searchHints: { type: "array", items: { type: "string" }, minItems: 1, maxItems: 6 },
+    noChange: { type: "boolean" },
+    title: { type: "string" },
+    description: { type: "string" },
+    content: { type: "string" },
+    tags: { type: "array", items: { type: "string" }, maxItems: 8 },
+    searchHints: { type: "array", items: { type: "string" }, maxItems: 6 },
   },
-  required: ["title", "description", "content", "tags", "searchHints"],
+  required: ["noChange", "title", "description", "content", "tags", "searchHints"],
   additionalProperties: false,
 } as const;
 
 /**
  * Compress a single memory body into one derived memory via the configured LLM.
  *
- * Returns `undefined` on any failure (timeout, invalid JSON, empty response).
- * Errors are logged via `warn()` but never thrown — a failed split for one memory
+ * Returns the draft, or {@link MEMORY_INFER_NO_CHANGE} when the model explicitly
+ * decides the memory needs no derived memory. Returns `undefined` on any failure
+ * (timeout, invalid JSON, empty or incomplete response, HTML, abort, disabled
+ * pass), which is never the same thing as no-change. Errors are logged via `warn()` but never thrown — a failed split for one memory
  * must not abort the rest of the index pass.
  *
  * Routes through `callStructured({ feature: "memory_inference", ... })` so the
@@ -107,7 +124,7 @@ export async function compressMemoryToDerivedMemory(
   telemetry?: MemoryInferTelemetry,
   onRetryAttempt?: () => void,
   onNotices?: (notices: readonly Readonly<LoweringNotice>[]) => void,
-): Promise<DerivedMemoryDraft | undefined> {
+): Promise<DerivedMemoryDraft | MemoryInferNoChange | undefined> {
   const trimmedBody = body.trim();
   if (!trimmedBody) return undefined;
 
@@ -120,7 +137,7 @@ export async function compressMemoryToDerivedMemory(
     return undefined;
   }
 
-  return callStructured<DerivedMemoryDraft | undefined>({
+  return callStructured<DerivedMemoryDraft | MemoryInferNoChange | undefined>({
     feature: "memory_inference",
     akmConfig,
     runner: llmRunner,
@@ -144,6 +161,9 @@ export async function compressMemoryToDerivedMemory(
         warn("memory inference: invalid JSON response from LLM; skipping memory.");
         return undefined;
       }
+      // Only a literal boolean `true` is a decision; anything else falls through
+      // to the complete-payload checks, so a malformed reply is never restraint.
+      if (parsed.noChange === true) return MEMORY_INFER_NO_CHANGE;
       const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
       const description = typeof parsed.description === "string" ? parsed.description.trim() : "";
       const content = typeof parsed.content === "string" ? parsed.content.trim() : "";

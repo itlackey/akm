@@ -1,0 +1,169 @@
+[
+ {
+  "id": "pos-vendor-rate-limit",
+  "process": "memory-inference",
+  "files": [
+   "memories/vendor-rate-limit.md"
+  ],
+  "expected": {
+   "required": [
+    "429",
+    "import.rate_limit",
+    "config/import.yaml"
+   ]
+  }
+ },
+ {
+  "id": "pos-sqlite-wal-decision",
+  "process": "memory-inference",
+  "files": [
+   "memories/sqlite-wal-decision.md"
+  ],
+  "expected": {
+   "required": [
+    "wal",
+    "pragma journal_mode=wal",
+    "2026-05-02"
+   ]
+  }
+ },
+ {
+  "id": "pos-libfoo-pin",
+  "process": "memory-inference",
+  "files": [
+   "memories/libfoo-pin.md"
+  ],
+  "expected": {
+   "required": [
+    "libfoo",
+    "2.3.9",
+    "--legacy-flag",
+    "requirements.lock"
+   ]
+  }
+ },
+ {
+  "id": "pos-edge-proxy-cert-outage",
+  "process": "memory-inference",
+  "files": [
+   "memories/edge-proxy-cert-outage.md"
+  ],
+  "expected": {
+   "required": [
+    "tls",
+    "edge-proxy-2",
+    "runbook",
+    "2026-06-18"
+   ]
+  }
+ },
+ {
+  "id": "pos-label-sync-ordering",
+  "process": "memory-inference",
+  "files": [
+   "memories/label-sync-ordering.md"
+  ],
+  "expected": {
+   "required": [
+    "label sync",
+    "catalog-import",
+    "search-reindex",
+    "label_sync_batch"
+   ]
+  }
+ },
+ {
+  "id": "pos-backup-restore-drill",
+  "process": "memory-inference",
+  "files": [
+   "memories/backup-restore-drill.md"
+  ],
+  "expected": {
+   "required": [
+    "restore",
+    "47 minutes",
+    "orders",
+    "wal",
+    "2026-07-14"
+   ]
+  }
+ },
+ {
+  "id": "neg-tool-summary-1",
+  "process": "memory-inference",
+  "files": [
+   "memories/tool-summary-1.md"
+  ],
+  "expected": {
+   "required": [
+    "tool",
+    "call"
+   ]
+  }
+ },
+ {
+  "id": "neg-checkpoint-saved",
+  "process": "memory-inference",
+  "files": [
+   "memories/checkpoint-saved.md"
+  ],
+  "expected": {
+   "required": [
+    "checkpoint",
+    "saved"
+   ]
+  }
+ },
+ {
+  "id": "neg-resume-from-summary",
+  "process": "memory-inference",
+  "files": [
+   "memories/resume-from-summary.md"
+  ],
+  "expected": {
+   "required": [
+    "resuming",
+    "from"
+   ]
+  }
+ },
+ {
+  "id": "neg-make-lint",
+  "process": "memory-inference",
+  "files": [
+   "memories/make-lint.md"
+  ],
+  "expected": {
+   "required": [
+    "run",
+    "`make"
+   ]
+  }
+ },
+ {
+  "id": "neg-dist-dir",
+  "process": "memory-inference",
+  "files": [
+   "memories/dist-dir.md"
+  ],
+  "expected": {
+   "required": [
+    "build",
+    "output"
+   ]
+  }
+ },
+ {
+  "id": "neg-tool-usage-turn",
+  "process": "memory-inference",
+  "files": [
+   "memories/tool-usage-turn.md"
+  ],
+  "expected": {
+   "required": [
+    "tool",
+    "usage"
+   ]
+  }
+ }
+]

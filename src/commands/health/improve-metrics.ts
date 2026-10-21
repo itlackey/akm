@@ -129,7 +129,15 @@ export function emptyImproveMetrics(): ImproveHealthMetrics {
       totalChunks: 0,
       durationMs: 0,
     },
-    memoryInference: { considered: 0, freshAttempts: 0, written: 0, skippedNoFacts: 0, yieldRate: 0, durationMs: 0 },
+    memoryInference: {
+      considered: 0,
+      freshAttempts: 0,
+      written: 0,
+      noChange: 0,
+      skippedNoFacts: 0,
+      yieldRate: 0,
+      durationMs: 0,
+    },
     wallTime: { medianMs: 0, p95Ms: 0 },
     coverage: { acceptedProposals: 0, distinctRefs: 0 },
   };
@@ -249,6 +257,7 @@ function projectRunMetrics(result: Record<string, unknown>): ImproveHealthMetric
       considered - toFiniteNumber(memoryInference.cacheHits) - toFiniteNumber(memoryInference.skippedAborted),
     );
     mi.written += toFiniteNumber(memoryInference.writtenFacts);
+    mi.noChange += toFiniteNumber(memoryInference.noChange);
     mi.skippedNoFacts += toFiniteNumber(memoryInference.skippedNoFacts);
   }
   metrics.memoryInference.durationMs += toFiniteNumber(result.memoryInferenceDurationMs);
@@ -299,6 +308,7 @@ function mergeImproveMetrics(dst: ImproveHealthMetrics, src: ImproveHealthMetric
   dst.memoryInference.considered += src.memoryInference.considered;
   dst.memoryInference.freshAttempts += src.memoryInference.freshAttempts;
   dst.memoryInference.written += src.memoryInference.written;
+  dst.memoryInference.noChange += src.memoryInference.noChange;
   dst.memoryInference.skippedNoFacts += src.memoryInference.skippedNoFacts;
   dst.memoryInference.durationMs += src.memoryInference.durationMs;
 }

@@ -251,13 +251,13 @@ describe("ensureSchema — retired metadata-enhance cache rows", () => {
     // cache_variant at its default empty string; graph and memory inference
     // always pass a named variant.
     upsertLlmCacheEntry(db, "some-bundle//knowledge/thing", "h1", "{}", "");
-    upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v2");
+    upsertLlmCacheEntry(db, "/stash/memories/parent.md", "h2", "{}", "memory-inference-v3");
     closeDatabase(db);
 
     db = openIndexDatabase(tmpDbPath);
 
     const rows = db.prepare("SELECT asset_ref, cache_variant FROM llm_enrichment_cache").all();
-    expect(rows).toEqual([{ asset_ref: "/stash/memories/parent.md", cache_variant: "memory-inference-v2" }]);
+    expect(rows).toEqual([{ asset_ref: "/stash/memories/parent.md", cache_variant: "memory-inference-v3" }]);
   });
 });
 
@@ -324,7 +324,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       freshPath,
       computeBodyHash(exactBody),
       JSON.stringify(sampleDraft("Cached Result")),
-      "memory-inference-v2",
+      "memory-inference-v3",
     );
 
     // Run the pass — cache hit → LLM must NOT be called.
@@ -345,7 +345,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       filePath,
       computeBodyHash("completely different old body"),
       JSON.stringify(sampleDraft("Stale")),
-      "memory-inference-v2",
+      "memory-inference-v3",
     );
 
     // Run — body hash mismatch → cache miss → LLM called.
@@ -367,7 +367,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       filePath,
       computeBodyHash(exactBody),
       JSON.stringify(sampleDraft("Cached")),
-      "memory-inference-v2",
+      "memory-inference-v3",
     );
 
     // Run with reEnrich=true — must call LLM despite cache hit.
