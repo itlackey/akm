@@ -1,0 +1,17 @@
+{"name":"code in real link label","input":"[label `[fake](/fake.md)`](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"code in real link label","input":"[label `[fake](/fake.md)`](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"escaped link opener","input":"\\[fake](/fake.md) [real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"escaped link opener","input":"\\[fake](/fake.md) [real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"unequal inline delimiters","input":"``prefix ` [fake](/fake.md) suffix`` [real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"unequal inline delimiters","input":"``prefix ` [fake](/fake.md) suffix`` [real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"quote-list-quote","input":"> - > ~~~txt\n>   > [fake](/fake.md)\n>   > ~~~\n\n[real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"quote-list-quote","input":"> - > ~~~txt\n>   > [fake](/fake.md)\n>   > ~~~\n\n[real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"ordered then quote code","input":"2) > ````text\n   > [fake](/fake.md)\n   > ````\n\n[real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"ordered then quote code","input":"2) > ````text\n   > [fake](/fake.md)\n   > ````\n\n[real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"list consecutive fenced code blocks","input":"- ```\n  [fake](/fake.md)\n  ```\n  ~~~\n  [second](/second.md)\n  ~~~\n\n[real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"list consecutive fenced code blocks","input":"- ```\n  [fake](/fake.md)\n  ```\n  ~~~\n  [second](/second.md)\n  ~~~\n\n[real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"blank paragraph breaks unmatched span","input":"` unmatched\n\n[real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"blank paragraph breaks unmatched span","input":"` unmatched\n\n[real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"four-space code block","input":"    [fake](/fake.md)\n\n[real](/real.md)","adapter":"okf","pass":true,"expected":["real"],"actual":["real"]}
+{"name":"four-space code block","input":"    [fake](/fake.md)\n\n[real](/real.md)","adapter":"wiki","pass":true,"expected":["real"],"actual":["real"]}
+{"cases":16,"failed":0}

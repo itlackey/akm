@@ -1,0 +1,89 @@
+{
+  "issue": 1200,
+  "baseline": "d0fe1d0000d0ed0b268ee2d5c153fdf578daa7cf",
+  "finalImplementation": "60b57c2eddd4ac82f88d29d537545bf82138c6ea",
+  "finalReleaseBase": "946c4b5acd4516a194d8c02f670b215e546bb4fc",
+  "skill": {
+    "repository": "itlackey/akm-stash",
+    "mainRevision": "fd61fd1",
+    "refreshedWith": "git pull --ff-only origin main"
+  },
+  "eval": {
+    "repository": "itlackey/akm-eval",
+    "revision": "1002fa2",
+    "runs": 4,
+    "pilotQueries": 1,
+    "fullQueries": 3,
+    "corpusAssets": 4,
+    "embeddingModel": "embed/qwen3-embedding-0.6b",
+    "endpoint": "redacted private lab endpoint",
+    "grading": "existing qrels, all returned hits judged",
+    "defaultsChanged": false,
+    "note": "Baseline warm and candidate cold semantic index; ranking unchanged, timing not a causal speed comparison. Relationship/support fields asserted in AKM integration tests, outside scorer coverage."
+  },
+  "validation": [
+    {
+      "command": "bunx biome check --write src/ tests/",
+      "result": "pass"
+    },
+    {
+      "command": "bun run check",
+      "base": "d0fe1d000",
+      "result": "pass",
+      "unit": {
+        "passed": 7211,
+        "skipped": 4,
+        "failed": 0
+      },
+      "integration": {
+        "passed": 3767,
+        "skipped": 81,
+        "failed": 0
+      }
+    },
+    {
+      "command": "bun run build",
+      "base": "946c4b5ac",
+      "result": "pass"
+    },
+    {
+      "command": "bun test tests/core/adapter/markdown-link-code.test.ts tests/core/adapter/okf-adapter.test.ts tests/core/adapter/llm-wiki-adapter.test.ts tests/integration/indexer/declared-links.test.ts tests/integration/okf-conformance.test.ts tests/integration/ui/ui-client.test.ts tests/integration/ui/ui-server.test.ts",
+      "base": "946c4b5ac",
+      "result": "pass",
+      "passed": 195,
+      "failed": 0
+    },
+    {
+      "command": "independently authored resolver final cases (inputs/output in final-independent.jsonl)",
+      "base": "946c4b5ac",
+      "passed": 16,
+      "failed": 0
+    }
+  ],
+  "cost": {
+    "repetitionsPerBuild": 3,
+    "documents": 100,
+    "corpusBytes": 520170,
+    "semanticSearchMode": "off",
+    "models": "none",
+    "fixture": "35 identical prose paragraphs per concept, one real next-document link, one inline-code and one tilde-fenced missing-link example; raw timing arrays in index-cost-*.json",
+    "conditions": "isolated fresh storage per repetition; in-process initial index, forced full reindex, unchanged incremental; shared-host load and warm runtime vary; no speed-win claim"
+  },
+  "rollout": {
+    "state": "ready for rollout after PR acceptance",
+    "owner": "release maintainer",
+    "remaining": "Publish approved release and run akm index --full once on affected installed indexes; inspect representative show/curate/UI links",
+    "recovery": "Revert code/reinstall selected build and run akm index --full; no persisted format change or migration"
+  },
+  "installedPackage": {
+    "sourceRevision": "60b57c2eddd4ac82f88d29d537545bf82138c6ea",
+    "tarballSha256": "669e6421bdf1c033570f072f921cef751cd4c5bee3e991ba4a951c7b0c1b9f2c",
+    "version": "0.10.261008",
+    "isolatedPrefix": "/tmp/akm-1200-evidence/npm-prefix-final",
+    "launcherCommands": 8,
+    "allExitCodes": 0,
+    "stderr": "empty",
+    "assertions": "Real outgoing/incoming/support preserved before edit; all absent after real link becomes code; installed UI API also has no stale backlinks",
+    "passed": true
+  }
+}
