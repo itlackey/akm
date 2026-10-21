@@ -1,7 +1,7 @@
 # Author's Guide: Writing Workflows
 
-This guide walks through writing and testing a workflow definition: choosing a
-source format, the Markdown structure, a minimal complete example, common authoring mistakes,
+This guide walks through writing and testing a workflow definition: the
+Markdown structure, a minimal complete example, common authoring mistakes,
 and how to verify gates and outputs before you publish. It assumes you
 already know what a workflow is; for the exhaustive, exact-syntax reference
 — every frontmatter key, the reference grammar, gates, and outputs — see
@@ -22,10 +22,9 @@ akm workflow create my-release --from ./my-release.md
 akm lint --type workflows                # Check for structural errors before using it
 ```
 
-Both formats compile to source IR version 1. Choose Markdown for maps,
-gates, typed artifacts, and prose-rich agent instructions. Choose the bounded
-YAML subset for a single local self-hosted job made of token-safe `run` and
-supported local `uses` steps.
+Markdown is the only workflow format. The GitHub-shaped `.yml` format was
+removed in 0.10: a `.yml` file under `workflows/` is skipped at index time with
+a warning that it must use `.md`.
 
 ## A minimal complete example
 
