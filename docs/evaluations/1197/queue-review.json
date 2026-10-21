@@ -1,0 +1,8 @@
+{
+  "observedAt": "2026-10-21T02:53:39.277028+00:00",
+  "method": "read-only default working-bundle proposal list; no writes or production acceptance",
+  "pending": 0,
+  "retirementPending": 0,
+  "consolidationPromotionPending": 0,
+  "scope": "default working bundle only; not all installed hosts or bundles"
+}

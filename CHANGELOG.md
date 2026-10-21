@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Consolidation preserves the existing `scope_user`, `scope_agent`, `scope_run`, and
+  `scope_channel` tuple (#1197). Pairing requires exact normalized equality before
+  consuming an eligible neighbor slot. Retirement acceptance, including resume, checks
+  live scopes against the judged tuple; promotion refuses incompatible source/output
+  scopes and preserves differently scoped derived twins. Older retirements without a
+  recorded judged tuple remain readable but require rejection/reassessment before
+  acceptance. Staged stale decisions use the existing stale-target rejection/retry
+  path. No database migration is needed; review pending work before unattended drain.
+
 - Consolidation assesses complete note bodies in both retirement checks instead of silently
   cutting each at 12,000 characters. Requests exceeding the selected engine's context window fail conservatively;
   failed second checks leave proposals pending and unstaged. Before unattended proposal drain,

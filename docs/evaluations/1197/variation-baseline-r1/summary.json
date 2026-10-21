@@ -1,0 +1,311 @@
+{
+  "eval": "consolidate",
+  "corpus": "custom",
+  "corpus_folder": null,
+  "label": "1197-variation-baseline-r1",
+  "date": "2026-10-21T02:48:48.039Z",
+  "status": "complete",
+  "aborted_reason": null,
+  "git_commit": "unknown",
+  "model": "fast/qwen3.6-35b-a3b",
+  "akm_version": "0.10.261008",
+  "akm_bin": "bun /tmp/akm-1197-baseline/src/cli.ts",
+  "akm_build": null,
+  "akm_build_fingerprint": null,
+  "embedder": "deterministic",
+  "limit": null,
+  "strategy": "consolidate",
+  "config_patch": {
+    "path": "../akm-1195-evidence/lab-embedding.json",
+    "sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a"
+  },
+  "config": {
+    "configVersion": "0.9.0",
+    "semanticSearchMode": "auto",
+    "registries": [],
+    "engines": {
+      "consolidate": {
+        "kind": "llm",
+        "provider": "openai",
+        "endpoint": "<MODEL_BASE_URL>/chat/completions",
+        "model": "fast/qwen3.6-35b-a3b",
+        "apiKey": "$MODEL_API_KEY",
+        "timeoutMs": 600000,
+        "temperature": 0,
+        "enableThinking": false
+      }
+    },
+    "defaults": {
+      "llmEngine": "consolidate"
+    },
+    "embedding": {
+      "endpoint": "<MODEL_BASE_URL>/embeddings",
+      "model": "embed/qwen3-embedding-0.6b",
+      "apiKey": "$MODEL_API_KEY",
+      "queryTimeoutMs": 120000
+    }
+  },
+  "engine": {
+    "engine": "consolidate",
+    "model": "fast/qwen3.6-35b-a3b",
+    "endpoint": "<LAB_ENDPOINT>",
+    "temperature": 0,
+    "enableThinking": false,
+    "timeoutMs": 600000,
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "<LAB_ENDPOINT>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "assets_sha256": "293b5502ddba7cacdecd3a3ab1ad3ff3203015b941507ca39a5b81f516301956",
+  "seed": null,
+  "n_cases": 6,
+  "n_run": 6,
+  "n_scored": 6,
+  "n_errored": 0,
+  "timeouts": 0,
+  "n_paired": 6,
+  "served_models": {
+    "qwen3.6-35b-a3b": 16
+  },
+  "metrics": {
+    "unsafe": {
+      "n": 1,
+      "of": 6,
+      "staged": 0
+    },
+    "staged": {
+      "n": 1,
+      "safe": 1
+    },
+    "precision": {
+      "value": 0.75,
+      "safe": 3,
+      "retired": 4
+    },
+    "recall": {
+      "value": 0.75,
+      "retired_safe": 3,
+      "of": 4
+    },
+    "classes": {
+      "duplicate": {
+        "n": 2,
+        "error": 0,
+        "paired": 2,
+        "judged_as": {
+          "duplicate": 2,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 2,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "subsumed": {
+        "n": 1,
+        "error": 0,
+        "paired": 1,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 1,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 1
+      },
+      "supersedes": {
+        "n": 1,
+        "error": 0,
+        "paired": 1,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 1,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 1,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "contradicts": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "overlap": {
+        "n": 1,
+        "error": 0,
+        "paired": 1,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 1,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 1
+      },
+      "unrelated": {
+        "n": 1,
+        "error": 0,
+        "paired": 1,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 1,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 1,
+        "kept": 0
+      }
+    }
+  },
+  "model_calls": {
+    "calls": 16,
+    "errors": 0,
+    "prompt_tokens": 895.8,
+    "completion_tokens": 78.8,
+    "seconds": 2.33,
+    "output_tokens_per_second": 33.8
+  },
+  "semantic_verification": null,
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "consolidate",
+    "corpus": "custom",
+    "collection": null,
+    "mode": null,
+    "harness_version": 3,
+    "collector": {
+      "version": "0.2"
+    },
+    "scorer": {
+      "version": "0.2"
+    },
+    "cases": {
+      "duplicate-01": {
+        "input_sha256": "cd0d271e20f256af302fcc90a147526ba08f5f0525330db8d4e4db69219a4146",
+        "label_sha256": "74ba89ab4c61cf310b27f93cf50ea8bfea19250a04c7cd2ed579d64b98e1c596"
+      },
+      "duplicate-08": {
+        "input_sha256": "b8cab6f351130cfb30483dfaf5031ae1505cfc5e84f1482e056e5d868cbfab19",
+        "label_sha256": "14e21fe72dc7bac3a3a698f64dde3e22eda237224844f70df132d3aeeb1bbfd7"
+      },
+      "subsumed-01": {
+        "input_sha256": "45b6f013f0c7a5725fde33cb3893c8936e40c2030d362867d5d75f107c9f3b0a",
+        "label_sha256": "afe7e9ff5b760b6362c48928a08d2f5db544216e5df433020fd559b5dac6d302"
+      },
+      "supersedes-06": {
+        "input_sha256": "f0b50da3693200fe803e85232cbade22f0715cd13142bce1fdeef4201787b366",
+        "label_sha256": "96675651a34e28b2028b791fc0003e02817826d33cf2108edaeff26922650223"
+      },
+      "overlap-01": {
+        "input_sha256": "30bd98cf1c0ac15c6a641c3552954aec6507d0fcf7c8ee0b58ac1bbc0411943e",
+        "label_sha256": "d185cd0512318822df31b11e0a9efcedfc88e4ba67ec4a8bb14b0d679a9e7d3a"
+      },
+      "unrelated-08": {
+        "input_sha256": "d72f76abf63d7080af2b85bf9fe4bd043d32d6e2a51820b92ebc7e09b42b7743",
+        "label_sha256": "26b00240d24b4a59e60e9ecfbf620d395524353d8f250b4cdfa94be6b5a7918c"
+      }
+    },
+    "akm": {
+      "version": "0.10.261008",
+      "bin": "bun /tmp/akm-1197-baseline/src/cli.ts",
+      "build": null,
+      "build_fingerprint": null
+    },
+    "config": {
+      "redacted": {
+        "configVersion": "0.9.0",
+        "semanticSearchMode": "auto",
+        "registries": [],
+        "engines": {
+          "consolidate": {
+            "kind": "llm",
+            "provider": "openai",
+            "apiKey": "$MODEL_API_KEY"
+          }
+        },
+        "defaults": {
+          "llmEngine": "consolidate"
+        },
+        "embedding": {
+          "endpoint": "<LAB_ENDPOINT>/v1/embeddings",
+          "model": "embed/qwen3-embedding-0.6b",
+          "apiKey": "$MODEL_API_KEY",
+          "queryTimeoutMs": 120000
+        }
+      }
+    },
+    "settings": {
+      "strategy": "consolidate",
+      "config_patch_sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a",
+      "timeout_ms": null,
+      "seed": null
+    },
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "<LAB_ENDPOINT>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    },
+    "treatment_hints": {
+      "embedder": "deterministic"
+    },
+    "completion": {
+      "selected": [
+        "duplicate-01",
+        "duplicate-08",
+        "subsumed-01",
+        "supersedes-06",
+        "overlap-01",
+        "unrelated-08"
+      ],
+      "scored": [
+        "duplicate-01",
+        "duplicate-08",
+        "subsumed-01",
+        "supersedes-06",
+        "overlap-01",
+        "unrelated-08"
+      ],
+      "errored": []
+    }
+  },
+  "wall_seconds": 41.31
+}

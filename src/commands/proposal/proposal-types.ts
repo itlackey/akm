@@ -7,6 +7,7 @@
  * and the validators can share `Proposal` without importing each other.
  */
 
+import type { StashEntryScope } from "../../core/adapter/types";
 import type { AssetRef } from "../../core/asset/resolve-ref";
 import type { FileChange } from "../../core/file-change";
 
@@ -160,6 +161,8 @@ export interface ProposalGateDecision {
 export type RetireReason = "duplicate" | "subsumed" | "superseded" | "promoted";
 
 export interface RetirementMetadata {
+  /** Shared normalized tuple at judgment; {} is known unscoped, absent requires reassessment. */
+  judgedScope?: StashEntryScope;
   /** The ref being retired — redundant with `Proposal.ref`, kept explicit for metadata-only readers. */
   retiredRef: string;
   /** The ref that survives this pair. */

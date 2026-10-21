@@ -90,7 +90,7 @@ function seed(
     target: { source: "stash", root: stash },
     payload: { content, frontmatter: { description: `${ref} fixture` } },
     // A consolidate fixture is a promotion unless a test says otherwise (#1132).
-    ...(source === "consolidate" ? { promotionSource: "memory:fixture-source" } : {}),
+    ...(source === "consolidate" ? { promotionSource: "memories/fixture-source" } : {}),
     ...(eligibilitySource ? { eligibilitySource } : {}),
   });
   return result;
@@ -969,7 +969,7 @@ describe("drainProposals — judgment tier (llm mode)", () => {
     const created = createProposal(stash, {
       ref: "lessons/judgment-dry-run-stale",
       source: "consolidate",
-      promotionSource: "memory:fixture-source",
+      promotionSource: "memories/fixture-source",
       sourceRun: "run-x",
       target: { source: "stash", root: stash },
       payload: { content: VALID_LESSON, frontmatter: { description: "judgment-dry-run-stale fixture" } },

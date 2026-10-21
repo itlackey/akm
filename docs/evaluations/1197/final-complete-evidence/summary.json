@@ -1,0 +1,336 @@
+{
+  "eval": "consolidate",
+  "corpus": "custom",
+  "corpus_folder": null,
+  "label": "1197-final-complete-evidence",
+  "date": "2026-10-21T02:52:45.245Z",
+  "status": "complete",
+  "aborted_reason": null,
+  "git_commit": "unknown",
+  "model": "fast/qwen3.6-35b-a3b",
+  "akm_version": "0.10.261008",
+  "akm_bin": "bun /tmp/akm-1197/src/cli.ts",
+  "akm_build": "v0.9.0-beta.60-2842-gd0fe1d000-dirty",
+  "akm_build_fingerprint": "0967c6be9e23e770fe5a25c7c853682b710d17ff2e90516acc17b96dbc11d988",
+  "embedder": "real",
+  "limit": null,
+  "strategy": "consolidate",
+  "config_patch": {
+    "path": "../akm-1195-evidence/lab-embedding.json",
+    "sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a"
+  },
+  "config": {
+    "configVersion": "0.9.0",
+    "semanticSearchMode": "auto",
+    "registries": [],
+    "engines": {
+      "consolidate": {
+        "kind": "llm",
+        "provider": "openai",
+        "endpoint": "<MODEL_BASE_URL>/chat/completions",
+        "model": "fast/qwen3.6-35b-a3b",
+        "apiKey": "$MODEL_API_KEY",
+        "timeoutMs": 600000,
+        "temperature": 0,
+        "enableThinking": false
+      }
+    },
+    "defaults": {
+      "llmEngine": "consolidate"
+    },
+    "embedding": {
+      "localModel": "Xenova/bge-small-en-v1.5",
+      "queryTimeoutMs": 120000,
+      "endpoint": "<MODEL_BASE_URL>/embeddings",
+      "model": "embed/qwen3-embedding-0.6b",
+      "apiKey": "$MODEL_API_KEY"
+    }
+  },
+  "engine": {
+    "engine": "consolidate",
+    "model": "fast/qwen3.6-35b-a3b",
+    "endpoint": "<LAB_ENDPOINT>",
+    "temperature": 0,
+    "enableThinking": false,
+    "timeoutMs": 600000,
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "<LAB_ENDPOINT>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "assets_sha256": "f60d82c9fffefb000daa45949f78ea45a86ab8f4460bde4267af09fe1cc96ecb",
+  "seed": null,
+  "n_cases": 8,
+  "n_run": 8,
+  "n_scored": 8,
+  "n_errored": 0,
+  "timeouts": 0,
+  "n_paired": 8,
+  "served_models": {
+    "qwen3.6-35b-a3b": 24
+  },
+  "metrics": {
+    "unsafe": {
+      "n": 0,
+      "of": 8,
+      "staged": 0
+    },
+    "staged": {
+      "n": 3,
+      "safe": 3
+    },
+    "precision": {
+      "value": 1,
+      "safe": 8,
+      "retired": 8
+    },
+    "recall": {
+      "value": 1,
+      "retired_safe": 8,
+      "of": 8
+    },
+    "classes": {
+      "duplicate": {
+        "n": 3,
+        "error": 0,
+        "paired": 3,
+        "judged_as": {
+          "duplicate": 3,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 3,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "subsumed": {
+        "n": 5,
+        "error": 0,
+        "paired": 5,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 5,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 5,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "supersedes": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "contradicts": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "overlap": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      },
+      "unrelated": {
+        "n": 0,
+        "error": 0,
+        "paired": 0,
+        "judged_as": {
+          "duplicate": 0,
+          "subsumed": 0,
+          "supersedes": 0,
+          "contradicts": 0,
+          "overlap": 0,
+          "unrelated": 0
+        },
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "kept": 0
+      }
+    }
+  },
+  "model_calls": {
+    "calls": 24,
+    "errors": 0,
+    "prompt_tokens": 5415.1,
+    "completion_tokens": 39.5,
+    "seconds": 4.55,
+    "output_tokens_per_second": 8.7
+  },
+  "semantic_verification": {
+    "index_checks": 8,
+    "indexed_entries": 16,
+    "embedded_entries": 16,
+    "searches": {
+      "semantic": 0,
+      "non_semantic": 0,
+      "unknown": 0
+    },
+    "telemetry_errors": 0,
+    "failures": 0
+  },
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "consolidate",
+    "corpus": "custom",
+    "collection": null,
+    "mode": null,
+    "harness_version": 3,
+    "collector": {
+      "version": "0.2"
+    },
+    "scorer": {
+      "version": "0.2"
+    },
+    "cases": {
+      "long-duplicate": {
+        "input_sha256": "a05f56ea3db424656e2ebd57aaa1057d99c55f684dc8dc2df09c83a72771ca9f",
+        "label_sha256": "910f1a24bfd0a1f5142b606471398062e774dfe8930c4cba94d8f28d177138e0"
+      },
+      "long-unique-1": {
+        "input_sha256": "b7bb3c04ad595fa8567fb481cdaaa6b6e808a2441442eb0cc3809e1b63faaec0",
+        "label_sha256": "8a461198124ef69020de5e3e6d8a9ade8607bd4719609a679558ae2fb7519390"
+      },
+      "long-unique-2": {
+        "input_sha256": "48009e12335faf72577ad510af9cd47c98602f211f0151115b1bc39c849268c1",
+        "label_sha256": "62138aff58e7158540b2f98c2597b6057beda13c0f96fb2075c9729dae7f693b"
+      },
+      "long-unique-3": {
+        "input_sha256": "8c05428b7925a01db6523a92a1fd679d9667b9ea9f899b1597bbcc3762503718",
+        "label_sha256": "412898d24cca00e1f8aa7c9a785a42d81d15d5bf6fabfebbf857bd7631fa4cae"
+      },
+      "long-unique-4": {
+        "input_sha256": "272ddf02edc66f4f588e8ecf91488e95fbab201ef4b049742fd295b8babc2874",
+        "label_sha256": "cd04c407ae87b2707466040e164cd313246dc228692c42af06586ab5397014e9"
+      },
+      "long-exact-duplicate": {
+        "input_sha256": "3a14b48ef5326425b682691022b766596d83f2278b715a9b820eabda6cf7ab43",
+        "label_sha256": "910f1a24bfd0a1f5142b606471398062e774dfe8930c4cba94d8f28d177138e0"
+      },
+      "independent-long-duplicate": {
+        "input_sha256": "3c49ef1ba474f41c674f13370cf0724a35b8dad55e177b27f26ebc4764f57e63",
+        "label_sha256": "d66678924c2cddae2ab4d95fe4f812a8e2ea45947df3f6c95254d0f4dcf90204"
+      },
+      "independent-long-tail": {
+        "input_sha256": "cc556e7c5a987a5458baa52389b30b93772bf98ec3dae96d066836bccc362a41",
+        "label_sha256": "61adb5e8dfe61cf75fc674195f7abfa5a9b7bfea364319021339687b8a595a5e"
+      }
+    },
+    "akm": {
+      "version": "0.10.261008",
+      "bin": "bun /tmp/akm-1197/src/cli.ts",
+      "build": "v0.9.0-beta.60-2842-gd0fe1d000-dirty",
+      "build_fingerprint": "0967c6be9e23e770fe5a25c7c853682b710d17ff2e90516acc17b96dbc11d988"
+    },
+    "config": {
+      "redacted": {
+        "configVersion": "0.9.0",
+        "semanticSearchMode": "auto",
+        "registries": [],
+        "engines": {
+          "consolidate": {
+            "kind": "llm",
+            "provider": "openai",
+            "apiKey": "$MODEL_API_KEY"
+          }
+        },
+        "defaults": {
+          "llmEngine": "consolidate"
+        },
+        "embedding": {
+          "localModel": "Xenova/bge-small-en-v1.5",
+          "queryTimeoutMs": 120000,
+          "endpoint": "<LAB_ENDPOINT>/v1/embeddings",
+          "model": "embed/qwen3-embedding-0.6b",
+          "apiKey": "$MODEL_API_KEY"
+        }
+      }
+    },
+    "settings": {
+      "strategy": "consolidate",
+      "config_patch_sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a",
+      "timeout_ms": null,
+      "seed": null
+    },
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "<LAB_ENDPOINT>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    },
+    "treatment_hints": {
+      "embedder": "real"
+    },
+    "completion": {
+      "selected": [
+        "long-duplicate",
+        "long-unique-1",
+        "long-unique-2",
+        "long-unique-3",
+        "long-unique-4",
+        "long-exact-duplicate",
+        "independent-long-duplicate",
+        "independent-long-tail"
+      ],
+      "scored": [
+        "long-duplicate",
+        "long-unique-1",
+        "long-unique-2",
+        "long-unique-3",
+        "long-unique-4",
+        "long-exact-duplicate",
+        "independent-long-duplicate",
+        "independent-long-tail"
+      ],
+      "errored": []
+    }
+  },
+  "wall_seconds": 116.795
+}

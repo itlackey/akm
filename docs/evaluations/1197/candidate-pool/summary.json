@@ -1,0 +1,570 @@
+{
+  "eval": "consolidate",
+  "mode": "pool",
+  "corpus": "public",
+  "corpus_folder": null,
+  "label": "1197-candidate-pool",
+  "date": "2026-10-21T02:48:36.257Z",
+  "git_commit": "unknown",
+  "model": "fast/qwen3.6-35b-a3b",
+  "akm_version": "0.10.261008",
+  "akm_bin": "bun /tmp/akm-1197/src/cli.ts",
+  "akm_build": "v0.9.0-beta.60-2842-gd0fe1d000-dirty",
+  "akm_build_fingerprint": "eeecf1b020fbe7d3e7b06d0da8e7411e379c503aeb3ad8c06593627e79f932d1",
+  "embedder": "deterministic",
+  "strategy": "consolidate",
+  "config_patch": {
+    "path": "../akm-1195-evidence/lab-embedding.json",
+    "sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a"
+  },
+  "config": {
+    "configVersion": "0.9.0",
+    "semanticSearchMode": "auto",
+    "registries": [],
+    "engines": {
+      "consolidate": {
+        "kind": "llm",
+        "provider": "openai",
+        "endpoint": "<MODEL_BASE_URL>/chat/completions",
+        "model": "fast/qwen3.6-35b-a3b",
+        "apiKey": "$MODEL_API_KEY",
+        "timeoutMs": 600000,
+        "temperature": 0,
+        "enableThinking": false
+      }
+    },
+    "defaults": {
+      "llmEngine": "consolidate"
+    },
+    "embedding": {
+      "endpoint": "<MODEL_BASE_URL>/embeddings",
+      "model": "embed/qwen3-embedding-0.6b",
+      "apiKey": "$MODEL_API_KEY",
+      "queryTimeoutMs": 120000
+    }
+  },
+  "engine": {
+    "engine": "consolidate",
+    "model": "fast/qwen3.6-35b-a3b",
+    "endpoint": "<LAB_ENDPOINT>",
+    "temperature": 0,
+    "enableThinking": false,
+    "timeoutMs": 600000,
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "<LAB_ENDPOINT>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "assets_sha256": "6368db0bc8adaa15d505ab7c75a2bb94047c19c3f488d4bd19dcea8b8d473380",
+  "seed": null,
+  "timeout_ms": null,
+  "limit": null,
+  "n_notes": 80,
+  "n_clusters": 47,
+  "n_cases": 1,
+  "n_run": 1,
+  "n_scored": 1,
+  "n_errored": 0,
+  "timeouts": 0,
+  "n_paired": 31,
+  "seconds": 148.2,
+  "served_models": {
+    "qwen3.6-35b-a3b": 61
+  },
+  "metrics": {
+    "unsafe": {
+      "n": 0,
+      "of": 19,
+      "staged": 0
+    },
+    "staged": {
+      "n": 11,
+      "safe": 11
+    },
+    "precision": {
+      "value": 1,
+      "safe": 19,
+      "retired": 19
+    },
+    "recall": {
+      "value": 1,
+      "retired_safe": 19,
+      "of": 19
+    },
+    "wrong_successor": 0,
+    "classes": {
+      "duplicate": {
+        "clusters": 7,
+        "with_safe_retirement": 7,
+        "hit": 7,
+        "retired_safe": 7,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 0
+      },
+      "triple": {
+        "clusters": 2,
+        "with_safe_retirement": 2,
+        "hit": 2,
+        "retired_safe": 2,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 0
+      },
+      "subsumed": {
+        "clusters": 5,
+        "with_safe_retirement": 5,
+        "hit": 5,
+        "retired_safe": 5,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 0
+      },
+      "supersedes": {
+        "clusters": 5,
+        "with_safe_retirement": 5,
+        "hit": 5,
+        "retired_safe": 5,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 0
+      },
+      "overlap": {
+        "clusters": 7,
+        "with_safe_retirement": 0,
+        "hit": 0,
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 7
+      },
+      "contradicts": {
+        "clusters": 2,
+        "with_safe_retirement": 0,
+        "hit": 0,
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 2
+      },
+      "lookalike": {
+        "clusters": 3,
+        "with_safe_retirement": 0,
+        "hit": 0,
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 3
+      },
+      "single": {
+        "clusters": 16,
+        "with_safe_retirement": 0,
+        "hit": 0,
+        "retired_safe": 0,
+        "retired_unsafe": 0,
+        "wrong_successor": 0,
+        "untouched": 16
+      }
+    },
+    "pairs": {
+      "initiators": 80,
+      "judged": 31,
+      "considered": 35,
+      "failed": 4,
+      "labels": {
+        "duplicate": 11,
+        "subsumed": 12,
+        "supersedes": 0,
+        "contradicts": 0,
+        "overlap": 12,
+        "unrelated": 0
+      }
+    },
+    "calls": {
+      "calls": 61,
+      "failures": 0,
+      "prompt_tokens": 67996,
+      "completion_tokens": 5711
+    },
+    "chunks": {
+      "total": 7,
+      "failed": 0,
+      "deferred_memories": 0,
+      "promote_ops": 32
+    },
+    "anti_collapse_injected": null,
+    "cold_start_budget": null,
+    "warnings": [
+      "Promote: skipped memories/kiln-7-firing → knowledge/studio-kiln-7-procedures — slug-variant of pending proposal b2ce34de-455a-43cf-a96f-a3f4e9c2d52b (bundle//knowledge/studio-kiln-3-procedures)."
+    ]
+  },
+  "status": "complete",
+  "aborted_reason": null,
+  "model_calls": {
+    "calls": 61,
+    "errors": 0,
+    "prompt_tokens": 1114.7,
+    "completion_tokens": 93.6,
+    "seconds": 2.42,
+    "output_tokens_per_second": 38.7
+  },
+  "semantic_verification": null,
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "consolidate",
+    "corpus": "public",
+    "collection": null,
+    "mode": "pool",
+    "harness_version": 3,
+    "collector": {
+      "version": "0.2"
+    },
+    "scorer": {
+      "version": "0.2"
+    },
+    "cases": {
+      "duplicate-01": {
+        "input_sha256": "c36bfd317a3ea0c351945f6856f7f87165be62cc522c1f06b18369e5acbc3aeb",
+        "label_sha256": "96c340e277f65d393467396d7f64a1a4270efdbea00a6c7c9f88f6d8ce464515"
+      },
+      "duplicate-02": {
+        "input_sha256": "0c256d31136d530ab0f6a08ad0c20728578d38a9d58aded240861793f5ae24f2",
+        "label_sha256": "171b04e0ca9e23a2073160817c1e1617ab0dcda719d032c2dde74b5eeda73bb9"
+      },
+      "duplicate-03": {
+        "input_sha256": "c1c26649ba067381fc0f12b7b26e412719f371b5a88063e17ae790f226339c21",
+        "label_sha256": "922e2d2684106658b6c5e7639e656bda649a05d2fbf1c8511f507b3b3bfb9704"
+      },
+      "duplicate-04": {
+        "input_sha256": "d065664831b7f0cc1b944de9e38d1019cdf19e791d0256d27c4149fa51cd573c",
+        "label_sha256": "a6edb2be46b20ac5ea17191d9881aac653776629bfee6b8626a5eb042f6286a1"
+      },
+      "duplicate-05": {
+        "input_sha256": "3c772af128c3d41feae2fdc343c08f357eec14845dcfb6d7a4406af33b18b50b",
+        "label_sha256": "65be08a00c83e280497484d3bbc35c6292d86f52caceb7a2131d0cb623131a0b"
+      },
+      "duplicate-06": {
+        "input_sha256": "f716b5143b74c741144ca4cb4d55f811d721a709bc92a510bc15ee7d85c3b92a",
+        "label_sha256": "5a6538394452b1e59cd349bdd25a04166529aece9f90bdbb5cbe0068d5b8f3ef"
+      },
+      "duplicate-07": {
+        "input_sha256": "712a0b2b0e73f23edaa0feb44391c7082602d8fda78bea72b7bd7d521e46dae6",
+        "label_sha256": "54db59f9f1dceeb5bf55a7e0f2e801f16a8f2493ea953b8bb6327d1578fb08ba"
+      },
+      "triple-01": {
+        "input_sha256": "cc31b8425f56b139d7fb7c4af0ee216b64e05b1e55257be517ddd707aaf4e098",
+        "label_sha256": "392624606663150e5f0037a75516c2257015fafeded78776703db6212789b05d"
+      },
+      "triple-02": {
+        "input_sha256": "2edb2838c87a6ea7cf4e34baf180193e6469abc72dcba9e3e1316b599f88878d",
+        "label_sha256": "983e034e3092fa92f8c9069dc3c78ec1a03b712c17a0f57a16aeb6180361f21f"
+      },
+      "subsumed-01": {
+        "input_sha256": "fffd934bc6a16a1bb64d994429e901f2f019e99c5bf7205e7c7e4db7c4a077fc",
+        "label_sha256": "29b16b245da115bbb55bcb050bd497e46bb041ead9752cb399371006542e2551"
+      },
+      "subsumed-02": {
+        "input_sha256": "15d053bc6cc9be4012a225dafd1274deca548225dbaed861fc766518e6a6d94a",
+        "label_sha256": "019b5f6f9e5481da78ba8a250d8e5cc1bd2e6988a1680667882461dd104a785e"
+      },
+      "subsumed-03": {
+        "input_sha256": "3fbb3e20edbf38e6c2f0ad0c7dd6db0051dceaac0c7cd5a70b647701e611caae",
+        "label_sha256": "f5255a57997b0b244cb91c501cd6f676b593184c764c25339ee0190b4c6f0706"
+      },
+      "subsumed-04": {
+        "input_sha256": "a204302a7a2d67dba01bb33065a180b27d47d2d80e8de7c32374620cfd9a5280",
+        "label_sha256": "481ff55fc599ab5617aa5db72e503ffc9a8e7d8134d255239920505bebdddba1"
+      },
+      "subsumed-05": {
+        "input_sha256": "7ec13fc31379e735e60224cc3b84a1091fceb3fcf456e01591a82cbb68d8935f",
+        "label_sha256": "4b9543d154192232d6943041614045d71056eca0d5cf8489dc751cb7d31ac932"
+      },
+      "supersedes-01": {
+        "input_sha256": "2172b801122310f4aeef65ac1d2563a088b8758c8da73c29ee0e1a03b86d9f43",
+        "label_sha256": "d585e07bd679eb3b05f2e505f6b797483d359ed08b152a2a0dc668baebaf9ede"
+      },
+      "supersedes-02": {
+        "input_sha256": "d29fb2a0eb866bf3c4af8dd4af16a099bee53f114e4ce63dd7f079834936d6dd",
+        "label_sha256": "9de1b5a90c5161e9c5172366792cdd22d240dfd1fffccddc444fcda921316607"
+      },
+      "supersedes-03": {
+        "input_sha256": "9e28803a3337e52ee3ddc116ebcaaf1fe17900c2ee20b55dd747d96f9390d202",
+        "label_sha256": "c59a5ff0bc98b513403993debf43ef29d002988c9f2744b441e41eca295064b7"
+      },
+      "supersedes-04": {
+        "input_sha256": "8ef17de22c3862acb538fb3897a7a7d1f7debe19b532e7d8cab06ebc92494b46",
+        "label_sha256": "11fa71ec8d92ea7d2f29af210e8583ab6280189c513ff5444a254e091e54b752"
+      },
+      "supersedes-05": {
+        "input_sha256": "c5f594a8fcb25c180b1e5bb258ffc32f87831c4edd64fe5312314e3bed91d97f",
+        "label_sha256": "6328f9560cae3628ab4ed2a54e2a73f56783e9d01eff81fee52b93aca6282ebf"
+      },
+      "overlap-01": {
+        "input_sha256": "a86a42742a91562bb860e77b2b3bf708424ba29daa90427309e16fe98ad3bed6",
+        "label_sha256": "774e6562beb9a492d35b561c1b6fac189e4ee9c865421008448a808450ff692f"
+      },
+      "overlap-02": {
+        "input_sha256": "5fbb70e224be76c5b785e5799ade5111b664fe652b12c3b22de0b5b31c8cef84",
+        "label_sha256": "ce3907e0356c8974421ce8682a95adad68da9a4537e281c705ecf567c6ac0985"
+      },
+      "overlap-03": {
+        "input_sha256": "b197ad76f43067ea85564df3ceb23c7f07d894122b22ca190d2b3448b8b6b2c5",
+        "label_sha256": "503df8f454de7dc5117276e6e41775c13fc0bceb82ff46f876d7d796aa22ef86"
+      },
+      "overlap-04": {
+        "input_sha256": "d047b22a74731d6029a08a9cf7720a10f5c6bead49bffefac3a42b5db2a7989a",
+        "label_sha256": "ba802b84d27f322d4d24ad72774dbecb5158e118ef25e6ffa5a04ff08c9605f3"
+      },
+      "overlap-05": {
+        "input_sha256": "aaf9f1a5c4b01783db0444a01afe268e41feb445f54093ba90e8aef2020fdb9f",
+        "label_sha256": "e91cabf2718aaef8079e66c02f846463bc7269d9d7986afd5b43017530cd7f6a"
+      },
+      "overlap-06": {
+        "input_sha256": "4fcf0ca0b4c83ce92e8a2396559de53b0a2efa62f3c6f63fa5914879b6204cc4",
+        "label_sha256": "690ee43c526c5f784b60e39f3d60e6214e35cfc1eb74cca6e443fc185fb256fc"
+      },
+      "overlap-07": {
+        "input_sha256": "3fdcb668458e2503723725a36438949b54644f8ddd173bf2d71b20c2daa2ec8b",
+        "label_sha256": "f28d2d10ac31cf6207ee08176017c87461e349a1ab01f74756c9a5c1552e9318"
+      },
+      "contradicts-01": {
+        "input_sha256": "76435af631e7e817439ed01365948b9b685eaba81809a5774d4bd78f5797b363",
+        "label_sha256": "f92f37deb9a1d2cfffd66c911fc8a1fe7f7b03915bae9f03e87b231bef264258"
+      },
+      "contradicts-02": {
+        "input_sha256": "c6fa780c9d792f6b950c592565d4489136880f1ce4ce5374c379af2134cfae19",
+        "label_sha256": "f50c550501f831f707d9559fb7ddc3de8ae8cc35fd289874da4ced35d7588649"
+      },
+      "lookalike-01": {
+        "input_sha256": "76db343b172254d219d36e9eb432bf9c6c30db9914ff88ddf6ac8345e3cd30fe",
+        "label_sha256": "796e084f6de2be88fb65eae1d9592b64ef5bcc3018fcc0d3bd647a2e166c35bf"
+      },
+      "lookalike-02": {
+        "input_sha256": "9c8c1dd13095496917949c356726c06468b4ea8a3cb135818034f91af6e626a9",
+        "label_sha256": "3a7031a387de1a66395f1e00ac298981a370ca43f228076ca2288b1f019f1be1"
+      },
+      "lookalike-03": {
+        "input_sha256": "066c18cbee3d9d46238312bee876bef11c5ce7e3dd2822274ba671c9fb3b2943",
+        "label_sha256": "8f4a7f45d62bd9afb995814bde40c9c131503814721ff239153f7d358e01ae64"
+      },
+      "single-01": {
+        "input_sha256": "3a76af088fe6642c63927f54c4a06fc2efb2cc424005a9f52ed038662c417f9a",
+        "label_sha256": "3a64f1c2bef92ef4dc8f31af6d43b38a3954db35e254c8b1f7bfb07918a94ac3"
+      },
+      "single-02": {
+        "input_sha256": "8d896e38889763390c8926bb869457ced37eafc72401b7f9e92f00e933c01a2e",
+        "label_sha256": "25ea9039acb20b35a145467b4bb4b8036c8512801e986f03c79c0d9a8ac0b8f0"
+      },
+      "single-03": {
+        "input_sha256": "9fc6d8219be354264df12f375831cf21f2fe34bb288d78b7080753417b3c2358",
+        "label_sha256": "7a3e6daba69d09d5d2b130f6fd10f8593a62c13792c345ff513ee8e58643d324"
+      },
+      "single-04": {
+        "input_sha256": "e93e7169ba26df5798f3544a2888cf8d8dea0906084219dae19ede4981c8be59",
+        "label_sha256": "9ef0a06807b5efbb71d218647d560bc84f203a879c2e2b1b1e6218bf168fb0a2"
+      },
+      "single-05": {
+        "input_sha256": "a183be020ac66885de0583ee2b739dfe6a72724c710db134c8151654e5f6dfd7",
+        "label_sha256": "0b414c71312b2faf0a8f1c5f9271741c3886fc660bd5106f17cf61a7a07540f3"
+      },
+      "single-06": {
+        "input_sha256": "a4fd0e141dae52d642c7a160c366ba52549bedbebf071447c2b2b43f175aeb68",
+        "label_sha256": "028c40b2f2c69c8df3bd440cd96d9c135289435b67a53b1405b03d8199d3edf1"
+      },
+      "single-07": {
+        "input_sha256": "dd58e924e3cbfd6ca7aa5973efc91a3932d73de122bc8f225cd9a322811e346e",
+        "label_sha256": "00cbc6434bdc29b91c5a1212b1b4bb5bcb3e86bfe126fbddcd411e5fa5808970"
+      },
+      "single-08": {
+        "input_sha256": "07b635c11b9e614da67aa4b4a4498c5cfd84b6bd1d2b691e957583785f9e34a8",
+        "label_sha256": "9d57b3380f272b4a6a786839f3fd5e16e700161d57fb02418a6ddcba84888509"
+      },
+      "single-09": {
+        "input_sha256": "31204ca961356fa8a276044f37c0b394c55750fc20618f670350a0331e9efa14",
+        "label_sha256": "5c5404d1c281ad1aaa132aeb76299e4c21d4f79caf15f0de0c19fb084b4d090f"
+      },
+      "single-10": {
+        "input_sha256": "b7b2a887e490b543ab6521bc4d575fa9c2e410c5494b708e188cda4ea242f659",
+        "label_sha256": "c4385e3442615dbed5e947349ec2080f364664149da87b166c110917e8f21f40"
+      },
+      "single-11": {
+        "input_sha256": "d7708ec93ba735e01d046e8ce038842ee3f35593a20d1291c9aa69f94fc31ec3",
+        "label_sha256": "2ddcc141a8c36812ffd398c8e84132d24b002c6942ea6a94a73a6994421a3079"
+      },
+      "single-12": {
+        "input_sha256": "cf1023ff02ec56883546b489f06f7a66e6c878cd264752ea6c3b7d94fa59505b",
+        "label_sha256": "8628956cbe03c26bae29ac02d55a3e2edc80d6ba709b355ef84107ca0883406c"
+      },
+      "single-13": {
+        "input_sha256": "cdafbc0d162526048e5810664dc311db5431e3084e6f1cec1e346c414322bc36",
+        "label_sha256": "8593e4dd3b2152359dfad536229d017ff7724395dccc41b3abc87b8902edacda"
+      },
+      "single-14": {
+        "input_sha256": "25b5c5453a0f51567a77581df1159ab597248aa9b9b64c9562ca1d33362d9d2a",
+        "label_sha256": "ea2634073337cabd07cb3706e95c21b070d6e9ffb27937f0d14e94397c2ac8a6"
+      },
+      "single-15": {
+        "input_sha256": "5d5932e57912e2ac604daded250669624160b943a10d067a3e71c6149ac2c2d8",
+        "label_sha256": "8e32f772139d40e86d680226e20d056bd5299b0d0002481d84369bf854641f5d"
+      },
+      "single-16": {
+        "input_sha256": "8546dfe102482ed9d3770a11e50ce3fcbe5992c40b86f3ac47c4466a44f5e7de",
+        "label_sha256": "1a92802a91e270cf79c5c938afae507cdcde3787517dfc58f7849dd964db2e53"
+      }
+    },
+    "akm": {
+      "version": "0.10.261008",
+      "bin": "bun /tmp/akm-1197/src/cli.ts",
+      "build": "v0.9.0-beta.60-2842-gd0fe1d000-dirty",
+      "build_fingerprint": "eeecf1b020fbe7d3e7b06d0da8e7411e379c503aeb3ad8c06593627e79f932d1"
+    },
+    "config": {
+      "redacted": {
+        "configVersion": "0.9.0",
+        "semanticSearchMode": "auto",
+        "registries": [],
+        "engines": {
+          "consolidate": {
+            "kind": "llm",
+            "provider": "openai",
+            "apiKey": "$MODEL_API_KEY"
+          }
+        },
+        "defaults": {
+          "llmEngine": "consolidate"
+        },
+        "embedding": {
+          "endpoint": "<LAB_ENDPOINT>/v1/embeddings",
+          "model": "embed/qwen3-embedding-0.6b",
+          "apiKey": "$MODEL_API_KEY",
+          "queryTimeoutMs": 120000
+        }
+      }
+    },
+    "settings": {
+      "strategy": "consolidate",
+      "config_patch_sha256": "17704bcafebd8f3a8228bd7afb6b1444d38ce482602010113202cb1ecc213c8a",
+      "timeout_ms": null,
+      "seed": null
+    },
+    "engines": {
+      "consolidate": {
+        "model": "fast/qwen3.6-35b-a3b",
+        "endpoint": "<LAB_ENDPOINT>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    },
+    "treatment_hints": {
+      "embedder": "deterministic"
+    },
+    "completion": {
+      "selected": [
+        "duplicate-01",
+        "duplicate-02",
+        "duplicate-03",
+        "duplicate-04",
+        "duplicate-05",
+        "duplicate-06",
+        "duplicate-07",
+        "triple-01",
+        "triple-02",
+        "subsumed-01",
+        "subsumed-02",
+        "subsumed-03",
+        "subsumed-04",
+        "subsumed-05",
+        "supersedes-01",
+        "supersedes-02",
+        "supersedes-03",
+        "supersedes-04",
+        "supersedes-05",
+        "overlap-01",
+        "overlap-02",
+        "overlap-03",
+        "overlap-04",
+        "overlap-05",
+        "overlap-06",
+        "overlap-07",
+        "contradicts-01",
+        "contradicts-02",
+        "lookalike-01",
+        "lookalike-02",
+        "lookalike-03",
+        "single-01",
+        "single-02",
+        "single-03",
+        "single-04",
+        "single-05",
+        "single-06",
+        "single-07",
+        "single-08",
+        "single-09",
+        "single-10",
+        "single-11",
+        "single-12",
+        "single-13",
+        "single-14",
+        "single-15",
+        "single-16"
+      ],
+      "scored": [
+        "duplicate-01",
+        "duplicate-02",
+        "duplicate-03",
+        "duplicate-04",
+        "duplicate-05",
+        "duplicate-06",
+        "duplicate-07",
+        "triple-01",
+        "triple-02",
+        "subsumed-01",
+        "subsumed-02",
+        "subsumed-03",
+        "subsumed-04",
+        "subsumed-05",
+        "supersedes-01",
+        "supersedes-02",
+        "supersedes-03",
+        "supersedes-04",
+        "supersedes-05",
+        "overlap-01",
+        "overlap-02",
+        "overlap-03",
+        "overlap-04",
+        "overlap-05",
+        "overlap-06",
+        "overlap-07",
+        "contradicts-01",
+        "contradicts-02",
+        "lookalike-01",
+        "lookalike-02",
+        "lookalike-03",
+        "single-01",
+        "single-02",
+        "single-03",
+        "single-04",
+        "single-05",
+        "single-06",
+        "single-07",
+        "single-08",
+        "single-09",
+        "single-10",
+        "single-11",
+        "single-12",
+        "single-13",
+        "single-14",
+        "single-15",
+        "single-16"
+      ],
+      "errored": []
+    }
+  },
+  "wall_seconds": 148.72
+}

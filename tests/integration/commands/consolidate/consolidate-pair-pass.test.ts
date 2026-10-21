@@ -48,6 +48,7 @@ import {
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../../../src/storage/repositories/index-entries-repository";
 import { upsertEmbedding } from "../../../../src/storage/repositories/index-vec-repository";
+import { upsertProposal } from "../../../../src/storage/repositories/proposals-repository";
 import { makeConfig } from "../../../_helpers/factories";
 import { testLlmRunner } from "../../../_helpers/llm-runner";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../../_helpers/sandbox";
@@ -1913,4 +1914,263 @@ describe("loadGitFirstAddedMap — real git, large output (B1 regression)", () =
       fs.rmSync(repo, { recursive: true, force: true });
     }
   }, 30_000);
+});
+
+describe("memory scope integrity (#1197)", () => {
+  test("incompatible neighbors do not consume the five eligible slots", () => {
+    const initiatorFile = writeAsset("memories/initiator.md", "scope_user: alice");
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const entryId = indexAsset(db, "memory", "initiator", initiatorFile, 0);
+      for (let i = 0; i < 5; i++) {
+        const file = writeAsset(`memories/other-${i}.md`, "scope_user: bob");
+        indexAsset(db, "memory", `other-${i}`, file, 0);
+      }
+      const safe = writeAsset("memories/safe.md", "scope_user: alice");
+      indexAsset(db, "memory", "safe", safe, angleForCosine(0.98));
+      const result = selectCandidates(
+        db,
+        [
+          {
+            ref: "memories/initiator",
+            name: "initiator",
+            type: "memory",
+            filePath: initiatorFile,
+            entryId,
+            backlog: false,
+            newMaterial: true,
+            bodyHash: "",
+          },
+        ],
+        "stash",
+      );
+      expect(result.map((c) => c.other.ref)).toEqual(["memories/safe"]);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  const keys = ["user", "agent", "run", "channel"] as const;
+  const fullScope = keys.map((k) => `scope_${k}: original-${k}`).join("\n");
+
+  function plant(scopes: [string, string]): [string, string] {
+    const files = scopes.map((scope, i) => {
+      const file = writeAsset(
+        `memories/${i === 0 ? "scope-a" : "scope-b"}.md`,
+        `description: scoped recovery\n${scope}`,
+        "Recovery requires the offline key from the custodian.\n",
+      );
+      dateAsset(file, i === 0 ? 3 : 1);
+      return file;
+    }) as [string, string];
+    const db = openIndexDatabase(getDbPath());
+    try {
+      files.forEach((file, i) => {
+        indexAsset(db, "memory", i === 0 ? "scope-a" : "scope-b", file, 0);
+      });
+    } finally {
+      closeDatabase(db);
+    }
+    return files;
+  }
+
+  const mismatches: [string, string, string][] = [
+    ...keys.map((key): [string, string, string] => [
+      key,
+      fullScope,
+      fullScope.replace(`original-${key}`, `different-${key}`),
+    ]),
+    ["scoped/unscoped", "scope_user: alice", ""],
+    ["partial tuple", "scope_user: alice", "scope_user: alice\nscope_channel: chat"],
+  ];
+  for (const [name, a, b] of mismatches) {
+    test(`${name}: no cross-scope proposal, stage, or acceptance`, async () => {
+      const files = plant([a, b]);
+      const before = files.map((f) => fs.readFileSync(f, "utf8"));
+      let calls = 0;
+      const result = await runConsolidatePairPass(
+        baseOpts(),
+        makeConfig(storage.stashDir),
+        storage.stashDir,
+        "stash",
+        [],
+        {
+          chat: async (...args) => {
+            calls++;
+            return fixedChat({})(...args);
+          },
+        },
+      );
+      expect(result.pairsConsidered).toBe(0);
+      expect(result.pairsJudged).toBe(0);
+      expect(calls).toBe(0);
+      expect(listProposals(storage.stashDir, { status: "pending" })).toHaveLength(0);
+      expect(files.map((f) => fs.readFileSync(f, "utf8"))).toEqual(before);
+    });
+  }
+
+  for (const [name, scopes] of [
+    ["full", [fullScope, fullScope]],
+    ["partial", ["scope_user: alice", "scope_user: alice"]],
+    ["unscoped", ["", ""]],
+    ["normalized", ['scope_user: " alice "\nscope_run: 42\nscope_agent: false', 'scope_user: alice\nscope_run: "42"']],
+    ["malformed empty values", ["scope_user: false\nscope_agent: []", ""]],
+  ] as [string, [string, string]][]) {
+    test(`${name}: useful retirement, scoped survivor, archive and exact revert`, async () => {
+      const files = plant(scopes);
+      const before = files.map((f) => fs.readFileSync(f, "utf8"));
+      const config = makeConfig(storage.stashDir);
+      const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+        chat: fixedChat({}),
+      });
+      expect(result.pairsJudged).toBe(1);
+      expect(result.retired).toHaveLength(1);
+      const id = result.retired[0]!;
+      expect(getProposal(storage.stashDir, id).gateDecision?.outcome).toBe("staged");
+      await akmProposalAccept({ stashDir: storage.stashDir, id, config });
+      expect(fs.readFileSync(files[1], "utf8")).toBe(before[1]!);
+      expect(fs.existsSync(files[0])).toBe(false);
+      await akmProposalRevert({ stashDir: storage.stashDir, id, config });
+      expect(files.map((f) => fs.readFileSync(f, "utf8"))).toEqual(before);
+    });
+  }
+
+  for (const key of keys)
+    for (const side of [0, 1])
+      for (const mode of ["manual", "staged", "resumed"] as const) {
+        test(`${key} edit to side ${side}: ${mode} acceptance refuses unchanged body`, async () => {
+          const files = plant([fullScope, fullScope]);
+          const config = makeConfig(storage.stashDir);
+          const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+            chat: fixedChat(mode === "manual" ? { missing: ["manual review"] } : {}),
+          });
+          const id = result.retired[0]!;
+          const proposal = getProposal(storage.stashDir, id);
+          if (mode === "resumed") {
+            const db = openStateDatabase();
+            try {
+              upsertProposal(
+                db,
+                {
+                  ...proposal,
+                  retireAcceptIntent: { assetPath: files[0], backupContent: fs.readFileSync(files[0], "utf8") },
+                },
+                storage.stashDir,
+              );
+            } finally {
+              db.close();
+            }
+          }
+          fs.writeFileSync(
+            files[side]!,
+            fs.readFileSync(files[side]!, "utf8").replace(`original-${key}`, `changed-${key}`),
+          );
+          if (mode === "staged") {
+            const drain = await drainProposals({
+              stashDir: storage.stashDir,
+              config,
+              applyMode: "promote",
+              maxAccepts: 25,
+              dryRun: false,
+            });
+            expect(drain.promoted).toHaveLength(0);
+          } else {
+            await expect(akmProposalAccept({ stashDir: storage.stashDir, id, config })).rejects.toThrow(/scope/i);
+          }
+          expect(files.every((f) => fs.existsSync(f))).toBe(true);
+          expect(getProposal(storage.stashDir, id).status).not.toBe("accepted");
+        });
+      }
+
+  test("changing both tuples equally still invalidates judged scope", async () => {
+    const files = plant([fullScope, fullScope]);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    for (const file of files)
+      fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("original-user", "new-user"));
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: result.retired[0]!, config })).rejects.toThrow(
+      /scope/i,
+    );
+  });
+
+  for (const mutateAt of [1, 2]) {
+    test(`scope changes during model call ${mutateAt} never stage`, async () => {
+      const files = plant([fullScope, fullScope]);
+      let calls = 0;
+      const result = await runConsolidatePairPass(
+        baseOpts(),
+        makeConfig(storage.stashDir),
+        storage.stashDir,
+        "stash",
+        [],
+        {
+          chat: async (...args) => {
+            if (++calls === mutateAt)
+              fs.writeFileSync(
+                files[1],
+                fs.readFileSync(files[1], "utf8").replace("original-channel", "changed-channel"),
+              );
+            return fixedChat({})(...args);
+          },
+        },
+      );
+      for (const id of result.retired)
+        expect(getProposal(storage.stashDir, id).gateDecision?.outcome).not.toBe("staged");
+      expect(files.every((file) => fs.existsSync(file))).toBe(true);
+    });
+  }
+
+  test("a differently scoped derived twin survives retirement and revert", async () => {
+    const files = plant([fullScope, fullScope]);
+    const twin = files[0].replace(/\.md$/, ".derived.md");
+    const twinBytes = fs.readFileSync(files[0], "utf8").replace("original-user", "other-user");
+    fs.writeFileSync(twin, twinBytes);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    const id = result.retired[0]!;
+    await akmProposalAccept({ stashDir: storage.stashDir, id, config });
+    expect(fs.readFileSync(twin, "utf8")).toBe(twinBytes);
+    await akmProposalRevert({ stashDir: storage.stashDir, id, config });
+    expect(fs.readFileSync(twin, "utf8")).toBe(twinBytes);
+    expect(fs.existsSync(files[0])).toBe(true);
+  });
+
+  test("legacy judged scope absent requires reassessment, even for currently unscoped notes", async () => {
+    const files = plant(["", ""]);
+    const config = makeConfig(storage.stashDir);
+    const result = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    const proposal = getProposal(storage.stashDir, result.retired[0]!);
+    const retirement = { ...proposal.retirement! };
+    delete (retirement as unknown as Record<string, unknown>).judgedScope;
+    const db = openStateDatabase();
+    try {
+      upsertProposal(db, { ...proposal, retirement }, storage.stashDir);
+    } finally {
+      db.close();
+    }
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(
+      /reassess|review/i,
+    );
+    expect(files.every((f) => fs.existsSync(f))).toBe(true);
+    const drained = await drainProposals({
+      stashDir: storage.stashDir,
+      config,
+      applyMode: "promote",
+      maxAccepts: 25,
+      dryRun: false,
+    });
+    expect(drained.promoted).toHaveLength(0);
+    expect(getProposal(storage.stashDir, proposal.id).gateDecision?.reason).toBe("stale-target");
+    const reassessed = await runConsolidatePairPass(baseOpts(), config, storage.stashDir, "stash", [], {
+      chat: fixedChat({}),
+    });
+    expect(reassessed.retired).toHaveLength(1);
+    expect(getProposal(storage.stashDir, reassessed.retired[0]!).retirement?.judgedScope).toEqual({});
+  });
 });
