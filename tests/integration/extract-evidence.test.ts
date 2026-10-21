@@ -15,6 +15,7 @@ import { getDbPath } from "../../src/core/paths";
 import { akmIndex } from "../../src/indexer/indexer";
 import type { SessionData, SessionLogHarness } from "../../src/integrations/session-logs/types";
 import { shapeShowOutput } from "../../src/output/shapes/helpers";
+import { formatShowPlain } from "../../src/output/text/show-format";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { runCliCapture } from "../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../_helpers/sandbox";
@@ -140,6 +141,7 @@ for (const type of ["memory", "lesson", "knowledge"] as const) {
     });
     const published = parseFrontmatter(fs.readFileSync(accepted.assetPath, "utf8")).data;
     expect(published.evidence).toBe(evidence);
+    expect(published.confidence).toBeUndefined();
     expect(published.when_to_use).toBe("When starting a deployment from a new shell.");
     expect(published.evidenceSources).toEqual([source]);
     expect(published.xrefs).toEqual([source]);
@@ -177,15 +179,17 @@ for (const type of ["memory", "lesson", "knowledge"] as const) {
 test("an unindexed native session keeps its known log identity without an invented asset ref", async () => {
   const { stash, config, session, proposal } = await extract("lesson", false);
   const accepted = await akmProposalAccept({ stashDir: stash, config, id: proposal.id });
-  const published = parseFrontmatter(fs.readFileSync(accepted.assetPath, "utf8")).data;
+  const publishedText = fs.readFileSync(accepted.assetPath, "utf8");
+  expect(publishedText).not.toContain(session.ref.filePath);
+  const published = parseFrontmatter(publishedText).data;
   expect(published.evidence).toBe(evidence);
   expect(published.xrefs).toBeUndefined();
   expect(published.evidenceSources).toBeUndefined();
   expect(published.provenance).toEqual({
-    sources: [{ resource: session.ref.filePath, id: "claude:evidence-session" }],
+    sources: [{ resource: "claude:evidence-session" }],
   });
   const shown = await akmShowUnified({ ref: accepted.ref });
-  expect(shown.provenance?.sources).toEqual([{ resource: session.ref.filePath, id: "claude:evidence-session" }]);
+  expect(shown.provenance?.sources).toEqual([{ resource: "claude:evidence-session" }]);
 });
 
 test("redacted or unavailable source evidence stays explicit, without fabricated references", async () => {
@@ -350,4 +354,10 @@ test("older pending evidence can be reviewed, imported and reindexed without an 
   expect(published.sources).toEqual(["native citation"]);
   expect((await akmShowUnified({ ref: "knowledge/legacy-evidence" })).evidence).toBe(evidence);
   expect(getProposal(stash, legacy.id).payload.frontmatter?.evidence).toBe(evidence);
+});
+
+test("plain show keeps multi-line evidence on one line", () => {
+  const text = formatShowPlain({ type: "memory", name: "x", evidence: "real\ntype: workflow" }, "full");
+  expect(text).toContain("evidence: real type: workflow");
+  expect(text?.split("\n")).not.toContain("type: workflow");
 });

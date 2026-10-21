@@ -326,14 +326,14 @@ function buildCandidateProposal(
   const description = repairTruncatedDescription(candidate.description, candidate.body);
   const fm: Record<string, unknown> = {
     description,
-    confidence: candidate.confidence,
     evidence: candidate.evidence,
     ...(sessionAssetRef ? { xrefs: [sessionAssetRef], evidenceSources: [sessionAssetRef] } : {}),
   };
-  // With no published session asset, keep the known native log identity in the
-  // existing structured provenance channel, never invent an AKM asset ref.
+  // With no published session asset, keep the known native session identity in
+  // the existing structured provenance channel, never invent an AKM asset ref.
+  // The identity, not the log's absolute path, so published notes carry no local paths.
   if (!sessionAssetRef && sourceRef.filePath) {
-    fm.provenance = { sources: [{ resource: sourceRef.filePath, id: `${sourceRef.harness}:${sourceRef.sessionId}` }] };
+    fm.provenance = { sources: [{ resource: `${sourceRef.harness}:${sourceRef.sessionId}` }] };
   }
   if (candidate.when_to_use) fm.when_to_use = candidate.when_to_use;
   return { ref, content: assembleAsset(fm, candidate.body), frontmatter: fm };
@@ -718,7 +718,9 @@ async function processSession(
           attemptedRefs: [built.ref],
           payload: {
             content: built.content,
-            frontmatter: built.frontmatter,
+            // Model confidence stays on the proposal for reviewers; it is not published,
+            // where promotion scoring would read it as a signal.
+            frontmatter: { ...built.frontmatter, confidence: candidate.confidence },
           },
         });
         proposalIds.push(proposal.id);

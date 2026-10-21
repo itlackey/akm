@@ -540,8 +540,7 @@ export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<
       .filter((s): s is Record<string, unknown> => s !== null && typeof s === "object" && !Array.isArray(s))
       .map((s) => {
         const resource = asNonEmptyString(s.resource);
-        const id = asNonEmptyString(s.id);
-        return resource ? { resource, ...(id ? { id } : {}) } : undefined;
+        return resource ? { resource } : undefined;
       })
       .filter((s): s is { resource: string } => s !== undefined);
     if (sources.length > 0) result.sources = sources;
