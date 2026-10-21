@@ -243,7 +243,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
 
     try {
       await withTTY(false, async () => {
-        await expect(akmUpdate({ target: "audited", stashDir: storage.stashDir, yes: true })).rejects.toMatchObject({
+        await expect(akmUpdate({ target: "audited", stashDir: storage.stashDir })).rejects.toMatchObject({
           code: "DANGEROUS_ENV_KEY",
         });
       });
@@ -280,7 +280,6 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
           target: "approved",
           stashDir: storage.stashDir,
           force: true,
-          yes: true,
           allowDangerousEnvKeys: true,
         }),
       );
@@ -326,7 +325,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
     });
 
     try {
-      await withTTY(true, () => akmUpdate({ target: "interactive", stashDir: storage.stashDir, yes: true }));
+      await withTTY(true, () => akmUpdate({ target: "interactive", stashDir: storage.stashDir }));
     } finally {
       syncSpy.mockRestore();
     }
@@ -357,7 +356,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
 
     try {
       await expect(
-        withTTY(false, () => akmUpdate({ target: "audit-fault", stashDir: storage.stashDir, yes: true })),
+        withTTY(false, () => akmUpdate({ target: "audit-fault", stashDir: storage.stashDir })),
       ).rejects.toMatchObject({ code: "DANGEROUS_ENV_AUDIT_FAILED" });
     } finally {
       syncSpy.mockRestore();
@@ -459,7 +458,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
 
     let result: Awaited<ReturnType<typeof akmUpdate>>;
     try {
-      result = await withTTY(false, () => akmUpdate({ all: true, stashDir: storage.stashDir, yes: true }));
+      result = await withTTY(false, () => akmUpdate({ all: true, stashDir: storage.stashDir }));
     } finally {
       syncSpy.mockRestore();
     }
@@ -520,7 +519,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
 
       try {
         await expect(
-          withTTY(false, () => akmUpdate({ target: "plain", stashDir: storage.stashDir, yes: true })),
+          withTTY(false, () => akmUpdate({ target: "plain", stashDir: storage.stashDir })),
         ).rejects.toMatchObject({ code: "DANGEROUS_ENV_KEY" });
       } finally {
         syncSpy.mockRestore();
@@ -568,7 +567,7 @@ describe("akm bundle update dangerous-key gate (#765)", () => {
 
     let result: Awaited<ReturnType<typeof akmUpdate>>;
     try {
-      result = await withTTY(false, () => akmUpdate({ all: true, stashDir: storage.stashDir, yes: true }));
+      result = await withTTY(false, () => akmUpdate({ all: true, stashDir: storage.stashDir }));
     } finally {
       syncSpy.mockRestore();
     }

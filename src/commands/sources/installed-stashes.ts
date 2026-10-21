@@ -742,18 +742,15 @@ function managedInstallViewOfPlainNpm(config: AkmConfig, npmSource: ConfiguredSo
  * Sync a single registry-managed install and return the processed record:
  * fetch into staging, audit, publish, write its lock entry, reindex.
  *
- * `yes` gates ONLY the destructive branch below (deleting a previous
- * `localRoot` whose content moved) — it has no effect on the sync itself. A
- * normal refresh that resolves the SAME content directory (the overwhelming
- * majority of updates) never reaches that branch, so it never prompts and
- * never requires `--yes` (F1/R-058: `update` must stay usable bare in
- * scripts; only the branch that can `rm -rf` needs a gate, not the whole
- * command).
+ * Read-only installs are keyed by resolved revision, so every upstream change
+ * resolves a new content directory, and the previous one is deleted once the
+ * new one is published. That directory is a re-fetchable cache: local and
+ * writable installs never take this path, and a directory another bundle or
+ * lock entry still references is kept. So deleting it never asks for confirmation.
  */
 async function updateManagedInstall(
   managed: ManagedInstall,
   force: boolean,
-  yes: boolean,
   stashDir: string,
   allowDangerousEnvKeys: boolean,
 ): Promise<{ item: UpdateResultItem; index: IndexResult }> {
@@ -781,15 +778,6 @@ async function updateManagedInstall(
       path.resolve(managed.localRoot) !== path.resolve(synced.contentDir) &&
       managed.source !== "local" &&
       !managed.writable;
-    if (movedRoot) {
-      const { confirmDestructive } = await import("../../cli/confirm.js");
-      const confirmed = await confirmDestructive(
-        `Update resolved a new content directory for "${managed.installId}" (${synced.contentDir}) and would delete the previous install directory at ${managed.localRoot}. This cannot be undone.`,
-        { yes },
-      );
-      if (!confirmed)
-        throw new UsageError(`Update cancelled for "${managed.installId}"; no configuration was changed.`);
-    }
 
     const index = await publishAndIndex(stashDir, async () => {
       staged.publish();
@@ -871,13 +859,6 @@ export async function akmUpdate(input?: {
   all?: boolean;
   force?: boolean;
   stashDir?: string;
-  /**
-   * Skips the confirmation prompt for the destructive branch of
-   * {@link updateManagedInstall} (deleting a previous `localRoot` whose
-   * resolved content directory moved). Has no effect otherwise — most
-   * updates never reach that branch (F1/R-058).
-   */
-  yes?: boolean;
   /** Explicitly permit staged dangerous environment keys after warning. */
   allowDangerousEnvKeys?: boolean;
 }): Promise<UpdateResponse> {
@@ -885,7 +866,6 @@ export async function akmUpdate(input?: {
   const target = input?.target?.trim();
   const all = input?.all === true;
   const force = input?.force === true;
-  const yes = input?.yes === true;
   const allowDangerousEnvKeys = input?.allowDangerousEnvKeys === true;
   const config = loadConfig();
   const managedInstalls = listManagedInstalls(config);
@@ -894,7 +874,7 @@ export async function akmUpdate(input?: {
     // Registry-managed install (lock-backed) — re-download from its locator.
     const managed = resolveManagedTarget(config, target);
     if (managed) {
-      const updated = await updateManagedInstall(managed, force, yes, stashDir, allowDangerousEnvKeys);
+      const updated = await updateManagedInstall(managed, force, stashDir, allowDangerousEnvKeys);
       return buildUpdateResponse(stashDir, target, all, [updated.item], { index: updated.index });
     }
 
@@ -942,7 +922,6 @@ export async function akmUpdate(input?: {
       const updated = await updateManagedInstall(
         managedInstallViewOfPlainNpm(config, npmMatch),
         force,
-        yes,
         stashDir,
         allowDangerousEnvKeys,
       );
@@ -967,7 +946,7 @@ export async function akmUpdate(input?: {
   let latestIndex: IndexResult | undefined;
   for (const managed of selected) {
     try {
-      const updated = await updateManagedInstall(managed, force, yes, stashDir, allowDangerousEnvKeys);
+      const updated = await updateManagedInstall(managed, force, stashDir, allowDangerousEnvKeys);
       processed.push(updated.item);
       latestIndex = updated.index;
     } catch (error) {
@@ -1000,7 +979,6 @@ export async function akmUpdate(input?: {
           const updated = await updateManagedInstall(
             managedInstallViewOfPlainNpm(config, plain),
             force,
-            yes,
             stashDir,
             allowDangerousEnvKeys,
           );
