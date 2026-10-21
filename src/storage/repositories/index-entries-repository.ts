@@ -705,6 +705,22 @@ export function getEmbeddableEntryCount(db: Database): number {
   return getEntryCount(db);
 }
 
+/** Read one bounded candidate batch using the same mapper as browse. */
+export function getEntriesByIds(db: Database, ids: readonly number[]): DbIndexedEntry[] {
+  const entries: DbIndexedEntry[] = [];
+  for (let offset = 0; offset < ids.length; offset += SQLITE_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + SQLITE_CHUNK_SIZE);
+    const rows = db
+      .prepare(`SELECT ${ENTRY_COLUMNS} FROM entries WHERE id IN (${chunk.map(() => "?").join(",")})`)
+      .all(...chunk) as EntryRow[];
+    for (const row of rows) {
+      const entry = rowToIndexedEntry(row, "getEntriesByIds");
+      if (entry) entries.push(entry);
+    }
+  }
+  return entries;
+}
+
 export function getEntryById(
   db: Database,
   id: number,

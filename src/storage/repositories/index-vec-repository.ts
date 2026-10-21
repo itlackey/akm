@@ -17,7 +17,7 @@ import type { IndexDocument } from "../../indexer/passes/metadata";
 import { buildSearchText } from "../../indexer/search/search-fields";
 import type { EmbeddingVector } from "../../llm/embedders/types";
 import type { Database } from "../database";
-import type { DbVecResult } from "./index-entry-types";
+import type { CandidateFilter, DbVecResult } from "./index-entry-types";
 import { getMeta, setMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
@@ -119,7 +119,13 @@ export interface VecScope {
  * scanned: the `k` nearest of those, not the `k` nearest of everything filtered
  * afterwards.
  */
-export function searchVec(db: Database, query: ArrayLike<number>, k: number, scope?: VecScope): DbVecResult[] {
+export function searchVec(
+  db: Database,
+  query: ArrayLike<number>,
+  k: number,
+  scope?: VecScope,
+  filterCandidates?: CandidateFilter,
+): DbVecResult[] {
   const dim = query.length;
   const q = Float64Array.from(query);
   let queryNorm = 0;
@@ -135,7 +141,24 @@ export function searchVec(db: Database, query: ArrayLike<number>, k: number, sco
   const rows = db
     .prepare(`SELECT id, embedding FROM embeddings WHERE ${current.sql}${scoped}`)
     .iterate(...params) as IterableIterator<{ id: number; embedding: Uint8Array }>;
-  for (const { id, embedding } of rows) {
+  function* eligibleRows() {
+    if (!filterCandidates) {
+      yield* rows;
+      return;
+    }
+    let batch: Array<{ id: number; embedding: Uint8Array }> = [];
+    function* keepBatch() {
+      const eligible = filterCandidates!(batch.map((row) => row.id));
+      for (const row of batch) if (eligible.has(row.id)) yield row;
+      batch = [];
+    }
+    for (const row of rows) {
+      batch.push(row);
+      if (batch.length === 100) yield* keepBatch();
+    }
+    if (batch.length > 0) yield* keepBatch();
+  }
+  for (const { id, embedding } of eligibleRows()) {
     if (embedding.byteLength !== dim * 4) continue;
     // A Float32Array view needs 4-byte alignment; copy the rare row that lacks it.
     const vector =

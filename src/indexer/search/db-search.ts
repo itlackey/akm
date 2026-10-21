@@ -41,11 +41,12 @@ import {
 import {
   getAllEntries,
   getBaseBeliefStatesForDerivedTwins,
+  getEntriesByIds,
   getEntryById,
   getEntryCount,
   getEntryRefsAndTypes,
 } from "../../storage/repositories/index-entries-repository";
-import type { DbVecResult } from "../../storage/repositories/index-entry-types";
+import type { CandidateFilter, DbVecResult } from "../../storage/repositories/index-entry-types";
 import { searchFts } from "../../storage/repositories/index-fts-repository";
 import { getMeta } from "../../storage/repositories/index-meta-repository";
 import { getEmbeddingCount, searchVec } from "../../storage/repositories/index-vec-repository";
@@ -153,13 +154,13 @@ export interface SearchLocalInput {
   config: AkmConfig;
   /**
    * Optional scope filter (`user`, `agent`, `run`, `channel`). When present,
-   * hits whose `entry.scope` does not satisfy every supplied key are dropped
-   * after fusion — filtering narrows the result set, it does not reorder it.
+   * only entries whose `entry.scope` satisfies every supplied key contribute
+   * to the channels before their candidate budgets.
    */
   filters?: StashEntryScope;
   /**
    * When true, entries with `quality === "proposed"` are kept in the result
-   * set. By default (false) they are filtered out after fusion per v1
+   * set. By default (false) they are excluded before candidate selection per v1
    * spec §4.2.
    */
   includeProposed?: boolean;
@@ -335,8 +336,14 @@ async function searchDatabase(
   const typeFilter = searchType === "any" ? undefined : searchType;
   const startedAt = Date.now();
   // The query embedding request goes out first, so FTS runs while it is in flight.
-  const vectorChannel = startVectorChannel(db, query, config);
-  const lexical = searchFts(db, query, CHANNEL_DEPTH, typeFilter, defaultExcludes);
+  const filterCandidates: CandidateFilter = (ids) => {
+    const entries = getEntriesByIds(db, ids)
+      .filter(hasIndexedProvenance)
+      .filter((row) => (typeFilter ? row.entry.type === typeFilter : !defaultExcludes.includes(row.entry.type)));
+    return new Set(applyEntryFilters(entries, filterOptions).map((row) => row.id));
+  };
+  const vectorChannel = startVectorChannel(db, query, config, filterCandidates);
+  const lexical = searchFts(db, query, CHANNEL_DEPTH, typeFilter, defaultExcludes, filterCandidates);
   const vector = await vectorChannel;
   const embedMs = Date.now() - startedAt;
 
@@ -651,6 +658,7 @@ function startVectorChannel(
   db: Database,
   query: string,
   config: AkmConfig,
+  filterCandidates: CandidateFilter,
 ): Promise<{ neighbors: DbVecResult[] | null; warning?: string }> {
   if (config.semanticSearchMode === "off") return Promise.resolve({ neighbors: null });
   // A real-time completeness fact, not a cached verdict: skip the round trip
@@ -670,7 +678,7 @@ function startVectorChannel(
   });
   const queryText = applyEmbeddingTemplate(resolveEmbeddingProfile(config.embedding).queryTemplate, query);
   return Promise.race([embed(queryText, config.embedding, controller.signal), timeout])
-    .then((vector) => ({ neighbors: searchVec(db, vector, CHANNEL_DEPTH) }))
+    .then((vector) => ({ neighbors: searchVec(db, vector, CHANNEL_DEPTH, undefined, filterCandidates) }))
     .catch((error: unknown) => ({ neighbors: null, warning: buildVectorFallbackWarning(config, error) }))
     .finally(() => clearTimeout(timer));
 }

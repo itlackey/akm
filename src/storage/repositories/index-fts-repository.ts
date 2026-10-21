@@ -24,6 +24,7 @@ import { ftsOrMatch, ftsQueryTokens } from "../../indexer/search/fts-query";
 import { buildSearchFields } from "../../indexer/search/search-fields";
 import type { Database, RunResult, SqlValue } from "../database";
 import { isContentlessFtsDdl, readTableSql } from "./index-entry-schema";
+import type { CandidateFilter } from "./index-entry-types";
 import { deleteMeta, getMeta } from "./index-meta-repository";
 import { SQLITE_CHUNK_SIZE } from "./index-sql";
 
@@ -147,6 +148,7 @@ export function searchFts(
   limit: number,
   entryType?: string,
   excludeTypes: readonly string[] = [],
+  filterCandidates?: CandidateFilter,
 ): FtsCandidate[] {
   const tokens = ftsQueryTokens(query);
   if (limit <= 0 || tokens.length === 0) return [];
@@ -156,19 +158,35 @@ export function searchFts(
     : excludeTypes.length > 0
       ? `AND e.type NOT IN (${excludeTypes.map(() => "?").join(", ")})`
       : "";
-  const params: SqlValue[] = [ftsOrMatch(tokens), ...(typed ? [entryType] : excludeTypes), limit];
+  const params: SqlValue[] = [ftsOrMatch(tokens), ...(typed ? [entryType] : excludeTypes)];
   // Contentless FTS rows address their entry by rowid; the COALESCE also reads
   // the content-bearing layout older releases wrote.
-  return db
-    .prepare(
-      `SELECT e.id AS id, e.item_ref AS itemRef
+  const statement = db.prepare(
+    `SELECT e.id AS id, e.item_ref AS itemRef
          FROM entries_fts f
          JOIN entries e ON e.id = COALESCE(f.entry_id, f.rowid)
         WHERE entries_fts MATCH ? ${filter}
         ORDER BY bm25(entries_fts, ${BM25_COLUMN_WEIGHTS}), e.item_ref
-        LIMIT ?`,
-    )
-    .all(...params) as FtsCandidate[];
+        ${filterCandidates ? "" : "LIMIT ?"}`,
+  );
+  if (!filterCandidates) return statement.all(...params, limit) as FtsCandidate[];
+  // Stream matching rows in BM25 order, stopping at the eligible budget.
+  // No full-corpus materialization and no repeated OFFSET/restarted query.
+  const selected: FtsCandidate[] = [];
+  let batch: FtsCandidate[] = [];
+  const keepBatch = () => {
+    const eligible = filterCandidates(batch.map((row) => row.id));
+    for (const row of batch) if (eligible.has(row.id)) selected.push(row);
+    batch = [];
+  };
+  for (const row of statement.iterate(...params) as IterableIterator<FtsCandidate>) {
+    batch.push(row);
+    if (batch.length < 100) continue;
+    keepBatch();
+    if (selected.length >= limit) break;
+  }
+  if (selected.length < limit && batch.length > 0) keepBatch();
+  return selected.slice(0, limit);
 }
 
 /**
