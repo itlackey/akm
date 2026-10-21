@@ -110,9 +110,16 @@ export interface StashCommit extends GitCommitSummary {
 }
 
 /** The `limit` most recent commits of the repository at `repoDir`, newest first; `null` when it is not a git root. */
-export async function readRecentCommits(repoDir: string, limit: number): Promise<StashCommit[] | null> {
+export async function readRecentCommits(repoDir: string, limit: number, file?: string): Promise<StashCommit[] | null> {
   if (!isGitRoot(repoDir)) return null;
-  const out = await git(repoDir, ["log", "-n", String(limit), "--name-only", "--format=%x1e%H%x1f%cI%x1f%an%x1f%s"]);
+  const out = await git(repoDir, [
+    "log",
+    "-n",
+    String(limit),
+    "--name-only",
+    "--format=%x1e%H%x1f%cI%x1f%an%x1f%s",
+    ...(file ? ["--", file] : []),
+  ]);
   if (out === null) return [];
   const commits: StashCommit[] = [];
   for (const record of out.split("\x1e")) {
@@ -132,4 +139,13 @@ export async function readRecentCommits(repoDir: string, limit: number): Promise
     });
   }
   return commits;
+}
+
+/** Caller supplies an indexed asset path inside this bundle and a commit ID it took from {@link readRecentCommits}. */
+export async function readFileRevision(repoDir: string, file: string, sha: string) {
+  const after = await git(repoDir, ["show", `${sha}:${file}`]);
+  if (after === null) return null;
+  const before = await git(repoDir, ["show", `${sha}^:${file}`]);
+  const unified = await git(repoDir, ["show", "--no-ext-diff", "--no-textconv", "--format=", sha, "--", file]);
+  return { before, after, unified: unified ?? "" };
 }

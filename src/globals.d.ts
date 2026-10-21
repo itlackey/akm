@@ -66,6 +66,11 @@ declare module "*/assets/ui/diff.js" {
   export default content;
 }
 
+declare module "*/assets/ui/editor.js" {
+  const content: string;
+  export default content;
+}
+
 declare module "*/assets/ui/lib.js" {
   const content: string;
   export default content;

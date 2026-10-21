@@ -42,7 +42,7 @@ import {
 } from "../sources/providers/git";
 import { listIgnoredExactPaths } from "../sources/providers/git-stash";
 import { detectAdapterId } from "./adapter/detect-adapter";
-import { ensureAkmMarkdownType } from "./asset/akm-markdown";
+import { normalizeAkmMarkdown } from "./asset/akm-markdown";
 import { assetPathForName, stashDirFor } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { conceptIdFromTypeName, displayRef } from "./asset/resolve-ref";
@@ -359,7 +359,7 @@ export async function writeAssetToSource(
   assertAkmAssetWrite(source);
 
   const filePath = resolveAssetFilePath(source, ref);
-  const authored = filePath.toLowerCase().endsWith(".md") ? ensureAkmMarkdownType(content, ref.type) : content;
+  const authored = filePath.toLowerCase().endsWith(".md") ? normalizeAkmMarkdown(content, ref.type) : content;
   const normalized = authored.endsWith("\n") ? authored : `${authored}\n`;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   // Atomic: sibling temp file, fdatasync, rename — a crash or a full disk never

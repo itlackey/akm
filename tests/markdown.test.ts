@@ -150,3 +150,32 @@ test("parseMarkdownToc skips headings inside fenced code blocks", () => {
   expect(toc.headings[1]).toEqual({ level: 2, text: "Real Section", line: 9 });
   expect(toc.headings[2]).toEqual({ level: 3, text: "Real Subsection", line: 15 });
 });
+
+test("parseMarkdownToc closes a fence only on the same character at least as long (CommonMark)", () => {
+  const doc = [
+    "# Real",
+    "````markdown",
+    "```",
+    "# Inside the outer fence",
+    "```",
+    "~~~~",
+    "## Still inside",
+    "```` trailing text is not a closing fence",
+    "````  ",
+    "## After the four-backtick fence",
+    "~~~",
+    "# Inside tildes",
+    "```",
+    "~~~~",
+    "    ```",
+    "# Indented four spaces is not a fence",
+    "```js ``` backticks in the info string",
+    "## Inline backticks do not open a fence",
+  ].join("\n");
+  expect(parseMarkdownToc(doc).headings).toEqual([
+    { level: 1, text: "Real", line: 1 },
+    { level: 2, text: "After the four-backtick fence", line: 10 },
+    { level: 1, text: "Indented four spaces is not a fence", line: 16 },
+    { level: 2, text: "Inline backticks do not open a fence", line: 18 },
+  ]);
+});

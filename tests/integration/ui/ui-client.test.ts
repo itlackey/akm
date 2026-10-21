@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { EMBEDDED_UI, startUiServer, type UiServer } from "../../../src/commands/ui/server";
+import { markdownHeadingSlug, parseMarkdownToc } from "../../../src/core/asset/markdown";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { akmIndex } from "../../../src/indexer/indexer";
@@ -107,7 +108,9 @@ describe("what the page may load and do", () => {
   });
 
   test("decisions use inline confirmation only: no window.confirm, alert or prompt anywhere", () => {
-    for (const file of jsFiles) expect(read(file), file).not.toMatch(/\b(?:confirm|alert|prompt)\s*\(/);
+    for (const file of jsFiles) {
+      expect(read(file), file).not.toMatch(/\b(?:confirm|alert|prompt)\s*\(/);
+    }
   });
 
   test("external links are noopener and carry no unvetted scheme", () => {
@@ -297,11 +300,133 @@ describe("pages", () => {
     expect(asset).toContain("&lt;b&gt;guide&lt;/b&gt;");
     expect(asset).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(asset).toContain("&lt;i&gt;code&lt;/i&gt;");
-    expect(asset).toContain('href="#/asset?ref=knowledge%2Fnotes"');
+    expect(asset).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes"');
     expect(asset).toContain("&lt;b&gt;clear&lt;/b&gt;");
     for (const unsafe of ["<script", "<img", "<b>", "<i>", 'href="javascript:']) {
       expect(asset, unsafe).not.toContain(unsafe);
     }
+  });
+
+  test("the source editor escapes full live Markdown and wires saving while creation remains separate", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const asset = (await (await view("asset.js"))(ctx("ref=knowledge%2Fguide"))).text;
+    expect(asset).toContain('href="#/edit?ref=stash%2F%2Fknowledge%2Fguide"');
+    const editCtx = ctx("ref=knowledge%2Fguide");
+    const edit = (await (await view("editor.js"))(editCtx)).text;
+    expect(edit).toContain("Edit Markdown");
+    expect(edit).toContain('class="edit-form form-grid"');
+    expect(edit).toContain("description: Deploy &lt;b&gt;guide&lt;/b&gt;");
+    expect(edit).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(edit).not.toContain("<script>");
+    expect(editCtx.after).toHaveLength(1);
+    const create = (await (await view("editor.js"))(ctx())).text;
+    expect(create).toContain("New knowledge");
+    expect(create).not.toContain("Save Markdown");
+  });
+
+  test("the editor saves the exact source, re-applies uniform CRLF, and keeps a draft through a conflict", async () => {
+    await seed();
+    const dir = path.join(storage.stashDir, "knowledge");
+    const crlf = "---\r\ndescription: CRLF\r\n---\r\n# CRLF\r\n\r\nline\r\n";
+    const mixed = "# Mixed\r\nline\n";
+    fs.writeFileSync(path.join(dir, "crlf.md"), crlf);
+    fs.writeFileSync(path.join(dir, "mixed.md"), mixed);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const lib = (await load("lib.js")) as { hasUnsaved: () => boolean };
+
+    // Every save body the editor sends is recorded, then passed on to the real server.
+    const sent: Array<{ ref: string; revision: string; content: string }> = [];
+    const signedIn = globalThis.fetch;
+    globalThis.fetch = ((input: string, init?: RequestInit) => {
+      if (input === "/api/asset/save") sent.push(JSON.parse(String(init?.body)));
+      return signedIn(input, init);
+    }) as typeof fetch;
+
+    // A stand-in for the mounted page: the textarea, the preview and the form's status.
+    const open = async (ref: string) => {
+      const pageCtx = ctx(`ref=${encodeURIComponent(ref)}`);
+      await (await view("editor.js"))(pageCtx);
+      const handlers: Record<string, (event: unknown) => Promise<void> | void> = {};
+      const input = { value: "", addEventListener: (_t: string, fn: () => void) => (handlers.input = fn) };
+      const preview = { innerHTML: "" };
+      const status = { innerHTML: "" };
+      const form = {
+        addEventListener: (_t: string, fn: (event: unknown) => Promise<void>) => (handlers.submit = fn),
+        querySelector: () => status,
+      };
+      const root = {
+        querySelector: (sel: string) =>
+          sel === '[name="content"]' ? input : sel === "[data-preview]" ? preview : null,
+        querySelectorAll: (sel: string) => (sel === ".edit-form" ? [form] : []),
+      };
+      for (const after of pageCtx.after) after(root);
+      const type = (value: string) => {
+        input.value = value;
+        handlers.input?.({});
+      };
+      const save = async () => {
+        const button = { disabled: false };
+        (globalThis as { location: { hash: string } }).location.hash = "";
+        await handlers.submit?.({ preventDefault: () => undefined, submitter: button });
+        return button;
+      };
+      return { input, preview, status, type, save };
+    };
+    const location = (globalThis as { location: { hash: string } }).location;
+
+    // Untouched: the textarea shows LF, but the exact CRLF source is what is sent.
+    const untouched = await open("knowledge/crlf");
+    expect(untouched.input.value).toBe(crlf);
+    untouched.type(crlf.replace(/\r\n/g, "\n"));
+    expect(lib.hasUnsaved()).toBe(false);
+    await untouched.save();
+    expect(sent.at(-1)?.content).toBe(crlf);
+    expect(location.hash).toBe("#/asset?ref=stash%2F%2Fknowledge%2Fcrlf");
+
+    // Edited uniform CRLF: the edit is saved with CRLF re-applied.
+    const edited = await open("knowledge/crlf");
+    edited.type(`${crlf.replace(/\r\n/g, "\n")}more\n`);
+    expect(lib.hasUnsaved()).toBe(true);
+    await edited.save();
+    expect(sent.at(-1)?.content).toBe(`${crlf}more\r\n`);
+    expect(fs.readFileSync(path.join(dir, "crlf.md"), "utf8")).toEndWith("line\r\nmore\r\n");
+    expect(lib.hasUnsaved()).toBe(false);
+
+    // Mixed endings are not guessed at: the edit is saved as the textarea's LF.
+    const mixedEdit = await open("knowledge/mixed");
+    mixedEdit.type("# Mixed\nline\nmore\n");
+    await mixedEdit.save();
+    expect(sent.at(-1)?.content).toBe("# Mixed\nline\nmore\n");
+
+    // A conflict keeps the draft, takes the new revision, and the next save goes through.
+    const conflict = await open("knowledge/notes");
+    const draft = "---\ndescription: Notes\n---\nMy draft\n";
+    conflict.type(draft);
+    const newer = "---\ndescription: Notes\n---\nChanged on disk\n";
+    fs.writeFileSync(path.join(dir, "notes.md"), newer);
+    const button = await conflict.save();
+    expect(conflict.status.innerHTML).toContain("The document changed on disk since you opened it.");
+    expect(conflict.status.innerHTML).toContain("saving again will overwrite");
+    expect(button.disabled).toBe(false);
+    expect(conflict.input.value).toBe(draft);
+    expect(location.hash).toBe("");
+    expect(lib.hasUnsaved()).toBe(true);
+    const rejectedRevision = sent.at(-1)?.revision;
+    await conflict.save();
+    expect(sent.at(-1)?.revision).not.toBe(rejectedRevision);
+    expect(sent.at(-1)?.content).toBe(draft);
+    expect(fs.readFileSync(path.join(dir, "notes.md"), "utf8")).toEndWith("My draft\n");
+    expect(location.hash).toBe("#/asset?ref=stash%2F%2Fknowledge%2Fnotes");
+    expect(lib.hasUnsaved()).toBe(false);
+
+    // The preview anchors in-page links to the document instead of a bare "#x" the router reads as a page.
+    conflict.type("[setup](#setup)");
+    expect(conflict.preview.innerHTML).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes&section=setup"');
+    (lib as unknown as { setUnsaved: (v: boolean) => void }).setUnsaved(false);
   });
 
   test("a pending proposal's page has Accept and Reject; the list has a checkbox per row and a group select, all through html``", async () => {
@@ -492,7 +617,7 @@ describe("helpers", () => {
   test("markdown renders its subset and drops unsafe links", async () => {
     const { markdown, splitFrontmatter } = (await load("markdown.js")) as {
       markdown: (s: string) => Rendered;
-      splitFrontmatter: (s: string) => { fields: string[][]; body: string };
+      splitFrontmatter: (s: string) => { fields: string[][]; body: string; startLine: number };
     };
     const out = markdown(
       "## Title <x>\n\n1. one\n2. two\n\n- a `c<d>`\n\n[ok](https://example.com) [no](javascript:alert(1)) **b**\n",
@@ -509,7 +634,95 @@ describe("helpers", () => {
         ["b", "[x]"],
       ],
       body: "body",
+      startLine: 5,
     });
+  });
+
+  test("document rendering keeps tables/tasks/code safe and uses indexed links and heading selectors", async () => {
+    const { markdown } = (await load("markdown.js")) as {
+      markdown: (s: string, context: unknown) => Rendered;
+    };
+    const out = markdown(
+      "# Guide\n\n| Step | Status |\n| --- | --- |\n| <script>bad</script> | done |\n\n- [x] Complete\n- [ ] Pending\n\n[notes](notes.md#notes) [local](#guide) [missing](missing.md)\n\n~~~\n# Hidden\n[code](notes.md)\n~~~\n",
+      {
+        ref: "stash//knowledge/guide",
+        links: { "notes.md#notes": "stash//knowledge/notes#notes" },
+        headings: [{ line: 1, slug: "guide" }],
+      },
+    ).text;
+    expect(out).toContain('<h2 id="h-guide">Guide</h2>');
+    expect(out).toContain("<table>");
+    expect(out).toContain("&lt;script&gt;bad&lt;/script&gt;");
+    expect(out).toContain('disabled checked aria-label="Complete"');
+    expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes%23notes"');
+    expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fguide&section=guide"');
+    expect(out).not.toContain('href="missing.md"');
+    expect(out).toContain('<pre class="code"><code># Hidden\n[code](notes.md)</code></pre>');
+  });
+
+  test("links are own properties only, a table needs a piped delimiter row, and nested fences keep heading ids", async () => {
+    const { markdown } = (await load("markdown.js")) as {
+      markdown: (s: string, context?: unknown) => Rendered;
+    };
+    const links = markdown("[a](constructor) [b](toString) [c](__proto__) [d](#x)", { links: {} }).text;
+    expect(links).not.toContain("<a ");
+    expect(links).toContain("a b c d");
+
+    expect(markdown("a | b\n---\nc").text).not.toContain("<table>");
+    expect(markdown("a | b\n--- | ---\nc | d").text).toContain("<td>c</td><td>d</td>");
+    expect(markdown("| a |\n| :---: |\n| c |").text).toContain("<th>a</th>");
+
+    // A four-backtick fence wraps a three-backtick example, a tilde line does not close a backtick fence,
+    // a backtick in the info string and a 4-space indent are not fences: client and server agree on all of it.
+    const source =
+      "# One\n\n````\n```\n# Not a heading\n```\n````\n\n# Two\n\n```\n~~~\n# Still code\n```\n# Three\n\n``` x`y\n# Four\n\n    ```\n# Five\n";
+    const headings = parseMarkdownToc(source).headings.map((h) => ({
+      line: h.line,
+      slug: markdownHeadingSlug(h.text),
+    }));
+    expect(headings.map((h) => h.slug)).toEqual(["one", "two", "three", "four", "five"]);
+    const out = markdown(source, { headings }).text;
+    for (const h of headings) expect(out).toContain(`<h2 id="h-${h.slug}">`);
+    expect(out.match(/<h2/g)?.length).toBe(5);
+    expect(out).toContain("<code>```\n# Not a heading\n```</code>");
+    expect(out).toContain("<code>~~~\n# Still code</code>");
+    // Ids follow the source line, after frontmatter too.
+    const { splitFrontmatter } = (await load("markdown.js")) as {
+      splitFrontmatter: (s: string) => { body: string; startLine: number };
+    };
+    const split = splitFrontmatter("---\r\na: 1\r\n---\r\n# App\r\n");
+    expect(markdown(split.body, { headings: [{ line: 4, slug: "app" }], startLine: split.startLine }).text).toContain(
+      '<h2 id="h-app">App</h2>',
+    );
+  });
+
+  test("actionForm says when nothing changed and locks after an invalid command response", async () => {
+    const { actionForm, ApiError } = (await load("lib.js")) as {
+      actionForm: (root: unknown, sel: string, action: () => Promise<unknown>, opts?: unknown) => void;
+      ApiError: new (status: number, code: string, message: string) => Error;
+    };
+    const bind = (action: () => Promise<unknown>) => {
+      let submit: (event: unknown) => Promise<void> = async () => undefined;
+      const status = { innerHTML: "" };
+      const form = { addEventListener: (_t: string, fn: typeof submit) => (submit = fn), querySelector: () => status };
+      actionForm({ querySelectorAll: () => [form] }, ".f", action, { after: () => undefined });
+      return async () => {
+        const button = { disabled: false };
+        await submit({ preventDefault: () => undefined, submitter: button });
+        return { button, status: status.innerHTML };
+      };
+    };
+    expect((await bind(async () => ({ saved: false }))()).status).toContain("No changes.");
+    expect((await bind(async () => ({ saved: true }))()).status).toContain("Saved.");
+    const invalid = await bind(async () => {
+      throw new ApiError(500, "INVALID_COMMAND_RESPONSE", "Reload the view before retrying.");
+    })();
+    expect(invalid.button.disabled).toBe(true);
+    expect(invalid.status).toContain("Reload the view before retrying.");
+    const ordinary = await bind(async () => {
+      throw new ApiError(400, "USAGE", "Bad input.");
+    })();
+    expect(ordinary.button.disabled).toBe(false);
   });
 
   test("chart scales use round steps and the axis ends at or above the data", async () => {

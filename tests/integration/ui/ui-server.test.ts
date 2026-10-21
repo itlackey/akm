@@ -11,7 +11,8 @@
  * that a browse session leaves both databases byte-for-byte as they were.
  */
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { Database } from "bun:sqlite";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -20,17 +21,18 @@ import { akmProposalAccept } from "../../../src/commands/proposal/proposal";
 import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
-import { MAX_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
-import { resetConfigCache } from "../../../src/core/config/config";
-import { getDbPath } from "../../../src/core/paths";
+import { MAX_BODY_BYTES, MAX_DOCUMENT_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
+import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
+import { getConfigPath, getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { recordImproveRun } from "../../../src/storage/repositories/improve-runs-repository";
+import * as akmBin from "../../../src/tasks/resolve-akm-bin";
 import { runCliCapture } from "../../_helpers/cli";
 import { makeConfig } from "../../_helpers/factories";
 import { git, makeGitRepo } from "../../_helpers/git";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const PLANTED_API_KEY = "sk-planted-literal-api-key-0001";
 const PLANTED_CONFIG_TOKEN = "tok-planted-config-token-0002";
@@ -58,6 +60,44 @@ afterEach(async () => {
 
 function sha1(file: string): string {
   return createHash("sha1").update(fs.readFileSync(file)).digest("hex");
+}
+
+/**
+ * A WAL-mode database's committed content as one hash. A commit through a
+ * connection that is still open sits in `-wal` and leaves the main file as it
+ * was, so checkpoint everything into the main file first and require that
+ * nothing is left behind.
+ */
+function dbSnapshot(file: string): string {
+  const db = new Database(file);
+  try {
+    const result = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number };
+    expect(result.busy).toBe(0);
+  } finally {
+    db.close();
+  }
+  const wal = `${file}-wal`;
+  expect(fs.existsSync(wal) ? fs.statSync(wal).size : 0).toBe(0);
+  return sha1(file);
+}
+
+/** Every file named `name` under `dir`, following no symlinks. */
+function filesNamed(dir: string, name: string): string[] {
+  return fs
+    .readdirSync(dir, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name === name)
+    .map((entry) => path.join(entry.parentPath, entry.name));
+}
+
+const sha256 = (text: string): string => createHash("sha256").update(text).digest("hex");
+
+function countRows(table: string): number {
+  const db = openStateDatabase();
+  try {
+    return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
+  } finally {
+    db.close();
+  }
 }
 
 /** A stash with indexed knowledge, planted secrets, a git history, usage, feedback and one improve run. */
@@ -435,7 +475,7 @@ describe("endpoints", () => {
       payload: { content: "proposed-secret-value-0007" },
     });
     const s = await start();
-    const stateBefore = sha1(getStateDbPath());
+    const stateBefore = dbSnapshot(getStateDbPath());
 
     const detail = await data(s, `/api/proposals/${update.id}`);
     expect(detail.diffError).toBeNull();
@@ -455,7 +495,7 @@ describe("endpoints", () => {
       for (const value of leaked) expect(text).not.toContain(value);
     }
     // Reading wrote nothing.
-    expect(sha1(getStateDbPath())).toBe(stateBefore);
+    expect(dbSnapshot(getStateDbPath())).toBe(stateBefore);
   });
 
   test("GET /api/proposals/:id cuts a very large side and says so", async () => {
@@ -559,19 +599,11 @@ describe("secrets and read-only guarantees", () => {
   test("a browse session writes no usage events and leaves state.db and index.db unchanged", async () => {
     await seed();
     const s = await start();
-    const countRows = (table: string): number => {
-      const db = openStateDatabase();
-      try {
-        return (db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n;
-      } finally {
-        db.close();
-      }
-    };
     const before = {
       usage: countRows("usage_events"),
       events: countRows("events"),
-      state: sha1(getStateDbPath()),
-      index: sha1(getDbPath()),
+      state: dbSnapshot(getStateDbPath()),
+      index: dbSnapshot(getDbPath()),
     };
 
     for (const endpoint of ENDPOINTS) await api(s, endpoint);
@@ -581,8 +613,8 @@ describe("secrets and read-only guarantees", () => {
 
     expect(countRows("usage_events")).toBe(before.usage);
     expect(countRows("events")).toBe(before.events);
-    expect(sha1(getStateDbPath())).toBe(before.state);
-    expect(sha1(getDbPath())).toBe(before.index);
+    expect(dbSnapshot(getStateDbPath())).toBe(before.state);
+    expect(dbSnapshot(getDbPath())).toBe(before.index);
   });
 
   test("with no state.db yet, the overview reports it and does not create it", async () => {
@@ -601,7 +633,7 @@ describe("secrets and read-only guarantees", () => {
   });
 });
 
-// ── Proposal accept / reject: the only writes ────────────────────────────────
+// ── Proposal accept / reject ────────────────────────────────────────────────
 
 const NOTES_REWRITE = "---\ndescription: Deploy notes, rewritten\n---\n# Notes\nRewritten by a proposal.\n";
 
@@ -862,7 +894,7 @@ describe("proposal writes", () => {
     await seed();
     const id = propose("lessons/rg");
     const s = await start();
-    const before = { state: sha1(getStateDbPath()), commits: commitCount() };
+    const before = { state: dbSnapshot(getStateDbPath()), commits: commitCount() };
     const path_ = `/api/proposals/${id}/accept`;
     const own = `http://${s.host}:${s.port}`;
 
@@ -906,7 +938,7 @@ describe("proposal writes", () => {
       expect((await write(s, route, { reason: "r", ids: [id] }, { "X-Akm-Ui-Token": null })).status).toBe(401);
     }
 
-    expect(sha1(getStateDbPath())).toBe(before.state);
+    expect(dbSnapshot(getStateDbPath())).toBe(before.state);
     expect(commitCount()).toBe(before.commits);
     expect(fs.existsSync(lessonFile("rg"))).toBe(false);
 
@@ -951,5 +983,592 @@ describe("proposal writes", () => {
     expect((await api(s, `/api/proposals/${id}/accept`)).status).toBe(404);
     expect((await api(s, "/api/proposals/accept")).status).toBe(404);
     expect((await data(s, `/api/proposals/${id}`)).proposal.status).toBe("pending");
+  });
+});
+
+describe("workspace actions", () => {
+  async function writableConfig() {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      engines: { default: { ...config.engines!.default!, apiKey: "$AKM_UI_TEST_KEY" } },
+    });
+  }
+  test("asset navigation resolves indexed relative targets within the owning bundle and keeps fragment selectors", async () => {
+    await seed();
+    const guide = path.join(storage.stashDir, "knowledge", "guide.md");
+    fs.writeFileSync(
+      guide,
+      `${GUIDE}\n## Details\n[notes](notes.md#notes) [missing](missing.md) [unsafe](javascript:bad)\n`,
+    );
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    const result = await data(s, "/api/asset?ref=knowledge/guide");
+    expect(result.links).toEqual({ "notes.md#notes": "stash//knowledge/notes#notes" });
+    expect(result.headings.map((h: Json) => h.slug)).toEqual(["deploy-guide", "details"]);
+  });
+
+  test("search forwards explicit historical and scope controls without recording usage", async () => {
+    await seed();
+    for (const [name, belief, user] of [
+      ["current", "active", "alice"],
+      ["old", "deprecated", "alice"],
+      ["other", "active", "bob"],
+    ]) {
+      fs.writeFileSync(
+        path.join(storage.stashDir, "memories", `${name}.md`),
+        `---\ntitle: Gateway\ndescription: Gateway memory\nbeliefState: ${belief}\nscope:\n  user: ${user}\n---\n# Gateway\nUse the gateway.\n`,
+      );
+    }
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    const current = await data(s, "/api/search?q=gateway&type=memory&scope_user=alice");
+    const historical = await data(s, "/api/search?q=gateway&type=memory&belief=historical&scope_user=alice");
+    const all = await data(s, "/api/search?q=gateway&type=memory&belief=all&scope_user=alice");
+    expect(current.hits.map((h: Json) => h.name)).toEqual(["current"]);
+    expect(historical.hits.map((h: Json) => h.name)).toEqual(["old"]);
+    const direct = await akmSearch({
+      query: "gateway",
+      type: "memory",
+      source: "local",
+      belief: "all",
+      filters: { user: "alice" },
+      readOnly: true,
+    });
+    expect(all.hits.map((h: Json) => h.ref)).toEqual(direct.hits.flatMap((h) => ("ref" in h ? [h.ref] : [])));
+    expect((await api(s, "/api/search?belief=invalid")).status).toBe(400);
+  });
+
+  test("document history is file-scoped, read-only and only accepts returned revision IDs", async () => {
+    await seed();
+    const guide = path.join(storage.stashDir, "knowledge", "guide.md");
+    fs.writeFileSync(guide, `${GUIDE}\nReviewed procedure.\n`);
+    git(storage.stashDir, ["add", "knowledge/guide.md"]);
+    git(storage.stashDir, ["commit", "-qm", "Review guide"]);
+    const s = await start();
+    const indexBefore = dbSnapshot(getDbPath());
+    const stateBefore = dbSnapshot(getStateDbPath());
+    const history = await data(s, "/api/asset/history?ref=knowledge/guide");
+    expect(history.available).toBe(true);
+    expect(history.commits).toHaveLength(2);
+    expect(history.commits[0].subject).toBe("Review guide");
+    const revision = history.commits[0].sha;
+    const selected = await data(s, `/api/asset/history?ref=knowledge/guide&revision=${revision}`);
+    expect(selected.diff.before).toBe(GUIDE);
+    expect(selected.diff.after).toBe(`${GUIDE}\nReviewed procedure.\n`);
+    expect(selected.diff.unified).toContain("+Reviewed procedure.");
+    expect((await api(s, "/api/asset/history?ref=knowledge/guide&revision=HEAD")).status).toBe(400);
+    expect((await data(s, "/api/asset/history?ref=env/prod")).available).toBe(false);
+    expect(dbSnapshot(getDbPath())).toBe(indexBefore);
+    expect(dbSnapshot(getStateDbPath())).toBe(stateBefore);
+    fs.rmSync(path.join(storage.stashDir, ".git"), { recursive: true });
+    expect((await data(s, "/api/asset/history?ref=knowledge/guide")).available).toBe(false);
+  });
+
+  test("feedback enforces CLI reason policy and persists user-attributed tags, counts and ranking effects", async () => {
+    await seed();
+    const s = await start();
+    const missing = await write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "negative" });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toContain("reason");
+    const result = await withEnv({ AKM_EVENT_SOURCE: undefined }, () =>
+      write(s, "/api/feedback", {
+        ref: "stash//knowledge/guide",
+        signal: "positive",
+        reason: "Clear procedure",
+        tags: ["status:tested", "team:platform"],
+      }),
+    );
+    expect(result.status, result.body.error).toBe(200);
+    expect(result.body.data.rankingUpdate.applied).toBe(true);
+    const asset = await data(s, "/api/asset?ref=stash//knowledge/guide");
+    expect(asset.feedback.counts.positive).toBe(2);
+    expect(asset.feedback.history).toContainEqual(
+      expect.objectContaining({
+        signal: "positive",
+        source: "user",
+        reason: "Clear procedure",
+        tags: ["status:tested", "team:platform"],
+      }),
+    );
+    // A reload observes the stored event; no in-memory UI vote store exists.
+    expect((await data(s, "/api/asset?ref=knowledge/guide")).feedback.counts.positive).toBe(2);
+    // An ambient event source (an improve or task run driving the UI) wins over the default, as for every akm child.
+    const ambient = await withEnv({ AKM_EVENT_SOURCE: "improve" }, () =>
+      write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "positive", reason: "Ambient run" }),
+    );
+    expect(ambient.status, ambient.body.error).toBe(200);
+    expect((await data(s, "/api/asset?ref=knowledge/guide")).feedback.history).toContainEqual(
+      expect.objectContaining({ signal: "positive", source: "improve", reason: "Ambient run" }),
+    );
+    writeSandboxConfig({ ...loadConfig(), feedback: { requireReason: false } });
+    expect((await write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "negative" })).status).toBe(200);
+  });
+
+  test("settings save only allowed fields and preserve secrets, unknown values and disabled/default state", async () => {
+    await writableConfig();
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      bundles: {
+        ...config.bundles,
+        stash: {
+          ...config.bundles!.stash!,
+          components: { main: { root: ".", adapter: "akm", writable: true } },
+        },
+      },
+      unrelated: { keep: [1, "two"] },
+    });
+    const s = await start();
+    const changed = await write(s, "/api/bundles/settings", {
+      bundle: "stash",
+      enabled: false,
+      writable: false,
+      componentWritability: { main: false },
+      defaultBundle: "",
+      defaultWriteTarget: "",
+      engines: { default: { apiKey: "[redacted]" } },
+      unrelated: "overwrite attempt",
+    });
+    expect(changed.status, changed.body.error).toBe(200);
+    const saved = JSON.parse(fs.readFileSync(getConfigPath(), "utf8"));
+    expect(saved.bundles.stash).toMatchObject({
+      enabled: false,
+      writable: false,
+      components: { main: { writable: false } },
+    });
+    expect(saved.engines.default.apiKey).toBe("$AKM_UI_TEST_KEY");
+    expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
+    expect(saved.unrelated).toEqual({ keep: [1, "two"] });
+    const listed = await data(s, "/api/bundles");
+    expect(listed.bundles.find((b: Json) => b.name === "stash")).toMatchObject({ enabled: false, writable: false });
+    expect((await write(s, "/api/bundles/settings", { defaultBundle: "missing" })).status).toBe(400);
+    expect((await write(s, "/api/bundles/settings", { bundle: "constructor", enabled: true })).status).toBe(400);
+    expect(
+      (await write(s, "/api/bundles/settings", { bundle: "stash", componentWritability: { constructor: true } }))
+        .status,
+    ).toBe(400);
+    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "" })).status).toBe(200);
+    expect(loadConfig().defaultWriteTarget).toBeUndefined();
+    expect(
+      (await write(s, "/api/bundles/settings", { bundle: "stash", enabled: true, defaultWriteTarget: "stash" })).status,
+    ).toBe(200);
+    expect(loadConfig().defaultWriteTarget).toBe("stash");
+  });
+
+  test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {
+    await writableConfig();
+    const source = path.join(storage.root, "extra");
+    fs.mkdirSync(path.join(source, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(source, "knowledge", "extra.md"), "# Extra\nFirst revision.\n");
+    const s = await start();
+    expect((await write(s, "/api/bundles/add", { source, name: "extra" })).status).toBe(200);
+    expect((await data(s, "/api/bundles")).bundles.map((b: Json) => b.name)).toContain("extra");
+    // The asset view reads a local-dir bundle live from disk, so the update is observed through the index.
+    const indexed = async () =>
+      (await data(s, "/api/search?q=zephyrrevision&bundle=extra")).hits.map((h: Json) => h.ref);
+    fs.writeFileSync(path.join(source, "knowledge", "extra.md"), "# Extra\nUpdated zephyrrevision.\n");
+    expect(await indexed()).toEqual([]);
+    expect((await write(s, "/api/bundles/update", { bundle: "extra" })).status).toBe(200);
+    expect(await indexed()).toEqual(["extra//knowledge/extra"]);
+    expect((await write(s, "/api/bundles/remove", { bundle: "extra" })).status).toBe(400);
+    expect((await write(s, "/api/bundles/remove", { bundle: "extra", confirm: true })).status).toBe(200);
+    expect((await data(s, "/api/bundles")).bundles.map((b: Json) => b.name)).not.toContain("extra");
+    expect(fs.existsSync(path.join(source, "knowledge", "extra.md"))).toBe(true);
+  });
+
+  test("config-affecting actions refuse unrelated sanitizer changes rather than losing legacy credentials", async () => {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({ engines: { default: { ...config.engines!.default!, apiKey: PLANTED_API_KEY } } });
+    const s = await start();
+    const configPath = getConfigPath();
+    const before = fs.readFileSync(configPath, "utf8");
+    for (const action of ["settings", "add", "remove"]) {
+      const result = await write(s, `/api/bundles/${action}`, {
+        bundle: "stash",
+        writable: false,
+        source: storage.stashDir,
+        confirm: true,
+      });
+      expect(result.status).toBe(400);
+      expect(result.body.code).toBe("INVALID_FLAG_VALUE");
+      expect(result.body.error).toContain("sanitizer");
+      expect(result.body.error).not.toContain(PLANTED_API_KEY);
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    }
+    // A settings request that changes nothing writes nothing, so it is not refused.
+    const noop = await write(s, "/api/bundles/settings", {});
+    expect(noop.status, noop.body.error).toBe(200);
+    expect(noop.body.data).toEqual({ saved: false });
+    // `bundle update` writes only the lockfile, so the config guard does not apply.
+    const update = await write(s, "/api/bundles/update", { bundle: "stash" });
+    expect(update.status, update.body.error).toBe(200);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+  });
+
+  test("local settings preserve inherited configuration and do not flatten the effective config", async () => {
+    await writableConfig();
+    const configPath = getConfigPath();
+    const basePath = path.join(path.dirname(configPath), "shared.json");
+    fs.writeFileSync(
+      basePath,
+      JSON.stringify({ configVersion: "0.9.0", inheritedExtra: { keep: true }, archiveRetentionDays: 17 }),
+    );
+    writeSandboxConfig({ extends: "./shared.json" });
+    const s = await start();
+    const result = await write(s, "/api/bundles/settings", { bundle: "stash", writable: false });
+    expect(result.status, result.body.error).toBe(200);
+    const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(saved.extends).toBe("./shared.json");
+    expect(saved.inheritedExtra).toBeUndefined();
+    expect(saved.archiveRetentionDays).toBeUndefined();
+    expect(loadConfig().archiveRetentionDays).toBe(17);
+    expect(JSON.parse(fs.readFileSync(basePath, "utf8")).inheritedExtra).toEqual({ keep: true });
+  });
+
+  test("knowledge creation preserves Markdown through import and refuses overwrites and path escapes", async () => {
+    await writableConfig();
+    const s = await start();
+    const content =
+      "---\ntitle: New knowledge\ncustom: [keep, me]\n---\n# New knowledge\n\n| A | B |\n| --- | --- |\n| one | two |\n";
+    const result = await write(s, "/api/knowledge/create", { bundle: "stash", name: "new", content });
+    expect(result.status).toBe(200);
+    const read = await data(s, "/api/asset?ref=stash//knowledge/new");
+    expect(read.asset.content).toContain("custom:");
+    expect(read.asset.content).toContain("| one | two |");
+    const before = fs.readFileSync(path.join(storage.stashDir, "knowledge", "new.md"), "utf8");
+    expect(
+      (await write(s, "/api/knowledge/create", { bundle: "stash", name: "new", content: "overwrite" })).status,
+    ).toBe(400);
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "new.md"), "utf8")).toBe(before);
+    const escaped = await write(s, "/api/knowledge/create", {
+      bundle: "stash",
+      name: "escape",
+      path: "../../outside",
+      content,
+    });
+    expect(escaped.status).toBe(400);
+    expect(escaped.body).toEqual({
+      ok: false,
+      code: "INVALID_FLAG_VALUE",
+      error: "--path must be a relative directory without '.' or '..' segments.",
+    });
+    expect(filesNamed(storage.root, "escape.md")).toEqual([]);
+  });
+
+  test("the server keeps serving after a child exits without reading a large stdin body", async () => {
+    await writableConfig();
+    const s = await start();
+    const content = "x".repeat(1024 * 1024);
+    const result = await write(s, "/api/knowledge/create", { bundle: "missing", name: "reject", content });
+    expect(result.status).toBe(400);
+    expect((await api(s, "/api/meta")).status).toBe(200);
+  });
+
+  test("knowledge creation and feedback succeed under a legacy literal apiKey and leave config bytes untouched", async () => {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({ ...config, engines: { default: { ...config.engines!.default!, apiKey: PLANTED_API_KEY } } });
+    const configPath = getConfigPath();
+    const before = fs.readFileSync(configPath, "utf8");
+    const s = await start();
+    const result = await write(s, "/api/knowledge/create", {
+      bundle: "stash",
+      name: "literal-key",
+      content: "# Created\n",
+    });
+    expect(result.status, result.body.error).toBe(200);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "literal-key.md"), "utf8")).toContain("# Created");
+    const feedback = await write(s, "/api/feedback", { ref: "knowledge/guide", signal: "positive", reason: "Works" });
+    expect(feedback.status, feedback.body.error).toBe(200);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(fs.readFileSync(configPath, "utf8")).toContain(PLANTED_API_KEY);
+  });
+
+  test("source editing uses live full Markdown, preserves nested targets and rejects stale saves without mutation", async () => {
+    await seed();
+    const file = path.join(storage.stashDir, "knowledge", "review", "guide.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, GUIDE);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    // Deliberately newer than the indexed hash, with formatting the display/serializer must not invent.
+    const live = "---\n# Keep comment\ntitle: 'Live title'\ncustom: [keep, me]\n---\n# Live guide\n\nOriginal body.\n";
+    fs.writeFileSync(file, live);
+    const s = await start();
+    const route = "/api/asset/source?ref=stash//knowledge/review/guide";
+    const source = await data(s, route);
+    expect(source).toMatchObject({ ref: "stash//knowledge/review/guide", type: "knowledge", content: live });
+    expect(source.revision).toBe(createHash("sha256").update(live).digest("hex"));
+    const mtime = fs.statSync(file, { bigint: true }).mtimeNs;
+    const noop = { events: countRows("events"), index: dbSnapshot(getDbPath()) };
+    const unchanged = await write(s, "/api/asset/save", source);
+    expect(unchanged.status, unchanged.body.error).toBe(200);
+    expect(unchanged.body.data.unchanged).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe(live);
+    expect(fs.statSync(file, { bigint: true }).mtimeNs).toBe(mtime);
+    // No event and no reindex. (This filesystem bundle has no commit path, so commits are not asserted.)
+    expect({ events: countRows("events"), index: dbSnapshot(getDbPath()) }).toEqual(noop);
+    const changed = `${live}\nquasarprocedure verified.\n`;
+    expect((await write(s, "/api/asset/save", { ...source, content: changed })).status).toBe(200);
+    const saved = fs.readFileSync(file, "utf8");
+    expect(saved).toContain("# Keep comment\ntitle: 'Live title'\ncustom: [keep, me]");
+    expect(saved).toContain("quasarprocedure verified");
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "guide.md"), "utf8")).toBe(GUIDE);
+    expect((await data(s, "/api/search?q=quasarprocedure")).hits.map((h: Json) => h.ref)).toContain(
+      "knowledge/review/guide",
+    );
+    const indexBefore = dbSnapshot(getDbPath());
+    const stateBefore = dbSnapshot(getStateDbPath());
+    const stale = await write(s, "/api/asset/save", { ...source, content: "Stale draft" });
+    expect(stale.status).toBe(409);
+    expect(stale.body.code).toBe("ASSET_CONTENT_CHANGED");
+    expect(fs.readFileSync(file, "utf8")).toBe(saved);
+    expect(dbSnapshot(getDbPath())).toBe(indexBefore);
+    expect(dbSnapshot(getStateDbPath())).toBe(stateBefore);
+  });
+
+  test("memory editing reuses the writer and refuses unsupported, read-only or redacted source", async () => {
+    await seed();
+    const memory = path.join(storage.stashDir, "memories", "note.md");
+    const credentials = path.join(storage.stashDir, "knowledge", "private-url.md");
+    fs.writeFileSync(memory, "---\ntitle: Memory\n---\n# Memory\nRemember this.\n");
+    const secretSource = "# Private link\n[link](https://user:private-password@example.test/path)\n";
+    fs.writeFileSync(credentials, secretSource);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    const source = await data(s, "/api/asset/source?ref=memories/note");
+    expect(source.type).toBe("memory");
+    expect(
+      (await write(s, "/api/asset/save", { ...source, content: `${source.content}\nUpdated memory.\n` })).status,
+    ).toBe(200);
+    expect(fs.readFileSync(memory, "utf8")).toContain("Updated memory.");
+    const refusals: Array<[string, number, string, string]> = [
+      ["env/prod", 400, "INVALID_FLAG_VALUE", "Only knowledge and memory support source editing in this UI."],
+      [
+        "knowledge/guide#deploy-guide",
+        400,
+        "INVALID_FLAG_VALUE",
+        'Export fragment "#deploy-guide" is not accepted here — drop it from "knowledge/guide#deploy-guide".',
+      ],
+      ["knowledge/missing", 404, "ASSET_NOT_FOUND", "Stash asset not found for ref: knowledge/missing."],
+      [
+        "knowledge/private-url",
+        400,
+        "INVALID_FLAG_VALUE",
+        "This document contains URL credentials hidden by the UI. Edit it outside the UI to preserve those values.",
+      ],
+    ];
+    for (const [ref, status, code, message] of refusals) {
+      const result = await api(s, `/api/asset/source?${new URLSearchParams({ ref })}`);
+      const text = await result.text();
+      expect(text).not.toContain("private-password");
+      expect({ ref, status: result.status, code: JSON.parse(text).code }).toEqual({ ref, status, code });
+      expect(JSON.parse(text).error).toStartWith(message);
+    }
+    const rejected = await write(s, "/api/asset/save", {
+      ref: "stash//knowledge/private-url",
+      revision: createHash("sha256").update(secretSource).digest("hex"),
+      content: "# Replacement\n",
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body).toEqual({
+      ok: false,
+      code: "INVALID_FLAG_VALUE",
+      error:
+        "This document contains URL credentials hidden by the UI. Edit it outside the UI to preserve those values.",
+    });
+    expect(fs.readFileSync(credentials, "utf8")).toBe(secretSource);
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      bundles: { ...config.bundles, stash: { ...config.bundles!.stash!, writable: false } },
+    });
+    // A read-only bundle is a refusal the user can address, not a server failure.
+    const readOnlyRead = await api(s, "/api/asset/source?ref=knowledge/guide");
+    expect(readOnlyRead.status).toBe(409);
+    expect(await readOnlyRead.json()).toEqual({
+      ok: false,
+      code: "INVALID_CONFIG_FILE",
+      error: "source stash is not writable",
+    });
+    const readOnly = await write(s, "/api/asset/save", source);
+    expect(readOnly.status).toBe(409);
+    expect(readOnly.body).toEqual({ ok: false, code: "INVALID_CONFIG_FILE", error: "source stash is not writable" });
+    expect(fs.readFileSync(memory, "utf8")).toContain("Updated memory.");
+  });
+
+  test("a document over the 64 KiB write limit can be saved and created", async () => {
+    await seed();
+    const file = path.join(storage.stashDir, "knowledge", "guide.md");
+    const s = await start();
+    const source = await data(s, "/api/asset/source?ref=knowledge/guide");
+    const content = `${source.content}\n${"A long procedure line.\n".repeat(4000)}`;
+    expect(Buffer.byteLength(content)).toBeGreaterThan(MAX_BODY_BYTES);
+    const saved = await write(s, "/api/asset/save", { ...source, content });
+    expect(saved.status, saved.body?.error).toBe(200);
+    expect(fs.statSync(file).size).toBeGreaterThan(MAX_BODY_BYTES);
+    const created = await write(s, "/api/knowledge/create", { bundle: "stash", name: "large", content });
+    expect(created.status, created.body?.error).toBe(200);
+    expect(fs.statSync(path.join(storage.stashDir, "knowledge", "large.md")).size).toBeGreaterThan(MAX_BODY_BYTES);
+    // Proposal decisions keep the small limit.
+    expect(MAX_DOCUMENT_BODY_BYTES).toBeGreaterThan(MAX_BODY_BYTES);
+  });
+
+  test("saves and creates fail fast with a retryable 409 while another writer holds the lease", async () => {
+    await seed();
+    const s = await start();
+    const source = await data(s, "/api/asset/source?ref=knowledge/guide");
+    const lease = await acquireAssetMutationLease({ purpose: "test-holder", mode: "try" });
+    expect(lease).toBeDefined();
+    try {
+      for (const [route, body] of [
+        ["/api/asset/save", { ...source, content: `${source.content}\nHeld.\n` }],
+        ["/api/knowledge/create", { bundle: "stash", name: "held", content: "# Held\n" }],
+      ] as const) {
+        const held = await write(s, route, body);
+        expect(held.status).toBe(409);
+        expect(held.body).toEqual({
+          ok: false,
+          code: "ASSET_MUTATION_LEASE_HELD",
+          error: "Another akm process or request is writing to the bundle right now. Try again in a moment.",
+        });
+      }
+    } finally {
+      lease?.release();
+    }
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "guide.md"), "utf8")).toBe(GUIDE);
+    expect(fs.existsSync(path.join(storage.stashDir, "knowledge", "held.md"))).toBe(false);
+  });
+
+  test("a save after the document was deleted is refused and does not recreate it", async () => {
+    await seed();
+    const file = path.join(storage.stashDir, "knowledge", "notes.md");
+    const s = await start();
+    const source = await data(s, "/api/asset/source?ref=knowledge/notes");
+    fs.rmSync(file);
+    const result = await write(s, "/api/asset/save", { ...source, content: `${source.content}\nEdited.\n` });
+    expect(result.status).toBe(404);
+    expect(result.body.code).toBe("ASSET_NOT_FOUND");
+    expect(fs.existsSync(file)).toBe(false);
+  });
+
+  test("a symlinked document or directory pointing outside the bundle is neither read nor written", async () => {
+    await seed();
+    const outside = path.join(storage.root, "outside-bundle");
+    fs.mkdirSync(outside, { recursive: true });
+    fs.writeFileSync(path.join(outside, "target.md"), NOTES);
+    fs.symlinkSync(path.join(outside, "target.md"), path.join(storage.stashDir, "knowledge", "linked.md"));
+    fs.symlinkSync(outside, path.join(storage.stashDir, "knowledge", "linkdir"));
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    for (const ref of ["knowledge/linked", "knowledge/linkdir/target"]) {
+      // The indexer does not follow the links, so neither route resolves the target.
+      const read = await api(s, `/api/asset/source?${new URLSearchParams({ ref })}`);
+      expect({ ref, status: read.status, code: ((await read.json()) as Json).code }).toEqual({
+        ref,
+        status: 404,
+        code: "ASSET_NOT_FOUND",
+      });
+      const saved = await write(s, "/api/asset/save", { ref, revision: sha256(NOTES), content: "# Replaced\n" });
+      expect({ ref, status: saved.status, code: saved.body.code }).toEqual({
+        ref,
+        status: 404,
+        code: "ASSET_NOT_FOUND",
+      });
+    }
+    expect(fs.readFileSync(path.join(outside, "target.md"), "utf8")).toBe(NOTES);
+  });
+
+  test("a ref that escapes the bundle is refused by the save route and writes nothing outside", async () => {
+    await seed();
+    const s = await start();
+    for (const ref of ["knowledge/../../escaped", "stash//knowledge/../../../escaped"]) {
+      const result = await write(s, "/api/asset/save", { ref, revision: sha256(""), content: "# Escaped\n" });
+      expect(result.status).toBe(400);
+      expect(result.body).toEqual({
+        ok: false,
+        code: "MISSING_REQUIRED_ARGUMENT",
+        error: "Asset name cannot contain relative path segments.",
+      });
+    }
+    expect(filesNamed(storage.root, "escaped.md")).toEqual([]);
+  });
+
+  test("bundle names that begin with a dash can be updated and removed", async () => {
+    await writableConfig();
+    const source = path.join(storage.root, "dash");
+    fs.mkdirSync(path.join(source, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(source, "knowledge", "dash.md"), "# Dash\n");
+    const s = await start();
+    const added = await write(s, "/api/bundles/add", { source, name: "-dash" });
+    expect(added.status, added.body.error).toBe(200);
+    // Without `--` before the name, the CLI reads it as an unknown flag.
+    const updated = await write(s, "/api/bundles/update", { bundle: "-dash" });
+    expect(updated.status, updated.body.error).toBe(200);
+    expect(updated.body.data.target).toBe("-dash");
+    const removed = await write(s, "/api/bundles/remove", { bundle: "-dash", confirm: true });
+    expect(removed.status, removed.body.error).toBe(200);
+    expect(removed.body.data.removed.id).toBe("-dash");
+    expect((await data(s, "/api/bundles")).bundles.map((b: Json) => b.name)).not.toContain("-dash");
+  });
+
+  test("a child's exit code maps to the CLI contract, and a malformed success is a 500", async () => {
+    await seed();
+    const child = (name: string, script: string) => {
+      const file = path.join(storage.root, `${name}.js`);
+      fs.writeFileSync(file, script);
+      return { argv: [process.execPath, file], via: "checkout" as const };
+    };
+    const fail = (exit: number, code: string) =>
+      child(
+        `exit-${exit}`,
+        `process.stderr.write(${JSON.stringify(`${JSON.stringify({ ok: false, error: `exit ${exit}`, code })}\n`)}); process.exit(${exit});`,
+      );
+    const s = await start();
+    const cases: Array<[ReturnType<typeof child>, number, string]> = [
+      [child("malformed", 'process.stdout.write("not json\\n");'), 500, "INVALID_COMMAND_RESPONSE"],
+      [fail(1, "ASSET_NOT_FOUND"), 404, "ASSET_NOT_FOUND"],
+      [fail(2, "INVALID_FLAG_VALUE"), 400, "INVALID_FLAG_VALUE"],
+      [fail(75, "ASSET_MUTATION_LEASE_HELD"), 409, "ASSET_MUTATION_LEASE_HELD"],
+      [fail(78, "INVALID_CONFIG_FILE"), 409, "INVALID_CONFIG_FILE"],
+      [fail(70, "INTERNAL_ERROR"), 500, "INTERNAL_ERROR"],
+    ];
+    for (const [invocation, status, code] of cases) {
+      const spy = spyOn(akmBin, "resolveAkmInvocation").mockReturnValue(invocation);
+      try {
+        const result = await write(s, "/api/bundles/update", { bundle: "stash" });
+        expect({ child: invocation.argv[1], status: result.status, code: result.body.code }).toEqual({
+          child: invocation.argv[1],
+          status,
+          code,
+        });
+      } finally {
+        spy.mockRestore();
+      }
+    }
+  });
+
+  test("all workspace writes retain header-token, Origin, JSON and finite route guards", async () => {
+    await seed();
+    const s = await start();
+    for (const action of [
+      "feedback",
+      "bundles/add",
+      "bundles/remove",
+      "bundles/update",
+      "bundles/settings",
+      "knowledge/create",
+      "asset/save",
+    ]) {
+      const route = `/api/${action}`;
+      expect((await write(s, `${route}?token=${s.token}`, {}, { "X-Akm-Ui-Token": null })).status).toBe(401);
+      expect((await write(s, route, {}, { Origin: "http://attacker.invalid" })).status).toBe(403);
+      expect((await write(s, route, {}, { "Content-Type": "text/plain" })).status).toBe(415);
+      expect((await api(s, route)).status).toBe(404);
+    }
+    expect((await write(s, "/api/command", { command: "echo unsafe" })).status).toBe(405);
   });
 });

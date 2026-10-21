@@ -102,7 +102,7 @@ export function api(path, query = {}) {
   return request(url, { headers: { "X-Akm-Ui-Token": token ?? "" }, cache: "no-store" });
 }
 
-/** POST `body` as JSON to `path`. Only the proposal accept/reject routes take one; the token goes in the header, never the URL. */
+/** POST `body` as JSON to an explicit action. The token goes in the header, never the URL. */
 export function post(path, body = {}) {
   return request(path, {
     method: "POST",
@@ -235,4 +235,54 @@ export function pretty(value) {
 
 export function percent(part, total) {
   return total > 0 ? Math.round((part / total) * 1000) / 10 : 0;
+}
+
+// ---- unsaved drafts and one-shot status ------------------------------------
+
+let unsaved = false;
+/** The editor marks a draft that leaving the page would lose; the router asks before discarding it. */
+export function setUnsaved(value) {
+  unsaved = value;
+}
+export function hasUnsaved() {
+  return unsaved;
+}
+
+let flash = null;
+/** Show the status a form left before its page re-rendered, once. Called by the router after each render. */
+export function showFlash(root) {
+  const pending = flash;
+  flash = null;
+  const status = pending && root.querySelectorAll(pending.selector)[pending.index]?.querySelector("[data-status]");
+  if (status) mount(status, html`<p role="status" class="text-ok">${pending.message}</p>`);
+}
+
+/** Bind an explicit form action; errors stay beside the user's inputs. */
+export function actionForm(root, selector, action, { after } = {}) {
+  root.querySelectorAll(selector).forEach((form, index) => {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = form.querySelector("[data-status]");
+      const button = event.submitter;
+      let locked = false;
+      if (button) button.disabled = true;
+      if (status) mount(status, html`<p role="status">Working…</p>`);
+      try {
+        const result = await action(form, new FormData(form));
+        const message = result?.saved === false ? "No changes." : "Saved.";
+        if (status) mount(status, html`<p role="status" class="text-ok">${message}</p>`);
+        if (after) after(result);
+        else {
+          flash = { selector, index, message };
+          window.dispatchEvent(new HashChangeEvent("hashchange"));
+        }
+      } catch (error) {
+        // The action may already have happened; the server asks not to repeat it without a reload.
+        locked = error?.code === "INVALID_COMMAND_RESPONSE";
+        if (status) mount(status, html`<p role="alert" class="text-fail">${error.message}</p>`);
+      } finally {
+        if (button && !locked) button.disabled = false;
+      }
+    });
+  });
 }

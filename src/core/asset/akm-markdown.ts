@@ -34,12 +34,16 @@ import { parseFrontmatterBlock, replaceFrontmatterLine, spliceFrontmatterLine } 
  * intended mapping; when it does not (a `type` value that spans several lines,
  * a flow-style `{…}` block), the document is re-serialized instead, as it
  * always used to be. A document with no frontmatter block gets a new one;
- * malformed YAML throws.
+ * malformed YAML throws. An inserted or re-serialized block uses CRLF when
+ * every line break in the document is CRLF, and LF otherwise.
  */
 export function ensureAkmMarkdownType(content: string, type: string, now: Date = new Date()): string {
+  const eol = documentLineEnding(content);
   const block = parseFrontmatterBlock(content);
   if (!block) {
-    return `---\n${serializeFrontmatter({ type, updated: localDateStamp(now) })}\n---\n${content}`;
+    return (
+      `---\n${serializeFrontmatter({ type, updated: localDateStamp(now) })}\n---\n`.replaceAll("\n", eol) + content
+    );
   }
 
   let parsed: unknown;
@@ -73,7 +77,23 @@ export function ensureAkmMarkdownType(content: string, type: string, now: Date =
   const { type: _priorType, ...rest } = data;
   const next: Record<string, unknown> = { type, ...rest };
   if (needsUpdated) next.updated = updated;
-  return `---\n${serializeFrontmatter(next)}\n---\n${block.content}`;
+  return `---\n${serializeFrontmatter(next)}\n---\n`.replaceAll("\n", eol) + block.content;
+}
+
+/**
+ * The exact text `writeAssetToSource` writes for an AKM Markdown asset: the
+ * conformant document from {@link ensureAkmMarkdownType}, ending in a line
+ * break in the document's own line-ending style.
+ */
+export function normalizeAkmMarkdown(content: string, type: string, now: Date = new Date()): string {
+  const authored = ensureAkmMarkdownType(content, type, now);
+  return authored.endsWith("\n") ? authored : authored + documentLineEnding(authored);
+}
+
+/** CRLF only when every line break is CRLF; LF for LF-only, mixed or single-line text. */
+function documentLineEnding(text: string): "\r\n" | "\n" {
+  const breaks = text.split("\n").length - 1;
+  return breaks > 0 && text.split("\r\n").length - 1 === breaks ? "\r\n" : "\n";
 }
 
 /** True when the frontmatter of `text` parses to exactly `intended`. */

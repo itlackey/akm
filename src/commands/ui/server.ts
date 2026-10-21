@@ -11,7 +11,7 @@
  * `Host` header must be the address the server is bound to, which stops a web
  * page from reaching it through DNS rebinding. Static UI files are served
  * without the token and embed no data. Only GET (and HEAD) is accepted, except
- * for the three proposal writes (accept, reject, accept several): a POST to one
+ * for explicit proposal and workspace actions: a POST to one
  * of those must carry the token in the `X-Akm-Ui-Token` header (never the
  * query string), a JSON content type and an `Origin` that is this server's own,
  * so another web page cannot make the browser send one.
@@ -30,6 +30,7 @@ import chartsJs from "../../assets/ui/charts.js" with { type: "text" };
 import configJs from "../../assets/ui/config.js" with { type: "text" };
 import diffJs from "../../assets/ui/diff.js" with { type: "text" };
 import diffViewJs from "../../assets/ui/diff-view.js" with { type: "text" };
+import editorJs from "../../assets/ui/editor.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
 import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
@@ -43,11 +44,20 @@ import { getDirname } from "../../runtime";
 import { handleApiRequest, NO_SUCH_ROUTE, type UiServerInfo } from "./api";
 import { classifyProposalError, handleWriteRequest, matchWriteRoute } from "./proposal-actions";
 import { scrubUrlCredentials } from "./redact";
+import {
+  classifyWorkspaceError,
+  handleWorkspaceAction,
+  matchWorkspaceAction,
+  type WorkspaceAction,
+} from "./workspace-actions";
 
 export const TOKEN_HEADER = "x-akm-ui-token";
 
 /** Largest request body a write route reads. */
 export const MAX_BODY_BYTES = 64 * 1024;
+
+/** Largest body of a route that carries a whole Markdown document (`/api/asset/save`, `/api/knowledge/create`). */
+export const MAX_DOCUMENT_BODY_BYTES = 8 * 1024 * 1024;
 
 const UI_DIR = path.join(getDirname(import.meta.url), "../../assets/ui");
 
@@ -69,6 +79,7 @@ export const EMBEDDED_UI: Record<string, string> = {
   "config.js": configJs as unknown as string,
   "diff-view.js": diffViewJs as unknown as string,
   "diff.js": diffJs as unknown as string,
+  "editor.js": editorJs as unknown as string,
   "lib.js": libJs as unknown as string,
   "markdown.js": markdownJs as unknown as string,
   "overview.js": overviewJs as unknown as string,
@@ -194,11 +205,11 @@ function isJsonContentType(header: string | undefined): boolean {
   return (header ?? "").split(";")[0]?.trim().toLowerCase() === "application/json";
 }
 
-/** The request body as text, or `null` when it is larger than {@link MAX_BODY_BYTES}. */
-function readBody(req: http.IncomingMessage): Promise<string | null> {
+/** The request body as text, or `null` when it is larger than `limit` bytes. */
+function readBody(req: http.IncomingMessage, limit: number): Promise<string | null> {
   return new Promise((resolve, reject) => {
     const declared = Number(req.headers["content-length"]);
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    if (Number.isFinite(declared) && declared > limit) {
       resolve(null);
       return;
     }
@@ -207,7 +218,7 @@ function readBody(req: http.IncomingMessage): Promise<string | null> {
     let tooLarge = false;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) tooLarge = true;
+      if (size > limit) tooLarge = true;
       else chunks.push(chunk);
     });
     req.on("end", () => resolve(tooLarge ? null : Buffer.concat(chunks).toString("utf8")));
@@ -279,7 +290,8 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     const url = new URL(req.url ?? "/", "http://akm-ui.invalid");
     const isApi = url.pathname === "/api" || url.pathname.startsWith("/api/");
 
-    const writeRoute = req.method === "POST" ? matchWriteRoute(url.pathname) : null;
+    const workspace = req.method === "POST" ? matchWorkspaceAction(url.pathname) : null;
+    const writeRoute = req.method === "POST" ? (workspace ? { workspace } : matchWriteRoute(url.pathname)) : null;
     if (writeRoute) {
       await handleWrite(req, res, writeRoute);
       return;
@@ -303,7 +315,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
         res,
         405,
         "METHOD_NOT_ALLOWED",
-        "Only GET is accepted here. akm ui writes only through POST /api/proposals/:id/accept, /reject and /api/proposals/accept.",
+        "Only GET is accepted here. Use an explicit UI action to make changes.",
         {
           Allow: "GET, HEAD",
         },
@@ -321,7 +333,9 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
         sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
       } catch (error) {
         const code = error instanceof AkmError ? error.code : "INTERNAL_ERROR";
-        sendError(req, res, statusFor(error), code, error instanceof Error ? error.message : String(error));
+        // The editor's source read refuses what a save would refuse, with the same status.
+        const status = url.pathname === "/api/asset/source" ? classifyWorkspaceError(error).status : statusFor(error);
+        sendError(req, res, status, code, error instanceof Error ? error.message : String(error));
       }
       return;
     }
@@ -340,11 +354,11 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     res.end(req.method === "HEAD" ? undefined : asset.body);
   }
 
-  /** The three proposal writes. Every check runs before the body is read. */
+  /** Explicit write actions. Every check runs before the body is read. */
   async function handleWrite(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    route: NonNullable<ReturnType<typeof matchWriteRoute>>,
+    route: NonNullable<ReturnType<typeof matchWriteRoute>> | { workspace: WorkspaceAction },
   ): Promise<void> {
     // The header only: a token in the URL ends up in history and logs, and a link can carry it.
     const given = req.headers[TOKEN_HEADER];
@@ -362,9 +376,12 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       sendError(req, res, 415, "UNSUPPORTED_MEDIA_TYPE", "Writes must be sent as Content-Type: application/json.");
       return;
     }
-    const text = await readBody(req);
+    const document =
+      "workspace" in route && (route.workspace === "document-save" || route.workspace === "knowledge-create");
+    const limit = document ? MAX_DOCUMENT_BODY_BYTES : MAX_BODY_BYTES;
+    const text = await readBody(req, limit);
     if (text === null) {
-      sendError(req, res, 413, "BODY_TOO_LARGE", `The request body is larger than ${MAX_BODY_BYTES} bytes.`, {
+      sendError(req, res, 413, "BODY_TOO_LARGE", `The request body is larger than ${limit} bytes.`, {
         Connection: "close",
       });
       return;
@@ -377,10 +394,14 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       return;
     }
     try {
-      const data = await handleWriteRequest(route, body);
+      const data =
+        "workspace" in route
+          ? await handleWorkspaceAction(route.workspace, body)
+          : await handleWriteRequest(route, body);
       sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
     } catch (error) {
-      const { status, code, message } = classifyProposalError(error);
+      const { status, code, message } =
+        "workspace" in route ? classifyWorkspaceError(error) : classifyProposalError(error);
       sendError(req, res, status, code, message);
     }
   }

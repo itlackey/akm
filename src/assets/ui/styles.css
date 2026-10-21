@@ -372,6 +372,21 @@ p {
   padding-left: 20px;
 }
 
+/* Unsaved-draft guard: floats over the page so the editor underneath stays mounted. */
+#unsaved {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  max-width: min(420px, calc(100vw - 32px));
+  margin: 0;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+}
+
+#unsaved p {
+  margin: 0 0 8px;
+}
+
 /* ---- badges ---- */
 .badge {
   display: inline-block;
@@ -1017,6 +1032,8 @@ pre.diff {
 }
 
 input[type="search"],
+input:not([type]),
+textarea,
 select,
 button {
   font: inherit;
@@ -1025,6 +1042,59 @@ button {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 8px 12px;
+}
+
+.form-grid {
+  display: grid;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.form-grid label:not(.check) {
+  display: grid;
+  gap: 4px;
+}
+
+.form-grid input:not([type="checkbox"]),
+.form-grid textarea {
+  width: 100%;
+  min-width: 0;
+}
+
+.form-grid textarea {
+  resize: vertical;
+  font-family: var(--mono);
+}
+
+.form-grid button {
+  justify-self: start;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.scope-controls {
+  flex-basis: 100%;
+}
+
+.asset-inventory > details {
+  margin-top: 16px;
+}
+
+.md [id] {
+  scroll-margin-top: 20px;
+}
+
+.task-item {
+  list-style: none;
+}
+
+.task-item input {
+  margin-right: 8px;
 }
 
 input[type="search"] {

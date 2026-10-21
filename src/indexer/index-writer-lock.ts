@@ -177,7 +177,12 @@ export async function withAssetMutationLease<T>(purpose: string, run: () => Prom
 
   const context = inherited ?? new Set<string>();
   const execute = async (): Promise<T> => {
-    const lease = await acquireAssetMutationLease({ purpose });
+    const lease = await acquireAssetMutationLease({
+      purpose,
+      // #956: say who is in the way instead of waiting silently, as the sync path does.
+      onWait: ({ waitedMs }) =>
+        warn(`waiting for ${describeAssetMutationHolder(lockPath)} — ${Math.round(waitedMs / 1000)}s`),
+    });
     if (!lease) throw new Error(`asset mutation lease unavailable for ${purpose}`);
     context.add(lockPath);
     try {
