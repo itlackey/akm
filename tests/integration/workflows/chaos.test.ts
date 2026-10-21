@@ -719,6 +719,55 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     const unitDump = JSON.stringify(await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(runId)));
     expect(unitDump).not.toContain(FAKE_SECRET);
   });
+
+  test("a `pass_env` value survives in the journaled exec output; an env-asset value is still redacted", async () => {
+    // #1096: pass-through values were added to the redaction set, so a
+    // pass-through `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into
+    // `[REDACTED]/inbox/x`. The documented contract is that they are not redacted.
+    const PASSED = "/pass-env-probe-stash";
+    fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "env", "leak.env"), `FAKE_TOKEN=${FAKE_SECRET}\n`, "utf8");
+    const command = [
+      process.execPath,
+      "-e",
+      'process.stdout.write(process.env.PASS_ENV_PROBE + "/inbox/x " + process.env.FAKE_TOKEN)',
+    ];
+    writeProgram(
+      "pass-env",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: build",
+        "    unit:",
+        "      env: [env/leak]",
+        "      exec:",
+        `        command: ${JSON.stringify(command)}`,
+        "        pass_env: [PASS_ENV_PROBE]",
+        "---",
+        "",
+        "## build",
+        "",
+        "Print both values.",
+        "",
+      ].join("\n"),
+    );
+    const prior = process.env.PASS_ENV_PROBE;
+    process.env.PASS_ENV_PROBE = PASSED;
+    try {
+      const started = await startWorkflowRun("workflows/pass-env", {});
+      const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
+      expect(result.run.status).toBe("completed");
+      const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id));
+      const journaled = JSON.parse(rows[0]?.result_json ?? "null") as string;
+      expect(journaled).toStartWith(`${PASSED}/inbox/x `);
+      expect(journaled).not.toContain(FAKE_SECRET);
+      expect(journaled).toContain("[REDACTED]");
+    } finally {
+      if (prior === undefined) delete process.env.PASS_ENV_PROBE;
+      else process.env.PASS_ENV_PROBE = prior;
+    }
+  });
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

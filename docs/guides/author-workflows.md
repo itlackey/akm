@@ -192,8 +192,9 @@ process.stdout.write(JSON.stringify({ posted: draft.status === "done" }));
 
 The rule: a **unit schema** (`unit.output`) types that unit's result. A
 **step schema** (step-level `output:`) validates the promoted step artifact,
-which for a `map` step is the reducer's result. For a solo step, put `output:`
-under `unit:`.
+which for a `map` step is the reducer's result. On a solo step with no
+`unit.output`, a step-level `output:` is also used as the unit's schema;
+writing it under `unit:` says so explicitly.
 
 An agent that cannot do the work still "succeeds": it returns something that
 fits the schema, such as `status: blocked`, and the step completes. If the run

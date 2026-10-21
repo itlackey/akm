@@ -186,8 +186,11 @@ families) plus the orchestration keys:
   attached context sees upstream data, and how replay hashing gets its exact
   input set — a step re-dispatches only when the slice it actually consumes
   changes.
-- `output` — a JSON Schema for the step's promoted artifact, used on a `map`
-  step to check the reducer's result. A solo step uses `unit.output` instead.
+- `output` — a JSON Schema for the step's promoted artifact. On a `map` step
+  it checks the reducer's result. On any other step that is not a
+  child-`workflow` unit and whose `unit:` declares no `output` of its own, it
+  is also the unit's `output` schema, so the reply is parsed and checked as
+  JSON; `unit.output` is the explicit form.
 - `gate` — optional validation-loop configuration: `max_loops` bounds
   evaluator-optimizer retries (see
   [Gates and verification](#gates-and-verification)). The rubric itself lives

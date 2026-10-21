@@ -1318,7 +1318,6 @@ current files into the index immediately.
 akm bundle update npm:@scope/pkg
 akm bundle update --all
 akm bundle update --all --force   # Force fresh download even if version is unchanged
-akm bundle update --all --yes     # Skip confirmation when an update needs to delete a moved install dir
 akm bundle update npm:@scope/pkg --allow-dangerous-env-keys  # Explicitly approve reviewed dangerous env keys
 ```
 
@@ -1326,8 +1325,8 @@ akm bundle update npm:@scope/pkg --allow-dangerous-env-keys  # Explicitly approv
 | --- | --- |
 | `--all` | Update all managed sources |
 | `--force` | Delete cached extraction before re-downloading |
-| `--allow-dangerous-env-keys` | Permit a staged update containing dangerous environment keys after warning. Without it, an interactive terminal prompts with a default of No; non-interactive use fails closed. This is independent of `--yes`. |
-| `-y`, `--yes` | Skip the confirmation prompt for the rare branch where the resolved content location moved and the previous install directory must be deleted. No effect on a normal refresh, which deletes nothing. |
+| `--allow-dangerous-env-keys` | Permit a staged update containing dangerous environment keys after warning. Without it, an interactive terminal prompts with a default of No; non-interactive use fails closed. |
+| `-y`, `--yes` | Deprecated, no effect. An update no longer asks before deleting the previous install directory of a read-only bundle whose content moved; that directory is a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
 
 The audit examines key names in `.env`-suffixed files under the staged
 component root. Publisher lint suppressions do not bypass it. Rejection or an

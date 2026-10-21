@@ -162,8 +162,8 @@ akm bundle remove my-provider           # By name
 ```
 
 Dangerous keys prompt in a terminal (default: No) and block non-interactive
-updates unless `--allow-dangerous-env-keys` is explicit. `--yes` only approves deletion
-of an obsolete moved install directory; it never approves security findings.
+updates unless `--allow-dangerous-env-keys` is explicit. `--yes` is a deprecated
+no-op on update; it never approves security findings.
 For `--all`, blocked and failed bundles are reported separately and later
 bundles continue. A rejected or failed bundle keeps its prior bytes, lock/config
 state, and search-index generation.

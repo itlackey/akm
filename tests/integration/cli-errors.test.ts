@@ -783,6 +783,9 @@ describe("S11: sectioned root help", () => {
     expect(stderr).toBe("");
     expect(stdout).toContain("--skip-if-locked");
     expect(stdout).toContain("schedule this command");
+    // #1096: --yes stays accepted (no UNKNOWN_FLAG for existing scripts) but does nothing.
+    expect(stdout).toContain("--yes");
+    expect(stdout).toContain("Deprecated, no effect");
   });
 
   test("akm task run --help includes the akm prefix on nested USAGE lines", () => {
