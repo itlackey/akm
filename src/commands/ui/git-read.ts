@@ -141,12 +141,11 @@ export async function readRecentCommits(repoDir: string, limit: number, file?: s
   return commits;
 }
 
-/** Caller supplies an indexed asset path inside this bundle; revisions are commit IDs, never git expressions. */
+/** Caller supplies an indexed asset path inside this bundle and a commit ID it took from {@link readRecentCommits}. */
 export async function readFileRevision(repoDir: string, file: string, sha: string) {
-  if (!/^[a-f0-9]{40}$/.test(sha)) return null;
   const after = await git(repoDir, ["show", `${sha}:${file}`]);
   if (after === null) return null;
   const before = await git(repoDir, ["show", `${sha}^:${file}`]);
   const unified = await git(repoDir, ["show", "--no-ext-diff", "--no-textconv", "--format=", sha, "--", file]);
-  return { before, after, unified: unified ?? "", truncated: false };
+  return { before, after, unified: unified ?? "" };
 }

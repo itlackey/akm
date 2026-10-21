@@ -14,11 +14,11 @@ import {
 } from "../../core/config/config";
 import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { setConfigValue, unsetConfigValue } from "../config-cli";
 import { writeMarkdownAsset } from "../read/knowledge";
 import { readDocumentSource } from "./document-source";
+import { assertWriteLeaseFree, classifyProposalError, type ProposalActionError } from "./proposal-actions";
 import { redactForUi, redactUrlsInText } from "./redact";
 
 export type WorkspaceAction =
@@ -65,23 +65,30 @@ function positional(body: Record<string, unknown>, key: string): string {
 }
 
 function preserveUnrelatedConfig(config = loadConfig()) {
-  if (!isDeepStrictEqual(sanitizeConfigForWrite(config), config)) {
+  if (!isDeepStrictEqual(sanitizeConfigForWrite(config, { quiet: true }), config)) {
     throw new UsageError(
       "AKM's config sanitizer would remove unrelated credentials. Move literal API keys to $VAR or secret:// references and remove registry URL credentials using the CLI before changing bundle configuration in the UI.",
     );
   }
 }
 
+/** The error kind behind each exit code of the CLI contract (`EXIT_CODES`, `src/cli/shared.ts`). */
+const KIND_BY_EXIT: Record<number, AkmErrorKind> = { 1: "not-found", 2: "usage", 75: "transient", 78: "config" };
+
 /** Preserve the CLI's error identity while crossing a process boundary. */
 class CommandError extends AkmError {
   readonly kind: AkmErrorKind;
+  /** Exit 70, a signal or a failed spawn: akm itself failed, not the request. */
+  readonly internal: boolean;
   constructor(
     message: string,
     readonly code: string,
     exitCode: string | number | null | undefined,
   ) {
     super(message);
-    this.kind = exitCode === 2 ? "usage" : exitCode === 75 ? "transient" : exitCode === 1 ? "not-found" : "config";
+    const kind = typeof exitCode === "number" ? KIND_BY_EXIT[exitCode] : undefined;
+    this.internal = kind === undefined;
+    this.kind = kind ?? "config";
   }
   hint() {
     return undefined;
@@ -111,17 +118,32 @@ export function parseCommandResponse(stdout: string, expectedShape: string): unk
   }
 }
 
+/**
+ * HTTP status and code for a failed workspace action. A config refusal (a
+ * read-only bundle, exit 78) is something the user can address: `409`. Exit 70
+ * and anything unclassified stay `500`; the rest map as for proposal decisions.
+ */
+export function classifyWorkspaceError(error: unknown): ProposalActionError {
+  if (error instanceof CommandError && error.internal) return { status: 500, code: error.code, message: error.message };
+  const classified = classifyProposalError(error);
+  return error instanceof AkmError && error.kind === "config" ? { ...classified, status: 409 } : classified;
+}
+
 /** Fixed UI actions use the real CLI, including feedback's argv-dependent tag validation and bundle install audits. */
 async function command(args: string[], input?: string, userFeedback = false): Promise<unknown> {
   const [bin, ...prefix] = resolveAkmInvocation().argv;
+  // Options go before a `--` that ends them, so a positional name may begin with a dash.
+  const end = args.indexOf("--");
+  const argv = end === -1 ? [...args, "--format=json"] : [...args.slice(0, end), "--format=json", ...args.slice(end)];
   return new Promise((resolve, reject) => {
     const child = execFile(
       bin!,
-      [...prefix, ...args, "--format", "json"],
+      [...prefix, ...argv],
       {
         encoding: "utf8",
         maxBuffer: 16 * 1024 * 1024,
-        ...(userFeedback ? { env: { ...process.env, AKM_EVENT_SOURCE: "user" } } : {}),
+        // An ambient event source (an improve or task run) wins, as for every akm child.
+        ...(userFeedback ? { env: { ...process.env, AKM_EVENT_SOURCE: process.env.AKM_EVENT_SOURCE || "user" } } : {}),
       },
       (error, stdout, stderr) => {
         resetConfigCache();
@@ -159,7 +181,6 @@ async function command(args: string[], input?: string, userFeedback = false): Pr
 
 function settings(body: Record<string, unknown>) {
   const result = mutateConfig((current) => {
-    preserveUnrelatedConfig(current);
     let updated = current;
     if (body.bundle !== undefined) {
       const name = text(body, "bundle");
@@ -186,10 +207,17 @@ function settings(body: Record<string, unknown>) {
       const name = body[key].trim();
       if (name && !Object.hasOwn(current.bundles ?? {}, name))
         throw new UsageError(`No configured bundle named "${name}".`);
-      if (!name && getConfigValueSource(key).startsWith("extends:"))
-        throw new UsageError(`The inherited ${key} cannot be unset here; choose a local override.`);
+      const source = name ? "" : getConfigValueSource(key);
+      if (source.startsWith("extends:"))
+        throw new UsageError(
+          `Config key "${key}" is inherited from ${source} and cannot be unset here.`,
+          "TARGET_NOT_UPDATABLE",
+          `Override it locally with "akm config set ${key} <value>", or edit the base file directly.`,
+        );
       updated = name ? setConfigValue(updated, key, name) : unsetConfigValue(updated, key);
     }
+    // Only a write can drop credentials, so a request that changes nothing is never refused.
+    if (updated !== current) preserveUnrelatedConfig(current);
     return updated;
   });
   return { saved: result.written };
@@ -197,7 +225,8 @@ function settings(body: Record<string, unknown>) {
 
 export async function handleWorkspaceAction(action: WorkspaceAction, value: unknown): Promise<unknown> {
   const body = object(value);
-  if (action === "bundle-add" || action === "bundle-remove" || action === "bundle-update") preserveUnrelatedConfig();
+  // `bundle update` writes only the lockfile, so it never passes config through the sanitizer.
+  if (action === "bundle-add" || action === "bundle-remove") preserveUnrelatedConfig();
   switch (action) {
     case "feedback": {
       const signal = text(body, "signal");
@@ -222,13 +251,13 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
       const name = text(body, "bundle");
       if (!Object.hasOwn(loadConfig().bundles ?? {}, name))
         throw new UsageError(`No configured bundle named "${name}".`);
-      return command(["bundle", "remove", name, "--yes"]);
+      return command(["bundle", "remove", "--yes", "--", name]);
     }
     case "bundle-update": {
       const name = text(body, "bundle");
       if (!Object.hasOwn(loadConfig().bundles ?? {}, name))
         throw new UsageError(`No configured bundle named "${name}".`);
-      return command(["bundle", "update", name]);
+      return command(["bundle", "update", "--", name]);
     }
     case "bundle-settings":
       return settings(body);
@@ -237,32 +266,33 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
       const content = body.content;
       const revision = text(body, "revision");
       const ref = text(body, "ref");
-      return withAssetMutationLease("ui-document-save", async () => {
-        const source = await readDocumentSource(ref);
-        const identity = parseRefInput(source.ref);
-        const result = await writeMarkdownAsset({
-          type: source.type,
-          content,
-          name: identity.name,
-          fallbackPrefix: source.type,
-          target: identity.origin,
-          force: true,
-          expectedContentHash: revision,
-        });
-        if (!result.unchanged)
-          appendEvent({
-            eventType: source.type === "knowledge" ? "import" : "remember",
-            ref: result.ref,
-            metadata: { source: "ui", path: result.path, force: true },
-          });
-        return result;
+      await assertWriteLeaseFree("ui-document-save");
+      // The writer takes the lease and compares `revision` with the live bytes inside it.
+      const source = await readDocumentSource(ref);
+      const identity = parseRefInput(source.ref);
+      const result = await writeMarkdownAsset({
+        type: source.type,
+        content,
+        name: identity.name,
+        fallbackPrefix: source.type,
+        target: identity.origin,
+        force: true,
+        expectedContentHash: revision,
       });
+      if (!result.unchanged)
+        appendEvent({
+          eventType: source.type === "knowledge" ? "import" : "remember",
+          ref: result.ref,
+          metadata: { source: "ui", path: result.path, force: true },
+        });
+      return result;
     }
     case "knowledge-create": {
       if (typeof body.content !== "string" || !body.content.trim())
         throw new UsageError("Document content is required.");
       const args = ["import", "-", `--name=${text(body, "name")}`, `--bundle=${text(body, "bundle")}`];
       if (typeof body.path === "string" && body.path.trim()) args.push(`--path=${body.path.trim()}`);
+      await assertWriteLeaseFree("ui-knowledge-create");
       return command(args, body.content);
     }
   }

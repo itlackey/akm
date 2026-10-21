@@ -15,6 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
+import { normalizeAkmMarkdown } from "../../core/asset/akm-markdown";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../../core/asset/asset-create";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { assembleAsset } from "../../core/asset/asset-serialize";
@@ -688,11 +689,13 @@ interface MarkdownAssetWriteResult {
   superseded?: Array<{ ref: string; applied: boolean; reason?: string }>;
 }
 
-export function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Promise<MarkdownAssetWriteResult> {
-  return withAssetMutationLease("markdown-write", () => writeMarkdownAssetWithLease(options));
-}
-
-async function writeMarkdownAssetWithLease(options: MarkdownAssetWriteOptions): Promise<MarkdownAssetWriteResult> {
+export async function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Promise<MarkdownAssetWriteResult> {
+  if (options.expectedContentHash !== undefined && !/^[0-9a-f]{64}$/.test(options.expectedContentHash)) {
+    throw new UsageError(
+      "The expected content hash must be a lowercase hex SHA-256 digest (64 characters).",
+      "INVALID_FLAG_VALUE",
+    );
+  }
   const cfg = loadConfig();
   // `--name` is the flat asset name; `--path` is the subdirectory under the
   // type root. Combine them into the nested name the path resolver expects.
@@ -708,18 +711,9 @@ async function writeMarkdownAssetWithLease(options: MarkdownAssetWriteOptions): 
   const { target } = resolved;
   const { source, config } = target;
   const typeRoot = path.join(source.path, options.type === "knowledge" ? "knowledge" : "memories");
-  // Pre-flight: existence + force semantics. The helper itself overwrites
-  // unconditionally; the CLI surfaces a friendlier UsageError before any
-  // disk activity when --force is absent.
   const assetPath = assetPathForName(options.type, typeRoot, normalizedName);
   if (!isWithin(assetPath, typeRoot)) {
     throw new UsageError(`Resolved ${options.type} path escapes the stash: "${normalizedName}"`);
-  }
-  if (fs.existsSync(assetPath) && !options.force) {
-    throw new UsageError(
-      `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
-      "RESOURCE_ALREADY_EXISTS",
-    );
   }
   // A correction cannot supersede ITSELF. Under `--force` the ref resolves to
   // the very file this command is about to overwrite, and the demotion would
@@ -736,94 +730,122 @@ async function writeMarkdownAssetWithLease(options: MarkdownAssetWriteOptions): 
     }
   }
 
-  if (options.expectedContentHash !== undefined) {
-    let existing: Buffer | undefined;
-    try {
-      existing = fs.readFileSync(assetPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-    if (!existing || createHash("sha256").update(existing).digest("hex") !== options.expectedContentHash) {
+  // The lease covers only what reads or changes authored files: the existence
+  // and revision checks, the write, the demotions and the boundary commit. The
+  // commit pushes inside the lease on purpose: a push from a writer that has
+  // released it would race the next writer's commit on the same branch (the
+  // conflicting-commit hazard the lease exists for), and the sync write path
+  // (`withWriteTargetMutation`) draws the same boundary. Indexing is a
+  // regenerable cache and runs after release.
+  const written = await withAssetMutationLease("markdown-write", async () => {
+    // Pre-flight: existence + force semantics. The helper itself overwrites
+    // unconditionally; the CLI surfaces a friendlier UsageError before any
+    // disk activity when --force is absent.
+    if (fs.existsSync(assetPath) && !options.force) {
       throw new UsageError(
-        "The document changed or was removed after it was loaded. Reload its source before saving.",
-        "ASSET_CONTENT_CHANGED",
+        `${options.type === "knowledge" ? "Knowledge" : "Memory"} "${normalizedName}" already exists. Re-run with --force to overwrite it.`,
+        "RESOURCE_ALREADY_EXISTS",
       );
     }
-    if (existing.equals(Buffer.from(options.content, "utf8")) && !options.supersedes?.length) {
-      return { ref: resolved.displayRef, path: assetPath, stashDir: source.path, unchanged: true };
-    }
-  }
-  const result = await writeAssetToSource(source, config, resolved.ref, options.content);
-  const durableRef = result.ref;
-  result.ref = resolved.displayRef;
-  // SPEC-5 (--supersedes): demote each superseded asset by mutating its
-  // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
-  // every other key and the body are preserved). Ordered BEFORE
-  // commitWriteTargetBoundary so a git target batches the correction and the
-  // demoted incumbent into the single boundary commit instead of leaving the
-  // metadata edit as dirty residue after it.
-  const superseded: Array<{ ref: string; applied: boolean; reason?: string }> = [];
-  const demotedByRoot = new Map<string, string[]>();
-  for (const item of options.supersedes ?? []) {
-    if (!item.writable) {
-      const reason = item.reason ?? "target is not writable";
-      warn(
-        `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
-          "The correction was written and cites it in xrefs; demote the old asset where it is writable.",
-      );
-      superseded.push({ ref: item.ref, applied: false, reason });
-      continue;
-    }
-    // The demotion round-trips the old file's frontmatter through the YAML
-    // parser. A malformed block would silently fall back to the lossy lenient
-    // scanner and re-serializing that result destroys list/nested values —
-    // skip instead of rewriting, mirroring mergeXrefsIntoContent's
-    // abort-on-malformed policy (the correction itself still writes).
-    let oldFrontmatter: string | null = null;
-    try {
-      oldFrontmatter = parseFrontmatter(fs.readFileSync(item.filePath, "utf8")).frontmatter;
-    } catch {
-      // Unreadable file — let writeSupersededEdge surface the real fs error.
-    }
-    if (oldFrontmatter?.trim() && !isParseableYamlMapping(oldFrontmatter)) {
-      const reason =
-        "its existing frontmatter is not a parseable YAML mapping — rewriting it would drop the values the parser could not read";
-      warn(
-        `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
-          "The correction was written and cites it in xrefs; fix the old asset's frontmatter and re-run the correction with --force.",
-      );
-      superseded.push({ ref: item.ref, applied: false, reason });
-      continue;
-    }
-    // A demotion failure (fs error, concurrent delete, malformed YAML the
-    // pre-check missed) must NOT abort the correction: the new asset is
-    // already on disk, and bailing out here would skip the boundary commit and
-    // the write-path indexing below — leaving the correction unindexed and,
-    // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
-    // Degrade to the same applied:false report the non-writable path uses.
-    try {
-      const sameSource = path.resolve(item.stashRoot) === path.resolve(source.path);
-      writeSupersededEdge(item.filePath, durableRef);
-      if (sameSource) {
-        recordWriteTargetPath(source, item.filePath);
+    if (options.expectedContentHash !== undefined) {
+      let existing: Buffer | undefined;
+      try {
+        existing = fs.readFileSync(assetPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
-    } catch (error) {
-      const reason = `demotion failed: ${error instanceof Error ? error.message : String(error)}`;
-      warn(
-        `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
-          "The correction was written and cites it in xrefs; demote the old asset manually or re-run the correction with --force.",
-      );
-      superseded.push({ ref: item.ref, applied: false, reason });
-      continue;
+      if (!existing || createHash("sha256").update(existing).digest("hex") !== options.expectedContentHash) {
+        throw new UsageError(
+          "The document changed or was removed after it was loaded. Reload its source before saving.",
+          "ASSET_CONTENT_CHANGED",
+        );
+      }
+      // Unchanged when the live bytes are the submission itself (an untouched
+      // document keeps its bytes, missing metadata included) or exactly what
+      // the writer would write for it (e.g. the submission only lacks the
+      // final line break the writer adds).
+      const unchanged =
+        existing.equals(Buffer.from(options.content, "utf8")) ||
+        existing.equals(Buffer.from(normalizeAkmMarkdown(options.content, resolved.ref.type), "utf8"));
+      if (unchanged && !options.supersedes?.length) {
+        return { ref: resolved.displayRef, path: assetPath, stashDir: source.path, unchanged: true as const };
+      }
     }
-    superseded.push({ ref: item.ref, applied: true });
-    const files = demotedByRoot.get(item.stashRoot) ?? [];
-    files.push(item.filePath);
-    demotedByRoot.set(item.stashRoot, files);
-  }
-  // 0.9.0 (issue #507): single batch commit at the write boundary for git
-  // targets. No-op for filesystem/primary-stash targets.
-  commitWriteTargetBoundary(target, `Update ${formatRefForMessage(resolved.ref)}`);
+    const result = await writeAssetToSource(source, config, resolved.ref, options.content);
+    const durableRef = result.ref;
+    result.ref = resolved.displayRef;
+    // SPEC-5 (--supersedes): demote each superseded asset by mutating its
+    // frontmatter (`beliefState: superseded` + sorted-set-append `supersededBy`;
+    // every other key and the body are preserved). Ordered BEFORE
+    // commitWriteTargetBoundary so a git target batches the correction and the
+    // demoted incumbent into the single boundary commit instead of leaving the
+    // metadata edit as dirty residue after it.
+    const superseded: Array<{ ref: string; applied: boolean; reason?: string }> = [];
+    const demotedByRoot = new Map<string, string[]>();
+    for (const item of options.supersedes ?? []) {
+      if (!item.writable) {
+        const reason = item.reason ?? "target is not writable";
+        warn(
+          `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
+            "The correction was written and cites it in xrefs; demote the old asset where it is writable.",
+        );
+        superseded.push({ ref: item.ref, applied: false, reason });
+        continue;
+      }
+      // The demotion round-trips the old file's frontmatter through the YAML
+      // parser. A malformed block would silently fall back to the lossy lenient
+      // scanner and re-serializing that result destroys list/nested values —
+      // skip instead of rewriting, mirroring mergeXrefsIntoContent's
+      // abort-on-malformed policy (the correction itself still writes).
+      let oldFrontmatter: string | null = null;
+      try {
+        oldFrontmatter = parseFrontmatter(fs.readFileSync(item.filePath, "utf8")).frontmatter;
+      } catch {
+        // Unreadable file — let writeSupersededEdge surface the real fs error.
+      }
+      if (oldFrontmatter?.trim() && !isParseableYamlMapping(oldFrontmatter)) {
+        const reason =
+          "its existing frontmatter is not a parseable YAML mapping — rewriting it would drop the values the parser could not read";
+        warn(
+          `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
+            "The correction was written and cites it in xrefs; fix the old asset's frontmatter and re-run the correction with --force.",
+        );
+        superseded.push({ ref: item.ref, applied: false, reason });
+        continue;
+      }
+      // A demotion failure (fs error, concurrent delete, malformed YAML the
+      // pre-check missed) must NOT abort the correction: the new asset is
+      // already on disk, and bailing out here would skip the boundary commit and
+      // the write-path indexing below — leaving the correction unindexed and,
+      // on a git target, uncommitted (and a re-run hits RESOURCE_ALREADY_EXISTS).
+      // Degrade to the same applied:false report the non-writable path uses.
+      try {
+        const sameSource = path.resolve(item.stashRoot) === path.resolve(source.path);
+        writeSupersededEdge(item.filePath, durableRef);
+        if (sameSource) {
+          recordWriteTargetPath(source, item.filePath);
+        }
+      } catch (error) {
+        const reason = `demotion failed: ${error instanceof Error ? error.message : String(error)}`;
+        warn(
+          `Warning: superseded asset ${item.ref} was NOT demoted (${reason}). ` +
+            "The correction was written and cites it in xrefs; demote the old asset manually or re-run the correction with --force.",
+        );
+        superseded.push({ ref: item.ref, applied: false, reason });
+        continue;
+      }
+      superseded.push({ ref: item.ref, applied: true });
+      const files = demotedByRoot.get(item.stashRoot) ?? [];
+      files.push(item.filePath);
+      demotedByRoot.set(item.stashRoot, files);
+    }
+    // 0.9.0 (issue #507): single batch commit at the write boundary for git
+    // targets. No-op for filesystem/primary-stash targets.
+    commitWriteTargetBoundary(target, `Update ${formatRefForMessage(resolved.ref)}`);
+    return { result, superseded, demotedByRoot };
+  });
+  if (written.unchanged) return written;
+  const { result, superseded, demotedByRoot } = written;
   // Write-path indexing: the asset is searchable immediately. Fail-open; reads
   // no longer trigger reindexes, so keeping the index current is the writer's
   // job. Demoted files reindex under their own containing root (usually the

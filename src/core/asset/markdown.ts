@@ -33,7 +33,8 @@ export function markdownFragmentSlugs(content: string): string[] {
   return uniqueHeadingSlugs(parseMarkdownToc(content).headings).filter(Boolean);
 }
 
-function uniqueHeadingSlugs(headings: TocHeading[]): string[] {
+/** One slug per heading, in order; a heading with no sluggable text gets "". */
+export function uniqueHeadingSlugs(headings: TocHeading[]): string[] {
   const used = new Set<string>();
   return headings.map((heading) => {
     const base = markdownHeadingSlug(heading.text);
@@ -55,14 +56,21 @@ export function parseMarkdownToc(content: string): KnowledgeToc {
   const parsed = parseFrontmatter(content);
   const start = parsed.frontmatter ? parsed.bodyStartLine - 1 : 0;
 
-  let inFence = false;
+  // Fenced code blocks follow CommonMark, so headings inside them are skipped:
+  // a fence opens with 3+ backticks or tildes indented at most 3 spaces (a
+  // backtick fence's info string has no backtick) and closes only on a line of
+  // the same character, at least as long, followed by nothing but whitespace.
+  let fence: { char: string; length: number } | undefined;
   for (let i = start; i < lines.length; i++) {
-    // Track fenced code blocks (``` or ~~~) so headings inside them are skipped.
-    if (/^\s*(`{3,}|~{3,})/.test(lines[i]!)) {
-      inFence = !inFence;
+    const [, run = "", rest = ""] = lines[i]!.match(/^ {0,3}(`{3,}|~{3,})(.*)$/) ?? [];
+    if (fence) {
+      if (run[0] === fence.char && run.length >= fence.length && !rest.trim()) fence = undefined;
       continue;
     }
-    if (inFence) continue;
+    if (run && !(run[0] === "`" && rest.includes("`"))) {
+      fence = { char: run[0]!, length: run.length };
+      continue;
+    }
 
     const match = lines[i]!.match(/^(#{1,6})\s+(.+)$/);
     if (match) {

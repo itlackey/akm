@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { parseBundleRef } from "../../core/asset/asset-ref";
-import { markdownFragmentSlugs, markdownHeadingSlug, parseMarkdownToc } from "../../core/asset/markdown";
+import { parseMarkdownToc, uniqueHeadingSlugs } from "../../core/asset/markdown";
 import { markdownLinkTargets } from "../../core/asset/markdown-link-targets";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
@@ -598,7 +598,7 @@ async function asset(query: Query) {
   const durableRef = shown.path ? durableRefForPath(shown.path) : null;
   const content = shown.content ?? "";
   const headings = parseMarkdownToc(content).headings;
-  const slugs = markdownFragmentSlugs(content);
+  const slugs = uniqueHeadingSlugs(headings);
   const links: Record<string, string> = {};
   if (shown.path && durableRef) {
     const owner = parseBundleRef(durableRef).bundle;
@@ -624,7 +624,6 @@ async function asset(query: Query) {
       }
     }
   }
-  let slugIndex = 0;
   return {
     redacted: false,
     durableRef,
@@ -633,10 +632,7 @@ async function asset(query: Query) {
     feedback: feedbackFor(durableRef),
     feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
     links,
-    headings: headings.map((heading) => ({
-      ...heading,
-      slug: markdownHeadingSlug(heading.text) ? slugs[slugIndex++] : "",
-    })),
+    headings: headings.map((heading, i) => ({ ...heading, slug: slugs[i] })),
   };
 }
 

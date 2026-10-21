@@ -975,9 +975,10 @@ export function schedulerSourceIdFor(config: AkmConfig, bundleId: string): strin
  * user knows their key was dropped and how to provide it at runtime (#474).
  * Previously the strip was silent — a user invoking `akm setup --from <file>
  * --yes` with an `apiKey` field expected persistence and got a wiped config
- * with no feedback.
+ * with no feedback. `quiet` skips the warnings for a caller that only asks
+ * whether a write would drop anything and writes nothing itself.
  */
-export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknown> {
+export function sanitizeConfigForWrite(config: AkmConfig, options?: { quiet?: boolean }): Record<string, unknown> {
   const sanitized: Record<string, unknown> = { ...config };
   const stripped: string[] = [];
 
@@ -1009,7 +1010,7 @@ export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknow
     sanitized.engines = engines;
   }
 
-  if (stripped.length > 0) {
+  if (stripped.length > 0 && !options?.quiet) {
     warn(
       `Config sanitizer dropped API key(s) before writing to disk:\n  - ${stripped.join("\n  - ")}\n\nakm does not persist API keys to config.json. Set the listed environment variables to provide them at runtime, or use \`\${VAR}\` references in your config to defer lookup. See docs/reference/data-and-telemetry.md.`,
     );
@@ -1024,9 +1025,10 @@ export function sanitizeConfigForWrite(config: AkmConfig): Record<string, unknow
     });
     if (droppedRegistries.length > 0) {
       sanitized.registries = registries;
-      warn(
-        `Config sanitizer dropped registry entr${droppedRegistries.length === 1 ? "y" : "ies"} with URL credentials before writing to disk:\n  - ${droppedRegistries.join("\n  - ")}\n\nRegistry URLs must be credential-free; configure a credential-free HTTPS endpoint.`,
-      );
+      if (!options?.quiet)
+        warn(
+          `Config sanitizer dropped registry entr${droppedRegistries.length === 1 ? "y" : "ies"} with URL credentials before writing to disk:\n  - ${droppedRegistries.join("\n  - ")}\n\nRegistry URLs must be credential-free; configure a credential-free HTTPS endpoint.`,
+        );
     }
   }
 

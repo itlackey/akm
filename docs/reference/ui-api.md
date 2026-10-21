@@ -27,8 +27,8 @@ release, and nothing outside the page should script against them. Use the CLI's 
 
   Errors raised by akm keep their stable `code` (`PROPOSAL_NOT_FOUND`, `ASSET_NOT_FOUND`, `INVALID_FLAG_VALUE`, ...).
   Status codes: `400` usage error (bad parameter), `401` token, `403` host or origin, `404` not found, `405` method,
-  `409` conflict (writes only), `413` body too large, `415` content type, `503` transient (another akm process holds a
-  lock; retry), `500` anything else. Codes the server itself raises: `UNAUTHORIZED`, `HOST_NOT_ALLOWED`,
+  `409` conflict (writes, and the editor's `/api/asset/source` read), `413` body too large, `415` content type, `503`
+  transient (another akm process holds a lock; retry), `500` anything else. Codes the server itself raises: `UNAUTHORIZED`, `HOST_NOT_ALLOWED`,
   `ORIGIN_NOT_ALLOWED`, `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`, `BODY_TOO_LARGE`, `INVALID_JSON_ARGUMENT`,
   `NOT_FOUND`, `INTERNAL_ERROR`.
 - **Redaction.** Config values under secret-like keys (`apiKey`, `token`, `password`, `secret`, `credential`,
@@ -592,7 +592,8 @@ is always escaped. Heading links use the UI router's `section` parameter.
 Query: `ref` (required, without a fragment). Returns `{ref, type, content, revision}` for an indexed, enabled, writable
 AKM `knowledge` or `memory` file. `content` is the full live UTF-8 source, including frontmatter; `revision` is its
 SHA-256 over raw source bytes, independent of the indexed hash. The same authorized indexed-file resolution used by
-`show` applies. Unsupported adapters, read-only targets, stale target identities and invalid UTF-8 are refused.
+`show` applies. Unsupported adapters, read-only targets, stale target identities and invalid UTF-8 are refused, with the
+statuses of [workspace actions](#workspace-actions): a read-only bundle is `409`, not `500`.
 The UI also refuses source editing when URL redaction would change its contents, so saving never replaces hidden
 credentials with their displayed redactions. This route does not prepare a Git boundary, fetch or write anything.
 
@@ -607,30 +608,44 @@ outside the returned file history are refused. No fetch, restore, rename trackin
 ## Workspace actions
 
 Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same
-Origin, JSON content type and maximum 64 KiB request body. Successful actions refresh the displayed data; failures
-stay beside the inputs. There is no general config editor or command-execution endpoint.
+Origin, JSON content type and a body of at most 64 KiB. The two routes that carry a whole Markdown document,
+`/api/asset/save` and `/api/knowledge/create`, take a body of up to 8 MiB (8388608 bytes); a larger one is
+`413 BODY_TOO_LARGE`. Successful actions refresh the displayed data; failures stay beside the inputs. There is no
+general config editor or command-execution endpoint.
 
 | `POST` route | Body and existing operation |
 | --- | --- |
-| `/api/feedback` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[]}` → `akm feedback`. The canonical indexed ref is used; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Explicit submissions are user-attributed and retain existing ranking/utility/event effects. No fix, supersession or model flags are exposed. |
+| `/api/feedback` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[]}` → `akm feedback`. The ref is passed to `akm feedback` as given, which resolves it as the CLI does; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Submissions are recorded with source `user` unless the server runs with an `AKM_EVENT_SOURCE` already set (for example under an improve or task run), which wins as it does for every akm child; they retain existing ranking/utility/event effects. Feedback does not save config, so it works under a config that still holds a literal API key. No fix, supersession or model flags are exposed. |
 | `/api/bundles/add` | `{source, name?, writable?}` → `akm bundle add`, including source validation and installation audit. Existing provider restrictions apply; no dangerous-key or insecure-transport bypass is exposed. |
-| `/api/bundles/update` | `{bundle}` → `akm bundle update <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
-| `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove <bundle> --yes`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
+| `/api/bundles/update` | `{bundle}` → `akm bundle update -- <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
+| `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove --yes -- <bundle>`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}, defaultBundle?, defaultWriteTarget?}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Defaults take existing names or `""` to unset a local value; inherited values cannot be unset locally. Existing validation rejects invalid defaults, disabled targets and writable npm/website sources. |
-| `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. |
-| `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. Under the existing reentrant mutation lease, the writer compares the live source immediately before writing. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a missing source is refused rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing, recording an event or committing. Changed saves retain normal writer validation, indexing and Git effects. |
+| `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. Fails fast with `409 ASSET_MUTATION_LEASE_HELD` while another writer holds the asset-mutation lease. |
+| `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 
 Configuration-affecting actions do not round-trip the redacted API configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`secret://` credential references. If the existing
-config sanitizer would remove unrelated legacy literal credentials, the UI refuses the action and asks the user to
-correct those settings through the CLI first. It never writes `"[redacted]"` back as a credential. Knowledge creation
-and document editing do not save config, so they do not use that config-sanitizer check.
+config sanitizer would remove unrelated legacy literal credentials, a bundle add or remove, or a settings change that
+would write config, is refused with `400 INVALID_FLAG_VALUE` and the user is asked to correct those settings through
+the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes
+`"[redacted]"` back as a credential. Bundle update writes only the lockfile, and feedback, knowledge creation and
+document editing do not save config, so none of them use that config-sanitizer check. Unsetting an inherited
+`defaultBundle` or `defaultWriteTarget` is refused with `400 TARGET_NOT_UPDATABLE`, as `akm config unset` refuses it.
 
 The shared Markdown writer now participates in the existing mutation lease, including CLI import/remember callers;
 omitting the optional expected hash retains their normal write/force behavior. This serializes cooperating AKM
 writers; an external editor does not acquire AKM's lease. There is no lock held while a user edits a draft.
 Untouched source preserves exact bytes, including leading newlines and mixed line endings. Actual edits preserve
 uniform CRLF line endings; the browser normalizes mixed line endings to LF when the text is changed.
+
+Failures keep the `code` the operation raised (for a child command, the code in its JSON error). Statuses:
+
+| Status | When |
+| --- | --- |
+| `400` | A usage error: bad input, or a child that exits `2`. |
+| `404` | Not found: an unknown asset or a deleted source, or a child that exits `1`. |
+| `409` | A refusal the user can address: a stale revision (`ASSET_CONTENT_CHANGED`), a held asset-mutation lease (`ASSET_MUTATION_LEASE_HELD`) or another transient error (a child that exits `75`), or a config refusal such as a read-only bundle (`INVALID_CONFIG_FILE`, or a child that exits `78`). |
+| `500` | A child that exits `70`, is killed or cannot start, any other error akm does not classify, and `INVALID_COMMAND_RESPONSE` below. |
 
 A child command that exits zero without a valid expected JSON result returns `500 INVALID_COMMAND_RESPONSE`.
 Its side effects may already have happened; reload before retrying. The UI never automatically repeats the action.

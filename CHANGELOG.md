@@ -6,7 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `akm ui` gains explicit write actions beside proposal decisions (#1217): edit
+  an indexed, writable knowledge or memory document's full Markdown source,
+  create knowledge, submit feedback, add, remove and update bundles, change
+  bundle settings, and view a document's Git file history. Each action reuses the
+  CLI operation and its validation, indexing and Git effects. A save is checked
+  against the source's raw-content revision and refused with `409
+  ASSET_CONTENT_CHANGED` if the file changed. Saves and creates answer `409
+  ASSET_MUTATION_LEASE_HELD` at once while another writer holds the lease, and
+  accept bodies up to 8 MiB (other writes stay at 64 KiB). Endpoints and status
+  codes are in `docs/reference/ui-api.md`.
+
 ### Changed
+
+- The shared Markdown writer behind `akm import` and `akm remember` now takes the
+  asset-mutation lease, so it waits for other akm writers instead of racing them
+  (#1217). It also accepts an optional expected content hash, which the UI's
+  editor uses to refuse a stale save. CLI writes without a hash behave as before.
 
 - Curate withholds context for exact whole-message phrases such as `hello`,
   `thanks, that worked!`, `ok sounds good, go ahead`, `yes`, and `lgtm` (#1201).

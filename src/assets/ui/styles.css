@@ -372,6 +372,21 @@ p {
   padding-left: 20px;
 }
 
+/* Unsaved-draft guard: floats over the page so the editor underneath stays mounted. */
+#unsaved {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  max-width: min(420px, calc(100vw - 32px));
+  margin: 0;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+}
+
+#unsaved p {
+  margin: 0 0 8px;
+}
+
 /* ---- badges ---- */
 .badge {
   display: inline-block;

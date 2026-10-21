@@ -133,7 +133,7 @@ function batchIds(body: unknown): string[] {
  * reject functions would wait up to ten minutes for it, which in a browser is a
  * hung button; the probe turns a held lease into an immediate, retryable 409.
  */
-async function assertWriteLeaseFree(purpose: string): Promise<void> {
+export async function assertWriteLeaseFree(purpose: string): Promise<void> {
   const lease = await acquireAssetMutationLease({ mode: "try", purpose });
   if (!lease) {
     throw new TransientError(

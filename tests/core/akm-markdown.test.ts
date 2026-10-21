@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ensureAkmMarkdownType } from "../../src/core/asset/akm-markdown";
+import { ensureAkmMarkdownType, normalizeAkmMarkdown } from "../../src/core/asset/akm-markdown";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 
 const FIXED_NOW = new Date(2026, 2, 14); // 2026-03-14, local time
@@ -137,6 +137,33 @@ describe("AKM Markdown OKF compatibility", () => {
       ).toBe(crlf(doc(["description: Note", "updated: 2026-01-15", "type: knowledge"])));
       expect(ensureAkmMarkdownType(crlf(doc(["type: Vendor", "updated: 2026-01-15"])), "knowledge", FIXED_NOW)).toBe(
         crlf(doc(["type: knowledge", "updated: 2026-01-15"])),
+      );
+    });
+
+    test("adds a CRLF frontmatter block and final line break to a uniformly CRLF document", () => {
+      expect(normalizeAkmMarkdown("# Title\r\n\r\nBody.", "knowledge", FIXED_NOW)).toBe(
+        "---\r\ntype: knowledge\r\nupdated: 2026-03-14\r\n---\r\n# Title\r\n\r\nBody.\r\n",
+      );
+      const frontmatterCrlf = "---\r\ntype: memory\r\nupdated: 2026-01-15\r\n---\r\nBody.";
+      expect(normalizeAkmMarkdown(frontmatterCrlf, "memory", FIXED_NOW)).toBe(`${frontmatterCrlf}\r\n`);
+      const reserialized = normalizeAkmMarkdown("---\r\n{description: Note}\r\n---\r\nBody.\r\n", "memory", FIXED_NOW);
+      expect(parseFrontmatter(reserialized).data).toEqual({
+        type: "memory",
+        description: "Note",
+        updated: "2026-03-14",
+      });
+      expect(reserialized.replaceAll("\r\n", "")).not.toContain("\n");
+    });
+
+    test("keeps LF for LF and mixed documents", () => {
+      expect(normalizeAkmMarkdown("# Title\n\nBody.", "knowledge", FIXED_NOW)).toBe(
+        "---\ntype: knowledge\nupdated: 2026-03-14\n---\n# Title\n\nBody.\n",
+      );
+      expect(normalizeAkmMarkdown("# Title\r\nLF line\nBody.", "knowledge", FIXED_NOW)).toBe(
+        "---\ntype: knowledge\nupdated: 2026-03-14\n---\n# Title\r\nLF line\nBody.\n",
+      );
+      expect(normalizeAkmMarkdown("Body.\n", "knowledge", FIXED_NOW)).toBe(
+        "---\ntype: knowledge\nupdated: 2026-03-14\n---\nBody.\n",
       );
     });
 

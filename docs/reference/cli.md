@@ -534,12 +534,12 @@ written to a bundle or to config. Refresh reloads existing data; it does not bui
 Explicit actions accept/reject proposals, submit user feedback, manage bundles/configuration, create knowledge and
 edit existing writable AKM knowledge/memory Markdown. They use the existing operations and their validation, indexing
 and Git effects. Editing loads the complete live source and rejects a save if its raw-content revision changed;
-an unchanged save leaves source bytes, modification time and Git history alone. Documents whose URL credentials are
+an unchanged save leaves source bytes and modification time alone and records no event. Documents whose URL credentials are
 hidden by the UI must be edited outside it. Historical restore remains unavailable.
 All write routes need the token in the
 `X-Akm-Ui-Token` header (not the query string), a JSON content type and an `Origin` equal to the server's own address.
 A read is short and the server holds no lock between requests, so browsing never blocks `akm improve`, `akm index` or
-`akm sync`; proposal decisions take the same write lease the CLI takes and answer `409` at once if another process holds it. Secrets are redacted: config values under secret-like keys and URL credentials
+`akm sync`; proposal decisions, document saves and knowledge creation take the same write lease the CLI takes and answer `409` at once if another process holds it. Secrets are redacted: config values under secret-like keys and URL credentials
 are masked, and env and secret assets are shown as a stub, never with their values. The endpoints are documented in
 [ui-api.md](ui-api.md). `--format` has no effect on this command.
 

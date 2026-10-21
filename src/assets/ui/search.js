@@ -4,8 +4,13 @@ import { api, assetHref, badge, emptyState, html, pageHeader } from "./lib.js";
 
 const RESULT_LIMIT = 50;
 
+/** Exactly `values` as options, with `selected` chosen. */
+function choices(values, selected) {
+  return values.map((v) => html`<option value="${v}" ${v === selected ? html`selected` : ""}>${v}</option>`);
+}
+
 function options(values, selected, allLabel) {
-  return html`<option value="">${allLabel}</option>${values.map((v) => html`<option value="${v}" ${v === selected ? html`selected` : ""}>${v}</option>`)}`;
+  return html`<option value="">${allLabel}</option>${choices(values, selected)}`;
 }
 
 function hit(h) {
@@ -63,8 +68,8 @@ export async function render(ctx) {
       <input type="search" name="q" value="${q}" placeholder="Search assets (empty browses the index)" aria-label="Query" autofocus>
       <select name="type" aria-label="Type">${options([...types].sort(), type, "All types")}</select>
       <select name="bundle" aria-label="Bundle">${options(bundleNames, bundle, "All bundles")}</select>
-      <select name="belief" aria-label="Belief state">${options(["current", "all", "historical"], belief, "Current")}</select>
-      <select name="limit" aria-label="Result limit">${options(["50", "100", "200"], limit, "50")}</select>
+      <select name="belief" aria-label="Belief state">${choices(["current", "all", "historical"], belief)}</select>
+      <select name="limit" aria-label="Result limit">${choices(["50", "100", "200"], limit)}</select>
       <details class="scope-controls"><summary>Scope filters</summary><div class="form-grid">${Object.entries(scope).map(([key, value]) => html`<label>${key.slice(6)}<input name="${key}" value="${value}" placeholder="Any"></label>`)}</div></details>
       <button type="submit">Search</button>
     </form>

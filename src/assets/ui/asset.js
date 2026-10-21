@@ -14,7 +14,7 @@ import {
   tableWrap,
   when,
 } from "./lib.js";
-import { markdown, splitFrontmatter } from "./markdown.js";
+import { headingId, markdown, splitFrontmatter } from "./markdown.js";
 
 function linksBlock(links) {
   const groups = Object.entries(links ?? {}).filter(([, kinds]) => kinds && typeof kinds === "object");
@@ -71,7 +71,7 @@ export async function render(ctx) {
       <div class="notice">${data.note}</div>`;
   }
   const asset = data.asset;
-  const { fields, body } = splitFrontmatter(asset.content);
+  const { fields, body, startLine } = splitFrontmatter(asset.content);
   const canonical = data.durableRef ?? asset.ref;
   const headings = (data.headings ?? []).filter((h) => h.slug);
   const historyOpen = ctx.query.get("history") === "1";
@@ -106,7 +106,8 @@ export async function render(ctx) {
       reason.required = data.feedbackRequireReason && signal.value === "negative";
     });
     const section = ctx.query.get("section");
-    if (section) requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView());
+    // ?section= keeps the plain slug; the heading's element id is prefixed.
+    if (section) requestAnimationFrame(() => document.getElementById(headingId(section))?.scrollIntoView());
   });
   return html`${back}${pageHeader(html`<span class="mono wrap">${asset.ref}</span>`)}
     <p class="action-links"><a href="${assetHref(canonical)}&history=1">Document history</a> · <a href="#/new">New knowledge</a>${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html` · <a href="#/edit?ref=${encodeURIComponent(canonical)}">Edit Markdown</a>` : ""}</p>
@@ -123,7 +124,7 @@ export async function render(ctx) {
     ])}</section>
     ${fields.length > 0 ? html`<section><h2>Frontmatter</h2>${tableWrap(html`<table class="fm"><tbody>${fields.map(([k, v]) => html`<tr><th scope="row" class="mono">${k}</th><td class="mono wrap pre-wrap">${v}</td></tr>`)}</tbody></table>`)}</section>` : ""}
     ${headings.length > 1 ? html`<details class="contents" open><summary>On this page</summary><ul>${headings.map((h) => html`<li><a href="${assetHref(canonical)}&section=${encodeURIComponent(h.slug)}">${h.text}</a></li>`)}</ul></details>` : ""}
-    <section><h2>Content</h2>${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings })}</section>
+    <section><h2>Content</h2>${body.trim() === "" ? emptyState("This asset has no body.") : markdown(body, { ref: canonical, bundle: data.bundle, links: data.links, headings: data.headings, startLine })}</section>
     <details><summary>Markdown source</summary><pre class="code">${asset.content ?? ""}</pre></details>
     ${history}
     ${linksBlock(asset.links)}
