@@ -417,9 +417,9 @@ for scripted use.
   them.
 - **`akm ui`** — new in 0.10. A local web UI over the same data
   `akm health`, `akm metrics`, `akm config`, `akm proposal`, `akm search` and
-  `akm show` report. It is read-only except that proposals can be accepted
-  (singly or several at once, one commit) and rejected from it, through the
-  same functions `akm proposal accept` / `reject` call. The command's flags, the page, and the `/api/` JSON the
+  `akm show` report. Browsing is read-only. Explicit feedback, bundle/configuration,
+  knowledge-creation and proposal-decision actions reuse existing AKM operations.
+  Existing-asset editing and historical restore remain unavailable. The command's flags, the page, and the `/api/` JSON the
   page reads (documented in `docs/reference/ui-api.md`) may change in any
   release; do not script against the API. The CLI's JSON output remains the
   scriptable surface.

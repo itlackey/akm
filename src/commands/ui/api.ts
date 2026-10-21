@@ -3,8 +3,8 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The read-only JSON API behind `akm ui`. (The three proposal writes live in
- * `proposal-actions.ts`; nothing in this file writes.) Every handler calls the function the
+ * The read-only JSON API behind `akm ui`. Explicit writes live in
+ * `proposal-actions.ts` and `workspace-actions.ts`; nothing in this file writes. Every handler calls the function the
  * matching CLI command renders (`akmHealth`, `akmMetrics`, `akmSearch`,
  * `akmShowUnified`, the proposal repository, ...), so the UI and the CLI never
  * disagree and there is no second data layer. Documented in
@@ -16,8 +16,11 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 import { parsePositiveIntFlag } from "../../cli/parse-args";
 import { parseBundleRef } from "../../core/asset/asset-ref";
+import { markdownFragmentSlugs, markdownHeadingSlug, parseMarkdownToc } from "../../core/asset/markdown";
+import { markdownLinkTargets } from "../../core/asset/markdown-link-targets";
 import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { resolveStashDir } from "../../core/common";
 import { getConfigValueSource, loadConfig } from "../../core/config/config";
@@ -26,6 +29,7 @@ import { getConfigPath, getDataDir, getDbPath } from "../../core/paths";
 import { getStateDbPath, listPendingStateMigrations } from "../../core/state-db";
 import { DURATION_UNITS, parseDuration } from "../../core/time";
 import { resolveWriteTarget } from "../../core/write-source";
+import { findSourceForPath, resolveSourceEntries } from "../../indexer/search/search-source";
 import { type Database, openDatabase } from "../../storage/database";
 import { listRecentImproveRuns } from "../../storage/repositories/improve-runs-repository";
 import { closeDatabase, openReadonlyExistingDatabase } from "../../storage/repositories/index-connection";
@@ -46,11 +50,11 @@ import { akmMetrics } from "../metrics/metrics-cli";
 import { isRetireProposal, type Proposal, proposalWaitingSince } from "../proposal/proposal-types";
 import { diffLoadedProposal, resolveProposalIdIn } from "../proposal/repository";
 import { validateProposal } from "../proposal/validators/proposals";
-import { akmSearch } from "../read/search";
+import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../read/search";
 import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
-import { readBundleGitStatus, readRecentCommits } from "./git-read";
+import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
 import { isSecretEnvName, redactForUi } from "./redact";
 
 export interface UiServerInfo {
@@ -269,6 +273,13 @@ async function bundles() {
       source: source.source,
       path: source.path ?? null,
       writable: source.writable,
+      enabled: config.bundles?.[source.name]?.enabled !== false,
+      writableSetting: config.bundles?.[source.name]?.writable,
+      components: source.components.map((component) => ({
+        ...component,
+        configured: !!config.bundles?.[source.name]?.components?.[component.name],
+      })),
+      settingsSource: configSource(["bundles", source.name]),
       version: source.version ?? null,
       exists: source.status.exists,
       itemCount: source.itemCount,
@@ -529,6 +540,10 @@ async function search(query: Query) {
     limit: limitParam(query, 20),
     // `--from <name>` narrows to one configured bundle; absent means every local bundle, as `akm search` does.
     source: bundle ?? "local",
+    belief: parseBeliefFilterMode(query.get("belief") || "current"),
+    filters: normalizeScopeFilters(
+      Object.fromEntries(["user", "agent", "run", "channel"].map((key) => [key, query.get(`scope_${key}`) ?? ""])),
+    ),
     readOnly: true,
   });
 }
@@ -580,7 +595,78 @@ async function asset(query: Query) {
   }
   const shown = await akmShowUnified({ ref, readOnly: true });
   const durableRef = shown.path ? durableRefForPath(shown.path) : null;
-  return { redacted: false, durableRef, asset: shown, feedback: feedbackFor(durableRef) };
+  const content = shown.content ?? "";
+  const headings = parseMarkdownToc(content).headings;
+  const slugs = markdownFragmentSlugs(content);
+  const links: Record<string, string> = {};
+  if (shown.path && durableRef) {
+    const owner = parseBundleRef(durableRef).bundle;
+    const db = openReadonlyExistingDatabase(getDbPath());
+    if (db) {
+      try {
+        for (const raw of markdownLinkTargets(content, false)) {
+          if (/^(?:[a-z][a-z0-9+.-]*:|\/\/|#)/i.test(raw)) continue;
+          const [file, fragment] = raw.split("#", 2);
+          if (!file?.toLowerCase().endsWith(".md") || file.startsWith("/")) continue;
+          let decoded: string;
+          try {
+            decoded = decodeURIComponent(file);
+          } catch {
+            continue;
+          }
+          const id = getEntryIdByFilePath(db, path.resolve(path.dirname(shown.path), decoded));
+          const target = id === undefined ? undefined : getItemRefById(db, id);
+          if (target && parseBundleRef(target).bundle === owner) links[raw] = target + (fragment ? `#${fragment}` : "");
+        }
+      } finally {
+        closeDatabase(db);
+      }
+    }
+  }
+  let slugIndex = 0;
+  return {
+    redacted: false,
+    durableRef,
+    bundle: durableRef ? parseBundleRef(durableRef).bundle : null,
+    asset: shown,
+    feedback: feedbackFor(durableRef),
+    feedbackRequireReason: loadConfig().feedback?.requireReason !== false,
+    links,
+    headings: headings.map((heading) => ({
+      ...heading,
+      slug: markdownHeadingSlug(heading.text) ? slugs[slugIndex++] : "",
+    })),
+  };
+}
+
+async function assetHistory(query: Query) {
+  const selected = await asset(query);
+  if (selected.redacted || !selected.asset?.path) return { available: false, commits: [] };
+  const source = findSourceForPath(selected.asset.path, resolveSourceEntries(undefined, loadConfig()));
+  if (!source) return { available: false, commits: [] };
+  const file = path.relative(source.path, selected.asset.path).split(path.sep).join("/");
+  if (file.startsWith("../") || path.isAbsolute(file)) throw new UsageError("Asset path is outside its bundle.");
+  const commits = await readRecentCommits(source.path, limitParam(query, 30), file);
+  const revision = query.get("revision");
+  if (revision && !commits?.some((commit) => commit.sha === revision))
+    throw new UsageError("Choose a revision from this asset's history.");
+  const diff = revision ? await readFileRevision(source.path, file, revision) : null;
+  const before = capSide(diff?.before ?? null);
+  const after = capSide(diff?.after ?? null);
+  return {
+    available: commits !== null,
+    commits: commits ?? [],
+    ...(diff
+      ? {
+          diff: {
+            before: before.text,
+            after: after.text,
+            unified: diff.unified.slice(0, DIFF_SIDE_MAX_CHARS),
+            truncated: before.truncated || after.truncated || diff.unified.length > DIFF_SIDE_MAX_CHARS,
+          },
+        }
+      : {}),
+  };
 }
 
 // ── Routing ──────────────────────────────────────────────────────────────────
@@ -594,6 +680,7 @@ const ROUTES: Record<string, Handler> = {
   "/api/changes": changes,
   "/api/search": search,
   "/api/asset": asset,
+  "/api/asset/history": assetHistory,
 };
 
 const PROPOSAL_ROUTE = /^\/api\/proposals\/([^/]+)$/;

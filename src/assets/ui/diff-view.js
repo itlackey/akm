@@ -137,7 +137,7 @@ function toolbar(mode, model) {
 
 function aligned(model, before, after, state) {
   if (model.same) {
-    return html`<p class="muted">No line differs between the current asset and the proposal${before === after ? "" : ", only line endings or the final newline"}.</p>`;
+    return html`<p class="muted">No line differs between these versions${before === after ? "" : ", only line endings or the final newline"}.</p>`;
   }
   const body =
     state.mode === "inline"

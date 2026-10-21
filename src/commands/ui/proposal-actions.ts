@@ -3,14 +3,14 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * The only writes `akm ui` makes: accept and reject a proposal, and accept
+ * Proposal writes `akm ui` makes: accept and reject a proposal, and accept
  * several at once. Each handler calls the function `akm proposal accept` /
  * `reject` calls, with the arguments the CLI passes, so a UI decision is
  * recorded exactly like a CLI one (same state.db rows, events and commit).
  *
  * The server decides whether a request may reach this module (token header,
  * Origin, content type, body size); see `server.ts`. Everything else in the UI
- * stays read-only and lives in `api.ts`.
+ * is either a read in `api.ts` or an explicit action in `workspace-actions.ts`.
  */
 
 import { AkmError, TransientError, UsageError } from "../../core/errors";

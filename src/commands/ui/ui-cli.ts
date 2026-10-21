@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm ui` — a local web UI, read-only apart from accepting and rejecting proposals, over the same data the CLI reports:
+ * `akm ui` — a local web UI over the same data and explicit operations the CLI offers:
  * health and metrics, bundles, config, the proposal queue, recent changes and
  * search. See `docs/reference/ui-api.md` for the API the page reads.
  */
@@ -30,7 +30,7 @@ export const uiCommand = defineJsonCommand({
   meta: {
     name: "ui",
     description:
-      "Experimental: serve a local web UI (health, bundles, config, proposals, recent changes, search) and open it in your browser. It is read-only except that you can accept and reject proposals in it. The URL carries a per-launch token. Press Ctrl-C to stop.",
+      "Experimental: serve a local web UI for browsing, feedback, bundle management, knowledge creation and proposal decisions. Browsing is read-only; explicit actions use existing AKM operations. The URL carries a per-launch token. Press Ctrl-C to stop.",
   },
   args: {
     port: { type: "string", description: "Port to listen on (default: a random free port)" },
@@ -48,7 +48,7 @@ export const uiCommand = defineJsonCommand({
     const server = await startUiServer({ host, port: parsePort(args.port as string | undefined) });
     if (!isLoopbackBind(host)) {
       warn(
-        `[ui] Listening on ${host}, not just this machine: anyone who can reach it and has the token can read your stash, config and proposals. Keep the URL private.`,
+        `[ui] Listening on ${host}, not just this machine: anyone who can reach it and has the token can read your data and use the UI's write actions. Keep the URL private.`,
       );
     }
     // The URL is the command's output, so it goes to stdout like any other result.

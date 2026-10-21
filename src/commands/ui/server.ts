@@ -11,7 +11,7 @@
  * `Host` header must be the address the server is bound to, which stops a web
  * page from reaching it through DNS rebinding. Static UI files are served
  * without the token and embed no data. Only GET (and HEAD) is accepted, except
- * for the three proposal writes (accept, reject, accept several): a POST to one
+ * for explicit proposal and workspace actions: a POST to one
  * of those must carry the token in the `X-Akm-Ui-Token` header (never the
  * query string), a JSON content type and an `Origin` that is this server's own,
  * so another web page cannot make the browser send one.
@@ -30,6 +30,7 @@ import chartsJs from "../../assets/ui/charts.js" with { type: "text" };
 import configJs from "../../assets/ui/config.js" with { type: "text" };
 import diffJs from "../../assets/ui/diff.js" with { type: "text" };
 import diffViewJs from "../../assets/ui/diff-view.js" with { type: "text" };
+import editorJs from "../../assets/ui/editor.js" with { type: "text" };
 import indexHtml from "../../assets/ui/index.html" with { type: "text" };
 import libJs from "../../assets/ui/lib.js" with { type: "text" };
 import markdownJs from "../../assets/ui/markdown.js" with { type: "text" };
@@ -43,6 +44,7 @@ import { getDirname } from "../../runtime";
 import { handleApiRequest, NO_SUCH_ROUTE, type UiServerInfo } from "./api";
 import { classifyProposalError, handleWriteRequest, matchWriteRoute } from "./proposal-actions";
 import { scrubUrlCredentials } from "./redact";
+import { handleWorkspaceAction, matchWorkspaceAction, type WorkspaceAction } from "./workspace-actions";
 
 export const TOKEN_HEADER = "x-akm-ui-token";
 
@@ -69,6 +71,7 @@ export const EMBEDDED_UI: Record<string, string> = {
   "config.js": configJs as unknown as string,
   "diff-view.js": diffViewJs as unknown as string,
   "diff.js": diffJs as unknown as string,
+  "editor.js": editorJs as unknown as string,
   "lib.js": libJs as unknown as string,
   "markdown.js": markdownJs as unknown as string,
   "overview.js": overviewJs as unknown as string,
@@ -279,7 +282,8 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     const url = new URL(req.url ?? "/", "http://akm-ui.invalid");
     const isApi = url.pathname === "/api" || url.pathname.startsWith("/api/");
 
-    const writeRoute = req.method === "POST" ? matchWriteRoute(url.pathname) : null;
+    const workspace = req.method === "POST" ? matchWorkspaceAction(url.pathname) : null;
+    const writeRoute = req.method === "POST" ? (workspace ? { workspace } : matchWriteRoute(url.pathname)) : null;
     if (writeRoute) {
       await handleWrite(req, res, writeRoute);
       return;
@@ -303,7 +307,7 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
         res,
         405,
         "METHOD_NOT_ALLOWED",
-        "Only GET is accepted here. akm ui writes only through POST /api/proposals/:id/accept, /reject and /api/proposals/accept.",
+        "Only GET is accepted here. Use an explicit UI action to make changes.",
         {
           Allow: "GET, HEAD",
         },
@@ -340,11 +344,11 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
     res.end(req.method === "HEAD" ? undefined : asset.body);
   }
 
-  /** The three proposal writes. Every check runs before the body is read. */
+  /** Explicit write actions. Every check runs before the body is read. */
   async function handleWrite(
     req: http.IncomingMessage,
     res: http.ServerResponse,
-    route: NonNullable<ReturnType<typeof matchWriteRoute>>,
+    route: NonNullable<ReturnType<typeof matchWriteRoute>> | { workspace: WorkspaceAction },
   ): Promise<void> {
     // The header only: a token in the URL ends up in history and logs, and a link can carry it.
     const given = req.headers[TOKEN_HEADER];
@@ -377,7 +381,10 @@ export async function startUiServer(options: UiServerOptions = {}): Promise<UiSe
       return;
     }
     try {
-      const data = await handleWriteRequest(route, body);
+      const data =
+        "workspace" in route
+          ? await handleWorkspaceAction(route.workspace, body)
+          : await handleWriteRequest(route, body);
       sendJson(req, res, 200, { ok: true, data: scrubUrlCredentials(data) });
     } catch (error) {
       const { status, code, message } = classifyProposalError(error);

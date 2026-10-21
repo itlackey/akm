@@ -297,7 +297,7 @@ describe("pages", () => {
     expect(asset).toContain("&lt;b&gt;guide&lt;/b&gt;");
     expect(asset).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
     expect(asset).toContain("&lt;i&gt;code&lt;/i&gt;");
-    expect(asset).toContain('href="#/asset?ref=knowledge%2Fnotes"');
+    expect(asset).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes"');
     expect(asset).toContain("&lt;b&gt;clear&lt;/b&gt;");
     for (const unsafe of ["<script", "<img", "<b>", "<i>", 'href="javascript:']) {
       expect(asset, unsafe).not.toContain(unsafe);
@@ -510,6 +510,28 @@ describe("helpers", () => {
       ],
       body: "body",
     });
+  });
+
+  test("document rendering keeps tables/tasks/code safe and uses indexed links and heading selectors", async () => {
+    const { markdown } = (await load("markdown.js")) as {
+      markdown: (s: string, context: unknown) => Rendered;
+    };
+    const out = markdown(
+      "# Guide\n\n| Step | Status |\n| --- | --- |\n| <script>bad</script> | done |\n\n- [x] Complete\n- [ ] Pending\n\n[notes](notes.md#notes) [local](#guide) [missing](missing.md)\n\n~~~\n# Hidden\n[code](notes.md)\n~~~\n",
+      {
+        ref: "stash//knowledge/guide",
+        links: { "notes.md#notes": "stash//knowledge/notes#notes" },
+        headings: [{ slug: "guide" }],
+      },
+    ).text;
+    expect(out).toContain('<h2 id="guide">Guide</h2>');
+    expect(out).toContain("<table>");
+    expect(out).toContain("&lt;script&gt;bad&lt;/script&gt;");
+    expect(out).toContain('disabled checked aria-label="Complete"');
+    expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fnotes%23notes"');
+    expect(out).toContain('href="#/asset?ref=stash%2F%2Fknowledge%2Fguide&section=guide"');
+    expect(out).not.toContain('href="missing.md"');
+    expect(out).toContain('<pre class="code"><code># Hidden\n[code](notes.md)</code></pre>');
   });
 
   test("chart scales use round steps and the axis ends at or above the data", async () => {

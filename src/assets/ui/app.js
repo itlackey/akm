@@ -1,4 +1,4 @@
-// akm ui client: hash router and shell. Pages are modules that fetch from the read-only JSON API and return markup
+// akm ui client: hash router and shell. Pages read the local JSON API and return markup
 // built with the escaping `html` tag; this file only mounts it.
 
 import { errorState, getMeta, html, initToken, loadingState, mount } from "./lib.js";
@@ -18,6 +18,13 @@ const ROUTES = [
   { name: "changes", label: "Changes", load: () => import("./changes.js"), render: (m, c) => m.render(c) },
   { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
   { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
+  {
+    name: "new",
+    label: "New knowledge",
+    nav: "search",
+    load: () => import("./editor.js"),
+    render: (m, c) => m.render(c),
+  },
 ];
 
 const main = document.getElementById("app");
@@ -87,5 +94,13 @@ async function showMeta() {
 }
 
 window.addEventListener("hashchange", route);
+document.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+    event.preventDefault();
+    if (location.hash.startsWith("#/search")) document.querySelector('input[name="q"]')?.focus();
+    else location.hash = "#/search";
+  }
+});
+document.querySelector("[data-refresh]")?.addEventListener("click", route);
 showMeta();
 route();

@@ -21,7 +21,7 @@ import { createProposal } from "../../../src/commands/proposal/repository";
 import { akmSearch } from "../../../src/commands/read/search";
 import { DIFF_SIDE_MAX_CHARS } from "../../../src/commands/ui/api";
 import { MAX_BODY_BYTES, startUiServer, type UiServer } from "../../../src/commands/ui/server";
-import { resetConfigCache } from "../../../src/core/config/config";
+import { loadConfig, resetConfigCache } from "../../../src/core/config/config";
 import { getDbPath } from "../../../src/core/paths";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { acquireAssetMutationLease } from "../../../src/indexer/index-writer-lock";
@@ -30,7 +30,7 @@ import { recordImproveRun } from "../../../src/storage/repositories/improve-runs
 import { runCliCapture } from "../../_helpers/cli";
 import { makeConfig } from "../../_helpers/factories";
 import { git, makeGitRepo } from "../../_helpers/git";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withEnv, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const PLANTED_API_KEY = "sk-planted-literal-api-key-0001";
 const PLANTED_CONFIG_TOKEN = "tok-planted-config-token-0002";
@@ -601,7 +601,7 @@ describe("secrets and read-only guarantees", () => {
   });
 });
 
-// ── Proposal accept / reject: the only writes ────────────────────────────────
+// ── Proposal accept / reject ────────────────────────────────────────────────
 
 const NOTES_REWRITE = "---\ndescription: Deploy notes, rewritten\n---\n# Notes\nRewritten by a proposal.\n";
 
@@ -951,5 +951,273 @@ describe("proposal writes", () => {
     expect((await api(s, `/api/proposals/${id}/accept`)).status).toBe(404);
     expect((await api(s, "/api/proposals/accept")).status).toBe(404);
     expect((await data(s, `/api/proposals/${id}`)).proposal.status).toBe("pending");
+  });
+});
+
+describe("workspace actions", () => {
+  async function writableConfig() {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      engines: { default: { ...config.engines!.default!, apiKey: "$AKM_UI_TEST_KEY" } },
+    });
+  }
+  test("asset navigation resolves indexed relative targets within the owning bundle and keeps fragment selectors", async () => {
+    await seed();
+    const guide = path.join(storage.stashDir, "knowledge", "guide.md");
+    fs.writeFileSync(
+      guide,
+      `${GUIDE}\n## Details\n[notes](notes.md#notes) [missing](missing.md) [unsafe](javascript:bad)\n`,
+    );
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    const result = await data(s, "/api/asset?ref=knowledge/guide");
+    expect(result.links).toEqual({ "notes.md#notes": "stash//knowledge/notes#notes" });
+    expect(result.headings.map((h: Json) => h.slug)).toEqual(["deploy-guide", "details"]);
+  });
+
+  test("search forwards explicit historical and scope controls without recording usage", async () => {
+    await seed();
+    for (const [name, belief, user] of [
+      ["current", "active", "alice"],
+      ["old", "deprecated", "alice"],
+      ["other", "active", "bob"],
+    ]) {
+      fs.writeFileSync(
+        path.join(storage.stashDir, "memories", `${name}.md`),
+        `---\ntitle: Gateway\ndescription: Gateway memory\nbeliefState: ${belief}\nscope:\n  user: ${user}\n---\n# Gateway\nUse the gateway.\n`,
+      );
+    }
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    const current = await data(s, "/api/search?q=gateway&type=memory&scope_user=alice");
+    const historical = await data(s, "/api/search?q=gateway&type=memory&belief=historical&scope_user=alice");
+    const all = await data(s, "/api/search?q=gateway&type=memory&belief=all&scope_user=alice");
+    expect(current.hits.map((h: Json) => h.name)).toEqual(["current"]);
+    expect(historical.hits.map((h: Json) => h.name)).toEqual(["old"]);
+    const direct = await akmSearch({
+      query: "gateway",
+      type: "memory",
+      source: "local",
+      belief: "all",
+      filters: { user: "alice" },
+      readOnly: true,
+    });
+    expect(all.hits.map((h: Json) => h.ref)).toEqual(direct.hits.flatMap((h) => ("ref" in h ? [h.ref] : [])));
+    expect((await api(s, "/api/search?belief=invalid")).status).toBe(400);
+  });
+
+  test("document history is file-scoped, read-only and only accepts returned revision IDs", async () => {
+    await seed();
+    const guide = path.join(storage.stashDir, "knowledge", "guide.md");
+    fs.writeFileSync(guide, `${GUIDE}\nReviewed procedure.\n`);
+    git(storage.stashDir, ["add", "knowledge/guide.md"]);
+    git(storage.stashDir, ["commit", "-qm", "Review guide"]);
+    const s = await start();
+    const indexBefore = sha1(getDbPath());
+    const stateBefore = sha1(getStateDbPath());
+    const history = await data(s, "/api/asset/history?ref=knowledge/guide");
+    expect(history.available).toBe(true);
+    expect(history.commits).toHaveLength(2);
+    expect(history.commits[0].subject).toBe("Review guide");
+    const revision = history.commits[0].sha;
+    const selected = await data(s, `/api/asset/history?ref=knowledge/guide&revision=${revision}`);
+    expect(selected.diff.before).toBe(GUIDE);
+    expect(selected.diff.after).toBe(`${GUIDE}\nReviewed procedure.\n`);
+    expect(selected.diff.unified).toContain("+Reviewed procedure.");
+    expect((await api(s, "/api/asset/history?ref=knowledge/guide&revision=HEAD")).status).toBe(400);
+    expect((await data(s, "/api/asset/history?ref=env/prod")).available).toBe(false);
+    expect(sha1(getDbPath())).toBe(indexBefore);
+    expect(sha1(getStateDbPath())).toBe(stateBefore);
+    fs.rmSync(path.join(storage.stashDir, ".git"), { recursive: true });
+    expect((await data(s, "/api/asset/history?ref=knowledge/guide")).available).toBe(false);
+  });
+
+  test("feedback enforces CLI reason policy and persists user-attributed tags, counts and ranking effects", async () => {
+    await seed();
+    const s = await start();
+    const missing = await write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "negative" });
+    expect(missing.status).toBe(400);
+    expect(missing.body.error).toContain("reason");
+    const result = await withEnv({ AKM_EVENT_SOURCE: "improve" }, () =>
+      write(s, "/api/feedback", {
+        ref: "stash//knowledge/guide",
+        signal: "positive",
+        reason: "Clear procedure",
+        tags: ["status:tested", "team:platform"],
+      }),
+    );
+    expect(result.status, result.body.error).toBe(200);
+    expect(result.body.data.rankingUpdate.applied).toBe(true);
+    const asset = await data(s, "/api/asset?ref=stash//knowledge/guide");
+    expect(asset.feedback.counts.positive).toBe(2);
+    expect(asset.feedback.history).toContainEqual(
+      expect.objectContaining({
+        signal: "positive",
+        source: "user",
+        reason: "Clear procedure",
+        tags: ["status:tested", "team:platform"],
+      }),
+    );
+    // A reload observes the stored event; no in-memory UI vote store exists.
+    expect((await data(s, "/api/asset?ref=knowledge/guide")).feedback.counts.positive).toBe(2);
+    writeSandboxConfig({ ...loadConfig(), feedback: { requireReason: false } });
+    expect((await write(s, "/api/feedback", { ref: "stash//knowledge/guide", signal: "negative" })).status).toBe(200);
+  });
+
+  test("settings save only allowed fields and preserve secrets, unknown values and disabled/default state", async () => {
+    await writableConfig();
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      bundles: {
+        ...config.bundles,
+        stash: {
+          ...config.bundles!.stash!,
+          components: { main: { root: ".", adapter: "akm", writable: true } },
+        },
+      },
+      unrelated: { keep: [1, "two"] },
+    });
+    const s = await start();
+    const changed = await write(s, "/api/bundles/settings", {
+      bundle: "stash",
+      enabled: false,
+      writable: false,
+      componentWritability: { main: false },
+      defaultBundle: "",
+      defaultWriteTarget: "",
+      engines: { default: { apiKey: "[redacted]" } },
+      unrelated: "overwrite attempt",
+    });
+    expect(changed.status, changed.body.error).toBe(200);
+    const saved = JSON.parse(fs.readFileSync(path.join(storage.configDir, "akm", "config.json"), "utf8"));
+    expect(saved.bundles.stash).toMatchObject({
+      enabled: false,
+      writable: false,
+      components: { main: { writable: false } },
+    });
+    expect(saved.engines.default.apiKey).toBe("$AKM_UI_TEST_KEY");
+    expect(saved.someToken).toBe(PLANTED_CONFIG_TOKEN);
+    expect(saved.unrelated).toEqual({ keep: [1, "two"] });
+    const listed = await data(s, "/api/bundles");
+    expect(listed.bundles.find((b: Json) => b.name === "stash")).toMatchObject({ enabled: false, writable: false });
+    expect((await write(s, "/api/bundles/settings", { defaultBundle: "missing" })).status).toBe(400);
+    expect((await write(s, "/api/bundles/settings", { bundle: "constructor", enabled: true })).status).toBe(400);
+    expect(
+      (await write(s, "/api/bundles/settings", { bundle: "stash", componentWritability: { constructor: true } }))
+        .status,
+    ).toBe(400);
+    expect((await write(s, "/api/bundles/settings", { defaultWriteTarget: "" })).status).toBe(200);
+    expect(loadConfig().defaultWriteTarget).toBeUndefined();
+    expect(
+      (await write(s, "/api/bundles/settings", { bundle: "stash", enabled: true, defaultWriteTarget: "stash" })).status,
+    ).toBe(200);
+    expect(loadConfig().defaultWriteTarget).toBe("stash");
+  });
+
+  test("bundle lifecycle uses real local-source add, update and confirmed remove operations", async () => {
+    await writableConfig();
+    const source = path.join(storage.root, "extra");
+    fs.mkdirSync(path.join(source, "knowledge"), { recursive: true });
+    fs.writeFileSync(path.join(source, "knowledge", "extra.md"), "# Extra\nFirst revision.\n");
+    const s = await start();
+    expect((await write(s, "/api/bundles/add", { source, name: "extra" })).status).toBe(200);
+    expect((await data(s, "/api/bundles")).bundles.map((b: Json) => b.name)).toContain("extra");
+    fs.writeFileSync(path.join(source, "knowledge", "extra.md"), "# Extra\nUpdated revision.\n");
+    expect((await write(s, "/api/bundles/update", { bundle: "extra" })).status).toBe(200);
+    expect((await data(s, "/api/asset?ref=extra//knowledge/extra")).asset.content).toContain("Updated revision");
+    expect((await write(s, "/api/bundles/remove", { bundle: "extra" })).status).toBe(400);
+    expect((await write(s, "/api/bundles/remove", { bundle: "extra", confirm: true })).status).toBe(200);
+    expect((await data(s, "/api/bundles")).bundles.map((b: Json) => b.name)).not.toContain("extra");
+    expect(fs.existsSync(path.join(source, "knowledge", "extra.md"))).toBe(true);
+  });
+
+  test("config-affecting actions refuse unrelated sanitizer changes rather than losing legacy credentials", async () => {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({ engines: { default: { ...config.engines!.default!, apiKey: PLANTED_API_KEY } } });
+    const s = await start();
+    const configPath = path.join(storage.configDir, "akm", "config.json");
+    const before = fs.readFileSync(configPath, "utf8");
+    for (const action of ["settings", "add", "update", "remove"]) {
+      const result = await write(s, `/api/bundles/${action}`, {
+        bundle: "stash",
+        writable: false,
+        source: storage.stashDir,
+        confirm: true,
+      });
+      expect(result.status).toBe(400);
+      expect(result.body.error).toContain("sanitizer");
+      expect(result.body.error).not.toContain(PLANTED_API_KEY);
+      expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    }
+  });
+
+  test("local settings preserve inherited configuration and do not flatten the effective config", async () => {
+    await writableConfig();
+    const configPath = path.join(storage.configDir, "akm", "config.json");
+    const basePath = path.join(storage.configDir, "akm", "shared.json");
+    fs.writeFileSync(
+      basePath,
+      JSON.stringify({ configVersion: "0.9.0", inheritedExtra: { keep: true }, archiveRetentionDays: 17 }),
+    );
+    writeSandboxConfig({ extends: "./shared.json" });
+    const s = await start();
+    const result = await write(s, "/api/bundles/settings", { bundle: "stash", writable: false });
+    expect(result.status, result.body.error).toBe(200);
+    const saved = JSON.parse(fs.readFileSync(configPath, "utf8"));
+    expect(saved.extends).toBe("./shared.json");
+    expect(saved.inheritedExtra).toBeUndefined();
+    expect(saved.archiveRetentionDays).toBeUndefined();
+    expect(loadConfig().archiveRetentionDays).toBe(17);
+    expect(JSON.parse(fs.readFileSync(basePath, "utf8")).inheritedExtra).toEqual({ keep: true });
+  });
+
+  test("knowledge creation preserves Markdown through import and refuses overwrites and path escapes", async () => {
+    await writableConfig();
+    const s = await start();
+    const content =
+      "---\ntitle: New knowledge\ncustom: [keep, me]\n---\n# New knowledge\n\n| A | B |\n| --- | --- |\n| one | two |\n";
+    const result = await write(s, "/api/knowledge/create", { bundle: "stash", name: "new", content });
+    expect(result.status).toBe(200);
+    const read = await data(s, "/api/asset?ref=stash//knowledge/new");
+    expect(read.asset.content).toContain("custom:");
+    expect(read.asset.content).toContain("| one | two |");
+    const before = fs.readFileSync(path.join(storage.stashDir, "knowledge", "new.md"), "utf8");
+    expect(
+      (await write(s, "/api/knowledge/create", { bundle: "stash", name: "new", content: "overwrite" })).status,
+    ).toBe(400);
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "new.md"), "utf8")).toBe(before);
+    expect(
+      (await write(s, "/api/knowledge/create", { bundle: "stash", name: "escape", path: "../../outside", content }))
+        .status,
+    ).toBe(400);
+    expect(
+      (await write(s, "/api/knowledge/create", { bundle: "missing", name: "reject", content: "x".repeat(60_000) }))
+        .status,
+    ).toBe(400);
+    expect((await api(s, "/api/meta")).status).toBe(200);
+  });
+
+  test("all workspace writes retain header-token, Origin, JSON and finite route guards", async () => {
+    await seed();
+    const s = await start();
+    for (const action of [
+      "feedback",
+      "bundles/add",
+      "bundles/remove",
+      "bundles/update",
+      "bundles/settings",
+      "knowledge/create",
+    ]) {
+      const route = `/api/${action}`;
+      expect((await write(s, `${route}?token=${s.token}`, {}, { "X-Akm-Ui-Token": null })).status).toBe(401);
+      expect((await write(s, route, {}, { Origin: "http://attacker.invalid" })).status).toBe(403);
+      expect((await write(s, route, {}, { "Content-Type": "text/plain" })).status).toBe(415);
+      expect((await api(s, route)).status).toBe(404);
+    }
+    expect((await write(s, "/api/command", { command: "echo unsafe" })).status).toBe(405);
   });
 });

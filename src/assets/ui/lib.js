@@ -102,7 +102,7 @@ export function api(path, query = {}) {
   return request(url, { headers: { "X-Akm-Ui-Token": token ?? "" }, cache: "no-store" });
 }
 
-/** POST `body` as JSON to `path`. Only the proposal accept/reject routes take one; the token goes in the header, never the URL. */
+/** POST `body` as JSON to an explicit action. The token goes in the header, never the URL. */
 export function post(path, body = {}) {
   return request(path, {
     method: "POST",
@@ -235,4 +235,27 @@ export function pretty(value) {
 
 export function percent(part, total) {
   return total > 0 ? Math.round((part / total) * 1000) / 10 : 0;
+}
+
+/** Bind an explicit form action; errors stay beside the user's inputs. */
+export function actionForm(root, selector, action, { after } = {}) {
+  for (const form of root.querySelectorAll(selector)) {
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const status = form.querySelector("[data-status]");
+      const button = event.submitter;
+      if (button) button.disabled = true;
+      if (status) mount(status, html`<p role="status">Working…</p>`);
+      try {
+        const result = await action(form, new FormData(form));
+        if (status) mount(status, html`<p role="status" class="text-ok">Saved.</p>`);
+        if (after) after(result);
+        else window.dispatchEvent(new HashChangeEvent("hashchange"));
+      } catch (error) {
+        if (status) mount(status, html`<p role="alert" class="text-fail">${error.message}</p>`);
+      } finally {
+        if (button) button.disabled = false;
+      }
+    });
+  }
 }

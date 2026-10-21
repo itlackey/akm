@@ -21,8 +21,13 @@ export async function render(ctx) {
   const q = ctx.query.get("q") ?? "";
   const type = ctx.query.get("type") ?? "";
   const bundle = ctx.query.get("bundle") ?? "";
+  const belief = ctx.query.get("belief") || "current";
+  const limit = ctx.query.get("limit") || String(RESULT_LIMIT);
+  const scope = Object.fromEntries(
+    ["user", "agent", "run", "channel"].map((key) => [`scope_${key}`, ctx.query.get(`scope_${key}`) ?? ""]),
+  );
   const [result, bundles] = await Promise.all([
-    api("/api/search", { q, type, bundle, limit: RESULT_LIMIT }),
+    api("/api/search", { q, type, bundle, belief, ...scope, limit }),
     api("/api/bundles").catch(() => null),
   ]);
   const types = new Set(Object.keys(bundles?.index?.byType ?? {}));
@@ -46,17 +51,27 @@ export async function render(ctx) {
     for (const select of form.querySelectorAll("select")) select.addEventListener("change", go);
   });
 
-  return html`${pageHeader("Search", "Search your bundles. Browsing here is not counted as usage.")}
+  const groups = new Map();
+  for (const h of result.hits) {
+    const group = h.ref.slice(0, h.ref.lastIndexOf("/")) || h.type;
+    if (!groups.has(group)) groups.set(group, []);
+    groups.get(group).push(h);
+  }
+  return html`${pageHeader("Search", "Search or browse your indexed assets. Browsing is not counted as usage.")}
+    <p class="action-links"><a href="#/new">New knowledge</a> <span class="muted small">· Ctrl/Cmd+K opens search</span></p>
     <form class="search-form" role="search">
-      <input type="search" name="q" value="${q}" placeholder="Search assets (empty lists everything)" aria-label="Query" autofocus>
+      <input type="search" name="q" value="${q}" placeholder="Search assets (empty browses the index)" aria-label="Query" autofocus>
       <select name="type" aria-label="Type">${options([...types].sort(), type, "All types")}</select>
       <select name="bundle" aria-label="Bundle">${options(bundleNames, bundle, "All bundles")}</select>
+      <select name="belief" aria-label="Belief state">${options(["current", "all", "historical"], belief, "Current")}</select>
+      <select name="limit" aria-label="Result limit">${options(["50", "100", "200"], limit, "50")}</select>
+      <details class="scope-controls"><summary>Scope filters</summary><div class="form-grid">${Object.entries(scope).map(([key, value]) => html`<label>${key.slice(6)}<input name="${key}" value="${value}" placeholder="Any"></label>`)}</div></details>
       <button type="submit">Search</button>
     </form>
     ${(result.warnings ?? []).map((w) => html`<div class="notice notice-warn">${w}</div>`)}
     ${
       result.hits.length === 0
         ? emptyState(q ? `No assets match "${q}".` : "No assets found.", result.tip ?? "")
-        : html`<p class="muted">${result.hits.length} ${result.hits.length === 1 ? "result" : "results"}${result.hits.length === RESULT_LIMIT ? ` (the first ${RESULT_LIMIT})` : ""}, ${result.searchMode ?? "search"} mode${result.timing ? `, ${result.timing.totalMs} ms` : ""}.</p><ul class="hits">${result.hits.map(hit)}</ul>`
+        : html`<p class="muted">${result.hits.length} ${result.hits.length === 1 ? "result" : "results"}${result.hits.length === Number(limit) ? ` (first ${limit}; narrow the query or filters for more specific results)` : ""}, ${result.searchMode ?? "search"} mode${result.timing ? `, ${result.timing.totalMs} ms` : ""}.</p>${q ? html`<ul class="hits">${result.hits.map(hit)}</ul>` : html`<div class="asset-inventory">${[...groups].sort(([a], [b]) => a.localeCompare(b)).map(([name, hits]) => html`<details open><summary>${name} <span class="muted">(${hits.length})</span></summary><ul class="hits">${hits.sort((a, b) => a.ref.localeCompare(b.ref)).map(hit)}</ul></details>`)}</div>`}`
     }`;
 }

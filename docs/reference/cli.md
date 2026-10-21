@@ -495,7 +495,7 @@ Notes you may see:
 **Experimental** (see [STABILITY.md](../../STABILITY.md)): the command, the page and the API it reads may change in any
 release.
 
-Serve a local web UI over your whole akm environment and open it in your browser. It is read-only except that you can accept and reject proposals in it: health and metrics, bundles
+Serve a local web UI over your whole akm environment and open it in your browser: health and metrics, bundles
 (with git status and asset counts), the effective config with where each value comes from, the proposal queue with
 diffs, recent changes to the write-target stash, and search with an asset view. Every page reads through the functions
 the matching CLI commands use, so the UI and the CLI report the same numbers.
@@ -503,11 +503,11 @@ the matching CLI commands use, so the UI and the CLI report the same numbers.
 | Page | Shows |
 | --- | --- |
 | Overview | Overall health, failing and warning check counts and the akm version; the health checks grouped by status with expandable evidence; metrics tiles; the last 10 improve runs (result, duration, model calls and failures, sync, triage) with bars; and a 14-day stacked usage chart (search, curate, show, feedback). |
-| Bundles | One card per bundle: kind, path or source, writable, git branch, ahead/behind, last commit time and asset counts by type; plus the index state. |
+| Bundles | Cards including disabled bundles, source, component writability, settings origin, Git and index state. Explicit add, update, confirmed removal, enabled/writable settings and default-bundle/write-target controls use existing AKM operations. |
 | Config | The effective config as a collapsible tree with a `default` / `file` / `extends:<ref>` source badge on every key, the engines table and the `AKM_*` environment. |
 | Proposals | The pending queue grouped by source (filter by source) with age and gate decision, a Recent tab of accepted, rejected and reverted proposals with reasons, and a detail page with the unified diff and, for retirements, the pair judgment. The detail page has Accept (after an inline confirmation) and Reject (with a required reason); the pending list has checkboxes and an Accept selected bar that accepts several in one commit. |
 | Changes | Recent stash commits as a timeline by day, each tagged by origin (`improve-sync`, `accept`, `remember`, `sync`, `other`) with its changed paths. |
-| Search | A query box with type and bundle filters. A result opens the asset view: frontmatter, the body as safe markdown, links, and feedback counts and history. |
+| Search | Search or browse the existing index grouped by path, with type/bundle, current/all/historical and user/agent/run/channel scope controls. Asset detail includes safe Markdown tables/tasks, indexed relative links, heading navigation, source, per-file Git history/diffs and explicit feedback with reasons/tags. New knowledge supports Markdown source and preview through `akm import`, without overwriting existing files. |
 
 The pages are plain HTML, CSS and JavaScript modules in `src/assets/ui/`: no framework, no build step, and no request
 beyond the local server. All text from the API is escaped before it reaches the page.
@@ -530,12 +530,14 @@ the server is bound to, which stops a web page from reaching it through DNS rebi
 
 Browsing is read-only: `state.db` and `index.db` are opened read-only and never created or migrated, searching and
 showing in the UI record no usage events (so browsing is never counted as demand) and build no index, and nothing is
-written to a bundle or to config. The only writes are accepting and rejecting proposals (and accepting several at once),
-through three `POST` routes that call the functions `akm proposal accept` and `reject` call, so a decision made in the
-UI is recorded and committed exactly like one made on the command line. Those routes need the token in the
+written to a bundle or to config. Refresh reloads existing data; it does not build an index or fetch sources.
+Explicit actions accept/reject proposals, submit user feedback, manage bundles/configuration and create knowledge.
+They use the existing operations and their validation, indexing and Git effects. Existing-asset editing and historical
+restore are unavailable: the current writer cannot condition a save on the revision the editor originally loaded.
+All write routes need the token in the
 `X-Akm-Ui-Token` header (not the query string), a JSON content type and an `Origin` equal to the server's own address.
 A read is short and the server holds no lock between requests, so browsing never blocks `akm improve`, `akm index` or
-`akm sync`; a decision takes the same write lease the CLI takes and answers `409` at once if another process holds it. Secrets are redacted: config values under secret-like keys and URL credentials
+`akm sync`; proposal decisions take the same write lease the CLI takes and answer `409` at once if another process holds it. Secrets are redacted: config values under secret-like keys and URL credentials
 are masked, and env and secret assets are shown as a stub, never with their values. The endpoints are documented in
 [ui-api.md](ui-api.md). `--format` has no effect on this command.
 

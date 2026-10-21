@@ -2,8 +2,8 @@
 
 The JSON API behind [`akm ui`](cli.md#ui). The page that `akm ui` serves uses only this API, and everything it
 returns comes from the function the matching CLI command renders, so it never disagrees with the CLI. The API is
-read-only apart from three proposal decisions: [accept](#post-apiproposalsidaccept), [reject](#post-apiproposalsidreject)
-and [accept several](#post-apiproposalsaccept).
+read-only for browsing. Intentional writes use the finite [proposal decision](#deciding-proposals) and
+[workspace action](#workspace-actions) routes below.
 
 **Experimental** (see [STABILITY.md](../../STABILITY.md)). The shapes below are what 0.10 ships; they may change in any
 release, and nothing outside the page should script against them. Use the CLI's `--format json` for that.
@@ -17,8 +17,7 @@ release, and nothing outside the page should script against them. Use the CLI's 
   served without a token and embed no data.
 - **Host.** The `Host` header must be the address the server is bound to (`127.0.0.1:<port>` by default); anything else is
   a `403`. A server bound to a wildcard address (`--host 0.0.0.0`) also accepts IP-literal hosts on its port.
-- **Methods.** `GET` (and `HEAD`) only, except the three `POST` routes under
-  [Deciding proposals](#deciding-proposals-the-only-writes). Anything else is a `405` (after the token check).
+- **Methods.** `GET` (and `HEAD`) only, except the explicit `POST` routes documented below. Anything else is a `405` (after the token check).
 - **Envelope.** Every response is JSON, `Cache-Control: no-store`:
 
   ```json
@@ -37,7 +36,7 @@ release, and nothing outside the page should script against them. Use the CLI's 
   are kept. Credentials inside any URL in any response (userinfo, `token=`, `api_key=`, `sig=`, ...) are masked. Env and
   secret assets are never read; see `/api/asset`.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
-- **Read-only, except the three proposal writes.** Every `GET` opens `state.db` and `index.db` read-only and never
+- **Read-only browsing.** Every `GET` opens `state.db` and `index.db` read-only and never
   creates or migrates them: a missing or behind-on-migrations `state.db` makes the sections that need it empty (and
   `health` report it as a failing check), not an error. Searching and showing record no usage events and build no index.
   Browsing writes nothing to a bundle, config or database.
@@ -194,6 +193,10 @@ fetched, so `ahead`/`behind` are measured against the remote-tracking branch as 
   counts paths with uncommitted changes.
 - `index` mirrors `akm info`'s `indexStats` and `semanticSearch`. `embeddingCoverage` is embeddings over entries
   (`null` for an empty or missing index). `links`, `unavailable` and `unreadable` appear only when `akm info` reports them.
+- Cards also include `enabled`, the raw `writableSetting`, `settingsSource` and existing source `components`
+  (`name`, `root`, `adapter`, optional explicit `writable`, and `configured`). Disabled bundles remain visible.
+  Component overrides take precedence over the bundle writable default. An implicit/detected component is shown
+  without creating new component configuration. Counts describe the existing index; they are not a live file catalog.
 
 ## `GET /api/config`
 
@@ -339,7 +342,7 @@ pending one, or an asset ref (URL-encode it). Unknown: `404` `PROPOSAL_NOT_FOUND
   configured). For a retire proposal `unified` shows the file leaving and `retirement` has the successor.
 - `validation` is the proposal validator's result; it does not run the accept preflight `akm proposal show` adds.
 
-## Deciding proposals (the only writes)
+## Deciding proposals
 
 Three `POST` routes accept or reject proposals. Each calls the function the CLI command calls (`akmProposalAccept`,
 `akmProposalReject`, `akmProposalAcceptMany`) with the arguments the CLI passes, so a decision made here is recorded
@@ -493,6 +496,8 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
 | `q` | The query. Empty lists everything, as `akm search` with no query does; a trailing-slash prefix (`memories/projecta/`) enumerates a subtree. |
 | `type` | Asset type filter (`knowledge`, `skill`, `memory`, ...), exact match. |
 | `bundle` | Narrow to one configured bundle (`akm search --from <name>`). Unknown names are a `400`. |
+| `belief` | `current` (default), `all`, or `historical`, forwarded to the existing search policy. |
+| `scope_user`, `scope_agent`, `scope_run`, `scope_channel` | Existing exact scope filters; blank values are omitted. |
 | `limit` | Maximum hits. Default 20. |
 
 `data` is the search function's own response (what `akm search --format json` shapes down for the terminal), unshaped:
@@ -574,3 +579,41 @@ Recent commits of the write-target stash (`defaultWriteTarget`, else the default
 - **Env and secret assets are never read.** A ref of type `env` or `secret` returns only
   `{ "redacted": true, "type": "env", "ref": "env/prod", "note": "..." }`, with no `asset`, key names or values.
   Use `akm env list` for key names.
+
+The response also supplies `feedbackRequireReason`, the owning `bundle`, `headings` with existing AKM fragment
+selectors, and a `links` map for supported relative inline Markdown links. A relative `.md` target must already be
+indexed in the same bundle. Missing/out-of-bundle paths remain text; no arbitrary-file endpoint is added. Explicit
+cross-bundle refs remain available. Relative images, uploads, universal title/alias resolution and unsupported
+Markdown extensions are not provided. The client renders basic tables and disabled task-list checkboxes; raw HTML
+is always escaped. Heading links use the UI router's `section` parameter.
+
+## `GET /api/asset/history`
+
+Query: `ref` (required), `limit` (default 30, maximum 200), optional `revision` chosen from the returned commit IDs.
+Returns `{available, commits, diff?}` using the same Git summary shape as `/api/changes`, scoped to this file.
+`diff` contains `before`, `after`, `unified`, `truncated`; sides/patches are capped at the existing 512 × 1024 character diff limit.
+History is unavailable for non-Git bundles and protected env/secret assets. Unknown Git expressions or commit IDs
+outside the returned file history are refused. No fetch, restore, rename tracking or additional version store exists.
+
+## Workspace actions
+
+Every route below uses the same write guards as [proposal decisions](#deciding-proposals): token **header**, same
+Origin, JSON content type and maximum 64 KiB request body. Successful actions refresh the displayed data; failures
+stay beside the inputs. There is no general config editor or command-execution endpoint.
+
+| `POST` route | Body and existing operation |
+| --- | --- |
+| `/api/feedback` | `{ref, signal: "positive"\|"negative", reason?, tags?: string[]}` → `akm feedback`. The canonical indexed ref is used; tags follow existing `key:value` validation. Negative feedback requires a reason when `feedback.requireReason` is enabled. Explicit submissions are user-attributed and retain existing ranking/utility/event effects. No fix, supersession or model flags are exposed. |
+| `/api/bundles/add` | `{source, name?, writable?}` → `akm bundle add`, including source validation and installation audit. Existing provider restrictions apply; no dangerous-key or insecure-transport bypass is exposed. |
+| `/api/bundles/update` | `{bundle}` → `akm bundle update <bundle>`. Fetches/reindexes only on explicit submission. A rare update requiring destructive confirmation remains refused; the UI does not silently pass `--yes`. |
+| `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove <bundle> --yes`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
+| `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}, defaultBundle?, defaultWriteTarget?}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Defaults take existing names or `""` to unset a local value; inherited values cannot be unset locally. Existing validation rejects invalid defaults, disabled targets and writable npm/website sources. |
+| `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. |
+
+Configuration-affecting actions do not round-trip the redacted API configuration. Existing mutation helpers retain
+unknown/unrelated fields, local overrides and supported `$VAR`/`secret://` credential references. If the existing
+config sanitizer would remove unrelated legacy literal credentials, the UI refuses the action and asks the user to
+correct those settings through the CLI first. It never writes `"[redacted]"` back as a credential.
+
+Existing-asset editing is deliberately unavailable until a writer can reject a save made against an outdated revision
+under its normal mutation lease. Historical restore and media ingestion are separate work.
