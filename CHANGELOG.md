@@ -8,6 +8,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Curate withholds context for exact whole-message phrases such as `hello`,
+  `thanks, that worked!`, `ok sounds good, go ahead`, `yes`, and `lgtm` (#1201).
+  Matching normalizes case, whitespace and common punctuation; added task text
+  still retrieves. Use `akm search` for literal lookups that collide with the list.
+
 - Search and curate default to `--belief current`, retaining unflagged reference
   knowledge and active/asserted assets while excluding historical beliefs (#1199).
   Use `--belief all` for broad investigation or `--belief historical` for old

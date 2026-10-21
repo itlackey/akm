@@ -725,14 +725,19 @@ only for read-only items. Their `followUp` remains `akm show <ref>` rather than
 being replaced by clone guidance.
 Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
-Curate returns no items, on purpose, when the input is not a task: a harness
-or tool envelope (input that starts with an XML-style tag and contains a
-closing tag, such as `<task-notification>…</task-notification>`), the stash
-README boilerplate, or a standalone greeting/acknowledgment such as `hello`,
-`thanks, that worked!`, or `ok sounds good, go ahead`. Greetings and thanks
-followed by task text still retrieve normally. The `summary` starts with `Curate abstained` and
-names the reason, and `tip` says how to curate the task instead. Long input is
-curated like any other.
+Curate returns no items, on purpose, for a harness or tool envelope (input
+that starts with an XML-style tag and contains a closing tag, such as
+`<task-notification>…</task-notification>`), the stash README boilerplate,
+or an exact phrase in its short conversational list, such as `hello`,
+`thanks, that worked!`, `ok sounds good, go ahead`, `yes`, `lgtm`, `ok do it`,
+`continue`, or `thanks so much`. Phrase matching ignores case, repeated
+whitespace, and common punctuation (commas, periods, exclamation marks and
+question marks). This is an explicit phrase list, not general detection of
+conversational intent. Unlisted phrases and phrases followed by task text
+retrieve normally. The `summary` starts with `Curate abstained` and names the
+reason; `tip` explains how to curate a task. For a deliberate lookup of a word
+or asset name that collides with the list, such as `hello`, use
+`akm search "hello"`. Long input is curated like any other.
 `akm curate` is safe to call frequently, including from a hook that fires on
 every prompt: it only ever reads the index as it currently stands (the same
 non-blocking `ensureIndex()` path `search` uses) and never waits on or

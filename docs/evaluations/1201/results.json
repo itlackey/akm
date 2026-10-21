@@ -3113,5 +3113,10 @@
         }
       }
     ]
+  },
+  "measurement_identity": {
+    "candidate_commit": "7b024c6e356e7c2358379810f75d75a560bed956",
+    "social_case_limit": "Public phrase-fitted gains and author-created normalized phrase variants do not establish conversational generalization.",
+    "review_revision": "See review-validation.json; these saved metrics were not recollected for the expanded exact-phrase Set."
   }
 }

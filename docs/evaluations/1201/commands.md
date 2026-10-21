@@ -1,7 +1,8 @@
 # Reproduction commands
 
 Run from akm-eval `33c8f78` with Bun 1.4.1. `BASE` is an archive/checkout of
-AKM `d2369845a`; `CANDIDATE` is this PR. Both use locked AKM dependencies.
+AKM `d2369845a`; `CANDIDATE` for the archived original measurements is PR build `7b024c6`.
+The review revision is validated separately in `review-validation.json`. Both use locked AKM dependencies.
 The private profile replaces only `semanticConfig()`/model identity with the
 owner-approved remote Qwen settings recorded in provenance; no secret or endpoint
 is published. Default collector semantics otherwise remain 0.3.

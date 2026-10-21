@@ -1,4 +1,4 @@
-# #1201 — bounded conversational abstention
+# #1201 — exact-phrase curation abstention
 
 Status: **ready for rollout** — accepted for PR review; not deployed.
 
@@ -22,9 +22,9 @@ non-task inspection shows standalone social messages selecting irrelevant materi
 `ok sounds good, go ahead` selects print QA; `hey, are you still there?` selects an
 agent-routing example and report analyst. These carry no task to retrieve for.
 
-Proposed treatment: extend the EXISTING non-task precheck to whole-message greetings
-and acknowledgments. Match the entire normalized message; any added task text
-continues through normal retrieval. No search/ranking/packing/index/model/config
+Proposed treatment: extend the EXISTING non-task precheck with a short list of
+exact normalized whole-message phrases. Match the entire normalized message;
+any added task text continues through normal retrieval. No search/ranking/packing/index/model/config
 change, new classifier stage, model judge or additional retrieval pass.
 No promise to solve logs/status messages, unsupported tasks, document truth,
 section retrieval or the separate #1208–#1212 issues.
@@ -45,7 +45,7 @@ section retrieval or the separate #1208–#1212 issues.
    unjudged pairs remain limitations, not automatically irrelevant judgments.
 4. Resource bound: no new model calls; social precheck avoids embedding/show/pack.
    Investigate >2x task median query latency; do not tune ordinary timing noise.
-5. Final: untouched author-created conversational/task pairs in a separate domain,
+5. Original final plan: author-created conversational/task pairs in a separate domain,
    existing merged scope/evidence tests, final public collections, installed CLI
    positive/empty/historical/API behavior. Solo critical review, no independent
    reviewer claimed. Ready for rollout is distinct from deployed.
@@ -84,11 +84,11 @@ Search remains available for deliberate keyword investigation of a social phrase
 Revert/reinstall the prior version for recovery. Release maintainer owns review,
 merge/publication and observation of false abstention, fallback and latency.
 
-## Decision and final results
+## Original decision and measurements (PR build `7b024c6`)
 
 Accept approach 2 and stop. The production change extends the existing precheck
-with one whole-message expression, normalizing case, common punctuation and
-whitespace. It does not strip social prefixes from real tasks. RRF, feedback,
+with an exact-phrase expression, normalizing case, common punctuation and
+whitespace. Review later replaced that expression with an explicit Set; see below. It does not strip social prefixes from real tasks. RRF, feedback,
 search defaults/controls, candidate budgets, enrichment, packing and all indexing
 semantics are unchanged. No new configuration, dependency, model stage or service.
 #1208–#1212 remain outside the diff. The final release refresh still points to
@@ -104,8 +104,8 @@ semantics are unchanged. No new configuration, dependency, model stage or servic
 | Library semantic-curate nDCG / recall (rescored observation) | 0.8161 / 0.8087 | 0.8192 / 0.8081 |
 | Books semantic-curate nDCG / recall | 0.9027 / 0.9877 | identical |
 | Books banned above useful: keyword / semantic curate | 12/51 / 8/51 | identical |
-| Fresh final non-task abstention, both modes | 0/4 | 4/4 |
-| Fresh final answerable jobs: success / useful recall | 6/6 / 1.0 | identical |
+| Author-created phrase variants (not independent), both modes | 0/4 | 4/4 |
+| Author-created answerable jobs: success / useful recall | 6/6 / 1.0 | identical |
 | Fresh explicit two-document questions: all evidence present | 2/2 | 2/2 |
 
 Only n12 (`ok sounds good, go ahead`), n13 (`hey, are you still there?`),
@@ -115,8 +115,11 @@ irrelevant recommendations. Search results remain identical for every input.
 No answerable public or final task falsely abstains in either mode. Final greeting
 and acknowledgment prefixes followed by task text retain useful answers. Final
 current/historical/empty-scope and packed-content assertions also pass on the
-installed package. These finite cases do not establish universal false-abstention
-rates or complete evidence coverage on arbitrary questions.
+installed package. The four social cases are case/punctuation variants or
+combinations of the original rule fragments. They are contract checks, not independent evidence of
+generalization. The public 1/25 to 5/25 gain is also fitted to those explicit
+phrases. Neither set estimates real conversational recall or false-abstention
+rates, nor complete evidence coverage on arbitrary questions.
 
 [Results](results.json) contains summary metrics and every changed task outcome,
 including the observed semantic recall losses. [The evidence archive](evidence.tar.gz)
@@ -206,11 +209,10 @@ No-answer/log abstention, factual truth and general ranking remain imperfect.
   fresh final corpus retains both required documents, stale filtering and symptom
   retrieval. No broader agent/answer benchmark answers an unresolved claim here.
 
-Measured source → submitted source: no production changes after the selected
-formatted source; only this evidence/documentation finalization. Earlier full
-checks and final retrieval/install observations therefore validate the submitted
-behavior. The evaluator itself needs no public harness change or separate PR;
-its semantic profile and case/label additions are private run inputs retained
+Those original full checks and retrieval/install observations validate build
+`7b024c6`, not the later review revision. The revision is validated separately
+below; the archived collections have not been relabelled as measurements of it.
+The evaluator itself needs no public harness change or separate PR; its semantic profile and case/label additions are private run inputs retained
 in the artifact. The first same-index diagnostic used the wrong DB pathname and
 made zero queries; it was repaired before valid observations. Initial environment
 failures and auto-review denial were not quality samples; the user explicitly
@@ -222,3 +224,55 @@ packing and latency. No merge, deployment, automatic issue closure or recurring
 monitor was performed. Standalone names such as `hello` may also be deliberate
 lookup requests; use `akm search` for that investigation. This narrow English
 precheck intentionally does not try to infer tasks from conversation history.
+
+## Review revision: explicit phrases and honest evidence boundary
+
+Review [comment 6310359631](https://github.com/itlackey/akm/pull/1213#issuecomment-6310359631)
+correctly identified the limited generalization evidence. The shipped mechanism
+is now a plain Set of 53 exact normalized phrases, one per line. It enumerates
+all 30 combinations previously accepted by the expression, and adds 23 common
+whole-message replies supplied in review (including `yes`, `lgtm`, `ok do it`,
+`continue`, and `thanks so much`). These are deliberate contract entries, not
+new research treatments selected by optimizing the 25 public queries. No live
+public collection was rerun to retune the list or claim a new aggregate gain. Offline
+regression replay compares all 187 public inputs per build in keyword and
+captured-vector semantic mode: every ref list is unchanged from `7b024c6` and
+all four physical replay index hashes match the retained immutable snapshots.
+
+Each entry has an explicit test, plus task text appended to verify whole-message
+matching. Case/punctuation variants are tested separately. The reviewer-provided
+real-task prompts remain eligible, including non-English task text. Questions
+such as `why?`, `what do you think?`, and `can you explain that more?` remain
+unlisted and eligible: the phrase list does not infer conversational context.
+Literal word/asset lookups can collide with any listed phrase. The curate tip
+and CLI reference now direct those lookups to `akm search`.
+
+The shared `nonTaskInput` also filters `usableRetrievalQueries`: exact listed
+phrases are excluded from mined improve/continuity replay queries, while real
+task text and unlisted questions remain eligible. A focused test pins this side
+effect. RRF, indexing, scope/belief, support and packing are unchanged.
+
+Privacy repair: all four retained q008 response captures have lab routing and
+provider metadata redacted, and the private home path in `checks.txt` is replaced
+with a placeholder. All embedding data arrays are byte-equivalent after JSON
+parsing. The archive is regenerated and scanned for the identified host and
+home path; its new SHA-256 is recorded in provenance. This repairs the current
+archive; no history rewrite is claimed. Original measured build hashes remain
+labelled as historical evidence, separate from the review revision hashes.
+
+Review validation results are recorded in `review-validation.json`. The new
+revision requires its own full checks, build and installed CLI/API controls;
+prior measurements are not substituted for these checks. The original 20-trial
+follow-up research remains rejected for production; its semantic floor was not
+applied. The release branch's intervening `3fbdc915e` changes only release version
+and changelog metadata, with no retrieval interaction. The old failed CI job was
+explicitly rerun; the pushed revision also receives fresh CI.
+
+Review revision verification completed: write-capable Biome, lint, typecheck,
+**7,276 unit + 3,888 integration tests pass**, zero failures (4/81 existing
+explicit skips), build, 82 focused checks, 14 installed cases with Bun/Node API
+byte parity and packed recall controls, plus 3 actual bin-launcher cases. The
+prior failed CI rerun is green. No model request was sent for the offline
+controls; no new speed or model-cost savings are claimed. The first restricted
+full run could not start local servers/managed children; the authorized full
+rerun passed. Current review evidence is under `review/` in the redacted archive.

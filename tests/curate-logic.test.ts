@@ -176,6 +176,79 @@ describe("akmCurate abstains on input that is not a task", () => {
     expect(result.tip).toContain("on purpose");
   });
 
+  // Explicit contract cases, not an independently sampled social-recall estimate.
+  test.each([
+    "thanks",
+    "thanks that worked",
+    "thank you",
+    "thank you that worked",
+    "ok",
+    "ok sounds good",
+    "ok go ahead",
+    "ok sounds good go ahead",
+    "okay",
+    "okay sounds good",
+    "okay go ahead",
+    "okay sounds good go ahead",
+    "hi",
+    "hi are you still there",
+    "hi ready when you are",
+    "hello",
+    "hello are you still there",
+    "hello ready when you are",
+    "hey",
+    "hey are you still there",
+    "hey ready when you are",
+    "good morning",
+    "good morning are you still there",
+    "good morning ready when you are",
+    "good afternoon",
+    "good afternoon are you still there",
+    "good afternoon ready when you are",
+    "good evening",
+    "good evening are you still there",
+    "good evening ready when you are",
+    "yes",
+    "yep",
+    "y",
+    "no",
+    "lgtm",
+    "ok do it",
+    "do it",
+    "go ahead",
+    "sounds good",
+    "looks good",
+    "continue",
+    "continue please",
+    "perfect",
+    "nice",
+    "cool",
+    "thx",
+    "thanks so much",
+    "great thanks",
+    "ok thanks",
+    "ok got it",
+    "hi there",
+    "hello there",
+    "hey thanks a lot",
+    "LGTM!",
+    "  THANK YOU!!  ",
+    "ok, got it",
+    "hi there!",
+    "hey, thanks a lot",
+  ])("withholds the exact phrase %j but retrieves when it has task text", async (query) => {
+    const empty = await akmCurate({ query, searchResponse: matching, skipLogging: true });
+    expect(empty.items).toEqual([]);
+    expect(empty.summary).toContain("exact conversational phrase");
+    expect(empty.tip).toContain('akm search "<literal words>"');
+    const task = await akmCurate({
+      query: `${query} review the deployment`,
+      searchResponse: matching,
+      skipLogging: true,
+    });
+    expect(task.items.map((item) => ("ref" in item ? item.ref : item.id))).toEqual(["knowledge/deploy-guide"]);
+  });
+
   test("still curates a task that mentions a tag, and a task over 2,000 characters", async () => {
     const longTask = `Fix the failing deploy check. ${"The step that uploads the bundle times out after the retry. ".repeat(40)}`;
     expect(longTask.length).toBeGreaterThan(2000);
@@ -185,6 +258,18 @@ describe("akmCurate abstains on input that is not a task", () => {
       "Good morning! Why does the deployment fail?",
       "hello world command template",
       "okay to deploy with warnings?",
+      "hi, can you review this PR?",
+      "thanks, now fix the lint errors",
+      "ok go ahead and deploy to staging",
+      "status",
+      "help",
+      "deploy",
+      "test",
+      "bonjour, comment configurer le stash ?",
+      "what do you think?",
+      "why?",
+      "can you explain that more?",
+      "hello there friend",
       "knowledge/",
       longTask,
     ]) {
