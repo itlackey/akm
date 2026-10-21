@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- OKF and LLM Wiki indexing no longer records relationships from links inside code spans,
+  fenced or indented code, including code nested in lists and blockquotes (#1200). Links are
+  read with the `marked` tokenizer (new runtime dependency) instead of raw regex scans; the
+  indexed link syntax is otherwise unchanged. Run `akm index --full` once to drop false
+  relationships stored by earlier builds; incremental indexing keeps unchanged files' old links.
+
 - Consolidation preserves the existing `scope_user`, `scope_agent`, `scope_run`, and
   `scope_channel` tuple (#1197). Pairing requires exact normalized equality before
   consuming an eligible neighbor slot. Retirement acceptance, including resume, checks
