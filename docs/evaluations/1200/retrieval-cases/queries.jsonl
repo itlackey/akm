@@ -1,0 +1,3 @@
+{"id": "vpn", "query": "connect staging VPN before deployment", "kind": "task"}
+{"id": "cache", "query": "recover staging cache retry build", "kind": "task"}
+{"id": "prerequisite", "query": "deployment prerequisite VPN access", "kind": "task"}

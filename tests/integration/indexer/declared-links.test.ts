@@ -18,13 +18,14 @@ import path from "node:path";
 import { akmCurate } from "../../../src/commands/read/curate";
 import { akmShowUnified } from "../../../src/commands/read/show";
 import { assembleInfo } from "../../../src/commands/sources/info";
+import { handleApiRequest } from "../../../src/commands/ui/api";
 import { resetConfigCache } from "../../../src/core/config/config";
 import { getConfigPath, getDbPath } from "../../../src/core/paths";
 import { indexWrittenAssets } from "../../../src/indexer/index-written-assets";
 import { akmIndex } from "../../../src/indexer/indexer";
 import { closeDatabase, openIndexDatabase } from "../../../src/storage/repositories/index-connection";
 import { rekeyEntryInPlace, renameEntriesBundleId } from "../../../src/storage/repositories/index-entries-repository";
-import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
+import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
 
 let storage: IsolatedAkmStorage;
 
@@ -126,6 +127,128 @@ afterEach(() => {
 });
 
 describe("declared links", () => {
+  for (const adapter of ["okf", "llm-wiki"] as const) {
+    test(`${adapter} code edits remove relationships, backlinks and support; full rebuild agrees`, async () => {
+      const portable = path.join(storage.root, "portable");
+      const put = (rel: string, body: string) => {
+        const file = path.join(portable, rel);
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(
+          file,
+          `---\ntype: concept\npageKind: concept\ndescription: ${path.basename(rel, ".md")}\n---\n\n${body}\n`,
+        );
+        return file;
+      };
+      writeSandboxConfig({
+        semanticSearchMode: "off",
+        defaultBundle: "stash",
+        bundles: {
+          stash: { path: storage.stashDir, components: { main: { root: ".", adapter: "akm" } } },
+          portable: { path: portable, components: { main: { root: ".", adapter } } },
+        },
+      });
+      const source = "portable//pages/zeppelin-rollout";
+      const harbor = "portable//pages/harbor";
+      const mooring = "portable//pages/mooring";
+      put("schema.md", "# Wiki schema");
+      put("pages/zeppelin-rollout.md", "[Harbor](./harbor.md) [Mooring](./mooring.md) `[Example](./example.md)`");
+      put("pages/harbor.md", "Safe harbor.");
+      const mooringFile = put("pages/mooring.md", "Mooring instructions.");
+      put("pages/example.md", "Illustrative placeholder, not a reference.");
+      // Identical title in another bundle must not receive the portable edge.
+      write("knowledge/harbor.md", "---\ndescription: harbor\n---\n\nUnrelated harbor.\n");
+      await akmIndex({ stashDir: storage.stashDir });
+      const original = storedLinks();
+      expect(original).toEqual([
+        `${source} links_to pages/harbor -> ${harbor}`,
+        `${source} links_to pages/mooring -> ${mooring}`,
+      ]);
+      expect((await akmShowUnified({ ref: source })).links?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
+      expect((await akmShowUnified({ ref: harbor })).links?.incoming?.links_to?.refs).toEqual([source]);
+      const uiLinks = async (ref: string) => {
+        const detail = (await handleApiRequest("/api/asset", new URLSearchParams({ ref }), {
+          startedAt: "2026-10-20T00:00:00Z",
+          host: "127.0.0.1",
+          port: 0,
+        })) as { asset: Awaited<ReturnType<typeof akmShowUnified>> };
+        return detail.asset.links;
+      };
+      expect((await uiLinks(source))?.outgoing?.links_to?.refs).toEqual([harbor, mooring]);
+      expect((await akmShowUnified({ ref: "knowledge/harbor" })).links).toBeUndefined();
+      const support = async () => {
+        const item = (await akmCurate({ query: "zeppelin rollout", limit: 1 })).items[0];
+        expect(item && "ref" in item ? item.ref : undefined).toBe(source);
+        return item && "supportRefs" in item ? item.supportRefs?.map((entry) => entry.ref) : undefined;
+      };
+      expect(await support()).toEqual([harbor, mooring]);
+
+      // An edited real link becomes code; a deleted target becomes unresolved,
+      // while its still-authored link remains (the tolerant missing-link contract).
+      put(
+        "pages/zeppelin-rollout.md",
+        "``[Harbor](./harbor.md) ` literal`` [Mooring](./mooring.md)\n\n~~~md\n[Example](./example.md)\n~~~",
+      );
+      fs.rmSync(mooringFile);
+      await akmIndex({ stashDir: storage.stashDir });
+      expect(storedLinks()).toEqual([`${source} links_to pages/mooring -> null`]);
+      expect((await akmShowUnified({ ref: source })).links).toEqual({
+        unresolved: { links_to: { total: 1, refs: ["pages/mooring"] } },
+      });
+      expect((await akmShowUnified({ ref: harbor })).links).toBeUndefined();
+      expect(await support()).toBeUndefined();
+      expect((await uiLinks(source))?.unresolved?.links_to?.refs).toEqual(["pages/mooring"]);
+      expect(await uiLinks(harbor)).toBeUndefined();
+      const incremental = storedLinks();
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      expect(storedLinks()).toEqual(incremental);
+
+      // Changing the actual target and then deleting its citer removes old edges.
+      put("pages/zeppelin-rollout.md", "[Harbor](./harbor.md) `[Mooring](./mooring.md)`");
+      await akmIndex({ stashDir: storage.stashDir });
+      expect(storedLinks()).toEqual([`${source} links_to pages/harbor -> ${harbor}`]);
+      expect(await support()).toEqual([harbor]);
+      fs.rmSync(path.join(portable, "pages/zeppelin-rollout.md"));
+      await akmIndex({ stashDir: storage.stashDir });
+      expect(storedLinks()).toEqual([]);
+      expect((await akmShowUnified({ ref: harbor })).links).toBeUndefined();
+      await akmIndex({ stashDir: storage.stashDir, full: true });
+      expect(storedLinks()).toEqual([]);
+    });
+  }
+
+  test("index --full reparses unchanged files to remove old code-example links", async () => {
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      defaultBundle: "stash",
+      bundles: { stash: { path: storage.stashDir, components: { main: { root: ".", adapter: "okf" } } } },
+    });
+    write("pages/start.md", "---\ntype: concept\ndescription: Start\n---\n\n`[Example](./example.md)`\n");
+    write("pages/example.md", "---\ntype: concept\ndescription: Example\n---\n\nExample.\n");
+    await akmIndex({ stashDir: storage.stashDir });
+    expect(storedLinks()).toEqual([]);
+    // Simulate the previous release's stored document plus its false edge.
+    const db = openIndexDatabase(getDbPath());
+    try {
+      const row = db.prepare("SELECT id, document_json FROM entries WHERE item_ref = ?").get("stash//pages/start") as {
+        id: number;
+        document_json: string;
+      };
+      const document = { ...JSON.parse(row.document_json), links: ["pages/example"] };
+      db.prepare("UPDATE entries SET document_json = ? WHERE id = ?").run(JSON.stringify(document), row.id);
+      db.prepare(
+        "INSERT INTO asset_links (entry_id, ord, kind, raw, dst_bundle, dst_concept) VALUES (?, 0, 'links_to', 'pages/example', NULL, 'pages/example')",
+      ).run(row.id);
+    } finally {
+      closeDatabase(db);
+    }
+    expect((await akmShowUnified({ ref: "pages/example" })).links?.incoming?.links_to?.refs).toEqual(["pages/start"]);
+    await akmIndex({ stashDir: storage.stashDir });
+    expect(storedLinks()).toHaveLength(1); // Unchanged-file indexing keeps prior results.
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    expect(storedLinks()).toEqual([]);
+    expect((await akmShowUnified({ ref: "pages/example" })).links).toBeUndefined();
+  });
+
   test("indexing with no engine stores every declared relation as a typed link, resolved or not", async () => {
     writeStash();
     await akmIndex({ stashDir: storage.stashDir });
