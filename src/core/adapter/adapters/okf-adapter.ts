@@ -34,6 +34,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter } from "../../asset/frontmatter";
+import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { isRecord, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -151,23 +152,10 @@ function isReservedFileName(name: string): boolean {
  */
 export function resolveOkfLinks(body: string, fileRelPath: string): string[] {
   const dir = path.posix.dirname(toPosix(fileRelPath));
-  const definitions = new Map<string, string>();
-  for (const match of body.matchAll(/^\s*\[([^\]]+)\]:\s*(\S+)/gm)) {
-    definitions.set(match[1]!.trim().toLowerCase(), match[2]!);
-  }
-  const candidates: Array<{ index: number; target: string }> = [];
-  for (const match of body.matchAll(/\[[^\]]*\]\(([^)]+)\)/g)) {
-    candidates.push({ index: match.index, target: match[1]! });
-  }
-  for (const match of body.matchAll(/(?<!!)\[[^\]]*\]\[([^\]]+)\]/g)) {
-    const target = definitions.get(match[1]!.trim().toLowerCase());
-    if (target) candidates.push({ index: match.index, target });
-  }
-  candidates.sort((a, b) => a.index - b.index);
   const out: string[] = [];
   const seen = new Set<string>();
-  for (const candidate of candidates) {
-    let target = candidate.target.trim();
+  for (const link of markdownLinkTargets(body, true)) {
+    let target = link.trim();
     // Drop an optional markdown link title: `[x](/a.md "Title")`.
     const wsIdx = target.search(/\s/);
     if (wsIdx >= 0) target = target.slice(0, wsIdx);
