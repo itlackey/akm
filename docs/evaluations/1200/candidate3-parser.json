@@ -1,0 +1,41 @@
+{
+  "root": "/tmp/akm-1200",
+  "results": [
+    {
+      "name": "inline",
+      "okf": [],
+      "wiki": []
+    },
+    {
+      "name": "multiple",
+      "okf": [],
+      "wiki": []
+    },
+    {
+      "name": "backtickFence",
+      "okf": [],
+      "wiki": []
+    },
+    {
+      "name": "tildeFence",
+      "okf": [],
+      "wiki": []
+    },
+    {
+      "name": "referenceDefinition",
+      "okf": [],
+      "wiki": []
+    },
+    {
+      "name": "real",
+      "okf": [
+        "pages/real",
+        "other"
+      ],
+      "wiki": [
+        "pages/real",
+        "other"
+      ]
+    }
+  ]
+}

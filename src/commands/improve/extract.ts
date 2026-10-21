@@ -313,20 +313,30 @@ export function parseSinceArg(value: string | undefined, now: number = Date.now(
 }
 
 /**
- * A candidate's ref and content. `description` (and a lesson's `when_to_use`)
- * go into the body's frontmatter so accept-time validation sees them.
+ * Assemble candidate metadata once in the authoritative Markdown that acceptance
+ * publishes. The payload projection is for proposal readers, not another write path.
  */
 function buildCandidateProposal(
   candidate: ExtractCandidate,
   sourceRef: SessionSummary,
   sessionAssetRef?: string,
-): { ref: string; content: string; description: string } {
+): { ref: string; content: string; frontmatter: Record<string, unknown> } {
   const ref = deriveExtractCandidateRef(candidate, sourceRef);
   // Complete a description the model cut mid-sentence (no-op for valid ones).
   const description = repairTruncatedDescription(candidate.description, candidate.body);
-  const fm: Record<string, unknown> = { description, ...(sessionAssetRef ? { xrefs: [sessionAssetRef] } : {}) };
-  if (candidate.type === "lesson" && candidate.when_to_use) fm.when_to_use = candidate.when_to_use;
-  return { ref, content: assembleAsset(fm, candidate.body), description };
+  const fm: Record<string, unknown> = {
+    description,
+    evidence: candidate.evidence,
+    ...(sessionAssetRef ? { xrefs: [sessionAssetRef], evidenceSources: [sessionAssetRef] } : {}),
+  };
+  // With no published session asset, keep the known native session identity in
+  // the existing structured provenance channel, never invent an AKM asset ref.
+  // The identity, not the log's absolute path, so published notes carry no local paths.
+  if (!sessionAssetRef && sourceRef.filePath) {
+    fm.provenance = { sources: [{ resource: `${sourceRef.harness}:${sourceRef.sessionId}` }] };
+  }
+  if (candidate.when_to_use) fm.when_to_use = candidate.when_to_use;
+  return { ref, content: assembleAsset(fm, candidate.body), frontmatter: fm };
 }
 
 function canonicalSegment(value: string): string {
@@ -708,13 +718,9 @@ async function processSession(
           attemptedRefs: [built.ref],
           payload: {
             content: built.content,
-            frontmatter: {
-              description: built.description,
-              ...(candidate.when_to_use ? { when_to_use: candidate.when_to_use } : {}),
-              confidence: candidate.confidence,
-              ...(sessionAsset.sessionAssetRef ? { xrefs: [sessionAsset.sessionAssetRef] } : {}),
-              evidence: candidate.evidence,
-            },
+            // Model confidence stays on the proposal for reviewers; it is not published,
+            // where promotion scoring would read it as a signal.
+            frontmatter: { ...built.frontmatter, confidence: candidate.confidence },
           },
         });
         proposalIds.push(proposal.id);

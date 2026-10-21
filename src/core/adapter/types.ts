@@ -270,6 +270,8 @@ export interface IndexDocument {
    * `evidenceSources:` frontmatter key.
    */
   evidenceSources?: string[];
+  /** Captured claim support, without implying independent verification. */
+  evidence?: string;
   /**
    * For derived memories (Phase 5A / Advantage D5), the parent ref that this
    * entry was distilled from. Surfaced from the `source:` frontmatter key

@@ -787,6 +787,35 @@ them all. The field is omitted when nothing links either way. Links are read
 from frontmatter and parsed structure at index time, with no model; they do
 not affect search ranking.
 
+Indexed body-link syntax depends on the bundle adapter:
+
+| Adapter | Body links that produce `links_to` relationships |
+| --- | --- |
+| `okf` | Inline `[label](./target.md)` and explicit reference `[label][id]` with `[id]: ./target.md` definitions |
+| `llm-wiki` | Inline Markdown links; frontmatter `xrefs:` and `sources:` retain their separate contracts |
+| `akm` and other native adapters | Their declared frontmatter/structural relationships; ordinary Markdown body links do not automatically become `links_to` |
+
+For OKF and LLM Wiki, relative paths resolve from the linking file's directory
+and `/`-rooted paths from the component root. Optional titles, fragments and
+queries do not change the target identity. Repeated targets collapse in first
+appearance order. External schemes, protocol-relative URLs, in-page anchors,
+non-`.md` targets and paths escaping the component root are excluded. Missing
+supported targets stay unresolved; their diagnostics are non-blocking.
+
+Inline backtick code and backtick/tilde fenced code (including fences inside
+lists and blockquotes) produce no body-link relationships or broken-link
+warnings. Reference definitions inside code cannot supply OKF links. Rendering
+`[[wiki links]]` in the UI does not establish indexed support: neither adapter
+indexes that syntax, and LLM Wiki does not index reference-style body links.
+This is the existing indexed subset, not a full Markdown syntax parser.
+
+After upgrading a build that indexed links inside examples, run `akm index
+--full` once. It reparses unchanged files and replaces their stored relationships,
+removing false outgoing links, backlinks and curated support references. Ordinary
+incremental indexing updates changed/deleted entries but can retain unchanged
+older parsing results. No data migration is required; rebuilding the index
+under the selected build is also the recovery action after reverting the fix.
+
 Opaque fragment shows and `--context lead` keep `ref` as the canonical parent
 identity and add
 `selectedRef`, `parentRef`, one-based `fragmentOrdinal`, `fragmentCount`,

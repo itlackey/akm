@@ -1,0 +1,292 @@
+{
+  "eval": "retrieval",
+  "corpus": "custom",
+  "corpus_folder": null,
+  "collection": "own",
+  "label": "issue1200-baseline-pilot",
+  "date": "2026-10-21T03:20:42.796Z",
+  "git_commit": "1002fa2-dirty",
+  "akm_version": "0.10.261008",
+  "akm_bin": "bun /tmp/akm-coordination-baseline/src/cli.ts",
+  "akm_build": "v0.9.0-beta.60-2842-gd0fe1d000",
+  "akm_build_fingerprint": "27acaf5fb46d44c59a877b6235f133257640308816a590b32a2f2690a32c325e",
+  "search_mode": {
+    "keyword": "keyword",
+    "semantic": "semantic"
+  },
+  "semantic_model": "embed/qwen3-embedding-0.6b",
+  "semantic_index": "cold",
+  "semantic_index_built_by": {
+    "version": "0.10.261008",
+    "akm_bin": "bun /tmp/akm-coordination-baseline/src/cli.ts",
+    "akm_build": "v0.9.0-beta.60-2842-gd0fe1d000",
+    "akm_build_fingerprint": "27acaf5fb46d44c59a877b6235f133257640308816a590b32a2f2690a32c325e",
+    "builtAt": "2026-10-21T03:20:39.234Z"
+  },
+  "semantic_flag": "on",
+  "depth": 10,
+  "relevant_from_grade": 2,
+  "limit": 1,
+  "n_assets": 4,
+  "index_seconds": {
+    "keyword": 0.5,
+    "semantic": 1.2
+  },
+  "status": "complete",
+  "aborted_reason": null,
+  "n_queries": 1,
+  "n_scored": 1,
+  "n_errored": 0,
+  "errored": {
+    "search": 0,
+    "curate": 0,
+    "semantic_search": 0,
+    "semantic_curate": 0
+  },
+  "timeouts": 0,
+  "metrics": {
+    "search": {
+      "n": 1,
+      "ndcg_10": 1,
+      "ndcg_10_condensed": 1,
+      "p_5": 0.4,
+      "success_5": 1,
+      "mrr": 1,
+      "recall_10": 1,
+      "judged_10": 1,
+      "banned_above": null,
+      "banned_above_first": null
+    },
+    "curate": {
+      "n": 1,
+      "ndcg_10": 1,
+      "ndcg_10_condensed": 1,
+      "p_5": 0.4,
+      "success_5": 1,
+      "mrr": 1,
+      "recall_10": 1,
+      "judged_10": 1,
+      "banned_above": null,
+      "banned_above_first": null
+    },
+    "semantic_search": {
+      "n": 1,
+      "ndcg_10": 1,
+      "ndcg_10_condensed": 1,
+      "p_5": 0.4,
+      "success_5": 1,
+      "mrr": 1,
+      "recall_10": 1,
+      "judged_10": 1,
+      "banned_above": null,
+      "banned_above_first": null
+    },
+    "semantic_curate": {
+      "n": 1,
+      "ndcg_10": 1,
+      "ndcg_10_condensed": 1,
+      "p_5": 0.4,
+      "success_5": 1,
+      "mrr": 1,
+      "recall_10": 1,
+      "judged_10": 1,
+      "banned_above": null,
+      "banned_above_first": null
+    }
+  },
+  "abstention": {
+    "non_task": {
+      "search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      }
+    },
+    "no_answer": {
+      "search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_search": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      },
+      "semantic_curate": {
+        "n": 0,
+        "abstained": 0,
+        "rate": null
+      }
+    }
+  },
+  "config": {
+    "keyword": {
+      "configVersion": "0.9.0",
+      "semanticSearchMode": "off",
+      "registries": [],
+      "bundles": {
+        "notes": {
+          "path": "/tmp/1200-retrieval-cases/library/notes",
+          "components": {
+            "main": {
+              "adapter": "okf"
+            }
+          },
+          "writable": false
+        }
+      }
+    },
+    "semantic": {
+      "configVersion": "0.9.0",
+      "semanticSearchMode": "auto",
+      "registries": [],
+      "embedding": {
+        "provider": "openai",
+        "endpoint": "https://[redacted-lab]/v1/embeddings",
+        "model": "embed/qwen3-embedding-0.6b",
+        "apiKey": "$LAB_API_KEY",
+        "dimension": 1024,
+        "queryTimeoutMs": 600000,
+        "timeoutMs": 600000
+      },
+      "bundles": {
+        "notes": {
+          "path": "/tmp/1200-retrieval-cases/library/notes",
+          "components": {
+            "main": {
+              "adapter": "okf"
+            }
+          },
+          "writable": false
+        }
+      }
+    }
+  },
+  "engine": {
+    "engine": null,
+    "model": null,
+    "endpoint": "https://[redacted-lab]/v1/embeddings",
+    "temperature": null,
+    "enableThinking": null,
+    "timeoutMs": null,
+    "engines": {}
+  },
+  "assets_sha256": "1ebd5df1fb4e1095777146fbbc03cdbea40538dddaf1b445f73f0e2b47e4c578",
+  "assets": {
+    "library_sha256": "075c2af41fa4ad6ea791268fcccc27c1a3ccdfa405be3f5b1c613beb5ce81ac2",
+    "bundles_sha256": "fc44624ac85daf79b2be3e7084ec7189fbe19274cf09b885072a5426303bbeca",
+    "queries_sha256": "9712ee82d2c02788e6c2c5be6085ff6947c7a520f6e0340647dcfcc2d344846c",
+    "qrels_sha256": "f06d92338adc37038e7748c96fc07e0760fc622d53114377c9937d331125fdc6"
+  },
+  "seed": null,
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "retrieval",
+    "corpus": "custom",
+    "collection": "own",
+    "mode": null,
+    "harness_version": 3,
+    "collector": {
+      "version": "0.2"
+    },
+    "scorer": {
+      "version": "0.3"
+    },
+    "cases": {
+      "vpn": {
+        "input_sha256": "f4b3b88cdc6575b6f5135f0701a9502c66caa015767b92858801073af24cb8ca",
+        "label_sha256": "2511883071fb6629980b38539f9d13abac5e31368f34e99e71343fc98433856e"
+      }
+    },
+    "akm": {
+      "version": "0.10.261008",
+      "bin": "bun /tmp/akm-coordination-baseline/src/cli.ts",
+      "build": "v0.9.0-beta.60-2842-gd0fe1d000",
+      "build_fingerprint": "27acaf5fb46d44c59a877b6235f133257640308816a590b32a2f2690a32c325e"
+    },
+    "config": {
+      "redacted": {
+        "keyword": {
+          "configVersion": "0.9.0",
+          "semanticSearchMode": "off",
+          "registries": [],
+          "bundles": {
+            "notes": {
+              "path": "/tmp/1200-retrieval-cases/library/notes",
+              "components": {
+                "main": {
+                  "adapter": "okf"
+                }
+              },
+              "writable": false
+            }
+          }
+        },
+        "semantic": {
+          "configVersion": "0.9.0",
+          "semanticSearchMode": "auto",
+          "registries": [],
+          "embedding": {
+            "provider": "openai",
+            "endpoint": "https://[redacted-lab]/v1/embeddings",
+            "model": "embed/qwen3-embedding-0.6b",
+            "apiKey": "$LAB_API_KEY",
+            "dimension": 1024,
+            "queryTimeoutMs": 600000,
+            "timeoutMs": 600000
+          },
+          "bundles": {
+            "notes": {
+              "path": "/tmp/1200-retrieval-cases/library/notes",
+              "components": {
+                "main": {
+                  "adapter": "okf"
+                }
+              },
+              "writable": false
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "strategy": null,
+      "config_patch_sha256": null,
+      "timeout_ms": 120000,
+      "seed": null
+    },
+    "engines": {},
+    "eval_settings": {},
+    "completion": {
+      "selected": [
+        "vpn"
+      ],
+      "scored": [
+        "vpn"
+      ],
+      "errored": []
+    }
+  },
+  "wall_seconds": 5.155
+}

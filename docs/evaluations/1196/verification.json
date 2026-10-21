@@ -1,0 +1,179 @@
+{
+  "issue": "https://github.com/itlackey/akm/issues/1196",
+  "status": "ready for rollout",
+  "sourceCommit": "9e5b38c5582fe27a55eaf9923f398044d9a90d83",
+  "originalBaseline": "d0fe1d0000d0ed0b268ee2d5c153fdf578daa7cf",
+  "integratedReleaseBase": "946c4b5ac",
+  "targetBranch": "release/0.10.0",
+  "skillBundleCommit": "fd61fd1",
+  "evalCommit": "1002fa2",
+  "evalVersion": "0.2",
+  "scoringVersion": "0.2",
+  "acceptanceOrder": [
+    "Hard: no invented source references/authority or claim transformations; preserve #1195 and integrated #1197 integrity.",
+    "Primary: captured evidence and known sources persist through pending, actual acceptance, Markdown, index, full/agent show and discovery-follow-up on all defined supported fixtures.",
+    "Secondary: preserve existing extraction quality/routine restraint and inspect planted controls; material newly introduced regression blocks; disclose finite model errors.",
+    "Cost: no additional extraction/model stages, no token/latency savings claim; fixed six collections maximum and three product variants maximum."
+  ],
+  "budget": {
+    "candidateVariants": 3,
+    "candidateVariantLimit": 3,
+    "modelCollections": 6,
+    "modelCollectionLimit": 6,
+    "noFurtherTuning": true
+  },
+  "variants": [
+    {
+      "variant": 1,
+      "change": "Single authoritative extraction metadata assembly, evidence/source projection",
+      "result": "Baseline published evidence0/3; lifecycle3/3fixed; original/candidate pilots5/5scored correct.",
+      "decision": "Review found possible source-live body/indexed evidence mismatch."
+    },
+    {
+      "variant": 2,
+      "change": "Align show support with live Markdown or selected indexed fragment; health canonical validation before probes",
+      "result": "Stale-index/removal fixture passes; full64 insights36/40both, routine20/20both; unsafe2baseline/1candidate observed without causal attribution.",
+      "decision": "Preserve model behavior; discovered optional when_to_use only lived in original nonlesson payload."
+    },
+    {
+      "variant": 3,
+      "change": "Preserve optional when_to_use for every candidate type using same authoritative metadata",
+      "result": "Deterministic all-type guidance persistence passes. Final5insight2/3 due model text omitting75; baseline repeat5insight3/3. Exact same captured outputs yield equal scorer inputs5/5 through original/finalassembly.",
+      "decision": "Stop: deterministic retention benefit established, unchanged model request/parser path, fullquality aggregate unchanged, remaining finite model variability and instruction errors disclosed."
+    }
+  ],
+  "evaluation": {
+    "modelRoute": "fast/qwen3.6-35b-a3b",
+    "servedModel": "qwen3.6-35b-a3b",
+    "temperature": 0,
+    "enableThinking": false,
+    "strategy": "extract-only",
+    "indexSessions": false,
+    "triage": false,
+    "semanticSearchMode": "auto",
+    "embeddingProvider": "owner lab service",
+    "embeddingModel": "embed/qwen3-embedding-0.6b",
+    "semanticRuntimeObservation": "Configured, not exercised by the extract-only collector: summaries semantic_verification=null. Actual keyword discovery separately verified in deterministic lifecycle/installed checks.",
+    "concurrencyPerCollection": 2,
+    "commandTimeoutMs": 180000,
+    "engineTimeoutMs": 600000,
+    "fullBaseline": {
+      "run": 64,
+      "scored": 64,
+      "errors": 0,
+      "timeouts": 0,
+      "insights": "36/40",
+      "routine": "20/20",
+      "planted": "2/4",
+      "unsafeInstructions": 2,
+      "wallSeconds": 479.446,
+      "meanInputTokens": 3595.6,
+      "meanOutputTokens": 358
+    },
+    "fullCandidate": {
+      "run": 64,
+      "scored": 64,
+      "errors": 0,
+      "timeouts": 0,
+      "insights": "36/40",
+      "routine": "20/20",
+      "planted": "3/4",
+      "unsafeInstructions": 1,
+      "wallSeconds": 445.807,
+      "meanInputTokens": 3595.6,
+      "meanOutputTokens": 341.6
+    },
+    "measurementConditions": "Fresh isolated AKM sandbox per case; baseline/candidate full collections overlapped with2workers each. Shared model service caches/load not controlled. No causal quality, latency or cost improvement claim. Token values are reported per-call means, not dollar costs.",
+    "finalPilot": "5/5complete0errors; insight2/3, routine1/1, planted1/1. insight-01omits75 in saved model text. This is not called a model-quality pass.",
+    "baselineRepeat": "5/5complete0errors; insight3/3, routine1/1, planted1/1. Temporary local observer forwards requests/responses unchanged to same upstream. Local endpoint instrumentation and reported prompt-token accounting5087.4vs4503.4limit strict variation inference.",
+    "rawFieldLimit": "The full collector stores scored saved text, not raw nonlesson when_to_use fields. Full collections measured variant2; final optional-guidance correction has direct fixtures, finalpilot and exact-output assembly replay. Do not represent fullscores as a fresh finalvariant3fullcollection.",
+    "sourceFilesUnchangedForModelCalls": [
+      "src/commands/improve/extract-prompt.ts",
+      "src/assets/prompts/extract-session.md"
+    ],
+    "fullCollectionExtractSourceSha256": "b24bcd1901692529ff9d5b8309d4be772ebefb2c3535f59405dc1879eaa7b33c"
+  },
+  "verification": {
+    "command": "TMPDIR=/tmp bun run check",
+    "integrated": {
+      "unit": {
+        "pass": 7183,
+        "skip": 4,
+        "fail": 0,
+        "files": 503
+      },
+      "integration": {
+        "pass": 3825,
+        "skip": 81,
+        "fail": 0,
+        "files": 340
+      }
+    },
+    "focusedLifecycle": {
+      "pass": 12,
+      "fail": 0,
+      "assertions": 122
+    },
+    "focusedIntegratedExtractionProposal": {
+      "pass": 216,
+      "fail": 0
+    },
+    "focusedIntegratedScopes": {
+      "pass": 120,
+      "fail": 0
+    },
+    "exactCapturedOutputReplay": {
+      "pass": 5,
+      "fail": 0,
+      "nonemptyCaptures": 4
+    },
+    "independentlyAuthoredFinal": "Parent-authored YAML-looking evidence with doc separators and spoofed verification/citation keys remains scalar through actual acceptance/index/show.",
+    "build": "TMPDIR=/tmp bun run build passed; dist/tests absent.",
+    "biome": "bunx biome check --write src/ tests/ completed before commit; repository lint passes with existing warning diagnostics.",
+    "contractSmoke": "extract success and malformed outcomes reached,1/1contractrun passed.",
+    "initialFailure": "First fullcheck health bad-duration captured installed OpenCode1advisory before JSON error. Reused existing resolveWindowComparePhase once before starting probes; focusedCLI/health68pass and integratedfullcheckpass. New test optional config typing also corrected before final checks.",
+    "installedPath": "See installed-path.json: local npm pack/install in isolated /tmp prefix, actual launcher,3/3types pending/publication/full+agentshow, sessionrefresolves, search/curatefollowupretains evidence; deterministic local modelstub2calls. Bun runtime tested; package installed with --ignore-scripts so no Node native-binding claim.",
+    "combinedWorkstreams": {
+      "sourceCommit": "222d6e1e1",
+      "base": "946c4b5ac",
+      "scope": "Final #1196, #1198 and #1200 source patches together; extraction source/test diff to9e5b38c empty.",
+      "build": "pass",
+      "lint": "pass",
+      "types": "pass",
+      "unit": {
+        "pass": 7213,
+        "skip": 4,
+        "fail": 0
+      },
+      "integration": {
+        "pass": 3866,
+        "skip": 81,
+        "fail": 0,
+        "files": 342
+      }
+    }
+  },
+  "sourceSha256": {
+    "src/commands/improve/extract.ts": "a080eb31881e51e7beadd76e57139c2a9a5766c66b338288ca5e407f8f730240",
+    "src/commands/read/show.ts": "bd861c58529efafa415de98efeaec15a8c3537d6ac5f81530a3c5700e094cf14",
+    "src/indexer/passes/metadata.ts": "f0b0273274dd51597d470403b2a8273e43664f35747d2318388d4faa08c4ae9d",
+    "src/core/adapter/adapters/akm-adapter.ts": "848bea14a614a831db1d1d483adc36446e98c71a9290a3cab10289db55ef5112",
+    "src/indexer/scan/doc-to-entry.ts": "913f2b22ac700c4e28c4d606d788cedf0ffcac6bfaf50f635c1eff390084c4cf",
+    "src/core/adapter/types.ts": "f2f28710fe466532b3fd9773c8e2bec3005581eb5477380e8ed420dad1cbaefc",
+    "src/output/shapes/helpers.ts": "b5def32375643abab8e5fc3ddbf1ae706d783bfacb028c0d5bf895303c885169",
+    "src/output/text/show-format.ts": "b387e398a75f87548895609e0257c1deb8a0a2019afadd564bf4ff7108f3c98f",
+    "src/sources/types.ts": "9c984acb9c5d942bcb2b5ecb52072acc4d4dbec7f1b6717566fb2266893d9ac5",
+    "src/commands/health.ts": "1805dd5c314ab1d23cdcafea23cecc1b034e3853446569923a7efa53abed258e"
+  },
+  "compatibilityRecovery": {
+    "storageMigration": "None: reuse existing evidence/evidenceSources/provenance; additive metadata projection only. akm index --full projects evidence already present in existing files.",
+    "oldPending": "Not automatically changed or merged. Current defaultqueue inspection found0pending extraction proposals; other queues/installs require operator review. Preserve original evidence payload; reviewed knowledge repair via existing import+reject is exercised on an isolatedbundle. Memory/lesson repairs can use existing owned-bundle editing and reindexing after review.",
+    "alreadyAccepted": "No automatic backfill from unavailable history. Existing proposal revert restores prior bytes for updates; new assets have no prior-contentbackup.",
+    "rollback": "Revert the implementation commit for future creation; inspect alreadywrittencontent separately. Existing accepted update recovery uses akm proposal revert <id>; metadata fullreindex is rebuildable."
+  },
+  "remainingRollout": {
+    "owner": "AKM release maintainer",
+    "action": "Review/merge through normal release workflow, publish chosen release and verify representative installed capture/accept/recall path plus queued decisions on affected hosts. No merge/deployment/issueclosure performed.",
+    "productionObservation": "Not performed; local installed verification only."
+  }
+}
