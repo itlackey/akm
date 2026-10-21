@@ -1,0 +1,25 @@
+{
+  "baseline_commit": "d2369845ad9e3bd9e968129eec60b7291b8d95f2",
+  "candidate_identity": "baseline plus the single production-file change in this PR",
+  "source_file_sha256": "f8bd0bc6d8b3da1fefd09a4eada1ab46893c3f1e4dc837388476db31facb63a2",
+  "compiled_file_sha256": "42139d7de55014db6adc194ad4ca00f537218b508ce22cb9f162f96b5b33e031",
+  "installed_tarball_sha256": "7475c85d6d915dcac080779bb197b98771c20ced4afed064fae5e08528ec2e16",
+  "package_version": "0.10.261008",
+  "evaluator_commit": "33c8f78f65d05c671c6f1d4e298f38baff36b626",
+  "skill_commit": "ff35ed5",
+  "bun_version": "1.4.1",
+  "collector_version": "0.3",
+  "scorer_version": "0.3",
+  "embedding_model": "embed/qwen3-embedding-0.6b",
+  "embedding_dimensions": 1024,
+  "embedding_query_timeout_ms": 600000,
+  "reranker": "disabled",
+  "shipped_default_mode": "keyword",
+  "source_change_after_measurement": "None; only evidence/documentation finalization",
+  "notes": [
+    "Baseline archive contains exactly the merged commit; it has no .git so evaluator build is null.",
+    "Private uncommitted semanticConfig overlay reads owner lab configuration; model identity updated to Qwen. Collector/scorer behavior unchanged.",
+    "Diagnostic script paths use <candidate> placeholders; substitute checkout paths. No private credential/config is included.",
+    "25 labels added without replacing any old grade; both saved public arms explicitly rescored. First label digest used raw bytes; corrected with existing assetSha256 before final -rescored-2 results."
+  ]
+}

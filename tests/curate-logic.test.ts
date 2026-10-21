@@ -164,6 +164,10 @@ describe("akmCurate abstains on input that is not a task", () => {
       '  <cross-session-message from="akm-45">REPORT.md is free</cross-session-message>',
     ],
     ["the stash README line", "This is an **AKM stash** — a structured knowledge repository that stores reusable"],
+    ["an acknowledgment", "ok sounds good, go ahead"],
+    ["thanks after success", "thanks, that worked!"],
+    ["a presence check", "hey, are you still there?"],
+    ["a greeting", "good morning! ready when you are"],
   ])("returns no items for %s and says it abstained", async (_label, query) => {
     const result = await akmCurate({ query, searchResponse: matching, skipLogging: true });
 
@@ -175,7 +179,15 @@ describe("akmCurate abstains on input that is not a task", () => {
   test("still curates a task that mentions a tag, and a task over 2,000 characters", async () => {
     const longTask = `Fix the failing deploy check. ${"The step that uploads the bundle times out after the retry. ".repeat(40)}`;
     expect(longTask.length).toBeGreaterThan(2000);
-    for (const query of ["why does <system-reminder> text show up in my hook output?", longTask]) {
+    for (const query of [
+      "why does <system-reminder> text show up in my hook output?",
+      "Thanks, fix the deployment check",
+      "Good morning! Why does the deployment fail?",
+      "hello world command template",
+      "okay to deploy with warnings?",
+      "knowledge/",
+      longTask,
+    ]) {
       const result = await akmCurate({ query, searchResponse: matching, skipLogging: true });
       expect(result.items.map((item) => ("ref" in item ? item.ref : item.id))).toEqual(["knowledge/deploy-guide"]);
       expect(result.tip).toBeUndefined();

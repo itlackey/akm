@@ -727,8 +727,10 @@ Use `--type workflow` when you want curated step-by-step procedures instead of
 individual scripts, skills, or docs.
 Curate returns no items, on purpose, when the input is not a task: a harness
 or tool envelope (input that starts with an XML-style tag and contains a
-closing tag, such as `<task-notification>…</task-notification>`) or the stash
-README boilerplate. The `summary` then starts with `Curate abstained` and
+closing tag, such as `<task-notification>…</task-notification>`), the stash
+README boilerplate, or a standalone greeting/acknowledgment such as `hello`,
+`thanks, that worked!`, or `ok sounds good, go ahead`. Greetings and thanks
+followed by task text still retrieve normally. The `summary` starts with `Curate abstained` and
 names the reason, and `tip` says how to curate the task instead. Long input is
 curated like any other.
 `akm curate` is safe to call frequently, including from a hook that fires on
