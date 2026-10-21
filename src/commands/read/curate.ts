@@ -228,7 +228,7 @@ export async function akmCurate(options: CurateOptions): Promise<CurateResponse>
       query: options.query,
       summary: `Curate abstained: the input is ${nonTask}, not a task.`,
       items: [],
-      tip: 'Nothing was selected on purpose. To curate for it, pass the task itself: akm curate "<what you are trying to do>".',
+      tip: 'Nothing was selected on purpose. To curate for it, pass the task itself: akm curate "<what you are trying to do>". For a literal asset or word lookup, use akm search "<literal words>".',
     };
     if (!options.skipLogging) {
       logCurateEvent(options.query, abstained, options.eventSource, options.attributionProjection);

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Curate withholds context for exact whole-message phrases such as `hello`,
+  `thanks, that worked!`, `ok sounds good, go ahead`, `yes`, and `lgtm` (#1201).
+  Matching normalizes case, whitespace and common punctuation; added task text
+  still retrieves. Use `akm search` for literal lookups that collide with the list.
+
 ## [0.10.261009] - 2026-10-21
 
 ### Changed

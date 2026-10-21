@@ -6,6 +6,18 @@ import { describe, expect, test } from "bun:test";
 import { usableRetrievalQueries } from "../../../src/commands/improve/retrieval-queries";
 
 describe("usableRetrievalQueries", () => {
+  test("drops exact conversational phrases but retains task text and unlisted questions", () => {
+    expect(
+      usableRetrievalQueries([
+        "LGTM!",
+        "ok do it",
+        "thanks so much",
+        "continue please",
+        "thanks, now fix the lint errors",
+        "why?",
+      ]),
+    ).toEqual(["thanks, now fix the lint errors", "why?"]);
+  });
   test("drops harness envelopes, the stash README line and pastes, keeps five distinct queries", () => {
     const queries = usableRetrievalQueries([
       "  rotate   the vpn key ",

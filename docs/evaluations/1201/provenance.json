@@ -1,0 +1,39 @@
+{
+  "baseline_commit": "d2369845ad9e3bd9e968129eec60b7291b8d95f2",
+  "candidate_identity": "Historical measured PR build 7b024c6; review revision recorded separately",
+  "source_file_sha256": "f8bd0bc6d8b3da1fefd09a4eada1ab46893c3f1e4dc837388476db31facb63a2",
+  "compiled_file_sha256": "42139d7de55014db6adc194ad4ca00f537218b508ce22cb9f162f96b5b33e031",
+  "installed_tarball_sha256": "7475c85d6d915dcac080779bb197b98771c20ced4afed064fae5e08528ec2e16",
+  "package_version": "0.10.261008",
+  "evaluator_commit": "33c8f78f65d05c671c6f1d4e298f38baff36b626",
+  "skill_commit": "ff35ed5",
+  "bun_version": "1.4.1",
+  "collector_version": "0.3",
+  "scorer_version": "0.3",
+  "embedding_model": "embed/qwen3-embedding-0.6b",
+  "embedding_dimensions": 1024,
+  "embedding_query_timeout_ms": 600000,
+  "reranker": "disabled",
+  "shipped_default_mode": "keyword",
+  "source_change_after_measurement": "Review revision replaces phrase regex with explicit Set, adds 23 phrases and literal-lookup tip; original metrics describe 7b024c6 only",
+  "notes": [
+    "Baseline archive contains exactly the merged commit; it has no .git so evaluator build is null.",
+    "Private uncommitted semanticConfig overlay reads owner lab configuration; model identity updated to Qwen. Collector/scorer behavior unchanged.",
+    "Diagnostic script paths use <candidate> placeholders; substitute checkout paths. No private credential/config is included.",
+    "25 labels added without replacing any old grade; both saved public arms explicitly rescored. First label digest used raw bytes; corrected with existing assetSha256 before final -rescored-2 results."
+  ],
+  "review_revision": {
+    "prior_pr_commit": "7b024c6e356e7c2358379810f75d75a560bed956",
+    "phrase_count": 53,
+    "new_phrases_from_review": 23,
+    "source_sha256": {
+      "src/core/non-task-input.ts": "20df51d7f42747be0bb73eb081bc15b53e03f0060af9d8763fe8e374b966908e",
+      "src/commands/read/curate.ts": "aa889336c0c4b64e8e0a39ea61d2c89cda9871eed7b1f1c59c7a5b76393bf40d"
+    },
+    "compiled_non_task_sha256": "a33963146d762db179dfbbe6239b45c9f0c59e263d216e4024c2e856f5e782b1",
+    "installed_compiled_non_task_sha256": "a33963146d762db179dfbbe6239b45c9f0c59e263d216e4024c2e856f5e782b1",
+    "installed_tarball_sha256": "9357ac92a487f5ff688e1a32dd191964329f700bc6828143e04687d0e9044486",
+    "evidence_archive_sha256": "1bdb458488336ccceea5d3dd4d4be4ddf861219c22c7599889a28f87776e6c20",
+    "original_vectors_unchanged": true
+  }
+}
