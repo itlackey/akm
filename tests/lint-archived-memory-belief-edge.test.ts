@@ -209,6 +209,7 @@ describe("a retire proposal's archived KNOWLEDGE asset also resolves through the
         cosine: 0.96,
         judgeLabel: "duplicate",
         judgeReason: "Same durable facts as the newer guide.",
+        judgedScope: {},
         retiredContentHash: contentHash(oldGuideContent, "body"),
         successorContentHash: contentHash(newGuideContent, "body"),
         reason: "duplicate",

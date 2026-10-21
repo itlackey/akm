@@ -80,6 +80,7 @@ function retirement(
     cosine: 0.986,
     judgeLabel: "duplicate",
     judgeReason: "Same durable facts, B adds nothing new.",
+    judgedScope: {},
     retiredContentHash: contentHash(fs.readFileSync(retiredPath, "utf8"), "body"),
     successorContentHash: contentHash(fs.readFileSync(successorPath, "utf8"), "body"),
     reason: "duplicate",

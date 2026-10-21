@@ -246,6 +246,21 @@ export function applyScopeFrontmatter(entry: IndexDocument, fmData: Record<strin
   if (scope) entry.scope = scope;
 }
 
+/** The same normalized tuple the index projects, including legacy nested scope. */
+export function scopeFromFrontmatter(fm: Record<string, unknown>): StashEntryScope {
+  const entry: IndexDocument = { type: "memory", name: "scope" };
+  if (typeof fm.scope === "object" && fm.scope !== null && !Array.isArray(fm.scope)) {
+    entry.scope = normalizeScopeObject(fm.scope as Record<string, unknown>);
+  }
+  applyScopeFrontmatter(entry, fm);
+  return entry.scope ?? {};
+}
+
+/** Exact maintenance equality: absence is a value, never a wildcard. */
+export function sameScope(a: StashEntryScope, b: StashEntryScope): boolean {
+  return SCOPE_KEYS.every((key) => a[key] === b[key]);
+}
+
 function normalizeIntent(value: unknown): StashIntent | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;

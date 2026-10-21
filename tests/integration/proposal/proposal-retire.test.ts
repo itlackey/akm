@@ -92,6 +92,7 @@ function retirement(
     cosine: 0.94,
     judgeLabel: "duplicate",
     judgeReason: "Same durable facts, B adds nothing new.",
+    judgedScope: {},
     retiredContentHash: contentHash(fs.readFileSync(retiredPath, "utf8"), "body"),
     successorContentHash: contentHash(fs.readFileSync(successorPath, "utf8"), "body"),
     reason: "duplicate",
@@ -519,6 +520,48 @@ describe("akm proposal accept on a retire proposal", () => {
       expect(getProposal(storage.stashDir, pAB.id).status).toBe("pending");
       expect(fs.existsSync(aPath)).toBe(true); // a survives — never archived
     });
+  });
+
+  test("partial archive resume revalidates the live successor scope", async () => {
+    const oldPath = writeAsset("memories/old.md", "description: old");
+    const newPath = writeAsset("memories/new.md", "description: new");
+    const twinPath = writeAsset("memories/old.derived.md", "description: twin");
+    const config = makeConfig(storage.stashDir);
+    const proposal = createRetireProposal(storage.stashDir, {
+      ref: "memories/old",
+      source: "consolidate-pair",
+      retirement: retirement({
+        retiredPath: oldPath,
+        successorPath: newPath,
+        retiredRef: "memories/old",
+        successorRef: "memories/new",
+      }),
+    });
+    const backupContent = fs.readFileSync(oldPath, "utf8");
+    const db = openStateDatabase();
+    try {
+      upsertProposal(db, { ...proposal, retireAcceptIntent: { assetPath: oldPath, backupContent } }, storage.stashDir);
+    } finally {
+      db.close();
+    }
+    archiveCleanupCandidate(
+      storage.stashDir,
+      { ref: "memories/old", reason: "duplicate", proposalId: proposal.id, successorRefs: ["memories/new"] },
+      oldPath,
+    );
+    fs.writeFileSync(
+      newPath,
+      fs.readFileSync(newPath, "utf8").replace("description: new", "description: new\nscope_channel: changed"),
+    );
+    await expect(akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config })).rejects.toThrow(/scope/);
+    expect(fs.existsSync(twinPath)).toBe(true);
+    expect(getProposal(storage.stashDir, proposal.id).status).toBe("pending");
+    // Existing recorded archive and backup remain intact; restoring successor scope allows idempotent completion/revert.
+    fs.writeFileSync(newPath, fs.readFileSync(newPath, "utf8").replace("\nscope_channel: changed", ""));
+    await akmProposalAccept({ stashDir: storage.stashDir, id: proposal.id, config });
+    await akmProposalRevert({ stashDir: storage.stashDir, id: proposal.id, config });
+    expect(fs.readFileSync(oldPath, "utf8")).toBe(backupContent);
+    expect(fs.existsSync(twinPath)).toBe(true);
   });
 
   describe("B2: accept-time freshness — both sides, not just the retired one", () => {

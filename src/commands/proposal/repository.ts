@@ -48,6 +48,7 @@ import {
 import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations } from "../../indexer/installations";
+import { sameScope, scopeFromFrontmatter } from "../../indexer/passes/metadata";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
 import type { Database } from "../../storage/database";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
@@ -55,6 +56,7 @@ import {
   CONSOLIDATE_LEDGER_SOURCE,
   forgetImproveLedgerDecision,
   type ImproveLedgerOutcome,
+  PAIR_PASS_LEDGER_SOURCE,
   recordImproveLedger,
   recordImproveLedgerDecision,
   reopenImproveLedgerDecision,
@@ -784,6 +786,14 @@ export function archiveProposal(
         at: decidedAt,
         ...(reason !== undefined ? { detail: reason } : {}),
       });
+      // The pair pass settles initiators under bare refs, independently of the
+      // proposal's durable ref. A stale decision must release both inputs for
+      // reassessment through that same ledger, rather than hold an old body forever.
+      if (isRetireProposal(updated) && gateDecision?.reason === STALE_TARGET_GATE_REASON) {
+        for (const ref of retireHeldRefs(updated)) {
+          recordImproveLedger(db, { stashDir, ref, source: PAIR_PASS_LEDGER_SOURCE, outcome: "failed", at: decidedAt });
+        }
+      }
       return updated;
     }),
   );
@@ -1390,6 +1400,22 @@ export function preflightProposalPromotion(
       // best-effort; the freshness check is the real staleness gate
     }
   }
+  if (prepared.promotionSource) {
+    const sourcePath = resolveAssetFilePathSafe(target.source, parseRefInput(prepared.promotionSource));
+    if (
+      sourcePath &&
+      fs.existsSync(sourcePath) &&
+      !sameScope(
+        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(sourcePath, "utf8")).data),
+        scopeFromFrontmatter(parseFrontmatter(stampedContent).data),
+      )
+    ) {
+      throw new UsageError(
+        `Promotion ${proposal.id} has incompatible source/output scope — reject and reassess.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+  }
   const lintBlockers = promotionLintBlockers(stampedContent, assetPath, target.source.path, ref.type, config);
   if (lintBlockers.length > 0) {
     const summary = lintBlockers.map((finding) => `[${finding.issue}] ${finding.detail}`).join("; ");
@@ -1544,7 +1570,17 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       );
       return;
     }
-    const currentHash = contentHash(fs.readFileSync(sourcePath, "utf8"), "body");
+    const sourceContent = fs.readFileSync(sourcePath, "utf8");
+    if (
+      !sameScope(
+        scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
+        scopeFromFrontmatter(parseFrontmatter(proposalContent(accepted)).data),
+      )
+    ) {
+      warn(`[proposal] source scope changed for ${accepted.id} — leaving ${accepted.promotionSource} unarchived.`);
+      return;
+    }
+    const currentHash = contentHash(sourceContent, "body");
     if (currentHash !== accepted.promotionSourceHash) {
       warn(
         `[proposal] O1: source ${accepted.promotionSource} for ${accepted.id} changed since the promotion was queued — leaving it unarchived.`,
@@ -1564,7 +1600,13 @@ function retirePromotionSource(mutationTarget: ResolvedWriteTarget, accepted: Pr
       path.join(mutationTarget.source.path, record.auditPath),
     );
     const twin = derivedTwinPath(sourcePath, sourceRef.type);
-    if (twin) {
+    if (
+      twin &&
+      sameScope(
+        scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twin, "utf8")).data),
+        scopeFromFrontmatter(parseFrontmatter(sourceContent).data),
+      )
+    ) {
       const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twin);
       paths.push(
         twin,
@@ -1795,7 +1837,7 @@ function persistRetireAcceptance(
 
 /**
  * B2: throws a stale-retire `UsageError` unless the successor still exists
- * and both sides' recorded body hashes still match their current files — the
+ * and both sides' recorded body hashes and judged scopes still match — the
  * durable half of the chain guard. Used for a fresh accept, and (4b, third
  * review round) to re-check a resumed accept whose intent was recorded but
  * nothing has moved yet: a separate proposal accepted in between (e.g. this
@@ -1811,6 +1853,23 @@ function assertRetirementStillFresh(
 ): void {
   const successorPath = resolveAssetFilePathSafe(targetSource, parseRefInput(retirement.successorRef));
   const successorBytes = successorPath && fs.existsSync(successorPath) ? fs.readFileSync(successorPath) : undefined;
+  const judgedScope = retirement.judgedScope;
+  if (!judgedScope || typeof judgedScope !== "object" || Array.isArray(judgedScope)) {
+    throw new UsageError(
+      `Retire proposal ${proposalId} is stale — judged scope cannot be established; reject it and reassess the pair before acceptance.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  if (
+    !sameScope(scopeFromFrontmatter(parseFrontmatter(retiredCurrentBytes.toString("utf8")).data), judgedScope) ||
+    (successorBytes &&
+      !sameScope(scopeFromFrontmatter(parseFrontmatter(successorBytes.toString("utf8")).data), judgedScope))
+  ) {
+    throw new UsageError(
+      `Retire proposal ${proposalId} is stale — scope changed since judging; reject and reassess.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
   const retiredFresh = contentHash(retiredCurrentBytes, "body") === retirement.retiredContentHash;
   const successorFresh =
     successorBytes !== undefined && contentHash(successorBytes, "body") === retirement.successorContentHash;
@@ -1919,19 +1978,15 @@ async function retireProposalWithLease(
     }
   } else {
     assertAkmAssetWrite(target.source);
-    // 4b (third review round): intent was recorded but Phase 2 never moved
-    // anything yet — re-run the B2 freshness check before resuming. A
-    // separate proposal accepted in the meantime (this one's successor
-    // itself retired by a B->C accept) can make the decision stale even
-    // though nothing here changed. Once something has moved, it is too late
-    // to cleanly refuse — Phase 2 below already tolerates a partial move.
-    if (working.retirement && fs.existsSync(intent.assetPath)) {
+    // Revalidate the survivor even after a partial archive. The recorded original
+    // is the judged retired side when its file has already moved.
+    if (working.retirement) {
       assertRetirementStillFresh(
         proposal.id,
         proposal.ref,
         working.retirement,
         target.source,
-        fs.readFileSync(intent.assetPath),
+        fs.existsSync(intent.assetPath) ? fs.readFileSync(intent.assetPath) : Buffer.from(intent.backupContent),
       );
     }
   }
@@ -1963,7 +2018,15 @@ async function retireProposalWithLease(
   // tombstone scan above (`alreadyDone`) already finds one archived earlier,
   // so storing it was redundant persisted state.
   const twinPath = derivedTwinPath(intent.assetPath, ref.type);
-  if (twinPath && !alreadyDone.has(path.resolve(twinPath)) && fs.existsSync(twinPath)) {
+  if (
+    twinPath &&
+    !alreadyDone.has(path.resolve(twinPath)) &&
+    fs.existsSync(twinPath) &&
+    sameScope(
+      scopeFromFrontmatter(parseFrontmatter(fs.readFileSync(twinPath, "utf8")).data),
+      scopeFromFrontmatter(parseFrontmatter(intent.backupContent).data),
+    )
+  ) {
     const twinRecord = archiveCleanupCandidate(mutationTarget.source.path, candidate, twinPath);
     archiveDirs.push(path.dirname(twinRecord.auditPath));
     paths.push(

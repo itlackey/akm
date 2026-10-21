@@ -41,6 +41,7 @@ import type { ConsolidatePairJudgeLabel, ConsolidatePairPassResult } from "../..
 import { parseEmbeddedJsonResponse } from "../../../core/parse";
 import { DERIVED_SUFFIX } from "../../../core/recognition-util";
 import { warnOnce } from "../../../core/warn";
+import { sameScope, scopeFromFrontmatter } from "../../../indexer/passes/metadata";
 import { type RunnerSpec, runnerLlmConnection } from "../../../integrations/agent/runner";
 import { assertRunnerCredentials } from "../../../integrations/agent/runner-dispatch";
 import type { ChatCompletionOptions, ChatMessage } from "../../../llm/client";
@@ -469,6 +470,9 @@ export function selectCandidates(
     // rest of the backlog (no row, not recently git-added) needs the higher
     // BACKFILL_FLOOR.
     const floor = initiator.backlog && !initiator.newMaterial ? BACKFILL_FLOOR : T_PAIR;
+    const initiatorSide = loadSide(initiator, undefined, "");
+    if (!initiatorSide) continue;
+    const scope = scopeFromFrontmatter(initiatorSide.frontmatter);
     let kept = 0;
     for (const hit of getNeighborsByEntryId(db, initiator.entryId, PAIR_NEIGHBOR_FETCH_K)) {
       if (kept >= PAIR_NEIGHBOR_K) break;
@@ -489,6 +493,8 @@ export function selectCandidates(
       // distance = sqrt(2 * (1 - cosine)) (index-vec-repository.ts) — invert it back to cosine.
       const cosine = 1 - (hit.distance * hit.distance) / 2;
       if (cosine < floor) continue;
+      const otherSide = loadSide(other, undefined, "");
+      if (!otherSide || !sameScope(scope, scopeFromFrontmatter(otherSide.frontmatter))) continue;
       const key = pairKey(initiator.ref, other.ref);
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
@@ -723,6 +729,14 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
   const otherSide = loadSide(candidate.other, ctx.gitFirstAdded, ctx.stashDir);
   if (!initiatorSide || !otherSide) return { failed: false }; // unreadable since selection — skip, not a judge failure
 
+  const judgedScope = scopeFromFrontmatter(initiatorSide.frontmatter);
+  if (!sameScope(judgedScope, scopeFromFrontmatter(otherSide.frontmatter))) return { failed: false };
+  const scopesStillFresh = (): boolean =>
+    [initiatorSide, otherSide].every((side) => {
+      const live = loadSide(side.asset, ctx.gitFirstAdded, ctx.stashDir);
+      return live !== undefined && sameScope(judgedScope, scopeFromFrontmatter(live.frontmatter));
+    });
+
   // Item 0 / S1: this exact pair (same two refs, same two content hashes,
   // EITHER orientation) was already judged and rejected OR reverted. Checked
   // HERE, before the judge call, not after — the judge (not yet run) is what
@@ -820,7 +834,9 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     ledgerAccess: { proposalsCtx: ctx.opts.proposalsCtx },
     search: ctx.continuitySearch,
   });
+  if (!scopesStillFresh()) return { failed: true };
   const retirement: RetirementMetadata = {
+    judgedScope,
     retiredRef: retired.asset.ref,
     successorRef: successor.asset.ref,
     cosine: candidate.cosine,
@@ -865,7 +881,8 @@ async function judgeOne(ctx: PairPassContext, candidate: PairCandidate): Promise
     if (
       (verdict.relation !== "duplicate" || verdict.onlyInA.length + verdict.onlyInB.length === 0) &&
       !continuityRisk &&
-      (await confirmNothingLost(ctx, retired, successor))
+      (await confirmNothingLost(ctx, retired, successor)) &&
+      scopesStillFresh()
     ) {
       recordGateDecision(
         ctx.stashDir,

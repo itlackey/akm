@@ -1,0 +1,1662 @@
+{
+  "issue": "https://github.com/itlackey/akm/issues/1197",
+  "baseCommit": "d0fe1d0000d0ed0b268ee2d5c153fdf578daa7cf",
+  "dependency": "Merged PR #1202 (#1195), implementation e7ef0702f and acceptance evidence 778801e59; unchanged prompt assets and complete-evidence regressions preserved",
+  "branch": "fix/1197-preserve-memory-scopes",
+  "prTarget": "release/0.10.0",
+  "harness": "akm-eval 4d14d45fe70704c3d8d9010ff810ea917230ff93; three smoke files from existing PR #126/a9f30b1, quality collector/scorer unchanged",
+  "guidance": "Current remote akm-measured-improvement dated 2026-10-21; process-guidance, evaluation-guide, definition-of-done read",
+  "variants": {
+    "budget": 3,
+    "used": 1,
+    "treatment": "Exact normalized scope equality before pair quota; snapshot judgedScope; live scope checks at stage/accept/resume/promotion/archive; no prompt tuning"
+  },
+  "modelRuns": {
+    "budget": 12,
+    "used": 12,
+    "note": "Two unchanged baseline variation repeats count separately; stub tests and setup failures do not call the external model. No further model runs planned."
+  },
+  "orderedCriteria": [
+    "No cross-scope proposal/stage/accept or silent scope loss in defined fixtures",
+    "Full-body claim integrity and archive/revert recovery",
+    "Useful same-scope retirement and promotion preserved",
+    "Report judgment/error/call/token/runtime costs, disclose bounded uncertainty"
+  ],
+  "baselineReproduction": {
+    "pairTests": {
+      "pass": 5,
+      "fail": 32,
+      "total": 37
+    },
+    "promotionTests": {
+      "pass": 1,
+      "fail": 6,
+      "total": 7
+    },
+    "source": "Unchanged release baseline archive; regressions exercised independently of candidate production source"
+  },
+  "validation": {
+    "check": "bun run check: passed with built distribution",
+    "unit": {
+      "pass": 7183,
+      "skip": 4,
+      "fail": 0
+    },
+    "integration": {
+      "pass": 3813,
+      "skip": 81,
+      "fail": 0
+    },
+    "biome": "bunx biome check --write src/ tests/ passed (existing advisory warnings)",
+    "build": "bun run build passed; dist/tests absent",
+    "packInstall": "npm pack --ignore-scripts after build, offline install in isolated prefix; 19 baseline/installed lifecycle checks passed",
+    "nativeTestSetup": "Bun install left optional SQLite binding absent. Supplied the matching better-sqlite3 12.11.1 native binary already installed in original checkout; Node piped stdout 4/4 passed. No dependency/manifest changes.",
+    "resolvedInitialFailures": [
+      "New-test forEach lint corrected",
+      "Obsolete memory:fixture-source test ref corrected to memories/fixture-source",
+      "Two UI database-byte checks passed isolated and full final runs without changes",
+      "Node dist test passed after matching native dependency supplied"
+    ]
+  },
+  "configuration": {
+    "route": "fast/qwen3.6-35b-a3b",
+    "served": "qwen3.6-35b-a3b",
+    "temperature": 0,
+    "enableThinking": false,
+    "timeoutMs": 600000,
+    "realEmbedding": "embed/qwen3-embedding-0.6b through owner lab endpoint; explicit --embedder real plus config patch; complete index telemetry, no fallback",
+    "deterministic": "Earlier runs omitted --embedder real and set AKM_EMBED_DETERMINISTIC=1. Retained as controlled pairing runs; not compared as equivalent to real embeddings.",
+    "defaults": "No shipped defaults/config/prompt changes",
+    "contextCeiling": "Not independently verified; no context errors observed"
+  },
+  "costLimits": {
+    "dollars": "No authoritative provider prices available; no dollar estimate claimed",
+    "timing": "Fresh isolated per-case/index state. Several separate evaluations overlapped on a shared service/cache; timing is observed, not causal performance evidence.",
+    "modelCallFields": "Existing summary model_calls prompt_tokens/completion_tokens are per-call means. Report summed samples[].usage or pool metrics.calls totals, not those means as total cost."
+  },
+  "scopeSnapshotJustification": "Existing beforeHash covers only retired mint-time file; body hashes omit scope and no judged successor frontmatter is stored. One optional shared judgedScope object is sufficient because new pairs require equal tuples. No new schema version, queue, table or migration. Legacy absence differs from known empty {}.",
+  "queuedDecisions": "Old records decode but acceptance/reopen refuse unknown judgedScope. Staged unknown/stale scopes follow existing stale-target rejection and release pair ledger inputs for reassessment. Unstaged old work stays for explicit review/rejection; it cannot be manually accepted without a fresh assessed decision.",
+  "partialArchive": "Resumes recheck successor even when primary already archived, using recorded original backup for the retired side. Mismatch refuses further movement and leaves recoverable archive/intent. Test restores scope, completes idempotently and reverts exact original bytes.",
+  "sourceSha256": {
+    "src/commands/improve/consolidate/pair-pass.ts": "ad8208086e06d672c7b1c3322dfaec6061c3352137a7e2c329a7256f585c26a8",
+    "src/commands/proposal/repository.ts": "e42a0ebfad4a5b62b93c9e9f546fa35534aff3cf113e19edb74a85a512748903",
+    "src/commands/proposal/proposal-types.ts": "263797e2afa78ed7756cc2030908b23eead368b325ed83c688c63a4e8667443d",
+    "src/indexer/passes/metadata.ts": "5022ee20858d8a3908e64bc5beb39b93485faf6773aa33985ee8594090e6e09a"
+  },
+  "runs": [
+    {
+      "name": "baseline-real-scopes",
+      "eval": "consolidate",
+      "embedder": "real",
+      "status": "complete",
+      "run": 9,
+      "scored": 9,
+      "errors": 0,
+      "paired": 9,
+      "wallSeconds": 36.325,
+      "metrics": {
+        "unsafe": {
+          "n": 6,
+          "of": 9,
+          "staged": 6
+        },
+        "staged": {
+          "n": 9,
+          "safe": 3
+        },
+        "precision": {
+          "value": 0.3333,
+          "safe": 3,
+          "retired": 9
+        },
+        "recall": {
+          "value": 1,
+          "retired_safe": 3,
+          "of": 3
+        },
+        "classes": {
+          "duplicate": {
+            "n": 9,
+            "error": 0,
+            "paired": 9,
+            "judged_as": {
+              "duplicate": 9,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 3,
+            "retired_unsafe": 6,
+            "kept": 0
+          },
+          "subsumed": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "supersedes": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "unrelated": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 27,
+        "failures": 0,
+        "promptTokens": 18171,
+        "completionTokens": 976
+      },
+      "modelCallAverages": {
+        "calls": 27,
+        "errors": 0,
+        "prompt_tokens": 673,
+        "completion_tokens": 36.1,
+        "seconds": 1.05,
+        "output_tokens_per_second": 34.4
+      }
+    },
+    {
+      "name": "baseline-scopes",
+      "eval": "consolidate",
+      "embedder": "deterministic",
+      "status": "complete",
+      "run": 9,
+      "scored": 9,
+      "errors": 0,
+      "paired": 9,
+      "wallSeconds": 24.57,
+      "metrics": {
+        "unsafe": {
+          "n": 6,
+          "of": 9,
+          "staged": 6
+        },
+        "staged": {
+          "n": 9,
+          "safe": 3
+        },
+        "precision": {
+          "value": 0.3333,
+          "safe": 3,
+          "retired": 9
+        },
+        "recall": {
+          "value": 1,
+          "retired_safe": 3,
+          "of": 3
+        },
+        "classes": {
+          "duplicate": {
+            "n": 9,
+            "error": 0,
+            "paired": 9,
+            "judged_as": {
+              "duplicate": 9,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 3,
+            "retired_unsafe": 6,
+            "kept": 0
+          },
+          "subsumed": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "supersedes": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "unrelated": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 27,
+        "failures": 0,
+        "promptTokens": 18171,
+        "completionTokens": 614
+      },
+      "modelCallAverages": {
+        "calls": 27,
+        "errors": 0,
+        "prompt_tokens": 673,
+        "completion_tokens": 22.7,
+        "seconds": 0.69,
+        "output_tokens_per_second": 32.8
+      }
+    },
+    {
+      "name": "candidate-real-scopes",
+      "eval": "consolidate",
+      "embedder": "real",
+      "status": "complete",
+      "run": 9,
+      "scored": 9,
+      "errors": 0,
+      "paired": 3,
+      "wallSeconds": 38.749,
+      "metrics": {
+        "unsafe": {
+          "n": 0,
+          "of": 9,
+          "staged": 0
+        },
+        "staged": {
+          "n": 3,
+          "safe": 3
+        },
+        "precision": {
+          "value": 1,
+          "safe": 3,
+          "retired": 3
+        },
+        "recall": {
+          "value": 1,
+          "retired_safe": 3,
+          "of": 3
+        },
+        "classes": {
+          "duplicate": {
+            "n": 9,
+            "error": 0,
+            "paired": 3,
+            "judged_as": {
+              "duplicate": 3,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 3,
+            "retired_unsafe": 0,
+            "kept": 6
+          },
+          "subsumed": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "supersedes": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "unrelated": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 15,
+        "failures": 0,
+        "promptTokens": 9081,
+        "completionTokens": 279
+      },
+      "modelCallAverages": {
+        "calls": 15,
+        "errors": 0,
+        "prompt_tokens": 605.4,
+        "completion_tokens": 18.6,
+        "seconds": 1.89,
+        "output_tokens_per_second": 9.8
+      }
+    },
+    {
+      "name": "candidate-scopes",
+      "eval": "consolidate",
+      "embedder": "deterministic",
+      "status": "complete",
+      "run": 9,
+      "scored": 9,
+      "errors": 0,
+      "paired": 3,
+      "wallSeconds": 13.007,
+      "metrics": {
+        "unsafe": {
+          "n": 0,
+          "of": 9,
+          "staged": 0
+        },
+        "staged": {
+          "n": 3,
+          "safe": 3
+        },
+        "precision": {
+          "value": 1,
+          "safe": 3,
+          "retired": 3
+        },
+        "recall": {
+          "value": 1,
+          "retired_safe": 3,
+          "of": 3
+        },
+        "classes": {
+          "duplicate": {
+            "n": 9,
+            "error": 0,
+            "paired": 3,
+            "judged_as": {
+              "duplicate": 3,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 3,
+            "retired_unsafe": 0,
+            "kept": 6
+          },
+          "subsumed": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "supersedes": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "unrelated": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 15,
+        "failures": 0,
+        "promptTokens": 9081,
+        "completionTokens": 255
+      },
+      "modelCallAverages": {
+        "calls": 15,
+        "errors": 0,
+        "prompt_tokens": 605.4,
+        "completion_tokens": 17,
+        "seconds": 0.48,
+        "output_tokens_per_second": 35.6
+      }
+    },
+    {
+      "name": "final-complete-evidence",
+      "eval": "consolidate",
+      "embedder": "real",
+      "status": "complete",
+      "run": 8,
+      "scored": 8,
+      "errors": 0,
+      "paired": 8,
+      "wallSeconds": 116.795,
+      "metrics": {
+        "unsafe": {
+          "n": 0,
+          "of": 8,
+          "staged": 0
+        },
+        "staged": {
+          "n": 3,
+          "safe": 3
+        },
+        "precision": {
+          "value": 1,
+          "safe": 8,
+          "retired": 8
+        },
+        "recall": {
+          "value": 1,
+          "retired_safe": 8,
+          "of": 8
+        },
+        "classes": {
+          "duplicate": {
+            "n": 3,
+            "error": 0,
+            "paired": 3,
+            "judged_as": {
+              "duplicate": 3,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 3,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "subsumed": {
+            "n": 5,
+            "error": 0,
+            "paired": 5,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 5,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 5,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "supersedes": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "unrelated": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 24,
+        "failures": 0,
+        "promptTokens": 129963,
+        "completionTokens": 947
+      },
+      "modelCallAverages": {
+        "calls": 24,
+        "errors": 0,
+        "prompt_tokens": 5415.1,
+        "completion_tokens": 39.5,
+        "seconds": 4.55,
+        "output_tokens_per_second": 8.7
+      }
+    },
+    {
+      "name": "variation-baseline-r1",
+      "eval": "consolidate",
+      "embedder": "deterministic",
+      "status": "complete",
+      "run": 6,
+      "scored": 6,
+      "errors": 0,
+      "paired": 6,
+      "wallSeconds": 41.31,
+      "metrics": {
+        "unsafe": {
+          "n": 1,
+          "of": 6,
+          "staged": 0
+        },
+        "staged": {
+          "n": 1,
+          "safe": 1
+        },
+        "precision": {
+          "value": 0.75,
+          "safe": 3,
+          "retired": 4
+        },
+        "recall": {
+          "value": 0.75,
+          "retired_safe": 3,
+          "of": 4
+        },
+        "classes": {
+          "duplicate": {
+            "n": 2,
+            "error": 0,
+            "paired": 2,
+            "judged_as": {
+              "duplicate": 2,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 2,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "subsumed": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 1,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 1
+          },
+          "supersedes": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 1,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 1,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 1,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 1
+          },
+          "unrelated": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 1,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 1,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 16,
+        "failures": 0,
+        "promptTokens": 14332,
+        "completionTokens": 1261
+      },
+      "modelCallAverages": {
+        "calls": 16,
+        "errors": 0,
+        "prompt_tokens": 895.8,
+        "completion_tokens": 78.8,
+        "seconds": 2.33,
+        "output_tokens_per_second": 33.8
+      }
+    },
+    {
+      "name": "variation-baseline-r2",
+      "eval": "consolidate",
+      "embedder": "deterministic",
+      "status": "complete",
+      "run": 6,
+      "scored": 6,
+      "errors": 0,
+      "paired": 6,
+      "wallSeconds": 30.317,
+      "metrics": {
+        "unsafe": {
+          "n": 1,
+          "of": 6,
+          "staged": 0
+        },
+        "staged": {
+          "n": 1,
+          "safe": 1
+        },
+        "precision": {
+          "value": 0.75,
+          "safe": 3,
+          "retired": 4
+        },
+        "recall": {
+          "value": 0.75,
+          "retired_safe": 3,
+          "of": 4
+        },
+        "classes": {
+          "duplicate": {
+            "n": 2,
+            "error": 0,
+            "paired": 2,
+            "judged_as": {
+              "duplicate": 2,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 2,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "subsumed": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 1,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 1
+          },
+          "supersedes": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 1,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 1,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 0,
+            "error": 0,
+            "paired": 0,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "overlap": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 1,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 1
+          },
+          "unrelated": {
+            "n": 1,
+            "error": 0,
+            "paired": 1,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 1,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 1,
+            "kept": 0
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 16,
+        "failures": 0,
+        "promptTokens": 14332,
+        "completionTokens": 1054
+      },
+      "modelCallAverages": {
+        "calls": 16,
+        "errors": 0,
+        "prompt_tokens": 895.8,
+        "completion_tokens": 65.9,
+        "seconds": 1.65,
+        "output_tokens_per_second": 40
+      }
+    },
+    {
+      "name": "candidate-pool",
+      "eval": "consolidate",
+      "embedder": "deterministic",
+      "status": "complete",
+      "run": 1,
+      "scored": 1,
+      "errors": 0,
+      "paired": 31,
+      "wallSeconds": 148.72,
+      "metrics": {
+        "unsafe": {
+          "n": 0,
+          "of": 19,
+          "staged": 0
+        },
+        "staged": {
+          "n": 11,
+          "safe": 11
+        },
+        "precision": {
+          "value": 1,
+          "safe": 19,
+          "retired": 19
+        },
+        "recall": {
+          "value": 1,
+          "retired_safe": 19,
+          "of": 19
+        },
+        "wrong_successor": 0,
+        "classes": {
+          "duplicate": {
+            "clusters": 7,
+            "with_safe_retirement": 7,
+            "hit": 7,
+            "retired_safe": 7,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "triple": {
+            "clusters": 2,
+            "with_safe_retirement": 2,
+            "hit": 2,
+            "retired_safe": 2,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "subsumed": {
+            "clusters": 5,
+            "with_safe_retirement": 5,
+            "hit": 5,
+            "retired_safe": 5,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "supersedes": {
+            "clusters": 5,
+            "with_safe_retirement": 5,
+            "hit": 5,
+            "retired_safe": 5,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "overlap": {
+            "clusters": 7,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 7
+          },
+          "contradicts": {
+            "clusters": 2,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 2
+          },
+          "lookalike": {
+            "clusters": 3,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 3
+          },
+          "single": {
+            "clusters": 16,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 16
+          }
+        },
+        "pairs": {
+          "initiators": 80,
+          "judged": 31,
+          "considered": 35,
+          "failed": 4,
+          "labels": {
+            "duplicate": 11,
+            "subsumed": 12,
+            "supersedes": 0,
+            "contradicts": 0,
+            "overlap": 12,
+            "unrelated": 0
+          }
+        },
+        "calls": {
+          "calls": 61,
+          "failures": 0,
+          "prompt_tokens": 67996,
+          "completion_tokens": 5711
+        },
+        "chunks": {
+          "total": 7,
+          "failed": 0,
+          "deferred_memories": 0,
+          "promote_ops": 32
+        },
+        "anti_collapse_injected": null,
+        "cold_start_budget": null,
+        "warnings": [
+          "Promote: skipped memories/kiln-7-firing → knowledge/studio-kiln-7-procedures — slug-variant of pending proposal b2ce34de-455a-43cf-a96f-a3f4e9c2d52b (bundle//knowledge/studio-kiln-3-procedures)."
+        ]
+      },
+      "usageTotals": {
+        "calls": 61,
+        "failures": 0,
+        "prompt_tokens": 67996,
+        "completion_tokens": 5711
+      },
+      "modelCallAverages": {
+        "calls": 61,
+        "errors": 0,
+        "prompt_tokens": 1114.7,
+        "completion_tokens": 93.6,
+        "seconds": 2.42,
+        "output_tokens_per_second": 38.7
+      }
+    },
+    {
+      "name": "candidate-public",
+      "eval": "consolidate",
+      "embedder": "deterministic",
+      "status": "complete",
+      "run": 80,
+      "scored": 80,
+      "errors": 0,
+      "paired": 73,
+      "wallSeconds": 396.471,
+      "metrics": {
+        "unsafe": {
+          "n": 2,
+          "of": 80,
+          "staged": 0
+        },
+        "staged": {
+          "n": 21,
+          "safe": 21
+        },
+        "precision": {
+          "value": 0.9512,
+          "safe": 39,
+          "retired": 41
+        },
+        "recall": {
+          "value": 0.975,
+          "retired_safe": 39,
+          "of": 40
+        },
+        "classes": {
+          "duplicate": {
+            "n": 13,
+            "error": 0,
+            "paired": 13,
+            "judged_as": {
+              "duplicate": 11,
+              "subsumed": 1,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 1,
+              "unrelated": 0
+            },
+            "retired_safe": 12,
+            "retired_unsafe": 0,
+            "kept": 1
+          },
+          "subsumed": {
+            "n": 14,
+            "error": 0,
+            "paired": 14,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 14,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 14,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "supersedes": {
+            "n": 13,
+            "error": 0,
+            "paired": 13,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 13,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 0,
+              "unrelated": 0
+            },
+            "retired_safe": 13,
+            "retired_unsafe": 0,
+            "kept": 0
+          },
+          "contradicts": {
+            "n": 13,
+            "error": 0,
+            "paired": 13,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 13,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 13
+          },
+          "overlap": {
+            "n": 13,
+            "error": 0,
+            "paired": 13,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 0,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 13,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "kept": 13
+          },
+          "unrelated": {
+            "n": 14,
+            "error": 0,
+            "paired": 7,
+            "judged_as": {
+              "duplicate": 0,
+              "subsumed": 2,
+              "supersedes": 0,
+              "contradicts": 0,
+              "overlap": 5,
+              "unrelated": 0
+            },
+            "retired_safe": 0,
+            "retired_unsafe": 2,
+            "kept": 12
+          }
+        }
+      },
+      "usageTotals": {
+        "calls": 194,
+        "failures": 0,
+        "promptTokens": 174596,
+        "completionTokens": 16918
+      },
+      "modelCallAverages": {
+        "calls": 194,
+        "errors": 0,
+        "prompt_tokens": 900,
+        "completion_tokens": 87.2,
+        "seconds": 1.75,
+        "output_tokens_per_second": 49.9
+      }
+    },
+    {
+      "name": "candidate-real-pool",
+      "eval": "consolidate",
+      "embedder": "real",
+      "status": "complete",
+      "run": 1,
+      "scored": 1,
+      "errors": 0,
+      "paired": 28,
+      "wallSeconds": 204.373,
+      "metrics": {
+        "unsafe": {
+          "n": 0,
+          "of": 18,
+          "staged": 0
+        },
+        "staged": {
+          "n": 12,
+          "safe": 12
+        },
+        "precision": {
+          "value": 1,
+          "safe": 18,
+          "retired": 18
+        },
+        "recall": {
+          "value": 0.9474,
+          "retired_safe": 18,
+          "of": 19
+        },
+        "wrong_successor": 0,
+        "classes": {
+          "duplicate": {
+            "clusters": 7,
+            "with_safe_retirement": 7,
+            "hit": 6,
+            "retired_safe": 6,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 1
+          },
+          "triple": {
+            "clusters": 2,
+            "with_safe_retirement": 2,
+            "hit": 2,
+            "retired_safe": 2,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "subsumed": {
+            "clusters": 5,
+            "with_safe_retirement": 5,
+            "hit": 5,
+            "retired_safe": 5,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "supersedes": {
+            "clusters": 5,
+            "with_safe_retirement": 5,
+            "hit": 5,
+            "retired_safe": 5,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 0
+          },
+          "overlap": {
+            "clusters": 7,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 7
+          },
+          "contradicts": {
+            "clusters": 2,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 2
+          },
+          "lookalike": {
+            "clusters": 3,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 3
+          },
+          "single": {
+            "clusters": 16,
+            "with_safe_retirement": 0,
+            "hit": 0,
+            "retired_safe": 0,
+            "retired_unsafe": 0,
+            "wrong_successor": 0,
+            "untouched": 16
+          }
+        },
+        "pairs": {
+          "initiators": 80,
+          "judged": 28,
+          "considered": 32,
+          "failed": 4,
+          "labels": {
+            "duplicate": 11,
+            "subsumed": 11,
+            "supersedes": 0,
+            "contradicts": 0,
+            "overlap": 10,
+            "unrelated": 0
+          }
+        },
+        "calls": {
+          "calls": 57,
+          "failures": 0,
+          "prompt_tokens": 63591,
+          "completion_tokens": 6366
+        },
+        "chunks": {
+          "total": 7,
+          "failed": 0,
+          "deferred_memories": 0,
+          "promote_ops": 36
+        },
+        "anti_collapse_injected": null,
+        "cold_start_budget": null,
+        "warnings": [
+          "Skipping promote: pending proposal already exists for knowledge/dunmere-feature-flags",
+          "Skipping promote: pending proposal already exists for knowledge/vesper-token-rotation",
+          "Skipping promote: pending proposal already exists for knowledge/kettering-tls-certificate-renewal",
+          "Skipping promote: pending proposal already exists for knowledge/kettering-tls-certificate-renewal",
+          "Skipping promote: pending proposal already exists for knowledge/pellam-kiosk-update",
+          "Skipping promote: pending proposal already exists for knowledge/jessamy-oncall-handover"
+        ]
+      },
+      "usageTotals": {
+        "calls": 57,
+        "failures": 0,
+        "prompt_tokens": 63591,
+        "completion_tokens": 6366
+      },
+      "modelCallAverages": {
+        "calls": 57,
+        "errors": 0,
+        "prompt_tokens": 1115.6,
+        "completion_tokens": 111.7,
+        "seconds": 3.5,
+        "output_tokens_per_second": 31.9
+      }
+    },
+    {
+      "name": "baseline-promotion",
+      "eval": "bakeoff",
+      "embedder": null,
+      "status": "complete",
+      "run": 8,
+      "scored": 8,
+      "errors": 0,
+      "paired": null,
+      "wallSeconds": 104.121,
+      "metrics": {
+        "valid_output": {
+          "n": 8,
+          "passed": 8,
+          "rate": 1
+        },
+        "case_pass": {
+          "n": 8,
+          "passed": 5,
+          "rate": 0.625
+        },
+        "checks": {
+          "n": 8,
+          "rate": 0.8542
+        },
+        "median_seconds": 5.9,
+        "by_process": {
+          "consolidate-promote": {
+            "n": 8,
+            "valid_output": 8,
+            "passed": 5,
+            "checks": 0.8542,
+            "outcomes": {
+              "output": 8,
+              "unusable": 0,
+              "error": 0
+            },
+            "failed": {
+              "promotes memories/signed-artifacts": 1,
+              "no extra or missing promotions": 1,
+              "promotes memories/artifact-signing-observation": 1,
+              "leaves protected memories/failover-drill-placeholder untouched": 1
+            }
+          }
+        }
+      },
+      "usageTotals": null,
+      "modelCallAverages": {
+        "calls": 24,
+        "errors": 0,
+        "prompt_tokens": 626.3,
+        "completion_tokens": 209.7,
+        "seconds": 3.89,
+        "output_tokens_per_second": 53.9
+      }
+    },
+    {
+      "name": "candidate-promotion",
+      "eval": "bakeoff",
+      "embedder": null,
+      "status": "complete",
+      "run": 8,
+      "scored": 8,
+      "errors": 0,
+      "paired": null,
+      "wallSeconds": 181.646,
+      "metrics": {
+        "valid_output": {
+          "n": 8,
+          "passed": 8,
+          "rate": 1
+        },
+        "case_pass": {
+          "n": 8,
+          "passed": 5,
+          "rate": 0.625
+        },
+        "checks": {
+          "n": 8,
+          "rate": 0.8542
+        },
+        "median_seconds": 10.6,
+        "by_process": {
+          "consolidate-promote": {
+            "n": 8,
+            "valid_output": 8,
+            "passed": 5,
+            "checks": 0.8542,
+            "outcomes": {
+              "output": 8,
+              "unusable": 0,
+              "error": 0
+            },
+            "failed": {
+              "promotes memories/signed-artifacts": 1,
+              "no extra or missing promotions": 1,
+              "promotes memories/artifact-signing-observation": 1,
+              "leaves protected memories/failover-drill-placeholder untouched": 1
+            }
+          }
+        }
+      },
+      "usageTotals": null,
+      "modelCallAverages": {
+        "calls": 24,
+        "errors": 0,
+        "prompt_tokens": 620.2,
+        "completion_tokens": 190,
+        "seconds": 7.04,
+        "output_tokens_per_second": 27
+      }
+    }
+  ],
+  "rolloutStatus": "Ready for rollout pending review/merge and owner release/install/production observations; no production deployment or issue closure performed"
+}
