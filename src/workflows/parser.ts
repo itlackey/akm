@@ -732,7 +732,11 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
       return;
     }
     const label = typeof rawStep.id === "string" && rawStep.id !== "" ? `Step "${rawStep.id}"` : `Step ${index + 1}`;
-    checkUnknownKeys(ctx, rawStep, path, STEP_KEYS, label);
+    const isMapStep = rawStep.map !== undefined;
+    const unitKeyHome = isMapStep ? "map.unit:" : "unit:";
+    checkUnknownKeys(ctx, rawStep, path, STEP_KEYS, label, (key) =>
+      UNIT_KEYS.includes(key) ? ` (this belongs under "${unitKeyHome}")` : "",
+    );
 
     let id = "";
     if (typeof rawStep.id !== "string" || rawStep.id === "") {
@@ -757,7 +761,6 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
       }
     }
 
-    const isMapStep = rawStep.map !== undefined;
     if (isMapStep && rawStep.unit !== undefined) {
       ctx.err(
         path,
@@ -775,6 +778,14 @@ function parseSteps(ctx: Ctx, raw: unknown): ProgramStep[] {
 
     const step: ProgramStep = { id, source: ctx.refAt(path) };
     if (unit) step.unit = unit;
+    // A solo step's `output` is also its unit's contract. Only `unit.output`
+    // makes the dispatch ask for, parse and re-request JSON, so without this a
+    // step-level schema met a raw text reply and could never pass. A map
+    // step's `output` describes the collected/reduced value, and a child
+    // workflow unit's result is the child's own, so both keep the step-only meaning.
+    if (output !== undefined && !isMapStep && unit?.output === undefined && unit?.workflow === undefined) {
+      step.unit = { ...(unit ?? { source: step.source }), output };
+    }
     if (map) step.map = map;
     if (inputs) step.inputs = inputs;
     if (output !== undefined) step.output = output;
@@ -1353,10 +1364,11 @@ function checkUnknownKeys(
   path: Path,
   allowed: readonly string[],
   label: string,
+  hint: (key: string) => string = () => "",
 ): void {
   for (const key of Object.keys(obj)) {
     if (!allowed.includes(key)) {
-      ctx.err([...path, key], `Unknown ${label} key "${key}". Allowed keys: ${allowed.join(", ")}.`);
+      ctx.err([...path, key], `Unknown ${label} key "${key}"${hint(key)}. Allowed keys: ${allowed.join(", ")}.`);
     }
   }
 }

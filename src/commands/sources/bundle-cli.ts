@@ -151,15 +151,14 @@ const updateCommand = defineJsonCommand({
         "Allow an update containing dangerous env keys (e.g. LD_PRELOAD, PATH). Use only after explicitly reviewing the staged bundle.",
       default: false,
     },
-    // F1/R-058: gates ONLY the rare branch where the resolved content
-    // directory moves and the previous `localRoot` is deleted — a normal
-    // refresh (the overwhelming majority of updates) deletes nothing and
-    // never consults this flag. Mirrors `remove`'s `-y/--yes`.
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Deleting the previous directory of a read-only
+    // install whose content moved no longer asks: it is a re-fetchable cache.
     yes: {
       type: "boolean",
       alias: "y",
       description:
-        "Skip the confirmation prompt when an update needs to delete a previous install directory (because the resolved content location moved). No effect on a normal refresh, which deletes nothing.",
+        "Deprecated, no effect: update no longer asks before deleting a moved read-only install directory. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
@@ -170,7 +169,6 @@ const updateCommand = defineJsonCommand({
         target: args.target,
         all: args.all,
         force: args.force,
-        yes: args.yes,
         allowDangerousEnvKeys: args["allow-dangerous-env-keys"],
       });
     } catch (error) {

@@ -3,20 +3,18 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * Regression tests for F1/R-058: `akm bundle update` could `rm -rf` a previous
- * install directory with NO confirmation gate and NO `--yes` flag at all,
- * while `akm bundle remove` already refused in non-interactive mode without
- * `--yes`. The asymmetry: `updateManagedInstall` (installed-stashes.ts)
- * deletes `managed.localRoot` via `cleanupDirectoryBestEffort` whenever the
- * resolved content directory (`synced.contentDir`) differs from it, the
- * source isn't "local", and the install isn't writable.
+ * `updateManagedInstall` (installed-stashes.ts) deletes the previous
+ * `managed.localRoot` via `cleanupDirectoryBestEffort` when the resolved
+ * content directory (`synced.contentDir`) differs from it, the source isn't
+ * "local", and the install isn't writable. Read-only git and npm installs are
+ * keyed per resolved revision, so that happens on every upstream change.
  *
- * The fix gates ONLY that branch with `confirmDestructive` (same helper
- * `remove` uses) and a new `-y/--yes` flag threaded through `akmUpdate`. A
- * normal refresh — the overwhelming majority of `akm bundle update` invocations,
- * where the resolved content directory does NOT move — must stay completely
- * unaffected: no prompt, no flag required, unchanged exit code. These tests
- * pin BOTH halves: the gated destructive path AND the untouched normal path.
+ * F1/R-058 once put a `confirmDestructive` gate on that branch, which made
+ * every real non-interactive update fail with NON_INTERACTIVE_REQUIRES_YES
+ * (#1096). The directory is a re-fetchable cache, and one still referenced by
+ * another bundle or lock entry is kept, so the gate was removed. These tests
+ * pin that the moved-directory cleanup never prompts, that it runs, and
+ * that a referenced directory survives.
  */
 
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -139,31 +137,8 @@ function mockStagedSync(opts: { ref?: string; version?: string } = {}): ReturnTy
   });
 }
 
-describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)", () => {
-  test("resolved content dir MOVES, non-interactive, no --yes: BLOCKED, old root untouched", async () => {
-    const oldRoot = createTmpDir("akm-update-confirm-old-");
-    fs.writeFileSync(path.join(oldRoot, "marker.txt"), "old content");
-    configureManagedBundle("left-pad", oldRoot);
-
-    const syncSpy = mockStagedSync();
-    try {
-      await withTTY(false, async () => {
-        await expect(akmUpdate({ target: "left-pad", stashDir })).rejects.toMatchObject({
-          code: "NON_INTERACTIVE_REQUIRES_YES",
-        });
-      });
-    } finally {
-      syncSpy.mockRestore();
-    }
-
-    // The gate fires BEFORE publication and cleanup: nothing moved.
-    expect(fs.existsSync(path.join(oldRoot, "marker.txt"))).toBe(true);
-    expect(fs.existsSync(liveContentDir())).toBe(false);
-    expect(loadConfig().bundles?.["left-pad"]?.npm).toBe("left-pad");
-    expect(readLockfile().find((e) => e.id === "left-pad")?.localRoot).toBe(oldRoot);
-  });
-
-  test("resolved content dir MOVES, --yes passed: proceeds and deletes the old root", async () => {
+describe("akm bundle update — a moved content directory never prompts (#1096)", () => {
+  test("resolved content dir MOVES, non-interactive, no --yes: succeeds and deletes the old root", async () => {
     const oldRoot = createTmpDir("akm-update-confirm-old-");
     fs.writeFileSync(path.join(oldRoot, "marker.txt"), "old content");
     configureManagedBundle("left-pad", oldRoot);
@@ -171,19 +146,21 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
     const syncSpy = mockStagedSync();
     let result: Awaited<ReturnType<typeof akmUpdate>>;
     try {
-      result = await withTTY(false, () => akmUpdate({ target: "left-pad", stashDir, yes: true }));
+      // No TTY and no --yes: a scheduled `bundle update --all` must not fail
+      // with NON_INTERACTIVE_REQUIRES_YES on an ordinary upstream change.
+      result = await withTTY(false, () => akmUpdate({ target: "left-pad", stashDir }));
     } finally {
       syncSpy.mockRestore();
     }
 
     expect(result.processed).toHaveLength(1);
+    expect(loadConfig().bundles?.["left-pad"]?.npm).toBe("left-pad");
     expect(readLockfile().find((e) => e.id === "left-pad")?.localRoot).toBe(liveContentDir());
     expect(fs.readFileSync(path.join(liveContentDir(), "marker.txt"), "utf8")).toBe("new content");
-    // The confirmed deletion actually ran.
     expect(fs.existsSync(oldRoot)).toBe(false);
   });
 
-  test("normal refresh (resolved content dir UNCHANGED) needs no --yes and prompts nothing", async () => {
+  test("normal refresh (resolved content dir UNCHANGED) never prompts and keeps its directory", async () => {
     const root = liveContentDir();
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(path.join(root, "marker.txt"), "stable content");
@@ -192,7 +169,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
     const syncSpy = mockStagedSync();
     let result: Awaited<ReturnType<typeof akmUpdate>>;
     try {
-      // Non-interactive AND no --yes: must NOT throw, because the
+      // Non-interactive: must NOT throw, and nothing is deleted because the
       // destructive branch is never reached (contentDir === localRoot).
       result = await withTTY(false, () => akmUpdate({ target: "left-pad", stashDir }));
     } finally {
@@ -243,7 +220,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
     const syncSpy = mockStagedSync();
 
     try {
-      await akmUpdate({ target: "left-pad", stashDir, yes: true });
+      await akmUpdate({ target: "left-pad", stashDir });
     } finally {
       syncSpy.mockRestore();
     }
@@ -267,7 +244,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
     const syncSpy = mockStagedSync();
 
     try {
-      await akmUpdate({ target: "left-pad", stashDir, yes: true });
+      await akmUpdate({ target: "left-pad", stashDir });
     } finally {
       syncSpy.mockRestore();
     }
@@ -294,7 +271,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
       const syncSpy = mockStagedSync();
 
       try {
-        await akmUpdate({ target: "left-pad", stashDir, yes: true });
+        await akmUpdate({ target: "left-pad", stashDir });
       } finally {
         syncSpy.mockRestore();
       }
@@ -339,7 +316,7 @@ describe("akm bundle update — destructive-branch confirmation gate (F1/R-058)"
     });
 
     try {
-      await expect(akmUpdate({ target: "left-pad", stashDir, yes: true })).rejects.toThrow(/index unavailable/);
+      await expect(akmUpdate({ target: "left-pad", stashDir })).rejects.toThrow(/index unavailable/);
     } finally {
       syncSpy.mockRestore();
     }
