@@ -1,0 +1,82 @@
+[
+  {
+    "capture": 1,
+    "requestSha256": "3e2598704964efadc62c00b7b5b9e8cb1c70478fc250543105b51e677aed8e30",
+    "payload": {
+      "candidates": [
+        {
+          "type": "memory",
+          "name": "harborlight/commit-conventions",
+          "description": "Harborlight requires conventional commit messages formatted as type(scope): subject in imperative lowercase, capped at 60 characters.",
+          "when_to_use": "",
+          "body": "Commit messages in the harborlight repository must follow the Conventional Commits format: `type(scope): subject`.\n\n- **Mood:** Imperative\n- **Case:** Lowercase subject\n- **Punctuation:** No trailing period\n- **Length:** Maximum 60 characters on the first line\n- **Footer:** If a ticket is referenced, add `Refs: HBL-123` on its own line in the footer.",
+          "confidence": 0.95,
+          "evidence": "User correction at 2026-09-23T13:23:30Z explicitly defined these rules for future commits."
+        }
+      ],
+      "rationale_if_empty": ""
+    }
+  },
+  {
+    "capture": 2,
+    "requestSha256": "7436722a003e903aea6078940df7b3b910fd1244f538367f71c1bc7cc505552f",
+    "payload": {
+      "candidates": [
+        {
+          "type": "lesson",
+          "name": "ledgerline/export-wrapper-stale-pid",
+          "description": "The export wrapper exits 75 on any existing pid file without checking process liveness, causing stale locks to block runs.",
+          "when_to_use": "When debugging exit status 75 in the nightly Ledgerline customer export cron job.",
+          "body": "The `bin/export-wrapper.sh` script checks for the existence of `var/export.pid` and immediately exits with status 75 if found. It does not verify whether the process recorded in the file is still alive.\n\nIf a previous run was killed by an OOM event (SIGKILL), the shell's EXIT trap fails to remove the pid file, leaving a stale lock that blocks all subsequent runs. The fix requires checking `kill -0` on the recorded pid before exiting.",
+          "confidence": 0.95,
+          "evidence": "Agent identified that the wrapper exits 75 whenever var/export.pid exists without checking if the process is alive."
+        }
+      ],
+      "rationale_if_empty": ""
+    }
+  },
+  {
+    "capture": 3,
+    "requestSha256": "f2d91eb335bfb83f95d4e5a0a342112faf156fc4deb894a80628429132e0bdc5",
+    "payload": {
+      "candidates": [
+        {
+          "type": "lesson",
+          "name": "pytest-xdist-sqlite-conftest",
+          "description": "Shared SQLite test fixtures fail under pytest-xdist because multiple workers lock the same database file.",
+          "when_to_use": "When running tests with pytest-xdist (-n > 1) that share a single SQLite database fixture.",
+          "body": "In `tests/conftest.py`, if `DB_PATH` is hardcoded to a single file (e.g., `tmp/test.db`), concurrent xdist workers will cause `sqlite3.OperationalError: database is locked`. The fix is to derive the path from the `PYTEST_XDIST_WORKER` environment variable, which is set to `gw0`, `gw1`, etc., during parallel runs and unset in serial runs.",
+          "confidence": 0.95,
+          "evidence": "Agent identified the shared DB_PATH issue in conftest.py after reproducing failures with -n 4."
+        }
+      ],
+      "rationale_if_empty": ""
+    }
+  },
+  {
+    "capture": 4,
+    "requestSha256": "f231e198f6e66e6be94e11f615881e37daffc003e81ddfa0111930600fc233b0",
+    "payload": {
+      "candidates": [],
+      "rationale_if_empty": "The session was a routine formatting and linting run on the Ledgerline billing package that completed without errors, failures, or non-obvious discoveries, so no durable engineering insights emerged."
+    }
+  },
+  {
+    "capture": 5,
+    "requestSha256": "037d50097f75fcb43871bb90ebe379b9a1bee0ca95f5e2d470aba2083d01af28",
+    "payload": {
+      "candidates": [
+        {
+          "type": "lesson",
+          "name": "harborlight/queue-test-flaky-sleep",
+          "description": "Fixed sleeps in Harborlight queue tests cause flakiness because FakeSink introduces random 20-120ms latency.",
+          "when_to_use": "When debugging intermittent failures in Harborlight async tests that rely on fixed sleep durations.",
+          "body": "In `src/queue.test.ts`, the test 'drains within 100ms' failed intermittently on CI but passed locally. The root cause was `FakeSink.write` taking a random 20 to 120 ms, which exceeded the fixed 100 ms sleep in some runs. The fix is to await the completion signal `q.drained()` instead of using `sleep()`. This pattern applies generally to tests involving async sinks with variable latency.",
+          "confidence": 0.85,
+          "evidence": "Agent identified that FakeSink's random latency caused the 1-in-6 failure rate before applying the fix."
+        }
+      ],
+      "rationale_if_empty": ""
+    }
+  }
+]

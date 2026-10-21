@@ -1,0 +1,40 @@
+{
+  "question": "Does final serialization change extraction scorer inputs when the exact same model output is replayed?",
+  "captures": [
+    {
+      "capture": 1,
+      "requestSha256": "3e2598704964efadc62c00b7b5b9e8cb1c70478fc250543105b51e677aed8e30",
+      "candidates": 1,
+      "scorerInputsEqual": true,
+      "evidenceInAuthoritativeMarkdown": true
+    },
+    {
+      "capture": 2,
+      "requestSha256": "7436722a003e903aea6078940df7b3b910fd1244f538367f71c1bc7cc505552f",
+      "candidates": 1,
+      "scorerInputsEqual": true,
+      "evidenceInAuthoritativeMarkdown": true
+    },
+    {
+      "capture": 3,
+      "requestSha256": "f2d91eb335bfb83f95d4e5a0a342112faf156fc4deb894a80628429132e0bdc5",
+      "candidates": 1,
+      "scorerInputsEqual": true,
+      "evidenceInAuthoritativeMarkdown": true
+    },
+    {
+      "capture": 4,
+      "requestSha256": "f231e198f6e66e6be94e11f615881e37daffc003e81ddfa0111930600fc233b0",
+      "candidates": 0,
+      "scorerInputsEqual": true,
+      "evidenceInAuthoritativeMarkdown": true
+    },
+    {
+      "capture": 5,
+      "requestSha256": "037d50097f75fcb43871bb90ebe379b9a1bee0ca95f5e2d470aba2083d01af28",
+      "candidates": 1,
+      "scorerInputsEqual": true,
+      "evidenceInAuthoritativeMarkdown": true
+    }
+  ]
+}
