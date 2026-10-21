@@ -723,6 +723,7 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
   const { db } = opened;
 
   try {
+    const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
     // Network probes overlap the local database phases below; awaited where consumed.
     const engineProbesPromise = runHealthEngineProbes({ probeReachable: options.probe ? probeLlmEndpoint : undefined });
     engineProbesPromise.catch(() => undefined);
@@ -826,9 +827,6 @@ export async function akmHealth(options: AkmHealthOptions = {}): Promise<AkmHeal
       (check) => check.status === "warn" && check.kind === "deterministic",
     );
     const status: AkmHealthResult["status"] = hardFailure ? "fail" : deterministicWarnings ? "warn" : "pass";
-
-    // ── Window-compare mode (Phase 3) ─────────────────────────────────────
-    const { windowResults, deltas } = resolveWindowComparePhase(options, db, stateDbPath, now);
 
     // ── Per-run mode (Phase 2) ────────────────────────────────────────────
     const runs: ImproveRunSummary[] | undefined = options.groupBy === "run" ? perRunSummaries : undefined;

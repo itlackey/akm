@@ -215,6 +215,7 @@ const DOCUMENT_JSON_CARRIED_FIELDS = [
   "wikiRole",
   "sources",
   "evidenceSources",
+  "evidence",
   // #935: a workflow's step targets and a task's target, read as declared links.
   "uses",
   // D2 (#730): the OKF v0.2 provenance `promoteProposal` stamps onto AKM-native

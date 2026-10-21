@@ -44,8 +44,13 @@ import {
   lookupBundleRefWithResolution,
   lookupBundleRefWithResolutionReadonly,
 } from "../../indexer/indexer";
-import type { StashEntryScope } from "../../indexer/passes/metadata";
-import { projectMarkdownFragmentContent } from "../../indexer/passes/metadata";
+import {
+  applyCuratedFrontmatter,
+  applyProvenanceFrontmatter,
+  type IndexDocument,
+  projectMarkdownFragmentContent,
+  type StashEntryScope,
+} from "../../indexer/passes/metadata";
 import { ensurePrimaryIndexForRead, resolveReadSources } from "../../indexer/read-preflight";
 import {
   buildEditHint,
@@ -468,8 +473,22 @@ export async function showLocal(input: {
     delete (response as { toolPolicy?: unknown }).toolPolicy;
   }
   const editable = isEditable(assetPath, config, allSources);
+  // Evidence must describe the same revision as the rendered claim: ordinary
+  // Markdown show is source-live, while indexed fragment show is a snapshot.
+  let evidenceMetadata: IndexDocument | undefined;
+  if (["memory", "lesson", "knowledge"].includes(response.type)) {
+    evidenceMetadata = indexedFragment ? indexedEntry.document : { name: presentedName, type: response.type };
+    if (!indexedFragment && evidenceMetadata) {
+      const frontmatter = parseFrontmatter(fileCtx.content()).data;
+      applyCuratedFrontmatter(evidenceMetadata, frontmatter);
+      applyProvenanceFrontmatter(evidenceMetadata, frontmatter);
+    }
+  }
   const fullResponse: ShowResponse = {
     ...response,
+    ...(evidenceMetadata?.evidence ? { evidence: evidenceMetadata.evidence } : {}),
+    ...(evidenceMetadata?.evidenceSources ? { evidenceSources: evidenceMetadata.evidenceSources } : {}),
+    ...(evidenceMetadata?.evidence && evidenceMetadata.provenance ? { provenance: evidenceMetadata.provenance } : {}),
     ref: canonicalRef,
     origin: source?.registryId ?? null,
     editable,

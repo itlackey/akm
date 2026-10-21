@@ -176,6 +176,7 @@ export function validateStashEntry(entry: unknown): IndexDocument | null {
   }
   const evidenceSources = normalizeNonEmptyStringList(e.evidenceSources);
   if (evidenceSources) result.evidenceSources = evidenceSources;
+  if (typeof e.evidence === "string" && e.evidence.trim().length > 0) result.evidence = e.evidence;
   if (typeof e.derivedFrom === "string" && e.derivedFrom.trim().length > 0) {
     result.derivedFrom = e.derivedFrom.trim();
   }
@@ -377,6 +378,7 @@ export function applyCuratedFrontmatter(entry: IndexDocument, fmData: Record<str
 
   const evidenceSources = normalizeNonEmptyStringList(fmData.evidenceSources);
   if (evidenceSources) entry.evidenceSources = evidenceSources;
+  if (typeof fmData.evidence === "string" && fmData.evidence.trim().length > 0) entry.evidence = fmData.evidence;
 
   // Phase 5A / Advantage D5: capture parent ref for derived memories.
   // Memory-inference writes `source: "memories/<parent>"` and `inferred: true`
@@ -538,7 +540,8 @@ export function applyProvenanceFrontmatter(entry: IndexDocument, fmData: Record<
       .filter((s): s is Record<string, unknown> => s !== null && typeof s === "object" && !Array.isArray(s))
       .map((s) => {
         const resource = asNonEmptyString(s.resource);
-        return resource ? { resource } : undefined;
+        const id = asNonEmptyString(s.id);
+        return resource ? { resource, ...(id ? { id } : {}) } : undefined;
       })
       .filter((s): s is { resource: string } => s !== undefined);
     if (sources.length > 0) result.sources = sources;
