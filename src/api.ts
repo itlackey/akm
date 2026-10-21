@@ -20,8 +20,9 @@ import { withQuiet } from "./core/warn";
 import { installLlmUsagePersistenceIfAbsent } from "./llm/usage-persist";
 import { resolveOutputMode } from "./output/context";
 import { stdoutText } from "./output/stdout";
+import type { RecallOptions } from "./sources/types";
 
-export interface CurateOptions {
+export interface CurateOptions extends RecallOptions {
   /** Maximum number of curated results (positive integer; the CLI default is 4). */
   limit?: number;
   /** Asset type filter, same as `--type`. */
@@ -48,7 +49,19 @@ export async function curate(query: string, options: CurateOptions = {}): Promis
     const disposeLlmUsageSink = installLlmUsagePersistenceIfAbsent();
     try {
       const curated = await runCurate(
-        { query, type: options.type, limit: options.limit === undefined ? undefined : String(options.limit) },
+        {
+          query,
+          type: options.type,
+          limit: options.limit === undefined ? undefined : String(options.limit),
+          from: options.source,
+          belief: options.belief,
+          filters:
+            options.filters === undefined
+              ? undefined
+              : Object.entries(options.filters)
+                  .filter(([, value]) => value !== undefined)
+                  .map(([key, value]) => `${key}=${value}`),
+        },
         mode,
       );
       return stdoutText(renderOutput("curate", curated, { ...mode, format }));

@@ -8,8 +8,8 @@
  * present edge AND demotion is a no-op; an edge without its demotion is
  * repaired) and never weakens a stronger demotion — severity is
  * superseded > contradicted > archived. (alpha.4 removed belief weights from
- * ranking: search no longer reads `beliefState` at all, and `--belief
- * current|historical` is the only reader, opt-in.)
+ * ranking: beliefState never changes rank. Search/curate filter current
+ * by default; --belief all|historical explicitly includes older context.)
  * The SCC resolver in memory-improve.ts is a state-transition writer (it
  * replaces and clears edges) and deliberately does not use this (#885).
  */

@@ -1,0 +1,3 @@
+$ rm -rf dist && bun scripts/gen-config-schema.ts &&bun run tsc --project ./tsconfig.build.json && bun scripts/copy-assets.ts && bun scripts/fix-esm-extensions.ts
+Wrote <akm-checkout>/schemas/akm-config.json
+fix-esm-extensions: rewrote 2890 specifier(s) across 512 file(s).

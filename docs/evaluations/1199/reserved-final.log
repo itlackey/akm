@@ -1,0 +1,48 @@
+bun test v1.4.1 (4661e494f)
+
+tests/integration/parent-eligibility-final.test.ts:
+(pass) compound eligibility crosses multiple candidate batches (off) [72.99ms]
+(pass) compound eligibility crosses multiple candidate batches (auto) [56.84ms]
+
+tests/integration/curate-recall-controls.test.ts:
+(pass) CLI/internal/API belief default and packed evidence [698.88ms]
+(pass) CLI/internal/API belief current and packed evidence [1021.54ms]
+(pass) CLI/internal/API belief all and packed evidence [1001.29ms]
+(pass) CLI/internal/API belief historical and packed evidence [848.00ms]
+(pass) scope user narrows selection, support and packing with CLI/API parity [756.88ms]
+(pass) scope agent narrows selection, support and packing with CLI/API parity [516.56ms]
+(pass) scope run narrows selection, support and packing with CLI/API parity [473.76ms]
+(pass) scope channel narrows selection, support and packing with CLI/API parity [430.25ms]
+(pass) compound scope, source/type combinations and duplicate source identities [1233.97ms]
+(pass) stale outgoing/incoming links are filtered in current; all labels historical context [53.39ms]
+(pass) packing rechecks changed scope/belief and missing content instead of widening [43.22ms]
+(pass) reranking false: only eligible candidates and derived surfaces reach reranker [51.28ms]
+(pass) reranking true: only eligible candidates and derived surfaces reach reranker [46.86ms]
+(pass) invalid controls: --belief invalid [348.08ms]
+(pass) invalid controls: --filter project=bad [368.28ms]
+(pass) invalid controls: --filter user= [391.62ms]
+(pass) invalid controls: --from missing [340.16ms]
+(pass) missing configured source gives empty evidence, not another bundle [42.61ms]
+(pass) search default current, explicit all/historical, browse and prefix share the policy [79.28ms]
+(pass) registry/all source and free-form type controls keep CLI/API parity without local widening [1250.64ms]
+
+tests/integration/extract-evidence.test.ts:
+(pass) memory: evidence and real session identity survive publication, reindex and recall [127.14ms]
+(pass) lesson: evidence and real session identity survive publication, reindex and recall [98.62ms]
+(pass) knowledge: evidence and real session identity survive publication, reindex and recall [79.63ms]
+(pass) an unindexed native session keeps its known log identity without an invented asset ref [51.31ms]
+(pass) redacted or unavailable source evidence stays explicit, without fabricated references [25.70ms]
+(pass) rejection preserves captured evidence and never publishes a partial note [31.38ms]
+(pass) stale acceptance preserves both newer content and pending evidence [42.32ms]
+(pass) repeated acceptance preserves evidence, then revert restores earlier evidence exactly [67.30ms]
+(pass) independent final: YAML-looking evidence remains text through publication and full show [81.93ms]
+(pass) source-live show never pairs edited claims with stale indexed support [54.27ms]
+(pass) failed acceptance into a different destination leaves evidence pending and writes no note [28.65ms]
+[index] Detected adapter for stash → akm; persisted to config.json (bundles.<id>.components.<component>.adapter).
+(pass) older pending evidence can be reviewed, imported and reindexed without an automatic backfill [70.90ms]
+(pass) plain show keeps multi-line evidence on one line [0.76ms]
+
+ 35 pass
+ 0 fail
+ 263 expect() calls
+Ran 35 tests across 3 files. [11.23s]

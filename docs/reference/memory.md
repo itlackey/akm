@@ -55,12 +55,13 @@ supported values, from strongest to weakest authority:
 | `contradicted` | Marked as contradicted by other evidence | historical |
 | `archived` | Soft-deleted; retained for audit | historical |
 
-`akm search` filters via `--belief current|historical|all`:
+`akm search` and `akm curate` filter via `--belief current|historical|all`:
 
-- `current` → `active` + `asserted`
+- `current` (default) → `active` + `asserted`; an asset with no `beliefState`
+  counts as `active`, so ordinary skills, knowledge and notes still surface
 - `historical` → `deprecated` + `superseded` + `contradicted` + `archived`
-- `all` (default — no filter) → every belief state, including `archived` and
-  `contradicted` memories, is eligible to surface.
+- `all` → no filter: every belief state, including `archived` and
+  `contradicted`, is eligible to surface.
 
 ### Derived memories as retrieval shortcuts
 
@@ -86,8 +87,8 @@ automation keeps working — agents that want the deeper summary follow
 - Background-derived memories (those inferred from other assets by `akm
   improve`) receive `captureMode: background`.
 - A memory with no explicit `beliefState` defaults to `active`.
-- `akm search --belief` defaults to `all` — no filter is applied unless you
-  pass `current` or `historical` explicitly.
+- `akm search --belief` and `akm curate --belief` default to `current`; pass
+  `--belief all` (API `belief: "all"`) for every belief state.
 
 ## Security / persistence implications
 

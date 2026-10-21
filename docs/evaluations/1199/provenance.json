@@ -1,0 +1,34 @@
+{
+  "baseline": "79cf3236a74dced65248dfae2534c3753773076a",
+  "branch": "feat/1199-curate-recall-controls",
+  "base": "release/0.10.0",
+  "skill": "itlackey/akm-stash@fd61fd1",
+  "evaluator": "27f5240d005fa17ceeaa52432f86feecb52b55a6",
+  "evaluatorAdaptation": "collector-adaptation.patch; existing searchArgs now applied to curate too. Label-only updates explicitly rescored on all saved public arms.",
+  "productDiffSha256": "839b4dc0aefb5e196b78cdcaf0fd53ea70708aada0d21201ec293b55c2a8dcd2",
+  "installedPackageSha256": "b6e0f4123f92a7e6419a980c718e23c0c5488cc255ed03c831d66413273c375a",
+  "candidateVariants": 2,
+  "selectedVariant": 2,
+  "collectorInvocations": 10,
+  "invalidCollectorInvocations": 2,
+  "semanticVariation": "Two valid observations per build over five cases; earlier raced 40-call attempt excluded (3 errors). No stochastic quality tuning.",
+  "rollout": "PR only; publication and production observation remain with release maintainer.",
+  "validation": {
+    "check": "exit 0",
+    "unit": {
+      "pass": 7213,
+      "skip": 4,
+      "fail": 0
+    },
+    "integration": {
+      "pass": 3887,
+      "skip": 81,
+      "fail": 0
+    },
+    "reservedFinal": {
+      "pass": 35,
+      "fail": 0
+    },
+    "installed": "Bun and Node API/CLI current and historical parity; search actual default/current/all/historical verified"
+  }
+}

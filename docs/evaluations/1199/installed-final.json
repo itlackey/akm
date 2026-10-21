@@ -1,0 +1,117 @@
+{
+  "package": "/tmp/1199-package/akm-cli-1199-final-b6e0f4123f92.tgz",
+  "isolatedInstall": true,
+  "indexed": 11,
+  "observations": [
+    {
+      "runtime": "bun",
+      "job": "current",
+      "parity": true,
+      "items": [
+        {
+          "source": "local",
+          "type": "memory",
+          "name": "quartz-now",
+          "ref": "memories/quartz-now",
+          "path": "/tmp/akm-eval-1199-installed-xOYwT7/bundle/memories/quartz-now.md",
+          "editable": true,
+          "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+          "beliefState": "asserted",
+          "followUp": "akm show memories/quartz-now",
+          "reason": "Strong saved context match for \"Quartz production rollout\".",
+          "score": 0.016393
+        }
+      ],
+      "mode": "keyword"
+    },
+    {
+      "runtime": "node",
+      "job": "current",
+      "parity": true,
+      "items": [
+        {
+          "source": "local",
+          "type": "memory",
+          "name": "quartz-now",
+          "ref": "memories/quartz-now",
+          "path": "/tmp/akm-eval-1199-installed-xOYwT7/bundle/memories/quartz-now.md",
+          "editable": true,
+          "description": "Quartz production rollout port 9443. Current rollout procedure and rollback checklist.",
+          "beliefState": "asserted",
+          "followUp": "akm show memories/quartz-now",
+          "reason": "Strong saved context match for \"Quartz production rollout\".",
+          "score": 0.016393
+        }
+      ],
+      "mode": "keyword"
+    },
+    {
+      "runtime": "bun",
+      "job": "historical",
+      "parity": true,
+      "items": [
+        {
+          "source": "local",
+          "type": "memory",
+          "name": "quartz-old",
+          "ref": "memories/quartz-old",
+          "path": "/tmp/akm-eval-1199-installed-xOYwT7/bundle/memories/quartz-old.md",
+          "editable": true,
+          "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+          "beliefState": "superseded",
+          "followUp": "akm show memories/quartz-old",
+          "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+          "score": 0.016393
+        },
+        {
+          "source": "local",
+          "type": "memory",
+          "name": "quartz-old.derived",
+          "ref": "memories/quartz-old.derived",
+          "path": "/tmp/akm-eval-1199-installed-xOYwT7/bundle/memories/quartz-old.derived.md",
+          "editable": true,
+          "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+          "beliefState": "superseded",
+          "followUp": "akm show memories/quartz-old.derived",
+          "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+          "score": 0.016129
+        }
+      ],
+      "mode": "keyword"
+    },
+    {
+      "runtime": "node",
+      "job": "historical",
+      "parity": true,
+      "items": [
+        {
+          "source": "local",
+          "type": "memory",
+          "name": "quartz-old",
+          "ref": "memories/quartz-old",
+          "path": "/tmp/akm-eval-1199-installed-xOYwT7/bundle/memories/quartz-old.md",
+          "editable": true,
+          "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+          "beliefState": "superseded",
+          "followUp": "akm show memories/quartz-old",
+          "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+          "score": 0.016393
+        },
+        {
+          "source": "local",
+          "type": "memory",
+          "name": "quartz-old.derived",
+          "ref": "memories/quartz-old.derived",
+          "path": "/tmp/akm-eval-1199-installed-xOYwT7/bundle/memories/quartz-old.derived.md",
+          "editable": true,
+          "description": "Quartz production rollout port 7000. Historical distilled rollout record.",
+          "beliefState": "superseded",
+          "followUp": "akm show memories/quartz-old.derived",
+          "reason": "Historical context. Strong saved context match for \"Quartz production rollout\".",
+          "score": 0.016129
+        }
+      ],
+      "mode": "keyword"
+    }
+  ]
+}

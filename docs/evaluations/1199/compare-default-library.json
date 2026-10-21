@@ -1,0 +1,816 @@
+{
+  "eval": "retrieval",
+  "eval_version": "0.3",
+  "scoring_version": "0.3",
+  "corpus": "public",
+  "collection": "library",
+  "mode": null,
+  "a": {
+    "dir": "/tmp/akm-eval-1199/evals/retrieval/results/2026-10-21-1199-public-baseline-library-rescored",
+    "label": "1199-public-baseline-rescored"
+  },
+  "b": {
+    "dir": "/tmp/akm-eval-1199/evals/retrieval/results/2026-10-21-1199-public-current-library-rescored",
+    "label": "1199-public-current-rescored"
+  },
+  "changes": [
+    {
+      "field": "akm",
+      "a": {
+        "version": "0.10.261008",
+        "bin": "bun /tmp/akm-1199-baseline/src/cli.ts",
+        "build": null,
+        "build_fingerprint": null
+      },
+      "b": {
+        "version": "0.10.261008",
+        "bin": "bun /tmp/1199-search-current.ts",
+        "build": null,
+        "build_fingerprint": null
+      }
+    }
+  ],
+  "warnings": [],
+  "rows": [
+    {
+      "key": "label",
+      "label": "Run",
+      "group": "Run",
+      "unit": "",
+      "a": "1199-public-baseline-rescored",
+      "b": "1199-public-current-rescored",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "suite",
+      "label": "Test",
+      "group": "Run",
+      "unit": "",
+      "a": "retrieval",
+      "b": "retrieval",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "collection",
+      "label": "Collection",
+      "group": "Run",
+      "unit": "",
+      "a": "library",
+      "b": "library",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "date",
+      "label": "Collected (UTC)",
+      "group": "Run",
+      "unit": "",
+      "a": "2026-10-21T04:26:39.402Z",
+      "b": "2026-10-21T04:34:53.047Z",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "quality_percent",
+      "label": "Quality %",
+      "group": "Quality",
+      "unit": "%",
+      "a": 75.64999999999999,
+      "b": 75.64999999999999,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "quality_metric",
+      "label": "Quality metric",
+      "group": "Quality",
+      "unit": "",
+      "a": "Keyword ranking · nDCG@10",
+      "b": "Keyword ranking · nDCG@10",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "quality_cases",
+      "label": "Quality cases",
+      "group": "Quality",
+      "unit": "",
+      "a": 101,
+      "b": 101,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "recorded",
+      "label": "Cases recorded",
+      "group": "Quality",
+      "unit": "",
+      "a": 136,
+      "b": 136,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "scored",
+      "label": "Cases scored",
+      "group": "Quality",
+      "unit": "",
+      "a": 136,
+      "b": 136,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "errors",
+      "label": "Errors",
+      "group": "Quality",
+      "unit": "",
+      "a": 0,
+      "b": 0,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "timeouts",
+      "label": "Timeouts",
+      "group": "Quality",
+      "unit": "",
+      "a": 0,
+      "b": 0,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "run_wall_s",
+      "label": "Run wall time (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 189.222,
+      "b": 170.133,
+      "delta": -19.089,
+      "note": ""
+    },
+    {
+      "key": "run_wall_basis",
+      "label": "Run wall time basis",
+      "group": "Performance",
+      "unit": "",
+      "a": "Runner elapsed",
+      "b": "Runner elapsed",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "keyword_mean_s",
+      "label": "Keyword query mean (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.26169117647058837,
+      "b": 0.23419117647058812,
+      "delta": -0.027500000000000246,
+      "note": ""
+    },
+    {
+      "key": "keyword_p50_s",
+      "label": "Keyword query p50 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.24,
+      "b": 0.23,
+      "delta": -0.009999999999999981,
+      "note": ""
+    },
+    {
+      "key": "keyword_p95_s",
+      "label": "Keyword query p95 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.3825,
+      "b": 0.2725,
+      "delta": -0.10999999999999999,
+      "note": ""
+    },
+    {
+      "key": "keyword_timed",
+      "label": "Keyword query timed",
+      "group": "Performance",
+      "unit": "",
+      "a": 136,
+      "b": 136,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "semantic_mean_s",
+      "label": "Semantic query mean (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.32882352941176457,
+      "b": 0.26786764705882354,
+      "delta": -0.060955882352941027,
+      "note": ""
+    },
+    {
+      "key": "semantic_p50_s",
+      "label": "Semantic query p50 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.29,
+      "b": 0.26,
+      "delta": -0.02999999999999997,
+      "note": ""
+    },
+    {
+      "key": "semantic_p95_s",
+      "label": "Semantic query p95 (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.4425,
+      "b": 0.3,
+      "delta": -0.14250000000000002,
+      "note": ""
+    },
+    {
+      "key": "semantic_timed",
+      "label": "Semantic query timed",
+      "group": "Performance",
+      "unit": "",
+      "a": 136,
+      "b": 136,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "keyword_index_s",
+      "label": "Keyword index (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 0.5,
+      "b": 0.6,
+      "delta": 0.09999999999999998,
+      "note": ""
+    },
+    {
+      "key": "semantic_index_s",
+      "label": "Semantic index (s)",
+      "group": "Performance",
+      "unit": "",
+      "a": 11.9,
+      "b": 16.4,
+      "delta": 4.499999999999998,
+      "note": ""
+    },
+    {
+      "key": "akm_version",
+      "label": "AKM version",
+      "group": "Settings",
+      "unit": "",
+      "a": "0.10.261008",
+      "b": "0.10.261008",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "measurement",
+      "label": "Eval version",
+      "group": "Settings",
+      "unit": "",
+      "a": "0.3",
+      "b": "0.3",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "scoring_version",
+      "label": "Scoring version",
+      "group": "Settings",
+      "unit": "",
+      "a": "0.3",
+      "b": "0.3",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "search_method",
+      "label": "Search methods",
+      "group": "Settings",
+      "unit": "",
+      "a": "keyword; semantic",
+      "b": "keyword; semantic",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "embedding_model",
+      "label": "Embedding model",
+      "group": "Settings",
+      "unit": "",
+      "a": "embed/qwen3-embedding-0.6b",
+      "b": "embed/qwen3-embedding-0.6b",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "top_k",
+      "label": "Retrieval depth",
+      "group": "Settings",
+      "unit": "",
+      "a": 10,
+      "b": 10,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "semantic_index",
+      "label": "Semantic index state",
+      "group": "Settings",
+      "unit": "",
+      "a": "cold",
+      "b": "cold",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "source_commit",
+      "label": "Collector commit",
+      "group": "Provenance",
+      "unit": "",
+      "a": "27f5240-dirty",
+      "b": "27f5240-dirty",
+      "delta": null,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword hit rate@5",
+      "label": "Keyword hit rate@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 97.03,
+      "b": 97.03,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword judged nDCG@10",
+      "label": "Keyword judged nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.7565,
+      "b": 0.7565,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword MRR",
+      "label": "Keyword MRR",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9109,
+      "b": 0.9109,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword precision@5",
+      "label": "Keyword precision@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 55.05,
+      "b": 55.05,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword ranking · nDCG@10",
+      "label": "Keyword ranking · nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.7565,
+      "b": 0.7565,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword recall@10",
+      "label": "Keyword recall@10 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 74.4,
+      "b": 74.4,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Keyword results with judgments",
+      "label": "Keyword results with judgments %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 100,
+      "b": 100,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic hit rate@5",
+      "label": "Semantic hit rate@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 98.02,
+      "b": 98.02,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic judged nDCG@10",
+      "label": "Semantic judged nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.8235,
+      "b": 0.8242,
+      "delta": 0.0007000000000000339,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic MRR",
+      "label": "Semantic MRR",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.9561,
+      "b": 0.9561,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic precision@5",
+      "label": "Semantic precision@5 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 60.4,
+      "b": 60.4,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic ranking · nDCG@10",
+      "label": "Semantic ranking · nDCG@10",
+      "group": "Test metrics",
+      "unit": "",
+      "a": 0.8196,
+      "b": 0.8201,
+      "delta": 0.000500000000000056,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic recall@10",
+      "label": "Semantic recall@10 %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 80.93,
+      "b": 81.01,
+      "delta": 0.0799999999999983,
+      "note": ""
+    },
+    {
+      "key": "score:Semantic results with judgments",
+      "label": "Semantic results with judgments %",
+      "group": "Test metrics",
+      "unit": "%",
+      "a": 82.28,
+      "b": 83.07,
+      "delta": 0.789999999999992,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.n",
+      "label": "metrics.search.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 101,
+      "b": 101,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.ndcg_10",
+      "label": "metrics.search.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.7565,
+      "b": 0.7565,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.ndcg_10_condensed",
+      "label": "metrics.search.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.7565,
+      "b": 0.7565,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.p_5",
+      "label": "metrics.search.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.5505,
+      "b": 0.5505,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.success_5",
+      "label": "metrics.search.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9703,
+      "b": 0.9703,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.mrr",
+      "label": "metrics.search.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9109,
+      "b": 0.9109,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.recall_10",
+      "label": "metrics.search.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.744,
+      "b": 0.744,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.search.judged_10",
+      "label": "metrics.search.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.n",
+      "label": "metrics.curate.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 101,
+      "b": 101,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.ndcg_10",
+      "label": "metrics.curate.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.7565,
+      "b": 0.7565,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.ndcg_10_condensed",
+      "label": "metrics.curate.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.7565,
+      "b": 0.7565,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.p_5",
+      "label": "metrics.curate.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.5505,
+      "b": 0.5505,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.success_5",
+      "label": "metrics.curate.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9703,
+      "b": 0.9703,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.mrr",
+      "label": "metrics.curate.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9109,
+      "b": 0.9109,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.recall_10",
+      "label": "metrics.curate.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.744,
+      "b": 0.744,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.curate.judged_10",
+      "label": "metrics.curate.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 1,
+      "b": 1,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.n",
+      "label": "metrics.semantic_search.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 101,
+      "b": 101,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.ndcg_10",
+      "label": "metrics.semantic_search.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8196,
+      "b": 0.8201,
+      "delta": 0.000500000000000056,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.ndcg_10_condensed",
+      "label": "metrics.semantic_search.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8235,
+      "b": 0.8242,
+      "delta": 0.0007000000000000339,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.p_5",
+      "label": "metrics.semantic_search.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.604,
+      "b": 0.604,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.success_5",
+      "label": "metrics.semantic_search.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9802,
+      "b": 0.9802,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.mrr",
+      "label": "metrics.semantic_search.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9561,
+      "b": 0.9561,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.recall_10",
+      "label": "metrics.semantic_search.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8093,
+      "b": 0.8101,
+      "delta": 0.0008000000000000229,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_search.judged_10",
+      "label": "metrics.semantic_search.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8228,
+      "b": 0.8307,
+      "delta": 0.007900000000000018,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.n",
+      "label": "metrics.semantic_curate.n",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 101,
+      "b": 101,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.ndcg_10",
+      "label": "metrics.semantic_curate.ndcg_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.819,
+      "b": 0.82,
+      "delta": 0.0010000000000000009,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.ndcg_10_condensed",
+      "label": "metrics.semantic_curate.ndcg_10_condensed",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8231,
+      "b": 0.824,
+      "delta": 0.0008999999999999009,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.p_5",
+      "label": "metrics.semantic_curate.p_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.604,
+      "b": 0.604,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.success_5",
+      "label": "metrics.semantic_curate.success_5",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9802,
+      "b": 0.9802,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.mrr",
+      "label": "metrics.semantic_curate.mrr",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.9561,
+      "b": 0.9561,
+      "delta": 0,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.recall_10",
+      "label": "metrics.semantic_curate.recall_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8093,
+      "b": 0.8095,
+      "delta": 0.00019999999999997797,
+      "note": ""
+    },
+    {
+      "key": "metrics.semantic_curate.judged_10",
+      "label": "metrics.semantic_curate.judged_10",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": 0.8228,
+      "b": 0.8297,
+      "delta": 0.006900000000000017,
+      "note": ""
+    },
+    {
+      "key": "status",
+      "label": "status",
+      "group": "Stored metrics",
+      "unit": "",
+      "a": "complete",
+      "b": "complete",
+      "delta": null,
+      "note": ""
+    }
+  ]
+}

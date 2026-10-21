@@ -159,6 +159,10 @@ Notes:
 - registry results live in `registryHits`, never in `hits`
 - `--from all` keeps registry results in `registryHits` — they are not
   rank-merged with source hits
+- curate carries search's normalized scope/source/type/belief controls through
+  selection, derived-surface enrichment, support refs and packing. Search and curate default
+  to current; explicit all/historical evidence is labelled as historical context.
+  Direct show remains a deliberate inspection path without a belief default.
 - local search and curate expose the actual execution in `searchMode`:
   `semantic`, intentional/unavailable `keyword`, or `fts-fallback` when a
   ready semantic runtime failed during the query; that degradation also

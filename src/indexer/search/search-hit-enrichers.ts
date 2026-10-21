@@ -7,6 +7,7 @@ import { presentationFor } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
+import type { IndexDocument } from "../passes/metadata";
 import { getRenderer } from "../walk/file-context";
 import { attachSearchHitAttribution } from "./search-attribution";
 
@@ -20,6 +21,8 @@ export interface SearchHitContext {
    * zero-overhead.
    */
   db?: Database;
+  /** A derived surface must satisfy the parent search's existing recall policy. */
+  eligible?: (row: { id: number; entry: IndexDocument; filePath: string }) => boolean;
 }
 
 /**
@@ -32,7 +35,7 @@ export async function enrichSearchHit(hit: SourceSearchHit, ctx: SearchHitContex
     const renderer = await getRenderer(rendererName);
     renderer?.enrichSearchHit?.(hit, ctx.stashDir);
   }
-  if (ctx.type === "memory" && ctx.db) surfaceDerivedMemory(hit, ctx.db, ctx.bundleId);
+  if (ctx.type === "memory" && ctx.db) surfaceDerivedMemory(hit, ctx.db, ctx.bundleId, ctx.eligible);
 }
 
 /**
@@ -44,7 +47,12 @@ export async function enrichSearchHit(hit: SourceSearchHit, ctx: SearchHitContex
  * The parent ref is preserved on the hit — only the surface text is
  * swapped, so links and provenance still point at the canonical parent.
  */
-function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, bundleId: string): void {
+function surfaceDerivedMemory(
+  hit: SourceSearchHit,
+  db: Database,
+  bundleId: string,
+  eligible?: SearchHitContext["eligible"],
+): void {
   // Never recurse: a `.derived` hit is itself the child surface; leaving
   // it untouched also avoids `<parent>.derived.derived` chains.
   if (hit.name.toLowerCase().endsWith(".derived")) return;
@@ -54,7 +62,7 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, bundleId: stri
   // carries. INTERNAL lookup key into `getDerivedForParent`: the `derived_from`
   // column stores this same conceptId grammar.
   const derived = getDerivedForParent(db, `memories/${hit.name}`, bundleId);
-  if (!derived) return;
+  if (!derived || (eligible && !eligible(derived))) return;
 
   // Swap description / tags from the derived child (SourceSearchHit carries no
   // `searchHints`).

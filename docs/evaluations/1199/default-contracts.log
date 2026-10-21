@@ -1,0 +1,53 @@
+bun test v1.4.1 (4661e494f)
+
+tests/integration/curate-recall-controls.test.ts:
+(pass) CLI/internal/API belief default and packed evidence [340.93ms]
+(pass) CLI/internal/API belief current and packed evidence [294.15ms]
+(pass) CLI/internal/API belief all and packed evidence [363.22ms]
+(pass) CLI/internal/API belief historical and packed evidence [327.75ms]
+(pass) scope user narrows selection, support and packing with CLI/API parity [321.43ms]
+(pass) scope agent narrows selection, support and packing with CLI/API parity [344.78ms]
+(pass) scope run narrows selection, support and packing with CLI/API parity [324.12ms]
+(pass) scope channel narrows selection, support and packing with CLI/API parity [301.17ms]
+(pass) compound scope, source/type combinations and duplicate source identities [837.30ms]
+(pass) stale outgoing/incoming links are filtered in current; all labels historical context [40.11ms]
+(pass) packing rechecks changed scope/belief and missing content instead of widening [25.51ms]
+(pass) reranking false: only eligible candidates and derived surfaces reach reranker [26.77ms]
+(pass) reranking true: only eligible candidates and derived surfaces reach reranker [28.53ms]
+(pass) invalid controls: --belief invalid [253.27ms]
+(pass) invalid controls: --filter project=bad [249.38ms]
+(pass) invalid controls: --filter user= [253.51ms]
+(pass) invalid controls: --from missing [276.17ms]
+(pass) missing configured source gives empty evidence, not another bundle [36.04ms]
+(pass) search default current, explicit all/historical, browse and prefix share the policy [85.63ms]
+
+tests/commands/remember-import-supersedes.test.ts:
+(pass) remember --supersedes > writes the correction with an xref to the old ref AND demotes the old asset (metadata-only edit) [30.80ms]
+(pass) remember --supersedes > demotion is live: --belief current hides the old asset and the correction outranks it [25.64ms]
+(pass) remember --supersedes > re-running the correction is idempotent: supersededBy is not duplicated [18.79ms]
+(pass) remember --supersedes > unresolvable --supersedes fails with exit 2 usage envelope; nothing written, nothing demoted [2.67ms]
+(pass) remember --supersedes > --supersedes composes with --xref (deduped) and adds a frontmatter block to a frontmatter-less old asset [7.62ms]
+(pass) remember --supersedes > self-supersede (--force overwrite of the same name) is rejected with exit 2; the original asset is untouched [5.88ms]
+(pass) remember --supersedes > old asset with malformed frontmatter: demotion skipped (applied:false), file byte-identical, correction still written [7.16ms]
+(pass) remember --supersedes > old asset in a WRITABLE non-target source: demotion skipped with a --bundle remedy (not misreported as read-only) [6.48ms]
+(pass) remember --supersedes > old asset in a read-only source: correction still written, demotion reported applied:false, file untouched [7.20ms]
+(pass) --supersedes refuses non-markdown demotion targets before any write > secret, env, task, and script refs exit 2 and leave the raw files byte-identical [5.34ms]
+(pass) --supersedes refuses non-markdown demotion targets before any write > a YAML workflow program is rejected (resolved file is not markdown), for both ref spellings [2.46ms]
+(pass) --supersedes refuses non-markdown demotion targets before any write > a MARKDOWN workflow still demotes (resolved stash-rooted, independent of the cwd) [10.48ms]
+(pass) a demotion fs error still commits and indexes the correction > deleted-underneath target: correction written + indexed, target reported applied:false [16.73ms]
+(pass) import --supersedes > imported correction xrefs the old doc and demotes it, preserving its other frontmatter and body [7.79ms]
+(pass) import --supersedes > old doc in a WRITABLE non-target source: demotion skipped with a --bundle remedy [4.59ms]
+(pass) import --supersedes > unresolvable --supersedes fails with exit 2 usage envelope and imports nothing [1.81ms]
+(pass) --supersedes qualified bundle literals > an absent local// bundle fails before writing or demoting [6.23ms]
+(pass) writeSupersededEdge in memory-belief > sets beliefState: superseded + supersededBy while preserving other keys and the body [1.02ms]
+(pass) writeSupersededEdge in memory-belief > idempotent: a repeat call with the same ref leaves the file byte-identical [0.71ms]
+(pass) writeSupersededEdge in memory-belief > sorted-set-appends refs across multiple corrections [5.09ms]
+(pass) writeSupersededEdge in memory-belief > a pre-existing SCALAR supersededBy edge is preserved, not dropped (finding #14) [2.73ms]
+(pass) writeSupersededEdge in memory-belief > never weakens a stronger demotion: contradicted/archived keep their state, edge still appends [2.17ms]
+(pass) --supersedes in command help meta > remember declares --supersedes with a description and renders it in usage [1.41ms]
+(pass) --supersedes in command help meta > import declares --supersedes with a description and renders it in usage [0.47ms]
+
+ 43 pass
+ 0 fail
+ 295 expect() calls
+Ran 43 tests across 2 files. [5.11s]

@@ -448,6 +448,7 @@ describe("akm improve memory cleanup", () => {
       query: "gateway a legacy tunnel",
       source: "local",
       type: "memory",
+      belief: "historical",
     });
     expect(contradictedResult.hits.some((hit) => hit.type !== "registry" && hit.name === "deploy-legacy.derived")).toBe(
       true,
@@ -466,6 +467,7 @@ describe("akm improve memory cleanup", () => {
       query: "gateway deploy tunnel",
       source: "local",
       type: "memory",
+      belief: "all",
     });
     const survivorHits = survivorResult.hits.filter((hit) => hit.type !== "registry");
     expect(survivorHits[0]?.name).toBe("deploy.derived");

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Search and curate default to `--belief current`, retaining unflagged reference
+  knowledge and active/asserted assets while excluding historical beliefs (#1199).
+  Use `--belief all` for broad investigation or `--belief historical` for old
+  evidence. Curate accepts search's repeatable `--filter` scope controls, and the
+  public `akm-cli/api` options add `source`, normalized `filters`, and `belief`.
+  The same eligibility follows derived surfaces, linked support and packed
+  content; historical results are labelled. Belief labels do not establish factual
+  truth. No migration or reindex is required; direct show remains available. The default
+  also applies to `akm ui` search, `akm remember --show-similar` and the related assets
+  distill reads.
+
 ### Fixed
 
 - Search applies eligibility filters (scope, source, type, belief state, proposed quality)

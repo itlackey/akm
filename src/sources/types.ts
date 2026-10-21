@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import type { OkfProvenance } from "../core/adapter/types";
+import type { StashEntryScope } from "../indexer/passes/metadata";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
@@ -11,6 +12,15 @@ export type AkmSearchType = string;
 export type SearchSource = "local" | "registry" | "all";
 export type SearchHitSize = "small" | "medium" | "large";
 export type BeliefFilterMode = "all" | "current" | "historical";
+/** Existing search controls, carried through task-evidence reads. */
+export interface RecallOptions {
+  /** Exact AND-joined scope values; CLI --filter user=…|agent=…|run=…|channel=… . */
+  filters?: StashEntryScope;
+  /** Search and curate default to current; explicit all/historical retain investigation. */
+  belief?: BeliefFilterMode;
+  type?: string;
+  source?: SearchSource | string;
+}
 /** Actual local ranking mode, including a semantic attempt that failed at runtime. */
 export type SearchExecutionMode = "semantic" | "keyword" | "fts-fallback";
 export type FragmentContextMode = "exact" | "lead";
@@ -440,6 +450,7 @@ export interface ShowLinkGroup {
 }
 
 export interface ShowResponse extends FragmentProvenance {
+  beliefState?: string;
   /** Captured support and source identities, when available. Omitted in compact projections. */
   evidence?: string;
   evidenceSources?: string[];

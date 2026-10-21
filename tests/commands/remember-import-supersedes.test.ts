@@ -208,8 +208,8 @@ describe("remember --supersedes", () => {
     expect(currentRefs).toContain(conceptId(newRef));
     expect(currentRefs).not.toContain(conceptId(old.ref));
 
-    // Unfiltered search still returns both.
-    const all = await runCliCapture(["search", "quantum rotation", "--type", "memory"]);
+    // Explicit broad investigation still returns both.
+    const all = await runCliCapture(["search", "quantum rotation", "--type", "memory", "--belief", "all"]);
     expect(all.code).toBe(0);
     const allRefs = ((JSON.parse(all.stdout).hits ?? []) as Array<{ ref: string }>).map((h) => conceptId(h.ref));
     expect(allRefs).toContain(conceptId(newRef));

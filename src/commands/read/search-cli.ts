@@ -28,6 +28,17 @@ import { akmCurate, type CuratePackResult, type CurateResponse, packCuratedHits 
 import { akmSearch, parseBeliefFilterMode, parseScopeFilterFlags, parseSearchSource } from "./search";
 import { akmShowUnified } from "./show";
 
+const scopeFilterArg = {
+  type: "string",
+  description:
+    "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows results without changing ranking.",
+} as const;
+const beliefArg = {
+  type: "string",
+  description:
+    "Belief filter on any asset: all|current|historical. current keeps active/asserted and unflagged assets; historical keeps deprecated/contradicted/superseded/archived assets. Labels do not establish factual truth.",
+} as const;
+
 export const searchCommand = defineJsonCommand({
   meta: { name: "search", description: "Search the bundle" },
   args: {
@@ -50,22 +61,13 @@ export const searchCommand = defineJsonCommand({
       description: "Include asset-level search results (only meaningful with --from registry|all)",
       default: false,
     },
-    filter: {
-      type: "string",
-      description:
-        "Scope filter (repeatable): --filter user=<id> --filter agent=<id> --filter run=<id> --filter channel=<name>. Narrows results without changing ranking.",
-    },
+    filter: scopeFilterArg,
     "include-proposed": {
       type: "boolean",
       description: 'Include entries with quality:"proposed" in the result set. Excluded by default.',
       default: false,
     },
-    belief: {
-      type: "string",
-      description:
-        "Memory belief filter: all|current|historical. current keeps active memory beliefs; historical keeps contradicted/superseded/archived memory beliefs.",
-      default: "all",
-    },
+    belief: { ...beliefArg, default: "current" },
     "include-sessions": {
       type: "boolean",
       description:
@@ -122,6 +124,8 @@ export const curateCommand = defineJsonCommand({
     },
     limit: { type: "string", description: "Maximum number of curated results", default: "4" },
     from: { type: "string", description: "Search source (local|registry|all)", default: "local" },
+    filter: scopeFilterArg,
+    belief: { ...beliefArg, default: "current" },
     pack: {
       type: "string",
       description:
@@ -137,7 +141,14 @@ export const curateCommand = defineJsonCommand({
     const packBudget = parsePositiveIntFlag(args.pack ?? undefined, "--pack");
     const outputMode = getOutputMode();
     const curated = await runCurate(
-      { query: args.query, type: args.type as string | undefined, limit: args.limit, from: args.from },
+      {
+        query: args.query,
+        type: args.type as string | undefined,
+        limit: args.limit,
+        from: args.from,
+        filters: parseAllFlagValues("--filter"),
+        belief: args.belief,
+      },
       outputMode,
     );
     if (packBudget !== undefined) {
@@ -160,7 +171,7 @@ export const curateCommand = defineJsonCommand({
  * reading the process-level singleton.
  */
 export async function runCurate(
-  args: { query?: string; type?: string; limit?: string; from?: string },
+  args: { query?: string; type?: string; limit?: string; from?: string; filters?: string[]; belief?: string },
   outputMode: Pick<OutputMode, "detail" | "shape">,
 ): Promise<CurateResponse> {
   if (!args.query || !String(args.query).trim()) {
@@ -176,6 +187,8 @@ export async function runCurate(
     type: args.type,
     limit: limitParsed && limitParsed > 0 ? limitParsed : 4,
     source: parseSearchSource(args.from ?? "local"),
+    filters: parseScopeFilterFlags(args.filters ?? [], "--filter"),
+    belief: parseBeliefFilterMode(args.belief ?? "current"),
     eventSource: resolveUsageEventSource(),
     attributionProjection: outputMode.shape === "agent" ? "agent" : outputMode.detail,
   });
@@ -186,7 +199,9 @@ function formatCuratePackText(packed: CuratePackResult): string {
   if (packed.items.length === 0) {
     return `No packed content for "${packed.query}" (budget ${packed.budget} tokens).`;
   }
-  return packed.items.map((item) => `## ${item.ref}\n\n${item.content}`).join("\n\n");
+  return packed.items
+    .map((item) => `## ${item.ref}\n\n${item.reason ? `${item.reason}\n\n` : ""}${item.content}`)
+    .join("\n\n");
 }
 
 /**

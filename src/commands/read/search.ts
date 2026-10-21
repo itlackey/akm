@@ -93,8 +93,8 @@ export async function akmSearch(input: {
   /**
    * Belief-state filter. Applies to ANY entry carrying a `beliefState`
    * (memory OR knowledge — 03), so flagged knowledge is filtered too:
-   * - `all` keeps current + historical hits (default)
-   * - `current` keeps active/asserted/unspecified beliefs (and unflagged entries)
+   * - `all` keeps current + historical hits
+   * - `current` keeps active/asserted/unspecified beliefs (and unflagged entries; default)
    * - `historical` keeps deprecated/contradicted/superseded/archived beliefs
    */
   belief?: BeliefFilterMode;
@@ -195,7 +195,7 @@ export async function akmSearch(input: {
 
   const filters = normalizeScopeFilters(input.filters);
   const includeProposed = input.includeProposed === true;
-  const belief = input.belief ?? "all";
+  const belief = parseBeliefFilterMode(input.belief ?? "current");
   const localResult =
     source === "registry"
       ? undefined
@@ -511,7 +511,7 @@ export function parseBeliefFilterMode(value: string | undefined): BeliefFilterMo
  * `undefined` when nothing meaningful remains, so callers don't pay for an
  * empty-filter post-walk in `searchLocal`.
  */
-function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEntryScope | undefined {
+export function normalizeScopeFilters(raw: StashEntryScope | undefined): StashEntryScope | undefined {
   if (!raw) return undefined;
   const out: StashEntryScope = {};
   for (const key of ["user", "agent", "run", "channel"] as const) {
