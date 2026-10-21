@@ -79,6 +79,8 @@ export interface ImproveHealthMetrics {
     /** `considered − cacheHits − skippedAborted`: parents that actually hit the LLM. */
     freshAttempts: number;
     written: number;
+    /** Explicit no-change decisions (fresh or cached): restraint, not failure, and never in `skippedNoFacts`. */
+    noChange: number;
     skippedNoFacts: number;
     /** `written / freshAttempts`, 4dp; 0 when `freshAttempts` is 0. */
     yieldRate: number;

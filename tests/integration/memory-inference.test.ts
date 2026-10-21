@@ -195,6 +195,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
       retryAttempts: 0,
       splitParents: 0,
       writtenFacts: 0,
+      noChange: 0,
       skippedNoFacts: 0,
       skippedChildExists: 0,
       skippedAborted: 0,
@@ -268,6 +269,7 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
       retryAttempts: 0,
       splitParents: 0,
       writtenFacts: 0,
+      noChange: 0,
       skippedNoFacts: 0,
       skippedChildExists: 0,
       skippedAborted: 0,
@@ -485,7 +487,7 @@ describe("runMemoryInferencePass — enabled", () => {
       record.filePath,
       computeBodyHash(record.body),
       JSON.stringify(sampleDraft("Cached Derived")),
-      "memory-inference-v2",
+      "memory-inference-v3",
     );
     let calls = 0;
     compressor = () => {
@@ -703,6 +705,7 @@ describe("runMemoryInferencePass — enabled", () => {
       retryAttempts: 0,
       splitParents: 1,
       writtenFacts: 1,
+      noChange: 0,
       skippedNoFacts: 0,
       skippedChildExists: 0,
       skippedAborted: 0,

@@ -44,7 +44,7 @@ let chatCalls = 0;
 // calls so the exact log lines can be asserted.
 let warnCalls: string[] = [];
 
-const { compressMemoryToDerivedMemory } = await import("../../src/llm/memory-infer");
+const { compressMemoryToDerivedMemory, isMemoryInferNoChange } = await import("../../src/llm/memory-infer");
 const { _setChatCompletionForTests, isContextSizeError, LlmCallError } = await import("../../src/llm/client");
 const { _setWarnSinkForTests } = await import("../../src/core/warn");
 const { testLlmRunner } = await import("../_helpers/llm-runner");
@@ -127,7 +127,7 @@ describe("compressMemoryToDerivedMemory — characterization", () => {
       (value) => notices.push(...value),
     );
 
-    expect(result?.title).toBe("Derived title");
+    expect(result).toMatchObject({ title: "Derived title" });
     expect(notices).toContainEqual(
       expect.objectContaining({ code: "untranslated-field", adapter: "llm", field: "outputSchema" }),
     );
@@ -147,6 +147,38 @@ describe("compressMemoryToDerivedMemory — characterization", () => {
     });
     expect(chatCalls).toBe(1);
     expect(warnCalls).toEqual([]);
+  });
+
+  test("explicit noChange -> the no-change result, no warn, no child draft", async () => {
+    chatResponder = () =>
+      JSON.stringify({ noChange: true, title: "", description: "", content: "", tags: [], searchHints: [] });
+
+    const result = await compressMemoryToDerivedMemory(
+      LLM_CONFIG,
+      "Tool calls: Read 3, Edit 1",
+      undefined,
+      ENABLED_CONFIG,
+    );
+
+    expect(result).toEqual({ noChange: true });
+    expect(isMemoryInferNoChange(result)).toBe(true);
+    expect(chatCalls).toBe(1);
+    expect(warnCalls).toEqual([]);
+  });
+
+  test("only a literal noChange: true is a decision; a draft with noChange false is still a draft", async () => {
+    chatResponder = () => JSON.stringify({ noChange: false, ...JSON.parse(validPayload()) });
+    expect(await compressMemoryToDerivedMemory(LLM_CONFIG, "body", undefined, ENABLED_CONFIG)).toMatchObject({
+      title: "Derived title",
+    });
+
+    for (const bad of [{ noChange: "true" }, { noChange: 1 }, { noChange: false }, { noChange: null }, {}]) {
+      warnCalls = [];
+      chatResponder = () => JSON.stringify(bad);
+      const result = await compressMemoryToDerivedMemory(LLM_CONFIG, "body", undefined, ENABLED_CONFIG);
+      expect(result).toBeUndefined();
+      expect(warnCalls).toEqual(["memory inference: incomplete derived memory payload from LLM; skipping memory."]);
+    }
   });
 
   test("trims/caps tags (>8) and searchHints (>6) to the documented limits", async () => {

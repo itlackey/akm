@@ -49,7 +49,7 @@ describe("renderRunsDetailMd", () => {
       "refl_ok/fail/cd/skip",
       "distill_q/llm-fail/judge/validator/cfg/skip",
       "cons_proc/promo/merge/del",
-      "mem_cons/written/skip",
+      "mem_cons/written/nochange/skip",
       "orphans",
       "lint_f/fl",
       "result_status",
@@ -80,7 +80,7 @@ describe("renderRunsDetailMd", () => {
         error: 0,
       },
       consolidation: { ...zeroImprove().consolidation, processed: 5, promoted: 2, merged: 1, deleted: 0 },
-      memoryInference: { ...zeroImprove().memoryInference, considered: 7, written: 3, skippedNoFacts: 4 },
+      memoryInference: { ...zeroImprove().memoryInference, considered: 7, written: 3, noChange: 2, skippedNoFacts: 4 },
       orphansPurged: 1,
       lintFixed: 2,
       lintFlagged: 0,
@@ -95,7 +95,7 @@ describe("renderRunsDetailMd", () => {
     expect(data).toContain("2/1/0/3"); // reflect
     expect(data).toContain("4/0/1/0/0/2"); // distill
     expect(data).toContain("5/2/1/0"); // consolidation
-    expect(data).toContain("7/3/4"); // mem inference
+    expect(data).toContain("7/3/2/4"); // mem inference
     // padded columns keep the header/data aligned to equal visual width
     expect(lines[0]!.length).toBe(lines[1]!.length);
   });

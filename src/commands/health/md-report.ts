@@ -34,7 +34,7 @@ function renderTable(headers: string[], rows: string[][]): string {
  *
  * Columns: ts | ok | actions | refl_ok/fail/cd/skip |
  *   distill_q/llm-fail/qrej/cfg/skip | cons_proc/promo/merge/del |
- *   mem_cons/written/skip | orphans | lint_f/fl
+ *   mem_cons/written/nochange/skip | orphans | lint_f/fl
  */
 export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
   const headers = [
@@ -45,7 +45,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
     "refl_ok/fail/cd/skip",
     "distill_q/llm-fail/judge/validator/cfg/skip",
     "cons_proc/promo/merge/del",
-    "mem_cons/written/skip",
+    "mem_cons/written/nochange/skip",
     "orphans",
     "lint_f/fl",
     "result_status",
@@ -73,7 +73,7 @@ export function renderRunsDetailMd(runs: ImproveRunSummary[]): string {
       `${r.actions.reflect.ok}/${r.actions.reflect.failed}/${r.actions.reflect.cooldown}/${r.actions.reflect.skipped}`,
       `${r.actions.distill.queued}/${r.actions.distill.llmFailed}/${r.actions.distill.judgeRejected}/${r.actions.distill.validatorRejected}/${r.actions.distill.configDisabled}/${r.actions.distill.skipped}`,
       `${r.consolidation.processed}/${r.consolidation.promoted}/${r.consolidation.merged}/${r.consolidation.deleted}`,
-      `${r.memoryInference.considered}/${r.memoryInference.written}/${r.memoryInference.skippedNoFacts}`,
+      `${r.memoryInference.considered}/${r.memoryInference.written}/${r.memoryInference.noChange}/${r.memoryInference.skippedNoFacts}`,
       String(r.orphansPurged),
       `${r.lintFixed}/${r.lintFlagged}`,
       r.resultStatus ?? "valid",
