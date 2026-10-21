@@ -76,6 +76,7 @@ import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../asset/frontmatter";
+import { markdownLinkTargets } from "../../asset/markdown-link-targets";
 import { toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
 import type { BundleAdapter } from "../bundle-adapter";
@@ -191,13 +192,10 @@ function resolveXref(xref: string, bundleId: string): string | null {
  */
 function resolveBodyLinks(body: string, fileRelPath: string): string[] {
   const dir = path.posix.dirname(toPosix(fileRelPath));
-  const linkRe = /\[[^\]]*\]\(([^)]+)\)/g;
   const out: string[] = [];
   const seen = new Set<string>();
-  let match: RegExpExecArray | null;
-  // biome-ignore lint/suspicious/noAssignInExpressions: idiomatic regex loop
-  while ((match = linkRe.exec(body)) !== null) {
-    let target = match[1]!.trim();
+  for (const link of markdownLinkTargets(body, false)) {
+    let target = link.trim();
     const wsIdx = target.search(/\s/);
     if (wsIdx >= 0) target = target.slice(0, wsIdx);
     const hashIdx = target.indexOf("#");

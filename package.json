@@ -124,6 +124,7 @@
     "citty": "^0.2.2",
     "dotenv": "^17.4.2",
     "fast-xml-parser": "^5.10.1",
+    "marked": "^18.1.1",
     "node-html-parser": "^9.0.1",
     "semver": "^7.6.0",
     "turndown": "^7.2.4",

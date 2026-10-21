@@ -1,0 +1,110 @@
+{
+  "prefix": "/tmp/akm-1200-evidence/npm-prefix-final",
+  "version": "0.10.261008",
+  "semanticSearchMode": "off",
+  "models": "none",
+  "commands": [
+    {
+      "args": [
+        "index",
+        "--full"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "show",
+        "pages/flight-guide"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "show",
+        "pages/beacon"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "curate",
+        "flight guide",
+        "--limit",
+        "1"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "index"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "show",
+        "pages/flight-guide"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "show",
+        "pages/beacon"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "args": [
+        "curate",
+        "flight guide",
+        "--limit",
+        "1"
+      ],
+      "exit": 0,
+      "stderr": ""
+    }
+  ],
+  "before": {
+    "outgoing": {
+      "outgoing": {
+        "links_to": {
+          "total": 1,
+          "refs": [
+            "pages/beacon"
+          ]
+        }
+      }
+    },
+    "incoming": {
+      "incoming": {
+        "links_to": {
+          "total": 1,
+          "refs": [
+            "pages/flight-guide"
+          ]
+        }
+      }
+    },
+    "supportRefs": [
+      {
+        "ref": "pages/beacon",
+        "reason": "Declared link (links_to) from this asset."
+      }
+    ]
+  },
+  "after": {
+    "outgoing": null,
+    "incoming": null,
+    "supportRefs": null,
+    "uiLinks": null
+  },
+  "passed": true
+}

@@ -1,0 +1,12 @@
+{"id": "vpn", "ref": "notes//deploy-prerequisite", "grade": 3, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "vpn", "ref": "notes//vpn-access", "grade": 3, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "vpn", "ref": "notes//cache-recovery", "grade": 1, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "vpn", "ref": "notes//unrelated-example", "grade": 0, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "cache", "ref": "notes//cache-recovery", "grade": 3, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "cache", "ref": "notes//deploy-prerequisite", "grade": 2, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "cache", "ref": "notes//vpn-access", "grade": 1, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "cache", "ref": "notes//unrelated-example", "grade": 0, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "prerequisite", "ref": "notes//deploy-prerequisite", "grade": 3, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "prerequisite", "ref": "notes//vpn-access", "grade": 2, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "prerequisite", "ref": "notes//cache-recovery", "grade": 1, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
+{"id": "prerequisite", "ref": "notes//unrelated-example", "grade": 0, "reason": "Independently authored reference corpus: direct procedural answer vs supporting procedure vs unrelated fixture.", "judge": "codex-review"}
