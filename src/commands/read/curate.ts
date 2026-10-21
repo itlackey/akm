@@ -289,7 +289,16 @@ export async function curateSearchResults(
   // at a bare literal 2 — the remaining slots after stash hits ARE the cap.
   const selectedRegistryHits =
     selectedStashHits.length >= limit ? [] : registryHits.slice(0, limit - selectedStashHits.length);
-  const selectedRefs = new Set(selectedStashHits.flatMap((hit) => (recall ? [hit.ref, evidenceRef(hit)] : [hit.ref])));
+  const selectedRefs = new Set(
+    selectedStashHits.flatMap((hit) => {
+      if (!recall) return [hit.ref];
+      try {
+        return [hit.ref, evidenceRef(hit)];
+      } catch {
+        return [hit.ref]; // no longer indexed: enrichCuratedStashHit drops it
+      }
+    }),
+  );
 
   const items = [
     ...(
@@ -565,7 +574,9 @@ async function buildCurateSupportRefs(
         let shown: ShowResponse | undefined;
         if (recall) {
           try {
-            shown = await akmShowUnified({ ref, recall, skipLogging: true });
+            // A support ref is a link, not a hit: `--type` narrows the hits only.
+            const { type: _type, ...linkRecall } = recall;
+            shown = await akmShowUnified({ ref, recall: linkRecall, skipLogging: true });
           } catch {
             continue;
           }

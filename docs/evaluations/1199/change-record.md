@@ -55,7 +55,7 @@ is established, explicit investigation works, and remaining tradeoffs are bounde
 | Public books semantic useful recall@10 | 0.9849 | 0.9877 | No individual job loses useful recall |
 | Public ordinary library keyword nDCG / useful recall | 0.7565 / 0.7440 | identical | 136 inputs; 101 scored answerable jobs, 10 no-answer and 25 non-task inputs |
 | Public library semantic curate nDCG | 0.8190 | 0.8200 | No belief labels in this library; semantic differences cannot establish a default-policy effect |
-| Reproduced #1198 eligibility corpus, candidate | — | 8/8 success, no banned-above hit | All four columns; keyword nDCG 1.0, semantic curate 0.9080; all useful answers retained |
+| Reproduced #1198 eligibility corpus, candidate | — | 8/8 success, no banned-above hit | All four columns; keyword nDCG 1.0, semantic curate 0.9077; all useful answers retained |
 | Real shipped-default rollout example, packed payload | 264 tokens | 196 tokens | Same 4000-token budget, estimator is chars/4; no answer-model cost claim |
 | Same default example, CLI query latency (3 observations) | 241–249 ms | 259–270 ms | Approximately +8% median; startup included; no operational ceiling exceeded |
 
@@ -128,6 +128,27 @@ This bounds attribution of the small semantic differences; it does not establish
 that embedding results are globally stable. No score-driven code tuning followed.
 Existing poor non-task abstention (1/25 curator abstentions, unchanged) stays in
 #1201; it was neither hidden nor optimized here.
+
+#### Review additions (independent recomputation)
+
+- Books keyword: nDCG falls on 9 of 51 queries and rises on 19 (worst
+  `medical-adv-pinned-fact-cpr-ratio`, −0.0663); 20 grade-1 and 22 grade-0 hits
+  leave the top ten, no grade-2/3 hit is lost and no query loses recall. Under the
+  original labels the gain is +0.0081 (0.8275 → 0.8356), so the keyword gain does
+  not depend on the added labels.
+- Books semantic: nDCG falls on 17 queries and rises on 18 (worst
+  `culinary-onion-caramelization-belief-state`, 0.8921 → 0.7232, a grade-0 note
+  moving to rank 1). Under the original labels the semantic delta is about 0
+  (search 0.9021 → 0.9020); the rescored +0.005 comes mainly from the 43 added
+  books labels, 40 of which surface only in the current arm.
+- Library semantic: means move by +0.0005 to +0.001, below the noise floor;
+  useful recall also falls on q088 search (1.0 → 0.857), which is not covered
+  above. Each arm built its own cold semantic index, and the matched-`all`
+  control is itself slightly below baseline, so semantic differences are not
+  attributed to the policy.
+- The compact and eligibility collector runs used variant 1 (search still `all`);
+  the final search default is covered by `installed-search.json` and `defaults.json`.
+- The lab embeddings endpoint and local checkout paths in these files are redacted.
 
 ## Implementation and final verification
 

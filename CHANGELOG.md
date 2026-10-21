@@ -15,7 +15,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   public `akm-cli/api` options add `source`, normalized `filters`, and `belief`.
   The same eligibility follows derived surfaces, linked support and packed
   content; historical results are labelled. Belief labels do not establish factual
-  truth. No migration or reindex is required; direct show remains available.
+  truth. No migration or reindex is required; direct show remains available. The default
+  also applies to `akm ui` search, `akm remember --show-similar` and the related assets
+  distill reads.
 
 ### Fixed
 

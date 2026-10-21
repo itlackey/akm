@@ -128,8 +128,11 @@ test("compound scope, source/type combinations and duplicate source identities",
     const packed = await packCuratedHits(result, 4000);
     expect(JSON.stringify(result.items)).not.toContain('"ref":"knowledge/external"');
     if (type === "memory") {
+      // --type narrows hits, not links: the same-source, same-scope knowledge stays as support.
       const item = result.items[0];
-      expect(item && "supportRefs" in item ? item.supportRefs : undefined).toBeUndefined();
+      expect(item && "supportRefs" in item ? item.supportRefs?.map((x) => x.ref) : undefined).toEqual([
+        "other//knowledge/reference",
+      ]);
     }
     expect(JSON.stringify(packed)).not.toContain("default source wrong answer");
     expect(packed.items.length).toBe(type === "any" ? 2 : 1);
@@ -159,6 +162,14 @@ test("stale outgoing/incoming links are filtered in current; all labels historic
   const support = all.items[0] && "supportRefs" in all.items[0] ? all.items[0].supportRefs : [];
   expect(support?.find((x) => x.ref === "memories/old")?.reason).toContain("Historical context");
   expect((await akmShowUnified({ ref: "memories/old" })).content).toContain("historical record");
+});
+test("--type narrows hits but keeps cross-type support links", async () => {
+  put("knowledge/main", { xrefs: ["memories/cur"] }, "quartz deployment selected\n\n[cur](stash//memories/cur)");
+  put("memories/cur", {}, "current supporting memory");
+  await akmIndex({ stashDir: storage.stashDir, full: true });
+  const result = await akmCurate({ query: "quartz deployment selected", limit: 1, type: "knowledge" });
+  const support = result.items[0] && "supportRefs" in result.items[0] ? result.items[0].supportRefs : [];
+  expect(support?.map((x) => x.ref)).toEqual(["memories/cur"]);
 });
 test("packing rechecks changed scope/belief and missing content instead of widening", async () => {
   const file = put("knowledge/main", { scope: { user: "alice" } });

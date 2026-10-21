@@ -9,17 +9,17 @@ redacted parameters. `LAB_API_KEY` was inherited symbolically, never printed.
 ## Preparation
 
 ```sh
-cd /home/founder3/code/github/itlackey/akm-stash
+cd <akm-stash-checkout>
 git status --short
 git pull --ff-only origin main
 # clean; 5ee979e -> fd61fd1
-cd /home/founder3/code/github/itlackey/akm
+cd <akm-checkout>
 git fetch origin
 # release/0.10.0 -> 79cf3236a
 ```
 
 The managed worktree tool created
-`/home/founder3/.codex/worktrees/1199-curate-recall-controls/akm` from
+`<akm-checkout>` from
 `origin/release/0.10.0`. In it:
 
 ```sh
@@ -42,7 +42,7 @@ per-query argv fixture field is reused for search **and curate**. Constants:
 
 ```sh
 BASE='bun /tmp/akm-1199-baseline/src/cli.ts'
-CAND='bun /home/founder3/.codex/worktrees/1199-curate-recall-controls/akm/src/cli.ts'
+CAND='bun <akm-checkout>/src/cli.ts'
 cd /tmp/akm-eval-1199
 scripts/smoke/run --contract --only retrieval --akm "$BASE"
 # 1 run, 1 outcome reached, 0 skipped
@@ -54,7 +54,7 @@ evals/retrieval/run --cases /tmp/1199-recall-cases --semantic --label 1199-candi
 evals/retrieval/run --semantic --label 1199-public-baseline --akm "$BASE"
 evals/retrieval/run --semantic --label 1199-public-matched --akm 'bun /tmp/1199-matched.ts'
 evals/retrieval/run --semantic --label 1199-public-current --akm 'bun /tmp/1199-search-current.ts'
-python3 /home/founder3/.codex/worktrees/1199-curate-recall-controls/akm/docs/evaluations/1198/make-corpus.py /tmp/1199-public-eligibility
+python3 <akm-checkout>/docs/evaluations/1198/make-corpus.py /tmp/1199-public-eligibility
 evals/retrieval/run --cases /tmp/1199-public-eligibility --semantic --label 1199-eligibility --akm "$CAND"
 ```
 
