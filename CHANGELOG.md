@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Search applies eligibility filters (scope, source, type, belief state, proposed quality)
+  before each channel's candidate limit instead of after it (#1198). An eligible asset ranked
+  below many ineligible ones in the keyword or semantic channel is no longer dropped before
+  filtering. The vector channel checks eligibility in similarity order, so unfiltered searches
+  load only the top candidates. No index migration or reindex is needed.
+
 - Consolidation preserves the existing `scope_user`, `scope_agent`, `scope_run`, and
   `scope_channel` tuple (#1197). Pairing requires exact normalized equality before
   consuming an eligible neighbor slot. Retirement acceptance, including resume, checks

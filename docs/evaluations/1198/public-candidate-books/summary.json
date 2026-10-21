@@ -152,7 +152,7 @@
       "registries": [],
       "embedding": {
         "provider": "openai",
-        "endpoint": "https://ai.lab.fwdslsh.dev/v1/embeddings",
+        "endpoint": "https://[redacted-lab]/v1/embeddings",
         "model": "embed/qwen3-embedding-0.6b",
         "apiKey": "$LAB_API_KEY",
         "dimension": 1024,
@@ -416,7 +416,7 @@
           "registries": [],
           "embedding": {
             "provider": "openai",
-            "endpoint": "https://ai.lab.fwdslsh.dev/v1/embeddings",
+            "endpoint": "https://[redacted-lab]/v1/embeddings",
             "model": "embed/qwen3-embedding-0.6b",
             "apiKey": "$LAB_API_KEY",
             "dimension": 1024,

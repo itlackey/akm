@@ -141,24 +141,7 @@ export function searchVec(
   const rows = db
     .prepare(`SELECT id, embedding FROM embeddings WHERE ${current.sql}${scoped}`)
     .iterate(...params) as IterableIterator<{ id: number; embedding: Uint8Array }>;
-  function* eligibleRows() {
-    if (!filterCandidates) {
-      yield* rows;
-      return;
-    }
-    let batch: Array<{ id: number; embedding: Uint8Array }> = [];
-    function* keepBatch() {
-      const eligible = filterCandidates!(batch.map((row) => row.id));
-      for (const row of batch) if (eligible.has(row.id)) yield row;
-      batch = [];
-    }
-    for (const row of rows) {
-      batch.push(row);
-      if (batch.length === 100) yield* keepBatch();
-    }
-    if (batch.length > 0) yield* keepBatch();
-  }
-  for (const { id, embedding } of eligibleRows()) {
+  for (const { id, embedding } of rows) {
     if (embedding.byteLength !== dim * 4) continue;
     // A Float32Array view needs 4-byte alignment; copy the rare row that lacks it.
     const vector =
@@ -179,10 +162,23 @@ export function searchVec(
 
   const order = ids.map((_, index) => index);
   order.sort((a, b) => similarities[b]! - similarities[a]! || ids[a]! - ids[b]!);
-  return order.slice(0, k).map((index) => ({
+  const result = (index: number): DbVecResult => ({
     id: ids[index]!,
     distance: Math.sqrt(2 * Math.max(0, 1 - similarities[index]!)),
-  }));
+  });
+  if (!filterCandidates) return order.slice(0, k).map(result);
+  // Filter in similarity order, a batch at a time, so only the rows near the
+  // top are loaded and checked — not every embedded entry.
+  const results: DbVecResult[] = [];
+  for (let start = 0; start < order.length && results.length < k; start += 100) {
+    const batch = order.slice(start, start + 100);
+    const eligible = filterCandidates(batch.map((index) => ids[index]!));
+    for (const index of batch) {
+      if (results.length === k) break;
+      if (eligible.has(ids[index]!)) results.push(result(index));
+    }
+  }
+  return results;
 }
 
 /**
