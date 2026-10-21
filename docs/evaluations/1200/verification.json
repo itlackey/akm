@@ -85,5 +85,27 @@
     "stderr": "empty",
     "assertions": "Real outgoing/incoming/support preserved before edit; all absent after real link becomes code; installed UI API also has no stale backlinks",
     "passed": true
+  },
+  "combinedValidation": {
+    "revision": "222d6e1e1",
+    "base": "946c4b5ac",
+    "composition": "Latest release plus reviewed #1196 extraction, #1198 eligibility and #1200 parser patches; parser patch equivalent to 60b57c2. Includes shared health-window validation ordering correction.",
+    "commands": [
+      "bun run build",
+      "bun run check"
+    ],
+    "unit": {
+      "passed": 7213,
+      "skipped": 4,
+      "failed": 0
+    },
+    "integration": {
+      "passed": 3866,
+      "skipped": 81,
+      "failed": 0,
+      "files": 342
+    },
+    "reportedBy": "coordinating parent agent after completed checks",
+    "note": "Combined workstream evidence; does not imply these extra #1196/#1198 source changes are in this PR."
   }
 }
