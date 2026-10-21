@@ -1,0 +1,545 @@
+{
+ "model": "splinter-b70/qwen3.8-flash-next-iq2_xs",
+ "endpoint": "<MODEL_BASE_URL>",
+ "settings": "temperature 0, thinking off, one case at a time, search keyword (bakeoff defaults)",
+ "runs": [
+  {
+   "label": "base-pos-r1",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 8,
+   "valid": 8,
+   "checks": 1,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4.2,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "base-pos-r2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 8,
+   "valid": 8,
+   "checks": 1,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4.1,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f-dirty",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "cand-pos-r1",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 7,
+   "valid": 8,
+   "checks": 0.975,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4.2,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2852-g76f5b2396",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "cand-pos-r2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 7,
+   "valid": 8,
+   "checks": 0.975,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4.2,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2852-g76f5b2396",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "cand-pos-r1-t2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 8,
+   "valid": 8,
+   "checks": 1,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4.2,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2852-g76f5b2396-dirty",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "cand-pos-r2-t2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 8,
+   "valid": 8,
+   "checks": 1,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4.2,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2853-g731288358",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "base-restraint-r1",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 7,
+   "valid": 8,
+   "checks": 0.9375,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 3.5,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "base-restraint-r2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 7,
+   "valid": 8,
+   "checks": 0.9375,
+   "children": 8,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 3.5,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f-dirty",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "cand-restraint-r1",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 3,
+   "valid": 3,
+   "checks": 0.375,
+   "children": 3,
+   "noChange": 5,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 2.5,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2852-g76f5b2396",
+   "run2_cacheHits": 5,
+   "run2_noChange": 5
+  },
+  {
+   "label": "cand-restraint-r2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 3,
+   "valid": 3,
+   "checks": 0.375,
+   "children": 3,
+   "noChange": 5,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 2.5,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2852-g76f5b2396",
+   "run2_cacheHits": 5,
+   "run2_noChange": 5
+  },
+  {
+   "label": "cand-restraint-r1-t2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 3,
+   "valid": 3,
+   "checks": 0.375,
+   "children": 3,
+   "noChange": 5,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 2.5,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2852-g76f5b2396-dirty",
+   "run2_cacheHits": 5,
+   "run2_noChange": 5
+  },
+  {
+   "label": "cand-restraint-r2-t2",
+   "n_run": 8,
+   "errored": 0,
+   "passed": 3,
+   "valid": 3,
+   "checks": 0.375,
+   "children": 3,
+   "noChange": 5,
+   "skippedNoFacts": 0,
+   "calls_run1": 8,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 2.5,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2853-g731288358",
+   "run2_cacheHits": 5,
+   "run2_noChange": 5
+  },
+  {
+   "label": "base-finalB-r1",
+   "n_run": 12,
+   "errored": 0,
+   "passed": 10,
+   "valid": 12,
+   "checks": 0.9167,
+   "children": 12,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 12,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f-dirty",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "base-finalB-r2",
+   "n_run": 12,
+   "errored": 0,
+   "passed": 10,
+   "valid": 12,
+   "checks": 0.9167,
+   "children": 12,
+   "noChange": 0,
+   "skippedNoFacts": 0,
+   "calls_run1": 12,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f-dirty",
+   "run2_cacheHits": 0,
+   "run2_noChange": 0
+  },
+  {
+   "label": "cand-finalB-r1",
+   "n_run": 12,
+   "errored": 0,
+   "passed": 7,
+   "valid": 8,
+   "checks": 0.625,
+   "children": 8,
+   "noChange": 4,
+   "skippedNoFacts": 0,
+   "calls_run1": 12,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2853-g731288358",
+   "run2_cacheHits": 4,
+   "run2_noChange": 4
+  },
+  {
+   "label": "cand-finalB-r2",
+   "n_run": 12,
+   "errored": 0,
+   "passed": 7,
+   "valid": 8,
+   "checks": 0.625,
+   "children": 8,
+   "noChange": 4,
+   "skippedNoFacts": 0,
+   "calls_run1": 12,
+   "calls_run2": 0,
+   "failed_calls": 0,
+   "median_s": 4,
+   "served": [
+    "qwen3.8-flash-next-iq2_xs"
+   ],
+   "akm_build": "v0.9.0-beta.60-2853-g731288358",
+   "run2_cacheHits": 4,
+   "run2_noChange": 4
+  }
+ ],
+ "per_case": {
+  "infer-checkpoint-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child FAIL:retains explicit date",
+   "cand-pos-r2": "child FAIL:retains explicit date",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-signing-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-cache-policy-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-operator-preference-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-partition-filter-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-press-proof-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-test-quarantine-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "infer-dns-cutover-memory": {
+   "base-pos-r1": "child ok",
+   "base-pos-r2": "child ok",
+   "cand-pos-r1": "child ok",
+   "cand-pos-r2": "child ok",
+   "cand-pos-r1-t2": "child ok",
+   "cand-pos-r2-t2": "child ok"
+  },
+  "restraint-session-tool-counts": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "no-change",
+   "cand-restraint-r2": "no-change",
+   "cand-restraint-r1-t2": "no-change",
+   "cand-restraint-r2-t2": "no-change"
+  },
+  "restraint-turn-tool-count": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "no-change",
+   "cand-restraint-r2": "no-change",
+   "cand-restraint-r1-t2": "no-change",
+   "cand-restraint-r2-t2": "no-change"
+  },
+  "restraint-checkpoint-step": {
+   "base-restraint-r1": "child FAIL:retains checkpoint",
+   "base-restraint-r2": "child FAIL:retains checkpoint",
+   "cand-restraint-r1": "no-change",
+   "cand-restraint-r2": "no-change",
+   "cand-restraint-r1-t2": "no-change",
+   "cand-restraint-r2-t2": "no-change"
+  },
+  "restraint-checkpoint-waiting": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "no-change",
+   "cand-restraint-r2": "no-change",
+   "cand-restraint-r1-t2": "no-change",
+   "cand-restraint-r2-t2": "no-change"
+  },
+  "restraint-context-resume": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "no-change",
+   "cand-restraint-r2": "no-change",
+   "cand-restraint-r1-t2": "no-change",
+   "cand-restraint-r2-t2": "no-change"
+  },
+  "restraint-deploy-key-rotation": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "child ok",
+   "cand-restraint-r2": "child ok",
+   "cand-restraint-r1-t2": "child ok",
+   "cand-restraint-r2-t2": "child ok"
+  },
+  "restraint-quick-ci-check": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "child ok",
+   "cand-restraint-r2": "child ok",
+   "cand-restraint-r1-t2": "child ok",
+   "cand-restraint-r2-t2": "child ok"
+  },
+  "restraint-exporter-port": {
+   "base-restraint-r1": "child ok",
+   "base-restraint-r2": "child ok",
+   "cand-restraint-r1": "child ok",
+   "cand-restraint-r2": "child ok",
+   "cand-restraint-r1-t2": "child ok",
+   "cand-restraint-r2-t2": "child ok"
+  },
+  "pos-vendor-rate-limit": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "pos-sqlite-wal-decision": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "pos-libfoo-pin": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "pos-edge-proxy-cert-outage": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "pos-label-sync-ordering": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "pos-backup-restore-drill": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "neg-tool-summary-1": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "no-change",
+   "cand-finalB-r2": "no-change"
+  },
+  "neg-checkpoint-saved": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "no-change",
+   "cand-finalB-r2": "no-change"
+  },
+  "neg-resume-from-summary": {
+   "base-finalB-r1": "child FAIL:retains resuming",
+   "base-finalB-r2": "child FAIL:retains resuming",
+   "cand-finalB-r1": "no-change",
+   "cand-finalB-r2": "no-change"
+  },
+  "neg-make-lint": {
+   "base-finalB-r1": "child FAIL:retains `make",
+   "base-finalB-r2": "child FAIL:retains `make",
+   "cand-finalB-r1": "child FAIL:retains `make",
+   "cand-finalB-r2": "child FAIL:retains `make"
+  },
+  "neg-dist-dir": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "child ok",
+   "cand-finalB-r2": "child ok"
+  },
+  "neg-tool-usage-turn": {
+   "base-finalB-r1": "child ok",
+   "base-finalB-r2": "child ok",
+   "cand-finalB-r1": "no-change",
+   "cand-finalB-r2": "no-change"
+  }
+ }
+}

@@ -1,0 +1,508 @@
+{
+  "eval": "bakeoff",
+  "corpus": "public",
+  "corpus_folder": null,
+  "label": "base-pos-r1",
+  "date": "2026-10-21T16:58:54.032Z",
+  "git_commit": "94c3de1",
+  "model": "splinter-b70/qwen3.8-flash-next-iq2_xs",
+  "akm_version": "0.10.261009",
+  "akm_bin": "bash /tmp/claude-1000/-home-founder3-akm/6de79e32-b812-4eef-a563-f1b22fcc2e42/scratchpad/pilot/wrap.sh /tmp/claude-1000/-home-founder3-akm/6de79e32-b812-4eef-a563-f1b22fcc2e42/scratchpad/pilot/logs base-pos-r1 ~/code/github/itlackey/akm/.claude/worktrees/base-1208/src/cli.ts",
+  "akm_build": "v0.9.0-beta.60-2851-gd6f8c537f",
+  "akm_build_fingerprint": "dc83d710a5f3863bea446a0026764618c4ca3beba7d788b96f422e9827421438",
+  "limit": null,
+  "config_patch": null,
+  "config": {
+    "configVersion": "0.9.0",
+    "semanticSearchMode": "off",
+    "registries": [],
+    "engines": {
+      "bakeoff": {
+        "kind": "llm",
+        "provider": "openai",
+        "endpoint": "<MODEL_BASE_URL>/chat/completions",
+        "model": "splinter-b70/qwen3.8-flash-next-iq2_xs",
+        "apiKey": "$MODEL_API_KEY",
+        "timeoutMs": 600000,
+        "temperature": 0,
+        "enableThinking": false
+      }
+    },
+    "defaults": {
+      "llmEngine": "bakeoff"
+    },
+    "experimental": {
+      "improveAutonomy": true
+    },
+    "improve": {
+      "strategies": {
+        "bakeoff-memory-inference": {
+          "engine": "bakeoff",
+          "processes": {
+            "reflect": {
+              "enabled": false
+            },
+            "distill": {
+              "enabled": false
+            },
+            "consolidate": {
+              "enabled": false
+            },
+            "memoryInference": {
+              "enabled": true
+            },
+            "extract": {
+              "enabled": false
+            },
+            "validation": {
+              "enabled": false
+            },
+            "triage": {
+              "enabled": false
+            },
+            "proactiveMaintenance": {
+              "enabled": false
+            }
+          },
+          "sync": {
+            "enabled": false,
+            "push": false
+          }
+        },
+        "bakeoff-schema-repair": {
+          "engine": "bakeoff",
+          "processes": {
+            "reflect": {
+              "enabled": false
+            },
+            "distill": {
+              "enabled": false
+            },
+            "consolidate": {
+              "enabled": false
+            },
+            "memoryInference": {
+              "enabled": false
+            },
+            "extract": {
+              "enabled": false
+            },
+            "validation": {
+              "enabled": true
+            },
+            "triage": {
+              "enabled": false
+            },
+            "proactiveMaintenance": {
+              "enabled": false
+            }
+          },
+          "sync": {
+            "enabled": false,
+            "push": false
+          }
+        },
+        "bakeoff-session-summary": {
+          "engine": "bakeoff",
+          "processes": {
+            "reflect": {
+              "enabled": false
+            },
+            "distill": {
+              "enabled": false
+            },
+            "consolidate": {
+              "enabled": false
+            },
+            "memoryInference": {
+              "enabled": false
+            },
+            "extract": {
+              "enabled": true,
+              "indexSessions": true,
+              "minSessionDuration": 0,
+              "triage": {
+                "enabled": false
+              }
+            },
+            "validation": {
+              "enabled": false
+            },
+            "triage": {
+              "enabled": false
+            },
+            "proactiveMaintenance": {
+              "enabled": false
+            }
+          },
+          "sync": {
+            "enabled": false,
+            "push": false
+          }
+        },
+        "bakeoff-consolidate-promote": {
+          "engine": "bakeoff",
+          "processes": {
+            "reflect": {
+              "enabled": false
+            },
+            "distill": {
+              "enabled": false
+            },
+            "consolidate": {
+              "enabled": true,
+              "minPoolSize": 0
+            },
+            "memoryInference": {
+              "enabled": false
+            },
+            "extract": {
+              "enabled": false
+            },
+            "validation": {
+              "enabled": false
+            },
+            "triage": {
+              "enabled": false
+            },
+            "proactiveMaintenance": {
+              "enabled": false
+            }
+          },
+          "sync": {
+            "enabled": false,
+            "push": false
+          }
+        }
+      }
+    }
+  },
+  "engine": {
+    "engine": "bakeoff",
+    "model": "splinter-b70/qwen3.8-flash-next-iq2_xs",
+    "endpoint": "<MODEL_BASE_URL>",
+    "temperature": 0,
+    "enableThinking": false,
+    "timeoutMs": 600000,
+    "engines": {
+      "bakeoff": {
+        "model": "splinter-b70/qwen3.8-flash-next-iq2_xs",
+        "endpoint": "<MODEL_BASE_URL>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    }
+  },
+  "assets_sha256": "70b86a9dadee30a95208b372e9c61f38314f57aa89208818b777ac40e7a86bf0",
+  "seed": null,
+  "status": "complete",
+  "aborted_reason": null,
+  "n_cases": 40,
+  "n_run": 8,
+  "n_scored": 8,
+  "n_errored": 0,
+  "timeouts": 0,
+  "served": {
+    "qwen3.8-flash-next-iq2_xs": 8
+  },
+  "metrics": {
+    "valid_output": {
+      "n": 8,
+      "passed": 8,
+      "rate": 1
+    },
+    "case_pass": {
+      "n": 8,
+      "passed": 8,
+      "rate": 1
+    },
+    "checks": {
+      "n": 8,
+      "rate": 1
+    },
+    "median_seconds": 4.2,
+    "by_process": {
+      "memory-inference": {
+        "n": 8,
+        "valid_output": 8,
+        "passed": 8,
+        "checks": 1,
+        "outcomes": {
+          "output": 8,
+          "unusable": 0,
+          "error": 0
+        },
+        "failed": {}
+      }
+    }
+  },
+  "process": "memory-inference",
+  "model_calls": {
+    "calls": 24,
+    "errors": 0,
+    "prompt_tokens": 165.4,
+    "completion_tokens": 44.9,
+    "seconds": 1.08,
+    "output_tokens_per_second": 41.6
+  },
+  "semantic_verification": null,
+  "concurrency": 1,
+  "timeout_ms": 900000,
+  "manifest": {
+    "manifest_version": 1,
+    "eval": "bakeoff",
+    "corpus": "public",
+    "collection": null,
+    "mode": null,
+    "harness_version": 3,
+    "collector": {
+      "version": "0.2"
+    },
+    "scorer": {
+      "version": "0.2"
+    },
+    "cases": {
+      "infer-checkpoint-memory": {
+        "input_sha256": "f6a06764d330ffb5f869ea77878b4ab05b58ccb2698526fb318a45e8ecdf22c4",
+        "label_sha256": "478e1124586617d6ab744f861d194072af760f59024752f3c1b10c5ef4a699bc"
+      },
+      "infer-signing-memory": {
+        "input_sha256": "b9115e2c2e91a7b2691a0433c867a2ba4c3964746652b9a0303a9463b6184409",
+        "label_sha256": "93aaf3a0cf4be8bbf96db1ff6a60affe38401d9212df8a08b6ee3f3978cfdda3"
+      },
+      "infer-cache-policy-memory": {
+        "input_sha256": "7a349fed2ed5c9b9a9d12de318a2e94282511c8c474a90d353a6b3c23d7359e8",
+        "label_sha256": "f2c5120b3d38c198211a1813081e98b01ead78130465fcfb9e4589e2a000a7ef"
+      },
+      "infer-operator-preference-memory": {
+        "input_sha256": "2a32f5a56ba36dc982380e1c70d1879c9f022b3e47ca8131e392d51910d1c770",
+        "label_sha256": "b859557f44f4b59e29ed5f87286920f6efee4e7c73ed23bb4a2f32f8c98f2e6d"
+      },
+      "infer-partition-filter-memory": {
+        "input_sha256": "7a560631288f7cf2536f8b61f9442d9c9c68008e5f77421334efa6f1d4509c82",
+        "label_sha256": "54f7f1a70b85d5c0ac8bd1aaaecccfba15c7867a27f389585aa92df316848d43"
+      },
+      "infer-press-proof-memory": {
+        "input_sha256": "91cda657fb188e4acfeff7a7f9743a1951b8d4fdf5df1399dfece6f639e5c57e",
+        "label_sha256": "e94603235465aea173ceac6afb88985a6f74b040310dd0f8ab7192db0654d0e1"
+      },
+      "infer-test-quarantine-memory": {
+        "input_sha256": "2ae3f4a20c9ee640183e9335012f3de98fee668ce913e7d1dbc8f2d6126831cc",
+        "label_sha256": "414b931bfc89d575fd3b4a2b6c70deb3d7d61d01d2b869ef22fbcdf1bb78b829"
+      },
+      "infer-dns-cutover-memory": {
+        "input_sha256": "b813d5c859fd3d4d47c9f27414cb7179f9540e2c0be8300a62c1f024a43f1867",
+        "label_sha256": "3cc79c3795cd294d96db32ea6b4b159e8a6f03bde6b563a157fc071d54cd8d2a"
+      }
+    },
+    "akm": {
+      "version": "0.10.261009",
+      "bin": "bash /tmp/claude-1000/-home-founder3-akm/6de79e32-b812-4eef-a563-f1b22fcc2e42/scratchpad/pilot/wrap.sh /tmp/claude-1000/-home-founder3-akm/6de79e32-b812-4eef-a563-f1b22fcc2e42/scratchpad/pilot/logs base-pos-r1 ~/code/github/itlackey/akm/.claude/worktrees/base-1208/src/cli.ts",
+      "build": "v0.9.0-beta.60-2851-gd6f8c537f",
+      "build_fingerprint": "dc83d710a5f3863bea446a0026764618c4ca3beba7d788b96f422e9827421438"
+    },
+    "config": {
+      "redacted": {
+        "configVersion": "0.9.0",
+        "semanticSearchMode": "off",
+        "registries": [],
+        "engines": {
+          "bakeoff": {
+            "kind": "llm",
+            "provider": "openai",
+            "apiKey": "$MODEL_API_KEY"
+          }
+        },
+        "defaults": {
+          "llmEngine": "bakeoff"
+        },
+        "experimental": {
+          "improveAutonomy": true
+        },
+        "improve": {
+          "strategies": {
+            "bakeoff-memory-inference": {
+              "engine": "bakeoff",
+              "processes": {
+                "reflect": {
+                  "enabled": false
+                },
+                "distill": {
+                  "enabled": false
+                },
+                "consolidate": {
+                  "enabled": false
+                },
+                "memoryInference": {
+                  "enabled": true
+                },
+                "extract": {
+                  "enabled": false
+                },
+                "validation": {
+                  "enabled": false
+                },
+                "triage": {
+                  "enabled": false
+                },
+                "proactiveMaintenance": {
+                  "enabled": false
+                }
+              },
+              "sync": {
+                "enabled": false,
+                "push": false
+              }
+            },
+            "bakeoff-schema-repair": {
+              "engine": "bakeoff",
+              "processes": {
+                "reflect": {
+                  "enabled": false
+                },
+                "distill": {
+                  "enabled": false
+                },
+                "consolidate": {
+                  "enabled": false
+                },
+                "memoryInference": {
+                  "enabled": false
+                },
+                "extract": {
+                  "enabled": false
+                },
+                "validation": {
+                  "enabled": true
+                },
+                "triage": {
+                  "enabled": false
+                },
+                "proactiveMaintenance": {
+                  "enabled": false
+                }
+              },
+              "sync": {
+                "enabled": false,
+                "push": false
+              }
+            },
+            "bakeoff-session-summary": {
+              "engine": "bakeoff",
+              "processes": {
+                "reflect": {
+                  "enabled": false
+                },
+                "distill": {
+                  "enabled": false
+                },
+                "consolidate": {
+                  "enabled": false
+                },
+                "memoryInference": {
+                  "enabled": false
+                },
+                "extract": {
+                  "enabled": true,
+                  "indexSessions": true,
+                  "minSessionDuration": 0,
+                  "triage": {
+                    "enabled": false
+                  }
+                },
+                "validation": {
+                  "enabled": false
+                },
+                "triage": {
+                  "enabled": false
+                },
+                "proactiveMaintenance": {
+                  "enabled": false
+                }
+              },
+              "sync": {
+                "enabled": false,
+                "push": false
+              }
+            },
+            "bakeoff-consolidate-promote": {
+              "engine": "bakeoff",
+              "processes": {
+                "reflect": {
+                  "enabled": false
+                },
+                "distill": {
+                  "enabled": false
+                },
+                "consolidate": {
+                  "enabled": true,
+                  "minPoolSize": 0
+                },
+                "memoryInference": {
+                  "enabled": false
+                },
+                "extract": {
+                  "enabled": false
+                },
+                "validation": {
+                  "enabled": false
+                },
+                "triage": {
+                  "enabled": false
+                },
+                "proactiveMaintenance": {
+                  "enabled": false
+                }
+              },
+              "sync": {
+                "enabled": false,
+                "push": false
+              }
+            }
+          }
+        }
+      }
+    },
+    "settings": {
+      "strategy": null,
+      "config_patch_sha256": null,
+      "timeout_ms": 900000,
+      "seed": null
+    },
+    "engines": {
+      "bakeoff": {
+        "model": "splinter-b70/qwen3.8-flash-next-iq2_xs",
+        "endpoint": "<MODEL_BASE_URL>",
+        "temperature": 0,
+        "enableThinking": false,
+        "timeoutMs": 600000
+      }
+    },
+    "eval_settings": {},
+    "completion": {
+      "selected": [
+        "infer-checkpoint-memory",
+        "infer-signing-memory",
+        "infer-cache-policy-memory",
+        "infer-operator-preference-memory",
+        "infer-partition-filter-memory",
+        "infer-press-proof-memory",
+        "infer-test-quarantine-memory",
+        "infer-dns-cutover-memory"
+      ],
+      "scored": [
+        "infer-checkpoint-memory",
+        "infer-signing-memory",
+        "infer-cache-policy-memory",
+        "infer-operator-preference-memory",
+        "infer-partition-filter-memory",
+        "infer-press-proof-memory",
+        "infer-test-quarantine-memory",
+        "infer-dns-cutover-memory"
+      ],
+      "errored": []
+    }
+  },
+  "wall_seconds": 32.745
+}
