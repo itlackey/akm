@@ -106,6 +106,7 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
     retryAttempts: 0,
     splitParents: 0,
     writtenFacts: 0,
+    noChange: 0,
     skippedNoFacts: 0,
     skippedChildExists: 0,
     skippedAborted: 0,

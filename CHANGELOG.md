@@ -12,6 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `thanks, that worked!`, `ok sounds good, go ahead`, `yes`, and `lgtm` (#1201).
   Matching normalizes case, whitespace and common punctuation; added task text
   still retrieves. Use `akm search` for literal lookups that collide with the list.
+- Memory inference accepts an explicit, cached "no change" decision (#1208). A
+  tool-count or checkpoint note, or a note already adequate as written, no longer
+  needs a derived memory or a model call on every run. The decision is cached on
+  the note's body hash (cache namespace `memory-inference-v3`; older rows are a
+  disposable miss), writes no child, and does not stamp the parent
+  `inferenceProcessed`, so an edited note is considered again, as is a
+  `--re-enrich` run. It is counted in `memoryInference.noChange` in the improve
+  result, progress line and health metrics (the health runs table gains a
+  `nochange` column), never in `skippedNoFacts`. Malformed or HTML replies,
+  timeouts, aborts and endpoint failures are still not cached and are retried.
 
 ## [0.10.261009] - 2026-10-21
 

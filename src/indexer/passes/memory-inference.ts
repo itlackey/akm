@@ -56,7 +56,7 @@ import { type RunnerSpec, runnerLlmConnection } from "../../integrations/agent/r
 import { assertRunnerCredentials } from "../../integrations/agent/runner-dispatch";
 import { isProcessEnabled } from "../../llm/feature-gate";
 import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../../llm/index-passes";
-import type { DerivedMemoryDraft, MemoryInferTelemetry } from "../../llm/memory-infer";
+import type { DerivedMemoryDraft, MemoryInferNoChange, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { withLlmCache } from "../db/llm-cache";
@@ -72,14 +72,20 @@ const FM_INFERENCE_PROCESSED = "inferenceProcessed";
 const FM_SOURCE = "source";
 const FM_CAPTURE_MODE = "captureMode";
 
+/**
+ * Cache namespace for this pass. Bump it when the cached response semantics
+ * change (v3: a cached row may be an explicit no-change decision); rows under an
+ * older namespace are never read again, which is a disposable cache miss.
+ */
+const MEMORY_INFERENCE_CACHE_VARIANT = "memory-inference-v3";
+
 /** Telemetry returned to the caller. Useful for tests + future progress events. */
 export interface MemoryInferenceResult {
   /** Number of pending parent memories considered (includes cache hits). */
   considered: number;
   /**
-   * Parents whose body hash matched a prior LLM call's cached result. These
-   * are no-op cache hits — no LLM call was made, no derived file was
-   * (re-)written. Track separately from `considered` so the operational yield
+   * Parents whose body hash matched a prior LLM call's cached result (a
+   * derived memory or a no-change decision). No LLM call was made. Track separately from `considered` so the operational yield
    * rate (`writtenFacts / freshAttempts`) doesn't drift as the cache warms.
    */
   cacheHits: number;
@@ -93,6 +99,15 @@ export interface MemoryInferenceResult {
   splitParents: number;
   /** Derived memory files actually written to disk. */
   writtenFacts: number;
+  /**
+   * Parents for which inference succeeded and decided no derived memory is
+   * needed (a fresh decision or a cached one). Restraint, not failure: no child
+   * is written, the parent is neither stamped nor modified, and the decision is
+   * cached against the parent's body hash, so the parent is considered again
+   * only after its body changes (or on a `reEnrich` run). Never counted in
+   * `skippedNoFacts`, which stays the failure bucket.
+   */
+  noChange: number;
   /** Parents skipped because the LLM returned no usable derived memory (left unmarked → retried next run). */
   skippedNoFacts: number;
   /**
@@ -152,6 +167,7 @@ export interface MemoryInferenceProgress {
   processed: number;
   total: number;
   writtenFacts: number;
+  noChange: number;
   skippedNoFacts: number;
   currentRef?: string;
 }
@@ -183,8 +199,10 @@ interface MemoryRecord {
 type MemoryInferencePlan =
   | { kind: "aborted"; record: MemoryRecord }
   | { kind: "existing-child"; record: MemoryRecord }
-  | { kind: "cache-hit"; record: MemoryRecord; derived: DerivedMemoryDraft }
+  | { kind: "cache-hit"; record: MemoryRecord; decision: MemoryInferDecision }
   | { kind: "model"; record: MemoryRecord };
+
+type MemoryInferDecision = DerivedMemoryDraft | MemoryInferNoChange;
 
 function validateDerivedMemoryDraft(raw: unknown): DerivedMemoryDraft | undefined {
   if (!raw || typeof raw !== "object") return undefined;
@@ -201,6 +219,11 @@ function validateDerivedMemoryDraft(raw: unknown): DerivedMemoryDraft | undefine
     : undefined;
 }
 
+/** Cache validator: a recognised no-change decision, a complete draft, or `undefined` (unusable → recompute). */
+function validateMemoryInferDecision(raw: unknown): MemoryInferDecision | undefined {
+  return memoryInfer.isMemoryInferNoChange(raw) ? memoryInfer.MEMORY_INFER_NO_CHANGE : validateDerivedMemoryDraft(raw);
+}
+
 function planPendingMemoryRecord(
   record: MemoryRecord,
   ctx: Pick<MemoryInferencePassContext, "signal" | "db" | "reEnrich">,
@@ -213,11 +236,11 @@ function planPendingMemoryRecord(
         ctx.db as NonNullable<MemoryInferencePassContext["db"]>,
         record.filePath,
         computeBodyHash(record.body),
-        "memory-inference-v2",
+        MEMORY_INFERENCE_CACHE_VARIANT,
       );
-      return entry ? validateDerivedMemoryDraft(JSON.parse(entry.resultJson)) : undefined;
+      return entry ? validateMemoryInferDecision(JSON.parse(entry.resultJson)) : undefined;
     }, "memory inference cache read corrupt — fall through to recompute");
-    if (cached) return { kind: "cache-hit", record, derived: cached };
+    if (cached) return { kind: "cache-hit", record, decision: cached };
   }
   return { kind: "model", record };
 }
@@ -300,19 +323,19 @@ async function inferPendingMemoryRecord(
       onRetryAttempt,
       onNotices,
     );
-  let derived: DerivedMemoryDraft | undefined = plan.kind === "cache-hit" ? plan.derived : undefined;
+  let derived: MemoryInferDecision | undefined = plan.kind === "cache-hit" ? plan.decision : undefined;
   try {
     if (plan.kind === "model") {
       derived = db
-        ? await withLlmCache<DerivedMemoryDraft>(
+        ? await withLlmCache<MemoryInferDecision>(
             db,
             record.filePath,
             record.body,
             reEnrich ?? false,
             infer,
-            validateDerivedMemoryDraft,
+            validateMemoryInferDecision,
             undefined,
-            "memory-inference-v2",
+            MEMORY_INFERENCE_CACHE_VARIANT,
             {
               onCacheHit: () => {
                 fromCache = true;
@@ -339,6 +362,12 @@ async function inferPendingMemoryRecord(
   }
 
   if (!derived) return { skipped: true, fromCache, retryAttempts } as const;
+  // An explicit decision, not a failure. The parent is left exactly as it is: stamping it
+  // `inferenceProcessed` would hide every later edit, and the cached decision already
+  // stops the retry for as long as the effective input is unchanged.
+  if (memoryInfer.isMemoryInferNoChange(derived)) {
+    return { skipped: false, splitParent: false, written: 0, noChange: true, fromCache, retryAttempts } as const;
+  }
   const writeOutcome = await writeDerivedMemory(record, derived);
   if (writeOutcome.written > 0) {
     markParentProcessed(record);
@@ -399,6 +428,7 @@ async function runMemoryInferencePassBody(
     retryAttempts: 0,
     splitParents: 0,
     writtenFacts: 0,
+    noChange: 0,
     skippedNoFacts: 0,
     skippedChildExists: 0,
     skippedAborted: 0,
@@ -466,7 +496,7 @@ async function runMemoryInferencePassBody(
 
   let processed = 0;
   const total = pending.length;
-  onProgress?.({ processed, total, writtenFacts: 0, skippedNoFacts: 0 });
+  onProgress?.({ processed, total, writtenFacts: 0, noChange: 0, skippedNoFacts: 0 });
 
   let configFailure: ConfigError | undefined;
   const perRecordResults = await concurrentMap(
@@ -502,6 +532,7 @@ async function runMemoryInferencePassBody(
         processed,
         total,
         writtenFacts: result.writtenFacts,
+        noChange: result.noChange,
         skippedNoFacts: result.skippedNoFacts,
         currentRef: pending[i]?.ref,
       });
@@ -517,6 +548,8 @@ async function runMemoryInferencePassBody(
       result.skippedNoFacts += 1;
       // Intentionally NOT marked processed — a transient LLM failure should
       // be retried on the next index run.
+    } else if ("noChange" in res && res.noChange) {
+      result.noChange += 1;
     } else if (res.splitParent) {
       result.splitParents += 1;
       result.writtenFacts += res.written;
@@ -545,6 +578,7 @@ async function runMemoryInferencePassBody(
       processed,
       total,
       writtenFacts: result.writtenFacts,
+      noChange: result.noChange,
       skippedNoFacts: result.skippedNoFacts,
       currentRef: pending[i]?.ref,
     });

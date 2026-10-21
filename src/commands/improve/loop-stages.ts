@@ -634,7 +634,7 @@ export async function runMemoryInferenceMaintenancePass(
         onProgress: (event) => {
           const current = event.currentRef ? ` ${event.currentRef}` : "";
           info(
-            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, skipped ${event.skippedNoFacts})`,
+            `[improve] memory inference ${event.processed}/${event.total}${current} (written ${event.writtenFacts}, no change ${event.noChange}, skipped ${event.skippedNoFacts})`,
           );
         },
       }),
@@ -643,7 +643,7 @@ export async function runMemoryInferenceMaintenancePass(
   const memoryInference = pass.result;
   if (!memoryInference) return { durationMs: pass.durationMs, warnings: pass.warnings };
   info(
-    `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents)`,
+    `[improve] memory inference complete (${memoryInference.writtenFacts} facts written from ${memoryInference.splitParents} parents, ${memoryInference.noChange} no change)`,
   );
   return {
     memoryInference,
