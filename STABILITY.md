@@ -471,10 +471,16 @@ lane (#1143): the `default` strategy runs it without the opt-in, bounded by
 `akm proposal drain --promote`. Only a promote that turns the judgment tier on
 needs `experimental.improveAutonomy`.
 
-Consolidation remains enabled with autonomy off: both its passes (promotion,
-and the pair pass's duplicate/subsumed/supersedes judging) only ever emit a
-reviewable proposal, and a pair-pass `retire` proposal is never auto-accepted
-by `triage` `applyMode: "promote"` regardless of this gate.
+Consolidation remains enabled with autonomy off. Both passes emit proposals;
+the pair pass stages a retirement when its claim checks pass and there is no
+continuity risk. `triage` with `applyMode: "promote"` can accept that staged
+retirement unattended; an unstaged retirement stays pending. Both retirement
+checks receive complete note bodies with lexical attention hints, so the selected
+engine must accommodate them. The pair judge supplies distinct-claim lists; AKM
+derives duplicate/subsumed/overlap outcomes and retirement direction from those
+lists. Historical queued retirement labels remain readable. Before unattended drain after an upgrade, review pending/staged
+retirements produced by older builds from notes over 12,000 body characters:
+upgrading does not revalidate their evidence (#1195).
 
 Because the gate is applied before the LLM preflight, a review-first workspace
 also needs fewer engines configured: a strategy whose only model-backed process
