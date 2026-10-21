@@ -107,4 +107,3 @@ Changed settings:
 |---|---|---|
 | akm | {"version":"0.10.261008","bin":"bun /tmp/akm-coordination-baseline/src/cli.ts","build":"v0.9.0-beta.60-2842-gd0fe1d000","build_fingerprint":"27acaf5fb46d44c59a877b6235f133257640308816a590b32a2f2690a32c325e"} | {"version":"0.10.261008","bin":"bun /tmp/akm-1198/src/cli.ts","build":"v0.9.0-beta.60-2842-gd0fe1d000-dirty","build_fingerprint":"01f5ff41622a6eeef5e7d2976c9be350ab6ed184ae1b95034ade342dd65bffe1"} |
 | semantic_index | warm | cold |
-
