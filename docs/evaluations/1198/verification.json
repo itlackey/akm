@@ -1,0 +1,229 @@
+{
+  "issue": 1198,
+  "baseline": "d0fe1d0000d0ed0b268ee2d5c153fdf578daa7cf",
+  "branch": "fix/1198-filter-before-candidate-limits",
+  "base": "release/0.10.0",
+  "skillRevision": "itlackey/akm-stash fd61fd1",
+  "evaluator": {
+    "publicRevision": "1002fa22d783d010a901af82496cac234920875c",
+    "customRevision": "27f5240d005fa17ceeaa52432f86feecb52b55a6",
+    "customCollector": "0.3",
+    "scorer": "0.3",
+    "privateRunOverlay": "Same lab endpoint/model/dimension, symbolic $LAB_API_KEY, queryTimeoutMs/timeoutMs=600000 on both builds; private overlay not committed.",
+    "pullRequest": "https://github.com/itlackey/akm-eval/pull/128"
+  },
+  "acceptancePriority": [
+    "No invented policy/schema/ranking/default changes; preserve existing contracts and #1195.",
+    "All scoped/source/type/quality/belief eligible-hit starvation cases succeed in applicable lexical/vector channels; no defined ineligible hit appears.",
+    "Review full public library/books quality and raw regressions on matching labels.",
+    "Measure actual modes, errors, indexing, warm/cold query cost and process memory."
+  ],
+  "variants": [
+    {
+      "number": 1,
+      "treatment": "Canonical eligibility in bounded candidate batches before existing channel budgets.",
+      "decision": "Accept for review after verification; no score-driven code tuning."
+    }
+  ],
+  "budget": {
+    "candidateLimit": 3,
+    "candidatesUsed": 1,
+    "evaluationAllocation": "Fixed public and custom baseline/candidate comparisons with setup pilots; one final custom recollection pair after adding argv audit metadata; 12 targeted same-index diagnostic calls; one final 10001-note cost pair; required checks reserved."
+  },
+  "regression": {
+    "baseline": {
+      "tests": 35,
+      "passed": 4,
+      "failed": 31,
+      "artifact": "baseline-regression.log"
+    },
+    "candidate": {
+      "tests": 38,
+      "passed": 38,
+      "failed": 0,
+      "assertions": 92,
+      "artifact": "candidate-regression.log"
+    },
+    "coverage": [
+      "120 stronger rejected candidates per each scope key/source/type/default exclusions/proposed quality/current/historical belief, independently lexical/vector/combined.",
+      "Cross-bundle same concept, derived base demotion and explicit twin-state override, limit1/multiple/no eligible results.",
+      "Empty/unsearchable/prefix browse, missing embeddings, actual failed-embedding keyword fallback, opt-ins, normalized input scope and disabled named-source rejection.",
+      "Parent-authored final cases use 240 rejected entries, all scope keys plus source/type/belief/quality and vector-only query."
+    ]
+  },
+  "custom": {
+    "assets": 605,
+    "queries": 8,
+    "baselineRecall": 0,
+    "candidateKeywordRecall": 1,
+    "candidateSemanticRecall": 1,
+    "candidateKeywordNdcg": 1,
+    "candidateSemanticNdcg": 0.8616,
+    "judgedTop10": 1,
+    "errors": 0,
+    "timeouts": 0,
+    "ineligibleHits": 0,
+    "scopeLimit": "Search-only per-query flags. Curate columns intentionally use ordinary invocation; this does not add scope/belief controls to curate."
+  },
+  "public": {
+    "queries": {
+      "library": 136,
+      "books": 51
+    },
+    "errors": 0,
+    "timeouts": 0,
+    "newJudgments": 11,
+    "labels": "public-qrel-additions.jsonl; both library saved runs explicitly rescored; books labels unchanged.",
+    "keywordLibraryNdcg": [
+      0.7568,
+      0.7568
+    ],
+    "semanticLibraryNdcg": [
+      0.8177,
+      0.8143
+    ],
+    "semanticLibraryRecall": [
+      0.8026,
+      0.8042
+    ],
+    "semanticBooksNdcg": [
+      0.9022,
+      0.9022
+    ],
+    "semanticBooksRecall": [
+      0.9849,
+      0.9849
+    ],
+    "uncertainty": "Separately built semantic indexes. TRIM_SIZES exact asset rank1-to-absent in paired collection also absent for baseline on candidate index in both diagnostic repeats. q107 top3 and q005 top6 stable across builds on same index. These observations do not isolate that loss to this patch or prove universal semantic quality parity.",
+    "sameIndexDiagnostic": "public-same-index-isolation.json",
+    "latencyCaveat": "Shared-host parallel validation affects public process timings; no causal speedup claim.",
+    "semanticLibraryJudgedTop10": [
+      0.8218,
+      0.8257
+    ],
+    "semanticBooksJudgedTop10": [
+      0.8804,
+      0.8804
+    ]
+  },
+  "cost": {
+    "assets": 10001,
+    "dimensions": 1024,
+    "queryEmbedding": "Controlled constant; no network/model cost.",
+    "setupMs": [
+      2157.712,
+      2022.938
+    ],
+    "rssMiB": [
+      154.24609375,
+      154.6796875
+    ],
+    "rows": [
+      {
+        "mode": "keyword",
+        "scope": "unfiltered",
+        "baselineWarmMedianMs": 11.46,
+        "candidateWarmMedianMs": 18.783,
+        "baselineHits": [
+          "note-00000"
+        ],
+        "candidateHits": [
+          "note-00000"
+        ]
+      },
+      {
+        "mode": "keyword",
+        "scope": "alice",
+        "baselineWarmMedianMs": 16.509,
+        "candidateWarmMedianMs": 97.743,
+        "baselineHits": [],
+        "candidateHits": [
+          "note-10000"
+        ]
+      },
+      {
+        "mode": "keyword",
+        "scope": "nobody",
+        "baselineWarmMedianMs": 17.351,
+        "candidateWarmMedianMs": 117.907,
+        "baselineHits": [],
+        "candidateHits": []
+      },
+      {
+        "mode": "semantic",
+        "scope": "unfiltered",
+        "baselineWarmMedianMs": 69.708,
+        "candidateWarmMedianMs": 186.815,
+        "baselineHits": [
+          "note-00000"
+        ],
+        "candidateHits": [
+          "note-00000"
+        ]
+      },
+      {
+        "mode": "semantic",
+        "scope": "alice",
+        "baselineWarmMedianMs": 71.715,
+        "candidateWarmMedianMs": 211.783,
+        "baselineHits": [],
+        "candidateHits": [
+          "note-10000"
+        ]
+      },
+      {
+        "mode": "semantic",
+        "scope": "nobody",
+        "baselineWarmMedianMs": 87.166,
+        "candidateWarmMedianMs": 228.931,
+        "baselineHits": [],
+        "candidateHits": []
+      }
+    ],
+    "tradeoff": "Canonical metadata checks add CPU. Lexical visits only matching rows and stops at 100 eligible; zero/rare cases can exhaust matches. Vector reuses its existing exact BLOB scan and filters bounded batches before cosine/top-k. No extra full-corpus eligibility pass, full-corpus materialization, raised candidate limit, index/schema migration, or new vector service. Worst-case total work still scales with matched rows / existing vector scan."
+  },
+  "validation": {
+    "biome": "bunx biome check --write src/ tests/: pass",
+    "types": "bunx tsc --noEmit: pass",
+    "build": "bun run build: pass",
+    "unit": "Final individual:7183pass /4skip /0fail across503files; combined:7213pass /4skip /0fail.",
+    "integration": "Final individual:3851pass /81skip /0fail across341files; combined:3866pass /81skip /0fail across342files.",
+    "initialFailures": "Default sandbox denied mock-server/process operations; required checks ran with needed access. One earlier signal teardown timeout passed focused5tests and full retry. Integrated checks exposed the real health JSON-advisory ordering bug; the shared4-line correction is included, with focused64CLI tests passing. No failure suppressed or test skipped.",
+    "evaluator": "scripts/check typecheck: pass; bun test --timeout=120000: 2919 pass / 13 skip / 0 fail across 101 files; focused metadata/rescore53pass.",
+    "installed": "node dist/akm: scoped/current/historical search; supported dist/api.js curate proposed-quality case: pass",
+    "upgrade": "Code-only; no rebuild or migration required.",
+    "recovery": "Retain previous CLI build; restore it to revert. Existing index remains usable.",
+    "integratedFocused": "38 candidate eligibility tests /92assertions pass atop946c4b5ac; focused health CLI64tests pass after diagnosed supporting fix.",
+    "integratedConsolidation": "120 tests /659assertions across newly integrated scope/pairing suites pass.",
+    "combinedFinal": {
+      "checkout": "/tmp/akm-coordination-integrated",
+      "commit": "222d6e1e1",
+      "base": "946c4b5ac",
+      "source": "All three requested issue patches including identical health ordering fix.",
+      "build": "pass",
+      "lint": "pass",
+      "types": "pass",
+      "unit": "7213 pass /4skip /0fail",
+      "integration": "3866 pass /81skip /0fail across342files",
+      "artifact": "combined-validation.log"
+    },
+    "integratedFinal": "bun run check on946c4b5ac +190bedba +identical health correction: lint/type/unit/integration all passed; bun run build passed; dist/tests absent."
+  },
+  "rollout": {
+    "state": "ready for rollout",
+    "owner": "Release maintainer",
+    "remaining": "Review and merge approved release PR, publish/install target build, verify representative scoped/historical installed queries and observe existing latency/fallback/error signals. No merge, deployment, or issue closure performed."
+  },
+  "integratedReleaseBase": "946c4b5acd4516a194d8c02f670b215e546bb4fc",
+  "implementationCommit": "190bedba10fe0c12ad560148b8fa35fa23907ae2",
+  "supportingValidationFix": {
+    "file": "src/commands/health.ts",
+    "source": "Same ordering correction as issue1196 commit9e5b38c5582fe27a55eaf9923f398044d9a90d83",
+    "reason": "Invalid window-compare input launched installed OpenCode engine probes before rejection; its advisory could precede the JSON error. Validate the existing comparison phase before probes.",
+    "scope": "No change to ranking, retrieval defaults, storage formats, or evaluation treatment."
+  },
+  "finalSourceCommits": [
+    "190bedba10fe0c12ad560148b8fa35fa23907ae2",
+    "9953e3b75"
+  ]
+}

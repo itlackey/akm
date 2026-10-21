@@ -1,0 +1,417 @@
+{
+  "rows": [
+    {
+      "build": "baseline",
+      "query": "scope-user",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "user=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-user",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "user=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-agent",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "agent=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-agent",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "agent=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-run",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "run=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-run",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "run=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-channel",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "channel=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "scope-channel",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "channel=alice"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "source",
+      "system": "search",
+      "searchArgs": [
+        "--from",
+        "target"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "source",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--from",
+        "target"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "quality",
+      "system": "search",
+      "searchArgs": [],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "quality",
+      "system": "semantic_search",
+      "searchArgs": [],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "current",
+      "system": "search",
+      "searchArgs": [
+        "--belief",
+        "current"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "current",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--belief",
+        "current"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "historical",
+      "system": "search",
+      "searchArgs": [
+        "--belief",
+        "historical"
+      ],
+      "hits": [],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "baseline",
+      "query": "historical",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--belief",
+        "historical"
+      ],
+      "hits": [
+        "target//memories/current-1"
+      ],
+      "ineligible": [],
+      "recall": 0
+    },
+    {
+      "build": "candidate",
+      "query": "scope-user",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "user=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-user",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "user=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-agent",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "agent=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-agent",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "agent=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-run",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "run=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-run",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "run=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-channel",
+      "system": "search",
+      "searchArgs": [
+        "--filter",
+        "channel=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "scope-channel",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--filter",
+        "channel=alice"
+      ],
+      "hits": [
+        "target//memories/scoped-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "source",
+      "system": "search",
+      "searchArgs": [
+        "--from",
+        "target"
+      ],
+      "hits": [
+        "target//memories/source-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "source",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--from",
+        "target"
+      ],
+      "hits": [
+        "target//memories/current-0",
+        "target//memories/source-eligible",
+        "target//memories/scoped-2"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "quality",
+      "system": "search",
+      "searchArgs": [],
+      "hits": [
+        "target//memories/quality-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "quality",
+      "system": "semantic_search",
+      "searchArgs": [],
+      "hits": [
+        "target//memories/quality-eligible",
+        "other//memories/source-0"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "current",
+      "system": "search",
+      "searchArgs": [
+        "--belief",
+        "current"
+      ],
+      "hits": [
+        "target//memories/current-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "current",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--belief",
+        "current"
+      ],
+      "hits": [
+        "other//memories/source-0",
+        "target//memories/current-eligible",
+        "target//memories/quality-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "historical",
+      "system": "search",
+      "searchArgs": [
+        "--belief",
+        "historical"
+      ],
+      "hits": [
+        "target//memories/historical-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    },
+    {
+      "build": "candidate",
+      "query": "historical",
+      "system": "semantic_search",
+      "searchArgs": [
+        "--belief",
+        "historical"
+      ],
+      "hits": [
+        "target//memories/current-1",
+        "target//memories/historical-eligible"
+      ],
+      "ineligible": [],
+      "recall": 1
+    }
+  ],
+  "candidateIneligibleHits": 0
+}

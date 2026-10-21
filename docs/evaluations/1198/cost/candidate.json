@@ -1,0 +1,87 @@
+{
+  "root": "/tmp/akm-1198",
+  "indexMs": 2022.938,
+  "rss": 162193408,
+  "cases": [
+    {
+      "mode": "off",
+      "user": "unfiltered",
+      "coldMs": 22.437,
+      "warmMs": [
+        19.666,
+        18.457,
+        18.783
+      ],
+      "hits": [
+        "note-00000"
+      ],
+      "actualMode": "keyword"
+    },
+    {
+      "mode": "off",
+      "user": "alice",
+      "coldMs": 113.156,
+      "warmMs": [
+        122.762,
+        97.743,
+        85.558
+      ],
+      "hits": [
+        "note-10000"
+      ],
+      "actualMode": "keyword"
+    },
+    {
+      "mode": "off",
+      "user": "nobody",
+      "coldMs": 116.625,
+      "warmMs": [
+        117.907,
+        140.117,
+        102.998
+      ],
+      "hits": [],
+      "actualMode": "keyword"
+    },
+    {
+      "mode": "auto",
+      "user": "unfiltered",
+      "coldMs": 203.976,
+      "warmMs": [
+        186.815,
+        167.284,
+        194.508
+      ],
+      "hits": [
+        "note-00000"
+      ],
+      "actualMode": "semantic"
+    },
+    {
+      "mode": "auto",
+      "user": "alice",
+      "coldMs": 222.012,
+      "warmMs": [
+        211.783,
+        205.495,
+        211.934
+      ],
+      "hits": [
+        "note-10000"
+      ],
+      "actualMode": "semantic"
+    },
+    {
+      "mode": "auto",
+      "user": "nobody",
+      "coldMs": 199.585,
+      "warmMs": [
+        206.139,
+        228.931,
+        273.309
+      ],
+      "hits": [],
+      "actualMode": "semantic"
+    }
+  ]
+}

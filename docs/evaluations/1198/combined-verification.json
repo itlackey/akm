@@ -1,0 +1,21 @@
+{
+  "releaseBase": "946c4b5ac",
+  "combinedCheckout": "/tmp/akm-coordination-integrated",
+  "combinedCommit": "222d6e1e1",
+  "sourcePatches": {
+    "1196": "9e5b38c5582fe27a55eaf9923f398044d9a90d83",
+    "1198": "190bedba10fe0c12ad560148b8fa35fa23907ae2",
+    "1200": "60b57c2eddd4ac82f88d29d537545bf82138c6ea"
+  },
+  "commands": ["bun run build", "bun run check"],
+  "build": "passed",
+  "lint": "passed with existing warnings",
+  "typecheck": "passed",
+  "unit": {"passed": 7213, "skipped": 4, "failed": 0, "files": 504},
+  "integration": {"passed": 3866, "skipped": 81, "failed": 0, "files": 342},
+  "notes": [
+    "All three source patches were combined on the updated release base in an isolated checkout; no PR was merged or deployed.",
+    "The shared health window-validation ordering correction is included from #1196; identical copies in other branches do not change the tested source.",
+    "Per-issue baseline/candidate evaluations, installed-path checks, raw failures and resource tradeoffs are recorded with their respective PRs."
+  ]
+}
