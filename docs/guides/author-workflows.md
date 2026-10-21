@@ -1,7 +1,7 @@
 # Author's Guide: Writing Workflows
 
-This guide walks through writing and testing a workflow definition: choosing a
-source format, the Markdown structure, a minimal complete example, common authoring mistakes,
+This guide walks through writing and testing a workflow definition: the
+Markdown structure, a minimal complete example, common authoring mistakes,
 and how to verify gates and outputs before you publish. It assumes you
 already know what a workflow is; for the exhaustive, exact-syntax reference
 — every frontmatter key, the reference grammar, gates, and outputs — see
@@ -22,10 +22,9 @@ akm workflow create my-release --from ./my-release.md
 akm lint --type workflows                # Check for structural errors before using it
 ```
 
-Both formats compile to source IR version 1. Choose Markdown for maps, routes,
-gates, typed artifacts, and prose-rich agent instructions. Choose the bounded
-YAML subset for a single local self-hosted job made of token-safe `run` and
-supported local `uses` steps.
+Markdown is the only workflow format. The GitHub-shaped `.yml` format was
+removed in 0.10: a `.yml` file under `workflows/` is skipped at index time with
+a warning that it must use `.md`.
 
 ## A minimal complete example
 
@@ -60,14 +59,14 @@ attached to this unit as input. Fix any failures before proceeding.
 ```
 
 Walking through it: `validate` and `build` are both bare unit steps — neither
-declares `unit:`, `map:`, or `route:`, so each is "still a unit step," the
+declares `unit:` or `map:`, so each is "still a unit step," the
 minimal declaration. `build` names `steps.validate.output` in `inputs:`, so
 the engine attaches `validate`'s result to `build`'s dispatched context, and
 `build`'s own re-dispatch on a resumed run is keyed to that exact slice — not
 the whole run. `validate` has a `### gate`; `build` does not, so `build`
 completes as soon as its unit succeeds, with no verification pass.
 
-For a richer example — fan-out with `map`, `route`-based branching, retries,
+For a richer example — fan-out with `map`, retries,
 and a run `budget` — see
 [Workflow Schema: Richer example](../reference/workflow-schema.md#richer-example).
 
@@ -150,6 +149,58 @@ step artifact becomes a validated structure:
 
 stdout must then be **exactly one JSON value** — no log noise around it — and
 downstream steps can address `steps.test.output.failed`.
+
+### Agent in, exec out
+
+A common pair is an agent step that writes something and an exec step that
+acts on it. Give each unit its own `output` schema:
+
+```yaml
+steps:
+  - id: draft
+    unit:
+      output:
+        type: object
+        required: [status, markdown]
+        additionalProperties: false
+        properties:
+          status: { type: string, enum: [done, blocked] }
+          markdown: { type: string, minLength: 1 }
+  - id: publish
+    inputs: [steps.draft.output]
+    unit:
+      exec:
+        command: ["node", "publish.mjs"]
+      output:
+        type: object
+        required: [posted]
+        properties:
+          posted: { type: boolean }
+```
+
+The command is an argv array, so nothing is spliced into it. `publish.mjs`
+reads the draft from `AKM_INPUTS`, a JSON object keyed by each `inputs:`
+reference string exactly as written, and prints one JSON value that matches
+its own `unit.output`:
+
+```js
+const inputs = JSON.parse(process.env.AKM_INPUTS ?? "{}");
+const draft = inputs["steps.draft.output"];
+// ...post draft.markdown; log to stderr, never stdout...
+process.stdout.write(JSON.stringify({ posted: draft.status === "done" }));
+```
+
+The rule: a **unit schema** (`unit.output`) types that unit's result. A
+**step schema** (step-level `output:`) validates the promoted step artifact,
+which for a `map` step is the reducer's result. On a solo step with no
+`unit.output`, a step-level `output:` is also used as the unit's schema;
+writing it under `unit:` says so explicitly.
+
+An agent that cannot do the work still "succeeds": it returns something that
+fits the schema, such as `status: blocked`, and the step completes. If the run
+must stop when the work was not done, make the unit schema require evidence
+of the work, such as a required non-null string with `minLength: 1` (a URL, a
+path, a commit id) that the agent can only fill by doing it.
 
 ### What the command can see
 
@@ -237,8 +288,7 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
   step declared in frontmatter exactly — no titles, no `Step:`/`Step ID:`
   lines, no `# Workflow:` prefix on the H1.
 - **A `unit`/`map` step with no body section.** Its instructions (or, for a
-  map step, its per-item template) are required — a `route`-only step is the
-  one case a body section is optional.
+  map step, its per-item template) are required.
 - **Misplaced or misspelled `### gate`.** It is the format's single reserved
   marker, and it must be a `###` sub-heading inside the step's own section.
   An empty `### gate` section is the same as omitting it — no verification
@@ -246,10 +296,6 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
 - **Referencing an item outside a map unit.** `item`/`item_index` are not
   part of the reference language anywhere — they only arrive as attached
   context inside that map step's own unit template.
-- **Backward routes.** Every `route` target (`when.step`, `default`) must be
-  a step declared *later* in the workflow; "loop back until it passes" is a
-  bounded `### gate` on the step doing the work, not a route back to an
-  earlier step.
 - **Referencing an unknown step or param.** `akm lint --type workflows`
   checks every bare reference statically (unknown step, unknown param, bad
   path) — run it before you rely on a workflow working.
@@ -268,8 +314,8 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
 
 ## Typing what a step returns
 
-A step's `output:` (and each `params:` entry) is a JSON Schema, and the engine
-validates the step's artifact against it before the step can complete. The
+An `output:` schema (and each `params:` entry) is a JSON Schema, and the engine
+validates the result against it before the step can complete. The
 runtime enforces a **bounded subset** of JSON Schema — anything outside it is
 an authoring error at `akm lint`, never a silent no-op, because a gate
 depending on a schema that constrains nothing is worse than a loud failure.
@@ -281,18 +327,22 @@ Enforced: `type`, `enum`, `properties`, `required`, `items`,
 
 ```yaml
   - id: release
-    output:
-      type: object
-      required: [version, verdict]
-      additionalProperties: false
-      properties:
-        version: { type: string, minLength: 1 }
-        verdict: { type: string, enum: [pass, fail] }
-        detail:
-          oneOf:
-            - { type: string, minLength: 1 }
-            - { type: "null" }
+    unit:
+      output:
+        type: object
+        required: [version, verdict]
+        additionalProperties: false
+        properties:
+          version: { type: string, minLength: 1 }
+          verdict: { type: string, enum: [pass, fail] }
+          detail:
+            oneOf:
+              - { type: string, minLength: 1 }
+              - { type: "null" }
 ```
+
+`release` is a solo step, so its schema sits under `unit:` (see
+[Agent in, exec out](#agent-in-exec-out)).
 
 Outside the subset (each fails lint with the keyword named, its line, and a
 suggested replacement where one exists): `$ref`/`$defs` — inline the schema
@@ -380,7 +430,7 @@ blast radius before running it.
    ```
 
    This catches the body-rule violations above, plus every static reference
-   check (unknown step, unknown param, bad path, backward route).
+   check (unknown step, unknown param, bad path).
 
 2. **Run it for real.** A dry inspection of the markdown doesn't tell you
    whether a gate actually rejects bad output or an `output` schema actually

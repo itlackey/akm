@@ -401,6 +401,17 @@ for scripted use.
   step that runs another workflow and returns its last step's output) are the
   least settled part and are kept only in that simple form; `akm workflow list
   --children` goes with them.
+
+  Per-key status today, from the Outcome section of
+  `docs/plans/0.10-workflows.md`. It stands until the promote-or-remove
+  decision in [#1096](https://github.com/itlackey/akm/issues/1096); every key
+  is still Experimental until then.
+
+  | Key | Status |
+  | --- | --- |
+  | `params`, `steps`, `inputs`, `output` / `unit.output`, `defaults.engine`, `### gate` | Core: the feature set pinned by `core-feature-set.test.ts` |
+  | exec units (`unit.exec`), `budget`, `unit.retry`, `map`, `gate.max_loops` | Kept in the 0.10 trim |
+  | child workflows (`unit.workflow`, `unit.with`) | Experimental: least settled |
 - **`akm metrics`** — new in 0.9.28. What it reports, its JSON shape and the
   `--format html` dashboard may change in any release; do not script against
   them.

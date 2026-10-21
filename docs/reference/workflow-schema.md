@@ -175,19 +175,22 @@ families) plus the orchestration keys:
   A step with neither is **still a unit step** — bare
   `- id: validate` is the complete minimal declaration. `unit:` is the
   optional dispatch-override bag (`exec`, `engine`, `model`, `llm`, `timeout`,
-  `retry`, `on_error`, `env`; see
+  `retry`, `on_error`, `output`, `env`; see
   [Exec (shell) units](#exec-shell-units) and
-  [Failure policy](#failure-policy)).
+  [Failure policy](#failure-policy)). Dispatch settings live under `unit:`
+  (`map.unit:` on a map step), not on the step itself; `unit.output` types
+  that unit's result, so a solo step puts its schema there.
 - `inputs` — on a `unit`/`map` step, the prior-step artifacts this step
   consumes, as bare reference strings (sub-paths legal:
   `steps.x.output.issues`, not just `steps.x.output`). This is how a step's
   attached context sees upstream data, and how replay hashing gets its exact
   input set — a step re-dispatches only when the slice it actually consumes
   changes.
-- `output` — a JSON Schema for the step's promoted artifact. On a step that
-  is not a `map` step and not a child-`workflow` unit, and whose `unit:`
-  declares no `output` of its own, it is also the unit's `output` schema, so
-  the reply is parsed and checked as JSON.
+- `output` — a JSON Schema for the step's promoted artifact. On a `map` step
+  it checks the reducer's result. On any other step that is not a
+  child-`workflow` unit and whose `unit:` declares no `output` of its own, it
+  is also the unit's `output` schema, so the reply is parsed and checked as
+  JSON; `unit.output` is the explicit form.
 - `gate` — optional validation-loop configuration: `max_loops` bounds
   evaluator-optimizer retries (see
   [Gates and verification](#gates-and-verification)). The rubric itself lives
@@ -261,14 +264,15 @@ Fan-out, retries, gates, and a run budget:
 ```markdown
 ---
 type: workflow
-description: Review changed files and triage the outcome
+description: Review changed files and give an overall verdict
 params:
   changed_files: { type: array, description: Files to review }
 defaults: { engine: reviewer, model: balanced, timeout: 10m, on_error: fail }
 budget: { max_units: 40, max_tokens: 200000 }
 steps:
   - id: discover
-    output: { type: object, properties: { files: { type: array } }, required: [files] }
+    unit:
+      output: { type: object, properties: { files: { type: array } }, required: [files] }
   - id: review
     map:
       over: steps.discover.output.files
@@ -286,12 +290,8 @@ steps:
     gate: { max_loops: 2 }
   - id: aggregate
     inputs: [steps.review.output]
-    output: { type: object, properties: { verdict: { type: string } }, required: [verdict] }
-  - id: triage
-    inputs: [steps.aggregate.output]
-  - id: ship
-  - id: rework
-  - id: manual-triage
+    unit:
+      output: { type: object, properties: { verdict: { type: string } }, required: [verdict] }
 ---
 
 # Review Changes
@@ -321,25 +321,6 @@ Every changed file has a verdict of `pass` or `fail`.
 Combine the per-file review verdicts — attached to this unit as input via
 `inputs: [steps.review.output]` above — into one overall verdict, `pass` or
 `fail`.
-
-## triage
-
-Read the verdict `aggregate` reported (attached as input) and decide whether
-the change should ship, be reworked, or go to manual triage; later steps act on
-that decision.
-
-## ship
-
-Ship the change.
-
-## rework
-
-Address the review findings. Confirming the fix is a fresh `akm workflow run`
-of this workflow, not a step this run goes back to.
-
-## manual-triage
-
-Summarize the ambiguous verdict for a human to triage.
 ```
 
 ## The reference grammar
@@ -543,7 +524,7 @@ An exec unit names **no engine**. It carries no `engine`, `model`, or `llm` (the
 parser rejects those alongside `exec:`), it consumes no tokens, and a workflow
 made only of exec steps freezes and runs on an install with no engine configured
 at all. Everything else about a unit still applies unchanged: `timeout`, `retry`,
-`on_error`, `output`, `env`, `isolation`, `map` fan-out and its concurrency, the
+`on_error`, `output`, `env`, `map` fan-out and its concurrency, the
 unit journal, budget accounting, and replay/reuse.
 
 The step's body prose is still required (it is the step's section, like any
@@ -650,6 +631,11 @@ failure reason.
 | `AKM_*` context too large for **this platform** to spawn | `exec_context_too_large` | **no** (an authoring/data problem) |
 | `cwd` resolved outside its base | `exec_cwd_escape` | **no** (tampering, never transient) |
 
+`non_zero_exit` in `retry.on` re-runs a command that already ran, and a
+command's exit is usually deterministic, so the retry mostly repeats the
+failure and any side effects. For exec steps prefer
+`retry: { max: 1, on: [timeout, spawn_failed] }`.
+
 A non-zero exit is an ordinary unit failure, so it flows through the ordinary
 policy: with the default `on_error: fail` it fails the step and the run — which
 is exactly what makes a `test` step a **gate**. With `on_error: continue` the
@@ -713,7 +699,6 @@ context blocks a model unit gets in its prompt:
 | `AKM_PARAMS` | the run params, canonical JSON |
 | `AKM_ITEM`, `AKM_ITEM_INDEX` | a `map` unit's item (canonical JSON) and 0-based index |
 | `AKM_INPUTS` | the step's declared `inputs:` artifacts, keyed by reference string |
-| `AKM_TASK_INPUTS` | a task-composed step's resolved `with:` bindings (canonical JSON), present only when the bindings are non-empty |
 
 These are applied *after* your `env:` bindings, so a binding can never shadow
 them.
@@ -834,6 +819,49 @@ a committed *value*, so it cannot carry "whatever this build agent's
 
 Values passed through this way are **not** redacted from the command's output
 the way `env:` binding values are, so never list a credential here.
+
+#### Binding a secret to a unit
+
+A unit's `env:` lists env assets by ref. A value inside an env asset can be a
+`${secret:<name>}` token, which akm replaces with a secret when the unit is
+dispatched. Say the bundle `team` holds `env/discord.env`:
+
+```sh
+DISCORD_BOT_TOKEN=${secret:discord_bot_token}
+```
+
+and the secret beside it, set with
+`akm secret set secrets/discord_bot_token --bundle team`. The unit names the
+env asset:
+
+```yaml
+  - id: announce
+    inputs: [steps.draft.output]
+    unit:
+      env: [team//env/discord]
+      exec:
+        command: ["node", "announce.mjs"]
+```
+
+- `<name>` is read from the **env asset's own bundle's** `secrets/` directory.
+  It is a path there, not a ref: `bundle//name` inside the token is **not** a
+  bundle qualifier. `${secret:team//token}` reads `secrets/team/token` in the
+  env asset's bundle.
+- It is the same token `akm env run` resolves. `akm env export` does not
+  resolve it; it writes the token verbatim.
+- Freezing records the env ref, its key names and the secret names, never a
+  value. Values and secrets are read at dispatch. A missing secret fails the
+  step at dispatch ("frozen environment preflight failed") and nothing is
+  injected.
+- Each dispatch that reads the env asset records an `env_access` event with the
+  ref, key names and secret names, never values.
+- Every value from an env asset is treated as sensitive, secret or not, and is
+  redacted out of stdout, stderr and diagnostics before they are journaled. A
+  non-secret value such as a channel id would be redacted from the output too,
+  so pass it as a param or in `command:` instead.
+- `env:` needs a child process: it works on exec units and on agent and SDK
+  engines. A unit on an `llm` engine that declares `env:` fails
+  `env_unsupported`.
 
 #### Durable v4 (`irVersion: 5`) forbids `inherit_env`
 

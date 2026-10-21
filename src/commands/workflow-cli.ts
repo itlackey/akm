@@ -93,7 +93,10 @@ const workflowStatusCommand = defineJsonCommand({
 const workflowListCommand = defineJsonCommand({
   meta: {
     name: "list",
-    description: "List workflow runs in the current working scope",
+    description:
+      "List workflow runs in the current working scope. A scheduled task runs from the scheduler's cwd, so its runs " +
+      "sit in another scope: get the run id from `akm task history <task-id> --limit 1` (detail.runId) and pass it " +
+      "to `akm workflow status <run-id>`, which works from any directory, or pass --all-scopes.",
   },
   args: {
     ref: { type: "string", description: "Filter to one workflow ref" },

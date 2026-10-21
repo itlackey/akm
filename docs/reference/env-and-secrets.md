@@ -58,6 +58,17 @@ script (re-serialised single-quoted, so shell substitutions in the source
 `.env` become literal strings) — it requires `--out` and never prints values
 to stdout.
 
+An env value can be a `${secret:<name>}` token, such as
+`DISCORD_BOT_TOKEN=${secret:discord_bot_token}`. `akm env run` and a workflow
+unit's `env:` binding both replace it with the secret at `secrets/<name>` in
+the env asset's own bundle; `env export` writes the token verbatim. `<name>` is
+a path under that `secrets/` directory, so `bundle//name` inside the token is
+not a bundle qualifier. A missing secret is an error and nothing is injected.
+In a workflow, every value of a bound env asset is redacted from the run's
+output and each read records an `env_access` event, so keep non-secret ids out
+of env assets used there. See
+[Workflow Schema: Binding a secret to a unit](workflow-schema.md#binding-a-secret-to-a-unit).
+
 ## File modes and storage
 
 `.env` files are stored at mode 0600 under `env/` in the target bundle;
