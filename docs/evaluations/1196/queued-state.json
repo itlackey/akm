@@ -1,0 +1,12 @@
+{
+  "inspected": true,
+  "counts": {
+    "pendingExtraction": 0,
+    "authoritativeEvidence": 0,
+    "recoverablePayloadOnlyEvidence": 0,
+    "missingEvidenceInBoth": 0
+  },
+  "scope": "current configured default queue; counts only, no private content/identities exported",
+  "changesMade": 0,
+  "action": "Operator reviews recoverable original payload evidence and uses existing bundle editing/import authoring facilities plus rejection of superseded proposals before publication. No automatic backfill."
+}

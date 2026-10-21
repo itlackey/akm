@@ -120,6 +120,7 @@ export function indexDocumentToStashEntry(doc: IndexDocument): IndexDocument {
   if (dj.wikiRole !== undefined) entry.wikiRole = dj.wikiRole as IndexDocument["wikiRole"];
   assignStringList(entry, "sources", dj.sources);
   assignStringList(entry, "evidenceSources", dj.evidenceSources);
+  assignString(entry, "evidence", dj.evidence);
   assignStringList(entry, "uses", dj.uses);
   // D2 (#730): OKF v0.2 provenance promoteProposal stamps onto AKM-native
   // writes, carried via DOCUMENT_JSON_CARRIED_FIELDS (akm-adapter.ts) —
@@ -141,7 +142,7 @@ type StringListKey =
   | "evidenceSources"
   | "uses";
 
-type StringKey = "pageKind" | "whenToUse" | "category" | "run" | "setup" | "cwd";
+type StringKey = "evidence" | "pageKind" | "whenToUse" | "category" | "run" | "setup" | "cwd";
 
 function assignStringList(entry: IndexDocument, key: StringListKey, value: unknown): void {
   if (Array.isArray(value)) entry[key] = value as string[];

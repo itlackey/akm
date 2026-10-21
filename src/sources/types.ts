@@ -2,6 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
+import type { OkfProvenance } from "../core/adapter/types";
 import type { SemanticSearchRuntimeStatus } from "../indexer/walk/index-context";
 import type { InstalledBundle, InstallKind } from "../registry/types";
 import type { WorkflowExec as ProgramExecCore } from "../workflows/plan";
@@ -439,6 +440,10 @@ export interface ShowLinkGroup {
 }
 
 export interface ShowResponse extends FragmentProvenance {
+  /** Captured support and source identities, when available. Omitted in compact projections. */
+  evidence?: string;
+  evidenceSources?: string[];
+  provenance?: OkfProvenance;
   schemaVersion?: number;
   type: string;
   name: string;

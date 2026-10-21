@@ -1,0 +1,27 @@
+{
+  "baselineCommit": "d0fe1d0000d0ed0b268ee2d5c153fdf578daa7cf",
+  "path": "real extract -> pending -> proposal accept -> published Markdown",
+  "cases": [
+    {
+      "type": "memory",
+      "payloadRetained": true,
+      "publishedEvidenceRetained": false,
+      "publishedEvidenceSources": null
+    },
+    {
+      "type": "lesson",
+      "payloadRetained": true,
+      "publishedEvidenceRetained": false,
+      "publishedEvidenceSources": null
+    },
+    {
+      "type": "knowledge",
+      "payloadRetained": true,
+      "publishedEvidenceRetained": false,
+      "publishedEvidenceSources": null
+    }
+  ],
+  "evidenceRetainedInPayload": 3,
+  "evidenceRetainedPublished": 0,
+  "supportedCases": 3
+}

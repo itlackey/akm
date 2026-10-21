@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Extraction proposals retain captured `evidence`, optional guidance and known session sources
+  in the Markdown actually published by acceptance (#1196). Reindexing and full/agent `show` preserve
+  the support; compact discovery continues to provide refs for follow-up. Earlier pending
+  proposals require explicit review/repair of their separate evidence payload; existing accepted
+  notes are not backfilled. Run `akm index --full` to project evidence already present in old files.
+- Invalid health comparison windows are rejected before runtime probes can prepend an unrelated
+  installed-agent advisory to the JSON usage error.
+
 - OKF and LLM Wiki indexing no longer records relationships from links inside code spans,
   fenced or indented code, including code nested in lists and blockquotes (#1200). Links are
   read with the `marked` tokenizer (new runtime dependency) instead of raw regex scans; the
