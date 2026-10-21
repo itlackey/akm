@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261009] - 2026-10-21
+
 ### Changed
 
 - Search and curate default to `--belief current`, retaining unflagged reference
