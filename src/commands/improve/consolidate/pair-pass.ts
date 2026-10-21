@@ -490,11 +490,11 @@ export function selectCandidates(
         entryId: hit.id,
       };
       if (other.ref === initiator.ref || isOwnTwinOrParent(initiator, other)) continue;
-      const otherSide = loadSide(other, undefined, "");
-      if (!otherSide || !sameScope(scope, scopeFromFrontmatter(otherSide.frontmatter))) continue;
       // distance = sqrt(2 * (1 - cosine)) (index-vec-repository.ts) — invert it back to cosine.
       const cosine = 1 - (hit.distance * hit.distance) / 2;
       if (cosine < floor) continue;
+      const otherSide = loadSide(other, undefined, "");
+      if (!otherSide || !sameScope(scope, scopeFromFrontmatter(otherSide.frontmatter))) continue;
       const key = pairKey(initiator.ref, other.ref);
       if (seenPairs.has(key)) continue;
       seenPairs.add(key);
