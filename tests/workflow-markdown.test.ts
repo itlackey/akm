@@ -246,6 +246,71 @@ Post the summary.
     expect(result.errors.some((e) => e.message.includes('Unknown Step "intake" key "route"'))).toBe(true);
   });
 
+  test("a misplaced unit key on a step names where it belongs", () => {
+    const result = parse(VALID_WORKFLOW.replace("- id: deploy\n", "- id: deploy\n    timeout: 10m\n"));
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(
+      result.errors.some((e) => e.message.includes('Unknown Step "deploy" key "timeout" (this belongs under "unit:")')),
+    ).toBe(true);
+  });
+
+  test("a solo step's output schema is also its unit's schema; map and unit-level schemas are left alone", () => {
+    const schema = { type: "object", required: ["files"] };
+    const doc = `---
+type: workflow
+params:
+  items: { type: array }
+steps:
+  - id: bare
+    output: { type: object, required: [files] }
+  - id: tuned
+    unit: { timeout: 5m }
+    output: { type: object, required: [files] }
+  - id: own
+    unit: { output: { type: object } }
+    output: { type: object, required: [files] }
+  - id: fan
+    map: { over: params.items }
+    output: { type: array }
+  - id: child
+    unit: { workflow: workflows/other }
+    output: { type: object }
+---
+
+## bare
+
+A.
+
+## tuned
+
+B.
+
+## own
+
+C.
+
+## fan
+
+D.
+
+## child
+
+E.
+`;
+    const result = parse(doc);
+    expectOk(result);
+    expect(step(result, "bare").spec?.unit?.output).toEqual(schema);
+    expect(step(result, "bare").outputSchema).toEqual(schema);
+    expect(step(result, "tuned").spec?.unit).toEqual({ timeoutMs: 300_000, output: schema });
+    expect(step(result, "own").spec?.unit?.output).toEqual({ type: "object" });
+    expect(step(result, "own").outputSchema).toEqual(schema);
+    expect(step(result, "fan").spec?.unit?.output).toBeUndefined();
+    expect(step(result, "fan").outputSchema).toEqual({ type: "array" });
+    expect(step(result, "child").spec?.unit?.output).toBeUndefined();
+    expect(step(result, "child").outputSchema).toEqual({ type: "object" });
+  });
+
   test("every level-2 heading must exactly match a declared step id", () => {
     const invalid = VALID_WORKFLOW.replace("## deploy\n", "## deployment\n");
     const result = parse(invalid);

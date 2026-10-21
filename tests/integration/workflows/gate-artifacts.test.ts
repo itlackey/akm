@@ -133,11 +133,9 @@ describe("typed artifacts — outputSchema validates the promoted artifact befor
     expect(status.workflow.steps[0]!.evidence?.output).toEqual({ files: ["a.ts", "b.ts"] });
   });
 
-  test("a schema-violating artifact fails the step with the validation errors in the summary", async () => {
-    // The unit itself has NO schema (free text), so the promoted artifact is
-    // a string — the STEP's declared output schema (object with files[])
-    // must reject it before completion.
-    const INVALID_WF = `---
+  // A solo step's `output` is also its unit's schema (#1096): the dispatch asks
+  // for JSON and parses the reply, so a step-level schema alone can pass.
+  const STEP_ONLY_WF = `---
 type: workflow
 steps:
   - id: discover
@@ -148,6 +146,32 @@ steps:
 
 Find files.
 `;
+  const FILES_SCHEMA = {
+    type: "object",
+    properties: { files: { type: "array", items: { type: "string" } } },
+    required: ["files"],
+  };
+
+  test("a solo step with only a step-level schema completes on a JSON reply; the frozen unit carries it", async () => {
+    const frozen = plan(STEP_ONLY_WF);
+    const root = frozen.steps[0]!.root;
+    expect(root?.kind === "unit" ? root.schema : undefined).toEqual(FILES_SCHEMA);
+    expect(frozen.steps[0]!.outputSchema).toEqual(FILES_SCHEMA);
+
+    seedRun({ steps: [{ id: "discover" }] });
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => ({ ok: true, text: '{"files": ["a.ts"]}' }),
+      loadPlan: useFrozenPlan(frozen),
+      summaryJudge: null,
+    });
+    expect(result.done).toBe(true);
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.workflow.steps[0]!.status).toBe("completed");
+    expect(status.workflow.steps[0]!.evidence?.output).toEqual({ files: ["a.ts"] });
+  });
+
+  test("a prose reply to a step-level schema fails at the unit, after the corrective re-dispatch", async () => {
     seedRun({ steps: [{ id: "discover" }] });
     let dispatches = 0;
     const result = await runWorkflowSteps({
@@ -156,14 +180,46 @@ Find files.
         dispatches++;
         return { ok: true, text: "just some prose, not the contract" };
       },
+      loadPlan: usePlan(STEP_ONLY_WF),
+      summaryJudge: null,
+    });
+    expect(dispatches).toBeGreaterThan(1);
+    expect(result.done).toBeUndefined();
+    expect(result.executed[0]!.ok).toBe(false);
+    expect(result.executed[0]!.summary).not.toContain("artifact failed validation");
+    const status = await getWorkflowStatus(RUN_ID);
+    expect(status.run.status).toBe("failed");
+    expect(status.workflow.steps[0]!.status).toBe("failed");
+  });
+
+  test("a unit result that violates the step schema fails the step with the validation errors", async () => {
+    // The unit's own schema accepts any object, so the unit succeeds; the
+    // STEP's declared schema (object with files[]) must still reject the
+    // promoted artifact before completion.
+    const INVALID_WF = `---
+type: workflow
+steps:
+  - id: discover
+    unit:
+      output: { type: object }
+    output: { type: object, properties: { files: { type: array, items: { type: string } } }, required: [files] }
+---
+
+## discover
+
+Find files.
+`;
+    seedRun({ steps: [{ id: "discover" }] });
+    const result = await runWorkflowSteps({
+      target: RUN_ID,
+      dispatcher: async () => ({ ok: true, text: '{"other": 1}' }),
       loadPlan: usePlan(INVALID_WF),
       summaryJudge: null,
     });
-    expect(dispatches).toBe(1);
     expect(result.done).toBeUndefined();
     expect(result.executed[0]!.ok).toBe(false);
     expect(result.executed[0]!.summary).toContain('Step "discover" artifact failed validation');
-    expect(result.executed[0]!.summary).toContain("expected type object, got string");
+    expect(result.executed[0]!.summary).toContain("files");
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("failed");
     expect(status.workflow.steps[0]!.status).toBe("failed");
