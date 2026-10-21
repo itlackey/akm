@@ -95,6 +95,20 @@ reference, X credential setup, and crawl-option details. Low-level knobs like
 `crawlTimeoutMs` and `respectRobots` live in the bundle's `website`
 descriptor — see [Configuration](../reference/configuration.md).
 
+**Index only a subdirectory of a git bundle.** Add the repo, point the
+bundle's component `root` at the subdirectory, then update:
+
+```sh
+akm bundle add <url> --name <name>
+akm config set bundles.<name>.components.main.root <subdir>
+akm bundle update <name>
+```
+
+`root` is relative to the stash root akm detected in the checkout (the repo
+root, or the shallowest directory it recognized as a bundle), not always the
+repo root. A path that escapes it is skipped with a warning. The change takes
+effect on the next `akm bundle update` or `akm index`.
+
 **Example: add a team bundle from GitHub**
 
 ```sh

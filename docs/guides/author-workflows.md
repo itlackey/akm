@@ -151,6 +151,57 @@ step artifact becomes a validated structure:
 stdout must then be **exactly one JSON value** — no log noise around it — and
 downstream steps can address `steps.test.output.failed`.
 
+### Agent in, exec out
+
+A common pair is an agent step that writes something and an exec step that
+acts on it. Give each unit its own `output` schema:
+
+```yaml
+steps:
+  - id: draft
+    unit:
+      output:
+        type: object
+        required: [status, markdown]
+        additionalProperties: false
+        properties:
+          status: { type: string, enum: [done, blocked] }
+          markdown: { type: string, minLength: 1 }
+  - id: publish
+    inputs: [steps.draft.output]
+    unit:
+      exec:
+        command: ["node", "publish.mjs"]
+      output:
+        type: object
+        required: [posted]
+        properties:
+          posted: { type: boolean }
+```
+
+The command is an argv array, so nothing is spliced into it. `publish.mjs`
+reads the draft from `AKM_INPUTS`, a JSON object keyed by each `inputs:`
+reference string exactly as written, and prints one JSON value that matches
+its own `unit.output`:
+
+```js
+const inputs = JSON.parse(process.env.AKM_INPUTS ?? "{}");
+const draft = inputs["steps.draft.output"];
+// ...post draft.markdown; log to stderr, never stdout...
+process.stdout.write(JSON.stringify({ posted: draft.status === "done" }));
+```
+
+The rule: a **unit schema** (`unit.output`) types that unit's result. A
+**step schema** (step-level `output:`) validates the promoted step artifact,
+which for a `map` step is the reducer's result. For a solo step, put `output:`
+under `unit:`.
+
+An agent that cannot do the work still "succeeds": it returns something that
+fits the schema, such as `status: blocked`, and the step completes. If the run
+must stop when the work was not done, make the unit schema require evidence
+of the work, such as a required non-null string with `minLength: 1` (a URL, a
+path, a commit id) that the agent can only fill by doing it.
+
 ### What the command can see
 
 The child does **not** inherit your environment. It starts empty and gets a
@@ -268,8 +319,8 @@ Full reference: [Workflow Schema: Exec (shell) units](../reference/workflow-sche
 
 ## Typing what a step returns
 
-A step's `output:` (and each `params:` entry) is a JSON Schema, and the engine
-validates the step's artifact against it before the step can complete. The
+An `output:` schema (and each `params:` entry) is a JSON Schema, and the engine
+validates the result against it before the step can complete. The
 runtime enforces a **bounded subset** of JSON Schema — anything outside it is
 an authoring error at `akm lint`, never a silent no-op, because a gate
 depending on a schema that constrains nothing is worse than a loud failure.
@@ -281,18 +332,22 @@ Enforced: `type`, `enum`, `properties`, `required`, `items`,
 
 ```yaml
   - id: release
-    output:
-      type: object
-      required: [version, verdict]
-      additionalProperties: false
-      properties:
-        version: { type: string, minLength: 1 }
-        verdict: { type: string, enum: [pass, fail] }
-        detail:
-          oneOf:
-            - { type: string, minLength: 1 }
-            - { type: "null" }
+    unit:
+      output:
+        type: object
+        required: [version, verdict]
+        additionalProperties: false
+        properties:
+          version: { type: string, minLength: 1 }
+          verdict: { type: string, enum: [pass, fail] }
+          detail:
+            oneOf:
+              - { type: string, minLength: 1 }
+              - { type: "null" }
 ```
+
+`release` is a solo step, so its schema sits under `unit:` (see
+[Agent in, exec out](#agent-in-exec-out)).
 
 Outside the subset (each fails lint with the keyword named, its line, and a
 suggested replacement where one exists): `$ref`/`$defs` — inline the schema

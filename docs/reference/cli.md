@@ -1020,6 +1020,7 @@ when the cwd is inside it, otherwise the cwd itself. In practice this means:
 - `workflow status workflows/<name>` resolves the most-recently-updated run in the current scope only, unless `--all-scopes` is passed.
 - `workflow list` shows runs for the current scope only, unless `--all-scopes` is passed. Its envelope always carries a top-level `scopeKey` naming the scope that was searched (`null` under `--all-scopes`), so an empty `runs: []` is never indistinguishable from "nothing anywhere".
 - Direct run-id commands like `workflow status <run-id>`, `workflow resume <run-id>`, and `workflow abandon <run-id>` still work even if the run was started from another directory.
+- A scheduled task runs from the scheduler's cwd, so its runs sit in a different scope from your shell's: find the run id with `akm task history <task-id> --limit 1` (`detail.runId`), then run `akm workflow status <run-id>` from any directory, or use `workflow list --all-scopes`.
 - Starting a ref by name (`workflow run workflows/<name>`) never collides across scopes — each scope can hold its own active run of the same ref — but if an active run of that ref exists in a *different* scope, the started run's envelope carries a `warnings[]` entry naming that run's id, scope, and start time, with the `akm workflow run <id>` / `akm workflow abandon <id>` remedy, so a stray run in another scope does not go unnoticed (#942).
 
 #### workflow create
@@ -1196,6 +1197,18 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--allow-dangerous-env-keys` | Allow reviewed process-hijacking env keys in the installed bundle; does not permit plain HTTP |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
+
+To index only a subdirectory of a git bundle, set the component `root` after
+adding it:
+
+```sh
+akm bundle add <url> --name <name>
+akm config set bundles.<name>.components.main.root <subdir>
+akm bundle update <name>
+```
+
+`root` is relative to the detected stash root of the checkout, not always the
+repo root, and takes effect on the next `bundle update` or `akm index`.
 
 #### Dangerous env key audit
 
