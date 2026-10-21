@@ -21,7 +21,7 @@ import { canonicalJson } from "../../src/workflows/ir/plan-hash";
 import type { FrozenWorkflowEnvironmentBinding } from "../../src/workflows/plan";
 import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import type { WorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
-import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, withEnvSync } from "../_helpers/sandbox";
 
 const sandboxes: SandboxedDir[] = [];
 
@@ -227,10 +227,11 @@ describe("materializing a frozen environment", () => {
     expect(auditJson).not.toContain("current");
   });
 
-  test("applies literal, pass-through, and env-ref precedence without ambient inheritance", () => {
+  test("applies literal and env-ref precedence; pass-through names are neither bound nor marked sensitive", () => {
     const descriptors: FrozenWorkflowEnvironmentBinding[] = [
       { kind: "literal", name: "SHARED", value: "literal" },
       { kind: "pass-through", name: "SHARED" },
+      { kind: "pass-through", name: "PASSED" },
       {
         kind: "env-ref",
         ref: "alpha//env/prod",
@@ -246,21 +247,20 @@ describe("materializing a frozen environment", () => {
         precedence: 2,
       },
     ];
-    const reads: string[] = [];
-    const materialized = materializeFrozenWorkflowEnvironment(descriptors, {
-      readPassThrough: (name) => {
-        reads.push(name);
-        return "pass-through";
-      },
-      readEnvFile: () => "SHARED=env-ref\nONLY_ENV=present\n",
-      readSecret: () => {
-        throw new Error("no secret token was frozen");
-      },
-    });
+    // A pass-through value in the parent environment: the exec allowlist
+    // delivers it, so materialization must not bind or redact it (#1096).
+    const materialized = withEnvSync({ PASSED: "/stash" }, () =>
+      materializeFrozenWorkflowEnvironment(descriptors, {
+        readEnvFile: () => "SHARED=env-ref\nONLY_ENV=present\n",
+        readSecret: () => {
+          throw new Error("no secret token was frozen");
+        },
+      }),
+    );
 
-    expect(reads).toEqual(["SHARED"]);
     expect(materialized.values).toEqual({ ONLY_ENV: "present", SHARED: "env-ref" });
     expect(materialized.values).not.toHaveProperty("HOME");
+    expect(materialized.sensitiveValues).not.toContain("/stash");
   });
 
   test("refuses an env file whose key set changed after freeze", () => {

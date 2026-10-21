@@ -28,7 +28,6 @@ export interface MaterializeFrozenWorkflowEnvironmentOptions {
     readonly name: string;
     readonly descriptor: EnvRefBinding;
   }) => string | Uint8Array | undefined;
-  readonly readPassThrough?: (name: string) => string | undefined;
 }
 
 export interface MaterializedFrozenWorkflowEnvironment {
@@ -51,14 +50,10 @@ export function materializeFrozenWorkflowEnvironment(
       if (descriptor.value) sensitive.add(descriptor.value);
       continue;
     }
-    if (descriptor.kind === "pass-through") {
-      const value = options.readPassThrough ? options.readPassThrough(descriptor.name) : process.env[descriptor.name];
-      if (value !== undefined) {
-        values[descriptor.name] = value;
-        if (value) sensitive.add(value);
-      }
-      continue;
-    }
+    // `pass_env` names reach the exec child through its allowlist
+    // (`execAllowlist`, exec-unit.ts), not as bindings. Their values are
+    // deliberately not redacted, so they are neither read nor marked sensitive here.
+    if (descriptor.kind === "pass-through") continue;
     const source = options.readEnvFile ? options.readEnvFile(descriptor) : readEnvFile(descriptor.owner);
     const parsed = dotenv.parse(typeof source === "string" ? source : Buffer.from(source));
     const keys = Object.keys(parsed).sort(compareCodePoints);
