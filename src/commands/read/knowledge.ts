@@ -10,6 +10,7 @@
  * focused on command definitions and routing.
  */
 
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { parse as yamlParse } from "yaml";
@@ -33,6 +34,7 @@ import {
   resolveWriteTarget,
   writeAssetToSource,
 } from "../../core/write-source";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { deriveInstallations, slugForPath } from "../../indexer/installations";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
@@ -646,13 +648,15 @@ export function resolveSupersedesForWrite(rawRefs: string[], target?: string, ta
  * type root, enforces `--force` semantics, and delegates the actual write
  * to `writeAssetToSource`.
  */
-export async function writeMarkdownAsset(options: {
+interface MarkdownAssetWriteOptions {
   type: "knowledge" | "memory";
   content: string;
   name?: string;
   fallbackPrefix: string;
   preferredName?: string;
   force?: boolean;
+  /** Optional SHA-256 of the complete live source bytes; a missing/changed source refuses the write. */
+  expectedContentHash?: string;
   /** Optional explicit `--bundle` override naming a configured source. */
   target?: string;
   /** The flag that carried `target`, as the caller's command spells it in errors (default `--bundle`). */
@@ -673,13 +677,22 @@ export async function writeMarkdownAsset(options: {
    * reported as `applied: false` in the returned `superseded` key.
    */
   supersedes?: SupersededTarget[];
-}): Promise<{
+}
+
+interface MarkdownAssetWriteResult {
   ref: string;
   path: string;
   stashDir: string;
   hint?: string;
+  unchanged?: true;
   superseded?: Array<{ ref: string; applied: boolean; reason?: string }>;
-}> {
+}
+
+export function writeMarkdownAsset(options: MarkdownAssetWriteOptions): Promise<MarkdownAssetWriteResult> {
+  return withAssetMutationLease("markdown-write", () => writeMarkdownAssetWithLease(options));
+}
+
+async function writeMarkdownAssetWithLease(options: MarkdownAssetWriteOptions): Promise<MarkdownAssetWriteResult> {
   const cfg = loadConfig();
   // `--name` is the flat asset name; `--path` is the subdirectory under the
   // type root. Combine them into the nested name the path resolver expects.
@@ -723,6 +736,23 @@ export async function writeMarkdownAsset(options: {
     }
   }
 
+  if (options.expectedContentHash !== undefined) {
+    let existing: Buffer | undefined;
+    try {
+      existing = fs.readFileSync(assetPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    if (!existing || createHash("sha256").update(existing).digest("hex") !== options.expectedContentHash) {
+      throw new UsageError(
+        "The document changed or was removed after it was loaded. Reload its source before saving.",
+        "ASSET_CONTENT_CHANGED",
+      );
+    }
+    if (existing.equals(Buffer.from(options.content, "utf8")) && !options.supersedes?.length) {
+      return { ref: resolved.displayRef, path: assetPath, stashDir: source.path, unchanged: true };
+    }
+  }
   const result = await writeAssetToSource(source, config, resolved.ref, options.content);
   const durableRef = result.ref;
   result.ref = resolved.displayRef;

@@ -531,9 +531,11 @@ the server is bound to, which stops a web page from reaching it through DNS rebi
 Browsing is read-only: `state.db` and `index.db` are opened read-only and never created or migrated, searching and
 showing in the UI record no usage events (so browsing is never counted as demand) and build no index, and nothing is
 written to a bundle or to config. Refresh reloads existing data; it does not build an index or fetch sources.
-Explicit actions accept/reject proposals, submit user feedback, manage bundles/configuration and create knowledge.
-They use the existing operations and their validation, indexing and Git effects. Existing-asset editing and historical
-restore are unavailable: the current writer cannot condition a save on the revision the editor originally loaded.
+Explicit actions accept/reject proposals, submit user feedback, manage bundles/configuration, create knowledge and
+edit existing writable AKM knowledge/memory Markdown. They use the existing operations and their validation, indexing
+and Git effects. Editing loads the complete live source and rejects a save if its raw-content revision changed;
+an unchanged save leaves source bytes, modification time and Git history alone. Documents whose URL credentials are
+hidden by the UI must be edited outside it. Historical restore remains unavailable.
 All write routes need the token in the
 `X-Akm-Ui-Token` header (not the query string), a JSON content type and an `Origin` equal to the server's own address.
 A read is short and the server holds no lock between requests, so browsing never blocks `akm improve`, `akm index` or

@@ -54,6 +54,7 @@ import { akmSearch, normalizeScopeFilters, parseBeliefFilterMode } from "../read
 import { akmShowUnified } from "../read/show";
 import { assembleInfo } from "../sources/info";
 import { akmListSources } from "../sources/installed-stashes";
+import { readDocumentSource } from "./document-source";
 import { readBundleGitStatus, readFileRevision, readRecentCommits } from "./git-read";
 import { isSecretEnvName, redactForUi } from "./redact";
 
@@ -681,6 +682,7 @@ const ROUTES: Record<string, Handler> = {
   "/api/search": search,
   "/api/asset": asset,
   "/api/asset/history": assetHistory,
+  "/api/asset/source": (query) => readDocumentSource(query.get("ref") ?? ""),
 };
 
 const PROPOSAL_ROUTE = /^\/api\/proposals\/([^/]+)$/;

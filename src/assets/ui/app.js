@@ -19,6 +19,13 @@ const ROUTES = [
   { name: "search", label: "Search", load: () => import("./search.js"), render: (m, c) => m.render(c) },
   { name: "asset", label: "Asset", nav: "search", load: () => import("./asset.js"), render: (m, c) => m.render(c) },
   {
+    name: "edit",
+    label: "Edit Markdown",
+    nav: "search",
+    load: () => import("./editor.js"),
+    render: (m, c) => m.render(c),
+  },
+  {
     name: "new",
     label: "New knowledge",
     nav: "search",

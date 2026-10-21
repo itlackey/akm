@@ -88,7 +88,7 @@ enumeration of the whole `proposal` noun group.
 | `akm index` | Stable | |
 | `akm health` | Evolving | Exit codes are Evolving; report *content* and rendered `md`/`html` layout are Experimental — do not script against report layout. |
 | `akm metrics` | Experimental | New in 0.9.28. Report content, JSON shape and the `html` dashboard may change. |
-| `akm ui` | Experimental | New in 0.10. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Read-only except that proposals can be accepted (singly or in a batch) and rejected from it. |
+| `akm ui` | Experimental | New in 0.10. The command, its flags, the page and the `/api/` JSON it reads may change in any release. Browsing is read-only; explicit actions support proposals, feedback, bundle configuration and Markdown authoring. |
 | `akm info` | Stable | |
 | `akm bundle create` | Stable | |
 | `akm bundle add` | Stable | |
@@ -418,8 +418,8 @@ for scripted use.
 - **`akm ui`** — new in 0.10. A local web UI over the same data
   `akm health`, `akm metrics`, `akm config`, `akm proposal`, `akm search` and
   `akm show` report. Browsing is read-only. Explicit feedback, bundle/configuration,
-  knowledge-creation and proposal-decision actions reuse existing AKM operations.
-  Existing-asset editing and historical restore remain unavailable. The command's flags, the page, and the `/api/` JSON the
+  knowledge-creation, revision-checked knowledge/memory editing and proposal-decision actions reuse existing AKM operations.
+  Historical restore remains unavailable. The command's flags, the page, and the `/api/` JSON the
   page reads (documented in `docs/reference/ui-api.md`) may change in any
   release; do not script against the API. The CLI's JSON output remains the
   scriptable surface.

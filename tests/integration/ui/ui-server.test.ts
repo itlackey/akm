@@ -57,6 +57,10 @@ afterEach(async () => {
 });
 
 function sha1(file: string): string {
+  // Bun's close_v2 leaves fixture prepare() statements alive until GC; their
+  // eventual WAL checkpoint changes main-file bytes even with no UI write.
+  // Finalize them before both snapshots so the byte comparison measures the request.
+  if (file.endsWith(".db")) Bun.gc(true);
   return createHash("sha1").update(fs.readFileSync(file)).digest("hex");
 }
 
@@ -1201,6 +1205,105 @@ describe("workspace actions", () => {
     expect((await api(s, "/api/meta")).status).toBe(200);
   });
 
+  test("knowledge creation leaves legacy literal credentials and unrelated config bytes untouched", async () => {
+    await seed();
+    const config = loadConfig();
+    writeSandboxConfig({ ...config, engines: { default: { ...config.engines!.default!, apiKey: PLANTED_API_KEY } } });
+    const configPath = path.join(storage.configDir, "akm", "config.json");
+    const before = fs.readFileSync(configPath, "utf8");
+    const s = await start();
+    const result = await write(s, "/api/knowledge/create", {
+      bundle: "stash",
+      name: "literal-key",
+      content: "# Created\n",
+    });
+    expect(result.status, result.body.error).toBe(200);
+    expect(fs.readFileSync(configPath, "utf8")).toBe(before);
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "literal-key.md"), "utf8")).toContain("# Created");
+  });
+
+  test("source editing uses live full Markdown, preserves nested targets and rejects stale saves without mutation", async () => {
+    await seed();
+    const file = path.join(storage.stashDir, "knowledge", "review", "guide.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, GUIDE);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    // Deliberately newer than the indexed hash, with formatting the display/serializer must not invent.
+    const live = "---\n# Keep comment\ntitle: 'Live title'\ncustom: [keep, me]\n---\n# Live guide\n\nOriginal body.\n";
+    fs.writeFileSync(file, live);
+    const s = await start();
+    const route = "/api/asset/source?ref=stash//knowledge/review/guide";
+    const source = await data(s, route);
+    expect(source).toMatchObject({ ref: "stash//knowledge/review/guide", type: "knowledge", content: live });
+    expect(source.revision).toBe(createHash("sha256").update(live).digest("hex"));
+    const mtime = fs.statSync(file, { bigint: true }).mtimeNs;
+    const commits = git(storage.stashDir, ["rev-parse", "HEAD"]);
+    const unchanged = await write(s, "/api/asset/save", source);
+    expect(unchanged.status, unchanged.body.error).toBe(200);
+    expect(unchanged.body.data.unchanged).toBe(true);
+    expect(fs.readFileSync(file, "utf8")).toBe(live);
+    expect(fs.statSync(file, { bigint: true }).mtimeNs).toBe(mtime);
+    expect(git(storage.stashDir, ["rev-parse", "HEAD"])).toBe(commits);
+    const changed = `${live}\nquasarprocedure verified.\n`;
+    expect((await write(s, "/api/asset/save", { ...source, content: changed })).status).toBe(200);
+    const saved = fs.readFileSync(file, "utf8");
+    expect(saved).toContain("# Keep comment\ntitle: 'Live title'\ncustom: [keep, me]");
+    expect(saved).toContain("quasarprocedure verified");
+    expect(fs.readFileSync(path.join(storage.stashDir, "knowledge", "guide.md"), "utf8")).toBe(GUIDE);
+    expect((await data(s, "/api/search?q=quasarprocedure")).hits.map((h: Json) => h.ref)).toContain(
+      "knowledge/review/guide",
+    );
+    const indexBefore = sha1(getDbPath());
+    const stateBefore = sha1(getStateDbPath());
+    const stale = await write(s, "/api/asset/save", { ...source, content: "Stale draft" });
+    expect(stale.status).toBe(409);
+    expect(stale.body.code).toBe("ASSET_CONTENT_CHANGED");
+    expect(fs.readFileSync(file, "utf8")).toBe(saved);
+    expect(sha1(getDbPath())).toBe(indexBefore);
+    expect(sha1(getStateDbPath())).toBe(stateBefore);
+    expect(git(storage.stashDir, ["rev-parse", "HEAD"])).toBe(commits);
+  });
+
+  test("memory editing reuses the writer and refuses unsupported, read-only or redacted source", async () => {
+    await seed();
+    const memory = path.join(storage.stashDir, "memories", "note.md");
+    const credentials = path.join(storage.stashDir, "knowledge", "private-url.md");
+    fs.writeFileSync(memory, "---\ntitle: Memory\n---\n# Memory\nRemember this.\n");
+    const secretSource = "# Private link\n[link](https://user:private-password@example.test/path)\n";
+    fs.writeFileSync(credentials, secretSource);
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const s = await start();
+    const source = await data(s, "/api/asset/source?ref=memories/note");
+    expect(source.type).toBe("memory");
+    expect(
+      (await write(s, "/api/asset/save", { ...source, content: `${source.content}\nUpdated memory.\n` })).status,
+    ).toBe(200);
+    expect(fs.readFileSync(memory, "utf8")).toContain("Updated memory.");
+    for (const ref of ["env/prod", "knowledge/guide#deploy-guide", "knowledge/missing", "knowledge/private-url"]) {
+      const result = await api(s, `/api/asset/source?${new URLSearchParams({ ref })}`);
+      expect(result.status).toBeGreaterThanOrEqual(400);
+      expect(await result.text()).not.toContain("private-password");
+    }
+    const rejected = await write(s, "/api/asset/save", {
+      ref: "stash//knowledge/private-url",
+      revision: createHash("sha256").update(secretSource).digest("hex"),
+      content: "# Replacement\n",
+    });
+    expect(rejected.status).toBe(400);
+    expect(rejected.body.error).toContain("outside the UI");
+    expect(fs.readFileSync(credentials, "utf8")).toBe(secretSource);
+    const config = loadConfig();
+    writeSandboxConfig({
+      ...config,
+      bundles: { ...config.bundles, stash: { ...config.bundles!.stash!, writable: false } },
+    });
+    expect((await api(s, "/api/asset/source?ref=knowledge/guide")).status).toBe(500);
+    const readOnly = await write(s, "/api/asset/save", source);
+    expect(readOnly.status).toBe(500);
+    expect(readOnly.body).toMatchObject({ code: "INVALID_CONFIG_FILE" });
+    expect(fs.readFileSync(memory, "utf8")).toContain("Updated memory.");
+  });
+
   test("all workspace writes retain header-token, Origin, JSON and finite route guards", async () => {
     await seed();
     const s = await start();
@@ -1211,6 +1314,7 @@ describe("workspace actions", () => {
       "bundles/update",
       "bundles/settings",
       "knowledge/create",
+      "asset/save",
     ]) {
       const route = `/api/${action}`;
       expect((await write(s, `${route}?token=${s.token}`, {}, { "X-Akm-Ui-Token": null })).status).toBe(401);

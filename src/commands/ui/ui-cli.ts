@@ -30,7 +30,7 @@ export const uiCommand = defineJsonCommand({
   meta: {
     name: "ui",
     description:
-      "Experimental: serve a local web UI for browsing, feedback, bundle management, knowledge creation and proposal decisions. Browsing is read-only; explicit actions use existing AKM operations. The URL carries a per-launch token. Press Ctrl-C to stop.",
+      "Experimental: serve a local web UI for browsing, feedback, bundle management, Markdown authoring and proposal decisions. Browsing is read-only; explicit actions use existing AKM operations. The URL carries a per-launch token. Press Ctrl-C to stop.",
   },
   args: {
     port: { type: "string", description: "Port to listen on (default: a random free port)" },

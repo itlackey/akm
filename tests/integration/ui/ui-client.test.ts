@@ -304,6 +304,25 @@ describe("pages", () => {
     }
   });
 
+  test("the source editor escapes full live Markdown and wires saving while creation remains separate", async () => {
+    await seed();
+    server = await startUiServer({ port: 0 });
+    await signIn(server.token);
+    const asset = (await (await view("asset.js"))(ctx("ref=knowledge%2Fguide"))).text;
+    expect(asset).toContain('href="#/edit?ref=stash%2F%2Fknowledge%2Fguide"');
+    const editCtx = ctx("ref=knowledge%2Fguide");
+    const edit = (await (await view("editor.js"))(editCtx)).text;
+    expect(edit).toContain("Edit Markdown");
+    expect(edit).toContain('class="edit-form form-grid"');
+    expect(edit).toContain("description: Deploy &lt;b&gt;guide&lt;/b&gt;");
+    expect(edit).toContain("&lt;script&gt;alert(1)&lt;/script&gt;");
+    expect(edit).not.toContain("<script>");
+    expect(editCtx.after).toHaveLength(1);
+    const create = (await (await view("editor.js"))(ctx())).text;
+    expect(create).toContain("New knowledge");
+    expect(create).not.toContain("Save Markdown");
+  });
+
   test("a pending proposal's page has Accept and Reject; the list has a checkbox per row and a group select, all through html``", async () => {
     const { proposalId } = await seed();
     server = await startUiServer({ port: 0 });

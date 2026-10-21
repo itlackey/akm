@@ -72,6 +72,7 @@ export function classifyProposalError(error: unknown): ProposalActionError {
   const message = error instanceof Error ? error.message : String(error);
   const byMessage = codeForMessage(message);
   if (error instanceof AkmError) {
+    if (error.code === "ASSET_CONTENT_CHANGED") return { status: 409, code: error.code, message };
     if (byMessage === "PROPOSAL_STALE" || byMessage === "PROPOSAL_NOT_PENDING") {
       return { status: 409, code: byMessage, message };
     }

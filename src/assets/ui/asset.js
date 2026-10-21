@@ -109,7 +109,7 @@ export async function render(ctx) {
     if (section) requestAnimationFrame(() => document.getElementById(section)?.scrollIntoView());
   });
   return html`${back}${pageHeader(html`<span class="mono wrap">${asset.ref}</span>`)}
-    <p class="action-links"><a href="${assetHref(canonical)}&history=1">Document history</a> · <a href="#/new">New knowledge</a></p>
+    <p class="action-links"><a href="${assetHref(canonical)}&history=1">Document history</a> · <a href="#/new">New knowledge</a>${asset.editable && ["knowledge", "memory"].includes(asset.type) ? html` · <a href="#/edit?ref=${encodeURIComponent(canonical)}">Edit Markdown</a>` : ""}</p>
     <div class="badges">${badge(asset.type, "info")}${asset.origin ? badge(asset.origin, "neutral") : ""}${asset.editable ? badge("editable", "ok") : badge("read-only", "neutral")}</div>
     <section>${definitionList([
       ["Name", html`<span class="mono">${asset.name}</span>`],

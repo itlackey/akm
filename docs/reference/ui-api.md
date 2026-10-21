@@ -587,6 +587,15 @@ cross-bundle refs remain available. Relative images, uploads, universal title/al
 Markdown extensions are not provided. The client renders basic tables and disabled task-list checkboxes; raw HTML
 is always escaped. Heading links use the UI router's `section` parameter.
 
+## `GET /api/asset/source`
+
+Query: `ref` (required, without a fragment). Returns `{ref, type, content, revision}` for an indexed, enabled, writable
+AKM `knowledge` or `memory` file. `content` is the full live UTF-8 source, including frontmatter; `revision` is its
+SHA-256 over raw source bytes, independent of the indexed hash. The same authorized indexed-file resolution used by
+`show` applies. Unsupported adapters, read-only targets, stale target identities and invalid UTF-8 are refused.
+The UI also refuses source editing when URL redaction would change its contents, so saving never replaces hidden
+credentials with their displayed redactions. This route does not prepare a Git boundary, fetch or write anything.
+
 ## `GET /api/asset/history`
 
 Query: `ref` (required), `limit` (default 30, maximum 200), optional `revision` chosen from the returned commit IDs.
@@ -609,11 +618,20 @@ stay beside the inputs. There is no general config editor or command-execution e
 | `/api/bundles/remove` | `{bundle, confirm: true}` → `akm bundle remove <bundle> --yes`. The UI requires an inline confirmation before this call. Managed installs may be deleted; local filesystem source files remain on disk. |
 | `/api/bundles/settings` | `{bundle?, enabled?, writable?, componentWritability?: {existingComponent: boolean}, defaultBundle?, defaultWriteTarget?}` → existing schema-walking config setters inside `mutateConfig`. Only changed controls are submitted. Defaults take existing names or `""` to unset a local value; inherited values cannot be unset locally. Existing validation rejects invalid defaults, disabled targets and writable npm/website sources. |
 | `/api/knowledge/create` | `{bundle, name, path?, content}` → `akm import -` with Markdown on stdin. Uses the existing writable AKM target, name/path validation, frontmatter preservation, index/Git effects, and no `--force`. Existing files are never overwritten. |
+| `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. Under the existing reentrant mutation lease, the writer compares the live source immediately before writing. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a missing source is refused rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing, recording an event or committing. Changed saves retain normal writer validation, indexing and Git effects. |
 
 Configuration-affecting actions do not round-trip the redacted API configuration. Existing mutation helpers retain
 unknown/unrelated fields, local overrides and supported `$VAR`/`secret://` credential references. If the existing
 config sanitizer would remove unrelated legacy literal credentials, the UI refuses the action and asks the user to
-correct those settings through the CLI first. It never writes `"[redacted]"` back as a credential.
+correct those settings through the CLI first. It never writes `"[redacted]"` back as a credential. Knowledge creation
+and document editing do not save config, so they do not use that config-sanitizer check.
 
-Existing-asset editing is deliberately unavailable until a writer can reject a save made against an outdated revision
-under its normal mutation lease. Historical restore and media ingestion are separate work.
+The shared Markdown writer now participates in the existing mutation lease, including CLI import/remember callers;
+omitting the optional expected hash retains their normal write/force behavior. This serializes cooperating AKM
+writers; an external editor does not acquire AKM's lease. There is no lock held while a user edits a draft.
+Untouched source preserves exact bytes, including leading newlines and mixed line endings. Actual edits preserve
+uniform CRLF line endings; the browser normalizes mixed line endings to LF when the text is changed.
+
+A child command that exits zero without a valid expected JSON result returns `500 INVALID_COMMAND_RESPONSE`.
+Its side effects may already have happened; reload before retrying. The UI never automatically repeats the action.
+Historical restore and media ingestion remain separate work.

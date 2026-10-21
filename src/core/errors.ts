@@ -83,6 +83,8 @@ export type UsageErrorCode =
   | "TARGET_NOT_UPDATABLE"
   | "PATH_ESCAPE_VIOLATION"
   | "RESOURCE_ALREADY_EXISTS"
+  /** A conditional Markdown write was based on an older or removed source. */
+  | "ASSET_CONTENT_CHANGED"
   | "TASK_SCHEMA_VERSION_UNSUPPORTED"
   | "INVALID_PROPOSAL"
   | "NON_INTERACTIVE_REQUIRES_YES"

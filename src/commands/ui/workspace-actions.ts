@@ -4,6 +4,7 @@
 
 import { execFile } from "node:child_process";
 import { isDeepStrictEqual } from "node:util";
+import { parseRefInput } from "../../core/asset/resolve-ref";
 import {
   getConfigValueSource,
   loadConfig,
@@ -12,8 +13,12 @@ import {
   sanitizeConfigForWrite,
 } from "../../core/config/config";
 import { AkmError, type AkmErrorKind, UsageError } from "../../core/errors";
+import { appendEvent } from "../../core/events";
+import { withAssetMutationLease } from "../../indexer/index-writer-lock";
 import { resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
 import { setConfigValue, unsetConfigValue } from "../config-cli";
+import { writeMarkdownAsset } from "../read/knowledge";
+import { readDocumentSource } from "./document-source";
 import { redactForUi, redactUrlsInText } from "./redact";
 
 export type WorkspaceAction =
@@ -22,6 +27,7 @@ export type WorkspaceAction =
   | "bundle-remove"
   | "bundle-update"
   | "bundle-settings"
+  | "document-save"
   | "knowledge-create";
 
 const ROUTES: Record<string, WorkspaceAction> = {
@@ -31,6 +37,7 @@ const ROUTES: Record<string, WorkspaceAction> = {
   "/api/bundles/update": "bundle-update",
   "/api/bundles/settings": "bundle-settings",
   "/api/knowledge/create": "knowledge-create",
+  "/api/asset/save": "document-save",
 };
 
 export function matchWorkspaceAction(path: string): WorkspaceAction | null {
@@ -60,7 +67,7 @@ function positional(body: Record<string, unknown>, key: string): string {
 function preserveUnrelatedConfig(config = loadConfig()) {
   if (!isDeepStrictEqual(sanitizeConfigForWrite(config), config)) {
     throw new UsageError(
-      "AKM's config sanitizer would remove unrelated credentials. Move literal API keys to $VAR or secret:// references and remove registry URL credentials using the CLI before changing bundles or creating knowledge in the UI.",
+      "AKM's config sanitizer would remove unrelated credentials. Move literal API keys to $VAR or secret:// references and remove registry URL credentials using the CLI before changing bundle configuration in the UI.",
     );
   }
 }
@@ -78,6 +85,29 @@ class CommandError extends AkmError {
   }
   hint() {
     return undefined;
+  }
+}
+
+/** Exit zero is not sufficient evidence that the expected action returned a valid result. */
+export function parseCommandResponse(stdout: string, expectedShape: string): unknown {
+  try {
+    const result = JSON.parse(stdout);
+    if (
+      !result ||
+      typeof result !== "object" ||
+      Array.isArray(result) ||
+      result.shape !== expectedShape ||
+      !Number.isInteger(result.schemaVersion) ||
+      result.ok === false
+    )
+      throw new Error("Invalid command envelope");
+    return redactForUi(result);
+  } catch {
+    throw new CommandError(
+      "AKM returned an invalid action response. State may already have changed. Reload the view before retrying; do not automatically repeat the action.",
+      "INVALID_COMMAND_RESPONSE",
+      70,
+    );
   }
 }
 
@@ -113,9 +143,9 @@ async function command(args: string[], input?: string, userFeedback = false): Pr
           return;
         }
         try {
-          resolve(redactForUi(JSON.parse(stdout)));
-        } catch {
-          resolve({ completed: true });
+          resolve(parseCommandResponse(stdout, args[0] === "bundle" ? args[1]! : args[0]!));
+        } catch (error) {
+          reject(error);
         }
       },
     );
@@ -167,7 +197,7 @@ function settings(body: Record<string, unknown>) {
 
 export async function handleWorkspaceAction(action: WorkspaceAction, value: unknown): Promise<unknown> {
   const body = object(value);
-  if (action !== "feedback" && action !== "bundle-settings") preserveUnrelatedConfig();
+  if (action === "bundle-add" || action === "bundle-remove" || action === "bundle-update") preserveUnrelatedConfig();
   switch (action) {
     case "feedback": {
       const signal = text(body, "signal");
@@ -202,6 +232,32 @@ export async function handleWorkspaceAction(action: WorkspaceAction, value: unkn
     }
     case "bundle-settings":
       return settings(body);
+    case "document-save": {
+      if (typeof body.content !== "string") throw new UsageError("Markdown content is required.");
+      const content = body.content;
+      const revision = text(body, "revision");
+      const ref = text(body, "ref");
+      return withAssetMutationLease("ui-document-save", async () => {
+        const source = await readDocumentSource(ref);
+        const identity = parseRefInput(source.ref);
+        const result = await writeMarkdownAsset({
+          type: source.type,
+          content,
+          name: identity.name,
+          fallbackPrefix: source.type,
+          target: identity.origin,
+          force: true,
+          expectedContentHash: revision,
+        });
+        if (!result.unchanged)
+          appendEvent({
+            eventType: source.type === "knowledge" ? "import" : "remember",
+            ref: result.ref,
+            metadata: { source: "ui", path: result.path, force: true },
+          });
+        return result;
+      });
+    }
     case "knowledge-create": {
       if (typeof body.content !== "string" || !body.content.trim())
         throw new UsageError("Document content is required.");
