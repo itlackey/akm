@@ -56,6 +56,7 @@ import {
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../../storage/repositories/extract-sessions-repository";
+import { type ImproveLedgerRow, listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";
 import { getStateProposal } from "../../storage/repositories/proposals-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
@@ -69,7 +70,7 @@ import {
   parseExtractPayload,
 } from "./extract-prompt";
 import { cloneAndFreeze, resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot, readLedgerDb } from "./ledger";
+import { isLedgerBlocked, ledgerKey, readLedgerDb } from "./ledger";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -698,30 +699,33 @@ async function processSession(
   if (payload.candidates.length > 0) {
     // A candidate the ledger holds a live window for (pending, or recently rejected) is not queued again.
     const access = { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx, ...(dryRun ? { readOnly: true } : {}) };
-    const ledger = loadLedgerSnapshot(access, stashDir, ["extract"]);
+    const ledger = new Map<string, ImproveLedgerRow>();
     // An accepted row has no window, so a retried or re-extracted session would propose its own
     // accepted insight again as an update (#1224). Hold a ref whose accepted proposal names this
     // session by a mark buildCandidateProposal writes; one accepted from another session stays eligible.
+    // One read serves both, so a dry run takes a single snapshot.
     const acceptedHere = new Set<string>();
-    const acceptedIds = payload.candidates.flatMap((candidate) => {
-      const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref)));
-      return row?.outcome === "accepted" && row.proposalId ? [row.proposalId] : [];
-    });
-    if (acceptedIds.length > 0) {
-      const marks = [
-        conceptIdFromTypeName("session", `${data.ref.harness}/${data.ref.sessionId}`),
-        `${data.ref.harness}:${data.ref.sessionId}`,
-      ];
+    const marks = [
+      conceptIdFromTypeName("session", `${data.ref.harness}/${data.ref.sessionId}`),
+      `${data.ref.harness}:${data.ref.sessionId}`,
+    ];
+    try {
       readLedgerDb(access, (db) => {
-        for (const id of acceptedIds) {
-          const fm = getStateProposal(db, id, stashDir)?.payload.frontmatter ?? {};
+        for (const row of listImproveLedgerRows(db, stashDir, ["extract"]))
+          ledger.set(ledgerKey(row.source, row.ref), row);
+        for (const candidate of payload.candidates) {
+          const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref)));
+          if (row?.outcome !== "accepted" || !row.proposalId) continue;
+          const fm = getStateProposal(db, row.proposalId, stashDir)?.payload.frontmatter ?? {};
           const sources = (fm.provenance as { sources?: Array<{ resource?: unknown }> } | undefined)?.sources;
           const cited = [fm.xrefs, fm.evidenceSources, Array.isArray(sources) ? sources.map((s) => s?.resource) : []];
           if (cited.some((list) => Array.isArray(list) && list.some((mark) => marks.includes(mark)))) {
-            acceptedHere.add(id);
+            acceptedHere.add(row.proposalId);
           }
         }
       });
+    } catch (error) {
+      warn(`[improve] ledger read failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     const nowIso = new Date().toISOString();
     for (const candidate of payload.candidates) {
