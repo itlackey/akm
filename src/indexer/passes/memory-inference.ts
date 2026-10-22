@@ -225,6 +225,21 @@ function validateMemoryInferDecision(raw: unknown): MemoryInferDecision | undefi
   return memoryInfer.isMemoryInferNoChange(raw) ? memoryInfer.MEMORY_INFER_NO_CHANGE : validateDerivedMemoryDraft(raw);
 }
 
+function readCachedMemoryDecision(
+  db: NonNullable<MemoryInferencePassContext["db"]>,
+  record: MemoryRecord,
+): MemoryInferDecision | undefined {
+  return bestEffort(() => {
+    const entry = getLlmCacheEntry(
+      db,
+      record.filePath,
+      computeBodyHash(record.effectiveInput),
+      MEMORY_INFERENCE_CACHE_VARIANT,
+    );
+    return entry ? validateMemoryInferDecision(JSON.parse(entry.resultJson)) : undefined;
+  }, "memory inference cache read corrupt — fall through to recompute");
+}
+
 function planPendingMemoryRecord(
   record: MemoryRecord,
   ctx: Pick<MemoryInferencePassContext, "signal" | "db" | "reEnrich">,
@@ -232,15 +247,7 @@ function planPendingMemoryRecord(
   if (ctx.signal?.aborted) return { kind: "aborted", record };
   if (fs.existsSync(derivedChildPath(record))) return { kind: "existing-child", record };
   if (ctx.db && !ctx.reEnrich) {
-    const cached = bestEffort(() => {
-      const entry = getLlmCacheEntry(
-        ctx.db as NonNullable<MemoryInferencePassContext["db"]>,
-        record.filePath,
-        computeBodyHash(record.effectiveInput),
-        MEMORY_INFERENCE_CACHE_VARIANT,
-      );
-      return entry ? validateMemoryInferDecision(JSON.parse(entry.resultJson)) : undefined;
-    }, "memory inference cache read corrupt — fall through to recompute");
+    const cached = readCachedMemoryDecision(ctx.db, record);
     if (cached) return { kind: "cache-hit", record, decision: cached };
   }
   return { kind: "model", record };
@@ -590,6 +597,21 @@ async function runMemoryInferencePassBody(
 }
 
 // ── Pending detection ───────────────────────────────────────────────────────
+
+/**
+ * Pending parents the `minPendingCount` gate should count: those with no cached
+ * no-change decision for their current effective input. A decided parent stays unstamped
+ * by design (so an edit re-opens it), but a pass made only of cached decisions
+ * makes no model call. Read-only; `db` absent counts every pending parent.
+ */
+export function countPendingMemoriesNeedingDecision(
+  stashRoot: string,
+  db?: NonNullable<MemoryInferencePassContext["db"]>,
+): number {
+  const pending = collectPendingMemories(stashRoot);
+  if (!db) return pending.length;
+  return pending.filter((record) => readCachedMemoryDecision(db, record) !== memoryInfer.MEMORY_INFER_NO_CHANGE).length;
+}
 
 /**
  * Walk `<stashRoot>/memories/` (recursively) and return every memory that

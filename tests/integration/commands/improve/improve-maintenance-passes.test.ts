@@ -24,9 +24,11 @@ import {
 } from "../../../../src/commands/improve/loop-stages";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
-import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
+import { collectPendingMemories, type MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
 import { insertEventStrict } from "../../../../src/storage/repositories/events-repository";
+import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
+import { computeBodyHash, upsertLlmCacheEntry } from "../../../../src/storage/repositories/index-llm-cache-repository";
 import { STATE_DB_VACUUMED_EVENT } from "../../../../src/storage/state-db-integrity";
 import { makeStashDir, type SandboxedDir, sandboxXdgCacheHome, sandboxXdgDataHome } from "../../../_helpers/sandbox";
 
@@ -87,6 +89,38 @@ describe("runMemoryInferenceMaintenancePass", () => {
 
     expect(out.memoryInference).toBeUndefined();
     expect(out.warnings).toEqual([]);
+  });
+
+  test("minPendingCount gate does not count a parent with a cached no-change decision (#1219)", async () => {
+    const stash = freshStash();
+    const file = path.join(stash, "memories", "note.md");
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, "---\ndescription: note\n---\n\nTool calls this session: Read 12.\n", "utf8");
+    const db = openIndexDatabase(path.join(stash, "index.db"));
+    try {
+      upsertLlmCacheEntry(
+        db,
+        file,
+        computeBodyHash(collectPendingMemories(stash)[0]!.effectiveInput),
+        JSON.stringify({ noChange: true }),
+        "memory-inference-v4",
+      );
+      const ctx = makeCtx(stash, {
+        improveProfile: { processes: { memoryInference: { minPendingCount: 1 } } } as MaintenanceCtx["improveProfile"],
+      });
+
+      // Only a cached decision is pending: below the gate, so the seam is not reached.
+      const out = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
+      expect(out.memoryInference).toBeUndefined();
+      expect(out.warnings).toEqual([]);
+
+      // Editing the body makes the parent count again, so the gate admits the pass.
+      fs.writeFileSync(file, "---\ndescription: note\n---\n\nThe retry cap is 30s via http.retryCap.\n", "utf8");
+      const admitted = await runMemoryInferenceMaintenancePass(ctx, { current: db }, new Set());
+      expect(admitted.warnings).toEqual(["memory inference failed: memoryInferenceFn not expected in this scenario"]);
+    } finally {
+      closeDatabase(db);
+    }
   });
 
   test("success returns the result, the memories/_inference action, and the pass duration", async () => {

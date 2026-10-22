@@ -12,7 +12,11 @@ import { assembleAsset } from "../../src/core/asset/asset-serialize";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import { saveConfig } from "../../src/core/config/config";
 import { akmIndex } from "../../src/indexer/indexer";
-import { collectPendingMemories, runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
+import {
+  collectPendingMemories,
+  countPendingMemoriesNeedingDecision,
+  runMemoryInferencePass,
+} from "../../src/indexer/passes/memory-inference";
 import { scopeFromFrontmatter } from "../../src/indexer/passes/metadata";
 import { _setChatCompletionForTests } from "../../src/llm/client";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -162,6 +166,7 @@ test("no-change cache follows supplied context edits, while equivalent formattin
   try {
     await run(db);
     expect(requests).toHaveLength(1);
+    expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(0);
     write({
       unrelated: "ignored",
       provenance: { sources: [{ resource: "claude:lab", ignored: true }] },
@@ -171,6 +176,7 @@ test("no-change cache follows supplied context edits, while equivalent formattin
     });
     expect((await run(db)).cacheHits).toBe(1);
     expect(requests).toHaveLength(1);
+    expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(0);
     for (const changed of [
       { ...fm, description: "Production route" },
       { ...fm, title: "Grounded title" },
@@ -186,7 +192,9 @@ test("no-change cache follows supplied context edits, while equivalent formattin
       { ...fm, provenance: { sources: [{ resource: "claude:other" }] } },
     ]) {
       write(changed);
+      expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(1);
       expect((await run(db)).cacheHits).toBe(0);
+      expect(countPendingMemoriesNeedingDecision(storage.stashDir, db)).toBe(0);
     }
     expect(requests).toHaveLength(13);
     expect(parseFrontmatter(fs.readFileSync(file, "utf8")).data.inferenceProcessed).toBeUndefined();

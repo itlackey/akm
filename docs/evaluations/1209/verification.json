@@ -1,8 +1,7 @@
 {
   "issue": "https://github.com/itlackey/akm/issues/1209",
-  "state": "needs iteration: required real-model paired pilot has no configured endpoint",
+  "state": "needs iteration: required real-model paired pilot is blocked by expired Codex authentication for requested Luna model",
   "baseline": "11bb443e5498d666d35a7eda761c603fb8b1ece8",
-  "measured_code_commit": "0342a21395a3588a2ca558910264d94abf1a24a7",
   "skill_revision": "ff35ed5393ae287aa8d81c9111fc27636b921d08",
   "evaluator_revision": "3b679fe8f59a63c8efc32710e1c09c27e45badab",
   "bakeoff_version": "0.3",
@@ -25,10 +24,10 @@
     "relevant_metadata_edit_cache_hits": 1
   },
   "checks": {
-    "focused": {
-      "passed": 98,
+    "focused_release_integration": {
+      "passed": 46,
       "failed": 0,
-      "assertions": 412
+      "assertions": 257
     },
     "full_unit": {
       "passed": 7283,
@@ -36,14 +35,14 @@
       "failed": 0
     },
     "full_integration": {
-      "passed": 3956,
+      "passed": 3960,
       "skipped": 81,
       "failed": 0
     },
     "build": "passed",
-    "package_acceptance": "passed with NODE_USE_ENV_PROXY=1",
-    "runtime": "Bun 1.4.3; Node 24.19.0; four test shards; conventional umask; OS /tmp TMPDIR",
-    "exact_ci_runtime_probe": "Peer verified Bun 1.3.14 (the ci.yml pin): UI loader probe 22 passed / 0 failed; peer PR #1221 CI is green. No workflow or UI change."
+    "biome_write": "passed; no source/test changes",
+    "doc_examples": "passed",
+    "runtime": "Bun 1.4.3; Node 24.19.0; four test shards; conventional umask; OS /tmp TMPDIR"
   },
   "deterministic_coverage": [
     "actual request context and missing dates",
@@ -73,44 +72,81 @@
     "body": "The operator retrieved the Nacre guide and requested a restart; completion was not recorded."
   },
   "installed_user_path": {
-    "package_sha256": "a674c4821a623cdd0d219c69b0216f7e9bf833e163fc8f7ddb0bffd5678cc4b6",
-    "commands": 9,
-    "scripted_inference_transport_calls": 5,
-    "all_scripted_transport_calls": 9,
+    "package_sha256": "b1afcd8e4023e70c3719452e1ad07824578492e4f4c8f6c580638cbe43455804",
+    "commands": 12,
+    "scripted_inference_transport_calls": 6,
+    "all_scripted_transport_calls": 13,
     "first": {
       "considered": 4,
       "cacheHits": 0,
+      "retryAttempts": 0,
       "splitParents": 1,
       "writtenFacts": 1,
       "noChange": 1,
       "skippedNoFacts": 2,
-      "unaccounted": 0
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": [
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/nacre.derived.md",
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/nacre.md"
+      ]
     },
     "after_malformed_reply_repaired": {
       "considered": 3,
       "cacheHits": 1,
+      "retryAttempts": 0,
       "splitParents": 1,
       "writtenFacts": 1,
       "noChange": 1,
       "skippedNoFacts": 1,
-      "unaccounted": 0
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": [
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/recovery.derived.md",
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/recovery.md"
+      ]
     },
     "unchanged_repeat": {
       "considered": 2,
       "cacheHits": 1,
+      "retryAttempts": 0,
       "splitParents": 0,
       "writtenFacts": 0,
       "noChange": 1,
       "skippedNoFacts": 1,
-      "unaccounted": 0
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": []
     },
-    "scope": "alice/helper/42/lab, copied independently of reply; legacy recovery scope bob",
-    "show": "matching scope succeeds; mismatching scope refuses",
-    "search": "matching scope includes derived child; mismatching scope returns no hits",
+    "minPendingCount": 1,
+    "cached_only_gate_skipped": true,
+    "metadata_only_scope_edit": {
+      "considered": 1,
+      "cacheHits": 0,
+      "retryAttempts": 0,
+      "splitParents": 0,
+      "writtenFacts": 0,
+      "noChange": 1,
+      "skippedNoFacts": 0,
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": []
+    },
+    "cached_again_gate_skipped": true,
+    "scope": "normalized parent tuple copied independently of reply; legacy recovery scope retained",
+    "consumer_checks": "actual write/index/show/scoped-search passed; parent evidence retained",
     "quality_claim": false
   },
   "model_pilot": {
-    "status": "blocked: no configured model endpoint/credentials/model env variables or local model service",
+    "status": "blocked: requested gpt-6-luna via existing Codex CLI; actual preflight returned HTTP 401, expired/revoked ChatGPT sign-in; user asked for login instructions",
     "prepared_cases": 11,
     "existing_public_cases": 8,
     "fictional_context_cases": 3,
@@ -124,7 +160,14 @@
       "min": 805,
       "max": 1049
     },
-    "quality_and_false_abstention": "unmeasured; no field-presence or scripted-score substitute"
+    "quality_and_false_abstention": "unmeasured; no field-presence or scripted-score substitute",
+    "requested_model": "gpt-6-luna",
+    "native_runner_preflight": {
+      "runner": "codex-cli 0.163.0",
+      "successful_inferences": 0,
+      "failed_auth_preflights": 1,
+      "note": "Cached login status reported authenticated but the actual inference failed; no model-quality evidence."
+    }
   },
   "budget": {
     "treatments_used": 1,
@@ -133,9 +176,11 @@
     "model_wall_minutes_ceiling": 90,
     "repairs": [
       "retained empty-body no-dispatch behavior",
-      "updated remaining pre-v4 cache seed fixtures after full-suite failure"
+      "updated remaining pre-v4 cache seed fixtures after full-suite failure",
+      "merged #1220 shared cache lookup and pending-count gate using effective-input v4 identity; refreshed affected seed fixtures",
+      "installed-path gate assertion initially used unset minPendingCount; configured explicit threshold 1 and replay passed; no product-code repair"
     ],
-    "stopping_reason": "missing authorized model endpoint; no tuning or acceptance claim"
+    "stopping_reason": "Luna authentication prerequisite missing; zero scored model cases; awaiting refreshed sign-in or configured authenticated endpoint, not accepted model quality"
   },
   "evaluator_preflight": {
     "help_and_current_runner_inspected": true,
@@ -172,9 +217,19 @@
     "note": "The actual index had generated a populated nacre tag despite absent authored tags; replay compares the indexed pre-inference surface. Missing-tag fallback is covered in focused fixtures."
   },
   "rollout": "review-only draft; issue remains open; no merge/deployment; existing children retained; v4 makes old cached pending decisions disposable misses; #1210 generation/date publication unchanged",
-  "evidence_reuse": "Code hashes below identify final behavior; the final branch addition is this verification artifact only. Combined checks cover both code commits; no full combined-suite claim.",
+  "evidence_reuse": "Original and temporary-combined results identify their earlier revisions and are historical. Current checks cover the release-sync source hashes below; only documentation and this record changed after the successful full check. No real-model or full combined #1211 quality claim.",
   "source_sha256": {
-    "src/indexer/passes/memory-inference.ts": "8539c9d11aadf719a732cb7978404c475457a3acd40921bb344ba3e7a818a066",
+    "src/indexer/passes/memory-inference.ts": "b377dcd785ddbea9506c74e8f8a6846ae83f474840c89d4dc69af5e214657a1b",
     "src/assets/prompts/memory-infer-user.md": "cb465d8e5d5f46a25ac6cb82123c79d41a85c782535dd1124c8d1f9d448fd855"
-  }
+  },
+  "original_measured_code_commit": "0342a21395a3588a2ca558910264d94abf1a24a7",
+  "release_base": "defa2343284b74af9379091379bf9cf649090688",
+  "release_sync": {
+    "upstream_pr": "https://github.com/itlackey/akm/pull/1220",
+    "shared_cache_identity": "pending-count gate and inference pass both hash selected context plus body under memory-inference-v4",
+    "regression_checks": "normalized-equivalent/excluded metadata stays decided; relevant metadata-only edits reopen the gate and pass; cached-only batch skips when minPendingCount=1",
+    "full_check_log": "/workspace/scratch/1209/release-1220-full-check.log",
+    "installed_log": "/workspace/scratch/1209/release-1220-installed-path.log"
+  },
+  "historical_evidence": "https://github.com/itlackey/akm/blob/ecabbb22abefe579dfa54b285097e6fb0b9e300a/docs/evaluations/1209/verification.json"
 }
