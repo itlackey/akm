@@ -474,3 +474,33 @@ describe("runManagedSubprocess — capture and failure surfacing", () => {
     expect(result.stdout).toBe("");
   });
 });
+
+describe("runManagedSubprocess — termination-signal guard", () => {
+  // #1230: the guard used to go in only after the spawn returned, so a SIGTERM or SIGINT that landed in between met
+  // the default disposition: akm died and the new process group was left running.
+  test.skipIf(!spawnsOwnProcessGroup())(
+    "is in force before a captured child is spawned and gone once it exits",
+    async () => {
+      // The guard stands aside when anything else handles the signals, and the test preload does; lift its listeners.
+      const signals = ["SIGTERM", "SIGINT"] as const;
+      const saved = signals.map((signal) => [signal, process.listeners(signal)] as const);
+      for (const signal of signals) process.removeAllListeners(signal);
+      try {
+        const atSpawn: number[] = [];
+        const { spawn: exitingSpawn, ...ctl } = controllableSpawn();
+        const spawn: SpawnFn = (cmd, options) => {
+          atSpawn.push(...signals.map((signal) => process.listenerCount(signal)));
+          return exitingSpawn(cmd, options);
+        };
+        const run = runManagedSubprocess(["harness"], { capture: true, timeoutMs: null, spawnFn: spawn });
+        ctl.closeStdout();
+        ctl.exit(0);
+        await run;
+        expect(atSpawn).toEqual([1, 1]);
+        expect(signals.map((signal) => process.listenerCount(signal))).toEqual([0, 0]);
+      } finally {
+        for (const [signal, listeners] of saved) for (const listener of listeners) process.on(signal, listener);
+      }
+    },
+  );
+});

@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- A SIGINT or SIGTERM that reached akm just after it started an agent or harness
+  in its own process group could end akm with that group still running (#1230).
+  The signal guard is now in place before the child is spawned, so the group is
+  always terminated with akm.
+
 ## [0.10.261011] - 2026-10-22
 
 ### Changed
