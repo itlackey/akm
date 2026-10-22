@@ -74,11 +74,22 @@ sanctioned internal channel that carries a bare parent name, not a public
 
 Inference receives the body with selected existing source context: title,
 description, evidence and references, known source dates, and normalized scope.
-The prompt asks the model to preserve qualifications, uncertainty, actors, and the distinction between
+The request carries that context as JSON after a `Source context:` line, then
+the raw body after a `Body:` line, as written and not JSON-escaped. Everything
+after the first `Body:` line is treated as the body, so a body cannot pose as
+context. A memory with an empty body is not sent. The prompt asks the model to preserve qualifications, uncertainty, actors, and the distinction between
 requests, references, attempts, and demonstrated outcomes. The caller copies
 the parent's normalized user/agent/run/channel scope to the child; the model
 cannot author that scope. Source evidence remains on the parent via the backref.
-Existing children are kept. A cached no-change decision is reconsidered when
+Existing children are kept and never regenerated. On each inference run, an
+existing child (`<parent>.derived.md` with `inferred: true` and `derivedFrom`
+naming its parent) whose scope differs from its parent's has only its scope
+frontmatter rewritten to match. This covers children written before scope was
+copied and later parent scope edits, so the child stays reachable under the
+parent's scope filter. The flat `scope_*` keys are set; stale ones and a legacy
+nested `scope:` are removed. The body and other metadata are kept byte for
+byte. No model call is made, a matching child is not written, and a read-only
+default bundle is skipped. The run reports the count as `scopeSynced`. A cached no-change decision is reconsidered when
 the body or supplied source context changes; unrelated metadata does not
 invalidate it.
 

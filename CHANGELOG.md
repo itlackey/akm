@@ -12,7 +12,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   normalized parent scope to derived memories (#1209). The request and both cache
   paths share the same effective-input identity under `memory-inference-v4`, so
   relevant metadata edits reopen pending decisions. Existing children are kept;
-  older cached pending decisions are disposable misses.
+  older cached pending decisions are disposable misses. The request carries the
+  context as JSON under `Source context:` and the raw body, not JSON-escaped,
+  under `Body:`.
+- Memory inference now syncs the scope of existing derived memories with their
+  parent's normalized scope (#1209). Children written before scope was copied,
+  and children whose parent's scope later changed, are now reachable under scope
+  filters, and the parent hit regains `expandTo`. Only the child's scope
+  frontmatter is rewritten: no model call, no regeneration, and the body and
+  other metadata keep every byte. A child that already matches is not written.
+  Each run reports the count as `scopeSynced`.
 
 ### Fixed
 

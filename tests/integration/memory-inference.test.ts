@@ -201,6 +201,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      scopeSynced: 0,
       writtenPaths: [],
     });
   });
@@ -275,6 +276,7 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      scopeSynced: 0,
       writtenPaths: [],
     });
     expect(invocations).toBe(0);
@@ -711,6 +713,7 @@ describe("runMemoryInferencePass — enabled", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      scopeSynced: 0,
       // R78: derived child + rewritten parent, the two files
       // indexWrittenAssets indexes afterwards instead of a full reindex.
       writtenPaths: [derivedPath, parentPath].sort(),

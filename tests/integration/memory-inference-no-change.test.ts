@@ -134,6 +134,7 @@ describe("a successful no-change decision", () => {
         skippedNoFacts: 0,
         unaccounted: 0,
         htmlErrorCount: 0,
+        scopeSynced: 0,
         writtenPaths: [],
       });
     });
@@ -431,6 +432,6 @@ describe("the prompt", () => {
     const prompt = chatCalls[0] ?? "";
     expect(prompt).toContain("noChange");
     expect(prompt).toContain("derived memory");
-    expect(JSON.parse(prompt.split("Source input:\n")[1] ?? "{}").body).toBe(CHECKPOINT_NOTE);
+    expect(prompt.slice(prompt.indexOf("\n\nBody:\n") + "\n\nBody:\n".length)).toBe(CHECKPOINT_NOTE);
   });
 });

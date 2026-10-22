@@ -29,6 +29,12 @@
  *   A pass runs iff both layers allow it. Existing inferred children are
  *   NEVER deleted — the user keeps what was already produced.
  *
+ * Scope sync: on every run, an existing derived child (`<name>.derived.md`,
+ * `inferred: true`, `derivedFrom` naming its parent) whose normalized scope
+ * differs from its parent's gets only its scope frontmatter rewritten to the
+ * parent's — deterministic, no model call, body and other metadata untouched.
+ * See {@link syncDerivedChildScopes}.
+ *
  * Locked v1 contract:
  *   - LLM access is exclusively via the frozen runner returned by
  *     `resolveIndexPassExecution("memory", config)`.
@@ -39,12 +45,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
-import { assembleAsset } from "../../core/asset/asset-serialize";
-import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
+import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
+import { parseFrontmatter, parseFrontmatterBlock, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
-import { asNonEmptyString, todayIso } from "../../core/common";
+import { asNonEmptyString, existingFileMode, todayIso, writeFileAtomic } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
@@ -61,7 +68,14 @@ import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
-import { applyProvenanceFrontmatter, type IndexDocument, scopeFromFrontmatter } from "./metadata";
+import {
+  applyProvenanceFrontmatter,
+  type IndexDocument,
+  SCOPE_KEYS,
+  type StashEntryScope,
+  sameScope,
+  scopeFromFrontmatter,
+} from "./metadata";
 import type { PassContext } from "./pass-context";
 
 /**
@@ -144,12 +158,20 @@ export interface MemoryInferenceResult {
    * a generic empty-result skip.
    */
   htmlErrorCount: number;
+  /**
+   * Existing derived children whose scope frontmatter was rewritten to match
+   * their parent's normalized scope (no model call; see
+   * {@link syncDerivedChildScopes}). Counted apart from `considered`: the
+   * parent may be long processed and is not a pending record.
+   */
+  scopeSynced: number;
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
    * Absolute paths this call actually wrote or rewrote — every derived child
    * (`writeAssetToSource`) and every parent whose frontmatter was stamped
-   * `inferenceProcessed: true` (`markParentProcessed`). Lets the caller index
+   * `inferenceProcessed: true` (`markParentProcessed`), plus every child whose
+   * scope was synced. Lets the caller index
    * exactly these files (`indexWrittenAssets`) instead of a full reindex
    * R78 — sourced from the run-scoped write-provenance journal
    * (`core/write-provenance.ts`), so it can never drift from what actually
@@ -442,6 +464,7 @@ async function runMemoryInferencePassBody(
     skippedAborted: 0,
     unaccounted: 0,
     htmlErrorCount: 0,
+    scopeSynced: 0,
     writtenPaths: [],
   };
 
@@ -489,9 +512,14 @@ async function runMemoryInferencePassBody(
     return completeResult();
   }
 
-  const pending = collectPendingMemories(primary.path).filter(
-    (record) => !options.candidateRefs || options.candidateRefs.has(record.ref),
-  );
+  const inCandidates = (ref: string) => !options.candidateRefs || options.candidateRefs.has(ref);
+  const scan = scanMemories(primary.path);
+  // A read-only default bundle keeps its children as they are; the
+  // deterministic scope rewrite runs before, and apart from, any model work.
+  if (primary.writable !== false && !signal?.aborted) {
+    result.scopeSynced = syncDerivedChildScopes(scan.scopeDrift.filter((drift) => inCandidates(drift.parentRef)));
+  }
+  const pending = scan.pending.filter((record) => inCandidates(record.ref));
   result.considered = pending.length;
   if (pending.length === 0) return completeResult();
 
@@ -619,10 +647,31 @@ export function countPendingMemoriesNeedingDecision(
  * is treated as "no pending memories" rather than an error.
  */
 export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
+  return scanMemories(stashRoot).pending;
+}
+
+/** An existing derived child whose scope differs from its parent's. */
+interface ScopeDrift {
+  childPath: string;
+  /** Parent conceptId, for candidate filtering. */
+  parentRef: string;
+  /** Bare parent name the child's `derivedFrom` must keep naming. */
+  parentName: string;
+  /** The parent's normalized scope, the child's target. */
+  scope: StashEntryScope;
+}
+
+/**
+ * One walk of `<stashRoot>/memories/`: the pending parents, and the existing
+ * derived children whose scope has drifted from their parent's.
+ */
+function scanMemories(stashRoot: string): { pending: MemoryRecord[]; scopeDrift: ScopeDrift[] } {
   const memoriesDir = path.join(stashRoot, "memories");
-  if (!fs.existsSync(memoriesDir)) return [];
+  if (!fs.existsSync(memoriesDir)) return { pending: [], scopeDrift: [] };
 
   const out: MemoryRecord[] = [];
+  const parentScopes = new Map<string, StashEntryScope>();
+  const children: { filePath: string; name: string; data: Record<string, unknown> }[] = [];
   const walked = walkMarkdownFiles(memoriesDir);
   if (!walked.complete) {
     warn(`memory inference: directory scan under ${memoriesDir} is incomplete — some memories may be missing`);
@@ -638,10 +687,14 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
       continue;
     }
     const parsed = parseFrontmatter(raw);
-    if (!isPendingMemory(parsed.data, filePath)) continue;
-
     const relName = toMemoryName(memoriesDir, filePath);
     if (!relName) continue;
+    if (relName.endsWith(".derived")) {
+      children.push({ filePath, name: relName, data: parsed.data });
+      continue;
+    }
+    parentScopes.set(relName, scopeFromFrontmatter(parsed.data));
+    if (!isPendingMemory(parsed.data, filePath)) continue;
 
     out.push({
       filePath,
@@ -652,10 +705,42 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
       name: relName,
     });
   }
-  return out;
+  const scopeDrift: ScopeDrift[] = [];
+  for (const child of children) {
+    const parentName = child.name.slice(0, -".derived".length);
+    const scope = parentScopes.get(parentName);
+    if (!scope || !isDerivedChildOf(child.data, parentName)) continue;
+    if (sameScope(scopeFromFrontmatter(child.data), scope)) continue;
+    scopeDrift.push({
+      childPath: child.filePath,
+      parentRef: conceptIdFromTypeName("memory", parentName),
+      parentName,
+      scope,
+    });
+  }
+  return { pending: out, scopeDrift };
 }
 
-/** A fixed selection of existing source fields, never arbitrary frontmatter or model-authored authority. */
+/** True only for a file this pass derived from `parentName`: `inferred: true` and a matching `derivedFrom`. */
+function isDerivedChildOf(fm: Record<string, unknown>, parentName: string): boolean {
+  if (fm[FM_INFERRED] !== true) return false;
+  const derivedFrom = asNonEmptyString(fm.derivedFrom);
+  return derivedFrom === parentName || derivedFrom === conceptIdFromTypeName("memory", parentName);
+}
+
+/**
+ * Section markers of the effective input; `memory-infer-user.md` names them.
+ * The context comes first and is pretty-printed JSON, whose lines are never
+ * exactly `Body:`, so the first such line always starts the raw body.
+ */
+const SOURCE_CONTEXT_MARKER = "Source context:";
+const BODY_MARKER = "Body:";
+
+/**
+ * The effective input: a fixed selection of existing source fields (never
+ * arbitrary frontmatter or model-authored authority) as JSON, then the raw
+ * trimmed body. One string drives the request and every cache lookup.
+ */
 function memoryInferenceInput(body: string, fm: Record<string, unknown>): string {
   const trimmedBody = body.trim();
   if (!trimmedBody) return "";
@@ -674,7 +759,7 @@ function memoryInferenceInput(body: string, fm: Record<string, unknown>): string
   applyProvenanceFrontmatter(entry, fm);
   if (entry.provenance?.sources) sourceContext.provenance = { sources: entry.provenance.sources };
   sourceContext.scope = scopeFromFrontmatter(fm);
-  return JSON.stringify({ sourceContext, body: trimmedBody });
+  return `${SOURCE_CONTEXT_MARKER}\n${JSON.stringify(sourceContext, null, 2)}\n\n${BODY_MARKER}\n${trimmedBody}`;
 }
 
 /**
@@ -835,4 +920,46 @@ function markParentProcessed(parent: MemoryRecord): void {
       `memory inference: failed to mark parent processed ${parent.filePath}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Rewrite only the scope frontmatter of each drifted child to its parent's
+ * normalized scope: the flat `scope_*` keys are set, stale ones and a legacy
+ * nested `scope:` removed, and every other byte — body included — kept. No
+ * model call. Each file is re-read and re-checked first, so a child edited
+ * since the walk is judged as it is now; one that no longer drifts, is no
+ * longer a derived child of that parent, or whose frontmatter cannot be edited
+ * in place is left untouched. Like {@link markParentProcessed}, this is a
+ * frontmatter-only exception to `writeAssetToSource`, written atomically and
+ * journaled so the caller indexes and commits it. Returns the rewrite count.
+ */
+function syncDerivedChildScopes(drifts: readonly ScopeDrift[]): number {
+  let synced = 0;
+  const scopeKeys = ["scope", ...SCOPE_KEYS.map((key) => `scope_${key}`)];
+  for (const drift of drifts) {
+    try {
+      const raw = fs.readFileSync(drift.childPath, "utf8");
+      const data = parseFrontmatter(raw).data;
+      if (!isDerivedChildOf(data, drift.parentName) || sameScope(scopeFromFrontmatter(data), drift.scope)) continue;
+      const flat: Record<string, unknown> = {};
+      for (const key of SCOPE_KEYS) if (drift.scope[key] !== undefined) flat[`scope_${key}`] = drift.scope[key];
+      const lines = Object.keys(flat).length > 0 ? serializeFrontmatter(flat).split("\n") : [];
+      const next = replaceFrontmatterBlocks(raw, scopeKeys, lines);
+      const expected: Record<string, unknown> = { ...data };
+      for (const key of scopeKeys) delete expected[key];
+      Object.assign(expected, flat);
+      if (next === null || !isDeepStrictEqual(parseFrontmatter(next).data, expected)) {
+        warn(`memory inference: scope of ${drift.childPath} differs from its parent but cannot be rewritten in place`);
+        continue;
+      }
+      writeFileAtomic(drift.childPath, next, existingFileMode(drift.childPath));
+      recordWrittenPath(drift.childPath);
+      synced += 1;
+    } catch (err) {
+      warn(
+        `memory inference: failed to sync scope of ${drift.childPath}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  return synced;
 }
