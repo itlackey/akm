@@ -281,7 +281,8 @@ version marker are historical/unattributed. Attributed rows use
 - `memoryInference`: `direct` when the emitted ref is an inferred child, or
   `surface` when derived description/tags were actually present in the emitted
   search or selected curate output. Brief output and internally replaced
-  descriptions are controls, not surface attribution.
+  descriptions are controls. Tag-only fallback is attributed in full search;
+  normal/agent search and curate omit tags and remain controls in that case.
 - `graphExtraction`: written only by releases that boosted search with the
   graph — the graph contribution applied to the hit, plus `bodyHash` and
   `extractionRunId` when available. Current releases do not rank by the graph

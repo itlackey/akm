@@ -90,13 +90,14 @@ export interface SourceSearchHit {
    *
    * When a parent memory has a derived child indexed, the parent's search hit
    * is enriched with `expandTo` set to the child's ref (e.g.
-   * `"memory:claude-prefs.derived"`). Clients can fetch the child via
+   * `"memories/claude-prefs.derived"`). Clients can fetch the child via
    * `akm show <expandTo>` to retrieve the distilled lesson surface while the
    * parent itself remains the primary retrieval result.
    *
-   * Absent when no derived child exists. The accompanying description /
-   * searchHints / tags fields on the hit are swapped in from the derived
-   * child when this pointer is set.
+   * Absent when no eligible derived child exists. The child's description
+   * and tags fill missing parent fields independently, including a known
+   * filename-generated description or tags consisting only of generated path
+   * tokens. Meaningful parent metadata is preserved.
    */
   expandTo?: string;
 }
