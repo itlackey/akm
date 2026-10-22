@@ -19,7 +19,7 @@ import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
+import { countPendingMemoriesNeedingDecision, runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests, LlmCallError } from "../../src/llm/client";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -356,6 +356,55 @@ describe("old cache data", () => {
         expect(chatCalls).toHaveLength(1);
         expect(result.cacheHits).toBe(0);
       }
+    });
+  });
+});
+
+describe("the minPendingCount gate count (#1219)", () => {
+  const decide = (db: Parameters<typeof upsertLlmCacheEntry>[0], file: string, body: string) =>
+    upsertLlmCacheEntry(db, file, computeBodyHash(body), JSON.stringify({ noChange: true }), "memory-inference-v3");
+
+  test("excludes a parent whose current body has a cached no-change decision", async () => {
+    const decided = writeMemory("decided", TOOL_COUNT_NOTE);
+    writeMemory("fresh", CHECKPOINT_NOTE);
+    await withDb(async (db) => {
+      decide(db, decided, parseFrontmatter(fs.readFileSync(decided, "utf8")).content);
+      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(1);
+      // Without a database every pending parent counts.
+      expect(countPendingMemoriesNeedingDecision(tmpStash)).toBe(2);
+    });
+  });
+
+  test("counts a parent again once its body is edited", async () => {
+    const parent = writeMemory("note", TOOL_COUNT_NOTE);
+    await withDb(async (db) => {
+      decide(db, parent, parseFrontmatter(fs.readFileSync(parent, "utf8")).content);
+      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(0);
+      writeMemory("note", SUBSTANTIVE_NOTE);
+      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(1);
+    });
+  });
+
+  test("counts a parent that has no cache row, a stale namespace, or a cached child draft", async () => {
+    const stale = writeMemory("stale", TOOL_COUNT_NOTE);
+    const drafted = writeMemory("drafted", ADEQUATE_NOTE);
+    writeMemory("none", CHECKPOINT_NOTE);
+    await withDb(async (db) => {
+      upsertLlmCacheEntry(
+        db,
+        stale,
+        computeBodyHash(parseFrontmatter(fs.readFileSync(stale, "utf8")).content),
+        JSON.stringify({ noChange: true }),
+        "memory-inference-v2",
+      );
+      upsertLlmCacheEntry(
+        db,
+        drafted,
+        computeBodyHash(parseFrontmatter(fs.readFileSync(drafted, "utf8")).content),
+        CHILD_REPLY,
+        "memory-inference-v3",
+      );
+      expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(3);
     });
   });
 });

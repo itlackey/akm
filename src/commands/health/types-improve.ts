@@ -79,7 +79,10 @@ export interface ImproveHealthMetrics {
     /** `considered − cacheHits − skippedAborted`: parents that actually hit the LLM. */
     freshAttempts: number;
     written: number;
-    /** Explicit no-change decisions (fresh or cached): restraint, not failure, and never in `skippedNoFacts`. */
+    /**
+     * Explicit no-change decisions (fresh or cached): restraint, not failure, and never in `skippedNoFacts`.
+     * Summed per run, so an unchanged note's cached decision is counted again on every run; not a cumulative total.
+     */
     noChange: number;
     skippedNoFacts: number;
     /** `written / freshAttempts`, 4dp; 0 when `freshAttempts` is 0. */
