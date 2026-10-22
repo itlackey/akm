@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Date-valued frontmatter keys lose the `_at` suffix and use bare names like
+  `created`, `updated` and `expires`: `observed_at` is now `observed` on memories
+  and knowledge, and `started_at` / `ended_at` are now `started` / `ended` on
+  session assets. The old names are still read, with the new name winning when both
+  are present, so existing stashes keep working; files are not rewritten or
+  migrated, and akm writes only the new names. The memory-inference prompt, its
+  `Source context:` JSON key and the `remember --enrich` model field are now
+  `observed` (`--enrich` still accepts `observed_at`), and the cache namespace is
+  `memory-inference-v5`, so older cached decisions are disposable misses. This
+  supersedes the key names in the entries below. OKF's `generated: {by, at}` and
+  `verified: [{by, at}]` are unchanged.
+- Memory search hints no longer invent a date. A memory without an `observed`
+  date used to get `observed_at:<file mtime>`; a file's write time is not an
+  observation date, so it now gets no date hint. A stated date is indexed as
+  `observed:<date>`.
 - Memory inference receives selected source context alongside the body and copies
   normalized parent scope to derived memories (#1209). The request and both cache
   paths share the same effective-input identity under `memory-inference-v4`, so

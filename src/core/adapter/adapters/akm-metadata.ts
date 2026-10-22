@@ -62,7 +62,7 @@ import type { IndexDocument } from "../../../indexer/passes/metadata";
 import type { FileContext } from "../../../indexer/walk/file-context";
 import { parseTaskSource } from "../../../tasks/source/parse-task-source";
 import { compileWorkflowSource, workflowStepInstructions } from "../../../workflows/compile";
-import { parseFrontmatter } from "../../asset/frontmatter";
+import { parseFrontmatter, readFrontmatterDate } from "../../asset/frontmatter";
 import type { TocHeading } from "../../asset/markdown";
 import { parseMarkdownToc } from "../../asset/markdown";
 import { nonEmptyString } from "./shared";
@@ -195,18 +195,9 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
         const hints = new Set<string>();
         const source = nonEmptyString(fm.source);
         if (source) hints.add(source);
-        const fmObservedAt = nonEmptyString(fm.observed_at);
-        if (fmObservedAt) {
-          hints.add(`observed_at:${fmObservedAt}`);
-        } else if (fm.inferred !== true) {
-          // A derived child's mtime is when it was generated, not when anything was observed.
-          try {
-            const isoDate = file.stat().mtime.toISOString().slice(0, 10);
-            hints.add(`observed_at:${isoDate}`);
-          } catch {
-            // Non-fatal: skip mtime fallback on stat error
-          }
-        }
+        // Only a stated observation date is a hint: a file's write time is not one.
+        const observed = readFrontmatterDate(fm, "observed");
+        if (observed) hints.add(`observed:${observed}`);
         const expires = nonEmptyString(fm.expires);
         if (expires) hints.add(`expires:${expires}`);
         if (fm.subjective === true) hints.add("subjective");

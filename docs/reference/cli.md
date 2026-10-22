@@ -1766,7 +1766,7 @@ akm remember "VPN required for staging deploys" \
   --expires 90d \
   --source "skills/deploy"
 
-# Opt-in heuristic tagging — derives `code`, `source`, `observed_at`, `subjective`:
+# Opt-in heuristic tagging — derives `code`, `source`, `observed`, `subjective`:
 akm remember "Found this snippet: \`curl -fsSL ... | bash\`" --tag ops --auto
 
 # Opt-in LLM enrichment (requires configured LLM endpoint; fails soft):

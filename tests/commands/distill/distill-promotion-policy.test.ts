@@ -45,6 +45,30 @@ describe("distill promotion policy", () => {
     expect(promoted.content).toContain(VPN_BODY);
   });
 
+  test("the observation date is read as `observed` first, then legacy `observed_at`, and written as `observed`", () => {
+    const withDate = (...dates: string[]) => [
+      ...VPN_FRONTMATTER.filter((line) => !line.startsWith("observed_at")),
+      ...dates,
+    ];
+    const assess = (frontmatter: string[]) =>
+      assessMemoryKnowledgePromotionCandidate(
+        memoryInput("deploy-vpn-required", frontmatter, VPN_BODY, ["positive", "positive"]),
+      );
+
+    const legacy = assess(withDate("observed_at: 2026-04-20"));
+    expect(legacy.promote).toBe(true);
+    expect(legacy.positiveSignals).toContain("observed present");
+    expect(legacy.content).toContain("observed: 2026-04-20");
+    expect(legacy.content).not.toContain("observed_at");
+
+    const both = assess(withDate("observed: 2026-05-01", "observed_at: 2026-04-20"));
+    expect(both.content).toContain("observed: 2026-05-01");
+    expect(both.content).not.toContain("2026-04-20");
+    expect(both.content).not.toContain("observed_at");
+
+    expect(assess(withDate()).positiveSignals).not.toContain("observed present");
+  });
+
   test("blocked memories report why they were rejected", () => {
     const blocked = assessMemoryKnowledgePromotionCandidate(
       memoryInput(

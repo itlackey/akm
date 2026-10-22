@@ -489,7 +489,7 @@ describe("runMemoryInferencePass — enabled", () => {
       record.filePath,
       computeBodyHash(record.effectiveInput),
       JSON.stringify(sampleDraft("Cached Derived")),
-      "memory-inference-v4",
+      "memory-inference-v5",
     );
     let calls = 0;
     compressor = () => {

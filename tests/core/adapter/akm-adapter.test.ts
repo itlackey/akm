@@ -169,7 +169,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
   // (name+type) seed, which the fold reproduces by construction — captured here
   // as literals now that the oracle is gone. Absence is pinned too (an empty
   // ExpectedFold asserts recognize adds NO fold surface for that file). The
-  // memory fold's `observed_at` hint is mtime-derived, so it is pinned by shape.
+  // fixture memory states no observation date, so its fold is empty (no mtime hint).
   interface ExpectedFold {
     searchHints?: string[];
     toc?: Array<{ level: number; text: string; line: number }>;
@@ -180,6 +180,7 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
     "commands/all-types-command.md": {},
     "env/all-types-env.env": { searchHints: ["FIXTURE_GREETING", "FIXTURE_LOG_LEVEL"] },
     "facts/all-types-fact.md": { searchHints: ["category:meta"] },
+    "memories/all-types-memory.md": {},
     "knowledge/all-types-knowledge.md": {
       toc: [
         { level: 1, text: "All Types Knowledge", line: 5 },
@@ -207,9 +208,6 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
       searchHints: ["# All Types Fixture", "announce", "Print a single fixture line and stop."],
     },
   };
-  // mtime-derived observed_at hint — pinned by shape below, not in EXPECTED_FOLDS.
-  const MEMORY_REL = "memories/all-types-memory.md";
-
   // Chunk 5 M-b: recognize carries the FULL metadata surface (P1/P2/P4 + the
   // contributor fold). The contributor-EXCLUSIVE fields (searchHints/toc/
   // parameters) are what this test pins verbatim; the full-surface parity
@@ -222,15 +220,6 @@ describe("akm adapter — recognize folds the index-time metadata contributors (
       expect(doc, `recognize null for ${ctx.relPath}`).not.toBeNull();
       if (!doc) continue;
       const extras = (doc.documentJson ?? {}) as Record<string, unknown>;
-
-      if (ctx.relPath === MEMORY_REL) {
-        expect(doc.searchHints, "memory searchHints").toHaveLength(1);
-        expect(doc.searchHints?.[0]).toMatch(/^observed_at:\d{4}-\d{2}-\d{2}$/);
-        expect(extras.toc, "memory toc").toBeUndefined();
-        expect(extras.parameters, "memory parameters").toBeUndefined();
-        asserted += 1;
-        continue;
-      }
 
       const expected = EXPECTED_FOLDS[ctx.relPath];
       expect(expected, `no expected fold pinned for ${ctx.relPath}`).toBeDefined();
