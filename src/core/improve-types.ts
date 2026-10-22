@@ -612,7 +612,14 @@ export interface ExtractedSessionResult {
   sessionId: string;
   harness: string;
   candidateCount: number;
+  /** IDs of successfully persisted proposals only; previews never appear here. */
   proposalIds: string[];
+  /** Eligible candidate refs inspected by a dry run, without creating proposals. */
+  previewRefs?: string[];
+  /** Candidates held by the improve ledger. Absent on older results. */
+  blockedCount?: number;
+  /** Proposal writes that failed. Absent on older results. */
+  failedCount?: number;
   /** When candidates was empty, the LLM's explanation. */
   rationaleIfEmpty?: string;
   /** Pre-filter stats for the session. */
@@ -691,7 +698,9 @@ export interface AkmExtractResult {
   type: string;
   sessionsProcessed: number;
   sessionsSkipped: number;
+  /** Successfully persisted proposals (including in dry runs, where this is zero). */
   candidatesCreated: number;
+  /** Successfully persisted proposal IDs only. */
   proposals: string[];
   sessions: ExtractedSessionResult[];
   warnings: string[];

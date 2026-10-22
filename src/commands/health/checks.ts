@@ -1486,20 +1486,28 @@ export const HEALTH_CHECKS: readonly HealthCheck[] = [
       }
 
       // `read_failed` / `exception` land in the ledger as `failed`, not `skipped`.
-      const nothingHarvested = rows.every((row) => row.outcome === "skipped" || row.outcome === "failed");
-      const knownSkipReasons = [...new Set(rows.flatMap((row) => (row.skipReason ? [row.skipReason] : [])))].sort();
-      const allKnownReasonsAreInfra = knownSkipReasons.every((reason) =>
-        (EXTRACT_INFRASTRUCTURE_SKIP_REASONS as readonly string[]).includes(reason),
+      const nothingHarvested = rows.every((row) =>
+        ["skipped", "failed", "proposal_write_failed"].includes(row.outcome),
+      );
+      const reasonFor = (row: (typeof rows)[number]) =>
+        row.outcome === "proposal_write_failed" ? row.outcome : row.skipReason;
+      const knownSkipReasons = [...new Set(rows.map(reasonFor).filter((reason) => reason !== null))].sort();
+      const allKnownReasonsAreInfra = knownSkipReasons.every(
+        (reason) =>
+          reason === "proposal_write_failed" ||
+          (EXTRACT_INFRASTRUCTURE_SKIP_REASONS as readonly string[]).includes(reason),
       );
       if (nothingHarvested && allKnownReasonsAreInfra) {
         const reasonClauses = knownSkipReasons.map((reason) => {
           const engines = [
-            ...new Set(rows.flatMap((row) => (row.skipReason === reason && row.engine ? [row.engine] : []))),
+            ...new Set(rows.flatMap((row) => (reasonFor(row) === reason && row.engine ? [row.engine] : []))),
           ].sort();
           return engines.length > 0 ? `${reason} (engine ${engines.map((e) => `"${e}"`).join(", ")})` : reason;
         });
-        if (rows.some((row) => row.skipReason === null)) reasonClauses.push("unknown reason");
-        const verb = rows.some((row) => row.outcome === "failed") ? "skipped or failed" : "skipped";
+        if (rows.some((row) => reasonFor(row) === null)) reasonClauses.push("unknown reason");
+        const verb = rows.some((row) => row.outcome === "failed" || row.outcome === "proposal_write_failed")
+          ? "skipped or failed"
+          : "skipped";
         return {
           ...base,
           status: "warn",

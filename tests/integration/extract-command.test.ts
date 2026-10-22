@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { akmHealth } from "../../src/commands/health";
 import {
   akmExtract,
   countNewExtractCandidates,
@@ -15,13 +16,14 @@ import {
   resolveStandaloneExtractPlan,
 } from "../../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
+import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
 import { listProposals } from "../../src/commands/proposal/repository";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
 import { ConfigError, UsageError } from "../../src/core/errors";
-import { readEvents } from "../../src/core/events";
+import { appendEvent, readEvents } from "../../src/core/events";
 import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
 import { detectTruncatedDescription } from "../../src/core/text-truncation";
@@ -35,9 +37,11 @@ import type {
   SessionSummary,
 } from "../../src/integrations/session-logs/types";
 import {
+  getExtractedSession,
   getExtractedSessionsMap,
   upsertExtractedSession,
 } from "../../src/storage/repositories/extract-sessions-repository";
+import { recordImproveLedger } from "../../src/storage/repositories/improve-ledger-repository";
 import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { asLlmRunner } from "../_helpers/llm-runner";
@@ -752,6 +756,262 @@ describe("akmExtract — Codex sessions", () => {
   });
 });
 
+describe("akmExtract — accounting matches persisted effects (#1212)", () => {
+  const candidate = (name: string) => ({
+    type: "memory",
+    name,
+    description: "Deployment requires a working VPN connection before starting.",
+    body: "Connect the corporate VPN before running deploy.sh, which otherwise stalls while pushing to stage.",
+    confidence: 0.9,
+    evidence: "The session demonstrated the deployment failure without VPN.",
+  });
+
+  for (const mode of ["preview", "blocked", "mixed", "failed"] as const) {
+    test(`${mode}: event, session result, tracking and proposal rows reconcile`, async () => {
+      const stash = makeStashDir();
+      const session = fakeSession(`accounting-${mode}`, Date.now() - 60_000);
+      const config = configEnabled(stash);
+      // Exercise dry-run's asset suppression even when indexing is enabled.
+      const extractProcess = config.improve?.strategies?.extract?.processes?.extract;
+      if (mode === "preview" && extractProcess) extractProcess.indexSessions = true;
+      const db = openStateDatabase();
+      try {
+        recordImproveLedger(db, {
+          stashDir: stash,
+          ref: "memories/held",
+          source: "extract",
+          outcome: "rejected",
+          at: new Date().toISOString(),
+        });
+        // A real failed database write, rather than a mocked mint function.
+        db.exec(`CREATE TRIGGER fail_extract_proposal BEFORE INSERT ON proposals
+          WHEN NEW.ref LIKE '%/broken' BEGIN SELECT RAISE(ABORT, 'scripted write failure'); END`);
+        const snapshot = () => ({
+          ledger: db.prepare("SELECT * FROM improve_ledger ORDER BY ref").all(),
+          seen: db.prepare("SELECT * FROM extract_sessions_seen").all(),
+          proposals: db.prepare("SELECT * FROM proposals").all(),
+          assets: fs.readdirSync(stash, { recursive: true }).sort(),
+        });
+        const before = snapshot();
+        const names = mode === "blocked" ? ["held"] : mode === "failed" ? ["broken"] : ["held", "broken", "saved"];
+        const result = await akmExtract({
+          type: "claude",
+          stashDir: stash,
+          config,
+          sessionId: session.ref.sessionId,
+          harnesses: [makeFakeHarness([session])],
+          stateDb: db,
+          eventsCtx: { db },
+          dryRun: mode === "preview",
+          chat: async () => JSON.stringify({ candidates: names.map(candidate) }),
+          generateSessionSummary: async () => {
+            throw new Error("preview must never summarize/write assets");
+          },
+        });
+        const persisted = mode === "mixed" ? 1 : 0;
+        const previews = mode === "preview" ? 2 : 0;
+        const blocked = mode === "failed" ? 0 : 1;
+        const failed = mode === "mixed" || mode === "failed" ? 1 : 0;
+        const outcome =
+          mode === "preview"
+            ? "candidates_previewed"
+            : mode === "blocked"
+              ? "candidates_blocked"
+              : mode === "mixed"
+                ? "candidates_queued"
+                : "proposal_write_failed";
+        const rows = listProposals(stash, {}, { dbPath: getStateDbPath() });
+        const event = readEvents({ type: "extract_invoked" }, { db }).events.at(-1);
+        expect(rows).toHaveLength(persisted);
+        expect(result.candidatesCreated).toBe(persisted);
+        expect(result.proposals).toEqual(rows.map((row) => row.id));
+        expect(result.sessions[0]).toMatchObject({
+          candidateCount: names.length,
+          proposalIds: result.proposals,
+          previewRefs: mode === "preview" ? ["memories/broken", "memories/saved"] : [],
+          blockedCount: blocked,
+          failedCount: failed,
+        });
+        expect(event?.metadata).toMatchObject({
+          dryRun: mode === "preview",
+          outcome,
+          candidateCount: names.length,
+          proposalCount: persisted,
+          previewCount: previews,
+          blockedCount: blocked,
+          failedCount: failed,
+        });
+        if (failed) expect(result.sessions[0]?.warnings.join(" ")).toContain("scripted write failure");
+        const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+        if (mode === "preview") {
+          expect(snapshot()).toEqual(before);
+          expect(seen).toBeUndefined();
+          expect(readEvents({}, { db }).events.map((e) => e.eventType)).toEqual(["extract_invoked"]);
+        } else {
+          expect(seen).toMatchObject({ outcome, candidate_count: names.length, proposal_count: persisted });
+          expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({
+            dryRun: false,
+            previewCount: 0,
+            blockedCount: blocked,
+            failedCount: failed,
+          });
+        }
+        const health = await akmHealth({ since: "7d" });
+        const advisory = health.advisories.find((check) => check.name === "session-extraction");
+        expect(advisory?.status).toBe(mode === "preview" ? "unknown" : mode === "failed" ? "warn" : "pass");
+        if (mode !== "preview") expect(JSON.stringify(advisory?.evidence)).toContain(outcome);
+        const metrics = await akmMetrics();
+        expect(metrics.proposals.byStatus.pending ?? 0).toBe(persisted);
+      } finally {
+        db.close();
+      }
+    });
+  }
+
+  for (const dryRun of [false, true]) {
+    for (const mode of ["empty", "malformed", "unavailable"] as const) {
+      test(`final: ${mode}, dryRun=${dryRun} stays distinct from preview/queue success`, async () => {
+        const stash = makeStashDir();
+        const session = fakeSession(`final-${mode}`, Date.now() - 60_000);
+        const db = openStateDatabase();
+        try {
+          const result = await akmExtract({
+            type: "claude",
+            stashDir: stash,
+            config: configEnabled(stash),
+            harnesses: [makeFakeHarness([session])],
+            stateDb: db,
+            eventsCtx: { db },
+            dryRun,
+            chat: async () => {
+              if (mode === "unavailable") throw new Error("llm endpoint unreachable");
+              return mode === "empty"
+                ? JSON.stringify({ candidates: [], rationale_if_empty: "Nothing durable." })
+                : "not JSON";
+            },
+          });
+          expect(result.proposals).toEqual([]);
+          expect(result.candidatesCreated).toBe(0);
+          expect(listProposals(stash, {})).toEqual([]);
+          expect(db.prepare("SELECT * FROM improve_ledger").all()).toEqual([]);
+          expect(fs.readdirSync(stash, { recursive: true }).sort()).toEqual(["knowledge", "lessons", "memories"]);
+          const events = readEvents({ type: "extract_invoked" }, { db }).events;
+          if (mode === "empty") {
+            expect(result.sessions[0]?.previewRefs).toEqual([]);
+            expect(events).toHaveLength(1);
+            expect(events[0]?.metadata).toMatchObject({
+              dryRun,
+              outcome: "no_candidates",
+              candidateCount: 0,
+              proposalCount: 0,
+              previewCount: 0,
+              blockedCount: 0,
+              failedCount: 0,
+              rationale: "Nothing durable.",
+            });
+          } else {
+            expect(result.sessions[0]?.skipReason).toBe(
+              mode === "malformed" ? "malformed_model_output" : "llm_unavailable",
+            );
+            expect(events).toEqual([]);
+          }
+          const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+          if (dryRun) expect(seen).toBeUndefined();
+          else {
+            expect(seen?.outcome).toBe(
+              mode === "empty" ? "no_candidates" : mode === "malformed" ? "failed" : "skipped",
+            );
+            expect(seen?.proposal_count).toBe(0);
+            if (mode !== "empty") expect(seen?.content_hash).toBeNull();
+          }
+        } finally {
+          db.close();
+        }
+      });
+    }
+  }
+
+  test("final: multi-session previews preserve legacy records and never enter proposal totals", async () => {
+    const stash = makeStashDir();
+    const sessions = [fakeSession("legacy", Date.now() - 60_000), fakeSession("fresh", Date.now() - 30_000)];
+    const db = openStateDatabase();
+    try {
+      appendEvent(
+        {
+          eventType: "extract_invoked",
+          metadata: {
+            sessionId: "legacy",
+            outcome: "candidates_queued",
+            candidateCount: 2,
+            proposalCount: 2,
+          },
+        },
+        { db },
+      );
+      upsertExtractedSession(db, {
+        harness: "claude",
+        sessionId: "legacy",
+        processedAt: new Date().toISOString(),
+        outcome: "candidates_queued",
+        candidateCount: 2,
+        proposalCount: 2,
+        contentHash: null,
+      });
+      const prior = getExtractedSession(db, "claude", "legacy");
+      recordImproveLedger(db, {
+        stashDir: stash,
+        ref: "memories/held",
+        source: "extract",
+        outcome: "rejected",
+        at: new Date().toISOString(),
+      });
+      const ledgerBefore = db.prepare("SELECT * FROM improve_ledger").all();
+      const result = await akmExtract({
+        type: "claude",
+        stashDir: stash,
+        config: configEnabled(stash),
+        harnesses: [makeFakeHarness(sessions)],
+        stateDb: db,
+        eventsCtx: { db },
+        dryRun: true,
+        chat: async (_config, messages) =>
+          JSON.stringify({
+            candidates: messages[0]?.content.includes("legacy")
+              ? [candidate("held")]
+              : [candidate("fresh-a"), candidate("fresh-b")],
+          }),
+      });
+      expect(result.sessionsProcessed).toBe(2);
+      expect(result.proposals).toEqual([]);
+      expect(result.candidatesCreated).toBe(0);
+      expect(result.sessions.map((row) => row.proposalIds)).toEqual([[], []]);
+      expect(result.sessions.map((row) => row.previewRefs)).toEqual([[], ["memories/fresh-a", "memories/fresh-b"]]);
+      const events = readEvents({ type: "extract_invoked" }, { db }).events;
+      expect(events[0]?.metadata).toEqual({
+        sessionId: "legacy",
+        outcome: "candidates_queued",
+        candidateCount: 2,
+        proposalCount: 2,
+      });
+      expect(events[0]?.metadata?.dryRun).toBeUndefined();
+      expect(
+        events
+          .slice(1)
+          .map((event) => [event.metadata?.outcome, event.metadata?.proposalCount, event.metadata?.previewCount]),
+      ).toEqual([
+        ["candidates_blocked", 0, 0],
+        ["candidates_previewed", 0, 2],
+      ]);
+      expect(getExtractedSession(db, "claude", "legacy")).toEqual(prior);
+      expect(getExtractedSession(db, "claude", "fresh")).toBeUndefined();
+      expect(db.prepare("SELECT * FROM improve_ledger").all()).toEqual(ledgerBefore);
+      expect((await akmMetrics()).proposals.byStatus.pending ?? 0).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("akmExtract — candidate → proposal routing", () => {
   test("creates one proposal per valid candidate, with merged body frontmatter", async () => {
     const stash = makeStashDir();
@@ -957,8 +1217,17 @@ describe("akmExtract — candidate → proposal routing", () => {
     });
 
     expect(result.dryRun).toBe(true);
-    expect(result.candidatesCreated).toBe(1);
-    expect(result.proposals[0]).toMatch(/^dry-run:memories\/fact-1$/);
+    expect(result.candidatesCreated).toBe(0);
+    expect(result.proposals).toEqual([]);
+    expect(result.sessions[0]?.proposalIds).toEqual([]);
+    expect(result.sessions[0]?.previewRefs).toEqual(["memories/fact-1"]);
+    expect(readEvents({ type: "extract_invoked" }).events.at(-1)?.metadata).toMatchObject({
+      dryRun: true,
+      outcome: "candidates_previewed",
+      candidateCount: 1,
+      previewCount: 1,
+      proposalCount: 0,
+    });
     // No actual proposal queued
     expect(listProposals(stash, { status: "pending" }).filter((p) => p.source === "extract")).toEqual([]);
   });
