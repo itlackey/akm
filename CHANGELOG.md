@@ -40,6 +40,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   instead of being skipped as `already_extracted` (#1212). Its seen-session row
   keeps a null content hash, as an unavailable model does; candidates that were
   written are held by their ledger window and are not proposed twice.
+- A retried or re-extracted session no longer proposes a candidate again after
+  its proposal from that same session was accepted (#1224). The candidate is
+  counted in `blockedCount` with an `accepted from this session` warning. The
+  same ref extracted from a different session is still proposed as an update.
+- A session whose only failed proposal writes were refused by the validator
+  (`INVALID_PROPOSAL`) now records its content hash, so it is not sent to the
+  model again on every run until its content changes (#1224). Other write
+  failures, such as a busy state.db, still leave the hash null so the session is
+  retried. The seen-session row records the refusals as
+  `failedRejectedCount`. The outcome is still `proposal_write_failed`, and
+  `akm health` still warns when every write failed.
 
 - `processes.memoryInference.minPendingCount` no longer counts a pending parent whose
   current effective input already has a cached no-change decision, so a

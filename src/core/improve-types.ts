@@ -620,6 +620,8 @@ export interface ExtractedSessionResult {
   blockedCount?: number;
   /** Proposal writes that failed. Absent on older results. */
   failedCount?: number;
+  /** Of `failedCount`, writes the proposal validator refused (`INVALID_PROPOSAL`). Absent on older results. */
+  failedRejectedCount?: number;
   /** When candidates was empty, the LLM's explanation. */
   rationaleIfEmpty?: string;
   /** Pre-filter stats for the session. */
