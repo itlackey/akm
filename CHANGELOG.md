@@ -51,14 +51,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A derived memory now records when and by what it was generated as `generated:
   {by, at}` (the existing proposal-stamp shape; `at` is the write instant, `by` is
   `akm/<version>`, neither seen by the model), and keeps its parent's explicit
-  `observed_at`, `evidence`, `evidenceSources` and `provenance.sources` as written
-  (#1210). `updated` stays the child's own write date. A derived memory without a
-  source observation date no longer gets an `observed_at:` search hint taken from
-  its file mtime, and nothing is stamped as `verified`. Existing children are not
-  rewritten. The historical date lives in the child's frontmatter (`observed_at`,
-  indexed as an `observed_at:` hint); the model is not required to restate it in
-  the description or body. `show` now also projects `provenance` when it has
-  `generatedAt` or `sources`, not only when the note has `evidence`.
+  `observed`, `evidence`, `evidenceSources` and `provenance.sources` as written
+  (#1210). `updated` stays the child's own write date, and nothing is stamped as
+  `verified`. Existing children are not rewritten. The historical date lives in the
+  child's frontmatter (`observed`, indexed as an `observed:` hint); the model is not
+  required to restate it in the description or body. `show` now also projects
+  `provenance` when it has `generatedAt` or `sources`, not only when the note has
+  `evidence`.
 
 ### Fixed
 
