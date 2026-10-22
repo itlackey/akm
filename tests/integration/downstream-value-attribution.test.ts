@@ -86,7 +86,7 @@ function writeIndexFixture(): void {
     storage.stashDir,
     "memories",
     "tag-only",
-    "description: tagonlyneedle Restart remains unverified; staging only.\ntags: [manual]",
+    "description: tagonlyneedle Restart remains unverified; staging only.",
     "Parent body.",
   );
   writeAsset(
@@ -101,7 +101,7 @@ function writeIndexFixture(): void {
     storage.stashDir,
     "memories",
     "parent.derived",
-    "inferred: true\nsource: memories/parent\ndescription: direct-child-needle",
+    "inferred: true\nsource: memories/parent\ndescription: direct-child-needle\ntags: [derived-insight]",
     "Primary derived body.",
   );
   writeAsset(
@@ -325,13 +325,13 @@ test("real authored qualifications and tags survive search and curate without in
 });
 
 test("tag-only fallback is attributed only by full search; curate never emits tags", async () => {
-  // Existing indexes may contain empty tags. Replay that supported persisted
-  // shape; the current indexer normally fills path tags even without authored tags.
+  // The real indexer supplies filename tokens when authored tags are absent.
   const db = openExistingDatabase(getDbPath());
-  db.prepare("UPDATE entries SET document_json = json_set(document_json, '$.tags', json('[]')) WHERE item_ref = ?").run(
-    "stash//memories/tag-only",
-  );
+  const row = db.prepare("SELECT document_json FROM entries WHERE item_ref = ?").get("stash//memories/tag-only") as {
+    document_json: string;
+  };
   db.close();
+  expect(JSON.parse(row.document_json).tags).toEqual(["tag", "only"]);
   for (const detail of ["brief", "normal", "agent", "full"] as const) {
     clearUsageRows();
     const result = await runCliCapture(["search", "tagonlyneedle", "--detail", detail, "--format", "json"]);
@@ -370,7 +370,7 @@ test("tag-only fallback is attributed only by full search; curate never emits ta
   });
 });
 
-test("filename-generated parent description benefits from indexed child while path tags stay intact", async () => {
+test("filename-generated parent description and tags fall back independently to the indexed child", async () => {
   const db = openExistingDatabase(getDbPath());
   const row = db.prepare("SELECT document_json FROM entries WHERE item_ref = ?").get("stash//memories/parent") as {
     document_json: string;
@@ -379,9 +379,44 @@ test("filename-generated parent description benefits from indexed child while pa
   const indexed = JSON.parse(row.document_json);
   expect(indexed.source).toBe("filename");
   expect(indexed.description.trim()).not.toBe("");
+  expect(indexed.tags).toEqual(["parent"]);
   const result = await akmSearch({ query: "surface-parent-needle", skipLogging: true });
   const hit = result.hits.find((candidate) => candidate.name === "parent");
   expect(hit?.description).toBe("direct-child-needle");
-  expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(indexed.tags);
-  expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(["description"]);
+  expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(["derived insight"]);
+  expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(["description", "tags"]);
 });
+
+for (const authoredTags of [undefined, ["auth"], ["manual", "auth"]]) {
+  test(`real nested path tags permit fallback unless authored tags add information: ${JSON.stringify(authoredTags)}`, async () => {
+    const name = "Project-One/Ops.v2/auth.vpn_note";
+    writeAsset(
+      storage.stashDir,
+      "memories",
+      name,
+      `description: nestedtagneedle Staging only.${authoredTags ? `\ntags: ${JSON.stringify(authoredTags)}` : ""}`,
+      "Parent body.",
+    );
+    writeAsset(
+      storage.stashDir,
+      "memories",
+      `${name}.derived`,
+      `source: memories/${name}\ndescription: Stronger child claim.\ntags: [derived-tag]`,
+      "Child body.",
+    );
+    await akmIndex({ stashDir: storage.stashDir, full: true });
+    const result = await akmSearch({ query: "nestedtagneedle", skipLogging: true });
+    const hit = result.hits.find((candidate) => candidate.name === name);
+    expect(hit?.description).toBe("nestedtagneedle Staging only.");
+    const preservesTags = authoredTags?.includes("manual");
+    expect(hit && "tags" in hit ? hit.tags : undefined).toEqual(
+      preservesTags
+        ? ["manual", "auth", "project", "one", "ops", "v2"]
+        : ["derived tag", "project", "one", "ops", "v2"],
+    );
+    expect(hit && "expandTo" in hit ? hit.expandTo : undefined).toBe(`memories/${name}.derived`);
+    expect(hit && getSearchHitAttribution(hit)?.memoryInference?.surfaceFields).toEqual(
+      preservesTags ? undefined : ["tags"],
+    );
+  });
+}

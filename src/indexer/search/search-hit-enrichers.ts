@@ -2,13 +2,12 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { parseBundleRef } from "../../core/asset/asset-ref";
 import { displayRef } from "../../core/asset/resolve-ref";
 import { presentationFor } from "../../core/type-presentation";
 import type { SourceSearchHit } from "../../sources/types";
 import type { Database } from "../../storage/database";
 import { getDerivedForParent, getItemRefById } from "../../storage/repositories/index-entries-repository";
-import type { IndexDocument } from "../passes/metadata";
+import { extractDirTagsFromName, extractTagsFromPath, type IndexDocument } from "../passes/metadata";
 import { getRenderer } from "../walk/file-context";
 import { attachSearchHitAttribution } from "./search-attribution";
 
@@ -16,6 +15,7 @@ export interface SearchHitContext {
   type: string;
   stashDir: string;
   bundleId: string;
+  defaultBundleId?: string;
   /** Existing indexed metadata provenance; filename text is only a fallback. */
   descriptionSource?: IndexDocument["source"];
   /**
@@ -62,8 +62,8 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, ctx: SearchHit
   const derived = getDerivedForParent(db, `memories/${hit.name}`, ctx.bundleId);
   if (!derived || (ctx.eligible && !ctx.eligible(derived))) return;
 
-  // Fields fall back independently. Preserve authored qualifications and tags;
-  // the index already identifies non-authored filename descriptions.
+  // Fields fall back independently. Preserve authored qualifications and tags
+  // that add information beyond the generated filename/directory tokens.
   const surfaceFields: Array<"description" | "tags"> = [];
   let surfaceDescription: string | undefined;
   if ((!hit.description?.trim() || ctx.descriptionSource === "filename") && derived.entry.description?.trim()) {
@@ -71,12 +71,16 @@ function surfaceDerivedMemory(hit: SourceSearchHit, db: Database, ctx: SearchHit
     surfaceDescription = derived.entry.description;
     surfaceFields.push("description");
   }
-  if (!hit.tags?.some((tag) => tag.trim()) && derived.entry.tags?.some((tag) => tag.trim())) {
+  const generatedTags = new Set([...extractTagsFromPath(`${hit.name}.md`, "."), ...extractDirTagsFromName(hit.name)]);
+  if (
+    !hit.tags?.some((tag) => tag.trim() && !generatedTags.has(tag.trim().toLowerCase())) &&
+    derived.entry.tags?.some((tag) => tag.trim())
+  ) {
     hit.tags = derived.entry.tags;
     surfaceFields.push("tags");
   }
   // Retain the parent's bundle qualification so expansion resolves the same child.
-  hit.expandTo = displayRef({ type: "memory", name: derived.entry.name, bundleId: parseBundleRef(hit.ref).bundle });
+  hit.expandTo = displayRef({ type: "memory", name: derived.entry.name, bundleId: ctx.bundleId }, ctx.defaultBundleId);
   const childRef = getItemRefById(db, derived.id);
   if (childRef && surfaceFields.length > 0) {
     attachSearchHitAttribution(hit, {

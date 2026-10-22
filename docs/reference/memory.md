@@ -73,8 +73,10 @@ sanctioned internal channel that carries a bare parent name, not a public
 [ref](refs.md) — agents never construct it.
 
 Search hits for the parent memory preserve a meaningful authored description
-and populated tags. The derived child's metadata fills missing or whitespace-only
-fields independently; a known filename-generated description also permits fallback.
+and tags that add information beyond filename and directory tokens. The derived
+child's metadata fills missing or whitespace-only fields independently; a known
+filename-generated description or tags consisting only of generated path tokens
+also permit fallback. An authored tag repeating a path token counts as generated.
 An `expandTo: memories/<derived>` field on the hit points at the richer
 derived ref, qualified with the parent's bundle when needed. The parent ref
 itself is preserved on the hit, so existing

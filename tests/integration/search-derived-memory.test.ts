@@ -25,6 +25,8 @@ import {
   copySearchHitAttribution,
   getSearchHitAttribution,
 } from "../../src/indexer/search/search-attribution";
+import { enrichSearchHit } from "../../src/indexer/search/search-hit-enrichers";
+import type { SourceSearchHit } from "../../src/sources/types";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
@@ -180,6 +182,27 @@ function buildFixture(): void {
   } finally {
     closeDatabase(db);
   }
+}
+
+for (const bundleId of ["stash", "team"]) {
+  test(`derived expansion uses bundle identity rather than rendered ref: ${bundleId}`, async () => {
+    const db = openIndexDatabase(":memory:");
+    try {
+      const child = { name: "parent.derived", type: "memory", derivedFrom: "memories/parent" };
+      upsertEntry(
+        db,
+        "/unread/parent.derived.md",
+        child,
+        deriveEntryProvenance({ bundleId, componentId: bundleId, adapterId: "akm" }, "memory", child.name),
+      );
+      const hit: SourceSearchHit = { name: "parent", type: "memory", path: "/unread/parent.md", ref: "wiki:parent" };
+      await enrichSearchHit(hit, { type: "memory", stashDir, bundleId, defaultBundleId: "stash", db });
+      expect(hit.ref).toBe("wiki:parent");
+      expect(hit.expandTo).toBe(`${bundleId === "stash" ? "" : "team//"}memories/parent.derived`);
+    } finally {
+      closeDatabase(db);
+    }
+  });
 }
 
 describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {

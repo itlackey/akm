@@ -96,7 +96,8 @@ export interface SourceSearchHit {
    *
    * Absent when no eligible derived child exists. The child's description
    * and tags fill missing parent fields independently, including a known
-   * filename-generated description. Meaningful parent metadata is preserved.
+   * filename-generated description or tags consisting only of generated path
+   * tokens. Meaningful parent metadata is preserved.
    */
   expandTo?: string;
 }
