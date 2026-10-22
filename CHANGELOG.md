@@ -22,8 +22,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   frontmatter is rewritten: no model call, no regeneration, and the body and
   other metadata keep every byte. A child that already matches is not written.
   Each run reports the count as `scopeSynced`.
+- `akm proposal extract --dry-run` JSON changes shape (#1212): `proposals` and
+  `sessions[].proposalIds` no longer carry synthetic `dry-run:<ref>` entries and
+  are empty in a preview; the eligible refs are in `sessions[].previewRefs`.
+  `proposals`, `candidatesCreated` and `--auto`'s `totalProposals` count only
+  proposals that were actually written. Scripts that read preview refs from
+  `proposals` must read `sessions[].previewRefs` instead.
+- Extraction outcomes follow what was written (#1212). A preview with eligible
+  refs records `candidates_previewed`; a live run that wrote nothing records
+  `candidates_blocked` when the ledger held every candidate and
+  `proposal_write_failed` when writes failed. `candidates_queued` now means at
+  least one proposal was written. `akm health` warns on `proposal_write_failed`.
 
 ### Fixed
+
+- A session whose proposal writes failed is retried on the next extraction run
+  instead of being skipped as `already_extracted` (#1212). Its seen-session row
+  keeps a null content hash, as an unavailable model does; candidates that were
+  written are held by their ledger window and are not proposed twice.
 
 - `processes.memoryInference.minPendingCount` no longer counts a pending parent whose
   current effective input already has a cached no-change decision, so a

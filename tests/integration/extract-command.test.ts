@@ -850,11 +850,11 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
         } else {
           expect(seen).toMatchObject({ outcome, candidate_count: names.length, proposal_count: persisted });
           expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({
-            dryRun: false,
-            previewCount: 0,
             blockedCount: blocked,
             failedCount: failed,
           });
+          // A failed write leaves the hash null so the session is retried; a clean run records it.
+          expect(seen?.content_hash).toBe(failed ? null : (result.sessions[0]?.contentHash ?? "missing"));
         }
         const health = await akmHealth({ since: "7d" });
         const advisory = health.advisories.find((check) => check.name === "session-extraction");
@@ -862,6 +862,34 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
         if (mode !== "preview") expect(JSON.stringify(advisory?.evidence)).toContain(outcome);
         const metrics = await akmMetrics();
         expect(metrics.proposals.byStatus.pending ?? 0).toBe(persisted);
+
+        if (failed) {
+          // The write failure clears; the next run re-extracts the session rather than
+          // skipping it as already extracted, writes the failed candidate, and the
+          // candidate that already persisted is held by its ledger window, not duplicated.
+          db.exec("DROP TRIGGER fail_extract_proposal");
+          const retry = await akmExtract({
+            type: "claude",
+            stashDir: stash,
+            config,
+            sessionId: session.ref.sessionId,
+            harnesses: [makeFakeHarness([session])],
+            stateDb: db,
+            eventsCtx: { db },
+            chat: async () => JSON.stringify({ candidates: names.map(candidate) }),
+          });
+          expect(retry.sessions[0]?.skipReason).toBeUndefined();
+          expect(retry.sessionsProcessed).toBe(1);
+          expect(retry.sessions[0]).toMatchObject({ blockedCount: blocked + persisted, failedCount: 0 });
+          expect(retry.candidatesCreated).toBe(1);
+          const after = listProposals(stash, {}, { dbPath: getStateDbPath() });
+          expect(after.map((row) => row.ref.split("//").pop()).sort()).toEqual(
+            mode === "mixed" ? ["memories/broken", "memories/saved"] : ["memories/broken"],
+          );
+          const retried = getExtractedSession(db, "claude", session.ref.sessionId);
+          expect(retried).toMatchObject({ outcome: "candidates_queued", proposal_count: 1 });
+          expect(retried?.content_hash).toBe(retry.sessions[0]?.contentHash ?? "missing");
+        }
       } finally {
         db.close();
       }

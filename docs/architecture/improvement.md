@@ -482,6 +482,9 @@ The existing `extract_invoked` event records `dryRun`, `candidateCount`,
 `candidates_queued` requires at least one successful write; zero-write runs use
 `candidates_blocked` or `proposal_write_failed`. A dry run with eligible refs
 uses `candidates_previewed`; an empty model result remains `no_candidates`.
+A session with any failed write keeps a null content hash in its seen-session
+row, so the next run re-extracts it: candidates that persisted are held by
+their `proposed` ledger window, and only the failed ones are written again.
 Unavailable or malformed model output retains its distinct skip/failure result.
 Older events without `dryRun` have unknown preview status; their historical
 `candidates_queued` label cannot establish persistence. Proposal metrics use

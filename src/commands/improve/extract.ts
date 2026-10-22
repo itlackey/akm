@@ -914,7 +914,8 @@ async function runExtractSessionLoop(
 /**
  * Persist a session's outcome in the seen-session table. A session skipped as
  * already extracted or locked is not rewritten; one that failed for a
- * transient reason keeps a null hash so it is retried.
+ * transient reason, or had a proposal write fail, keeps a null hash so it is
+ * retried.
  */
 function recordSessionOutcome(
   stateDb: Database | undefined,
@@ -942,12 +943,13 @@ function recordSessionOutcome(
       proposalCount: result.proposalIds.length,
       rationale: result.rationaleIfEmpty ?? null,
       sourceRun,
-      contentHash: ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason)
-        ? null
-        : (result.contentHash ?? null),
+      // A failed proposal write keeps a null hash too, so the next run re-extracts the
+      // session; the ledger's `proposed` window blocks the candidates that did persist.
+      contentHash:
+        ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason) || result.failedCount
+          ? null
+          : (result.contentHash ?? null),
       metadata: {
-        dryRun: false,
-        previewCount: 0,
         blockedCount: result.blockedCount ?? 0,
         failedCount: result.failedCount ?? 0,
         preFilterInputCount: result.preFilter.inputCount,
