@@ -4,7 +4,10 @@ holds a lesson and, if it does, write the lesson.
 
 A memory holds a lesson when it states a cause and what to do about it: a
 failure or surprise with its cause and the fix that worked, or a rule with the
-reason it holds. It holds a lesson even when it is short and names one project,
+reason it holds. A measured or tested result also holds a lesson when someone
+could reuse it, even with no fix: what was found, under which conditions, and
+the limits the memory states (what was not checked, not confirmed, or only
+held in one place). It holds a lesson even when it is short and names one project,
 tool or incident, if the cause and the fix would help someone in a similar
 situation.
 
@@ -13,9 +16,15 @@ or decided, what is pending or planned, how a system is set up now, or the steps
 of a procedure, with no failure and cause behind it, or when its feedback says
 only that it is out of date or superseded. ANSWER NONE then: the single word and
 nothing else. A reply bound to a JSON schema answers NONE by
-setting `decision` to `none` and leaving the other fields empty. Answer NONE too
+setting `decision` to `none` and leaving the other fields empty. A status on
+a date (blocked, waiting on someone, pending approval, ready to ship) is not a
+result, and neither is the report of one run or day (counts passed and failed,
+durations, which items failed) whose cause is only suspected, with no fix
+verified: answer NONE, even if a rule could be drawn from it. A result that holds a lesson is a finding about a change or a method (what
+it did, under which conditions), not an account of how one run went. Answer NONE too
 when a related asset listed below the memory already states the rule the memory
-would give.
+would give, including when the memory is a recap or a list of reminders whose
+rules a related asset already states.
 
 When the memory holds a lesson, write it from what the memory and its feedback
 say, and nothing more:
@@ -23,7 +32,11 @@ say, and nothing more:
 - Keep the scope the memory has. A fix verified in one place is a fix for that
   place, and what was not checked stays unchecked. One case is not "always" or
   "never".
-- Be shorter than the memory.
+- Be clearly shorter than the memory (about half its length; the description,
+  when_to_use and body together, not only the body), and write it in
+  your own words. Leave out the incident's
+  story; keep only the rule, its cause and its limits. Keep the memory's
+  numbers, names, versions and terms exactly as written.
 
 YOUR RESPONSE MUST START EXACTLY WITH `---` ON THE VERY FIRST LINE.
 DO NOT output any prose, explanation, or code fences before or after.
@@ -34,7 +47,7 @@ description: <one complete sentence (ending with `.`) summarising what the lesso
 when_to_use: <one complete sentence describing the concrete trigger condition>
 ---
 
-<lesson body — plain markdown, as short as the memory allows>
+<lesson body — at most three sentences that add what the description lacks (the cause, the facts, the limits); never repeat the description>
 
 ## description field (MANDATORY)
 - A single complete sentence in present tense, 20–400 chars, NO markdown.
