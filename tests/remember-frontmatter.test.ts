@@ -425,6 +425,18 @@ describe("memory metadata fold", () => {
     expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  test("a derived memory without observed_at gets no mtime hint, a plain one still does", async () => {
+    const derived = writeTmpMemory("---\ninferred: true\nsource: memories/x\n---\nDerived\n");
+    const derivedEntry: IndexDocument = { name: "test-memory", type: "memory" };
+    await applyMemoryMetadata(derivedEntry, derived.stashRoot, derived.filePath);
+    expect((derivedEntry.searchHints ?? []).some((h) => h.startsWith("observed_at:"))).toBe(false);
+
+    const plain = writeTmpMemory("---\ntags: [ops]\n---\nPlain\n");
+    const plainEntry: IndexDocument = { name: "test-memory", type: "memory" };
+    await applyMemoryMetadata(plainEntry, plain.stashRoot, plain.filePath);
+    expect((plainEntry.searchHints ?? []).some((h) => h.startsWith("observed_at:"))).toBe(true);
+  });
+
   test("works for bare memory with no frontmatter (no crash)", async () => {
     const { filePath, stashRoot } = writeTmpMemory("Just a plain memory without any frontmatter.\n");
 

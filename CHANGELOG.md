@@ -40,7 +40,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (#1210). `updated` stays the child's own write date. A derived memory without a
   source observation date no longer gets an `observed_at:` search hint taken from
   its file mtime, and nothing is stamped as `verified`. Existing children are not
-  rewritten.
+  rewritten. The historical date lives in the child's frontmatter (`observed_at`,
+  indexed as an `observed_at:` hint); the model is not required to restate it in
+  the description or body. `show` now also projects `provenance` when it has
+  `generatedAt` or `sources`, not only when the note has `evidence`.
 
 ### Fixed
 

@@ -119,6 +119,22 @@ test("an existing unscoped child of a scoped parent gets the parent's scope and 
   expect((await run()).scopeSynced).toBe(0);
 });
 
+test("syncing the scope of a child with generation provenance keeps its generated, observed_at and updated", async () => {
+  writeParent({ scope_user: "alice" });
+  const provenance = {
+    generated: { by: "akm/0.10.0", at: "2026-10-21T09:30:00.000Z" },
+    observed_at: "2026-06-14",
+    updated: "2026-10-21",
+    evidence: "No completion event.",
+    evidenceSources: ["sessions/claude/lab"],
+  };
+  const child = writeChild(provenance);
+  expect((await run()).scopeSynced).toBe(1);
+  const data = parseFrontmatter(fs.readFileSync(child, "utf8")).data;
+  expect(data).toMatchObject(provenance);
+  expect(childScope(child)).toEqual({ user: "alice" });
+});
+
 test("a later parent scope edit propagates to the child, including removal", async () => {
   const parent = writeParent({ scope_user: "alice" });
   const child = writeChild({ scope_user: "alice" });

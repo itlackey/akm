@@ -17,6 +17,7 @@ import { akmIndex } from "../../src/indexer/indexer";
 import { runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
 import { applyProvenanceFrontmatter, type IndexDocument } from "../../src/indexer/passes/metadata";
 import { _setChatCompletionForTests } from "../../src/llm/client";
+import { formatShowPlain } from "../../src/output/text/show-format";
 import { closeDatabase, openExistingDatabase } from "../../src/storage/repositories/index-connection";
 import { pkgVersion } from "../../src/version";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
@@ -167,6 +168,12 @@ test("a source with no evidence or references leaves the child without invented 
   const { child } = await infer();
   for (const key of ["evidence", "evidenceSources", "provenance", "verified", "observed_at"])
     expect(child.data[key]).toBeUndefined();
+  // Generation alone is enough for `show` to project provenance, without evidence.
+  await indexedChild();
+  const shown = await akmShowUnified({ ref: "memories/tunnel.derived", skipLogging: true });
+  expect(shown.evidence).toBeUndefined();
+  expect(shown.provenance).toEqual({ generatedBy: `akm/${pkgVersion}`, generatedAt: NOW });
+  expect(formatShowPlain({ ...shown }, "full")).toContain(`provenance: ${JSON.stringify(shown.provenance)}`);
 });
 
 test("source qualifications reach the model and the child keeps them with its provenance through file, index and show", async () => {

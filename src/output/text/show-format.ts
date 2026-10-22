@@ -32,7 +32,7 @@ export function formatShowPlain(r: Record<string, unknown>, detail: DetailLevel)
   // Evidence is captured text: keep it on one line so it cannot forge other fields.
   if (r.evidence) lines.push(`evidence: ${String(r.evidence).replace(/\s+/g, " ")}`);
   if (Array.isArray(r.evidenceSources)) lines.push(`evidenceSources: ${r.evidenceSources.join(", ")}`);
-  if (r.evidence && r.provenance) lines.push(`provenance: ${JSON.stringify(r.provenance)}`);
+  if (r.provenance) lines.push(`provenance: ${JSON.stringify(r.provenance)}`);
   if (r.workflowTitle) lines.push(`workflowTitle: ${String(r.workflowTitle)}`);
   if (r.agent) lines.push(`agent: ${String(r.agent)}`);
   if (Array.isArray(r.parameters) && r.parameters.length > 0) lines.push(`parameters: ${r.parameters.join(", ")}`);
