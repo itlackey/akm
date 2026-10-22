@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261011] - 2026-10-22
+
 ### Changed
 
 - Date-valued frontmatter keys lose the `_at` suffix and use bare names like
