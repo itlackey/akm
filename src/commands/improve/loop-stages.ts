@@ -17,7 +17,7 @@ import { withStateDb } from "../../core/state-db";
 import { info } from "../../core/warn";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import {
-  collectPendingMemories,
+  countPendingMemoriesNeedingDecision,
   type MemoryInferenceResult,
   runMemoryInferencePass,
 } from "../../indexer/passes/memory-inference";
@@ -610,7 +610,7 @@ export async function runMemoryInferenceMaintenancePass(
   }
   const minPendingCount = settings?.minPendingCount;
   if (primaryStashDir && minPendingCount !== undefined && minPendingCount > 0) {
-    const pending = collectPendingMemories(primaryStashDir).length;
+    const pending = countPendingMemoriesNeedingDecision(primaryStashDir, dbCell.current);
     if (pending < minPendingCount) {
       info(`[improve] memory inference skipped (${pending} pending < minPendingCount ${minPendingCount})`);
       return { durationMs: 0, warnings: [] };

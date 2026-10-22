@@ -34,7 +34,7 @@ import { resolveWorkingStashTarget, resolveWritable, resolveWriteTarget } from "
 import { ensureIndex } from "../../indexer/ensure-index";
 import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { akmIndex } from "../../indexer/indexer";
-import { collectPendingMemories } from "../../indexer/passes/memory-inference";
+import { countPendingMemoriesNeedingDecision } from "../../indexer/passes/memory-inference";
 import { resolveEntryContentDir, resolveSourceEntries } from "../../indexer/search/search-source";
 import { collectEngineCredentialValues } from "../../integrations/agent/engine-resolution";
 import { installLlmUsagePersistence } from "../../llm/usage-persist";
@@ -48,6 +48,7 @@ import {
 } from "../../sources/providers/git";
 import type { Database } from "../../storage/database";
 import { closeDatabase, openExistingDatabase } from "../../storage/repositories/index-connection";
+import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryCount } from "../../storage/repositories/index-entries-repository";
 import { openSqliteReadSnapshot, SqliteReadSnapshotUnavailableError } from "../../storage/sqlite-read-snapshot";
 import { summarizeLlmUsageRecordsCrossTab } from "../health/llm-usage";
@@ -573,6 +574,19 @@ function recordImproveFailure(err: unknown, run: ImproveRunSetup, eventsCtx: Eve
   );
 }
 
+/**
+ * The `minPendingCount` gate's count. Reads index.db read-only for cached no-change
+ * decisions; with no usable index it counts every pending parent.
+ */
+function countUndecidedPendingMemories(stashDir: string): number {
+  try {
+    return withIndexDb((db) => countPendingMemoriesNeedingDecision(stashDir, db), { readOnly: true });
+  } catch (err) {
+    rethrowIfTestIsolationError(err);
+    return countPendingMemoriesNeedingDecision(stashDir);
+  }
+}
+
 function probeEntryCount(): number | undefined {
   try {
     if (!fs.existsSync(getDbPath())) return undefined;
@@ -781,7 +795,7 @@ function buildResultExecutionPlan(
   const inferenceMinPending = improveProfile.processes?.memoryInference?.minPendingCount;
   const pendingMemories =
     run.primaryStashDir && inferenceMinPending !== undefined && inferenceMinPending > 0
-      ? collectPendingMemories(run.primaryStashDir).length
+      ? countUndecidedPendingMemories(run.primaryStashDir)
       : undefined;
   const belowMinPending =
     pendingMemories !== undefined && inferenceMinPending !== undefined && pendingMemories < inferenceMinPending;

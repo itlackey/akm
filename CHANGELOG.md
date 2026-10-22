@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `processes.memoryInference.minPendingCount` no longer counts a pending parent whose
+  current body already has a cached `memory-inference-v3` no-change decision, so a
+  pass made only of cached decisions is not admitted; an edited or uncached parent
+  still counts (#1219). Health `memoryInference.noChange` is documented as per run,
+  including cached decisions, not a cumulative total.
+
 ## [0.10.261010] - 2026-10-21
 
 ### Added
