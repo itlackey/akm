@@ -275,14 +275,16 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 | Column | Type | Notes |
 |---|---|---|
 | `asset_ref` | TEXT NOT NULL | Absolute file path |
-| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Memory inference uses a version-tagged variant (`memory-inference-v3`). |
-| `body_hash` | TEXT NOT NULL | SHA-256 hex digest of file body |
+| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Memory inference uses a version-tagged variant (`memory-inference-v4`). |
+| `body_hash` | TEXT NOT NULL | SHA-256 hex digest of the cache input; memory inference hashes body plus selected source context. |
 | `result_json` | TEXT NOT NULL | Serialized LLM enrichment result |
 | `updated_at` | INTEGER NOT NULL | Unix ms timestamp |
 
 Primary key: `(asset_ref, cache_variant)`.
 
-Cache miss on body change or cache-variant change. Stale rows removed by
+Cache miss on effective-input change or cache-variant change. See the
+[memory-inference caching rules](../0.10-process-rules.md#memory-inference).
+Stale rows removed by
 `clearStaleCacheEntries()`. The cache can also be bypassed by internal forced
 re-enrichment callers.
 

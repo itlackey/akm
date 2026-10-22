@@ -112,6 +112,7 @@ function stubMemoryInferenceResult(overrides?: Partial<MemoryInferenceResult>): 
     skippedAborted: 0,
     unaccounted: 0,
     htmlErrorCount: 0,
+    scopeSynced: 0,
     writtenPaths: [],
     ...overrides,
   };

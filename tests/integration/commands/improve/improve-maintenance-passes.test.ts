@@ -22,10 +22,9 @@ import {
   runMemoryInferenceMaintenancePass,
   runRetentionPurgePass,
 } from "../../../../src/commands/improve/loop-stages";
-import { parseFrontmatter } from "../../../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../../src/core/state-db";
-import type { MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
+import { collectPendingMemories, type MemoryInferenceResult } from "../../../../src/indexer/passes/memory-inference";
 import type { Database } from "../../../../src/storage/database";
 import { insertEventStrict } from "../../../../src/storage/repositories/events-repository";
 import { closeDatabase, openIndexDatabase } from "../../../../src/storage/repositories/index-connection";
@@ -102,9 +101,9 @@ describe("runMemoryInferenceMaintenancePass", () => {
       upsertLlmCacheEntry(
         db,
         file,
-        computeBodyHash(parseFrontmatter(fs.readFileSync(file, "utf8")).content),
+        computeBodyHash(collectPendingMemories(stash)[0]!.effectiveInput),
         JSON.stringify({ noChange: true }),
-        "memory-inference-v3",
+        "memory-inference-v4",
       );
       const ctx = makeCtx(stash, {
         improveProfile: { processes: { memoryInference: { minPendingCount: 1 } } } as MaintenanceCtx["improveProfile"],
