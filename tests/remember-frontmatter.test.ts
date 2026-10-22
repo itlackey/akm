@@ -298,7 +298,7 @@ describe("remember --auto", () => {
     expect(parsed.data.tags as string[]).toContain("ops");
   });
 
-  test("body with ISO date gets observed_at set", async () => {
+  test("body with ISO date gets observed set", async () => {
     const body = "The outage happened on 2026-01-15 and we fixed it quickly";
     const { result } = await runCli(["remember", body, "--auto"]);
     // Will fail required-field check if no tags derived from the body
@@ -309,7 +309,8 @@ describe("remember --auto", () => {
     const json = JSON.parse(r2.stdout) as { path: string };
     const content = fs.readFileSync(json.path, "utf8");
     const parsed = parseFrontmatter(content);
-    expect(parsed.data.observed_at).toBe("2026-01-15");
+    expect(parsed.data.observed).toBe("2026-01-15");
+    expect(parsed.data.observed_at).toBeUndefined();
     void result; // suppress unused variable warning
   });
 
@@ -396,7 +397,7 @@ describe("memory metadata fold", () => {
     expect(entry.description).toBe("VPN required for staging deploys");
   });
 
-  test("populates searchHints with source, observed_at, expires, subjective", async () => {
+  test("populates searchHints with source, observed, expires, subjective", async () => {
     const { filePath, stashRoot } = writeTmpMemory(
       "---\ntags: [ops]\nsource: skill:deploy\nobserved_at: 2026-01-15\nexpires: 2026-04-15\nsubjective: true\n---\nVPN needed\n",
     );
@@ -406,35 +407,35 @@ describe("memory metadata fold", () => {
 
     expect(entry.searchHints).toBeDefined();
     expect(entry.searchHints).toContain("skill:deploy");
-    expect(entry.searchHints).toContain("observed_at:2026-01-15");
+    expect(entry.searchHints).toContain("observed:2026-01-15");
     expect(entry.searchHints).toContain("expires:2026-04-15");
     expect(entry.searchHints).toContain("subjective");
   });
 
-  test("observed_at falls back to file mtime when not in frontmatter", async () => {
-    const { filePath, stashRoot } = writeTmpMemory("---\ntags: [ops]\n---\nSome memory without observed_at\n");
+  test("an old observed_at still produces the observed hint, and the new name wins over it", async () => {
+    const legacy = writeTmpMemory("---\ntags: [ops]\nobserved_at: 2026-01-15\n---\nOld stash\n");
+    const legacyEntry: IndexDocument = { name: "test-memory", type: "memory" };
+    await applyMemoryMetadata(legacyEntry, legacy.stashRoot, legacy.filePath);
+    expect(legacyEntry.searchHints).toContain("observed:2026-01-15");
+    expect((legacyEntry.searchHints ?? []).some((h) => h.startsWith("observed_at:"))).toBe(false);
 
-    const entry: IndexDocument = { name: "test-memory", type: "memory" };
-    await applyMemoryMetadata(entry, stashRoot, filePath);
-
-    // Should have an observed_at hint derived from mtime
-    const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
-    expect(mtimeHint).toBeDefined();
-    // The mtime-based date should be a valid ISO date
-    const dateStr = mtimeHint?.slice("observed_at:".length);
-    expect(dateStr).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const both = writeTmpMemory("---\ntags: [ops]\nobserved: 2026-02-01\nobserved_at: 2026-01-15\n---\nBoth\n");
+    const bothEntry: IndexDocument = { name: "test-memory", type: "memory" };
+    await applyMemoryMetadata(bothEntry, both.stashRoot, both.filePath);
+    expect(bothEntry.searchHints).toContain("observed:2026-02-01");
+    expect(bothEntry.searchHints).not.toContain("observed:2026-01-15");
   });
 
-  test("a derived memory without observed_at gets no mtime hint, a plain one still does", async () => {
-    const derived = writeTmpMemory("---\ninferred: true\nsource: memories/x\n---\nDerived\n");
-    const derivedEntry: IndexDocument = { name: "test-memory", type: "memory" };
-    await applyMemoryMetadata(derivedEntry, derived.stashRoot, derived.filePath);
-    expect((derivedEntry.searchHints ?? []).some((h) => h.startsWith("observed_at:"))).toBe(false);
-
-    const plain = writeTmpMemory("---\ntags: [ops]\n---\nPlain\n");
-    const plainEntry: IndexDocument = { name: "test-memory", type: "memory" };
-    await applyMemoryMetadata(plainEntry, plain.stashRoot, plain.filePath);
-    expect((plainEntry.searchHints ?? []).some((h) => h.startsWith("observed_at:"))).toBe(true);
+  test("a memory without a date gets no observed hint from the file mtime, derived or not", async () => {
+    for (const content of [
+      "---\ntags: [ops]\n---\nPlain\n",
+      "---\ninferred: true\nsource: memories/x\n---\nDerived\n",
+    ]) {
+      const { filePath, stashRoot } = writeTmpMemory(content);
+      const entry: IndexDocument = { name: "test-memory", type: "memory" };
+      await applyMemoryMetadata(entry, stashRoot, filePath);
+      expect((entry.searchHints ?? []).some((h) => h.startsWith("observed"))).toBe(false);
+    }
   });
 
   test("works for bare memory with no frontmatter (no crash)", async () => {
@@ -445,9 +446,8 @@ describe("memory metadata fold", () => {
     // Should not throw
     await expect(applyMemoryMetadata(entry, stashRoot, filePath)).resolves.toBeUndefined();
 
-    // mtime fallback should still fire
-    const mtimeHint = (entry.searchHints ?? []).find((h) => h.startsWith("observed_at:"));
-    expect(mtimeHint).toBeDefined();
+    // No date, no hint: a file's mtime is not an observation date.
+    expect((entry.searchHints ?? []).some((h) => h.startsWith("observed"))).toBe(false);
   });
 
   test("block-sequence tags in frontmatter are parsed correctly", async () => {

@@ -97,7 +97,7 @@ test("actual model request includes authored grounding and normalized scope, exc
     evidenceSources: ["sessions/claude/lab"],
     xrefs: ["knowledge/tunnel"],
     source: "operator",
-    observed_at: "2026-02-14",
+    observed: "2026-02-14",
     updated: "2026-02-15",
     provenance: { sources: [{ resource: "claude:lab-session" }] },
     scope_user: " alice ",
@@ -126,6 +126,22 @@ test("actual model request includes authored grounding and normalized scope, exc
   const input = sourceInput(request);
   expect(input.sourceContext.scope).toEqual({ user: "alice", agent: "helper", run: "42", channel: "lab" });
   expect(input.body).toBe(body);
+});
+
+test("source context sends an old observed_at as `observed`", async () => {
+  write({ description: "Legacy date", observed_at: "2026-02-14" });
+  await run();
+  const context = sourceInput(requests[0] ?? "").sourceContext;
+  expect(context.observed).toBe("2026-02-14");
+  expect(context.observed_at).toBeUndefined();
+});
+
+test("source context sends `observed` when both names are present", async () => {
+  write({ description: "Both dates", observed: "2026-03-01", observed_at: "2026-02-14" });
+  await run();
+  const context = sourceInput(requests[0] ?? "").sourceContext;
+  expect(context.observed).toBe("2026-03-01");
+  expect(context.observed_at).toBeUndefined();
 });
 
 test("the body reaches the model as raw Markdown after the context, and cannot impersonate it", async () => {
@@ -171,7 +187,7 @@ for (const fm of [
     const child = parseFrontmatter(fs.readFileSync(childFile, "utf8"));
     const input = sourceInput(requests[0] ?? "");
     expect(input.sourceContext.scope).toEqual(scopeFromFrontmatter(fm));
-    expect(input.sourceContext.observed_at).toBeUndefined();
+    expect(input.sourceContext.observed).toBeUndefined();
     expect(scopeFromFrontmatter(child.data)).toEqual(scopeFromFrontmatter(fm));
     expect(child.data.source).toBe("memories/tunnel");
     expect(child.content).toContain(body);
@@ -220,7 +236,7 @@ test("no-change cache follows supplied context edits, while equivalent formattin
       { ...fm, title: "Grounded title" },
       { ...fm, evidence: "retrieved only" },
       { ...fm, source: "operator" },
-      { ...fm, observed_at: "2026-02-14" },
+      { ...fm, observed: "2026-02-14" },
       { ...fm, created: "2026-02-13" },
       { ...fm, updated: "2026-02-15" },
       { ...fm, evidenceSources: ["sessions/claude/lab"] },
@@ -252,7 +268,7 @@ test("a relevant context edit also invalidates a cached draft before publication
       record.filePath,
       computeBodyHash(record.effectiveInput),
       JSON.stringify({ ...draft, title: "Stale draft" }),
-      "memory-inference-v4",
+      "memory-inference-v5",
     );
     write({ description: "New lab route" });
     const result = await run(db);

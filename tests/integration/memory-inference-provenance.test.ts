@@ -99,7 +99,7 @@ async function indexedChild() {
 test("an old observation summarized today keeps its date and gains truthful, deterministic generation metadata", async () => {
   writeParent({
     description: "Lab VPN note",
-    observed_at: "2026-06-14",
+    observed: "2026-06-14",
     updated: "2026-06-15",
     evidence: "Operator requested restart; no completion event.",
     evidenceSources: ["sessions/claude/lab"],
@@ -114,7 +114,8 @@ test("an old observation summarized today keeps its date and gains truthful, det
   // File modification stays the child write date; it is not backdated to the observation.
   expect(child.data.updated).toBe(TODAY);
   // Observation: the source's explicit date is retained verbatim, as its own field.
-  expect(child.data.observed_at).toBe("2026-06-14");
+  expect(child.data.observed).toBe("2026-06-14");
+  expect(child.data.observed_at).toBeUndefined();
   // The model's historical description and body are published as returned.
   expect(child.data.description).toBe(draft.description);
   expect(child.content).toContain("Observed 2026-06-14");
@@ -133,40 +134,44 @@ test("an old observation summarized today keeps its date and gains truthful, det
   // The parent is only stamped processed.
   const parent = parseFrontmatter(fs.readFileSync(parentFile(), "utf8")).data;
   expect(parent.generated).toBeUndefined();
-  expect(parent.observed_at).toBe("2026-06-14");
+  expect(parent.observed).toBe("2026-06-14");
 });
 
-test("a date held only in parent metadata reaches the model and survives on the child through the index", async () => {
+test("a legacy observed_at on the parent reaches the model and survives on the child through the index", async () => {
   writeParent(
     { description: "Lab VPN note", observed_at: "2026-06-14" },
     "The lab VPN tunnel dropped; restart requested.",
   );
   const { child } = await infer();
   const context = JSON.parse(requests[0]?.split("Source context:\n")[1]?.split("\n\nBody:\n")[0] ?? "{}");
-  expect(context.observed_at).toBe("2026-06-14");
-  expect(child.data.observed_at).toBe("2026-06-14");
+  expect(context.observed).toBe("2026-06-14");
+  expect(context.observed_at).toBeUndefined();
+  // The child is written with the new name only.
+  expect(child.data.observed).toBe("2026-06-14");
+  expect(child.data.observed_at).toBeUndefined();
   const indexed = await indexedChild();
-  expect(indexed.searchHints).toContain("observed_at:2026-06-14");
-  expect(indexed.searchHints).not.toContain(`observed_at:${TODAY}`);
+  expect(indexed.searchHints).toContain("observed:2026-06-14");
+  expect(indexed.searchHints).not.toContain(`observed:${TODAY}`);
 });
 
 test("a source with no observation date gets none: not from updated, mtime or the generation clock", async () => {
   writeParent({ description: "Lab VPN note", created: "2026-03-01", updated: "2026-03-02" });
   const { child } = await infer();
+  expect(child.data.observed).toBeUndefined();
   expect(child.data.observed_at).toBeUndefined();
   expect(child.data.created).toBeUndefined();
   // `updated` is the child's own write date, never the source's, and is not an event date.
   expect(child.data.updated).toBe(TODAY);
   // Nor does the index invent one from the child's mtime, which is its generation time.
   const indexed = await indexedChild();
-  expect((indexed.searchHints ?? []).filter((hint) => hint.startsWith("observed_at:"))).toEqual([]);
+  expect((indexed.searchHints ?? []).filter((hint) => hint.startsWith("observed"))).toEqual([]);
   expect(child.data.generated).toEqual({ by: `akm/${pkgVersion}`, at: NOW });
 });
 
 test("a source with no evidence or references leaves the child without invented ones", async () => {
   writeParent({ description: "Lab VPN note" });
   const { child } = await infer();
-  for (const key of ["evidence", "evidenceSources", "provenance", "verified", "observed_at"])
+  for (const key of ["evidence", "evidenceSources", "provenance", "verified", "observed", "observed_at"])
     expect(child.data[key]).toBeUndefined();
   // Generation alone is enough for `show` to project provenance, without evidence.
   await indexedChild();

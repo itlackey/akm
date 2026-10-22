@@ -103,7 +103,7 @@ export function buildMemoryFrontmatter(fields: MemoryFrontmatterFields): string 
   if (fields.tags && fields.tags.length > 0) obj.tags = fields.tags;
   if (fields.source?.trim()) obj.source = fields.source;
   if (fields.xrefs && fields.xrefs.length > 0) obj.xrefs = fields.xrefs;
-  if (fields.observed_at?.trim()) obj.observed_at = fields.observed_at;
+  if (fields.observed_at?.trim()) obj.observed = fields.observed_at;
   if (fields.expires?.trim()) obj.expires = fields.expires;
   if (fields.subjective) obj.subjective = true;
   if (fields.captureMode === "hot" || fields.captureMode === "background") {
@@ -246,7 +246,7 @@ export function runAutoHeuristics(body: string): HeuristicResult {
   const urlMatch = body.match(/https?:\/\/[^\s)>'"]+/);
   const source = urlMatch ? urlMatch[0] : undefined;
 
-  // ISO date token or obvious relative date phrase → observed_at
+  // ISO date token or obvious relative date phrase → observed
   const observed_at = detectObservedAt(body);
 
   return { tags, source, observed_at, subjective };
@@ -281,8 +281,8 @@ function detectObservedAt(body: string): string | undefined {
  * Result of an `--enrich` LLM call.
  *
  * `tags` is always an array (possibly empty). `description` and
- * `observed_at` are optional — only populated when the model returns them
- * in the expected shape. An absent engine, provider failure, timeout, or
+ * `observed_at` (the memory's `observed` date) are optional — only populated when
+ * the model returns them in the expected shape. An absent engine, provider failure, timeout, or
  * invalid JSON yields `{ tags: [] }` with a warning. Invalid configuration is
  * a hard pre-write error.
  */
@@ -292,6 +292,14 @@ export interface EnrichmentResult {
   observed_at?: string;
   /** Stable, secret-free execution-lowering diagnostics. */
   notices?: readonly Readonly<LoweringNotice>[];
+}
+
+/** The model's observation date: `observed`, or the older `observed_at`; only a plain `YYYY-MM-DD` counts. */
+export function parseEnrichObserved(parsed: Record<string, unknown>): string | undefined {
+  for (const raw of [parsed.observed, parsed.observed_at]) {
+    if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) return raw.trim();
+  }
+  return undefined;
 }
 
 /** Hard timeout for the `--enrich` LLM call. Write-path must not block on a misbehaving endpoint. */
@@ -319,7 +327,7 @@ export async function runLlmEnrich(body: string): Promise<EnrichmentResult> {
 Given the memory text below, return ONLY a JSON object with these fields:
 - "tags": array of 1-5 short lowercase keyword tags
 - "description": one-sentence summary (optional)
-- "observed_at": ISO date (YYYY-MM-DD) if the text references a specific date (optional)
+- "observed": ISO date (YYYY-MM-DD) if the text references a specific date (optional)
 
 Memory text:
 ${body.slice(0, 2000)}
@@ -372,12 +380,7 @@ Return ONLY the JSON object, no prose, no markdown fences.`;
     const description =
       typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined;
 
-    const observed_at =
-      typeof parsed.observed_at === "string" && /^\d{4}-\d{2}-\d{2}$/.test(parsed.observed_at.trim())
-        ? parsed.observed_at.trim()
-        : undefined;
-
-    return { tags, description, observed_at, ...noticeFields() };
+    return { tags, description, observed_at: parseEnrichObserved(parsed), ...noticeFields() };
   } catch (err) {
     if (err instanceof ConfigError) throw err;
     warn(`Warning: --enrich failed (${toErrorMessage(err)}). Writing memory without enrichment.`);

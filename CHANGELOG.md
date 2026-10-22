@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- Date-valued frontmatter keys lose the `_at` suffix and use bare names like
+  `created`, `updated` and `expires`: `observed_at` is now `observed` on memories
+  and knowledge, and `started_at` / `ended_at` are now `started` / `ended` on
+  session assets. The old names are still read, with the new name winning when both
+  are present, so existing stashes keep working; files are not rewritten or
+  migrated, and akm writes only the new names. The memory-inference prompt, its
+  `Source context:` JSON key and the `remember --enrich` model field are now
+  `observed` (`--enrich` still accepts `observed_at`), and the cache namespace is
+  `memory-inference-v5`, so older cached decisions are disposable misses. This
+  supersedes the key names in the entries below. OKF's `generated: {by, at}` and
+  `verified: [{by, at}]` are unchanged.
+- Memory search hints no longer invent a date. A memory without an `observed`
+  date used to get `observed_at:<file mtime>`; a file's write time is not an
+  observation date, so it now gets no date hint. A stated date is indexed as
+  `observed:<date>`.
 - Memory inference receives selected source context alongside the body and copies
   normalized parent scope to derived memories (#1209). The request and both cache
   paths share the same effective-input identity under `memory-inference-v4`, so
@@ -36,14 +51,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - A derived memory now records when and by what it was generated as `generated:
   {by, at}` (the existing proposal-stamp shape; `at` is the write instant, `by` is
   `akm/<version>`, neither seen by the model), and keeps its parent's explicit
-  `observed_at`, `evidence`, `evidenceSources` and `provenance.sources` as written
-  (#1210). `updated` stays the child's own write date. A derived memory without a
-  source observation date no longer gets an `observed_at:` search hint taken from
-  its file mtime, and nothing is stamped as `verified`. Existing children are not
-  rewritten. The historical date lives in the child's frontmatter (`observed_at`,
-  indexed as an `observed_at:` hint); the model is not required to restate it in
-  the description or body. `show` now also projects `provenance` when it has
-  `generatedAt` or `sources`, not only when the note has `evidence`.
+  `observed`, `evidence`, `evidenceSources` and `provenance.sources` as written
+  (#1210). `updated` stays the child's own write date, and nothing is stamped as
+  `verified`. Existing children are not rewritten. The historical date lives in the
+  child's frontmatter (`observed`, indexed as an `observed:` hint); the model is not
+  required to restate it in the description or body. `show` now also projects
+  `provenance` when it has `generatedAt` or `sources`, not only when the note has
+  `evidence`.
 
 ### Fixed
 

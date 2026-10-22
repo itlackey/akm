@@ -639,6 +639,28 @@ describe("Renderer", () => {
     expect(response.modelHint).toBe("gpt-4");
   });
 
+  test("getRenderer('session-md') shows started/ended, and still reads the legacy started_at/ended_at", async () => {
+    const root = tmpDir();
+    const show = async (name: string, dates: string[]) => {
+      const filePath = path.join(root, "sessions", "claude", `${name}.md`);
+      writeFile(filePath, ["---", "harness: claude", ...dates, "---", "## Summary"].join("\n"));
+      const renderer = expectDefined(await getRenderer("session-md"));
+      const ctx = buildFileContext(root, filePath);
+      const match = { type: "session", specificity: 10, renderer: "session-md", meta: { name: `${name}.md` } };
+      return renderer.buildShowResponse(buildRenderContext(ctx, match, [root])).action as string;
+    };
+
+    expect(await show("new", ["started: 2026-10-01T10:00:00.000Z", "ended: 2026-10-01T11:00:00.000Z"])).toContain(
+      "2026-10-01T10:00:00.000Z – 2026-10-01T11:00:00.000Z",
+    );
+    expect(await show("old", ["started_at: 2026-09-01T10:00:00.000Z", "ended_at: 2026-09-01T11:00:00.000Z"])).toContain(
+      "2026-09-01T10:00:00.000Z – 2026-09-01T11:00:00.000Z",
+    );
+    expect(await show("both", ["started: 2026-10-01T10:00:00.000Z", "started_at: 2026-09-01T10:00:00.000Z"])).toContain(
+      "2026-10-01T10:00:00.000Z",
+    );
+  });
+
   test("getRenderer('command-md') extracts template from body", async () => {
     const root = tmpDir();
     const filePath = path.join(root, "commands", "deploy.md");

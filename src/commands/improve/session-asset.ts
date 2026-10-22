@@ -25,8 +25,8 @@ export interface SessionAssetFrontmatter {
   type: "session";
   harness: string;
   session_id: string;
-  started_at?: string;
-  ended_at?: string;
+  started?: string;
+  ended?: string;
   project?: string;
   log_path: string;
   access: string;
@@ -173,8 +173,8 @@ export function buildSessionAssetContent(
     type: "session",
     harness,
     session_id: ref.sessionId,
-    ...(startedAt ? { started_at: startedAt } : {}),
-    ...(endedAt ? { ended_at: endedAt } : {}),
+    ...(startedAt ? { started: startedAt } : {}),
+    ...(endedAt ? { ended: endedAt } : {}),
     ...(ref.projectHint ? { project: ref.projectHint } : {}),
     log_path: logPath,
     access: buildSessionAccessInstructions(harness, logPath, ref.sessionId),

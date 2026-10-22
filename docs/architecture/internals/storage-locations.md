@@ -275,7 +275,7 @@ Incremental indexing cache. Directory skipped if hash + mtime unchanged.
 | Column | Type | Notes |
 |---|---|---|
 | `asset_ref` | TEXT NOT NULL | Absolute file path |
-| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Memory inference uses a version-tagged variant (`memory-inference-v4`). |
+| `cache_variant` | TEXT NOT NULL | Extractor/cache fingerprint. Memory inference uses a version-tagged variant (`memory-inference-v5`). |
 | `body_hash` | TEXT NOT NULL | SHA-256 hex digest of the cache input; memory inference hashes body plus selected source context. |
 | `result_json` | TEXT NOT NULL | Serialized LLM enrichment result |
 | `updated_at` | INTEGER NOT NULL | Unix ms timestamp |

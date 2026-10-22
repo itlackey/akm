@@ -48,7 +48,12 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-serialize";
-import { parseFrontmatter, parseFrontmatterBlock, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
+import {
+  parseFrontmatter,
+  parseFrontmatterBlock,
+  readFrontmatterDate,
+  replaceFrontmatterBlocks,
+} from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
 import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../../core/common";
@@ -90,10 +95,11 @@ const FM_CAPTURE_MODE = "captureMode";
 
 /**
  * Cache namespace for this pass. Bump it when the cached response semantics
- * change (v4: body plus grounded source context); rows under an
+ * change (v4: body plus grounded source context; v5: `observed` in the
+ * source context and prompt); rows under an
  * older namespace are never read again, which is a disposable cache miss.
  */
-const MEMORY_INFERENCE_CACHE_VARIANT = "memory-inference-v4";
+const MEMORY_INFERENCE_CACHE_VARIANT = "memory-inference-v5";
 
 /** Telemetry returned to the caller. Useful for tests + future progress events. */
 export interface MemoryInferenceResult {
@@ -751,8 +757,8 @@ function memoryInferenceInput(body: string, fm: Record<string, unknown>): string
   const trimmedBody = body.trim();
   if (!trimmedBody) return "";
   const sourceContext: Record<string, unknown> = {};
-  for (const key of ["title", "description", "evidence", "source", "observed_at", "created", "updated"]) {
-    const value = asNonEmptyString(fm[key]);
+  for (const key of ["title", "description", "evidence", "source", "observed", "created", "updated"]) {
+    const value = key === "observed" ? readFrontmatterDate(fm, key) : asNonEmptyString(fm[key]);
     if (value) sourceContext[key] = value;
   }
   for (const key of ["evidenceSources", "xrefs", "sources"]) {
@@ -890,10 +896,10 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
   // The source's own explicit observation date and evidence are carried as
   // written. A missing one stays missing: `updated` and mtime are not dates of
   // the facts.
-  for (const key of ["observed_at", "evidence"]) {
-    const value = asNonEmptyString(parent.data[key]);
-    if (value) fm[key] = value;
-  }
+  const observed = readFrontmatterDate(parent.data, "observed");
+  if (observed) fm.observed = observed;
+  const evidence = asNonEmptyString(parent.data.evidence);
+  if (evidence) fm.evidence = evidence;
   const evidenceSources = stringList(parent.data.evidenceSources);
   if (evidenceSources.length) fm.evidenceSources = evidenceSources;
   const sources: IndexDocument = { type: "memory", name: parent.name };

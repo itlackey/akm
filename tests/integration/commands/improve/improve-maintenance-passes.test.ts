@@ -103,7 +103,7 @@ describe("runMemoryInferenceMaintenancePass", () => {
         file,
         computeBodyHash(collectPendingMemories(stash)[0]!.effectiveInput),
         JSON.stringify({ noChange: true }),
-        "memory-inference-v4",
+        "memory-inference-v5",
       );
       const ctx = makeCtx(stash, {
         improveProfile: { processes: { memoryInference: { minPendingCount: 1 } } } as MaintenanceCtx["improveProfile"],

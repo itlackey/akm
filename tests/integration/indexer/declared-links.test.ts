@@ -356,7 +356,7 @@ describe("declared links", () => {
     ]);
 
     // A linked asset curate already selected is not repeated; the next declared link fills in.
-    const both = (await akmCurate({ query: "zeppelin rollout plan mooring", limit: 2 })).items;
+    const both = (await akmCurate({ query: "zeppelin rollout plan mooring runbook", limit: 2 })).items;
     expect(both.map((item) => ("ref" in item ? item.ref : undefined))).toEqual([
       "knowledge/zeppelin-rollout",
       "knowledge/mooring-runbook",

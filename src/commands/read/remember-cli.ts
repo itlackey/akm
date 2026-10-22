@@ -112,7 +112,7 @@ export const rememberCommand = defineJsonCommand({
     },
     auto: {
       type: "boolean",
-      description: "Apply heuristic tagging (code, subjective, source, observed_at) from the body",
+      description: "Apply heuristic tagging (code, subjective, source, observed) from the body",
       default: false,
     },
     enrich: {
