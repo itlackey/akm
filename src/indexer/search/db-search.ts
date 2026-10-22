@@ -805,6 +805,7 @@ export async function buildDbHit(input: {
     type: input.entry.type,
     stashDir: entryStashDir,
     bundleId: input.bundleId,
+    descriptionSource: input.entry.source,
     db: input.db,
     eligible: input.eligible,
   });

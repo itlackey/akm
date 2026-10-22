@@ -1,10 +1,10 @@
 /**
- * Phase 5A / Advantage D5 — derived memory as primary retrieval target.
+ * Phase 5A / Advantage D5 — derived memory as a metadata fallback.
  *
  * Asserts that when a parent memory has a `.derived` child indexed, search
  * for the parent surfaces:
  *   - `expandTo` pointing at the derived child's ref, and
- *   - `description` / `tags` swapped in from the derived child
+ *   - missing `description` / `tags` supplied by the derived child
  * while the parent ref itself remains the canonical entry on the hit.
  *
  * Default-safe assertion: a parent memory WITHOUT a derived child is
@@ -19,6 +19,12 @@ import { resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { getDbPath } from "../../src/core/paths";
 import { deriveEntryProvenance } from "../../src/indexer/installations";
 import type { IndexDocument } from "../../src/indexer/passes/metadata";
+import { buildDbHit } from "../../src/indexer/search/db-search";
+import {
+  buildUsageEventAttribution,
+  copySearchHitAttribution,
+  getSearchHitAttribution,
+} from "../../src/indexer/search/search-attribution";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
 import { upsertEntry } from "../../src/storage/repositories/index-entries-repository";
 import { rebuildFts } from "../../src/storage/repositories/index-fts-repository";
@@ -95,8 +101,7 @@ function buildFixture(): void {
   const memoryDir = path.join(stashDir, "memories");
   fs.mkdirSync(memoryDir, { recursive: true });
 
-  // Parent memory: terse hot-captured note. Description deliberately bland
-  // so the swap-in from the derived child is observable in the test.
+  // Parent memory: terse hot-captured note. Authored caveats must survive a more confident derived child.
   const parentPath = path.join(memoryDir, "claude-prefs.md");
   fs.writeFileSync(parentPath, "---\ntype: memory\n---\nUse three-space indent and no semicolons.\n");
 
@@ -124,7 +129,8 @@ function buildFixture(): void {
           name: "claude-prefs",
           type: "memory",
           filename: "claude-prefs.md",
-          description: "Use three-space indent and no semicolons.",
+          description: "Do not use semicolons in examples only; production style is uncertain.",
+          source: "frontmatter",
           tags: ["style"],
         },
         filePath: parentPath,
@@ -177,19 +183,17 @@ function buildFixture(): void {
 }
 
 describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
-  test("parent hit gains expandTo + derived child's description/tags when child exists", async () => {
+  test("parent hit preserves authored qualifications and tags while retaining expandTo", async () => {
     const result = await akmSearch({ query: "claude-prefs", source: "local", limit: 10 });
     const parentHit = result.hits.find((h) => h.type === "memory" && h.name === "claude-prefs");
     expect(parentHit).toBeDefined();
     if (!parentHit || !("ref" in parentHit)) return;
 
     expect(parentHit.expandTo).toBe("memories/claude-prefs.derived");
-    // Description swapped in from the derived child.
-    expect(parentHit.description).toBe(
-      "Distilled Claude style preferences: three-space indent, no semicolons, prefer TypeScript.",
-    );
-    // Tags swapped in from the derived child.
-    expect(parentHit.tags).toEqual(["claude", "style", "typescript"]);
+    // Authored description is not replaced by a stronger derived claim.
+    expect(parentHit.description).toBe("Do not use semicolons in examples only; production style is uncertain.");
+    // Populated parent tags are not merged with child tags.
+    expect(parentHit.tags).toEqual(["style"]);
     // Parent ref is preserved — only surface text is swapped.
     expect(parentHit.ref).toBe("memories/claude-prefs");
   });
@@ -213,3 +217,89 @@ describe("derived-memory search enrichment (Phase 5A / Advantage D5)", () => {
     expect(derivedHit.expandTo).toBeUndefined();
   });
 });
+
+// Replay complete indexed parent/child records through the DB-hit boundary.
+// No files are read during metadata enrichment.
+const fallbackFixtures: Array<{ name: string; parent: Partial<IndexDocument>; fields: Array<"description" | "tags"> }> =
+  [
+    { name: "missing", parent: {}, fields: ["description", "tags"] },
+    { name: "empty", parent: { description: "", tags: [] }, fields: ["description", "tags"] },
+    { name: "whitespace", parent: { description: " \t ", tags: [" ", "\t"] }, fields: ["description", "tags"] },
+    {
+      name: "filename",
+      parent: { description: "Generated filename", source: "filename", tags: ["authored"] },
+      fields: ["description"],
+    },
+    { name: "description-only", parent: { tags: ["authored"] }, fields: ["description"] },
+    {
+      name: "tags-only",
+      parent: { description: "Do not restart production; staging only, pending confirmation.", source: "frontmatter" },
+      fields: ["tags"],
+    },
+    {
+      name: "unknown-source",
+      parent: { description: "An existing caveat with no recorded source.", tags: ["authored"] },
+      fields: [],
+    },
+  ];
+for (const fixture of fallbackFixtures) {
+  test(`independent metadata fallback: ${fixture.name}`, async () => {
+    const db = openIndexDatabase(":memory:");
+    const child = {
+      name: `${fixture.name}.derived`,
+      type: "memory",
+      description: "Restart production immediately.",
+      tags: ["derived"],
+      derivedFrom: `memories/${fixture.name}`,
+    };
+    try {
+      upsertEntry(
+        db,
+        `/unread/${child.name}.md`,
+        child,
+        deriveEntryProvenance({ bundleId: "stash", componentId: "stash", adapterId: "akm" }, "memory", child.name),
+      );
+      const entry: IndexDocument = {
+        name: fixture.name,
+        type: "memory",
+        ...fixture.parent,
+        tags: fixture.parent.tags ? [...fixture.parent.tags] : undefined,
+      };
+      const hit = await buildDbHit({
+        entry,
+        path: `/unread/${fixture.name}.md`,
+        itemRef: `stash//memories/${fixture.name}`,
+        bundleId: "stash",
+        conceptId: `memories/${fixture.name}`,
+        score: 0.25,
+        defaultStashDir: stashDir,
+        sources: [],
+        db,
+      });
+      expect(hit.description).toBe(fixture.fields.includes("description") ? child.description : entry.description);
+      expect(hit.tags).toEqual(fixture.fields.includes("tags") ? child.tags : entry.tags);
+      expect(hit.ref).toBe(`stash//memories/${fixture.name}`);
+      expect(hit.score).toBe(0.25);
+      expect(hit.expandTo).toBe(`stash//memories/${child.name}`);
+      const attribution = getSearchHitAttribution(hit);
+      expect(attribution?.memoryInference?.surfaceFields ?? []).toEqual([...fixture.fields]);
+      const curated = {};
+      copySearchHitAttribution(hit, curated, hit.description);
+      expect(getSearchHitAttribution(curated)?.memoryInference?.surfaceFields ?? []).toEqual(
+        fixture.fields.includes("description") ? ["description"] : [],
+      );
+      for (const projection of ["brief", "normal", "agent", "full"] as const) {
+        const visible =
+          projection === "full"
+            ? fixture.fields.length > 0
+            : projection !== "brief" && fixture.fields.includes("description");
+        expect(
+          buildUsageEventAttribution(attribution, `stash//memories/${fixture.name}`, projection)?.memoryInference
+            ?.exposure,
+        ).toBe(visible ? "surface" : undefined);
+      }
+    } finally {
+      closeDatabase(db);
+    }
+  });
+}

@@ -72,10 +72,12 @@ parent/child link in the `derived_from` column. This provenance backref is a
 sanctioned internal channel that carries a bare parent name, not a public
 [ref](refs.md) — agents never construct it.
 
-Search hits for the parent memory are then enriched in-place: the parent's
-description and tags are swapped with the derived child's surface text, and
-an `expandTo: memories/<derived>` field on the hit points at the richer
-derived ref. The parent ref itself is preserved on the hit, so existing
+Search hits for the parent memory preserve a meaningful authored description
+and populated tags. The derived child's metadata fills missing or whitespace-only
+fields independently; a known filename-generated description also permits fallback.
+An `expandTo: memories/<derived>` field on the hit points at the richer
+derived ref, qualified with the parent's bundle when needed. The parent ref
+itself is preserved on the hit, so existing
 automation keeps working — agents that want the deeper summary follow
 `expandTo`.
 
