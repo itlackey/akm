@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261012] - 2026-10-22
+
 ### Changed
 
 - Distill writes more useful lessons without writing wrong ones. The lesson
