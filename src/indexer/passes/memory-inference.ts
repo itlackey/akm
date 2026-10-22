@@ -51,7 +51,7 @@ import { assembleAsset, serializeFrontmatter } from "../../core/asset/asset-seri
 import { parseFrontmatter, parseFrontmatterBlock, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
-import { asNonEmptyString, existingFileMode, todayIso, writeFileAtomic } from "../../core/common";
+import { asNonEmptyString, existingFileMode, writeFileAtomic } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
@@ -66,6 +66,7 @@ import { type ResolvedIndexPassExecution, resolveIndexPassExecution } from "../.
 import type { DerivedMemoryDraft, MemoryInferNoChange, MemoryInferTelemetry } from "../../llm/memory-infer";
 import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
+import { pkgVersion } from "../../version";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
 import {
@@ -736,6 +737,11 @@ function isDerivedChildOf(fm: Record<string, unknown>, parentName: string): bool
 const SOURCE_CONTEXT_MARKER = "Source context:";
 const BODY_MARKER = "Body:";
 
+/** The non-empty strings of a frontmatter list; anything else is no list. */
+function stringList(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.map(asNonEmptyString).filter((value): value is string => value !== undefined) : [];
+}
+
 /**
  * The effective input: a fixed selection of existing source fields (never
  * arbitrary frontmatter or model-authored authority) as JSON, then the raw
@@ -750,9 +756,7 @@ function memoryInferenceInput(body: string, fm: Record<string, unknown>): string
     if (value) sourceContext[key] = value;
   }
   for (const key of ["evidenceSources", "xrefs", "sources"]) {
-    const raw = fm[key];
-    if (!Array.isArray(raw)) continue;
-    const values = raw.map(asNonEmptyString).filter((value): value is string => value !== undefined);
+    const values = stringList(fm[key]);
     if (values.length) sourceContext[key] = values;
   }
   const entry: IndexDocument = { type: "memory", name: "source" };
@@ -864,6 +868,11 @@ async function writeDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDr
 }
 
 function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft): string {
+  // Generation is when and by what this file was written: deterministic, never
+  // model-authored and never sent to the model. `updated` is that same instant
+  // as the child's own modification date. Neither says when the facts were
+  // observed or that they were verified, so no `verified` is stamped.
+  const generatedAt = new Date().toISOString();
   const fm: Record<string, unknown> = {
     [FM_INFERRED]: true,
     [FM_CAPTURE_MODE]: "background",
@@ -875,8 +884,21 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
     searchHints: derived.searchHints,
     title: derived.title,
     derivedFrom: parent.name,
-    updated: todayIso(),
+    generated: { by: `akm/${pkgVersion}`, at: generatedAt },
+    updated: generatedAt.slice(0, 10),
   };
+  // The source's own explicit observation date and evidence are carried as
+  // written. A missing one stays missing: `updated` and mtime are not dates of
+  // the facts.
+  for (const key of ["observed_at", "evidence"]) {
+    const value = asNonEmptyString(parent.data[key]);
+    if (value) fm[key] = value;
+  }
+  const evidenceSources = stringList(parent.data.evidenceSources);
+  if (evidenceSources.length) fm.evidenceSources = evidenceSources;
+  const sources: IndexDocument = { type: "memory", name: parent.name };
+  applyProvenanceFrontmatter(sources, parent.data);
+  if (sources.provenance?.sources) fm.provenance = { sources: sources.provenance.sources };
   for (const [key, value] of Object.entries(scopeFromFrontmatter(parent.data))) fm[`scope_${key}`] = value;
   return assembleAsset(fm, `# ${derived.title.trim()}\n\n${derived.content.trim()}\n`);
 }
