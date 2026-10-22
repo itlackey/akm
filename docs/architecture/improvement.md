@@ -469,6 +469,27 @@ by that toggle. Session indexing writes are additive
 (`sessions/**`), which is why they are one of the writes left deliberately
 ungated by the autonomy gate above.
 
+`--dry-run` keeps eligible candidate refs in `sessions[].previewRefs`. It leaves
+proposal rows, seen-session tracking, the improve ledger and assets unchanged;
+an explicitly labeled preview event may still be recorded. `proposals`,
+`sessions[].proposalIds`, `candidatesCreated` and the `--auto` result's
+`totalProposals` count only successfully persisted proposals, so they are empty
+or zero in a preview. `sessions[].candidateCount` counts parsed model candidates;
+`blockedCount` and `failedCount` distinguish ledger holds from failed writes.
+
+The existing `extract_invoked` event records `dryRun`, `candidateCount`,
+`previewCount`, `proposalCount`, `blockedCount` and `failedCount`.
+`candidates_queued` requires at least one successful write; zero-write runs use
+`candidates_blocked` or `proposal_write_failed`. A dry run with eligible refs
+uses `candidates_previewed`; an empty model result remains `no_candidates`.
+A session with any failed write keeps a null content hash in its seen-session
+row, so the next run re-extracts it: candidates that persisted are held by
+their `proposed` ledger window, and only the failed ones are written again.
+Unavailable or malformed model output retains its distinct skip/failure result.
+Older events without `dryRun` have unknown preview status; their historical
+`candidates_queued` label cannot establish persistence. Proposal metrics use
+actual proposal rows, and health uses live seen-session outcomes.
+
 ## See also
 
 - [Improve the Library](../guides/improve-the-library.md) — the user-facing

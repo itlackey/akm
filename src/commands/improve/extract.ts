@@ -689,6 +689,9 @@ async function processSession(
   const { warning, ...sessionAsset } = await maybeWriteSessionAsset(run, data);
   if (warning) warnings.push(warning);
   const proposalIds: string[] = [];
+  const previewRefs: string[] = [];
+  let blockedCount = 0;
+  let failedCount = 0;
   if (payload.candidates.length > 0) {
     // A candidate the ledger holds a live window for (pending, or recently rejected) is not queued again.
     const ledger = loadLedgerSnapshot(
@@ -701,13 +704,14 @@ async function processSession(
       const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
       const ledgerRow = ledger.get(ledgerKey("extract", built.ref));
       if (isLedgerBlocked(ledgerRow, nowIso)) {
+        blockedCount += 1;
         warnings.push(
           `candidate ${candidate.type}:${candidate.name} skipped: ${ledgerRow?.outcome} until ${ledgerRow?.nextEligibleAt}`,
         );
         continue;
       }
       if (dryRun) {
-        proposalIds.push(`dry-run:${built.ref}`);
+        previewRefs.push(built.ref);
         continue;
       }
       try {
@@ -725,6 +729,7 @@ async function processSession(
         });
         proposalIds.push(proposal.id);
       } catch (err) {
+        failedCount += 1;
         warnings.push(
           `candidate ${candidate.type}:${candidate.name} failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -732,18 +737,34 @@ async function processSession(
     }
   }
   const empty = payload.candidates.length === 0;
+  const result = sessionOutcome(sessionRef.sessionId, harness.name, {
+    ...base,
+    candidateCount: payload.candidates.length,
+    proposalIds,
+    previewRefs,
+    blockedCount,
+    failedCount,
+    ...(empty && payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
+    warnings,
+    ...sessionAsset,
+    ...run.notices.fields(),
+  });
   appendEvent(
     {
       eventType: "extract_invoked",
       ...(sessionAsset.sessionAssetRef ? { ref: sessionAsset.sessionAssetRef } : {}),
       metadata: {
-        outcome: empty ? ("no_candidates" as const) : ("candidates_queued" as const),
+        outcome: previewRefs.length > 0 ? "candidates_previewed" : persistedExtractOutcome(result),
+        dryRun,
         sessionId: sessionRef.sessionId,
         harness: harness.name,
         sourceRun,
-        ...(empty
-          ? { rationale: payload.rationale_if_empty }
-          : { candidateCount: payload.candidates.length, proposalCount: proposalIds.length }),
+        candidateCount: payload.candidates.length,
+        proposalCount: proposalIds.length,
+        previewCount: previewRefs.length,
+        blockedCount,
+        failedCount,
+        ...(empty ? { rationale: payload.rationale_if_empty } : {}),
         preFilterInput: filtered.stats.inputCount,
         preFilterOutput: filtered.stats.outputCount,
         repairAttempts: extraction.attempts - 1,
@@ -751,15 +772,14 @@ async function processSession(
     },
     options.eventsCtx,
   );
-  return sessionOutcome(sessionRef.sessionId, harness.name, {
-    ...base,
-    candidateCount: payload.candidates.length,
-    proposalIds,
-    ...(empty && payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
-    warnings,
-    ...sessionAsset,
-    ...run.notices.fields(),
-  });
+  return result;
+}
+
+/** Queue outcomes follow effects, never merely the presence of model candidates. */
+function persistedExtractOutcome(result: ExtractSessionOutcome): ExtractedSessionRow["outcome"] {
+  if (result.candidateCount === 0) return "no_candidates";
+  if (result.proposalIds.length > 0) return "candidates_queued";
+  return result.failedCount ? "proposal_write_failed" : "candidates_blocked";
 }
 
 interface ExtractLoopTally {
@@ -894,7 +914,8 @@ async function runExtractSessionLoop(
 /**
  * Persist a session's outcome in the seen-session table. A session skipped as
  * already extracted or locked is not rewritten; one that failed for a
- * transient reason keeps a null hash so it is retried.
+ * transient reason, or had a proposal write fail, keeps a null hash so it is
+ * retried.
  */
 function recordSessionOutcome(
   stateDb: Database | undefined,
@@ -917,17 +938,20 @@ function recordSessionOutcome(
         ? ["read_failed", "exception", "malformed_model_output"].includes(reason)
           ? "failed"
           : "skipped"
-        : result.candidateCount === 0
-          ? "no_candidates"
-          : "candidates_queued",
+        : persistedExtractOutcome(result),
       candidateCount: result.candidateCount,
       proposalCount: result.proposalIds.length,
       rationale: result.rationaleIfEmpty ?? null,
       sourceRun,
-      contentHash: ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason)
-        ? null
-        : (result.contentHash ?? null),
+      // A failed proposal write keeps a null hash too, so the next run re-extracts the
+      // session; the ledger's `proposed` window blocks the candidates that did persist.
+      contentHash:
+        ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason) || result.failedCount
+          ? null
+          : (result.contentHash ?? null),
       metadata: {
+        blockedCount: result.blockedCount ?? 0,
+        failedCount: result.failedCount ?? 0,
         preFilterInputCount: result.preFilter.inputCount,
         preFilterOutputCount: result.preFilter.outputCount,
         preFilterTruncatedCount: result.preFilter.truncatedCount,
