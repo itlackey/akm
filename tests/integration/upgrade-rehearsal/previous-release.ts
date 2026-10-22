@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parse as parseSemver } from "semver";
 import { type CommandRunner, parsePackedTarball, runCommand } from "../../../scripts/package-install";
+import { withNpmNetworkRetry } from "../../_helpers/npm-network-retry";
 
 const PACKAGE_NAME = "akm-cli";
 
@@ -53,7 +54,9 @@ export async function resolvePreviousReleaseVersion(
 
   let stdout: string;
   try {
-    const result = await runner(["npm", "view", PACKAGE_NAME, "versions", "--json"], { cwd: process.cwd() });
+    const result = await withNpmNetworkRetry(runner)(["npm", "view", PACKAGE_NAME, "versions", "--json"], {
+      cwd: process.cwd(),
+    });
     stdout = result.stdout;
   } catch (error) {
     throw new Error(
@@ -116,7 +119,7 @@ export async function fetchPreviousReleaseTarball(
 
   let stdout: string;
   try {
-    const result = await runner(
+    const result = await withNpmNetworkRetry(runner)(
       ["npm", "pack", "--ignore-scripts", "--json", "--pack-destination", cacheDir, `${PACKAGE_NAME}@${version}`],
       { cwd: cacheDir },
     );
