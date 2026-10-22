@@ -18,6 +18,7 @@ import {
   runCommand,
   verifyGlobalInstall,
 } from "../../../scripts/package-install";
+import { withNpmNetworkRetry } from "../../_helpers/npm-network-retry";
 
 const PACKAGE_NAME = "akm-cli";
 
@@ -41,7 +42,7 @@ export async function installAkmTarball(
 ): Promise<InstalledAkm> {
   const prefix = path.join(prefixRoot, label);
   fs.mkdirSync(prefix, { recursive: true });
-  await installGlobalTarball(tarball, prefixRoot, prefix, runner);
+  await installGlobalTarball(tarball, prefixRoot, prefix, withNpmNetworkRetry(runner));
   const verified = await verifyGlobalInstall(prefix, { name: PACKAGE_NAME, version: expectedVersion }, runner);
   return {
     prefix,
