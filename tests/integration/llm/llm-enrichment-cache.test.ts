@@ -316,7 +316,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       freshPath,
       computeBodyHash(exactInput),
       JSON.stringify(sampleDraft("Cached Result")),
-      "memory-inference-v4",
+      "memory-inference-v5",
     );
 
     // Run the pass — cache hit → LLM must NOT be called.
@@ -337,7 +337,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       filePath,
       computeBodyHash("completely different old body"),
       JSON.stringify(sampleDraft("Stale")),
-      "memory-inference-v4",
+      "memory-inference-v5",
     );
 
     // Run — body hash mismatch → cache miss → LLM called.
@@ -357,7 +357,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       filePath,
       computeBodyHash(exactInput),
       JSON.stringify(sampleDraft("Cached")),
-      "memory-inference-v4",
+      "memory-inference-v5",
     );
 
     // Run with reEnrich=true — must call LLM despite cache hit.
