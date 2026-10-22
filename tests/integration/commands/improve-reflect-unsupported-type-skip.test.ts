@@ -344,6 +344,7 @@ describe("improve envelope: per-phase wall-clock durations are emitted at the to
           skippedBudget: 0,
           unaccounted: 0,
           htmlErrorCount: 0,
+          scopeSynced: 0,
           cacheHits: 0,
           retryAttempts: 0,
           skippedChildExists: 0,

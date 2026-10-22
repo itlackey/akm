@@ -19,7 +19,11 @@ import path from "node:path";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { _setWarnSinkForTests } from "../../src/core/warn";
-import { countPendingMemoriesNeedingDecision, runMemoryInferencePass } from "../../src/indexer/passes/memory-inference";
+import {
+  collectPendingMemories,
+  countPendingMemoriesNeedingDecision,
+  runMemoryInferencePass,
+} from "../../src/indexer/passes/memory-inference";
 import type { SearchSource } from "../../src/indexer/search/search-source";
 import { _setChatCompletionForTests, LlmCallError } from "../../src/llm/client";
 import { closeDatabase, openIndexDatabase } from "../../src/storage/repositories/index-connection";
@@ -130,6 +134,7 @@ describe("a successful no-change decision", () => {
         skippedNoFacts: 0,
         unaccounted: 0,
         htmlErrorCount: 0,
+        scopeSynced: 0,
         writtenPaths: [],
       });
     });
@@ -222,12 +227,12 @@ describe("a successful no-change decision", () => {
     expect(fs.existsSync(childPath("count"))).toBe(false);
   });
 
-  test("the decision is cached under the pass's cache variant with the body identity", async () => {
+  test("the decision is cached under the pass's cache variant with the effective input identity", async () => {
     const parent = writeMemory("note", TOOL_COUNT_NOTE);
     await withDb(async (db) => {
       await runMemoryInferencePass({ config: config(), sources: sources(), db });
-      const body = parseFrontmatter(fs.readFileSync(parent, "utf8")).content;
-      const entry = getLlmCacheEntry(db, parent, computeBodyHash(body), "memory-inference-v3");
+      const input = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
+      const entry = getLlmCacheEntry(db, parent, computeBodyHash(input), "memory-inference-v4");
       expect(JSON.parse(entry?.resultJson ?? "null")).toMatchObject({ noChange: true });
     });
   });
@@ -292,8 +297,8 @@ describe("failures are never no-change", () => {
       const failed = await runMemoryInferencePass({ config: config(), sources: sources(), db });
       expect(failed).toMatchObject({ considered: 1, noChange: 0, skippedNoFacts: 1, writtenFacts: 0 });
       expect(fs.readFileSync(parent, "utf8")).toBe(before);
-      const body = parseFrontmatter(before).content;
-      expect(getLlmCacheEntry(db, parent, computeBodyHash(body), "memory-inference-v3")).toBeUndefined();
+      const input = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
+      expect(getLlmCacheEntry(db, parent, computeBodyHash(input), "memory-inference-v4")).toBeUndefined();
 
       // The retry is a real model call, and a good reply is then honoured.
       reply = () => NO_CHANGE_REPLY;
@@ -317,8 +322,8 @@ describe("failures are never no-change", () => {
       });
       expect(result).toMatchObject({ skippedAborted: 1, noChange: 0, skippedNoFacts: 0 });
       expect(chatCalls).toHaveLength(0);
-      const body = parseFrontmatter(fs.readFileSync(parent, "utf8")).content;
-      expect(getLlmCacheEntry(db, parent, computeBodyHash(body), "memory-inference-v3")).toBeUndefined();
+      const input = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
+      expect(getLlmCacheEntry(db, parent, computeBodyHash(input), "memory-inference-v4")).toBeUndefined();
     });
   });
 
@@ -337,8 +342,14 @@ describe("old cache data", () => {
   test("a previous-namespace entry is a disposable miss", async () => {
     const parent = writeMemory("note", CHECKPOINT_NOTE);
     await withDb(async (db) => {
-      const body = parseFrontmatter(fs.readFileSync(parent, "utf8")).content;
-      upsertLlmCacheEntry(db, parent, computeBodyHash(body), JSON.stringify({ noChange: true }), "memory-inference-v2");
+      const input = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
+      upsertLlmCacheEntry(
+        db,
+        parent,
+        computeBodyHash(input),
+        JSON.stringify({ noChange: true }),
+        "memory-inference-v3",
+      );
       const result = await runMemoryInferencePass({ config: config(), sources: sources(), db });
       expect(chatCalls).toHaveLength(1);
       expect(result.cacheHits).toBe(0);
@@ -348,9 +359,9 @@ describe("old cache data", () => {
   test("an unrecognised entry under the current namespace falls through to a model call", async () => {
     const parent = writeMemory("note", CHECKPOINT_NOTE);
     await withDb(async (db) => {
-      const body = parseFrontmatter(fs.readFileSync(parent, "utf8")).content;
+      const input = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
       for (const junk of ["{}", '{"noChange":"yes"}', "[1]", "not json"]) {
-        upsertLlmCacheEntry(db, parent, computeBodyHash(body), junk, "memory-inference-v3");
+        upsertLlmCacheEntry(db, parent, computeBodyHash(input), junk, "memory-inference-v4");
         chatCalls = [];
         const result = await runMemoryInferencePass({ config: config(), sources: sources(), db });
         expect(chatCalls).toHaveLength(1);
@@ -361,14 +372,25 @@ describe("old cache data", () => {
 });
 
 describe("the minPendingCount gate count (#1219)", () => {
-  const decide = (db: Parameters<typeof upsertLlmCacheEntry>[0], file: string, body: string) =>
-    upsertLlmCacheEntry(db, file, computeBodyHash(body), JSON.stringify({ noChange: true }), "memory-inference-v3");
+  const inputFor = (file: string) => {
+    const record = collectPendingMemories(tmpStash).find((record) => record.filePath === file);
+    if (!record) throw new Error("Missing pending fixture");
+    return record.effectiveInput;
+  };
+  const decide = (db: Parameters<typeof upsertLlmCacheEntry>[0], file: string) =>
+    upsertLlmCacheEntry(
+      db,
+      file,
+      computeBodyHash(inputFor(file)),
+      JSON.stringify({ noChange: true }),
+      "memory-inference-v4",
+    );
 
   test("excludes a parent whose current body has a cached no-change decision", async () => {
     const decided = writeMemory("decided", TOOL_COUNT_NOTE);
     writeMemory("fresh", CHECKPOINT_NOTE);
     await withDb(async (db) => {
-      decide(db, decided, parseFrontmatter(fs.readFileSync(decided, "utf8")).content);
+      decide(db, decided);
       expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(1);
       // Without a database every pending parent counts.
       expect(countPendingMemoriesNeedingDecision(tmpStash)).toBe(2);
@@ -378,7 +400,7 @@ describe("the minPendingCount gate count (#1219)", () => {
   test("counts a parent again once its body is edited", async () => {
     const parent = writeMemory("note", TOOL_COUNT_NOTE);
     await withDb(async (db) => {
-      decide(db, parent, parseFrontmatter(fs.readFileSync(parent, "utf8")).content);
+      decide(db, parent);
       expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(0);
       writeMemory("note", SUBSTANTIVE_NOTE);
       expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(1);
@@ -393,17 +415,11 @@ describe("the minPendingCount gate count (#1219)", () => {
       upsertLlmCacheEntry(
         db,
         stale,
-        computeBodyHash(parseFrontmatter(fs.readFileSync(stale, "utf8")).content),
+        computeBodyHash(inputFor(stale)),
         JSON.stringify({ noChange: true }),
-        "memory-inference-v2",
-      );
-      upsertLlmCacheEntry(
-        db,
-        drafted,
-        computeBodyHash(parseFrontmatter(fs.readFileSync(drafted, "utf8")).content),
-        CHILD_REPLY,
         "memory-inference-v3",
       );
+      upsertLlmCacheEntry(db, drafted, computeBodyHash(inputFor(drafted)), CHILD_REPLY, "memory-inference-v4");
       expect(countPendingMemoriesNeedingDecision(tmpStash, db)).toBe(3);
     });
   });
@@ -416,6 +432,6 @@ describe("the prompt", () => {
     const prompt = chatCalls[0] ?? "";
     expect(prompt).toContain("noChange");
     expect(prompt).toContain("derived memory");
-    expect(prompt.endsWith(CHECKPOINT_NOTE)).toBe(true);
+    expect(prompt.slice(prompt.indexOf("\n\nBody:\n") + "\n\nBody:\n".length)).toBe(CHECKPOINT_NOTE);
   });
 });

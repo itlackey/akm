@@ -103,7 +103,9 @@ export const DERIVED_MEMORY_JSON_SCHEMA = {
 } as const;
 
 /**
- * Compress a single memory body into one derived memory via the configured LLM.
+ * Compress a single memory into one derived memory via the configured LLM.
+ * `body` is the pass's effective input (a `Source context:` section, then the
+ * raw body after `Body:`), appended verbatim to the user prompt.
  *
  * Returns the draft, or {@link MEMORY_INFER_NO_CHANGE} when the model explicitly
  * decides the memory needs no derived memory. Returns `undefined` on any failure

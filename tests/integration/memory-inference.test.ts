@@ -201,6 +201,7 @@ describe("runMemoryInferencePass — disabled by default", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      scopeSynced: 0,
       writtenPaths: [],
     });
   });
@@ -275,6 +276,7 @@ describe("runMemoryInferencePass — index pass gate and engine selection", () =
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      scopeSynced: 0,
       writtenPaths: [],
     });
     expect(invocations).toBe(0);
@@ -485,9 +487,9 @@ describe("runMemoryInferencePass — enabled", () => {
     upsertLlmCacheEntry(
       db,
       record.filePath,
-      computeBodyHash(record.body),
+      computeBodyHash(record.effectiveInput),
       JSON.stringify(sampleDraft("Cached Derived")),
-      "memory-inference-v3",
+      "memory-inference-v4",
     );
     let calls = 0;
     compressor = () => {
@@ -711,6 +713,7 @@ describe("runMemoryInferencePass — enabled", () => {
       skippedAborted: 0,
       unaccounted: 0,
       htmlErrorCount: 0,
+      scopeSynced: 0,
       // R78: derived child + rewritten parent, the two files
       // indexWrittenAssets indexes afterwards instead of a full reindex.
       writtenPaths: [derivedPath, parentPath].sort(),

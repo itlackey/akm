@@ -1,0 +1,297 @@
+{
+  "issue": "https://github.com/itlackey/akm/issues/1209",
+  "state": "ready for review: scoped acceptance supported with two disclosed soft regressions; merge and production verification pending",
+  "baseline": "11bb443e5498d666d35a7eda761c603fb8b1ece8",
+  "skill_revision": "ff35ed5393ae287aa8d81c9111fc27636b921d08",
+  "evaluator_revision": "3b679fe8f59a63c8efc32710e1c09c27e45badab",
+  "bakeoff_version": "0.3",
+  "priority": [
+    "scope/evidence/claim integrity",
+    "grounded useful output and false abstention",
+    "cache correctness and model resource cost"
+  ],
+  "baseline_reproduction": {
+    "initial_regression_tests": 6,
+    "passed": 1,
+    "failed": 5,
+    "observed": [
+      "request contained only body",
+      "canonical/legacy/partial child scope became {}",
+      "body-identical relevant metadata edit reused cached no-change"
+    ],
+    "actual_request_source_suffix": "Memory:\nThe operator retrieved the tunnel guide and requested a restart; completion was not recorded.",
+    "canonical_child_scope": {},
+    "relevant_metadata_edit_cache_hits": 1
+  },
+  "checks": {
+    "focused_release_integration": {
+      "passed": 46,
+      "failed": 0,
+      "assertions": 257
+    },
+    "full_unit": {
+      "passed": 7283,
+      "skipped": 4,
+      "failed": 0
+    },
+    "full_integration": {
+      "passed": 3960,
+      "skipped": 81,
+      "failed": 0
+    },
+    "build": "passed",
+    "biome_write": "passed; no source/test changes",
+    "doc_examples": "passed",
+    "runtime": "Bun 1.4.3; Node 24.19.0; four test shards; conventional umask; OS /tmp TMPDIR"
+  },
+  "deterministic_coverage": [
+    "actual request context and missing dates",
+    "canonical/legacy/partial/absent scope through write/index/show/filtered search",
+    "model-authored scope ignored",
+    "parent evidence/body retained and source backref preserved",
+    "all selected metadata fields invalidate cached no-change; relevant edit invalidates cached draft",
+    "equivalent YAML order/whitespace/scope and excluded metadata remain cached",
+    "empty body stays failure without a model call",
+    "existing child recovery/no recursion/no-change unchanged"
+  ],
+  "actual_installed_source_input": {
+    "sourceContext": {
+      "description": "Lab route; not proof of this assistant's configuration.",
+      "evidence": "Retrieved guide; restart requested, no completion event.",
+      "observed_at": "2026-02-14",
+      "evidenceSources": [
+        "sessions/claude/nacre"
+      ],
+      "scope": {
+        "user": "alice",
+        "agent": "helper",
+        "run": "42",
+        "channel": "lab"
+      }
+    },
+    "body": "The operator retrieved the Nacre guide and requested a restart; completion was not recorded."
+  },
+  "installed_user_path": {
+    "package_sha256": "b1afcd8e4023e70c3719452e1ad07824578492e4f4c8f6c580638cbe43455804",
+    "commands": 12,
+    "scripted_inference_transport_calls": 6,
+    "all_scripted_transport_calls": 13,
+    "first": {
+      "considered": 4,
+      "cacheHits": 0,
+      "retryAttempts": 0,
+      "splitParents": 1,
+      "writtenFacts": 1,
+      "noChange": 1,
+      "skippedNoFacts": 2,
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": [
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/nacre.derived.md",
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/nacre.md"
+      ]
+    },
+    "after_malformed_reply_repaired": {
+      "considered": 3,
+      "cacheHits": 1,
+      "retryAttempts": 0,
+      "splitParents": 1,
+      "writtenFacts": 1,
+      "noChange": 1,
+      "skippedNoFacts": 1,
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": [
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/recovery.derived.md",
+        "/tmp/akm-eval-1209-installed-2lvsc8/bundle/memories/recovery.md"
+      ]
+    },
+    "unchanged_repeat": {
+      "considered": 2,
+      "cacheHits": 1,
+      "retryAttempts": 0,
+      "splitParents": 0,
+      "writtenFacts": 0,
+      "noChange": 1,
+      "skippedNoFacts": 1,
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": []
+    },
+    "minPendingCount": 1,
+    "cached_only_gate_skipped": true,
+    "metadata_only_scope_edit": {
+      "considered": 1,
+      "cacheHits": 0,
+      "retryAttempts": 0,
+      "splitParents": 0,
+      "writtenFacts": 0,
+      "noChange": 1,
+      "skippedNoFacts": 0,
+      "skippedChildExists": 0,
+      "skippedAborted": 0,
+      "unaccounted": 0,
+      "htmlErrorCount": 0,
+      "writtenPaths": []
+    },
+    "cached_again_gate_skipped": true,
+    "scope": "normalized parent tuple copied independently of reply; legacy recovery scope retained",
+    "consumer_checks": "actual write/index/show/scoped-search passed; parent evidence retained",
+    "quality_claim": false
+  },
+  "model_pilot": {
+    "status": "complete: genuine Luna responses to actual AKM requests replayed through existing bakeoff collection/publication/scoring; no product or evaluator source changes",
+    "baseline": "defa2343284b74af9379091379bf9cf649090688",
+    "candidate": "2eab83771046d05c7ece6e3a75dc9c05bddf0860",
+    "requested_model": "gpt-6-luna",
+    "pilot_cases": 11,
+    "observations_per_build": 2,
+    "pilot_baseline_passes": [
+      9,
+      9
+    ],
+    "pilot_candidate_passes": [
+      11,
+      10
+    ],
+    "pilot_aggregate": {
+      "baseline": "18/22",
+      "candidate": "21/22"
+    },
+    "body_only_positive_and_no_change_controls": "16/16 per build",
+    "context_cases": {
+      "baseline": "2/6",
+      "candidate": "5/6"
+    },
+    "fresh_final_cases": {
+      "cases": 2,
+      "author": "coordinator; reserved before paired collection; not an independent-author claim",
+      "baseline": "1/2",
+      "candidate": "1/2",
+      "note": "Different misses: candidate preserves the new request but writes an unnecessary child for the short scoped log-path note."
+    },
+    "scope_checks": "Main pilot: baseline publishes 6 scoped-source children and preserves scope in 0; candidate publishes 5, preserves scope in all 5, and abstains once. Fresh candidate children both preserve exact scope, including the unnecessary child.",
+    "errors_or_tool_use": "0 in successful replay preflight, 44 main-pilot observations and 4 final-case observations; publication matches all actual response fields",
+    "native_codex_model_work": "Not supported by current AKM policy; configuration preflight rejected it before inference. No policy weakening or product adapter added. Task-local glue reuses existing runCorpus/startStub with separately captured genuine Codex replies.",
+    "effective_settings": "Codex CLI 0.163.0; medium reasoning, no explicit native temperature; tools disabled and no tool items observed. System/user text joined under the same native instructions; requested alias is not independent remote served-model confirmation.",
+    "acceptance_tradeoffs": [
+      {
+        "case": "infer-context-attempt-unknown",
+        "baseline": "derived output in both observations, missing source-only observation date",
+        "candidate": "grounded dated output once; explicit no-change once",
+        "disposition": "Accepted limited false abstention under the rubric. The parent and its evidence remain intact; one derived retrieval shortcut is absent. No introduced false completed action or widened scope."
+      },
+      {
+        "case": "final-short-scoped-log-directory",
+        "baseline": "no-change",
+        "candidate": "unnecessary accurate scoped child",
+        "disposition": "Accepted limited extra write/clutter. Fresh-case score ties at 1/2; the gain is recovery of the other case's request details, not a held-out aggregate improvement."
+      }
+    ],
+    "manual_review": "Reviewed actual requests, genuine responses and written assets for actors, qualifications, request/attempt/completion, negation and source-only dates. No introduced unsupported completed action or scope broadening observed in these finite cases. Finite lexical scoring does not establish general factual accuracy.",
+    "cost": {
+      "added_akm_request_characters": {
+        "min": 844,
+        "max": 1024,
+        "mean": 899.91
+      },
+      "native_input_tokens_main": {
+        "baseline": 209534,
+        "candidate": 213346,
+        "relative_increase_percent": 1.82
+      },
+      "native_output_tokens_main": {
+        "baseline": 2570,
+        "candidate": 2957,
+        "relative_increase_percent": 15.06
+      },
+      "native_call_seconds_main": {
+        "baseline": 117.45,
+        "candidate": 117.62
+      },
+      "limits": "Native input includes substantial Codex instructions; cache-hit counts differ. No dollar-cost, direct-API token-cost or speed claim. Smoke-envelope one-token counts are synthetic and excluded."
+    },
+    "artifact": "luna-pilot.jsonl.gz",
+    "artifact_format": "gzip-compressed JSON Lines: manifest/corpora/settings plus 49 scored actual-request/response/written-result records, including the one-case replay preflight",
+    "artifact_sha256": "c28b5ce0a84869c0b06a4712820993ca979c8e6e2d8a01f38b3fd2f5cde041cc",
+    "raw_evidence_directory": "/workspace/scratch/1209/luna",
+    "coverage_limit": "One requested model via a native Codex response-replay transport; no local 35B or other model coverage, production rollout, recall benchmark or universal quality claim."
+  },
+  "budget": {
+    "treatments_used": 1,
+    "treatment_ceiling": 3,
+    "scored_case_ceiling": 80,
+    "model_wall_minutes_ceiling": 90,
+    "repairs": [
+      "retained empty-body no-dispatch behavior",
+      "updated remaining pre-v4 cache seed fixtures after full-suite failure",
+      "merged #1220 shared cache lookup and pending-count gate using effective-input v4 identity; refreshed affected seed fixtures",
+      "installed-path gate assertion initially used unset minPendingCount; configured explicit threshold 1 and replay passed; no product-code repair",
+      "Evaluation-only setup: refreshed expired sign-in; native Codex model-work config rejected before inference; selected genuine-response replay using existing evaluator helpers and corrected version-probe setup. No product treatment change."
+    ],
+    "stopping_reason": "Stop after one product treatment: repeated metadata/scope benefit and fresh-case request gain are demonstrated; required integrity checks pass; false abstention, extra-child clutter and added input/output cost are bounded and disclosed. No prompt tuning or extra collections to chase perfect scores.",
+    "scored_case_invocations_used": 49,
+    "genuine_luna_scored_calls": 49,
+    "additional_successful_auth_readiness_probe": 1,
+    "scored_native_wall_seconds": 256.87,
+    "additional_failed_auth_preflight": 1,
+    "model_wall_minutes_upper_bound_including_auth_preflights": 6.11
+  },
+  "evaluator_preflight": {
+    "help_and_current_runner_inspected": true,
+    "contract_smoke": "pinned release and candidate reach output; both fail stale canned matcher Compress the memory after #1208",
+    "evaluator_code_changes": false,
+    "live_preflight": "One-case genuine Luna response replay completed; inspected saved actual requests, native usage/tool events, written fields and inference counters before full paired collection."
+  },
+  "peer_review": "#1211 agent reviewed changed boundary/test matrix before collection; exchanged fresh final cases and reviewed each patch",
+  "combined_verification": {
+    "code_commit": "4abc195c839da47cd8c81af1ee7dfb80c1391aec",
+    "includes": [
+      "0342a21395a3588a2ca558910264d94abf1a24a7",
+      "054af7fcf726c3f622647425a6aad46541096e8a"
+    ],
+    "status": "passed",
+    "documentation_conflict": "resolved in temporary combined worktree by retaining both context guidance and parent metadata fallback guidance",
+    "focused": {
+      "passed": 139,
+      "failed": 0,
+      "assertions": 616
+    },
+    "build": "passed",
+    "installed_commands": 10,
+    "scripted_inference_transport_calls": 5,
+    "all_scripted_transport_calls": 9,
+    "parent_description_before": "Lab route; not proof of this assistant's configuration.",
+    "parent_description_after": "Lab route; not proof of this assistant's configuration.",
+    "indexed_parent_tags_before": [
+      "nacre"
+    ],
+    "indexed_parent_tags_after": [
+      "nacre"
+    ],
+    "child_scope_and_filtered_show_search": "passed",
+    "note": "The actual index had generated a populated nacre tag despite absent authored tags; replay compares the indexed pre-inference surface. Missing-tag fallback is covered in focused fixtures."
+  },
+  "rollout": "Accepted for review with disclosed tradeoffs; issue remains open until merge. Maintainers own PR review/merge to release/0.10.0 and release/installation observation. Existing children remain; v4 makes older pending cache decisions disposable misses; a downgrade does not remove already written children. No merge/deployment or #1210 generation/date publication claim.",
+  "evidence_reuse": "Full check/build/installed-path checks and successful GitHub CI cover executable source at 2eab83771. Luna measurements cover exactly that source and release baseline defa23432. Subsequent edits are changelog and evidence only; source SHA-256 verified unchanged. Historical original and temporary-combined results retain their recorded revisions.",
+  "source_sha256": {
+    "src/indexer/passes/memory-inference.ts": "b377dcd785ddbea9506c74e8f8a6846ae83f474840c89d4dc69af5e214657a1b",
+    "src/assets/prompts/memory-infer-user.md": "cb465d8e5d5f46a25ac6cb82123c79d41a85c782535dd1124c8d1f9d448fd855"
+  },
+  "original_measured_code_commit": "0342a21395a3588a2ca558910264d94abf1a24a7",
+  "release_base": "defa2343284b74af9379091379bf9cf649090688",
+  "release_sync": {
+    "upstream_pr": "https://github.com/itlackey/akm/pull/1220",
+    "shared_cache_identity": "pending-count gate and inference pass both hash selected context plus body under memory-inference-v4",
+    "regression_checks": "normalized-equivalent/excluded metadata stays decided; relevant metadata-only edits reopen the gate and pass; cached-only batch skips when minPendingCount=1",
+    "full_check_log": "/workspace/scratch/1209/release-1220-full-check.log",
+    "installed_log": "/workspace/scratch/1209/release-1220-installed-path.log"
+  },
+  "historical_evidence": "https://github.com/itlackey/akm/blob/ecabbb22abefe579dfa54b285097e6fb0b9e300a/docs/evaluations/1209/verification.json"
+}
