@@ -184,9 +184,21 @@ function removeSignalGuard(): void {
  * else handles the signal. A command that handles it itself (`workflow run`,
  * `improve`, task runs) unwinds through its own cleanup, which already aborts
  * its children, and must not have its handling pre-empted by a re-raise.
+ *
+ * They go in BEFORE the spawn ({@link installSignalGuard}): a signal that lands
+ * between the spawn and the registration would otherwise meet the default
+ * disposition, end akm, and leave the new group running (#1230). The listener
+ * runs on the event loop, so it always sees the child registered here.
  */
 function registerLiveGroupChild(child: LiveGroupChild): () => void {
   liveGroupChildren.add(child);
+  return () => {
+    liveGroupChildren.delete(child);
+    if (liveGroupChildren.size === 0) removeSignalGuard();
+  };
+}
+
+function installSignalGuard(): void {
   if (!signalGuardHandlers && process.listenerCount("SIGINT") === 0 && process.listenerCount("SIGTERM") === 0) {
     const handlers: Array<[NodeJS.Signals, () => void]> = [];
     for (const signal of ["SIGINT", "SIGTERM"] as const) {
@@ -203,10 +215,6 @@ function registerLiveGroupChild(child: LiveGroupChild): () => void {
     }
     signalGuardHandlers = handlers;
   }
-  return () => {
-    liveGroupChildren.delete(child);
-    if (liveGroupChildren.size === 0) removeSignalGuard();
-  };
 }
 
 /** Result of draining one captured pipe. */
@@ -538,10 +546,14 @@ export async function runManagedSubprocess(
     };
   }
 
+  // A termination signal to this process takes the own-group child down too.
+  const guardsGroup = capture && spawnsOwnProcessGroup();
+  if (guardsGroup) installSignalGuard();
   let proc: SpawnedSubprocess;
   try {
     proc = spawnFn(cmd, buildSpawnOptions(opts));
   } catch (err) {
+    if (guardsGroup && liveGroupChildren.size === 0) removeSignalGuard();
     return {
       exitCode: null,
       stdout: "",
@@ -602,9 +614,7 @@ export async function runManagedSubprocess(
     else abortSignal.addEventListener("abort", onAbort, { once: true });
   }
 
-  // A termination signal to this process takes the own-group child down too.
-  const unregisterLiveChild =
-    capture && spawnsOwnProcessGroup() ? registerLiveGroupChild({ proc, terminate: onAbort }) : () => {};
+  const unregisterLiveChild = guardsGroup ? registerLiveGroupChild({ proc, terminate: onAbort }) : () => {};
 
   // Stream-drain timeout: a short grace once nothing living owns the pipe any
   // more, or a one-hour safety bound when execution itself is unbounded.
