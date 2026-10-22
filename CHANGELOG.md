@@ -6,10 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Memory inference receives selected source context alongside the body and copies
+  normalized parent scope to derived memories (#1209). The request and both cache
+  paths share the same effective-input identity under `memory-inference-v4`, so
+  relevant metadata edits reopen pending decisions. Existing children are kept;
+  older cached pending decisions are disposable misses.
+
 ### Fixed
 
 - `processes.memoryInference.minPendingCount` no longer counts a pending parent whose
-  current body already has a cached `memory-inference-v3` no-change decision, so a
+  current effective input already has a cached no-change decision, so a
   pass made only of cached decisions is not admitted; an edited or uncached parent
   still counts (#1219). Health `memoryInference.noChange` is documented as per run,
   including cached decisions, not a cumulative total.

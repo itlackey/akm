@@ -1,6 +1,6 @@
 {
   "issue": "https://github.com/itlackey/akm/issues/1209",
-  "state": "needs iteration: required real-model paired pilot is blocked by expired Codex authentication for requested Luna model",
+  "state": "ready for review: scoped acceptance supported with two disclosed soft regressions; merge and production verification pending",
   "baseline": "11bb443e5498d666d35a7eda761c603fb8b1ece8",
   "skill_revision": "ff35ed5393ae287aa8d81c9111fc27636b921d08",
   "evaluator_revision": "3b679fe8f59a63c8efc32710e1c09c27e45badab",
@@ -146,28 +146,82 @@
     "quality_claim": false
   },
   "model_pilot": {
-    "status": "blocked: requested gpt-6-luna via existing Codex CLI; actual preflight returned HTTP 401, expired/revoked ChatGPT sign-in; user asked for login instructions",
-    "prepared_cases": 11,
-    "existing_public_cases": 8,
-    "fictional_context_cases": 3,
-    "planned_initial_invocations": 44,
-    "fresh_independent_final_cases_reserved": 2,
-    "real_scored_cases": 0,
-    "real_model_calls": 0,
-    "real_model_wall_minutes": 0,
-    "tokens_or_dollar_cost": "not measured; scripted token counts are not cost evidence",
-    "additional_user_prompt_characters_on_five_scripted_requests": {
-      "min": 805,
-      "max": 1049
-    },
-    "quality_and_false_abstention": "unmeasured; no field-presence or scripted-score substitute",
+    "status": "complete: genuine Luna responses to actual AKM requests replayed through existing bakeoff collection/publication/scoring; no product or evaluator source changes",
+    "baseline": "defa2343284b74af9379091379bf9cf649090688",
+    "candidate": "2eab83771046d05c7ece6e3a75dc9c05bddf0860",
     "requested_model": "gpt-6-luna",
-    "native_runner_preflight": {
-      "runner": "codex-cli 0.163.0",
-      "successful_inferences": 0,
-      "failed_auth_preflights": 1,
-      "note": "Cached login status reported authenticated but the actual inference failed; no model-quality evidence."
-    }
+    "pilot_cases": 11,
+    "observations_per_build": 2,
+    "pilot_baseline_passes": [
+      9,
+      9
+    ],
+    "pilot_candidate_passes": [
+      11,
+      10
+    ],
+    "pilot_aggregate": {
+      "baseline": "18/22",
+      "candidate": "21/22"
+    },
+    "body_only_positive_and_no_change_controls": "16/16 per build",
+    "context_cases": {
+      "baseline": "2/6",
+      "candidate": "5/6"
+    },
+    "fresh_final_cases": {
+      "cases": 2,
+      "author": "coordinator; reserved before paired collection; not an independent-author claim",
+      "baseline": "1/2",
+      "candidate": "1/2",
+      "note": "Different misses: candidate preserves the new request but writes an unnecessary child for the short scoped log-path note."
+    },
+    "scope_checks": "Main pilot: baseline publishes 6 scoped-source children and preserves scope in 0; candidate publishes 5, preserves scope in all 5, and abstains once. Fresh candidate children both preserve exact scope, including the unnecessary child.",
+    "errors_or_tool_use": "0 in successful replay preflight, 44 main-pilot observations and 4 final-case observations; publication matches all actual response fields",
+    "native_codex_model_work": "Not supported by current AKM policy; configuration preflight rejected it before inference. No policy weakening or product adapter added. Task-local glue reuses existing runCorpus/startStub with separately captured genuine Codex replies.",
+    "effective_settings": "Codex CLI 0.163.0; medium reasoning, no explicit native temperature; tools disabled and no tool items observed. System/user text joined under the same native instructions; requested alias is not independent remote served-model confirmation.",
+    "acceptance_tradeoffs": [
+      {
+        "case": "infer-context-attempt-unknown",
+        "baseline": "derived output in both observations, missing source-only observation date",
+        "candidate": "grounded dated output once; explicit no-change once",
+        "disposition": "Accepted limited false abstention under the rubric. The parent and its evidence remain intact; one derived retrieval shortcut is absent. No introduced false completed action or widened scope."
+      },
+      {
+        "case": "final-short-scoped-log-directory",
+        "baseline": "no-change",
+        "candidate": "unnecessary accurate scoped child",
+        "disposition": "Accepted limited extra write/clutter. Fresh-case score ties at 1/2; the gain is recovery of the other case's request details, not a held-out aggregate improvement."
+      }
+    ],
+    "manual_review": "Reviewed actual requests, genuine responses and written assets for actors, qualifications, request/attempt/completion, negation and source-only dates. No introduced unsupported completed action or scope broadening observed in these finite cases. Finite lexical scoring does not establish general factual accuracy.",
+    "cost": {
+      "added_akm_request_characters": {
+        "min": 844,
+        "max": 1024,
+        "mean": 899.91
+      },
+      "native_input_tokens_main": {
+        "baseline": 209534,
+        "candidate": 213346,
+        "relative_increase_percent": 1.82
+      },
+      "native_output_tokens_main": {
+        "baseline": 2570,
+        "candidate": 2957,
+        "relative_increase_percent": 15.06
+      },
+      "native_call_seconds_main": {
+        "baseline": 117.45,
+        "candidate": 117.62
+      },
+      "limits": "Native input includes substantial Codex instructions; cache-hit counts differ. No dollar-cost, direct-API token-cost or speed claim. Smoke-envelope one-token counts are synthetic and excluded."
+    },
+    "artifact": "luna-pilot.jsonl.gz",
+    "artifact_format": "gzip-compressed JSON Lines: manifest/corpora/settings plus 49 scored actual-request/response/written-result records, including the one-case replay preflight",
+    "artifact_sha256": "c28b5ce0a84869c0b06a4712820993ca979c8e6e2d8a01f38b3fd2f5cde041cc",
+    "raw_evidence_directory": "/workspace/scratch/1209/luna",
+    "coverage_limit": "One requested model via a native Codex response-replay transport; no local 35B or other model coverage, production rollout, recall benchmark or universal quality claim."
   },
   "budget": {
     "treatments_used": 1,
@@ -178,14 +232,22 @@
       "retained empty-body no-dispatch behavior",
       "updated remaining pre-v4 cache seed fixtures after full-suite failure",
       "merged #1220 shared cache lookup and pending-count gate using effective-input v4 identity; refreshed affected seed fixtures",
-      "installed-path gate assertion initially used unset minPendingCount; configured explicit threshold 1 and replay passed; no product-code repair"
+      "installed-path gate assertion initially used unset minPendingCount; configured explicit threshold 1 and replay passed; no product-code repair",
+      "Evaluation-only setup: refreshed expired sign-in; native Codex model-work config rejected before inference; selected genuine-response replay using existing evaluator helpers and corrected version-probe setup. No product treatment change."
     ],
-    "stopping_reason": "Luna authentication prerequisite missing; zero scored model cases; awaiting refreshed sign-in or configured authenticated endpoint, not accepted model quality"
+    "stopping_reason": "Stop after one product treatment: repeated metadata/scope benefit and fresh-case request gain are demonstrated; required integrity checks pass; false abstention, extra-child clutter and added input/output cost are bounded and disclosed. No prompt tuning or extra collections to chase perfect scores.",
+    "scored_case_invocations_used": 49,
+    "genuine_luna_scored_calls": 49,
+    "additional_successful_auth_readiness_probe": 1,
+    "scored_native_wall_seconds": 256.87,
+    "additional_failed_auth_preflight": 1,
+    "model_wall_minutes_upper_bound_including_auth_preflights": 6.11
   },
   "evaluator_preflight": {
     "help_and_current_runner_inspected": true,
     "contract_smoke": "pinned release and candidate reach output; both fail stale canned matcher Compress the memory after #1208",
-    "evaluator_code_changes": false
+    "evaluator_code_changes": false,
+    "live_preflight": "One-case genuine Luna response replay completed; inspected saved actual requests, native usage/tool events, written fields and inference counters before full paired collection."
   },
   "peer_review": "#1211 agent reviewed changed boundary/test matrix before collection; exchanged fresh final cases and reviewed each patch",
   "combined_verification": {
@@ -216,8 +278,8 @@
     "child_scope_and_filtered_show_search": "passed",
     "note": "The actual index had generated a populated nacre tag despite absent authored tags; replay compares the indexed pre-inference surface. Missing-tag fallback is covered in focused fixtures."
   },
-  "rollout": "review-only draft; issue remains open; no merge/deployment; existing children retained; v4 makes old cached pending decisions disposable misses; #1210 generation/date publication unchanged",
-  "evidence_reuse": "Original and temporary-combined results identify their earlier revisions and are historical. Current checks cover the release-sync source hashes below; only documentation and this record changed after the successful full check. No real-model or full combined #1211 quality claim.",
+  "rollout": "Accepted for review with disclosed tradeoffs; issue remains open until merge. Maintainers own PR review/merge to release/0.10.0 and release/installation observation. Existing children remain; v4 makes older pending cache decisions disposable misses; a downgrade does not remove already written children. No merge/deployment or #1210 generation/date publication claim.",
+  "evidence_reuse": "Full check/build/installed-path checks and successful GitHub CI cover executable source at 2eab83771. Luna measurements cover exactly that source and release baseline defa23432. Subsequent edits are changelog and evidence only; source SHA-256 verified unchanged. Historical original and temporary-combined results retain their recorded revisions.",
   "source_sha256": {
     "src/indexer/passes/memory-inference.ts": "b377dcd785ddbea9506c74e8f8a6846ae83f474840c89d4dc69af5e214657a1b",
     "src/assets/prompts/memory-infer-user.md": "cb465d8e5d5f46a25ac6cb82123c79d41a85c782535dd1124c8d1f9d448fd855"
