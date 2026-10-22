@@ -198,7 +198,8 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
         const fmObservedAt = nonEmptyString(fm.observed_at);
         if (fmObservedAt) {
           hints.add(`observed_at:${fmObservedAt}`);
-        } else {
+        } else if (fm.inferred !== true) {
+          // A derived child's mtime is when it was generated, not when anything was observed.
           try {
             const isoDate = file.stat().mtime.toISOString().slice(0, 10);
             hints.add(`observed_at:${isoDate}`);

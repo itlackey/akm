@@ -530,7 +530,10 @@ export async function showLocal(input: {
     ...response,
     ...(evidenceMetadata?.evidence ? { evidence: evidenceMetadata.evidence } : {}),
     ...(evidenceMetadata?.evidenceSources ? { evidenceSources: evidenceMetadata.evidenceSources } : {}),
-    ...(evidenceMetadata?.evidence && evidenceMetadata.provenance ? { provenance: evidenceMetadata.provenance } : {}),
+    ...(evidenceMetadata?.provenance &&
+    (evidenceMetadata.evidence || evidenceMetadata.provenance.generatedAt || evidenceMetadata.provenance.sources)
+      ? { provenance: evidenceMetadata.provenance }
+      : {}),
     ref: canonicalRef,
     origin: source?.registryId ?? null,
     editable,
