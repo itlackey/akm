@@ -2,7 +2,7 @@
 // filesystem, but harness + LLM chat are injected so no network / no
 // platform install needed.
 
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -17,12 +17,14 @@ import {
 } from "../../src/commands/improve/extract";
 import { EXTRACT_JSON_SCHEMA } from "../../src/commands/improve/extract-prompt";
 import { akmMetrics } from "../../src/commands/metrics/metrics-cli";
+import { akmProposalAccept } from "../../src/commands/proposal/proposal";
+import * as proposalRepository from "../../src/commands/proposal/repository";
 import { listProposals } from "../../src/commands/proposal/repository";
 import { isValidDescription } from "../../src/commands/proposal/validators/proposal-quality-validators";
 import { parseFrontmatter } from "../../src/core/asset/frontmatter";
 import type { AkmConfig } from "../../src/core/config/config";
 import { ImproveProcessConfigSchema, ImproveProfileConfigSchema } from "../../src/core/config/config-schema";
-import { ConfigError, UsageError } from "../../src/core/errors";
+import { ConfigError, TransientError, UsageError } from "../../src/core/errors";
 import { appendEvent, readEvents } from "../../src/core/events";
 import { createLockPayload } from "../../src/core/file-lock";
 import { getStateDbPath, openStateDatabase } from "../../src/core/state-db";
@@ -45,7 +47,13 @@ import { recordImproveLedger } from "../../src/storage/repositories/improve-ledg
 import { codexMessage, writeCodexRollout } from "../_helpers/codex-rollout";
 import { durableItemRef } from "../_helpers/durable-ref";
 import { asLlmRunner } from "../_helpers/llm-runner";
-import { type IsolatedAkmStorage, mutateScopedEnv, withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import {
+  type IsolatedAkmStorage,
+  mutateScopedEnv,
+  withEnv,
+  withIsolatedAkmStorage,
+  writeSandboxConfig,
+} from "../_helpers/sandbox";
 import { snapshotTree } from "../_helpers/snapshot-tree";
 
 // ── Test scaffolding ────────────────────────────────────────────────────────
@@ -1034,6 +1042,191 @@ describe("akmExtract — accounting matches persisted effects (#1212)", () => {
       expect(getExtractedSession(db, "claude", "fresh")).toBeUndefined();
       expect(db.prepare("SELECT * FROM improve_ledger").all()).toEqual(ledgerBefore);
       expect((await akmMetrics()).proposals.byStatus.pending ?? 0).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("akmExtract — what a retried session writes again (#1224)", () => {
+  const candidate = (name: string) => ({
+    type: "memory",
+    name,
+    description: "Deployment requires a working VPN connection before starting.",
+    body: `Connect the corporate VPN before running deploy.sh (${name}), which otherwise stalls while pushing to stage.`,
+    confidence: 0.9,
+    evidence: "The session demonstrated the deployment failure without VPN.",
+  });
+  const realCreateProposal = proposalRepository.createProposal;
+
+  async function run(
+    db: ReturnType<typeof openStateDatabase>,
+    stash: string,
+    config: AkmConfig,
+    session: SessionData,
+    names: string[],
+    calls?: { count: number },
+  ) {
+    // The mint binds its proposal to this bundle, which the real accept resolves again.
+    writeSandboxConfig(config as unknown as Record<string, unknown>);
+    return akmExtract({
+      type: "claude",
+      stashDir: stash,
+      config,
+      sessionId: session.ref.sessionId,
+      harnesses: [makeFakeHarness([session])],
+      stateDb: db,
+      eventsCtx: { db },
+      chat: async () => {
+        if (calls) calls.count += 1;
+        return JSON.stringify({ candidates: names.map(candidate) });
+      },
+      generateSessionSummary: async () => ({ summary: "A VPN deployment session.", keyTopics: ["deploy"] }),
+    });
+  }
+  const pendingRefs = (stash: string) =>
+    listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() })
+      .map((row) => row.ref.split("//").pop())
+      .sort();
+
+  // Both ways a proposal names its session: the session asset (indexing on) or the native identity.
+  for (const mark of ["provenance", "session asset"] as const) {
+    test(`a candidate accepted between the failed run and its retry is not proposed again (${mark})`, async () => {
+      const stash = makeStashDir();
+      const config = configEnabled(stash);
+      const extractProcess = config.improve?.strategies?.extract?.processes?.extract;
+      if (mark === "session asset" && extractProcess) extractProcess.indexSessions = true;
+      const session = fakeSession(`accepted-${mark.replace(" ", "-")}`, Date.now() - 60_000);
+      const db = openStateDatabase();
+      try {
+        db.exec(`CREATE TRIGGER fail_extract_proposal BEFORE INSERT ON proposals
+          WHEN NEW.ref LIKE '%/broken' BEGIN SELECT RAISE(ABORT, 'scripted write failure'); END`);
+        const first = await run(db, stash, config, session, ["saved", "broken"]);
+        expect(first.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 0 });
+        expect(getExtractedSession(db, "claude", session.ref.sessionId)?.content_hash).toBeNull();
+        const saved = listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() });
+        expect(saved).toHaveLength(1);
+        const fm = saved[0]?.payload.frontmatter ?? {};
+        if (mark === "session asset") expect(fm.xrefs).toEqual([`sessions/claude/${session.ref.sessionId}`]);
+        else expect(fm.provenance).toEqual({ sources: [{ resource: `claude:${session.ref.sessionId}` }] });
+
+        // Accepted (drain, triage or a person) before the retry: its ledger row now has no window.
+        await akmProposalAccept({ stashDir: stash, config, id: saved[0]?.id ?? "missing" });
+        db.exec("DROP TRIGGER fail_extract_proposal");
+
+        const retry = await run(db, stash, config, session, ["saved", "broken"]);
+        expect(retry.sessions[0]).toMatchObject({ blockedCount: 1, failedCount: 0, failedRejectedCount: 0 });
+        expect(retry.sessions[0]?.warnings).toContain(
+          `candidate memory:saved skipped: accepted from this session as proposal ${saved[0]?.id}`,
+        );
+        expect(retry.candidatesCreated).toBe(1);
+        expect(pendingRefs(stash)).toEqual(["memories/broken"]);
+        const event = readEvents({ type: "extract_invoked" }, { db }).events.at(-1);
+        expect(event?.metadata).toMatchObject({ outcome: "candidates_queued", blockedCount: 1, proposalCount: 1 });
+      } finally {
+        db.close();
+      }
+    });
+  }
+
+  test("a ref accepted from another session is still proposed as an update", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    const db = openStateDatabase();
+    try {
+      await run(db, stash, config, fakeSession("earlier", Date.now() - 120_000), ["saved"]);
+      const earlier = listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() });
+      expect(earlier).toHaveLength(1);
+      await akmProposalAccept({ stashDir: stash, config, id: earlier[0]?.id ?? "missing" });
+
+      const later = await run(db, stash, config, fakeSession("later", Date.now() - 60_000), ["saved"]);
+      expect(later.sessions[0]).toMatchObject({ blockedCount: 0, failedCount: 0 });
+      const pending = listProposals(stash, { status: "pending" }, { dbPath: getStateDbPath() });
+      expect(pending.map((row) => row.ref.split("//").pop())).toEqual(["memories/saved"]);
+      expect(pending[0]?.changes?.[0]?.op).toBe("update");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a write the validator refuses records the hash, so the session is not extracted again", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    const session = fakeSession("refused", Date.now() - 60_000);
+    // The real validator refuses it: the candidate reaches createProposal with empty content.
+    spyOn(proposalRepository, "createProposal").mockImplementation((stashDir, input, ctx) =>
+      realCreateProposal(
+        stashDir,
+        input.ref.endsWith("/refused") ? { ...input, payload: { ...input.payload, content: " " } } : input,
+        ctx,
+      ),
+    );
+    const db = openStateDatabase();
+    try {
+      const calls = { count: 0 };
+      const first = await run(db, stash, config, session, ["refused"], calls);
+      expect(first.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 1, proposalIds: [] });
+      expect(first.sessions[0]?.warnings.join(" ")).toContain("has empty content");
+      expect(readEvents({ type: "proposal_creation_rejected" }, { db }).events.at(-1)?.metadata).toMatchObject({
+        source: "extract",
+        reason: "empty_content",
+      });
+      const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+      expect(seen?.outcome).toBe("proposal_write_failed");
+      expect(seen?.content_hash).toBe(first.sessions[0]?.contentHash ?? "missing");
+      expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({ failedCount: 1, failedRejectedCount: 1 });
+      // An all-failed window still warns.
+      const advisory = (await akmHealth({ since: "7d" })).advisories.find((c) => c.name === "session-extraction");
+      expect(advisory?.status).toBe("warn");
+
+      const again = await run(db, stash, config, session, ["refused"], calls);
+      expect(again.sessions[0]?.skipReason).toBe("already_extracted");
+      expect(calls.count).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a transient write failure keeps the hash null and is retried, even beside a refusal", async () => {
+    const stash = makeStashDir();
+    const config = configEnabled(stash);
+    const session = fakeSession("contended", Date.now() - 60_000);
+    let contended = true;
+    // `withImmediateTransaction`'s own exhaustion error: another akm process holds state.db.
+    spyOn(proposalRepository, "createProposal").mockImplementation((stashDir, input, ctx) => {
+      if (input.ref.endsWith("/busy") && contended) {
+        throw new TransientError(
+          "akm's state database is busy (another akm process is writing it); retry shortly.",
+          "STATE_DB_CONTENDED",
+        );
+      }
+      return realCreateProposal(
+        stashDir,
+        input.ref.endsWith("/refused") ? { ...input, payload: { ...input.payload, content: " " } } : input,
+        ctx,
+      );
+    });
+    const db = openStateDatabase();
+    try {
+      const calls = { count: 0 };
+      const first = await run(db, stash, config, session, ["busy", "refused"], calls);
+      expect(first.sessions[0]).toMatchObject({ failedCount: 2, failedRejectedCount: 1 });
+      const seen = getExtractedSession(db, "claude", session.ref.sessionId);
+      expect(seen?.content_hash).toBeNull();
+      expect(JSON.parse(seen?.metadata_json ?? "{}")).toMatchObject({ failedCount: 2, failedRejectedCount: 1 });
+
+      contended = false;
+      const retry = await run(db, stash, config, session, ["busy", "refused"], calls);
+      expect(retry.sessions[0]?.skipReason).toBeUndefined();
+      expect(retry.sessions[0]).toMatchObject({ failedCount: 1, failedRejectedCount: 1 });
+      expect(pendingRefs(stash)).toEqual(["memories/busy"]);
+      // Only the refusal is left, so this run records the hash and the next one skips.
+      expect(getExtractedSession(db, "claude", session.ref.sessionId)?.content_hash).toBe(
+        retry.sessions[0]?.contentHash ?? "missing",
+      );
+      const last = await run(db, stash, config, session, ["busy", "refused"], calls);
+      expect(last.sessions[0]?.skipReason).toBe("already_extracted");
+      expect(calls.count).toBe(2);
     } finally {
       db.close();
     }

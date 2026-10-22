@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assembleAsset } from "../../core/asset/asset-serialize";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { resolveStashDir, timestampForFilename } from "../../core/common";
 import type { AkmConfig, ImproveProcessConfig, ImproveProfileConfig, LlmProfileConfig } from "../../core/config/config";
 import { getImproveProcessConfig, loadConfig } from "../../core/config/config";
@@ -55,6 +56,8 @@ import {
   shouldSkipAlreadyExtractedSession,
   upsertExtractedSession,
 } from "../../storage/repositories/extract-sessions-repository";
+import { type ImproveLedgerRow, listImproveLedgerRows } from "../../storage/repositories/improve-ledger-repository";
+import { getStateProposal } from "../../storage/repositories/proposals-repository";
 import { openSqliteReadSnapshot } from "../../storage/sqlite-read-snapshot";
 import type { ProposalsContext } from "../proposal/repository";
 import { contentHash } from "./content-hash";
@@ -67,7 +70,7 @@ import {
   parseExtractPayload,
 } from "./extract-prompt";
 import { cloneAndFreeze, resolveImproveStrategy, resolveProcessEnabled } from "./improve-strategies";
-import { isLedgerBlocked, ledgerKey, loadLedgerSnapshot } from "./ledger";
+import { isLedgerBlocked, ledgerKey, readLedgerDb } from "./ledger";
 import {
   buildSessionSummaryPrompt,
   parseSessionSummary,
@@ -692,13 +695,38 @@ async function processSession(
   const previewRefs: string[] = [];
   let blockedCount = 0;
   let failedCount = 0;
+  let failedRejectedCount = 0;
   if (payload.candidates.length > 0) {
     // A candidate the ledger holds a live window for (pending, or recently rejected) is not queued again.
-    const ledger = loadLedgerSnapshot(
-      { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx, ...(dryRun ? { readOnly: true } : {}) },
-      stashDir,
-      ["extract"],
-    );
+    const access = { proposalsCtx: options.ctx, eventsCtx: options.eventsCtx, ...(dryRun ? { readOnly: true } : {}) };
+    const ledger = new Map<string, ImproveLedgerRow>();
+    // An accepted row has no window, so a retried or re-extracted session would propose its own
+    // accepted insight again as an update (#1224). Hold a ref whose accepted proposal names this
+    // session by a mark buildCandidateProposal writes; one accepted from another session stays eligible.
+    // One read serves both, so a dry run takes a single snapshot.
+    const acceptedHere = new Set<string>();
+    const marks = [
+      conceptIdFromTypeName("session", `${data.ref.harness}/${data.ref.sessionId}`),
+      `${data.ref.harness}:${data.ref.sessionId}`,
+    ];
+    try {
+      readLedgerDb(access, (db) => {
+        for (const row of listImproveLedgerRows(db, stashDir, ["extract"]))
+          ledger.set(ledgerKey(row.source, row.ref), row);
+        for (const candidate of payload.candidates) {
+          const row = ledger.get(ledgerKey("extract", deriveExtractCandidateRef(candidate, data.ref)));
+          if (row?.outcome !== "accepted" || !row.proposalId) continue;
+          const fm = getStateProposal(db, row.proposalId, stashDir)?.payload.frontmatter ?? {};
+          const sources = (fm.provenance as { sources?: Array<{ resource?: unknown }> } | undefined)?.sources;
+          const cited = [fm.xrefs, fm.evidenceSources, Array.isArray(sources) ? sources.map((s) => s?.resource) : []];
+          if (cited.some((list) => Array.isArray(list) && list.some((mark) => marks.includes(mark)))) {
+            acceptedHere.add(row.proposalId);
+          }
+        }
+      });
+    } catch (error) {
+      warn(`[improve] ledger read failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
     const nowIso = new Date().toISOString();
     for (const candidate of payload.candidates) {
       const built = buildCandidateProposal(candidate, data.ref, sessionAsset.sessionAssetRef);
@@ -707,6 +735,13 @@ async function processSession(
         blockedCount += 1;
         warnings.push(
           `candidate ${candidate.type}:${candidate.name} skipped: ${ledgerRow?.outcome} until ${ledgerRow?.nextEligibleAt}`,
+        );
+        continue;
+      }
+      if (ledgerRow?.proposalId && acceptedHere.has(ledgerRow.proposalId)) {
+        blockedCount += 1;
+        warnings.push(
+          `candidate ${candidate.type}:${candidate.name} skipped: accepted from this session as proposal ${ledgerRow.proposalId}`,
         );
         continue;
       }
@@ -730,6 +765,9 @@ async function processSession(
         proposalIds.push(proposal.id);
       } catch (err) {
         failedCount += 1;
+        // The validator's refusal recurs on every retry of this content; any other failure
+        // (state.db busy, I/O, config) may clear, so it keeps the session retryable.
+        if (err instanceof UsageError && err.code === "INVALID_PROPOSAL") failedRejectedCount += 1;
         warnings.push(
           `candidate ${candidate.type}:${candidate.name} failed: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -744,6 +782,7 @@ async function processSession(
     previewRefs,
     blockedCount,
     failedCount,
+    failedRejectedCount,
     ...(empty && payload.rationale_if_empty ? { rationaleIfEmpty: payload.rationale_if_empty } : {}),
     warnings,
     ...sessionAsset,
@@ -914,8 +953,8 @@ async function runExtractSessionLoop(
 /**
  * Persist a session's outcome in the seen-session table. A session skipped as
  * already extracted or locked is not rewritten; one that failed for a
- * transient reason, or had a proposal write fail, keeps a null hash so it is
- * retried.
+ * transient reason, or had a proposal write fail for any reason but the
+ * validator's refusal, keeps a null hash so it is retried.
  */
 function recordSessionOutcome(
   stateDb: Database | undefined,
@@ -945,13 +984,16 @@ function recordSessionOutcome(
       sourceRun,
       // A failed proposal write keeps a null hash too, so the next run re-extracts the
       // session; the ledger's `proposed` window blocks the candidates that did persist.
+      // A validator refusal recurs on the same content, so refusals alone record the hash.
       contentHash:
-        ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason) || result.failedCount
+        ["llm_unavailable", "triaged_out", "malformed_model_output"].includes(reason) ||
+        (result.failedCount ?? 0) > (result.failedRejectedCount ?? 0)
           ? null
           : (result.contentHash ?? null),
       metadata: {
         blockedCount: result.blockedCount ?? 0,
         failedCount: result.failedCount ?? 0,
+        failedRejectedCount: result.failedRejectedCount ?? 0,
         preFilterInputCount: result.preFilter.inputCount,
         preFilterOutputCount: result.preFilter.outputCount,
         preFilterTruncatedCount: result.preFilter.truncatedCount,
