@@ -72,6 +72,16 @@ parent/child link in the `derived_from` column. This provenance backref is a
 sanctioned internal channel that carries a bare parent name, not a public
 [ref](refs.md) — agents never construct it.
 
+Inference receives the body with selected existing source context: title,
+description, evidence and references, known source dates, and normalized scope.
+The prompt asks the model to preserve qualifications, uncertainty, actors, and the distinction between
+requests, references, attempts, and demonstrated outcomes. The caller copies
+the parent's normalized user/agent/run/channel scope to the child; the model
+cannot author that scope. Source evidence remains on the parent via the backref.
+Existing children are kept. A cached no-change decision is reconsidered when
+the body or supplied source context changes; unrelated metadata does not
+invalidate it.
+
 Search hits for the parent memory are then enriched in-place: the parent's
 description and tags are swapped with the derived child's surface text, and
 an `expandTo: memories/<derived>` field on the hit points at the richer

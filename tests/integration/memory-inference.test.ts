@@ -485,9 +485,9 @@ describe("runMemoryInferencePass — enabled", () => {
     upsertLlmCacheEntry(
       db,
       record.filePath,
-      computeBodyHash(record.body),
+      computeBodyHash(record.effectiveInput),
       JSON.stringify(sampleDraft("Cached Derived")),
-      "memory-inference-v3",
+      "memory-inference-v4",
     );
     let calls = 0;
     compressor = () => {

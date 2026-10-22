@@ -58,7 +58,7 @@ let memoryCompressor: (body: string) =>
     }
   | undefined = () => undefined;
 
-const { runMemoryInferencePass: runMemoryInferencePassImpl } = await import(
+const { runMemoryInferencePass: runMemoryInferencePassImpl, collectPendingMemories } = await import(
   "../../../src/indexer/passes/memory-inference"
 );
 const { computeBodyHash, getLlmCacheEntry, upsertLlmCacheEntry, clearStaleCacheEntries } = await import(
@@ -303,28 +303,20 @@ describe("clearStaleCacheEntries", () => {
 // ── Memory inference cache ─────────────────────────────────────────────────────
 
 describe("runMemoryInferencePass — cache hit skips LLM call", () => {
-  test("(a) cache hit: unchanged body does not call the LLM compressor", async () => {
+  test("(a) cache hit: unchanged effective input does not call the LLM compressor", async () => {
     // Write a fresh memory file that hasn't been processed yet.
     const freshPath = writeFile("memories/fresh.md", {}, "A brand new memory body.");
     memoryCompressor = () => sampleDraft("Should Not Be Called");
 
-    // Pre-populate the cache with the exact body that parseFrontmatter will
-    // return for this file. parseFrontmatter returns content WITH leading "\n\n"
-    // stripped (the actual body after the frontmatter block). The body the pass
-    // hashes is `parseFrontmatter(raw).content` which equals
-    // "\n\nA brand new memory body.\n" for our writeFile helper.
-    // We read the actual file and parse it to get the exact string the pass sees.
-    const { parseFrontmatter } = await import("../../../src/core/asset/frontmatter");
-    const raw = fs.readFileSync(freshPath, "utf8");
-    const parsed = parseFrontmatter(raw);
-    const exactBody = parsed.content; // exactly what the pass hashes
+    // Seed the same canonical input used for request construction and cache lookup.
+    const exactInput = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
 
     upsertLlmCacheEntry(
       db,
       freshPath,
-      computeBodyHash(exactBody),
+      computeBodyHash(exactInput),
       JSON.stringify(sampleDraft("Cached Result")),
-      "memory-inference-v3",
+      "memory-inference-v4",
     );
 
     // Run the pass — cache hit → LLM must NOT be called.
@@ -345,7 +337,7 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
       filePath,
       computeBodyHash("completely different old body"),
       JSON.stringify(sampleDraft("Stale")),
-      "memory-inference-v3",
+      "memory-inference-v4",
     );
 
     // Run — body hash mismatch → cache miss → LLM called.
@@ -358,16 +350,14 @@ describe("runMemoryInferencePass — cache hit skips LLM call", () => {
     const filePath = writeFile("memories/parent.md", {}, "Body text.");
     memoryCompressor = () => sampleDraft("Fresh");
 
-    // Pre-populate a valid cache entry with the exact parsed body hash.
-    const { parseFrontmatter } = await import("../../../src/core/asset/frontmatter");
-    const raw = fs.readFileSync(filePath, "utf8");
-    const exactBody = parseFrontmatter(raw).content;
+    // Pre-populate a valid cache entry with the exact effective input hash.
+    const exactInput = collectPendingMemories(tmpStash)[0]?.effectiveInput ?? "";
     upsertLlmCacheEntry(
       db,
       filePath,
-      computeBodyHash(exactBody),
+      computeBodyHash(exactInput),
       JSON.stringify(sampleDraft("Cached")),
-      "memory-inference-v3",
+      "memory-inference-v4",
     );
 
     // Run with reEnrich=true — must call LLM despite cache hit.

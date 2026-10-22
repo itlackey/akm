@@ -44,7 +44,7 @@ import { assembleAsset } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, parseFrontmatterBlock } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, parseRefInput } from "../../core/asset/resolve-ref";
 import { bestEffort } from "../../core/best-effort";
-import { todayIso } from "../../core/common";
+import { asNonEmptyString, todayIso } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import type { SourceConfigEntry } from "../../core/config/config";
 import { ConfigError } from "../../core/errors";
@@ -61,6 +61,7 @@ import * as memoryInfer from "../../llm/memory-infer";
 import { computeBodyHash, getLlmCacheEntry } from "../../storage/repositories/index-llm-cache-repository";
 import { withLlmCache } from "../db/llm-cache";
 import { walkMarkdownFiles } from "../walk/walker";
+import { applyProvenanceFrontmatter, type IndexDocument, scopeFromFrontmatter } from "./metadata";
 import type { PassContext } from "./pass-context";
 
 /**
@@ -74,17 +75,17 @@ const FM_CAPTURE_MODE = "captureMode";
 
 /**
  * Cache namespace for this pass. Bump it when the cached response semantics
- * change (v3: a cached row may be an explicit no-change decision); rows under an
+ * change (v4: body plus grounded source context); rows under an
  * older namespace are never read again, which is a disposable cache miss.
  */
-const MEMORY_INFERENCE_CACHE_VARIANT = "memory-inference-v3";
+const MEMORY_INFERENCE_CACHE_VARIANT = "memory-inference-v4";
 
 /** Telemetry returned to the caller. Useful for tests + future progress events. */
 export interface MemoryInferenceResult {
   /** Number of pending parent memories considered (includes cache hits). */
   considered: number;
   /**
-   * Parents whose body hash matched a prior LLM call's cached result (a
+   * Parents whose effective input matched a prior LLM call's cached result (a
    * derived memory or a no-change decision). No LLM call was made. Track separately from `considered` so the operational yield
    * rate (`writtenFacts / freshAttempts`) doesn't drift as the cache warms.
    */
@@ -103,8 +104,8 @@ export interface MemoryInferenceResult {
    * Parents for which inference succeeded and decided no derived memory is
    * needed (a fresh decision or a cached one). Restraint, not failure: no child
    * is written, the parent is neither stamped nor modified, and the decision is
-   * cached against the parent's body hash, so the parent is considered again
-   * only after its body changes (or on a `reEnrich` run). Never counted in
+   * cached against the body and supplied source context, so the parent is considered again
+   * after that input changes (or on a `reEnrich` run). Never counted in
    * `skippedNoFacts`, which stays the failure bucket.
    */
   noChange: number;
@@ -191,8 +192,8 @@ interface MemoryRecord {
   ref: string;
   /** Existing frontmatter (parsed). */
   data: Record<string, unknown>;
-  /** Body text (everything after the frontmatter). */
-  body: string;
+  /** Canonical source input shared by request construction and both cache paths. */
+  effectiveInput: string;
   name: string;
 }
 
@@ -235,7 +236,7 @@ function planPendingMemoryRecord(
       const entry = getLlmCacheEntry(
         ctx.db as NonNullable<MemoryInferencePassContext["db"]>,
         record.filePath,
-        computeBodyHash(record.body),
+        computeBodyHash(record.effectiveInput),
         MEMORY_INFERENCE_CACHE_VARIANT,
       );
       return entry ? validateMemoryInferDecision(JSON.parse(entry.resultJson)) : undefined;
@@ -315,7 +316,7 @@ async function inferPendingMemoryRecord(
   const infer = () =>
     compressMemoryToDerivedMemory(
       llmRunner,
-      record.body,
+      record.effectiveInput,
       signal,
       featureConfig,
       (event) => warn(`[akm] LLM fallback for ${event.feature}: ${event.reason}`),
@@ -330,7 +331,7 @@ async function inferPendingMemoryRecord(
         ? await withLlmCache<MemoryInferDecision>(
             db,
             record.filePath,
-            record.body,
+            record.effectiveInput,
             reEnrich ?? false,
             infer,
             validateMemoryInferDecision,
@@ -344,7 +345,7 @@ async function inferPendingMemoryRecord(
           )
         : await compressMemoryToDerivedMemory(
             llmRunner,
-            record.body,
+            record.effectiveInput,
             signal,
             config,
             (event) => warn(`[akm] LLM fallback for ${event.feature}: ${event.reason}`),
@@ -625,11 +626,33 @@ export function collectPendingMemories(stashRoot: string): MemoryRecord[] {
       stashRoot,
       ref: conceptIdFromTypeName("memory", relName),
       data: parsed.data,
-      body: parsed.content,
+      effectiveInput: memoryInferenceInput(parsed.content, parsed.data),
       name: relName,
     });
   }
   return out;
+}
+
+/** A fixed selection of existing source fields, never arbitrary frontmatter or model-authored authority. */
+function memoryInferenceInput(body: string, fm: Record<string, unknown>): string {
+  const trimmedBody = body.trim();
+  if (!trimmedBody) return "";
+  const sourceContext: Record<string, unknown> = {};
+  for (const key of ["title", "description", "evidence", "source", "observed_at", "created", "updated"]) {
+    const value = asNonEmptyString(fm[key]);
+    if (value) sourceContext[key] = value;
+  }
+  for (const key of ["evidenceSources", "xrefs", "sources"]) {
+    const raw = fm[key];
+    if (!Array.isArray(raw)) continue;
+    const values = raw.map(asNonEmptyString).filter((value): value is string => value !== undefined);
+    if (values.length) sourceContext[key] = values;
+  }
+  const entry: IndexDocument = { type: "memory", name: "source" };
+  applyProvenanceFrontmatter(entry, fm);
+  if (entry.provenance?.sources) sourceContext.provenance = { sources: entry.provenance.sources };
+  sourceContext.scope = scopeFromFrontmatter(fm);
+  return JSON.stringify({ sourceContext, body: trimmedBody });
 }
 
 /**
@@ -747,6 +770,7 @@ function renderDerivedMemory(parent: MemoryRecord, derived: DerivedMemoryDraft):
     derivedFrom: parent.name,
     updated: todayIso(),
   };
+  for (const [key, value] of Object.entries(scopeFromFrontmatter(parent.data))) fm[`scope_${key}`] = value;
   return assembleAsset(fm, `# ${derived.title.trim()}\n\n${derived.content.trim()}\n`);
 }
 
