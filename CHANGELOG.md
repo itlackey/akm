@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Distill writes more useful lessons without writing wrong ones. The lesson
+  writer treats a tested or measured result about a change or method, stated
+  with the conditions and limits it held under, as a lesson. It answers NONE for
+  a dated status, for the report of one run or day whose cause is only suspected
+  with no fix verified, and for a recap or reminder list whose rules a related
+  asset already states. Lessons are shorter (about half the memory), in the
+  writer's own words, and keep the memory's numbers, names and terms. The lesson
+  judge's REUSABLE criterion credits such a tested result and scores a lesson
+  drawn from an unconfirmed one-run report as not reusable; judging an update
+  to an existing lesson keeps the original criterion.
+
 ### Fixed
 
 - A SIGINT or SIGTERM that reached akm just after it started an agent or harness
