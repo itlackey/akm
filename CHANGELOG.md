@@ -36,6 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configured (#1236). Task sync now uses the same set of active bundles as
   search, show and workflows, so the working stash is synced the same way
   whether you sync everything or name it with `--bundle`.
+- `akm task sync --bundle <name>` (and `task enable` / `task disable`) no longer
+  fails with "working source is disabled" when `AKM_BUNDLE_DIR` names a disabled
+  bundle and you selected a different, enabled one. A disabled bundle is reported
+  only when it is the one you selected (#1236).
 - The `bundle update` reference no longer says a writable Git update re-audits
   the materialized worktree; that audit was removed with the dangerous-env
   gates. It now describes what the update does: fetch into a staged copy, then

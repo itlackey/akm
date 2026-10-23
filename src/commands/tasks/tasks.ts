@@ -43,7 +43,6 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -570,8 +569,9 @@ async function buildSchedulerSyncPlan(
 
   // The one active-bundle set search, show and workflows walk, working stash included.
   // A working stash that is a disabled configured bundle is left out: an
-  // unscoped sync still removes that bundle's rows (below) and syncs the others.
-  const sources = bundleTarget ? resolveSourceEntries(undefined, config) : activeTaskSources(config);
+  // unscoped sync still removes that bundle's rows (below) and syncs the others,
+  // and a scoped sync reports it as disabled only when it is the selected one.
+  const sources = activeTaskSources(config);
   const ids = deriveInstallations(sources).map((installation) => installation.id);
   const kinds = sources.map((source) => source.type);
   const configuredSources = resolveConfiguredSources(config);

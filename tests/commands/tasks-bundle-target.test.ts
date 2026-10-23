@@ -213,6 +213,22 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(cronBody(exec.current(), "secondary")).toBeUndefined();
   });
 
+  test("scoped sync uses the active set while AKM_BUNDLE_DIR names a disabled bundle", async () => {
+    writeTaskFile(work.dir, "foo", taskYaml());
+    const current = loadConfig();
+    saveConfig({
+      ...current,
+      defaultBundle: "work",
+      bundles: { ...current.bundles, stash: { ...current.bundles?.stash, path: iso.stashDir, enabled: false } },
+    });
+
+    const synced = await akmTasksSync({ backend: cron() }, "work");
+    expect(synced.installed).toEqual(["foo"]);
+    expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
+
+    await expect(akmTasksSync({ backend: cron() }, "stash")).rejects.toThrow('Bundle "stash" is disabled.');
+  });
+
   test("plain sync reports two bundles claiming one native id and installs neither", async () => {
     writeTaskFile(iso.stashDir, "same", taskYaml());
     writeTaskFile(work.dir, "same", taskYaml());
