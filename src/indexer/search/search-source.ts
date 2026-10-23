@@ -78,7 +78,9 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
 
   // Explicit and environment overrides stay first. Without either override,
   // the configured default enters through the validated loop below.
-  const sources: SearchSource[] = implicitStashDir ? [{ path: implicitStashDir, writable: true, isDefault: true }] : [];
+  const sources: SearchSource[] = implicitStashDir
+    ? [{ path: implicitStashDir, writable: true, isDefault: true, type: "filesystem" }]
+    : [];
   const sourceIdentity = (dir: string): string => {
     const resolved = path.resolve(dir);
     try {
@@ -108,7 +110,7 @@ export function resolveSourceEntries(overrideStashDir?: string, existingConfig?:
       // identity-less and a user-named primary source ("name": "my-stash")
       // would validate but match zero entries when filtering.
       const existing = sources.find((source) => sourceIdentity(source.path) === identity);
-      if (existing && existing.type === undefined) {
+      if (existing && existing.registryId === undefined) {
         if (registryId) existing.registryId = registryId;
         if (isDefault) existing.isDefault = true;
         existing.type = type;

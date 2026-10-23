@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- Scheduled tasks in the `AKM_BUNDLE_DIR` working stash were silently dropped by
+  an unscoped `akm task sync` (and `--rebind`) once any other bundle was
+  configured (#1236). Task sync now uses the same set of active bundles as
+  search, show and workflows, so the working stash is synced the same way
+  whether you sync everything or name it with `--bundle`.
+
 ### Changed
 
 - Installing a bundle is now the trust decision (#1237). A bundle whose `env/`

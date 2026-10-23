@@ -45,6 +45,8 @@ import {
   writeAssetToSource,
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
+import { deriveInstallations } from "../../indexer/installations";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -568,27 +570,41 @@ async function buildSchedulerSyncPlan(
     if (options.dryRun !== true) config = loadConfig();
   }
 
-  const activeSources = resolveActiveConfiguredSources(config);
+  // The one active-bundle set search, show and workflows walk, working stash included.
+  let ids: string[];
+  let kinds: Array<string | undefined>;
+  try {
+    const sources = resolveSourceEntries(undefined, config);
+    ids = deriveInstallations(sources).map((installation) => installation.id);
+    kinds = sources.map((source) => source.type);
+  } catch (cause) {
+    // The working stash is a configured bundle that is disabled, so the active
+    // set cannot include it: an unscoped sync still removes that bundle's rows
+    // (below) and syncs the other configured bundles.
+    const working = bundleKeyForContentRoot(config, resolveStashDir());
+    if (bundleTarget || !(cause instanceof ConfigError) || !working || config.bundles?.[working]?.enabled !== false) {
+      throw cause;
+    }
+    const active = resolveActiveConfiguredSources(config);
+    ids = active.map((source) => source.name);
+    kinds = active.map((source) => source.type);
+  }
+  const configuredSources = resolveConfiguredSources(config);
   if (bundleTarget) {
     // Only filesystem and git bundles can carry scheduler state.
-    const targetSource = activeSources.find((source) => source.name === bundleTarget);
-    if (targetSource && !isWriteCapableSourceKind(targetSource.type)) {
+    const targetType = kinds[ids.indexOf(bundleTarget)];
+    if (targetType !== undefined && !isWriteCapableSourceKind(targetType)) {
       throw new UsageError(
-        `Bundle "${bundleTarget}" has kind "${targetSource.type}"; task scheduling is only supported for filesystem and git bundles.`,
+        `Bundle "${bundleTarget}" has kind "${targetType}"; task scheduling is only supported for filesystem and git bundles.`,
         "INVALID_FLAG_VALUE",
       );
     }
   }
-  const configuredSources = resolveConfiguredSources(config);
-  const schedulable = activeSources
-    .filter((source) => isWriteCapableSourceKind(source.type))
-    .map((source) => source.name);
-  // No configured bundle at all: the working stash (e.g. `AKM_BUNDLE_DIR`).
-  const selected: Array<string | undefined> = bundleTarget
-    ? [bundleTarget]
-    : schedulable.length > 0 || configuredSources.length > 0
-      ? schedulable
-      : [undefined];
+  const schedulable = ids.filter((_, index) => {
+    const type = kinds[index];
+    return type !== undefined && isWriteCapableSourceKind(type);
+  });
+  const selected: string[] = bundleTarget ? [bundleTarget] : schedulable;
 
   const enabledRefSet = new Set(enabledRefs);
   const desired: SchedulerBinding[] = [];
@@ -1009,15 +1025,28 @@ export function resolveTaskReadBundle(
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    const configured = resolveActiveConfiguredSources(config).some((source) => source.name === selector);
-    const implicit = configured ? undefined : resolveImplicitScheduledBundleTarget(config, selector);
-    resolved =
-      implicit ??
-      resolveWriteTarget(config, selector, {
-        requireWritable: false,
-        // The selector is `--bundle` when given, else the task ref's own bundle qualifier.
-        flag: flagBundle !== undefined ? "--bundle" : "The task ref's bundle",
-      });
+    // A bundle of the active set that no config entry names is the
+    // `AKM_BUNDLE_DIR` working stash (CI, one-shot tools and fresh installs
+    // commonly use only that): a scheduled row names exactly its derived id.
+    // A configured bundle goes straight to `resolveWriteTarget`, so a disabled
+    // working stash cannot fail the lookup of another bundle.
+    const sources = config.bundles?.[selector] === undefined ? resolveSourceEntries(undefined, config) : [];
+    const source = sources[deriveInstallations(sources).findIndex((installation) => installation.id === selector)];
+    resolved = source
+      ? {
+          source: {
+            kind: "filesystem",
+            name: selector,
+            path: source.path,
+            adapterId: source.adapterId ?? detectAdapterId(source.path),
+          },
+          config: { type: "filesystem", name: selector, path: source.path, writable: true },
+        }
+      : resolveWriteTarget(config, selector, {
+          requireWritable: false,
+          // The selector is `--bundle` when given, else the task ref's own bundle qualifier.
+          flag: flagBundle !== undefined ? "--bundle" : "The task ref's bundle",
+        });
   }
   if (refBundle && resolved.source.name !== refBundle) {
     throw new UsageError(
@@ -1026,28 +1055,6 @@ export function resolveTaskReadBundle(
     );
   }
   return resolved;
-}
-
-/**
- * New scheduler bindings always carry a canonical `--bundle <owner>` token,
- * including an env-selected working stash. That stash need not be persisted in
- * config (CI, one-shot tools, and fresh installs commonly use only
- * AKM_BUNDLE_DIR), so its scheduled child — every row sets AKM_BUNDLE_DIR to
- * the working stash it was synced from — must accept precisely its derived
- * owner name.
- *
- * This is intentionally narrower than an unknown-bundle fallback: a configured
- * source always wins, and an unconfigured selector is accepted only when it is
- * exactly the current env-selected working stash identity.
- */
-function resolveImplicitScheduledBundleTarget(config: AkmConfig, selector: string): ResolvedWriteTarget | undefined {
-  if (!process.env.AKM_BUNDLE_DIR?.trim()) return undefined;
-  try {
-    const working = resolveWorkingStashTarget(config, { requireWritable: false });
-    return working.source.name === selector ? working : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** True when `candidate` resolves to the same directory as the primary stash. */
