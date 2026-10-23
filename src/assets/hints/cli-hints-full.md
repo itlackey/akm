@@ -92,7 +92,7 @@ akm import https://example.com/docs/auth       # Fetch one URL and import it as 
 akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
 akm workflow create ship-release               # Create a workflow asset in the bundle
 akm lint --type workflows                      # Parse and compile every workflow source; list every error
-akm workflow run workflows/ship-release        # Start or resume and execute the workflow
+akm workflow run workflows/ship-release        # Start a new run and execute it
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Apply an exact fix
@@ -186,9 +186,9 @@ workflow. Direct run-id commands still target the exact run.
 akm workflow create ship-release --print     # Print a starter workflow template, without writing
 akm workflow create ship-release             # Scaffold a new workflow asset
 akm workflow run workflows/ship-release --version=1.2.3  # Start and execute with exact-name parameter flags
-akm workflow run <run-id> --max-retries 2 --timeout 10m  # Resume with invocation-wide controls
+akm workflow run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
 akm workflow status <run-id>                 # Show the exact run by id
-akm workflow resume <run-id>                 # Resume a blocked or failed run
+akm workflow resume <run-id>                 # Re-activate a blocked or failed run, then `run <run-id>`
 akm workflow list                            # List workflow runs on this host
 ```
 

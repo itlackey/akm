@@ -66,11 +66,11 @@ export interface BundleRenamePlan {
   index: { entries: number };
   state: { proposalRefs: number; proposalTargets: number; taskHistoryRefs: number; workflowRunRefs: number };
   /**
-   * Active workflow runs of the renamed bundle. Their `workflow_ref` is
+   * Active and blocked workflow runs of the renamed bundle. Their `workflow_ref` is
    * rewritten, but each run's frozen plan keeps the old qualified refs, so the
    * operator finishes or abandons them.
    */
-  activeWorkflowRuns: Array<{ id: string; workflowRef: string }>;
+  activeWorkflowRuns: Array<{ id: string; workflowRef: string; status: string }>;
   /** Indexed files under the bundle whose content still spells `<old>//` — reported, not rewritten. */
   contentRefs: string[];
   /**

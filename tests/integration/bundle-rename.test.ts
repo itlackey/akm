@@ -262,16 +262,22 @@ describe("akm bundle rename — applied", () => {
     try {
       seedWorkflowRun(stateDb, { runId: "run-active", steps: ["a"], workflowRef: "original//workflows/foo" });
       seedWorkflowRun(stateDb, { runId: "run-done", steps: ["a"], workflowRef: "original//workflows/foo" });
+      seedWorkflowRun(stateDb, { runId: "run-blocked", steps: ["a"], workflowRef: "original//workflows/foo" });
       seedWorkflowRun(stateDb, { runId: "run-other", steps: ["a"], workflowRef: "other//workflows/foo" });
       stateDb.prepare("UPDATE workflow_runs SET status = 'completed' WHERE id = 'run-done'").run();
+      stateDb.prepare("UPDATE workflow_runs SET status = 'blocked' WHERE id = 'run-blocked'").run();
     } finally {
       closeDatabase(stateDb);
     }
 
     const result = await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
 
-    expect(result.state.workflowRunRefs).toBe(2);
-    expect(result.activeWorkflowRuns).toEqual([{ id: "run-active", workflowRef: "original//workflows/foo" }]);
+    expect(result.state.workflowRunRefs).toBe(3);
+    // A blocked run keeps the old refs in its frozen plan too, so it is listed with its status.
+    expect([...result.activeWorkflowRuns].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "run-active", workflowRef: "original//workflows/foo", status: "active" },
+      { id: "run-blocked", workflowRef: "original//workflows/foo", status: "blocked" },
+    ]);
 
     const readDb = openStateDatabase();
     try {
@@ -281,6 +287,7 @@ describe("akm bundle rename — applied", () => {
       }>;
       expect(rows).toEqual([
         { id: "run-active", workflow_ref: "renamed//workflows/foo" },
+        { id: "run-blocked", workflow_ref: "renamed//workflows/foo" },
         { id: "run-done", workflow_ref: "renamed//workflows/foo" },
         { id: "run-other", workflow_ref: "other//workflows/foo" },
       ]);

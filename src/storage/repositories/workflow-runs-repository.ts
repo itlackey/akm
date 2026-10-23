@@ -899,13 +899,13 @@ export class WorkflowRunsRepository {
 /**
  * Preview counterpart of {@link renameWorkflowRunRefs} for `akm bundle rename`:
  * how many run rows name `oldBundleId`, and which of them are still `active`
- * (their frozen `plan_json` keeps the old qualified refs, so the operator
+ * or `blocked` (their frozen `plan_json` keeps the old qualified refs, so the operator
  * finishes or abandons them — the rename lists them rather than touching them).
  */
 export function countWorkflowRunRefsForRename(
   db: Database,
   oldBundleId: string,
-): { refs: number; active: Array<{ id: string; workflowRef: string }> } {
+): { refs: number; active: Array<{ id: string; workflowRef: string; status: string }> } {
   const like = `${escapeLikePattern(oldBundleId)}//%`;
   const refs = (
     db.prepare(`SELECT COUNT(*) AS n FROM workflow_runs WHERE workflow_ref LIKE ? ESCAPE '\\'`).get(like) as {
@@ -914,9 +914,9 @@ export function countWorkflowRunRefsForRename(
   ).n;
   const active = db
     .prepare(
-      `SELECT id, workflow_ref AS workflowRef FROM workflow_runs WHERE workflow_ref LIKE ? ESCAPE '\\' AND status = 'active' ORDER BY updated_at DESC, created_at DESC`,
+      `SELECT id, workflow_ref AS workflowRef, status FROM workflow_runs WHERE workflow_ref LIKE ? ESCAPE '\\' AND status IN ('active', 'blocked') ORDER BY updated_at DESC, created_at DESC`,
     )
-    .all(like) as Array<{ id: string; workflowRef: string }>;
+    .all(like) as Array<{ id: string; workflowRef: string; status: string }>;
   return { refs, active };
 }
 

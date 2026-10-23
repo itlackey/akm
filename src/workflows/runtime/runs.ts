@@ -274,7 +274,7 @@ export async function startWorkflowRun(
 
     // Starting a ref always starts a run. Other active runs of the same ref
     // are not an error: name them once, after the start succeeds, so the
-    // operator can resume or abandon the ones they no longer want.
+    // operator can continue or abandon the ones they no longer want.
     const otherActive = repo.listRuns({ workflowRefs, activeOnly: true });
 
     repo.publishWorkflowRunV4({
@@ -305,7 +305,7 @@ export async function startWorkflowRun(
       const ids = otherActive.map((run) => run.id);
       warn(
         `Workflow ${asset.ref} already has ${ids.length} active run(s) (${ids.join(", ")}); started another. ` +
-          `Continue one with "akm workflow resume ${ids[0]}" or give up on it with "akm workflow abandon ${ids[0]}".`,
+          `Continue one with "akm workflow run ${ids[0]}" or give up on it with "akm workflow abandon ${ids[0]}".`,
       );
     }
 

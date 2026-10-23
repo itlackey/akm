@@ -28,7 +28,7 @@ akm search "memories/projectA/"               # List a subtree (conceptId prefix
 akm search "<query>" --from all               # Also search registries
 akm show <ref>                                # View asset details
 akm help <command>                            # Show a command's options and subcommands
-akm workflow run <ref>                        # Start or resume and execute a workflow
+akm workflow run <ref>                        # Start a new run and execute it
 akm remember "Deployment needs VPN access"    # Record a memory in your bundle
 akm remember "note" --bundle my-bundle         # Route write to a named writable bundle source
 akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable)

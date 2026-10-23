@@ -903,7 +903,7 @@ akm workflow run <run-id>                  # continue an active partial run
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status 7c115132               # 8+ char run-id prefix also works
-akm workflow resume <run-id>
+akm workflow resume <run-id>               # re-activate a blocked or failed run, then run <run-id>
 akm workflow abandon <run-id>
 akm workflow list --active
 akm workflow list --children               # also list child workflow runs (Experimental)
@@ -921,7 +921,7 @@ Subcommands:
 | `run <run-id\|ref>` | Canonical start/execute command. A ref always starts a new run (other active runs of the ref produce one warning, see below); a run id continues that exact active run. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
 | `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. `--all-scopes` is a deprecated no-op |
 | `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
-| `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
+| `resume <run-id>` | Flip a `blocked` or `failed` run back to `active` so `run <run-id>` can continue it; it executes nothing. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
 
@@ -981,10 +981,10 @@ The old `--params <json>` bag is removed.
 
 **A ref always starts a new run.** `workflow run <ref>` never resumes: use
 `workflow run <run-id>` to continue a run and `workflow resume <run-id>` to
-reopen a blocked or failed one. When other runs of the same ref are still
-active, the start prints one warning naming their ids and the
-`akm workflow resume <id>` / `akm workflow abandon <id>` commands, and starts
-anyway. `--skip-if-locked` is the guard for scheduled callers: it skips (exit
+reopen a blocked or failed one so `run <run-id>` can continue it. When other
+runs of the same ref are still active, the start prints one warning naming
+their ids and the `akm workflow run <id>` / `akm workflow abandon <id>`
+commands, and starts anyway. `--skip-if-locked` is the guard for scheduled callers: it skips (exit
 0) instead of starting when an active run of the ref is held by a live process.
 
 The result includes the current `run`, an `executed` step report list, a
@@ -1132,8 +1132,9 @@ a reference's `.from`), environment binding *names* (`environment[].kind`/
 akm workflow resume <run-id>
 ```
 
-Flips a `blocked` or `failed` run back to `active`. Completed runs cannot be
-resumed. Use `workflow list` to find runs by status.
+Flips a `blocked` or `failed` run back to `active`; it does not execute
+anything. Run `akm workflow run <run-id>` afterwards to continue it. Completed
+runs cannot be resumed. Use `workflow list` to find runs by status.
 
 Workflow markdown contract:
 
@@ -1372,9 +1373,10 @@ old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
 state rows that name the old bundle (`proposals.ref`, a pending proposal's
 write target, workflow `task_history.target_ref`, and `workflow_runs.workflow_ref`). The result's
-`activeWorkflowRuns` lists the active runs of the renamed bundle: their frozen
-plans keep the old qualified refs, so finish or abandon them with `akm workflow
-resume` / `akm workflow abandon`. Reported, never
+`activeWorkflowRuns` lists the active and blocked runs of the renamed bundle,
+each with its `status`: their frozen plans keep the old qualified refs, so
+continue them with `akm workflow run <id>` (after `akm workflow resume <id>` for
+a blocked one) or give up with `akm workflow abandon <id>`. Reported, never
 rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
 a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
 that still spell the old `<old>//` prefix so you can fix them by hand. A real
@@ -3656,7 +3658,7 @@ unattended run, so without one a single wedged unit hangs the task forever. An
 explicit `timeout` always wins, and `timeout: null` opts out entirely. On
 expiry the runner aborts the run's signal, which the engine treats as a
 graceful break at the next step boundary — the journal is kept and the run
-stays resumable with `akm workflow resume <run-id>` (the run id is in the task
+stays active, and `akm workflow run <run-id>` continues it (the run id is in the task
 run's `detail.error` and log). The attempt itself is recorded as `failed`, so
 the OS scheduler sees a non-zero exit.
 

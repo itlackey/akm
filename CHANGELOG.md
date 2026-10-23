@@ -47,11 +47,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   segments or absolute names are still refused, and writes still never follow a
   symlink out of the bundle.
 - `akm workflow run <ref>` always starts a new run, and `akm workflow run <run-id>`
-  or `akm workflow resume <run-id>` continues one (#1239). Before, running a ref
+  continues one (#1239). `akm workflow resume <run-id>` only re-activates a blocked
+  or failed run so `run <run-id>` can continue it. Before, running a ref
   silently resumed any active run of that ref started from the same directory,
   which is why scripts passed `--new` and why a scheduled task and a shell could
   each start their own run. Now, when other runs of the ref are still active, the
-  start prints one warning naming their ids and the `akm workflow resume <id>` /
+  start prints one warning naming their ids and the `akm workflow run <id>` /
   `akm workflow abandon <id>` commands, and starts anyway. Parameters are accepted
   on every ref start, and `--new` is accepted and does nothing (deprecated,
   through 0.10).
@@ -67,8 +68,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the flag a start is never refused.
 - `akm bundle rename` rewrites the workflow ref on that bundle's workflow runs, so
   `akm workflow list` shows the old runs under the new name, and lists the bundle's
-  active runs in its output (#1239). Their frozen plans keep the old refs; finish or
-  abandon them.
+  active and blocked runs in its output, each with its status (#1239). Their frozen
+  plans keep the old refs; continue or abandon them.
 - `akm workflow create` no longer indexes the new workflow, and a new run no longer
   records an index entry id (#1239).
 

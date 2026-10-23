@@ -20,8 +20,10 @@ its ref; the directory you run from never matters, so `akm workflow list` and
 `akm workflow status` show the same runs from anywhere.
 
 If other runs of the same ref are still active, a start says so in one
-warning that names their ids and the `akm workflow resume <id>` /
+warning that names their ids and the `akm workflow run <id>` /
 `akm workflow abandon <id>` commands. Starting is never refused.
+`akm workflow resume <id>` is only for a blocked or failed run: it re-activates
+the run so `akm workflow run <id>` can continue it.
 `--new` is a deprecated no-op (a ref always starts a new run), kept through
 0.10 so existing scripts keep working.
 

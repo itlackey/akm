@@ -72,3 +72,20 @@ describe("formatBundleRenamePlain — taskSync", () => {
     expect(text).not.toContain("re-synced under the new name");
   });
 });
+
+describe("formatBundleRenamePlain — unfinished workflow runs (#1239)", () => {
+  it("names `run <id>` as the way to continue, and lists a blocked run with its status", () => {
+    const text = formatBundleRenamePlain(
+      baseResult({
+        activeWorkflowRuns: [
+          { id: "run-a", workflowRef: "old//workflows/foo", status: "active" },
+          { id: "run-b", workflowRef: "old//workflows/foo", status: "blocked" },
+        ],
+      }),
+    );
+    expect(text).toContain("`akm workflow run <id>`");
+    expect(text).toContain("`akm workflow resume <id>`");
+    expect(text).toContain("run-a (old//workflows/foo, active)");
+    expect(text).toContain("run-b (old//workflows/foo, blocked)");
+  });
+});

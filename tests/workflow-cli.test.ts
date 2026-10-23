@@ -264,6 +264,9 @@ describe("workflow CLI", () => {
     // A ref always starts a new run (#1239), so params are fine while another run is active.
     expect(activeWithParams.code).toBe(0);
     expect(activeWithParams.stderr).toContain("already has 1 active run(s)");
+    // `run <id>` continues a run; `resume` only re-activates a blocked or failed one (#1239).
+    expect(activeWithParams.stderr).toMatch(/Continue one with "akm workflow run \S+"/);
+    expect(activeWithParams.stderr).not.toContain("workflow resume");
   });
 
   test("removed manual lifecycle commands are unknown commands", async () => {

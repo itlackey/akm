@@ -579,7 +579,7 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
   const workflowRunRefs = Number(state.workflowRunRefs ?? 0);
   const activeWorkflowRuns = Array.isArray(r.activeWorkflowRuns)
-    ? (r.activeWorkflowRuns as Array<{ id: string; workflowRef: string }>)
+    ? (r.activeWorkflowRuns as Array<{ id: string; workflowRef: string; status: string }>)
     : [];
   const entries = Number(index.entries ?? 0);
   const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
@@ -593,9 +593,9 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   ];
   if (activeWorkflowRuns.length > 0) {
     lines.push(
-      "Active workflow runs keep the old bundle name in their frozen plan; finish them (`akm workflow resume <id>`) or abandon them (`akm workflow abandon <id>`):",
+      "Active and blocked workflow runs keep the old bundle name in their frozen plan; continue them (`akm workflow run <id>`, after `akm workflow resume <id>` for a blocked one) or abandon them (`akm workflow abandon <id>`):",
     );
-    for (const run of activeWorkflowRuns) lines.push(`  - ${run.id} (${run.workflowRef})`);
+    for (const run of activeWorkflowRuns) lines.push(`  - ${run.id} (${run.workflowRef}, ${run.status})`);
   }
   if (!applied) {
     lines.push("Re-run without --dry-run to apply. It also re-syncs native scheduler bindings under the new name.");

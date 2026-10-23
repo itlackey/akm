@@ -384,7 +384,7 @@ orchestration surface.
 | **Concurrency** | Massively parallel (≤16 concurrent, ≤1000 total, `pipeline`/`parallel`) | Bounded map concurrency, frozen into the plan |
 | **Control flow** | Full JS: loops, conditionals, fan-out, budget-scaled | `unit`/`map`/`route`, bare reference strings, and bounded gate retries; no backward routes |
 | **State store** | Transcript dir (`journal.jsonl`, `agent-*.jsonl`) | SQLite `state.db`; native-engine runs add unit rows and a frozen `plan_json`/`plan_hash` |
-| **Scope / lifetime** | One session, one turn-shaped fan-out | Cross-session, per-project `scope_key`, resumable indefinitely |
+| **Scope / lifetime** | One session, one turn-shaped fan-out | Cross-session, host-wide (a run is identified by its id), resumable indefinitely |
 | **Progress model** | Push: live `/workflows` tree + `task-notification` | Pull via `status`, with near-live NDJSON event polling via `akm log` |
 | **Resume** | Prefix-cache replay keyed on `runId` (needs determinism) | Durable row resume; native-engine units add journaled replay keyed on content-derived identity |
 | **Quality gates** | Agent-authored (adversarial verify, judge panels, schemas) | Fail-closed LLM or agent verification of typed artifacts; `gate.max_loops` bounds retries |

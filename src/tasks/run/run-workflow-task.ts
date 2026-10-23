@@ -93,7 +93,7 @@ export async function runWorkflowTask(input: {
   // aborted by a timer. The engine reads `options.signal` at every step
   // boundary and breaks GRACEFULLY — in-flight units are cancelled, the journal
   // and the run lease are retained, and the run is left `active`, i.e.
-  // resumable with `akm workflow resume`.
+  // continuable with `akm workflow run <run-id>`.
   const controller = new AbortController();
   const deadline = armAbortDeadline(controller, {
     timeoutMs,
@@ -153,7 +153,7 @@ export async function runWorkflowTask(input: {
       ? undefined
       : new Error(
           `Workflow run timed out after ${timedOutAfterMs}ms and was aborted at a step boundary` +
-            (detail?.id ? ` — resume it with \`akm workflow resume ${detail.id}\`.` : "."),
+            (detail?.id ? ` — continue it with \`akm workflow run ${detail.id}\`.` : "."),
         );
 
   // One failure value for the three sinks below (status, log line, history

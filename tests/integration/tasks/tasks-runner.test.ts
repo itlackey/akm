@@ -415,7 +415,7 @@ describe("runTask — workflow target", () => {
     expect(exitCodeForStatus(result.status)).toBe(1);
     // The aborted run is left resumable, and its id is surfaced for that.
     expect(result.detail?.runId).toBe("run-wedged");
-    expect(result.detail?.error).toContain("akm workflow resume run-wedged");
+    expect(result.detail?.error).toContain("akm workflow run run-wedged");
     const log = fs.readFileSync(result.log, "utf8");
     expect(log).toContain("timed_out=true timeout_ms=100");
     expect(log).toContain("run_id=run-wedged status=active");
