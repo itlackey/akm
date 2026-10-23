@@ -298,6 +298,14 @@ describe("A-31, A-32 — RunWorkflowOptions.eventSource is threaded into the chi
 describe("A-33 — StepExecutionContext.dispatcher is threaded into the child drive's dispatcher", () => {
   test("A-33: a single injected fake serves BOTH a gated child's unit dispatch and its completion-criteria judge dispatch", async () => {
     const parent = await seedParentRun();
+    // The child's judge works in the root of the bundle that holds the child's workflow.
+    fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(storage.stashDir, "workflows", "gated-nested-child.md"),
+      ["---", "type: workflow", "steps:", "  - id: work", "---", "", "## work", "", "Do the child's work.", ""].join(
+        "\n",
+      ),
+    );
     const target = buildChildTarget(gatedChildPlan(), { ref: "workflows/gated-nested-child" });
     let sawUnitCall = false;
     let sawJudgeCall = false;

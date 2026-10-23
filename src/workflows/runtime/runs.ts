@@ -24,7 +24,7 @@ import {
   type WorkflowRunUnitStatus,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import { frozenSummaryJudge } from "../exec/frozen-judge";
+import { frozenSummaryJudge, resolveJudgeCwd } from "../exec/frozen-judge";
 import { detectSecretShapedParams } from "../exec/param-secrets";
 import { freezeWorkflow } from "../freeze/freeze";
 import {
@@ -538,7 +538,7 @@ export async function completeWorkflowStep(
     }
     const stepPlan = storedPlan.steps.find((step) => step.stepId === input.stepId);
     if (!stepPlan) throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
-    return { existing, plan: storedPlan, stepPlan };
+    return { existing, plan: storedPlan, stepPlan, workflowRef: run.workflow_ref };
   });
 
   const summary = input.summary?.trim();
@@ -561,10 +561,14 @@ export async function completeWorkflowStep(
         ? // Manual completion journals no gate row, so there is no `<stepId>.gate:l<loop>`
           // identity to agree with — but the dispatch still names the REAL run and
           // step (frozen-judge falls back to the gate node id for the unit id).
-          frozenSummaryJudge(preflight.stepPlan.gate.frozenJudge, input.signal, undefined, {
-            runId: input.runId,
-            stepId: input.stepId,
-          })
+          frozenSummaryJudge(
+            preflight.stepPlan.gate.frozenJudge,
+            input.signal,
+            undefined,
+            { runId: input.runId, stepId: input.stepId },
+            undefined,
+            resolveJudgeCwd(preflight.stepPlan.gate.frozenJudge, preflight.workflowRef),
+          )
         : input.summaryJudge;
     if (criteria.length > 0 && !judge) {
       throw new ConfigError(

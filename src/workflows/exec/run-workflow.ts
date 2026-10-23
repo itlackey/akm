@@ -37,7 +37,7 @@ import {
 } from "../runtime/runs";
 import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
-import { frozenSummaryJudge } from "./frozen-judge";
+import { frozenSummaryJudge, resolveJudgeCwd } from "./frozen-judge";
 import { mergeLoweringNotices } from "./lowering-notices";
 import {
   defaultUnitDispatcher,
@@ -386,6 +386,7 @@ function workflowSummaryJudge(
   stepPlan: WorkflowPlanStep,
   signal: AbortSignal | undefined,
   owner: { runId: string; stepId: string },
+  workflowRef: string,
 ): SummaryJudge | null {
   if (options.summaryJudge !== undefined) return options.summaryJudge;
   // The judge dispatches under the real run/step identity and the same event source as units.
@@ -395,6 +396,7 @@ function workflowSummaryJudge(
     options.dispatcher ?? defaultUnitDispatcher,
     owner,
     options.eventSource,
+    resolveJudgeCwd(stepPlan.gate.frozenJudge, workflowRef),
   );
 }
 
@@ -730,10 +732,16 @@ async function driveRun(
     // verify. No gate loop is consumed and nothing is dispatched.
     let summaryJudge: SummaryJudge | null;
     try {
-      summaryJudge = workflowSummaryJudge(options, stepPlan, options.signal, {
-        runId: next.run.id,
-        stepId: step.id,
-      });
+      summaryJudge = workflowSummaryJudge(
+        options,
+        stepPlan,
+        options.signal,
+        {
+          runId: next.run.id,
+          stepId: step.id,
+        },
+        next.run.workflowRef,
+      );
     } catch (error) {
       const detail = error instanceof Error && error.message ? ` (${error.message})` : "";
       // Nothing was dispatched, so there is no evidence to preserve — the same

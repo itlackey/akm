@@ -156,8 +156,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by earlier releases (`irVersion` 5 and 6) carry those fields, which are now
   ignored, and continue the same way. `akm workflow plan` lists an env ref
   without its `keys` and `secretNames`.
-- A workflow's exec units and agents work in the root of the bundle that holds
-  the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
+- A workflow's exec units, agents and gate judges work in the root of the bundle
+  that holds the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
   `exec.cwd` may now be absolute, and it is no longer required to stay inside the
   bundle: a command can reach any directory anyway. A step whose workflow no
   longer resolves to a bundle fails naming the workflow instead of running in

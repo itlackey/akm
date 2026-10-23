@@ -30,11 +30,12 @@ beforeEach(() => fakeOpencodeMajor(1));
 
 let tmpDir = "";
 let cleanup: Cleanup;
+let bundleDir = "";
 
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
 // Unified format: the gate CONTROL fields (none needed here)
 // live in frontmatter; the rubric lives in the body under "### gate" (spec §2.4).
-const PLAN = freezeWorkflow(`---
+const PLAN_SOURCE = `---
 type: workflow
 steps:
   - id: step-1
@@ -47,7 +48,8 @@ instructions
 ### gate
 
 Thing is done, Tests pass
-`);
+`;
+const PLAN = freezeWorkflow(PLAN_SOURCE);
 
 function seedRun(dbPath: string): void {
   const db = openStateDatabase(dbPath);
@@ -102,8 +104,13 @@ Thing is done, Tests pass
 
 beforeEach(() => {
   const sandboxed = sandboxEnvDir("akm-complete-summary-", "AKM_DATA_DIR");
+  // The judge works in the root of the bundle that holds the run's workflow, found when it is built.
+  const bundle = sandboxEnvDir("akm-complete-summary-bundle-", "AKM_BUNDLE_DIR", sandboxed.cleanup);
+  bundleDir = bundle.dir;
+  fs.mkdirSync(path.join(bundleDir, "workflows"), { recursive: true });
+  fs.writeFileSync(path.join(bundleDir, "workflows", "demo.md"), PLAN_SOURCE, "utf8");
   tmpDir = sandboxed.dir;
-  cleanup = sandboxed.cleanup;
+  cleanup = bundle.cleanup;
   seedRun(path.join(tmpDir, "state.db"));
 });
 
@@ -140,9 +147,13 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
 
     const config = sandboxXdgConfigHome();
     try {
-      // Any live-config lookup would fail before dispatch. The frozen plan is
-      // the sole manual-completion authority.
-      fs.writeFileSync(path.join(config.dir, "akm", "config.json"), "{ definitely invalid json", "utf8");
+      // The live config names no engine, so any live engine lookup would fail
+      // before dispatch. The frozen plan is the sole authority for the judge.
+      fs.writeFileSync(
+        path.join(config.dir, "akm", "config.json"),
+        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }),
+        "utf8",
+      );
       const result = await completeWorkflowStep({
         runId: RUN_ID,
         stepId: "step-1",

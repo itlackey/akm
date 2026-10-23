@@ -564,7 +564,7 @@ ref, so a `bundle update` that moves the bundle to a new revision directory
 between two steps of a running workflow is harmless: the next step runs from
 the new directory. `cwd` is joined onto that root **once**: `cwd: sub` runs in
 `<bundle>/sub`, and an absolute `cwd` replaces the root. Agent and SDK units
-get the same directory as their workspace. If the workflow's bundle no longer
+get the same directory as their workspace, and so does a step's gate judge. If the workflow's bundle no longer
 resolves, the step fails with a message naming the ref; akm never falls back to
 its own working directory.
 

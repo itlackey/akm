@@ -202,6 +202,68 @@ describe("one cwd rule", () => {
   });
 });
 
+describe("the gate judge's working directory", () => {
+  const gated = [
+    "---",
+    "type: workflow",
+    "steps:",
+    "  - id: one",
+    "---",
+    "",
+    "## one",
+    "",
+    "Do it.",
+    "",
+    "### gate",
+    "",
+    "- it is done",
+    "",
+  ].join("\n");
+  const passed = '{"complete": true, "missing": []}';
+
+  test("the judge request carries the owner root of the run's workflow as its cwd", async () => {
+    const team = bundle("team");
+    write(team, "workflows/gated.md", gated);
+    configureBundles({ team });
+    const started = await startWorkflowRun("team//workflows/gated", {});
+
+    const gateCwds: Array<string | undefined> = [];
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async (request) => {
+        if (request.nodeId === "one.gate") gateCwds.push(request.cwd);
+        return { ok: true, text: request.nodeId === "one.gate" ? passed : "done" };
+      },
+    });
+
+    expect(result.done).toBe(true);
+    expect(gateCwds).toHaveLength(1);
+    expect(realpath(gateCwds[0] ?? "")).toBe(realpath(team));
+  });
+
+  test("a workflow whose bundle is gone blocks the step naming the ref; the judge never runs in akm's cwd", async () => {
+    const team = bundle("team");
+    write(team, "workflows/gated-gone.md", gated);
+    configureBundles({ team });
+    const started = await startWorkflowRun("team//workflows/gated-gone", {});
+    configureBundles({});
+
+    const dispatched: Array<string | undefined> = [];
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      dispatcher: async (request) => {
+        dispatched.push(request.nodeId);
+        return { ok: true, text: request.nodeId === "one.gate" ? passed : "done" };
+      },
+    });
+
+    expect(result.done).toBeUndefined();
+    expect(result.executed[0]?.ok).toBe(false);
+    expect(result.executed[0]?.summary).toContain("team//workflows/gated-gone");
+    expect(dispatched).not.toContain("one.gate");
+  });
+});
+
 describe("${ref} in an exec unit", () => {
   test("a script in bundle B and an env value from bundle C that names a secret in bundle D complete a run in bundle A", async () => {
     const [a, b, c, d] = ["a", "b", "c", "d"].map(bundle) as [string, string, string, string];
