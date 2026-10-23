@@ -167,6 +167,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `<bundle>/<working-directory>`, and a `uses: scripts/<file>` target that is a
   symlink to a file outside the bundle works: the task freezes that file's
   bytes.
+- A task's `working-directory` follows the same rule as a workflow's `exec.cwd`
+  (#1238): a non-empty path, relative to the task's bundle root or absolute, and
+  no longer required to stay inside the bundle. A symlink to a directory outside
+  the bundle, an absolute path and a path with `..` all work, and `akm lint` and
+  `akm task sync` no longer need the bundle root to check it.
 
 ### Deprecated
 

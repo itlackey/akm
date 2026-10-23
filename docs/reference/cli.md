@@ -3638,7 +3638,7 @@ different bundle is a hard error.
 document (`version: 4`). In the file, exactly one of `uses` or `run` is
 allowed. `uses` accepts command, workflow, and script refs plus `akm/command`;
 agents and task refs are not executable. `run` accepts a shell string with the
-closed shell and contained working-directory contract. Task source v4 has no
+closed shell and working-directory contract. Task source v4 has no
 `akm:` options bag or `on:` trigger block — scheduling, resolver overrides,
 `timeout`, `maxSteps`, `maxRetries`, and redaction names are all top-level
 keys on the document itself. Normal execution rejects v2 and v3 and points to
