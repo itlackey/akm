@@ -128,7 +128,8 @@ export interface RunWorkflowResult {
    * Present when the verification judge FAILED (missing/unresolvable judge,
    * thrown judge call, or malformed verdict) — infrastructure, not a verdict.
    * No gate loop was consumed; the step and run are left `blocked`, and
-   * `akm workflow resume` retries the gate over the journaled units.
+   * `akm workflow resume` then `akm workflow run` retries the gate over the
+   * journaled units.
    */
   judgeFailure?: { stepId: string; message: string };
   /**

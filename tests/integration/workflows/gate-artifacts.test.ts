@@ -388,6 +388,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     expect(result.gateRejection).toBeUndefined();
     expect(result.judgeFailure?.stepId).toBe("extract");
     expect(result.judgeFailure?.message).toContain(`akm workflow resume ${RUN_ID}`);
+    expect(result.judgeFailure?.message).toContain(`akm workflow run ${RUN_ID}`);
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("blocked");
     expect(status.workflow.steps[0]?.status).toBe("blocked");
@@ -1128,6 +1129,7 @@ describe("judge outage — infrastructure failure blocks for resume instead of b
     expect(failed.judgeFailure?.stepId).toBe("work");
     expect(failed.judgeFailure?.message).toContain(expectedCause);
     expect(failed.judgeFailure?.message).toContain(`akm workflow resume ${RUN_ID}`);
+    expect(failed.judgeFailure?.message).toContain(`akm workflow run ${RUN_ID}`);
     expect(failed.run.status).toBe("blocked");
     const blocked = await getWorkflowStatus(RUN_ID);
     expect(blocked.workflow.steps[0]!.status).toBe("blocked");

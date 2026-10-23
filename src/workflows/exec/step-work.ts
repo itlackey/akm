@@ -1189,8 +1189,8 @@ export type FinalizeStepResult =
    * Verifier INFRASTRUCTURE failure — a missing judge, a thrown judge call, or
    * a malformed verdict — as opposed to an honest negative verdict. The step
    * was completed `blocked` (run derives `blocked`), NO gate loop was
-   * consumed, and `akm workflow resume` re-evaluates the gate against the
-   * journaled units without re-dispatching them.
+   * consumed, and `akm workflow resume` then `akm workflow run` re-evaluates
+   * the gate against the journaled units without re-dispatching them.
    */
   | { kind: "judge-failed"; summary: string }
   /**
@@ -1213,8 +1213,8 @@ function judgeFailureNotes(runId: string, stepId: string, cause: string): string
     `Step "${stepId}" could not be verified: ${cause}. ` +
     `This is a verification-judge failure, not a verdict — no gate loop was consumed and the step's ` +
     `journaled units are preserved. Fix the verifier configuration or service, then run ` +
-    `\`akm workflow resume ${runId}\` to re-evaluate the gate against the existing results ` +
-    `without re-dispatching units.`
+    `\`akm workflow resume ${runId}\` and \`akm workflow run ${runId}\` to re-evaluate the gate ` +
+    `against the existing results without re-dispatching units.`
   );
 }
 
@@ -1488,7 +1488,8 @@ export async function finalizeExecutedStep(input: FinalizeStepInput): Promise<Fi
 
   // Judge infrastructure failure: the fail-closed rejection is synthetic, not a
   // verdict. Consume NO gate loop; block the step (and therefore the run) so
-  // `akm workflow resume` retries the gate over the journaled units.
+  // `akm workflow resume` then `akm workflow run` retries the gate over the
+  // journaled units.
   if (rejection && judgeFailed) {
     return blockFinalizedStep(input, judgeFailure ?? "the verification judge failed");
   }
