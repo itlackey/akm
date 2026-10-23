@@ -22,7 +22,7 @@ import {
   resolveEngine,
   resolveLlmEngineUse,
 } from "../../src/integrations/agent/engine-resolution";
-import { materializeLlmRunnerConnection } from "../../src/integrations/agent/runner";
+import { decodeFrozenRunnerSpec, materializeLlmRunnerConnection } from "../../src/integrations/agent/runner";
 import { withEnv, withIsolatedAkmStorage } from "../_helpers/sandbox";
 
 const config = {
@@ -72,6 +72,23 @@ describe("engine-resolution secret-store credential (#953)", () => {
       if (runner.kind !== "llm") throw new Error("fixture must lower to llm");
       expect(runner.apiKeySecretRef).toBe("${secrets/lab-api-key}");
       expect(materializeLlmRunnerConnection(runner).apiKey).toBe("dispatch-store-secret");
+    } finally {
+      storage.cleanup();
+    }
+  });
+
+  test("a plan frozen with the retired secret:// form dispatches with the stored secret (#1238)", () => {
+    const storage = withIsolatedAkmStorage();
+    try {
+      setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("frozen-store-secret"));
+      const runner = decodeFrozenRunnerSpec({
+        kind: "llm",
+        engine: "lab",
+        connection: { endpoint: "https://example.test/v1/chat/completions", model: "m" },
+        apiKeySecretRef: "secret://lab-api-key",
+      });
+      if (runner.kind !== "llm") throw new Error("fixture must decode to llm");
+      expect(materializeLlmRunnerConnection(runner).apiKey).toBe("frozen-store-secret");
     } finally {
       storage.cleanup();
     }

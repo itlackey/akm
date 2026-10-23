@@ -177,16 +177,26 @@ function runConfigFilePipeline(text: string, sourcePath?: string): Record<string
 const SECRET_STORE_REFERENCE_PATTERN = /^secret:\/\/(.+)$/;
 
 /**
+ * The `${ref}` a retired `secret://<x>` value reads as: `${<x>}` when `<x>` is
+ * already a full ref, else `${secrets/<x>}`. `undefined` for any other string.
+ * Shared by the config reader and the frozen workflow runner decoder.
+ */
+export function liftRetiredSecretRef(value: string): string | undefined {
+  const name = SECRET_STORE_REFERENCE_PATTERN.exec(value)?.[1];
+  if (name === undefined) return undefined;
+  return isRefToken(`\${${name}}`) ? `\${${name}}` : `\${secrets/${name}}`;
+}
+
+/**
  * `secret://<x>` is retired in favour of `${ref}`. A value in that form is read
- * as `${<x>}` when `<x>` is already a full ref, else `${secrets/<x>}`, with one
- * warning naming the key; every ordinary config write and `akm migrate apply`'s
- * `configFile` step then persist the new form.
+ * as its {@link liftRetiredSecretRef} with one warning naming the key; every
+ * ordinary config write and `akm migrate apply`'s `configFile` step then
+ * persist the new form.
  */
 function readRetiredSecretRefs(node: unknown, keyPath: readonly string[], sourcePath?: string): unknown {
   if (typeof node === "string") {
-    const name = SECRET_STORE_REFERENCE_PATTERN.exec(node)?.[1];
-    if (name === undefined) return node;
-    const lifted = isRefToken(`\${${name}}`) ? `\${${name}}` : `\${secrets/${name}}`;
+    const lifted = liftRetiredSecretRef(node);
+    if (lifted === undefined) return node;
     const dotted = keyPath.join(".");
     warnOnce(
       `config:secret-scheme:${sourcePath ?? "inline"}:${dotted}`,
