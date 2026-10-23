@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configured (#1236). Task sync now uses the same set of active bundles as
   search, show and workflows, so the working stash is synced the same way
   whether you sync everything or name it with `--bundle`.
+- The `bundle update` reference no longer says a writable Git update re-audits
+  the materialized worktree; that audit was removed with the dangerous-env
+  gates. It now describes what the update does: fetch into a staged copy, then
+  fast-forward the live checkout to exactly that commit (#1237).
 
 ### Changed
 

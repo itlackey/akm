@@ -1313,17 +1313,15 @@ akm bundle update --all --force   # Force fresh download even if version is unch
 A publication or index failure preserves the prior active bytes, lock/config
 generation, and searchable index for that bundle.
 
-Writable Git updates resolve configured roots to their physical checkout,
-reject component symlinks that escape it, and re-audit the exact materialized
-worktree before activation. AKM holds its source/index writer lease through
-that check and commit, and rechecks after the index pass at the final database
-commit boundary. All AKM writers cooperate with this lease. A non-cooperating
-local process can still edit ordinary files because POSIX/Windows filesystems
-provide no mandatory recursive directory lock: writes observed by either
-generation check make the update fail and restore the pre-update checkout, but
-a write racing after the final filesystem read cannot be guaranteed detectable
-and a write during compensation can be overwritten. Do not edit a writable
-checkout from another process while its update is running.
+A writable Git update is fetched into a staged copy of the checkout beside the
+live one, so a failed fetch leaves the live checkout, the lock and the index
+untouched. The live checkout is then fast-forwarded to exactly the staged
+commit (`git merge --ff-only`), which refuses, and changes nothing, when local
+commits have diverged or the merge would overwrite local work. AKM holds its
+source/index writer lease through that fast-forward and the index pass; all AKM
+writers cooperate with this lease, but a non-cooperating local process is not
+excluded. Do not edit a writable checkout from another process while its update
+is running.
 
 The index and its update-owned state maintenance share one deferred SQLite
 transaction. WAL readers continue to see the last committed generation while a
