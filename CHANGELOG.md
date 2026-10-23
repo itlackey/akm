@@ -143,6 +143,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   longer resolves to a bundle fails naming the workflow instead of running in
   akm's own working directory.
 
+- An exec step's argv and `exec.cwd` can name an asset in any bundle with the same
+  `${ref}` token env assets use (#1238): `["bun", "${homelab//scripts/lab-status/fetch.ts}"]`.
+  A `secrets/` ref is replaced by the secret's value, which is then redacted from
+  the journal; any other asset ref by its absolute path. A ref no bundle owns
+  fails the unit, naming it, before anything is spawned. Prompts are not
+  substituted. A workflow in bundle A can now run a script from bundle B with an
+  env asset from bundle C that names a secret in bundle D.
+
 ### Deprecated
 
 - `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A

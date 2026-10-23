@@ -35,6 +35,21 @@ export interface ResolvedEnvBinding {
   secretValues: string[];
 }
 
+/**
+ * What a `${ref}` token stands for: a `secrets/` ref yields the secret's
+ * trimmed value, any other asset ref its absolute path, a ref no bundle owns
+ * `undefined`. The one resolver behind env values and exec argv.
+ */
+export function resolveRefToken(
+  ref: string,
+): { kind: "secret"; value: string } | { kind: "path"; path: string } | undefined {
+  const owner = resolveRefOwner(ref);
+  if (owner === undefined) return undefined;
+  return owner.type === "secret"
+    ? { kind: "secret", value: readValue(owner.absPath) }
+    : { kind: "path", path: owner.absPath };
+}
+
 export interface ResolveEnvBindingOptions {
   /** Inject ONLY these keys. Mutually exclusive with `except`. */
   only?: string[];
@@ -73,16 +88,8 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
   }
 
-  // Substitute `${ref}` tokens: a `secrets/` ref yields the secret's value, any
-  // other asset ref its absolute path. A missing ref is a hard error — inject NOTHING.
-  const resolveRef = (ref: string) => {
-    const owner = resolveRefOwner(ref);
-    if (owner === undefined) return undefined;
-    return owner.type === "secret"
-      ? { kind: "secret" as const, value: readValue(owner.absPath) }
-      : { kind: "path" as const, path: owner.absPath };
-  };
-  const { values: substituted, missing, secretValues } = substituteRefTokens(envValues, resolveRef);
+  // Substitute `${ref}` tokens. A missing ref is a hard error — inject NOTHING.
+  const { values: substituted, missing, secretValues } = substituteRefTokens(envValues, resolveRefToken);
   if (missing.length > 0) {
     throw new NotFoundError(
       `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,

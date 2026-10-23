@@ -25,7 +25,10 @@
  *    when crossed, regardless of `on_error`.
  */
 
+import { resolveRefToken } from "../../commands/env/env-binding";
+import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
+import { substituteRefTokens } from "../../core/ref-token";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
@@ -35,7 +38,7 @@ import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import type { WorkflowBudget, WorkflowPlanStep } from "../plan";
+import type { WorkflowBudget, WorkflowExecSpec, WorkflowPlanStep } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { resolveWorkflowBundleRoot } from "../runtime/workflow-asset-loader";
 // The ONE child-workflow drive — publishes and drives a
@@ -962,9 +965,10 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
     if (request.cwd === undefined) {
       throw new Error(`exec unit "${request.unitId}" was dispatched with no working directory.`);
     }
-    return runExecUnit({
+    const { exec, secretValues } = substituteExecRefs(request.unitId, frozenTarget.exec);
+    const outcome = await runExecUnit({
       unitId: request.unitId,
-      exec: frozenTarget.exec,
+      exec,
       baseDir: request.cwd,
       ...(request.env ? { env: request.env } : {}),
       ...(request.execContext ? { context: request.execContext } : {}),
@@ -973,9 +977,41 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
     });
+    // A secret substituted into argv joins the redaction set, like one bound through an env asset.
+    return redactUnitOutcome(outcome, secretValues);
   }
   return dispatchWorkflowExecution(request, feedback);
 };
+
+/**
+ * Replace the `${ref}` tokens in an exec unit's argv and `cwd` (prompts are not substituted): a
+ * `secrets/` ref with the secret's value, any other asset ref with its absolute path. A ref no
+ * bundle owns fails the unit before anything is spawned.
+ */
+function substituteExecRefs(
+  unitId: string,
+  exec: WorkflowExecSpec,
+): { exec: WorkflowExecSpec; secretValues: string[] } {
+  const slots: Record<string, string> = Object.fromEntries(exec.command.entries());
+  if (exec.cwd !== undefined) slots.cwd = exec.cwd;
+  const { values, missing, secretValues } = substituteRefTokens(slots, resolveRefToken);
+  if (missing.length > 0) {
+    throw new NotFoundError(
+      `exec unit "${unitId}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was run.`,
+      "FILE_NOT_FOUND",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Write each `${ref}` as a full akm ref that exists, e.g. `${team//scripts/run.sh}`.",
+    );
+  }
+  return {
+    exec: {
+      ...exec,
+      command: exec.command.map((_, index) => values[index]) as [string, ...string[]],
+      ...(exec.cwd !== undefined ? { cwd: values.cwd } : {}),
+    },
+    secretValues,
+  };
+}
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 

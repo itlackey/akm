@@ -202,6 +202,71 @@ describe("one cwd rule", () => {
   });
 });
 
+describe("${ref} in an exec unit", () => {
+  test("a script in bundle B and an env value from bundle C that names a secret in bundle D complete a run in bundle A", async () => {
+    const [a, b, c, d] = ["a", "b", "c", "d"].map(bundle) as [string, string, string, string];
+    write(
+      b,
+      "scripts/check.ts",
+      [
+        'import fs from "node:fs";',
+        'fs.writeFileSync("seen.txt", `${process.env.TOKEN === "tok-d" ? "token-ok" : "token-bad"}:${process.env.REGION}`);',
+        "",
+      ].join("\n"),
+    );
+    write(c, "env/ci.env", "REGION=east\nTOKEN=${d//secrets/t}\n");
+    write(d, "secrets/t", "tok-d\n");
+    write(
+      a,
+      "workflows/multi.md",
+      workflowSource([execStep("run", [BUN, "${b//scripts/check.ts}"], { env: ["c//env/ci"] })]),
+    );
+    configureBundles({ a, b, c, d });
+
+    const { result } = await drive("a//workflows/multi");
+
+    expect(result.done).toBe(true);
+    expect(fs.readFileSync(path.join(a, "seen.txt"), "utf8")).toBe("token-ok:east");
+  });
+
+  test("a token in exec.cwd resolves to the asset's path", async () => {
+    const [a, b] = ["a", "b"].map(bundle) as [string, string];
+    write(b, "scripts/lab/run.sh", "#!/bin/sh\n");
+    write(
+      a,
+      "workflows/cwd.md",
+      workflowSource([execStep("run", recordCwd("where"), { cwd: "${b//scripts/lab/run.sh}/.." })]),
+    );
+    configureBundles({ a, b });
+
+    const { result } = await drive("a//workflows/cwd");
+
+    expect(result.done).toBe(true);
+    expect(realpath(fs.readFileSync(path.join(b, "scripts", "lab", "where.txt"), "utf8"))).toBe(
+      realpath(path.join(b, "scripts", "lab")),
+    );
+  });
+
+  test("a ref no bundle owns fails the unit before anything is spawned, naming the ref", async () => {
+    const a = bundle("a");
+    write(
+      a,
+      "workflows/missing.md",
+      workflowSource([
+        execStep("run", [BUN, "-e", 'require("node:fs").writeFileSync("ran.txt", "x")', "${a//scripts/absent.sh}"]),
+      ]),
+    );
+    configureBundles({ a });
+
+    const { result } = await drive("a//workflows/missing");
+
+    expect(result.done).toBeUndefined();
+    expect(result.executed[0]?.ok).toBe(false);
+    expect(result.executed[0]?.summary).toContain("a//scripts/absent.sh");
+    expect(fs.existsSync(path.join(a, "ran.txt"))).toBe(false);
+  });
+});
+
 describe("an irVersion 6 run", () => {
   test("dispatches by ref: the frozen cwd and env locations it carries are ignored", async () => {
     const team = bundle("team");

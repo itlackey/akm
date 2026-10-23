@@ -554,8 +554,9 @@ Bounds: 1–64 argv entries, each a non-empty string of at most 4096 bytes.
 
 ### `cwd`
 
-Optional: a non-empty string, **relative or absolute**. That is the only static
-check; there is no containment.
+Optional: a non-empty string, **relative or absolute**, and free to carry
+`${ref}` tokens (see [`${ref}` in argv and `cwd`](#ref-in-argv-and-cwd)). It is
+the only static check; there is no containment.
 
 An exec unit's working directory is the **root of the bundle that owns the
 workflow**. akm finds that bundle again for each step, by the run's workflow
@@ -575,8 +576,9 @@ full.
 | | |
 | --- | --- |
 | **Working directory** | The owner root of the run's workflow, found at each step's dispatch. `cwd` joins it once and may be absolute. |
-| **Argv** | Spawned directly, never shell-interpreted. |
+| **Argv** | Spawned directly, never shell-interpreted. A `${ref}` token in an entry is replaced at dispatch. |
 | **Environment** | Starts empty: the [default allowlist](#the-childs-environment-is-an-allowlist) plus `pass_env`, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
+| **`${ref}` tokens** | In argv, `cwd` and env-asset values. `${secrets/name}` becomes the secret's value, any other asset ref the asset's absolute path. A ref no bundle owns fails the unit before it spawns. Prompts are not substituted. |
 | **Redaction** | Only values substituted from `secrets/` refs, engine credentials and unsafe passthrough values are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not. |
 
 #### What is frozen, and what is found at dispatch
@@ -590,6 +592,26 @@ all looked up when the unit dispatches, through the same ref lookup `akm show`
 uses. Plans frozen by earlier releases (`irVersion` 5 and 6) also carry a frozen
 `cwdIdentity` and the env asset's owner paths; they decode, those fields are
 ignored, and such a run dispatches by ref like any other.
+
+#### `${ref}` in argv and `cwd`
+
+An argv entry or `cwd` can name an asset in any bundle with the same
+`${[bundle//]conceptId}` token env assets use:
+
+```yaml
+  - id: status
+    unit:
+      env: [team//env/discord]
+      exec:
+        command: ["bun", "${homelab//scripts/lab-status/fetch-status.ts}"]
+```
+
+A `secrets/` ref gives the secret's value, trimmed of surrounding whitespace,
+and joins the redaction set; any other asset ref gives the asset's absolute
+path. Putting a secret in argv is the author's choice (it shows up in the
+process list); prefer an `env:` binding. A `${...}` body that is not an akm ref
+(`${HOME}`) is left as text. A ref no bundle owns fails the unit, naming it,
+before anything is spawned.
 
 ### The output rule
 
@@ -719,9 +741,10 @@ want the whole thing, have it write to a file and print the **path**:
 
 ### Context reaching the command
 
-A frozen argv is never interpolated (this format has no substitution language),
-so data reaches an exec unit as **environment**, the argv analogue of the
-context blocks a model unit gets in its prompt:
+A frozen argv never carries run data (this format has no substitution language
+for params or step output; the only substitution is a [`${ref}` token](#ref-in-argv-and-cwd)
+naming an asset), so data reaches an exec unit as **environment**, the argv
+analogue of the context blocks a model unit gets in its prompt:
 
 | Variable | Value |
 | --- | --- |
@@ -980,8 +1003,9 @@ They do not widen it, and they do not narrow it:
   the ref names, the replay hash carries only the ref names, and the resolved
   values are collected and scrubbed out of stdout, stderr, and the failure
   diagnostic by the same redaction contract every other dispatch uses — before
-  anything is journaled. Never inline a secret into `command:`; argv is stored
-  verbatim in `plan_json`.
+  anything is journaled. Never inline a secret value into `command:`; argv is
+  stored as authored in `plan_json`. A `${secrets/name}` token in argv is
+  stored as the token and replaced only when the unit dispatches.
 - **Read a workflow before you run it.** `exec:` makes what a workflow will run
   explicit and auditable in one place, which is a real improvement over
   instructing a model to "run the tests" — but a bundle you do not trust is
