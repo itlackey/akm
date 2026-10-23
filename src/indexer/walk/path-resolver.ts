@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName, stashDirFor } from "../../core/asset/asset-placement";
 import { type AssetRef, parseRefInput } from "../../core/asset/resolve-ref";
-import { isWithin } from "../../core/common";
+import { isContainedResolvedPath } from "../../core/common";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { lookup } from "../indexer";
 import { deriveInstallations } from "../installations";
@@ -84,10 +84,9 @@ function resolveViaDisk(ref: AssetRef, options: ResolveAssetPathOptions): string
       if (!fs.existsSync(candidate)) continue;
       const resolved = resolveDirectoryEntry(candidate, directoryIndexNames);
       if (!resolved) continue;
-      const resolvedRoot = fs.realpathSync(source.path);
-      const realTarget = fs.realpathSync(resolved);
-      if (!isWithin(realTarget, resolvedRoot)) continue;
-      return realTarget;
+      // Name grammar only: a symlinked asset resolves to its target.
+      if (!isContainedResolvedPath(path.resolve(resolved), path.resolve(source.path))) continue;
+      return fs.realpathSync(resolved);
     }
   }
   return null;

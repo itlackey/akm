@@ -7,7 +7,7 @@ import path from "node:path";
 import type { AdapterReadCandidate, BundleAdapter } from "../../core/adapter/bundle-adapter";
 import { adapterForId } from "../../core/adapter/registry";
 import type { BundleComponent } from "../../core/adapter/types";
-import { compareCodePoints, hasErrnoCode, isWithin } from "../../core/common";
+import { compareCodePoints, hasErrnoCode } from "../../core/common";
 import { ConfigError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { warnOnce } from "../../core/warn";
@@ -68,23 +68,16 @@ function lexicallyWithin(candidate: string, root: string): boolean {
 }
 
 /** Add case-only suffix spellings beside an adapter-authored read candidate. */
-function candidateSpellings(
-  candidate: AdapterReadCandidate,
-  sourcePath: string,
-  realRoot: string,
-): AdapterReadCandidate[] {
+function candidateSpellings(candidate: AdapterReadCandidate, sourcePath: string): AdapterReadCandidate[] {
   const authored = path.resolve(candidate.path);
   if (!lexicallyWithin(authored, sourcePath)) return [{ ...candidate, path: authored }];
   const parent = path.dirname(authored);
-  let realParent: string;
   let entries: fs.Dirent[];
   try {
-    realParent = fs.realpathSync(parent);
     entries = fs.readdirSync(parent, { withFileTypes: true });
   } catch {
     return [{ ...candidate, path: authored }];
   }
-  if (!isWithin(realParent, realRoot)) return [{ ...candidate, path: authored }];
 
   const extension = path.extname(authored);
   if (!extension) return [{ ...candidate, path: authored }];
@@ -101,7 +94,6 @@ function candidateSpellings(
 
 function inspectCandidate(
   sourcePath: string,
-  realRoot: string,
   adapterId: string,
   candidate: AdapterReadCandidate,
 ): AdapterConceptOwner | undefined {
@@ -121,7 +113,6 @@ function inspectCandidate(
   } catch {
     return undefined;
   }
-  if (!isWithin(realPath, realRoot)) return undefined;
   try {
     if (!fs.statSync(realPath).isFile()) return undefined;
   } catch {
@@ -168,9 +159,8 @@ export function resolveAdapterConceptOwner(
   const normalized = normalizedConceptId(conceptId);
   if (!adapter || !normalized) return undefined;
 
-  let realRoot: string;
   try {
-    realRoot = fs.realpathSync(sourcePath);
+    fs.realpathSync(sourcePath);
   } catch (error) {
     // Genuinely absent — "no owner" is correct. Any other failure (e.g.
     // EACCES) is not "doesn't exist"; treating it as such would report a
@@ -210,7 +200,7 @@ export function resolveAdapterConceptOwner(
   // `candidateSpellings` adds case-only siblings via one `readdirSync` of
   // each candidate's own parent directory.
   const spellings = (adapter.readCandidates?.(component, resolutionConceptId) ?? []).flatMap((candidate) =>
-    candidateSpellings(candidate, sourcePath, realRoot),
+    candidateSpellings(candidate, sourcePath),
   );
   const inspected = [
     ...new Map(
@@ -219,7 +209,7 @@ export function resolveAdapterConceptOwner(
   ]
     .sort((left, right) => compareCodePoints(left.path, right.path))
     .flatMap((candidate) => {
-      const owner = inspectCandidate(sourcePath, realRoot, adapterId, candidate);
+      const owner = inspectCandidate(sourcePath, adapterId, candidate);
       return owner ? [owner] : [];
     });
   for (const candidate of inspected) {

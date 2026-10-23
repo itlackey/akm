@@ -40,7 +40,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `${secret:NAME}` substitution and a workflow `env:` binding, and a ref
   resolved by path does the same, instead of failing with "escapes the secrets
   directory" or "Ref resolves outside the stash root", so a secret can point at
-  a container's `/run/secrets/<name>`. Indexing is unchanged: `akm show` and
+  a container's `/run/secrets/<name>`. A command, agent or script that is such a
+  symlink also resolves when a workflow, task or `akm agent` runs it. Indexing is unchanged: `akm show` and
   search still skip an asset whose real path is outside the bundle. Names with
   `..` segments or absolute names are still refused, and writes still never
   follow a symlink out of the bundle.

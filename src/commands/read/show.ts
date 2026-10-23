@@ -32,7 +32,7 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayRef, displayRefForConceptId, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { asNonEmptyString, isWithin } from "../../core/common";
+import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -630,13 +630,12 @@ function findUnrecognizedScriptSource(
       if ((source.adapterId ?? detectAdapterId(source.path)) !== "akm") continue;
       const sourceRoot = path.resolve(source.path);
       const candidate = path.resolve(assetPathForName("script", path.join(sourceRoot, scriptDir), assetParts.name));
-      if (!isWithin(candidate, sourceRoot)) continue;
+      if (!isContainedResolvedPath(candidate, sourceRoot)) continue;
       const authoredStat = fs.lstatSync(candidate);
       if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) continue;
-      const realRoot = fs.realpathSync(sourceRoot);
       const realCandidate = fs.realpathSync(candidate);
-      if (!isWithin(realCandidate, realRoot) || !fs.statSync(realCandidate).isFile()) continue;
-      return { extension, path: realCandidate, sourceRoot: realRoot };
+      if (!fs.statSync(realCandidate).isFile()) continue;
+      return { extension, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };
     } catch {
       // Missing, unreadable, dangling, or otherwise unsafe paths remain normal
       // not-found misses; this diagnostic never widens physical ownership.
