@@ -6,19 +6,20 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
+import { typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { compareCodePoints, toPosix } from "../../core/common";
 import { parseEnvRef } from "../../core/env-secret-ref";
 import { UsageError } from "../../core/errors";
+import { isRefToken, REF_TOKEN_RE } from "../../core/ref-token";
 import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { SECRET_TOKEN_RE } from "../exec/environment";
 import type { FrozenWorkflowEnvironmentBinding, WorkflowExec } from "../plan";
 import type { FreezeStep, OwnedAsset, ResolutionContext } from "./step-values";
 
 /**
  * A step's frozen environment: `pass_env` names, then
- * one value-free descriptor per `unit.env` ref (owner, key set, secret-token
- * names). Values are read at dispatch (`exec/environment.ts`), never frozen.
+ * one value-free descriptor per `unit.env` ref (owner, key set, secret refs).
+ * Values are read at dispatch (`exec/environment.ts`), never frozen.
  */
 export function freezeEnvironment(
   source: FreezeStep,
@@ -38,7 +39,11 @@ export function freezeEnvironment(
     const parsed = dotenv.parse(fs.readFileSync(owned.file));
     const secretNames = new Set<string>();
     for (const value of Object.values(parsed)) {
-      for (const match of value.matchAll(SECRET_TOKEN_RE)) if (match[1]) secretNames.add(match[1]);
+      for (const [token, body] of value.matchAll(REF_TOKEN_RE)) {
+        if (body && isRefToken(token) && typeNameFromConceptId(parseBundleRef(body).conceptId)?.type === "secret") {
+          secretNames.add(body);
+        }
+      }
     }
     envRefs.push(
       Object.freeze({

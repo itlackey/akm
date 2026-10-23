@@ -4,9 +4,9 @@
 
 /**
  * Workflow environments: env-asset VALUES are the one live input to a frozen
- * plan. Freeze records each ref's owner, exact key names, and secret-token
- * names — never a value or a value-derived hash; dispatch reads the current
- * values through those descriptors.
+ * plan. Freeze records each ref's owner, exact key names, and secret refs —
+ * never a value or a value-derived hash; dispatch reads the current values
+ * through `resolveEnvBinding` (tests/integration/workflows/workflow-environment-dispatch.test.ts).
  */
 
 import { afterEach, describe, expect, test } from "bun:test";
@@ -14,14 +14,13 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
-import { materializeFrozenWorkflowEnvironment } from "../../src/workflows/exec/environment";
 import { freezeEnvironment } from "../../src/workflows/freeze/environment";
 import type { ResolutionContext } from "../../src/workflows/freeze/step-values";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
 import type { FrozenWorkflowEnvironmentBinding } from "../../src/workflows/plan";
 import { decodeWorkflowPlan } from "../../src/workflows/runtime/run-plan";
 import type { WorkflowAsset } from "../../src/workflows/runtime/workflow-asset-loader";
-import { makeSandboxDir, type SandboxedDir, withEnvSync } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
 
 const sandboxes: SandboxedDir[] = [];
 
@@ -47,7 +46,7 @@ function sha256(value: string | Uint8Array): string {
 }
 
 function secretToken(name: string): string {
-  return `\${secret:${name}}`;
+  return `\${secrets/${name}}`;
 }
 
 /** Freeze `refs` as one step's `unit.env`, resolving each bundle to the given root. */
@@ -180,7 +179,7 @@ describe("freezing env refs", () => {
           relativePath: "env/prod.env",
         },
         keys: ["API_TOKEN", "DATABASE_URL", "LOG_LEVEL"],
-        secretNames: ["deploy-token"],
+        secretNames: ["secrets/deploy-token"],
         precedence: 0,
       },
     ]);
@@ -188,50 +187,6 @@ describe("freezing env refs", () => {
     expect(serialized).not.toContain("postgres://");
     expect(serialized).not.toContain("Bearer ");
     expect(serialized).not.toContain(sha256(fs.readFileSync(file)));
-  });
-
-  test("follows a symlinked env file and secret that point outside the bundle, at freeze and at dispatch", () => {
-    const outer = sandbox("akm-env-symlink");
-    const root = path.join(outer, "bundle");
-    const outsideEnv = write(outer, "outside.env", `TOKEN=${secretToken("deploy-token")}\n`);
-    const outsideSecret = write(outer, "run-secrets/deploy-token", "from-run-secrets");
-    fs.mkdirSync(path.join(root, "env"), { recursive: true });
-    fs.mkdirSync(path.join(root, "secrets"), { recursive: true });
-    fs.symlinkSync(outsideEnv, path.join(root, "env/linked.env"));
-    fs.symlinkSync(outsideSecret, path.join(root, "secrets/deploy-token"));
-
-    const descriptors = freezeRefs(["alpha//env/linked"], { alpha: root });
-    const materialized = materializeFrozenWorkflowEnvironment(descriptors);
-    expect(materialized.values).toEqual({ TOKEN: "from-run-secrets" });
-  });
-
-  test("still refuses a `..` env path or secret name at dispatch", () => {
-    const outer = sandbox("akm-env-containment");
-    const root = path.join(outer, "bundle");
-    write(outer, "outside.env", "LEAK=yes\n");
-    write(outer, "secret-outside", "leaked");
-    fs.mkdirSync(path.join(root, "env"), { recursive: true });
-    const ref = (requestedPath: string, secretNames: string[]): FrozenWorkflowEnvironmentBinding => ({
-      kind: "env-ref",
-      ref: "alpha//env/prod",
-      owner: {
-        bundle: "alpha",
-        adapter: "akm",
-        requestedRoot: root,
-        requestedPath,
-        relativePath: "env/prod.env",
-      },
-      keys: ["LEAK"],
-      secretNames,
-      precedence: 0,
-    });
-    expect(() => materializeFrozenWorkflowEnvironment([ref(path.join(root, "../outside.env"), [])])).toThrow(
-      /escapes its bundle/,
-    );
-    write(root, "env/prod.env", `LEAK=${secretToken("../../secret-outside")}\n`);
-    expect(() =>
-      materializeFrozenWorkflowEnvironment([ref(path.join(root, "env/prod.env"), ["../../secret-outside"])]),
-    ).toThrow(/escapes its bundle/);
   });
 
   test("keeps authored ref order as precedence and drops a repeated ref", () => {
@@ -249,103 +204,5 @@ describe("freezing env refs", () => {
       { ref: "omega//env/prod", precedence: 0, keys: ["OMEGA_ONLY", "SHARED"] },
       { ref: "alpha//env/base", precedence: 1, keys: ["ALPHA_ONLY", "SHARED"] },
     ]);
-  });
-});
-
-describe("materializing a frozen environment", () => {
-  test("reads current values only through frozen descriptors and returns value-free audits", () => {
-    const root = sandbox("akm-env-materialize");
-    const file = write(root, "env/prod.env", `LOG_LEVEL=old\nAPI_TOKEN=${secretToken("deploy-token")}\n`);
-    const descriptors = freezeRefs(["alpha//env/prod"], { alpha: root });
-
-    const currentToken = "github_pat_current_value_only_01234567890123456789";
-    fs.writeFileSync(file, `API_TOKEN=Bearer ${secretToken("deploy-token")}\nLOG_LEVEL=current\n`, { mode: 0o600 });
-    const materialized = materializeFrozenWorkflowEnvironment(descriptors, {
-      readSecret: ({ name }) => (name === "deploy-token" ? currentToken : undefined),
-    });
-    const auditJson = JSON.stringify(materialized.audits);
-
-    expect(materialized.values).toEqual({ API_TOKEN: `Bearer ${currentToken}`, LOG_LEVEL: "current" });
-    expect(new Set(materialized.sensitiveValues)).toEqual(new Set([`Bearer ${currentToken}`, "current", currentToken]));
-    expect(auditJson).toContain("alpha//env/prod");
-    expect(auditJson).toContain("deploy-token");
-    expect(auditJson).not.toContain(currentToken);
-    expect(auditJson).not.toContain("current");
-  });
-
-  test("applies literal and env-ref precedence; pass-through names are neither bound nor marked sensitive", () => {
-    const descriptors: FrozenWorkflowEnvironmentBinding[] = [
-      { kind: "literal", name: "SHARED", value: "literal" },
-      { kind: "pass-through", name: "SHARED" },
-      { kind: "pass-through", name: "PASSED" },
-      {
-        kind: "env-ref",
-        ref: "alpha//env/prod",
-        owner: {
-          bundle: "alpha",
-          adapter: "akm",
-          requestedRoot: "/frozen/root",
-          requestedPath: "/frozen/root/env/prod.env",
-          relativePath: "env/prod.env",
-        },
-        keys: ["ONLY_ENV", "SHARED"],
-        secretNames: [],
-        precedence: 2,
-      },
-    ];
-    // A pass-through value in the parent environment: the exec allowlist
-    // delivers it, so materialization must not bind or redact it (#1096).
-    const materialized = withEnvSync({ PASSED: "/stash" }, () =>
-      materializeFrozenWorkflowEnvironment(descriptors, {
-        readEnvFile: () => "SHARED=env-ref\nONLY_ENV=present\n",
-        readSecret: () => {
-          throw new Error("no secret token was frozen");
-        },
-      }),
-    );
-
-    expect(materialized.values).toEqual({ ONLY_ENV: "present", SHARED: "env-ref" });
-    expect(materialized.values).not.toHaveProperty("HOME");
-    expect(materialized.sensitiveValues).not.toContain("/stash");
-  });
-
-  test("refuses an env file whose key set changed after freeze", () => {
-    const root = sandbox("akm-env-keyset");
-    const file = write(root, "env/prod.env", `LOG_LEVEL=old\nAPI_TOKEN=${secretToken("deploy-token")}\n`);
-    const descriptors = freezeRefs(["alpha//env/prod"], { alpha: root });
-    fs.writeFileSync(file, `LOG_LEVEL=new\nAPI_TOKEN=${secretToken("deploy-token")}\nEXTRA=injected\n`, {
-      mode: 0o600,
-    });
-    expect(() => materializeFrozenWorkflowEnvironment(descriptors, { readSecret: () => "value" })).toThrow(
-      /key set changed/,
-    );
-  });
-
-  test("fails on a missing secret and never returns a partial value map", () => {
-    const descriptors: FrozenWorkflowEnvironmentBinding[] = [
-      { kind: "literal", name: "SAFE", value: "already-seen" },
-      {
-        kind: "env-ref",
-        ref: "alpha//env/prod",
-        owner: {
-          bundle: "alpha",
-          adapter: "akm",
-          requestedRoot: "/missing/root",
-          requestedPath: "/missing/root/env/prod.env",
-          relativePath: "env/prod.env",
-        },
-        keys: ["TOKEN"],
-        secretNames: ["missing-token"],
-        precedence: 1,
-      },
-    ];
-    let result: unknown;
-    expect(() => {
-      result = materializeFrozenWorkflowEnvironment(descriptors, {
-        readEnvFile: () => `TOKEN=${secretToken("missing-token")}\n`,
-        readSecret: () => undefined,
-      });
-    }).toThrow(/missing secret/);
-    expect(result).toBeUndefined();
   });
 });

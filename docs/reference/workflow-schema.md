@@ -818,7 +818,7 @@ a committed *value*, so it cannot carry "whatever this build agent's
 `CARGO_HOME` happens to be".
 
 Values passed through this way are **not** redacted from the command's output
-the way `env:` binding values are, so never list a credential here.
+the way a secret bound through `env:` is, so never list a credential here.
 
 #### Binding a secret to a unit
 
@@ -853,16 +853,20 @@ env asset:
   left as text.
 - It is the same token `akm env run` resolves. `akm env export` does not
   resolve it; it writes the token verbatim.
-- Freezing records the env ref, its key names and the secret names, never a
-  value. Values and secrets are read at dispatch. A missing secret fails the
-  step at dispatch ("frozen environment preflight failed") and nothing is
-  injected.
+- Freezing records the env ref, never a value. At each dispatch the unit's env
+  assets are read live with `resolveEnvBinding`, the same function `akm env run`
+  uses, so an edit to the env file, or to a secret, after the run started is
+  picked up by the next dispatch; there is no key-set check against the frozen
+  plan. A ref no bundle owns fails the step at dispatch ("frozen environment
+  preflight failed") and nothing is injected.
 - Each dispatch that reads the env asset records an `env_access` event with the
-  ref, key names and secret names, never values.
-- Every value from an env asset is treated as sensitive, secret or not, and is
-  redacted out of stdout, stderr and diagnostics before they are journaled. A
-  non-secret value such as a channel id would be redacted from the output too,
-  so pass it as a param or in `command:` instead.
+  ref and key names, never values.
+- Redaction covers secrets, not configuration. A value substituted from a
+  `secrets/` ref is treated as sensitive and redacted out of stdout, stderr and
+  diagnostics before they are journaled. The rest of an env asset, such as a URL
+  or a channel id, reaches the journal and the next step unredacted. A
+  credential typed straight into an env file is not redacted, so keep
+  credentials in `secrets/` and bind them with a `${secrets/name}` token.
 - `env:` needs a child process: it works on exec units and on agent and SDK
   engines. A unit on an `llm` engine that declares `env:` fails
   `env_unsupported`.

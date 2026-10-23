@@ -21,21 +21,20 @@ import type { UnitDispatcher } from "./unit-dispatch";
 /** The engine pair a dispatch may draw credentials from. `StepWorkUnit` satisfies it structurally. */
 export interface DispatchSecretSources {
   runner?: RunnerSpec;
-  /** Values sampled by the frozen-environment materializer. */
+  /** Secret values substituted by the frozen-environment materializer. */
   sensitiveValues?: readonly string[];
 }
 
 /**
  * Every exact value that must never reach the journal from one dispatch: the
- * resolved `env` bindings, the engine's (and SDK fallback's) credential from
- * env, file, or secret store, and unsafe passthrough values. Read at call time,
- * so collect no earlier than the dispatch being scrubbed.
+ * secrets substituted into the unit's env bindings (`dispatch.sensitiveValues`;
+ * the rest of an env asset is configuration and reaches the journal as is), the
+ * engine's (and SDK fallback's) credential from env, file, or secret store, and
+ * unsafe passthrough values. Read at call time, so collect no earlier than the
+ * dispatch being scrubbed.
  */
-export function collectWorkflowDispatchSensitiveValues(
-  dispatch: DispatchSecretSources,
-  env: Record<string, string> | undefined,
-): string[] {
-  const values = new Set<string>([...Object.values(env ?? {}), ...(dispatch.sensitiveValues ?? [])]);
+export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretSources): string[] {
+  const values = new Set<string>(dispatch.sensitiveValues ?? []);
   const addCredential = (runner: RunnerSpec | undefined): void => {
     if (!runner) return;
     if (runner.kind === "llm") {

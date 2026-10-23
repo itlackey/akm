@@ -53,7 +53,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   (`${team//secrets/discord_bot_token}`) rather than only the env file's own
   bundle. `engines.*.apiKey`, `embedding.apiKey`, `search.curateRerank.apiKey` and
   a git bundle's `credential` accept `$VAR`, `${VAR}` or `${ref}`. A `${...}` body
-  that is not an akm ref, such as `${HOME}`, is left as text.
+  that is not an akm ref, such as `${HOME}`, is left as text. An env file that
+  still holds `${secret:NAME}` is no longer substituted (the token is left as
+  text); rewrite it as `${secrets/NAME}`.
+- A workflow unit's `env:` bindings are now read at dispatch with the same
+  function `akm env run` uses, so a bundle's env asset, its `${ref}` tokens and
+  the secrets they name behave the same in a workflow as on the command line
+  (#1238). An edit to an env file after a run started is picked up by the next
+  dispatch instead of failing with "key set changed".
+- Only secret values are redacted from workflow output (#1238). A value
+  substituted from a `secrets/` ref is still `[REDACTED]` in stdout, stderr,
+  diagnostics and the journal, but the rest of an env asset, such as a URL or a
+  channel id, now reaches the journal and the next step intact. A credential
+  typed straight into an env file is no longer redacted; keep credentials in
+  `secrets/`.
 - A secret's value is read the same way everywhere (#1238): the file content with
   surrounding whitespace trimmed. `akm secret run` and env tokens used to pass
   the raw bytes, trailing newline included, while config credentials and the

@@ -25,7 +25,6 @@
  *    when crossed, regardless of `on_error`.
  */
 
-import { appendEvent } from "../../core/events";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
@@ -331,13 +330,6 @@ async function prepareStepDispatchPrerequisites(input: {
       const materialized = materializeFrozenWorkflowEnvironment(frozenEnvironment);
       env = materialized.values;
       sensitiveValues = materialized.sensitiveValues;
-      for (const audit of materialized.audits) {
-        appendEvent({
-          eventType: audit.eventType,
-          ref: audit.ref,
-          metadata: { keys: audit.keys, secretNames: audit.secretNames },
-        });
-      }
     } catch (err) {
       return {
         ok: false,
@@ -758,13 +750,10 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
   // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
   // run params join the set: they must reach the prompt in clear (the unit
   // needs them), but nothing about them needs to reach the journal.
-  const sensitiveValues = collectWorkflowDispatchSensitiveValues(
-    {
-      ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
-      sensitiveValues: [...(request.sensitiveValues ?? []), ...secretShapedParamValues(ctx.params)],
-    },
-    request.env,
-  );
+  const sensitiveValues = collectWorkflowDispatchSensitiveValues({
+    ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
+    sensitiveValues: [...(request.sensitiveValues ?? []), ...secretShapedParamValues(ctx.params)],
+  });
   const outcome = redactUnitOutcome(dispatched, sensitiveValues);
 
   const finishedAt = new Date().toISOString();

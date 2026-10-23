@@ -85,7 +85,7 @@ export function frozenSummaryJudge(
     const lowered = prepareWorkflowExecution(
       request as UnitDispatchRequest & { frozenTarget: FrozenWorkflowCommandTarget },
     );
-    const sensitiveValues = collectWorkflowDispatchSensitiveValues({ runner: target.runner }, undefined);
+    const sensitiveValues = collectWorkflowDispatchSensitiveValues({ runner: target.runner });
     const outcome = await dispatch({
       ...request,
       ...(sensitiveValues.length > 0 ? { sensitiveValues } : {}),

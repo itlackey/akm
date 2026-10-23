@@ -670,10 +670,19 @@ const ENV_SOLO_WF = [
   "",
 ].join("\n");
 
+/** An env asset in the working stash and the `${secrets/…}` token files it names. */
+function writeEnvAsset(name: string, body: string, secrets: Record<string, string> = {}): void {
+  fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
+  fs.writeFileSync(path.join(storage.stashDir, "env", `${name}.env`), body, "utf8");
+  for (const [secret, value] of Object.entries(secrets)) {
+    fs.mkdirSync(path.join(storage.stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "secrets", secret), value, "utf8");
+  }
+}
+
 describe("chaos: hostile content — secret env VALUES never reach a durable surface", () => {
   test("a bound secret value reaches the child env but appears in NO work-list / result / events / journal output", async () => {
-    fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
-    fs.writeFileSync(path.join(storage.stashDir, "env", "leak.env"), `FAKE_TOKEN=${FAKE_SECRET}\n`, "utf8");
+    writeEnvAsset("leak", "FAKE_TOKEN=${secrets/fake}\n", { fake: FAKE_SECRET });
     writeProgram("env-bound", ENV_SOLO_WF);
     const started = await startWorkflowRun("workflows/env-bound", {});
     const runId = started.run.id;
@@ -720,13 +729,12 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
     expect(unitDump).not.toContain(FAKE_SECRET);
   });
 
-  test("a `pass_env` value survives in the journaled exec output; an env-asset value is still redacted", async () => {
+  test("a `pass_env` value survives in the journaled exec output; a secret bound through an env asset is still redacted", async () => {
     // #1096: pass-through values were added to the redaction set, so a
     // pass-through `AKM_BUNDLE_DIR=/stash` turned `/stash/inbox/x` into
     // `[REDACTED]/inbox/x`. The documented contract is that they are not redacted.
     const PASSED = "/pass-env-probe-stash";
-    fs.mkdirSync(path.join(storage.stashDir, "env"), { recursive: true });
-    fs.writeFileSync(path.join(storage.stashDir, "env", "leak.env"), `FAKE_TOKEN=${FAKE_SECRET}\n`, "utf8");
+    writeEnvAsset("leak", "FAKE_TOKEN=${secrets/fake}\n", { fake: FAKE_SECRET });
     const command = [
       process.execPath,
       "-e",
@@ -767,6 +775,86 @@ describe("chaos: hostile content — secret env VALUES never reach a durable sur
       if (prior === undefined) delete process.env.PASS_ENV_PROBE;
       else process.env.PASS_ENV_PROBE = prior;
     }
+  });
+
+  test("redaction covers secrets, not configuration: a URL bound through an env asset survives, the token beside it is redacted", async () => {
+    const URL_VALUE = "https://hooks.example.test/inbox/7";
+    writeEnvAsset("hook", "HOOK_URL=https://hooks.example.test/inbox/7\nHOOK_TOKEN=${secrets/hook-token}\n", {
+      "hook-token": FAKE_SECRET,
+    });
+    const command = [
+      process.execPath,
+      "-e",
+      'process.stdout.write(process.env.HOOK_URL + " " + process.env.HOOK_TOKEN)',
+    ];
+    writeProgram(
+      "hook-env",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: call",
+        "    unit:",
+        "      env: [env/hook]",
+        "      exec:",
+        `        command: ${JSON.stringify(command)}`,
+        "---",
+        "",
+        "## call",
+        "",
+        "Print the URL and the token.",
+        "",
+      ].join("\n"),
+    );
+    const started = await startWorkflowRun("workflows/hook-env", {});
+    const result = await runWorkflowSteps({ target: started.run.id, summaryJudge: null });
+    expect(result.run.status).toBe("completed");
+
+    const rows = await withWorkflowRunsRepo((repo) => repo.getUnitsForRun(started.run.id));
+    const journaled = JSON.parse(rows[0]?.result_json ?? "null") as string;
+    expect(journaled).toContain(URL_VALUE);
+    expect(journaled).not.toContain(FAKE_SECRET);
+    expect(journaled).toContain("[REDACTED]");
+  });
+
+  test("a secret that no bundle owns fails the step and nothing is injected", async () => {
+    writeEnvAsset("hook", "HOOK_URL=https://hooks.example.test/x\nHOOK_TOKEN=${secrets/absent}\n");
+    writeProgram(
+      "hook-missing",
+      [
+        "---",
+        "type: workflow",
+        "defaults:",
+        "  engine: test-agent",
+        "steps:",
+        "  - id: call",
+        "    unit: { env: [env/hook] }",
+        "    gate: {}",
+        "---",
+        "",
+        "## call",
+        "",
+        "Call the hook.",
+        "",
+        "### gate",
+        "",
+        "- it was called",
+        "",
+      ].join("\n"),
+    );
+    const started = await startWorkflowRun("workflows/hook-missing", {});
+    let dispatched = false;
+    const result = await runWorkflowSteps({
+      target: started.run.id,
+      maxSteps: 1,
+      summaryJudge: acceptJudge,
+      dispatcher: async (): Promise<UnitDispatchResult> => {
+        dispatched = true;
+        return { ok: true, text: "called" };
+      },
+    });
+    expect(dispatched).toBe(false);
+    expect(JSON.stringify(result)).toContain("secrets/absent");
   });
 });
 
