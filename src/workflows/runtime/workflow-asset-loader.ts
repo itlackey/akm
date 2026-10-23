@@ -103,33 +103,27 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
  * The root of the bundle that owns a workflow ref right now: where the run's exec units and agents work.
  * A bundle-qualified ref names its bundle, so the workflow file need not exist (a bundle update may have
  * renamed or removed it; the frozen plan is the run's authority). An unqualified legacy ref finds its
- * owner by the existing walk.
- */
-export function resolveWorkflowBundleRoot(ref: string): string {
-  const { bundle } = parseWorkflowRefInput(ref);
-  if (bundle === undefined) return resolveWorkflowAsset(ref).sourcePath;
-  const source = resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig()))[0];
-  if (!source) {
-    throw new UsageError(`Bundle "${bundle}" was not found among configured sources.`, "WORKFLOW_SOURCE_INVALID");
-  }
-  return source.path;
-}
-
-/**
- * {@link resolveWorkflowBundleRoot} for a run that is about to dispatch. When the bundle does not resolve, the
- * error keeps its type (and exit code) and names the ref in its message.
+ * owner by the existing walk. When the bundle does not resolve, the error keeps its type (and exit code)
+ * and names the ref in its message.
  */
 export function resolveRunBundleRoot(ref: string): string {
-  try {
-    return resolveWorkflowBundleRoot(ref);
-  } catch (err) {
-    const text = `workflow ${ref} does not resolve to a bundle (${err instanceof Error ? err.message : String(err)})`;
-    if (err instanceof AkmError) {
-      err.message = text;
+  const { bundle } = parseWorkflowRefInput(ref);
+  if (bundle === undefined) {
+    try {
+      return resolveWorkflowAsset(ref).sourcePath;
+    } catch (err) {
+      if (err instanceof AkmError) err.message = `workflow ${ref} does not resolve to a bundle (${err.message})`;
       throw err;
     }
-    throw new Error(text);
   }
+  const source = resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig()))[0];
+  if (!source) {
+    throw new UsageError(
+      `workflow ${ref} does not resolve to a bundle (Bundle "${bundle}" was not found among configured sources.)`,
+      "WORKFLOW_SOURCE_INVALID",
+    );
+  }
+  return source.path;
 }
 
 /**
