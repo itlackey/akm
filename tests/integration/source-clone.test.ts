@@ -442,6 +442,30 @@ describe("akmClone", () => {
     expect(fs.readFileSync(path.join(stashDir, "scripts", "deploy.sh"), "utf8")).toBe("echo deploy\n");
   });
 
+  test("refuses to force-clone a symlinked skill onto its own target, leaving the source untouched", async () => {
+    const original = path.join(stashDir, "skills", "original", "SKILL.md");
+    writeFile(original, "# Original\n");
+    fs.symlinkSync(path.join(stashDir, "skills", "original"), path.join(stashDir, "skills", "alias"), "dir");
+    const before = fs.readFileSync(original);
+
+    await expect(akmClone({ sourceRef: "skills/alias", newName: "original", force: true })).rejects.toThrow(
+      "same path",
+    );
+    expect(fs.readFileSync(original).equals(before)).toBe(true);
+  });
+
+  test("refuses to force-clone a symlinked knowledge file onto its own target, leaving the source untouched", async () => {
+    const original = path.join(stashDir, "knowledge", "original.md");
+    writeFile(original, "# Original\n");
+    fs.symlinkSync(original, path.join(stashDir, "knowledge", "alias.md"));
+    const before = fs.readFileSync(original);
+
+    await expect(akmClone({ sourceRef: "knowledge/alias", newName: "original", force: true })).rejects.toThrow(
+      "same path",
+    );
+    expect(fs.readFileSync(original).equals(before)).toBe(true);
+  });
+
   test("throws when self-cloning a skill without rename", async () => {
     writeFile(path.join(stashDir, "skills", "review", "SKILL.md"), "# Review\n");
 

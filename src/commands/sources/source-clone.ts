@@ -13,7 +13,7 @@ import { isBundleSlug } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
-import { isWithin } from "../../core/common";
+import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
@@ -216,17 +216,19 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       ? `in target "${writeTarget.selector}"`
       : "in working stash";
 
-  // Guard against self-clone
+  // Guard against self-clone. Compare physical paths: sourcePath is the
+  // authored path, and a source that is a symlink to the destination is the
+  // same file (or skill) even though the authored paths differ.
   if (isSkill) {
-    const sourceSkillDir = path.resolve(path.dirname(sourcePath));
-    const destSkillDir = path.resolve(path.join(destRoot, typeDir, destName));
+    const sourceSkillDir = safeRealpath(path.dirname(sourcePath));
+    const destSkillDir = safeRealpath(path.join(destRoot, typeDir, destName));
     if (sourceSkillDir === destSkillDir) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }
   } else {
-    const resolvedSource = path.resolve(sourcePath);
+    const resolvedSource = safeRealpath(sourcePath);
     const effectiveDestName = !path.extname(destFileName) && sourceExt ? destFileName + sourceExt : destFileName;
-    const resolvedDest = path.resolve(path.join(destRoot, typeDir, effectiveDestName));
+    const resolvedDest = safeRealpath(path.join(destRoot, typeDir, effectiveDestName));
     if (resolvedSource === resolvedDest) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }
