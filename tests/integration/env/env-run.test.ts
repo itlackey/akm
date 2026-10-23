@@ -144,6 +144,28 @@ describe("env run", () => {
     expect(stdout).toBe(`from-team|${path.join(teamDir, "scripts", "fetch.sh")}`);
   });
 
+  test("a qualified ref into an installed non-native bundle substitutes its path; shell ${FOO//-/_} stays text", () => {
+    const primaryDir = makeStash();
+    const teamDir = makeStash();
+    fs.mkdirSync(path.join(primaryDir, "env"), { recursive: true });
+    fs.writeFileSync(
+      path.join(teamDir, "release.md"),
+      "---\ntype: workflow\nsteps:\n  - id: go\n---\n\n## go\n\nGo.\n",
+    );
+    fs.writeFileSync(path.join(primaryDir, "env", "prod.env"), "REL=${team//release}\nSH=${FOO//-/_}\n", "utf8");
+    writeSandboxConfig({
+      bundles: { team: { path: teamDir, components: { main: { root: ".", adapter: "akm-workflow" } } } },
+    });
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$REL" "$SH"'],
+      { AKM_BUNDLE_DIR: primaryDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout).toBe(`${fs.realpathSync(path.join(teamDir, "release.md"))}|\${FOO//-/_}`);
+  });
+
   test("a bare name is a usage error naming the full ref", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });

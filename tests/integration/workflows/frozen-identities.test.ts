@@ -21,6 +21,7 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { resolveStorageLocations } from "../../../src/storage/locations";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
+import { resolveOrchestrationRefs } from "../../../src/workflows/renderer";
 import { getWorkflowStatus, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import {
   type IsolatedAkmStorage,
@@ -320,6 +321,37 @@ describe("${ref} in an exec unit", () => {
 
     expect(result.done).toBe(true);
     expect(fs.readFileSync(path.join(a, "seen.txt"), "utf8")).toBe("token-ok:east");
+  });
+
+  test("a qualified ref into an installed non-native bundle is a ref; shell ${v//-/_} stays text (dispatch and plan)", async () => {
+    const a = bundle("a");
+    const team = bundle("team");
+    const release = write(team, "release.md", "---\ntype: workflow\nsteps:\n  - id: go\n---\n\n## go\n\nGo.\n");
+    const recordArgs = [
+      BUN,
+      "-e",
+      'require("node:fs").writeFileSync("args.json", JSON.stringify(process.argv.slice(1)))',
+      "${team//release}",
+      "${v//-/_}",
+    ];
+    write(a, "workflows/opaque.md", workflowSource([execStep("run", recordArgs)]));
+    writeSandboxConfig({
+      bundles: {
+        a: { path: a },
+        team: { path: team, components: { main: { root: ".", adapter: "akm-workflow" } } },
+      },
+    });
+    resetConfigCache();
+
+    // Dispatch: the installed bundle's ref becomes the owner's path; shell text is untouched.
+    const { result } = await drive("a//workflows/opaque");
+    expect(result.done).toBe(true);
+    expect(JSON.parse(fs.readFileSync(path.join(a, "args.json"), "utf8"))).toEqual([realpath(release), "${v//-/_}"]);
+
+    // Plan: the same ref is listed as resolved and the shell text is neither a ref nor unresolved.
+    const summary = resolveOrchestrationRefs({ exec: { command: recordArgs } });
+    expect(summary.refs?.map((r) => r.resolved)).toEqual(["team//release"]);
+    expect(summary.unresolved).toBeUndefined();
   });
 
   test("a ${secrets/...} token in argv joins the redaction set: the value reaches the child but never the journal", async () => {
