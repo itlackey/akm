@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
-import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
+import { AkmError, COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -113,6 +113,23 @@ export function resolveWorkflowBundleRoot(ref: string): string {
     throw new UsageError(`Bundle "${bundle}" was not found among configured sources.`, "WORKFLOW_SOURCE_INVALID");
   }
   return source.path;
+}
+
+/**
+ * {@link resolveWorkflowBundleRoot} for a run that is about to dispatch. When the bundle does not resolve, the
+ * error keeps its type (and exit code) and names the ref in its message.
+ */
+export function resolveRunBundleRoot(ref: string): string {
+  try {
+    return resolveWorkflowBundleRoot(ref);
+  } catch (err) {
+    const text = `workflow ${ref} does not resolve to a bundle (${err instanceof Error ? err.message : String(err)})`;
+    if (err instanceof AkmError) {
+      err.message = text;
+      throw err;
+    }
+    throw new Error(text);
+  }
 }
 
 /**

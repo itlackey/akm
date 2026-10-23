@@ -13,7 +13,7 @@
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { FrozenWorkflowCommandTarget } from "../plan";
-import { resolveWorkflowBundleRoot } from "../runtime/workflow-asset-loader";
+import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 import type { JudgeCallIdentity, SummaryJudge } from "../validate-summary";
 import { collectWorkflowDispatchSensitiveValues, withDispatchRedaction } from "./dispatch-redaction";
 import {
@@ -43,13 +43,7 @@ export function resolveJudgeCwd(
   workflowRef: string,
 ): string | undefined {
   if (!target) return undefined;
-  try {
-    return resolveWorkflowBundleRoot(workflowRef);
-  } catch (err) {
-    throw new Error(
-      `workflow ${workflowRef} does not resolve to a bundle (${err instanceof Error ? err.message : String(err)})`,
-    );
-  }
+  return resolveRunBundleRoot(workflowRef);
 }
 
 /** Identity for one judge dispatch: the caller's row identity, else the run/step with the gate node id. */

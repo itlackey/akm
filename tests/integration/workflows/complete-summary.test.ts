@@ -122,12 +122,14 @@ afterEach(() => {
 describe("completeWorkflowStep summary + validation gate (#506)", () => {
   test("manual completion dispatches a frozen CLI judge with its exact model and never reads live config", async () => {
     const argvPath = path.join(tmpDir, "judge-argv.bin");
+    const cwdPath = path.join(tmpDir, "judge-cwd.txt");
     const judgeBin = path.join(tmpDir, "frozen-codex-judge");
     fs.writeFileSync(
       judgeBin,
       [
         "#!/bin/sh",
         `printf '%s\\0' "$@" > '${argvPath}'`,
+        `pwd -P > '${cwdPath}'`,
         `printf '%s\\n' '{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"{\\"complete\\":true,\\"missing\\":[]}"}}'`,
       ].join("\n"),
       "utf8",
@@ -163,6 +165,8 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       expect("run" in result).toBe(true);
       const argv = fs.readFileSync(argvPath).toString("utf8").split("\0").filter(Boolean);
       expect(argv[argv.indexOf("--model") + 1]).toBe("frozen/exact-judge-model");
+      // The judge works in the root of the run's bundle, like every other agent dispatch.
+      expect(fs.readFileSync(cwdPath, "utf8").trim()).toBe(fs.realpathSync(bundleDir));
     } finally {
       config.cleanup();
     }

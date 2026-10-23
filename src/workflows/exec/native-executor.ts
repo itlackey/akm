@@ -40,7 +40,7 @@ import {
 } from "../../storage/repositories/workflow-runs-repository";
 import type { WorkflowBudget, WorkflowExecSpec, WorkflowPlanStep } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
-import { resolveWorkflowBundleRoot } from "../runtime/workflow-asset-loader";
+import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 // The ONE child-workflow drive — publishes and drives a
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
 // production caller.
@@ -334,14 +334,11 @@ async function prepareStepDispatchPrerequisites(input: {
   let cwd = ctx.bundleRootOverride;
   if (willDispatch && cwd === undefined && ctx.dispatcher === undefined) {
     try {
-      cwd = resolveWorkflowBundleRoot(ctx.workflowRef);
+      cwd = resolveRunBundleRoot(ctx.workflowRef);
     } catch (err) {
       return {
         ok: false,
-        result: failedStep(
-          dispatched,
-          `Step "${plan.stepId}" cannot run: workflow ${ctx.workflowRef} does not resolve to a bundle (${message(err)}).`,
-        ),
+        result: failedStep(dispatched, `Step "${plan.stepId}" cannot run: ${message(err)}.`),
       };
     }
   }
