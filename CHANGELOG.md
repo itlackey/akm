@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.10.261013] - 2026-10-23
+
 ### Fixed
 
 - A secret is now also redacted when it appears in its JSON-escaped spelling
