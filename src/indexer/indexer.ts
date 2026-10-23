@@ -1026,9 +1026,6 @@ function buildSourceScanPlans(
     }
     const walked = walkStashFlatWithStatus(currentStashDir, {
       includeAllDirectories: component.adapter === "okf",
-      ...(component.adapter === "akm" || component.adapter === "akm-workflow"
-        ? { workflowSymlinkAdapter: component.adapter }
-        : {}),
     });
     const dirGroups = groupFileContextsByDir(walked.files);
     const adapter = adapterForId(component.adapter);

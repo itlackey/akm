@@ -124,16 +124,6 @@ export class WorkflowSourceLinkResolutionError extends WorkflowSourceRejectionEr
   }
 }
 
-export class WorkflowSourcePathIdentityError extends WorkflowSourceRejectionError {
-  constructor(sourcePath: string, targetPath: string) {
-    super(`Workflow source ${sourcePath} resolves outside the bundle root to ${targetPath}.`, "PATH_ESCAPE_VIOLATION", [
-      sourcePath,
-    ]);
-    this.name = "WorkflowSourcePathIdentityError";
-    Object.setPrototypeOf(this, new.target.prototype);
-  }
-}
-
 /** Convert an adapter-owned concept id into its extensionless workflow name. */
 export function workflowNameForConceptId(adapterId: string, conceptId: string): string | undefined {
   if (adapterId === "akm-workflow") return conceptId;
@@ -347,19 +337,16 @@ function inspectWorkflowSourceCandidate(
     issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
     return { issues };
   }
+  // A symlink may point anywhere (installing a bundle is the trust decision),
+  // but it may not change the source's format.
   const targetPath = toPosix(path.relative(realRoot, realPath));
-  const contained = isWithinResolved(realPath, realRoot);
-  if (!contained) issues.push(new WorkflowSourcePathIdentityError(candidate.relativePath, targetPath));
   if (isLink && path.extname(realPath).toLowerCase() !== candidate.lowerExtension) {
     issues.push(new WorkflowSourceLinkIdentityError(candidate.relativePath, targetPath));
   }
-
-  if (contained) {
-    try {
-      if (!fs.statSync(realPath).isFile()) issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
-    } catch {
-      issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
-    }
+  try {
+    if (!fs.statSync(realPath).isFile()) issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
+  } catch {
+    issues.push(new WorkflowSourceLinkResolutionError(candidate.relativePath));
   }
   if (issues.length > 0) return { issues };
 

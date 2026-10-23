@@ -176,29 +176,20 @@ describe("generic lookup/show installation-priority ownership", () => {
     }
   });
 
-  test("an escaping placement candidate is neither read nor treated as an owning source", async () => {
-    const early = fixture("early-escaping-skill", "akm");
-    const later = fixture("later-after-escaping-skill", "akm");
-    const outsidePath = write(storage.root, "outside/SKILL.md", skillDocument("escape", "OUTSIDE_BYTES"));
-    const authoredPath = path.join(early.root, "skills", "escape", "SKILL.md");
+  test("an earlier bundle's symlinked placement owns the ref and is indexed (#1237)", async () => {
+    const early = fixture("early-linked-skill", "akm");
+    const later = fixture("later-after-linked-skill", "akm");
+    const outsidePath = write(storage.root, "outside/SKILL.md", skillDocument("linked", "OUTSIDE_BYTES"));
+    const authoredPath = path.join(early.root, "skills", "linked", "SKILL.md");
     fs.mkdirSync(path.dirname(authoredPath), { recursive: true });
     fs.symlinkSync(outsidePath, authoredPath);
-    const laterPath = write(later.root, "skills/escape/SKILL.md", skillDocument("escape", "LATER_SAFE_OWNER"));
+    write(later.root, "skills/linked/SKILL.md", skillDocument("linked", "LATER_OWNER"));
     configure(early, later);
     await akmIndex({ stashDir: early.root, full: true });
 
-    const originalReadFileSync = fs.readFileSync;
-    const readSpy = spyOn(fs, "readFileSync").mockImplementation(((candidate, options) => {
-      if (path.resolve(String(candidate)) === path.resolve(outsidePath)) {
-        throw new Error(`physical ownership must not read ${outsidePath}`);
-      }
-      return originalReadFileSync(candidate, options as never);
-    }) as typeof fs.readFileSync);
-    try {
-      expect(await lookupBundleRef(parseBundleRef("skills/escape"))).toMatchObject({ filePath: laterPath });
-    } finally {
-      readSpy.mockRestore();
-    }
+    // Installation priority decides, as for any other file: the earlier bundle's
+    // symlink owns the ref, and it is indexed rather than hiding the later copy.
+    expect(await lookupBundleRef(parseBundleRef("skills/linked"))).toMatchObject({ filePath: authoredPath });
   });
 
   test("an AKM reserved index.md abstains and allows a later owner", async () => {

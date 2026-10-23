@@ -758,7 +758,7 @@ describe("OKF first-class conformance", () => {
   });
 
   test.skipIf(process.platform === "win32")(
-    "standalone workflow lookup contains symlinks and handles extension case deterministically",
+    "standalone workflow lookup follows a file symlink and handles extension case deterministically",
     async () => {
       const workflowRoot = path.join(storage.root, "standalone-workflow-safety");
       const outside = path.join(storage.root, "outside-workflow.md");
@@ -766,7 +766,7 @@ describe("OKF first-class conformance", () => {
       write(workflowRoot, "duplicate.md", getWorkflowTemplate());
       write(workflowRoot, "duplicate.MD", getWorkflowTemplate());
       write(storage.root, "outside-workflow.md", getWorkflowTemplate());
-      fs.symlinkSync(outside, path.join(workflowRoot, "escape.md"));
+      fs.symlinkSync(outside, path.join(workflowRoot, "linked.md"));
       writeSandboxConfig({
         semanticSearchMode: "off",
         defaultBundle: "native",
@@ -781,7 +781,8 @@ describe("OKF first-class conformance", () => {
       resetConfigCache();
 
       expect((await loadWorkflowAsset("native//upper")).path).toBe(path.join(workflowRoot, "upper.MD"));
-      await expect(loadWorkflowAsset("native//escape")).rejects.toMatchObject({ code: "ASSET_NOT_FOUND" });
+      // A workflow that is a symlink to a file outside the bundle loads (#1237).
+      expect((await loadWorkflowAsset("native//linked")).path).toBe(path.join(workflowRoot, "linked.md"));
       await expect(loadWorkflowAsset("native//duplicate")).rejects.toMatchObject({
         code: "RESOURCE_ALREADY_EXISTS",
       });

@@ -253,7 +253,7 @@ describe("source commands and resolution", () => {
     });
   });
 
-  test("akmShow blocks symlink escapes outside stash type root", async () => {
+  test("akmShow reads a script that is a symlink outside the stash type root (#1237)", async () => {
     const stashDir = createTmpDir("akm-stash-");
     const outsideDir = createTmpDir("akm-outside-");
     const outsideFile = path.join(outsideDir, "outside.sh");
@@ -269,8 +269,9 @@ describe("source commands and resolution", () => {
     }
 
     await withEnv({ AKM_BUNDLE_DIR: stashDir }, async () => {
-      // Symlinks are skipped by the indexer, so the asset won't be found
-      await expect(akmShow({ ref: "scripts/link.sh" })).rejects.toThrow(/not found for ref/);
+      // Installing a bundle is the trust decision: the symlinked script is indexed and shown.
+      const shown = await akmShow({ ref: "scripts/link.sh" });
+      expect(shown).toMatchObject({ type: "script", ref: "scripts/link.sh", path: symlinkFile, run: "bash link.sh" });
     });
   });
 

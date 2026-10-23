@@ -41,10 +41,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   resolved by path does the same, instead of failing with "escapes the secrets
   directory" or "Ref resolves outside the stash root", so a secret can point at
   a container's `/run/secrets/<name>`. A command, agent or script that is such a
-  symlink also resolves when a workflow, task or `akm agent` runs it. Indexing is unchanged: `akm show` and
-  search still skip an asset whose real path is outside the bundle. Names with
-  `..` segments or absolute names are still refused, and writes still never
-  follow a symlink out of the bundle.
+  symlink also resolves when a workflow, task or `akm agent` runs it, and
+  `akm index` indexes a file symlink like any other file, so `akm show` and
+  search find it; a directory symlink is still never descended. Names with `..`
+  segments or absolute names are still refused, and writes still never follow a
+  symlink out of the bundle.
 - `akm workflow run <ref>` always starts a new run, and `akm workflow run <run-id>`
   or `akm workflow resume <run-id>` continues one (#1239). Before, running a ref
   silently resumed any active run of that ref started from the same directory,
