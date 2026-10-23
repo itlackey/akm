@@ -1797,7 +1797,7 @@ Environment scope and context:
       or CI variables present in akm's own environment are **absent** unless
       named. `pass_env:` widens it by name; exact named `env:` bindings provide
       fixed or secret values.
-- [ ] **CORE** A new durable-v4-family (`irVersion: 5`) start containing
+- [ ] **CORE** A new durable-v4-family (`irVersion: 7`) start containing
       `inherit_env: true` is rejected before dispatch and directs the author to
       named env bindings. A pre-`irVersion`-5 stored plan is also rejected and
       directs the user to start a new run.

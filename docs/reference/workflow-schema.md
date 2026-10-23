@@ -925,7 +925,7 @@ env asset:
   engines. A unit on an `llm` engine that declares `env:` fails
   `env_unsupported`.
 
-#### Durable v4 (`irVersion: 5`) forbids `inherit_env`
+#### Durable v4 (`irVersion: 7`) forbids `inherit_env`
 
 Every new workflow start freezes the durable plan v4 family's current
 executable format (`irVersion: 7`; 5 and 6 still decode). It rejects
