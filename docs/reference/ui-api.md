@@ -32,7 +32,7 @@ release, and nothing outside the page should script against them. Use the CLI's 
   `ORIGIN_NOT_ALLOWED`, `METHOD_NOT_ALLOWED`, `UNSUPPORTED_MEDIA_TYPE`, `BODY_TOO_LARGE`, `INVALID_JSON_ARGUMENT`,
   `NOT_FOUND`, `INTERNAL_ERROR`.
 - **Redaction.** Config values under secret-like keys (`apiKey`, `token`, `password`, `secret`, `credential`,
-  `authorization`, anything under `env` or `secrets`) are `"[redacted]"`; symbolic references (`$VAR`, `secret://name`)
+  `authorization`, anything under `env` or `secrets`) are `"[redacted]"`; symbolic references (`$VAR`, `${secrets/name}`)
   are kept. Credentials inside any URL in any response (userinfo, `token=`, `api_key=`, `sig=`, ...) are masked. Env and
   secret assets are never read; see `/api/asset`.
 - **Timestamps** are ISO 8601 UTC unless noted. Counts that cannot be computed are `null`, never `NaN`.
@@ -624,7 +624,7 @@ general config editor or command-execution endpoint.
 | `/api/asset/save` | `{ref, revision, content}` → the existing shared Markdown writer with `force` and the expected raw-content hash. Only indexed writable AKM knowledge/memory documents accepted by `/api/asset/source` can be edited. The writer takes the asset-mutation lease and compares the live source with `revision` inside it, immediately before writing. While another writer holds the lease the save fails fast with `409 ASSET_MUTATION_LEASE_HELD` instead of waiting. A stale revision returns `409 ASSET_CONTENT_CHANGED` without writing; a source deleted after it was loaded is refused (`404 ASSET_NOT_FOUND`) rather than recreated. The browser keeps the draft after a rejected save. An identical save returns `unchanged: true` without rewriting, reindexing or recording an event. Changed saves retain normal writer validation, indexing and Git effects. |
 
 Configuration-affecting actions do not round-trip the redacted API configuration. Existing mutation helpers retain
-unknown/unrelated fields, local overrides and supported `$VAR`/`secret://` credential references. If the existing
+unknown/unrelated fields, local overrides and supported `$VAR`/`${ref}` credential references. If the existing
 config sanitizer would remove unrelated legacy literal credentials, a bundle add or remove, or a settings change that
 would write config, is refused with `400 INVALID_FLAG_VALUE` and the user is asked to correct those settings through
 the CLI first. A settings request that changes nothing writes nothing and is not refused. It never writes

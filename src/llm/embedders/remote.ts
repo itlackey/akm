@@ -12,9 +12,10 @@
 import { abortableDelay, backoffDelay, fetchWithTimeout, isHttpUrl, readBodyWithByteCap } from "../../core/common";
 import { concurrentMap } from "../../core/concurrent";
 import { type EmbeddingConnectionConfig, resolveSecret } from "../../core/config/config";
-import { ENV_REFERENCE_PATTERN, SECRET_STORE_REFERENCE_PATTERN } from "../../core/config/schema/primitives";
+import { ENV_REFERENCE_PATTERN } from "../../core/config/schema/primitives";
 import { defaultConcurrencyForEndpoint } from "../../core/loopback";
 import { redactErrorBody, redactSensitiveText } from "../../core/redaction";
+import { isRefToken } from "../../core/ref-token";
 import { warnVerbose } from "../../core/warn";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import type { Embedder, EmbeddingVector } from "./types";
@@ -1065,7 +1066,7 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
 /**
  * Describe WHERE an `embedding.apiKey` came from, never its value — the
  * actionable outcome of the #953 field gap: `resolveSecret` throws on an
- * unresolvable `secret://` reference, so a keyless request can only mean
+ * unresolvable `${ref}` reference, so a keyless request can only mean
  * `embedding.apiKey` was absent from the config the run actually loaded (a
  * different config root, scope, or a config edited after the run started).
  * A default-level progress line naming the credential's SOURCE (this
@@ -1074,7 +1075,7 @@ export function hasRemoteEndpoint(config: EmbeddingConnectionConfig): boolean {
  */
 export function describeEmbeddingCredential(apiKey: string | undefined): string {
   if (!apiKey) return "none configured";
-  if (SECRET_STORE_REFERENCE_PATTERN.test(apiKey)) return `${apiKey} (store)`;
+  if (isRefToken(apiKey)) return `${apiKey} (store)`;
   if (ENV_REFERENCE_PATTERN.test(apiKey)) return `${apiKey} (env)`;
   return "literal apiKey";
 }

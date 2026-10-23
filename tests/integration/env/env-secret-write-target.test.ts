@@ -79,7 +79,7 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
       "--bundle",
@@ -110,7 +110,15 @@ describe("env/secret write-target routing", () => {
       defaultWriteTarget: "team",
     });
 
-    const res = await runCliCapture(["secret", "set", "deploy-key", "--from-file", valueFile(), "--format", "json"]);
+    const res = await runCliCapture([
+      "secret",
+      "set",
+      "secrets/deploy-key",
+      "--from-file",
+      valueFile(),
+      "--format",
+      "json",
+    ]);
 
     expect(res.code).toBe(0);
     const teamSecret = path.join(team, "secrets", "deploy-key");
@@ -125,7 +133,7 @@ describe("env/secret write-target routing", () => {
   test("no --bundle and no defaultWriteTarget writes to the working stash (unchanged default)", async () => {
     writeSandboxConfig({ bundles: { stash: { path: storage.stashDir } }, defaultBundle: "stash" });
 
-    const res = await runCliCapture(["env", "create", "prod", "--from-file", valueFile(), "--format", "json"]);
+    const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
 
     expect(res.code).toBe(0);
     expect(fs.existsSync(path.join(storage.stashDir, "env", "prod.env"))).toBe(true);
@@ -139,7 +147,7 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
       "--bundle",
@@ -162,7 +170,7 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
       "--bundle",
@@ -192,7 +200,7 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
       "--bundle",
@@ -224,7 +232,7 @@ describe("env/secret write-target routing", () => {
       defaultWriteTarget: "team",
     });
 
-    const res = await runCliCapture(["env", "create", "prod", "--from-file", valueFile(), "--format", "json"]);
+    const res = await runCliCapture(["env", "create", "env/prod", "--from-file", valueFile(), "--format", "json"]);
 
     expect(res.code).toBe(0);
     // Exactly one boundary commit was added and the tree is clean.
@@ -260,7 +268,7 @@ describe("env/secret write-target routing", () => {
     const res = await runCliCapture([
       "env",
       "create",
-      "prod",
+      "env/prod",
       "--from-file",
       valueFile(),
       "--sensitive",
@@ -273,7 +281,15 @@ describe("env/secret write-target routing", () => {
     expect(fs.existsSync(path.join(content, "env", "prod.sensitive"))).toBe(true);
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("1");
 
-    const secret = await runCliCapture(["secret", "set", "deploy-key", "--from-file", valueFile(), "--format", "json"]);
+    const secret = await runCliCapture([
+      "secret",
+      "set",
+      "secrets/deploy-key",
+      "--from-file",
+      valueFile(),
+      "--format",
+      "json",
+    ]);
     expect(secret.code).toBe(0);
     expect(fs.readFileSync(path.join(content, "secrets", "deploy-key"), "utf8")).toBe(SECRET_VALUE);
     expect(git(repo, ["rev-list", "--count", "HEAD"])).toBe("1");

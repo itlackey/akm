@@ -19,9 +19,9 @@ import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/a
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
-import { makeBundleRef } from "./asset/asset-ref";
+import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
 import type { AssetRef } from "./asset/resolve-ref";
-import { conceptIdFromTypeName, displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
+import { conceptIdFromTypeName, displayRef, parseRefInput, typeNameFromConceptId } from "./asset/resolve-ref";
 import { isWithin } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
@@ -78,11 +78,27 @@ export function listEnvsRecursive(
 }
 
 export function parseEnvRef(ref: string): AssetRef {
-  // Accept a bare env name (`prod`, `sub/prod`) or the new-grammar
-  // `[bundle//]env/name` conceptId. A bare name's leading segment maps to no
-  // asset type, so it is qualified with the `env/` conceptId prefix; anything
-  // already a full new-grammar ref is parsed as-is.
-  return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
+  return parseTypedRef(ref, "env", "env/<name>");
+}
+
+/**
+ * Parse `ref` as a `[bundle//]conceptId` of the given asset type. There is no
+ * bare-name form: `prod` is a usage error naming `env/prod`, never an alias.
+ */
+function parseTypedRef(ref: string, type: "env" | "secret", form: string): AssetRef {
+  let parsed: AssetRef | undefined;
+  try {
+    parsed = parseRefInput(ref);
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
+  }
+  if (parsed?.type !== type) {
+    throw new UsageError(
+      `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  return parsed;
 }
 
 /** The bundle and file that own an env or secret ref right now, or undefined. Sensitive files resolve too. */
@@ -90,6 +106,16 @@ function findEnvSecretOwner(origin: string | undefined, conceptId: string): Conc
   return resolveConceptOwner({ bundle: origin, conceptId }, resolveSourceEntries(undefined, loadConfig()), {
     includeSensitive: true,
   });
+}
+
+/**
+ * The file that owns any asset ref right now (and the asset type its conceptId
+ * names), or undefined when no bundle owns it. The lookup behind `${ref}` tokens.
+ */
+export function resolveRefOwner(ref: string): { absPath: string; type: string | undefined } | undefined {
+  const { bundle, conceptId } = parseBundleRef(ref);
+  const match = findEnvSecretOwner(bundle, conceptId);
+  return match && { absPath: match.owner.path, type: typeNameFromConceptId(conceptId)?.type };
 }
 
 /**
@@ -107,7 +133,7 @@ export function makeEnvRef(name: string, source?: IndexSearchSource, config: Akm
 
 /**
  * Resolve an env ref to the absolute `.env` path that owns it right now.
- * Accepts the `env/<name>` conceptId (or a bare name, auto-qualified into it).
+ * Accepts a full `[bundle//]env/<name>` ref.
  * Throws `NotFoundError` when no bundle owns it; creating one goes through
  * {@link resolveEnvWriteTarget}.
  */
@@ -119,9 +145,6 @@ export function resolveEnvPath(ref: string): {
   dir: "env";
 } {
   const parsed = parseEnvRef(ref);
-  if (parsed.type !== "env") {
-    throw new UsageError(`Expected an env ref (env/<name>); got "${ref}".`);
-  }
   const conceptId = conceptIdFromTypeName("env", parsed.name);
   const match = findEnvSecretOwner(parsed.origin, conceptId);
   if (!match) throw new NotFoundError(`Env not found: ${makeBundleRef(parsed.origin, conceptId)}`);
@@ -129,9 +152,7 @@ export function resolveEnvPath(ref: string): {
 }
 
 export function parseSecretRef(ref: string): AssetRef {
-  // Same bare-name-vs-full-ref rule as parseEnvRef; a bare name is qualified
-  // with the `secrets/` conceptId prefix (secret's stash subdir).
-  return parseRefInput(isFullRefInput(ref) ? ref : `secrets/${ref}`);
+  return parseTypedRef(ref, "secret", "secrets/<name>");
 }
 
 export function makeSecretRef(name: string, source?: IndexSearchSource): string {
@@ -152,9 +173,6 @@ export function resolveSecretPath(ref: string): {
   source: IndexSearchSource;
 } {
   const parsed = parseSecretRef(ref);
-  if (parsed.type !== "secret") {
-    throw new UsageError(`Expected a secret ref (secrets/<name>); got "${ref}".`);
-  }
   const conceptId = conceptIdFromTypeName("secret", parsed.name);
   const match = findEnvSecretOwner(parsed.origin, conceptId);
   if (!match) throw new NotFoundError(`Secret not found: ${makeBundleRef(parsed.origin, conceptId)}`);
@@ -197,9 +215,6 @@ export function resolveEnvWriteTarget(
   create?: { subPath?: string },
 ): EnvWriteResolution {
   const parsed = parseEnvRef(ref);
-  if (parsed.type !== "env") {
-    throw new UsageError(`Expected an env ref (env/<name>); got "${ref}".`);
-  }
   if (create) {
     assertFlatAssetName(parsed.name);
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
@@ -233,9 +248,6 @@ export function resolveSecretWriteTarget(
   create?: { subPath?: string },
 ): SecretWriteResolution {
   const parsed = parseSecretRef(ref);
-  if (parsed.type !== "secret") {
-    throw new UsageError(`Expected a secret ref (secrets/<name>); got "${ref}".`);
-  }
   if (create) {
     assertFlatAssetName(parsed.name);
     parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);

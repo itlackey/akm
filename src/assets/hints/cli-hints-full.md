@@ -150,8 +150,8 @@ the index (comments can contain commented-out credentials). akm does not edit
 entries — you edit the file with your own editor and akm loads it.
 
 ```sh
-akm env create prod                           # Create an empty env file
-akm env create prod --from-file ./.env        # Ingest an existing .env
+akm env create env/prod                           # Create an empty env file
+akm env create env/prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across bundles with key names
 akm show env/prod                             # Inspect key names (never values or comments)
 akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)

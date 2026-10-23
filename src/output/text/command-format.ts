@@ -182,7 +182,7 @@ export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
   if (envs.length === 0) {
-    return "No env files. Create one with `akm env create <name>`, then edit the .env file directly.";
+    return "No env files. Create one with `akm env create env/<name>`, then edit the .env file directly.";
   }
   const lines: string[] = [];
   for (const v of envs) {

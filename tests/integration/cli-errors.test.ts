@@ -774,7 +774,7 @@ describe("S11: sectioned root help", () => {
       expect(stdout).toContain(id);
     }
     expect(stdout).toContain("--credential");
-    expect(stdout).toContain("secret://name");
+    expect(stdout).toContain("secrets/name");
   });
 
   test("akm bundle update --help documents scheduling and lock-aware automation (#967/#976)", () => {

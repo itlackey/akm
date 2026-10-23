@@ -8,10 +8,10 @@ import path from "node:path";
 import { resolveSecret } from "../../core/config/config";
 import type { LlmConnectionConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
-import { SECRET_STORE_REFERENCE_PATTERN } from "../../core/config/schema/primitives";
 import { ConfigError } from "../../core/errors";
 import { formatExtraParamsIssue, validateExtraParams } from "../../core/extra-params";
 import { collectSensitiveValues } from "../../core/redaction";
+import { isRefToken } from "../../core/ref-token";
 import { resolveSecretFromStore } from "../../sources/snapshot-fetchers/secret-seam";
 import { getHarness } from "../harnesses";
 import { resolveOpencodeBin } from "../harnesses/opencode/version";
@@ -83,7 +83,7 @@ export interface CredentialDescriptor {
 
 /**
  * One selected LLM engine with overlays applied. Credentials stay symbolic
- * here — an env descriptor, a file path (#905), or a `secret://` reference
+ * here — an env descriptor, a file path (#905), or a `${ref}` reference
  * (#953) — and are read only at dispatch by {@link resolveLlmCredentialValue}.
  */
 export interface ResolvedLlmUse {
@@ -186,7 +186,7 @@ function resolveCredential(
     const explicit = envName(engine.apiKey);
     if (explicit) return { names: [explicit], required: true };
     // A secret-store reference is carried as `apiKeySecretRef` instead.
-    if (SECRET_STORE_REFERENCE_PATTERN.test(engine.apiKey)) return undefined;
+    if (isRefToken(engine.apiKey)) return undefined;
     throw new ConfigError(`Engine "${name}" has an invalid symbolic apiKey reference.`, "INVALID_CONFIG_FILE");
   }
   // An explicit apiKeyFile is its own credential source; it does not also
@@ -302,7 +302,7 @@ export function collectEngineCredentialValues(
       const value = lookupApiKeyFileValue(expandHomePath(engine.apiKeyFile));
       if (value) values.add(value);
     }
-    if (engine.apiKey !== undefined && SECRET_STORE_REFERENCE_PATTERN.test(engine.apiKey)) {
+    if (engine.apiKey !== undefined && isRefToken(engine.apiKey)) {
       const value = lookupApiKeySecretRefValue(engine.apiKey);
       if (value) values.add(value);
     }
@@ -350,8 +350,7 @@ export function resolveLlmEngineUse(
   for (const key of Object.keys(connection)) {
     if (connection[key] === undefined) delete connection[key];
   }
-  const apiKeySecretRef =
-    engine.apiKey !== undefined && SECRET_STORE_REFERENCE_PATTERN.test(engine.apiKey) ? engine.apiKey : undefined;
+  const apiKeySecretRef = engine.apiKey !== undefined && isRefToken(engine.apiKey) ? engine.apiKey : undefined;
   return {
     engine: name,
     connection: connection as LlmConnectionConfig,

@@ -1193,6 +1193,7 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
+| `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
 
 To index only a subdirectory of a git bundle, set the component `root` after
 adding it:
@@ -2262,9 +2263,9 @@ names only; `run` and `export` are the supported value-use paths.
 
 ```sh
 akm env list
-akm env create prod                          # creates env/prod.env (mode 0600)
-akm env create prod --from-file ./.env        # ingest an existing .env
-akm env create prod --path staging            # creates env/staging/prod.env
+akm env create env/prod                      # creates env/prod.env (mode 0600)
+akm env create env/prod --from-file ./.env    # ingest an existing .env
+akm env create env/prod --path staging        # creates env/staging/prod.env
 $EDITOR "$(akm env path env/prod --quiet)"    # edit the file directly
 akm env run env/prod -- npm test              # run a command with the whole file injected
 akm env run env/prod -- $SHELL                # interactive shell with the env loaded
@@ -2274,6 +2275,14 @@ akm env remove env/prod --yes                 # remove the whole env file
 
 akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
+
+Every `<ref>` is a full akm ref, `[bundle//]env/<name>`; there is no bare-name
+form (`akm env run prod` is a usage error naming `env/<name>`). A value in the
+file can embed a `${ref}` token: `${secrets/name}` (or `${bundle//secrets/name}`)
+is replaced with the secret's value when the env is injected, and any other
+asset ref with its absolute path. A `${...}` body that is not an akm ref, such
+as `${HOME}`, is left as text. A ref no bundle owns fails the run and nothing
+is injected. See [Environment & Secrets](env-and-secrets.md#the-ref-token).
 
 Env mutations (`create`, `remove`) pick their write destination the same way
 every other write command does: an explicit `--bundle <source>` wins, else
@@ -2291,7 +2300,7 @@ Subcommands:
 | --- | --- |
 | `list` | List all env files across all bundles with key names only |
 | `run <ref> -- <command>` | Run a command with the env injected. `--only` / `--except` filter which keys are injected; `--clean` starts from a minimal inherited environment |
-| `create <name>` | Create an env file. Empty by default; seed with `--from-file <path>` or `--from-stdin` |
+| `create <ref>` | Create an env file (a full ref such as `env/prod`). Empty by default; seed with `--from-file <path>` or `--from-stdin` |
 | `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
 | `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
@@ -2337,12 +2346,12 @@ is a deprecated no-op, accepted through 0.10 so existing scripts keep working.
 #### env create
 
 ```sh
-akm env create prod                       # empty
-akm env create prod --from-file ./.env    # seed from an existing .env (byte-for-byte)
-printf 'A=1\nB=2\n' | akm env create prod --from-stdin
-akm env create prod --path staging        # creates env/staging/prod.env
-akm env create prod --sensitive           # hidden from `env list` and the search index
-akm env create prod --bundle team         # write to the `team` source
+akm env create env/prod                   # empty
+akm env create env/prod --from-file ./.env  # seed from an existing .env (byte-for-byte)
+printf 'A=1\nB=2\n' | akm env create env/prod --from-stdin
+akm env create env/prod --path staging    # creates env/staging/prod.env
+akm env create env/prod --sensitive       # hidden from `env list` and the search index
+akm env create env/prod --bundle team     # write to the `team` source
 ```
 
 | Flag | Description |
@@ -2430,6 +2439,10 @@ akm secret set secrets/deploy-key --from-file ~/.ssh/id_ed25519   # byte-exact
 AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
 ```
+
+Every `<ref>` is a full akm ref, `[bundle//]secrets/<name>`; a bare name
+(`akm secret run deploy-token ...`) is a usage error naming `secrets/<name>`. The
+value is read with surrounding whitespace trimmed.
 
 Subcommands:
 
@@ -2875,7 +2888,7 @@ itself. `ok` and the exit code are unchanged either way, matching `extract`'s
 `skipReasons` contract: consumers that need to know branch on
 `skippedProcesses` (or pass `--require-engines` to abort instead of
 degrading). `reason` names which engine and which credential reference (an env
-var, `apiKeyFile` path, or `secret://` reference — never its value) is
+var, `apiKeyFile` path, or `${ref}` reference — never its value) is
 missing. A `--dry-run` preview never dispatches, so it never aborts
 on an unavailable credential either — even a strategy left with every process
 disabled this way still returns its plan, with the affected processes in

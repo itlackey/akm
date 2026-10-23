@@ -26,8 +26,8 @@
  * and could silently target different files. A ref's file still lives at
  * `<stash>/secrets/<name>`; locate or delete it there directly.
  *
- * Values are stored as raw bytes (no quoting, multi-line allowed) so they
- * round-trip byte-exact, unlike env values which forbid literal newlines.
+ * Values are stored as raw bytes (no quoting, multi-line allowed), unlike env
+ * values which forbid literal newlines; they are read back trimmed (`readValue`).
  */
 
 import { createHash } from "node:crypto";
@@ -100,11 +100,14 @@ function ensureParentDir(filePath: string): void {
 // ── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Read a secret's raw bytes. Internal use only (for `secret run`). Callers
- * MUST NOT write the returned value to stdout or any log.
+ * Read a secret's value: the file content as UTF-8 with surrounding whitespace
+ * trimmed. The one read every consumer uses (`secret run`, env `${ref}`
+ * tokens, config credentials, website fetchers), so a hand-written file's
+ * trailing newline never lands in an HTTP header. Callers MUST NOT write the
+ * returned value to stdout or any log.
  */
-export function readValue(secretPath: string): Buffer {
-  return fs.readFileSync(secretPath);
+export function readValue(secretPath: string): string {
+  return fs.readFileSync(secretPath, "utf8").trim();
 }
 
 /**

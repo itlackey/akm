@@ -61,7 +61,7 @@ export type ConfigErrorCode =
   // contract, filesystem permissions, or leftover upgrade state). The error
   // message carries the specific remediation.
   | "UPGRADE_BLOCKED"
-  // A `secret://<name>` apiKey reference did not resolve to a stored value —
+  // A `${ref}` apiKey reference did not resolve to a stored value —
   // the named secret does not exist, or no store-backed resolver was wired at
   // the call site.
   | "SECRET_REFERENCE_UNRESOLVED"
@@ -234,7 +234,7 @@ const CONFIG_HINTS: Partial<Record<ConfigErrorCode, string>> = {
     "Pass one of the listed strategy names to `--strategy`, or define it under `improve.strategies`. Names are case-sensitive.",
   EXECUTION_NOT_AUTHORIZED: "Change the selected tools or update the machine/user execution policy, then retry.",
   SECRET_REFERENCE_UNRESOLVED:
-    "Check the secret exists (`akm secret list`) and the name after `secret://` matches, or run `akm secret set <name> <value>` to store it.",
+    "Check the secret exists (`akm secret list`) and the ref inside `${…}` matches it, or run `akm secret set secrets/<name>` to store it.",
   REGISTRY_URL_INVALID:
     "Registry URLs must be credential-free http(s) URLs. Fix the entry with `akm registry list` / `akm registry add`, or the AKM_REGISTRY_URL / AKM_NPM_REGISTRY variable that supplied it.",
 };

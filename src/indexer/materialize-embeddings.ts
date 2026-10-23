@@ -150,7 +150,7 @@ export async function generateEmbeddingsForDb(
   }
 
   // #953 field gap: the actionable outcome is a self-diagnosing run, not a
-  // fix (every RemoteEmbedder path already resolves secret:// through one
+  // fix (every RemoteEmbedder path already resolves `${ref}` credentials through one
   // boundary — a keyless request can only mean embedding.apiKey was absent
   // from the config THIS run loaded). One default-level line, before the
   // first provider request of the phase, naming the endpoint/model/credential

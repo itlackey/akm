@@ -32,7 +32,7 @@ const config = {
       kind: "llm" as const,
       endpoint: "https://example.test/v1/chat/completions",
       model: "base-model",
-      apiKey: "secret://lab-api-key",
+      apiKey: "${secrets/lab-api-key}",
     },
   },
   defaults: { llmEngine: "lab" },
@@ -44,7 +44,7 @@ describe("engine-resolution secret-store credential (#953)", () => {
     try {
       setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("store-secret-value"));
       const resolved = resolveLlmEngineUse(config, [{ engine: "lab" }]);
-      expect(resolved.apiKeySecretRef).toBe("secret://lab-api-key");
+      expect(resolved.apiKeySecretRef).toBe("${secrets/lab-api-key}");
       expect(resolved.credential).toBeUndefined();
       expect(materializeLlmConnection(resolved).apiKey).toBe("store-secret-value");
     } finally {
@@ -70,7 +70,7 @@ describe("engine-resolution secret-store credential (#953)", () => {
       const runner = resolveEngine("lab", config);
       expect(runner.kind).toBe("llm");
       if (runner.kind !== "llm") throw new Error("fixture must lower to llm");
-      expect(runner.apiKeySecretRef).toBe("secret://lab-api-key");
+      expect(runner.apiKeySecretRef).toBe("${secrets/lab-api-key}");
       expect(materializeLlmRunnerConnection(runner).apiKey).toBe("dispatch-store-secret");
     } finally {
       storage.cleanup();
@@ -92,7 +92,7 @@ describe("engine-resolution secret-store credential (#953)", () => {
       setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("openpalm-store-secret"));
       await withEnv({ HOME: foreignHome }, () => {
         const resolved = resolveLlmEngineUse(config, [{ engine: "lab" }]);
-        expect(resolved.apiKeySecretRef).toBe("secret://lab-api-key");
+        expect(resolved.apiKeySecretRef).toBe("${secrets/lab-api-key}");
         expect(resolved.credential).toBeUndefined();
         expect(materializeLlmConnection(resolved).apiKey).toBe("openpalm-store-secret");
 

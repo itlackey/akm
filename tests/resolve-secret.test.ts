@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 // #917 — engine/embedding credentials could only resolve from process.env.
-// `resolveSecret` now also accepts a `secret://<name>` reference, resolved
+// `resolveSecret` now also accepts a `${ref}` reference, resolved
 // through an injected store lookup (kept out of this module's own imports to
 // avoid a cycle through `env-secret-ref.ts`, which already depends on it).
 
@@ -50,27 +50,43 @@ describe("resolveSecret (#917)", () => {
     expect(resolveSecret(undefined)).toBeUndefined();
   });
 
-  test("secret:// resolves through the injected store resolver", () => {
-    const resolved = resolveSecret("secret://lab-api-key", (ref) => (ref === "lab-api-key" ? "store-value" : null));
+  test("a ${ref} resolves through the injected store resolver", () => {
+    const resolved = resolveSecret("${secrets/lab-api-key}", (ref) =>
+      ref === "secrets/lab-api-key" ? "store-value" : null,
+    );
     expect(resolved).toBe("store-value");
   });
 
-  test("secret:// with no matching stored value throws an actionable ConfigError, never the ref's value", () => {
+  test("a bundle-qualified ${ref} reaches the store resolver whole", () => {
+    const resolved = resolveSecret("${team//secrets/lab-api-key}", (ref) =>
+      ref === "team//secrets/lab-api-key" ? "team-value" : null,
+    );
+    expect(resolved).toBe("team-value");
+  });
+
+  test("a $VAR and a ${ref} in one string both resolve, and a secret containing $ is not re-expanded", () => {
+    process.env[ENV_VAR] = "from-env";
+    const stored = `pa$w0rd$${"{HOME}"}`;
+    const resolved = resolveSecret(`$${ENV_VAR}:\${secrets/pw}`, () => stored);
+    expect(resolved).toBe(`from-env:${stored}`);
+  });
+
+  test("a ${ref} with no matching stored value throws an actionable ConfigError, never the ref's value", () => {
     let caught: unknown;
     try {
-      resolveSecret("secret://missing-key", () => null);
+      resolveSecret("${secrets/missing-key}", () => null);
     } catch (e) {
       caught = e;
     }
     expect(caught).toBeInstanceOf(ConfigError);
     const err = caught as ConfigError;
     expect(err.code).toBe("SECRET_REFERENCE_UNRESOLVED");
-    expect(err.message).toContain("secret://missing-key");
+    expect(err.message).toContain("${secrets/missing-key}");
     expect(err.hint()).toBeDefined();
   });
 
-  test("secret:// with no resolver supplied throws rather than sending the raw ref as the credential", () => {
-    expect(() => resolveSecret("secret://lab-api-key")).toThrow(ConfigError);
+  test("a ${ref} with no resolver supplied throws rather than sending the raw ref as the credential", () => {
+    expect(() => resolveSecret("${secrets/lab-api-key}")).toThrow(ConfigError);
   });
 });
 

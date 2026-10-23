@@ -2,9 +2,10 @@
  * Classification: opens a real database (`resolveEnvBinding` appends an
  * `env_access` event to state.db).
  *
- * A `${secret:NAME}` token reads the sibling secret even when that file is a
- * symlink to a file outside `secrets/` (installing a bundle is the trust
- * decision). A token naming a `..` path is still refused.
+ * A `${secrets/name}` token reads the secret even when that file is a symlink
+ * to a file outside `secrets/` (installing a bundle is the trust decision).
+ * A token whose body is not a well-formed ref (a `..` path) is plain text and
+ * reads nothing.
  */
 
 import { afterAll, describe, expect, test } from "bun:test";
@@ -32,7 +33,7 @@ function stashWithEnv(envBody: string): { stash: string; outside: string } {
 
 describe("resolveEnvBinding secret substitution", () => {
   test("substitutes a secret that is a symlink to a file outside secrets/", async () => {
-    const { stash, outside } = stashWithEnv("TOKEN=${secret:token}\n");
+    const { stash, outside } = stashWithEnv("TOKEN=${secrets/token}\n");
     fs.writeFileSync(path.join(outside, "real"), "s3cret");
     fs.symlinkSync(path.join(outside, "real"), path.join(stash, "secrets", "token"));
 
@@ -40,14 +41,17 @@ describe("resolveEnvBinding secret substitution", () => {
       resolveEnvBinding("env/prod"),
     );
     expect(binding.values.TOKEN).toBe("s3cret");
+    expect(binding.secretValues).toEqual(["s3cret"]);
   });
 
-  test("a secret token with a '..' segment is not read", async () => {
-    const { stash } = stashWithEnv("TOKEN=${secret:../outside}\n");
+  test("a token with a '..' segment is not a ref, so nothing outside secrets/ is read", async () => {
+    const { stash } = stashWithEnv("TOKEN=${secrets/../outside}\n");
     fs.writeFileSync(path.join(stash, "outside"), "leak");
 
-    await withEnv({ AKM_BUNDLE_DIR: stash, AKM_CONFIG_DIR: undefined }, async () => {
-      expect(() => resolveEnvBinding("env/prod")).toThrow();
-    });
+    const binding = await withEnv({ AKM_BUNDLE_DIR: stash, AKM_CONFIG_DIR: undefined }, async () =>
+      resolveEnvBinding("env/prod"),
+    );
+    expect(binding.values.TOKEN).toBe("${secrets/../outside}");
+    expect(binding.secretValues).toEqual([]);
   });
 });

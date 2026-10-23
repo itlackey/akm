@@ -823,11 +823,11 @@ the way `env:` binding values are, so never list a credential here.
 #### Binding a secret to a unit
 
 A unit's `env:` lists env assets by ref. A value inside an env asset can be a
-`${secret:<name>}` token, which akm replaces with a secret when the unit is
+`${ref}` token, which akm replaces with the secret's value when the unit is
 dispatched. Say the bundle `team` holds `env/discord.env`:
 
 ```sh
-DISCORD_BOT_TOKEN=${secret:discord_bot_token}
+DISCORD_BOT_TOKEN=${team//secrets/discord_bot_token}
 ```
 
 and the secret beside it, set with
@@ -843,10 +843,14 @@ env asset:
         command: ["node", "announce.mjs"]
 ```
 
-- `<name>` is read from the **env asset's own bundle's** `secrets/` directory.
-  It is a path there, not a ref: `bundle//name` inside the token is **not** a
-  bundle qualifier. `${secret:team//token}` reads `secrets/team/token` in the
-  env asset's bundle.
+- The token body is an akm ref, `[bundle//]conceptId`, resolved with the one
+  ref walk: `${team//secrets/discord_bot_token}` reads that secret from the
+  `team` bundle whichever bundle holds the env asset, and an unqualified
+  `${secrets/discord_bot_token}` resolves by the default bundle then
+  installation priority. A `secrets/...` ref gives the secret's value, trimmed
+  of surrounding whitespace; any other asset ref (`${scripts/x.sh}`) gives the
+  asset's absolute path. A `${...}` body that is not an akm ref (`${HOME}`) is
+  left as text.
 - It is the same token `akm env run` resolves. `akm env export` does not
   resolve it; it writes the token verbatim.
 - Freezing records the env ref, its key names and the secret names, never a

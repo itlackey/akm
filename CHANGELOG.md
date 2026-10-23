@@ -41,6 +41,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   not resolve into a disabled bundle, and `improve` finds a concept in a
   bundle whose adapter names the file (such as an OKF table) from disk as well
   as from the index.
+- An asset is addressed by its akm ref and nothing else (#1238). `akm secret
+  set|run` and `akm env create|run|path|export|remove` now take a full ref
+  (`secrets/gitea_token`, `team//env/prod`); a bare name such as `gitea_token`
+  or `prod` is a usage error that names the full form. `akm env create prod` is
+  now `akm env create env/prod`.
+- One substitution token, `${ref}`, replaces `${secret:NAME}` in env values and
+  `secret://name` in config credentials (#1238). A `${secrets/name}` token is
+  replaced with the secret's value and any other asset ref, such as
+  `${scripts/lab/fetch.sh}`, with its absolute path; the ref may name any bundle
+  (`${team//secrets/discord_bot_token}`) rather than only the env file's own
+  bundle. `engines.*.apiKey`, `embedding.apiKey`, `search.curateRerank.apiKey` and
+  a git bundle's `credential` accept `$VAR`, `${VAR}` or `${ref}`. A `${...}` body
+  that is not an akm ref, such as `${HOME}`, is left as text.
+- A secret's value is read the same way everywhere (#1238): the file content with
+  surrounding whitespace trimmed. `akm secret run` and env tokens used to pass
+  the raw bytes, trailing newline included, while config credentials and the
+  website fetchers trimmed.
 - Installing a bundle is now the trust decision (#1237). A bundle whose `env/`
   files set a key such as `PATH` installs, updates unattended, and works in
   `akm env run`, `akm secret run` and workflow `env:` bindings with no flag, no
@@ -55,7 +72,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   It is an unknown flag from 0.11.
 - Reads follow symlinks (#1237). An env file or secret that is a symlink to a
   file outside its bundle directory now resolves through `akm env`, `akm secret`,
-  `${secret:NAME}` substitution and a workflow `env:` binding, and a ref
+  `${ref}` substitution and a workflow `env:` binding, and a ref
   resolved by path does the same, instead of failing with "escapes the secrets
   directory" or "Ref resolves outside the stash root", so a secret can point at
   a container's `/run/secrets/<name>`. A command, agent or script that is such a
@@ -90,6 +107,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   plans keep the old refs; continue or abandon them.
 - `akm workflow create` no longer indexes the new workflow, and a new run no longer
   records an index entry id (#1239).
+
+### Deprecated
+
+- `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A
+  config that still holds it loads as if it said `${secrets/name}`, with one
+  warning naming the key, and `akm migrate apply` rewrites `config.json`.
+  `akm config set` and `bundle add --credential` no longer accept it.
 
 ### Removed
 

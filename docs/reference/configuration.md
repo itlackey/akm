@@ -829,7 +829,7 @@ or malformed response keeps the fused order.
 | `search.curateRerank.enabled` | Turn the rerank pass on (default `false`) |
 | `search.curateRerank.endpoint` | Full URL of the reranker's rerank endpoint |
 | `search.curateRerank.model` | Model name sent to the endpoint (optional) |
-| `search.curateRerank.apiKey` | `$VAR`/`secret://<name>` credential reference (optional) |
+| `search.curateRerank.apiKey` | `$VAR`/`${secrets/<name>}` credential reference (optional) |
 | `search.curateRerank.timeoutMs` | Request timeout (default `10000`) |
 | `search.curateRerank.topN` | How many of the top fused candidates to rerank (default `30`, max `50`) |
 
@@ -1081,8 +1081,9 @@ not itself a secret. Setting both `apiKey` and `apiKeyFile` on the same
 engine is rejected. A missing, unreadable, or empty file fails the call
 closed, naming the engine and path but never the file's content.
 
-`engines.<name>.apiKey` also accepts `secret://<name>`, a reference into
-AKM's own secret store (`akm secret set <name> --from-file <file>`), for a
+`engines.<name>.apiKey` also accepts `${secrets/<name>}`, an akm ref into
+AKM's own secret store (`akm secret set secrets/<name> --from-file <file>`;
+`${team//secrets/<name>}` names a secret in another bundle), for a
 launch context where the credential's environment variable is deliberately
 not sourced into the process — a scheduled task's crontab preamble, or a
 container entrypoint that keeps the user's env out on purpose — and a
@@ -1090,19 +1091,24 @@ file-backed credential is not an option. Like `apiKeyFile`, only the
 reference is kept in `config.json`; the store lookup happens at dispatch
 time, and an unresolved reference fails the call closed, naming the
 reference but never the value. `akm improve`, workflow LLM steps, and `akm
-health`'s engine probes all resolve `secret://` the same way direct LLM and
+health`'s engine probes all resolve `${ref}` the same way direct LLM and
 embedding calls have since 0.9.13 (#917); resolution order for a single
 `apiKey` field is: an env reference (`$VAR`/`${VAR}`) first, then
-`apiKeyFile`, then `secret://<name>` — though in practice a config sets only
-one of the three per engine.
+`apiKeyFile`, then `${ref}` — though in practice a config sets only one of the
+three per engine. The secret is read trimmed of surrounding whitespace.
 
-`embedding.apiKey` accepts the same three forms and resolves `secret://` the
+`secret://<name>` was the previous spelling of the `${ref}` form and is
+retired. A config that still holds it loads as if it said `${secrets/<name>}`
+(or `${<name>}` when `<name>` is already a full ref), with one warning naming
+the key; `akm migrate apply` rewrites `config.json` to the new form.
+
+`embedding.apiKey` accepts the same three forms and resolves `${ref}` the
 same way, on every path that sends an embedding request: `akm index`
 (including the reindex `akm bundle update` runs and the targeted re-embed a
 write command like `akm remember` triggers), `akm improve`'s
 consolidate pass (memory dedup and similarity clustering). All of them build the
 provider request through the same `RemoteEmbedder`/`resolveSecret` boundary,
-so a `secret://` reference resolves identically regardless of which command
+so a `${ref}` reference resolves identically regardless of which command
 triggered the request (#953).
 
 Use `AKM_SQLITE_JOURNAL_MODE=DELETE` or `TRUNCATE` when WAL is unavailable,

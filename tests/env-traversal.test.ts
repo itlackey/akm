@@ -135,7 +135,7 @@ describe("env: directory traversal rejection", () => {
   test("legitimate env name succeeds", async () => {
     const stashDir = freshStash();
 
-    const { status } = await runCli(["env", "create", "prod"], stashDir);
+    const { status } = await runCli(["env", "create", "env/prod"], stashDir);
 
     expect(status).toBe(0);
     // Confirm the file was created inside the stash's env/ dir.

@@ -322,10 +322,12 @@ describe("apiKey rejection (#454)", () => {
 
   test("setConfigValue accepts a secret:// store reference for engine and embedding apiKey", () => {
     const base: AkmConfig = { configVersion: "0.9.0", semanticSearchMode: "auto" };
-    expect(setConfigValue(base, "engines.lab.apiKey", "secret://lab-api-key").engines?.lab?.apiKey).toBe(
-      "secret://lab-api-key",
+    expect(setConfigValue(base, "engines.lab.apiKey", "${secrets/lab-api-key}").engines?.lab?.apiKey).toBe(
+      "${secrets/lab-api-key}",
     );
-    expect(setConfigValue(base, "embedding.apiKey", "secret://embed-key").embedding?.apiKey).toBe("secret://embed-key");
+    expect(setConfigValue(base, "embedding.apiKey", "${secrets/embed-key}").embedding?.apiKey).toBe(
+      "${secrets/embed-key}",
+    );
   });
 
   test("setConfigValue whole-engine-object set accepts a secret:// apiKey and still rejects a literal", () => {
@@ -337,10 +339,10 @@ describe("apiKey rejection (#454)", () => {
         kind: "llm",
         endpoint: "https://lab.example/v1/chat/completions",
         model: "x",
-        apiKey: "secret://lab-api-key",
+        apiKey: "${secrets/lab-api-key}",
       }),
     );
-    expect(withSecretRef.engines?.lab?.apiKey).toBe("secret://lab-api-key");
+    expect(withSecretRef.engines?.lab?.apiKey).toBe("${secrets/lab-api-key}");
     expect(() =>
       setConfigValue(
         base,

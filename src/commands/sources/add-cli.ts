@@ -72,7 +72,8 @@ export const addCommand = defineJsonCommand({
     after: { type: "string", description: "Insert the new bundle after this configured bundle" },
     credential: {
       type: "string",
-      description: "Git HTTPS bearer credential reference ($VAR or secret://name); never a literal token",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      description: "Git HTTPS bearer credential reference ($VAR or ${secrets/name}); never a literal token",
     },
     "max-pages": { type: "string", description: "Maximum pages to crawl for website sources (default: 50)" },
     "max-depth": { type: "string", description: "Maximum crawl depth for website sources (default: 3)" },

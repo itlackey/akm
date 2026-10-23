@@ -495,7 +495,7 @@ describe("env create --from-file / --from-stdin", () => {
     const srcFile = path.join(stashDir, "source.env");
     fs.writeFileSync(srcFile, "# seeded\nDB_URL=postgres://x\nAPI_KEY=k\n", "utf8");
 
-    const result = await runCli(["env", "create", "prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
+    const result = await runCli(["env", "create", "env/prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
 
     expect(result.status).toBe(0);
     const dest = path.join(stashDir, "env", "prod.env");
@@ -512,7 +512,7 @@ describe("env create --from-file / --from-stdin", () => {
     const srcFile = path.join(stashDir, "source.env");
     fs.writeFileSync(srcFile, "NEW=val\n", "utf8");
 
-    const result = await runCli(["env", "create", "prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
+    const result = await runCli(["env", "create", "env/prod", "--from-file", srcFile], { AKM_BUNDLE_DIR: stashDir });
 
     // Usage error (env already exists) -> exit 2 / RESOURCE_ALREADY_EXISTS.
     // Ground-truthed by probing the actual CLI output before pinning.

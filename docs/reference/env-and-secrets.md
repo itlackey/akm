@@ -19,6 +19,16 @@ command; use `env` or `secret`.
 | Discoverable | key *names* (not values) | name only (the whole file is the value) |
 | Injects | many vars at once (`env run`) | one var (`secret run <ref> <VAR>`) |
 
+## Addressing: the akm ref
+
+`env` and `secret` assets are addressed like every other asset, by their akm
+ref `[bundle//]conceptId`: `env/prod`, `secrets/gitea_token`,
+`team//secrets/discord_bot_token`. There is no bare-name form. `akm secret
+run gitea_token ...` and `akm env run prod -- ...` are usage errors that name
+the full ref (`secrets/<name>`, `env/<name>`). An unqualified ref resolves the
+way every unqualified ref does: the default bundle first, then installation
+priority.
+
 ## Core security guarantee
 
 Values never appear in akm's structured output. `env list` and `akm show
@@ -31,8 +41,8 @@ the child process — never through akm's own stdout, the index, or `akm
 show`.
 
 ```sh
-akm env create prod                       # create an empty .env group
-akm env create prod --from-file ./.env    # or ingest an existing .env
+akm env create env/prod                   # create an empty .env group
+akm env create env/prod --from-file ./.env  # or ingest an existing .env
 
 # akm does not manage individual keys — edit the whole file with your own editor:
 $EDITOR "$(akm env path env/prod --quiet)"
@@ -58,16 +68,33 @@ script (re-serialised single-quoted, so shell substitutions in the source
 `.env` become literal strings) — it requires `--out` and never prints values
 to stdout.
 
-An env value can be a `${secret:<name>}` token, such as
-`DISCORD_BOT_TOKEN=${secret:discord_bot_token}`. `akm env run` and a workflow
-unit's `env:` binding both replace it with the secret at `secrets/<name>` in
-the env asset's own bundle; `env export` writes the token verbatim. `<name>` is
-a path under that `secrets/` directory, so `bundle//name` inside the token is
-not a bundle qualifier. A missing secret is an error and nothing is injected.
-In a workflow, every value of a bound env asset is redacted from the run's
-output and each read records an `env_access` event, so keep non-secret ids out
-of env assets used there. See
+## The `${ref}` token
+
+Wherever akm substitutes a reference into a string it hands to a process or a
+provider, the token is `${[bundle//]conceptId}`:
+
+- an env value: `DISCORD_BOT_TOKEN=${team//secrets/discord_bot_token}`;
+- a config credential (`engines.<name>.apiKey`, `embedding.apiKey`, a git
+  bundle's `credential`): `"${secrets/openai}"`.
+
+A `secrets/...` ref stands for the secret's value; any other asset ref (for
+example `${scripts/lab/fetch.sh}`) stands for the asset's absolute path. The
+ref is resolved with the one ref walk, so it may name any bundle. `akm env run`
+and a workflow unit's `env:` binding replace the tokens in an env file's
+values; `env export` writes them verbatim. A `${...}` body that is not an akm
+ref (`${HOME}`, `${PATH//:/ }`) is plain text and is left untouched. A ref no
+bundle owns is an error and nothing is injected. Each read records an
+`env_access` event. See
 [Workflow Schema: Binding a secret to a unit](workflow-schema.md#binding-a-secret-to-a-unit).
+
+A secret's value is its file content with surrounding whitespace trimmed. That
+one read is used by `akm secret run`, env tokens, config credentials and the
+website fetchers, so a hand-written file's trailing newline never lands in an
+HTTP header.
+
+`secret://name` was the config spelling of the same thing. It is retired:
+config still reads it as `${secrets/name}` and names the key once, and `akm
+migrate apply` rewrites the file.
 
 ## File modes and storage
 
@@ -81,7 +108,7 @@ output and from the search index entirely; the value remains usable via
 `run`.
 
 An env file or secret may be a symlink to a file anywhere else, such as a
-container's `/run/secrets/<name>`: `akm env`, `akm secret`, `${secret:NAME}`
+container's `/run/secrets/<name>`: `akm env`, `akm secret`, `${secrets/name}`
 substitution and a workflow `env:` binding follow it. A name still cannot climb
 out of `env/` or `secrets/` with `..` or an absolute path. Writes never follow
 a symlink out of the bundle.

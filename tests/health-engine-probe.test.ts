@@ -487,7 +487,7 @@ describe("health engine probes", () => {
         semanticSearchMode: "off",
         engines: {
           agent: { kind: "agent", platform: "claude" },
-          improve: { ...llm, apiKey: "secret://953-health-probe-key" },
+          improve: { ...llm, apiKey: "${secrets/953-health-probe-key}" },
         },
         defaults: { engine: "agent", llmEngine: "improve" },
       };

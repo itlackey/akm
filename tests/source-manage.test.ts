@@ -195,6 +195,26 @@ describe("addStash", () => {
     expect(loadConfig().bundles?.["private-repo"]?.credential).toBe("$GIT_READ_TOKEN");
   });
 
+  test("accepts a ${ref} credential for a git source and no longer accepts secret://", () => {
+    const result = addStash({
+      target: "https://git.example.com/private/repo.git",
+      providerType: "git",
+      name: "private-repo",
+      credential: "${team//secrets/gitea_token}",
+    });
+
+    expect(result.added).toBe(true);
+    expect(loadConfig().bundles?.["private-repo"]?.credential).toBe("${team//secrets/gitea_token}");
+    expect(() =>
+      addStash({
+        target: "https://git.example.com/other/repo.git",
+        providerType: "git",
+        name: "legacy-ref",
+        credential: "secret://gitea_token",
+      }),
+    ).toThrow(/credential must be a \$VAR/);
+  });
+
   test("rejects literal and non-git credentials before writing config (#977)", () => {
     expect(() =>
       addStash({

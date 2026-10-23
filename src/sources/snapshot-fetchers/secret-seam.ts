@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
+import { readValue } from "../../commands/env/secret";
 import { resolveSecretPath } from "../../core/env-secret-ref";
 import type { SecretResolver } from "../provider";
 
@@ -24,7 +24,7 @@ import type { SecretResolver } from "../provider";
 export function resolveSecretFromStore(ref: string): string | null {
   try {
     const { absPath } = resolveSecretPath(ref);
-    return fs.readFileSync(absPath, "utf8").trim() || null;
+    return readValue(absPath) || null;
   } catch {
     return null;
   }

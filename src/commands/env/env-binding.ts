@@ -10,20 +10,18 @@
  * REUSES the exact same machinery instead of forking it. Every safety
  * invariant carries over unchanged:
  *
- *   - `${secret:NAME}` tokens resolve against the env's own stash; a missing
- *     secret is a hard error and NOTHING is injected (no partial injection).
+ *   - `${ref}` tokens resolve through the one ref walk (a `secrets/` ref to the
+ *     secret's trimmed value, any other asset ref to its absolute path); a
+ *     missing ref is a hard error and NOTHING is injected (no partial injection).
  *   - An `env_access` audit event records key NAMES only, never values.
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
-import fs from "node:fs";
-import path from "node:path";
-import { assetPathForName } from "../../core/asset/asset-placement";
-import { isContainedResolvedPath } from "../../core/common";
-import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
+import { makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
-import { loadEnv, resolveSecretTokens } from "./env";
+import { substituteRefTokens } from "../../core/ref-token";
+import { loadEnv } from "./env";
 import { readValue } from "./secret";
 
 export interface ResolvedEnvBinding {
@@ -33,6 +31,8 @@ export interface ResolvedEnvBinding {
   values: Record<string, string>;
   /** Key names, safe to log/audit. */
   keys: string[];
+  /** Every value substituted from a `secrets/` ref, for redaction. Configuration values are not listed. */
+  secretValues: string[];
 }
 
 export interface ResolveEnvBindingOptions {
@@ -46,8 +46,7 @@ export interface ResolveEnvBindingOptions {
 
 /**
  * Resolve an env ref to its injectable values: load the file, apply key
- * filtering, substitute `${secret:NAME}` tokens from the sibling secrets
- * directory, and append the keys-only
+ * filtering, substitute `${ref}` tokens, and append the keys-only
  * `env_access` audit event.
  */
 export function resolveEnvBinding(target: string, options: ResolveEnvBindingOptions = {}): ResolvedEnvBinding {
@@ -74,26 +73,22 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
     envValues = Object.fromEntries(Object.entries(allValues).filter(([k]) => !excluded.has(k)));
   }
 
-  // Substitute `${secret:NAME}` tokens with the sibling secret asset in the
-  // SAME stash. A missing secret is a hard error — inject NOTHING.
-  const secretsRoot = path.join(source.path, "secrets");
-  const resolveSecret = (secretName: string): string | undefined => {
-    const secretPath = assetPathForName("secret", secretsRoot, secretName);
-    // Name grammar: the token's name must not climb out of secrets/. Lexical
-    // only, so a secret that is a symlink to a file elsewhere is read.
-    if (!isContainedResolvedPath(path.resolve(secretPath), path.resolve(secretsRoot))) {
-      throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);
-    }
-    if (!fs.existsSync(secretPath)) return undefined;
-    // Match `secret run`: read utf8, do not trim (stay consistent with that path).
-    return readValue(secretPath).toString("utf8");
+  // Substitute `${ref}` tokens: a `secrets/` ref yields the secret's value, any
+  // other asset ref its absolute path. A missing ref is a hard error — inject NOTHING.
+  const resolveRef = (ref: string) => {
+    const owner = resolveRefOwner(ref);
+    if (owner === undefined) return undefined;
+    return owner.type === "secret"
+      ? { kind: "secret" as const, value: readValue(owner.absPath) }
+      : { kind: "path" as const, path: owner.absPath };
   };
-  const { values: substituted, missing } = resolveSecretTokens(envValues, resolveSecret);
+  const { values: substituted, missing, secretValues } = substituteRefTokens(envValues, resolveRef);
   if (missing.length > 0) {
     throw new NotFoundError(
-      `Env "${envRef}" references secret(s) not found in its stash: ${missing.map((n) => makeSecretRef(n)).join(", ")}. Nothing was injected.`,
+      `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,
       "FILE_NOT_FOUND",
-      `Create the missing secret, e.g. \`akm secret set ${makeSecretRef(missing[0]!)}\`.`,
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Write each `${ref}` as a full akm ref that exists, e.g. `${secrets/name}` or `${team//scripts/run.sh}`.",
     );
   }
   envValues = substituted;
@@ -102,5 +97,5 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   // Audit trail: keys only, never values.
   appendEvent({ eventType: "env_access", ref: envRef, metadata: { keys } });
 
-  return { ref: envRef, values: envValues, keys };
+  return { ref: envRef, values: envValues, keys, secretValues };
 }

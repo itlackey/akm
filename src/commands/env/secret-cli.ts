@@ -103,7 +103,7 @@ const secretSetCommand = defineJsonCommand({
   args: {
     ref: {
       type: "positional",
-      description: "Secret ref (flat name, e.g. secrets/deploy-key or just deploy-key; use --path for a subdirectory)",
+      description: "Secret ref (flat name, e.g. secrets/deploy-key; use --path for a subdirectory)",
       required: true,
     },
     path: {
@@ -202,7 +202,7 @@ const secretRunCommand = defineJsonCommand({
       clean: args.clean === true,
       inherit: parseKeyListFlag(args.inherit) ?? [],
     });
-    mergedEnv[varName] = readValue(absPath).toString("utf8");
+    mergedEnv[varName] = readValue(absPath);
 
     // Audit trail: record access by ref + var name only — never the value.
     appendEvent({

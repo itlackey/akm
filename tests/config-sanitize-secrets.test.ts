@@ -94,12 +94,12 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
         embedding: {
           endpoint: "https://example.com",
           model: "x",
-          apiKey: "secret://embed-key",
+          apiKey: "${secrets/embed-key}",
         },
       }),
     );
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).toContain("secret://embed-key");
+    expect(persisted).toContain("${secrets/embed-key}");
   });
 
   it("preserves $VAR (no braces) reference", () => {

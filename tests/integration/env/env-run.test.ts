@@ -72,12 +72,12 @@ describe("env run", () => {
     expect(stderr.trim()).toBe("");
   });
 
-  test("substitutes ${secret:NAME} tokens with the sibling secret value", () => {
+  test("substitutes ${secrets/name} tokens with the secret value", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "secrets", "my_api_token"), "s3cr3t", "utf8");
-    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secret:my_api_token}\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secrets/my_api_token}\n", "utf8");
 
     const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
       AKM_BUNDLE_DIR: stashDir,
@@ -93,7 +93,7 @@ describe("env run", () => {
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "secrets", "a"), "AAA", "utf8");
     fs.writeFileSync(path.join(stashDir, "secrets", "b"), "BBB", "utf8");
-    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "PAIR=${secret:a}:${secret:b}\nKEEP=${HOME}\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "PAIR=${secrets/a}:${secrets/b}\nKEEP=${HOME}\n", "utf8");
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$PAIR" "$KEEP"'],
@@ -103,6 +103,56 @@ describe("env run", () => {
     expect(status).toBe(0);
     // PAIR fully substituted; KEEP left as the literal token (no secret named HOME).
     expect(stdout.trim()).toBe("AAA:BBB|${HOME}");
+  });
+
+  test("reads a secret trimmed: a trailing newline never reaches the child", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "secrets", "tok"), "  s3cr3t\n\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secrets/tok}\n", "utf8");
+
+    const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '[%s]' \"$API_KEY\""], {
+      AKM_BUNDLE_DIR: stashDir,
+    });
+
+    expect(status).toBe(0);
+    expect(stdout).toBe("[s3cr3t]");
+  });
+
+  test("a secrets ref qualified with another bundle resolves there, and a script ref yields its path", () => {
+    const primaryDir = makeStash();
+    const teamDir = makeStash();
+    fs.mkdirSync(path.join(primaryDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(teamDir, "secrets"), { recursive: true });
+    fs.mkdirSync(path.join(teamDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(teamDir, "secrets", "discord"), "from-team", "utf8");
+    fs.writeFileSync(path.join(teamDir, "scripts", "fetch.sh"), "#!/bin/sh\n", "utf8");
+    fs.writeFileSync(
+      path.join(primaryDir, "env", "prod.env"),
+      "TOKEN=${team//secrets/discord}\nTOOL=${team//scripts/fetch.sh}\n",
+      "utf8",
+    );
+    writeSandboxConfig({ bundles: { team: { path: teamDir } } });
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$TOKEN" "$TOOL"'],
+      { AKM_BUNDLE_DIR: primaryDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout).toBe(`from-team|${path.join(teamDir, "scripts", "fetch.sh")}`);
+  });
+
+  test("a bare name is a usage error naming the full ref", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=bar\n", "utf8");
+
+    const { stderr, status } = spawnCli(["env", "run", "prod", "--", "true"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(status).toBe(2);
+    expect(JSON.parse(stderr.trim()).error).toContain("env/<name>");
   });
 
   test("injects a hijack var from the primary stash with no block or warning (#1237)", () => {

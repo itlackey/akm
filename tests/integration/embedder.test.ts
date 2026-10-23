@@ -158,7 +158,7 @@ describe("remote embed", () => {
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
-        apiKey: "secret://embed-key",
+        apiKey: "${secrets/embed-key}",
       };
       await embed("secret store apiKey header test", config);
       expect(capturedAuth).toBe("Bearer store-secret-value");

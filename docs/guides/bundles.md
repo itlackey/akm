@@ -80,8 +80,8 @@ back out of `sourceAdded`/`installed`. Without `--name`, akm derives one
 a `-<hash>` suffix only on a collision — that forgiving fallback applies
 solely to a derived name, never to an explicit `--name`.
 
-Git credentials must be symbolic references: `$VAR`, `${VAR}`, or
-`secret://name`. AKM resolves the reference only at the Git subprocess boundary
+Git credentials must be symbolic references: `$VAR`, `${VAR}`, or an akm ref
+such as `${secrets/gitea_token}`. AKM resolves the reference only at the Git subprocess boundary
 and sends it as an HTTPS bearer header; it does not put the token in the remote
 URL or `config.json`.
 

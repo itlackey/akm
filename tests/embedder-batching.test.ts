@@ -697,7 +697,7 @@ describe("describeEmbeddingCredential (#953)", () => {
   });
 
   test("a secret:// reference names the reference and its source, never a resolved value", () => {
-    expect(describeEmbeddingCredential("secret://lab-api-key")).toBe("secret://lab-api-key (store)");
+    expect(describeEmbeddingCredential("${secrets/lab-api-key}")).toBe("${secrets/lab-api-key} (store)");
   });
 
   test("a $VAR-style reference names the reference and its source", () => {

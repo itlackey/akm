@@ -8,7 +8,7 @@ import type { AgentProfile } from "./profiles";
 
 /**
  * The resolved engine. Credentials are symbolic (an env descriptor, a file
- * path, or a `secret://` reference) so this shape can be journaled; values are
+ * path, or a `${ref}` reference) so this shape can be journaled; values are
  * read only at dispatch.
  */
 export type RunnerSpec =

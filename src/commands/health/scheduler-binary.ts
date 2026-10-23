@@ -11,7 +11,7 @@
  * stale after upgrading akm through a different installer than the one
  * active at the last `task sync` (e.g. npm-global to a standalone binary):
  * the schedule kept invoking a version behind, with nothing in `akm health`
- * surfacing it, until an unrelated failure (a rejected `secret://` engine
+ * surfacing it, until an unrelated failure (a rejected `${ref}` engine
  * key on the stale binary) surfaced the drift.
  *
  * Modelled 1:1 on `version-drift.ts`'s shape: an injectable seam,

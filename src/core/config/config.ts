@@ -10,6 +10,7 @@ import { isBundleSlug } from "../asset/asset-ref";
 import { deriveBundleId } from "../bundle-id";
 import { isRecord, resolveStashDir } from "../common";
 import { ConfigError } from "../errors";
+import { isRefToken, substituteRefTokens } from "../ref-token";
 import { formatRegistryLabel, hasRegistryUrlCredentials } from "../registry-url";
 import {
   acquireConfigLock,
@@ -39,7 +40,7 @@ import type {
 } from "./config-types";
 import { resolveSchemaAt } from "./config-walker";
 import { deepMergeConfig, isPlainObject } from "./deep-merge";
-import { isApiKeyReference, SECRET_STORE_REFERENCE_PATTERN } from "./schema/primitives";
+import { isApiKeyReference } from "./schema/primitives";
 
 export { stripJsonComments } from "./config-io";
 
@@ -168,7 +169,39 @@ export function loadUserConfig(): AkmConfig {
  * the file that extends it.
  */
 function runConfigFilePipeline(text: string, sourcePath?: string): Record<string, unknown> {
-  return readConfigVersion(parseConfigText(text, sourcePath), sourcePath);
+  const raw = parseConfigText(text, sourcePath);
+  return readConfigVersion(readRetiredSecretRefs(raw, [], sourcePath) as Record<string, unknown>, sourcePath);
+}
+
+/** The retired `secret://<name>` credential form; it survives only in {@link readRetiredSecretRefs}. */
+const SECRET_STORE_REFERENCE_PATTERN = /^secret:\/\/(.+)$/;
+
+/**
+ * `secret://<x>` is retired in favour of `${ref}`. A value in that form is read
+ * as `${<x>}` when `<x>` is already a full ref, else `${secrets/<x>}`, with one
+ * warning naming the key; every ordinary config write and `akm migrate apply`'s
+ * `configFile` step then persist the new form.
+ */
+function readRetiredSecretRefs(node: unknown, keyPath: readonly string[], sourcePath?: string): unknown {
+  if (typeof node === "string") {
+    const name = SECRET_STORE_REFERENCE_PATTERN.exec(node)?.[1];
+    if (name === undefined) return node;
+    const lifted = isRefToken(`\${${name}}`) ? `\${${name}}` : `\${secrets/${name}}`;
+    const dotted = keyPath.join(".");
+    warnOnce(
+      `config:secret-scheme:${sourcePath ?? "inline"}:${dotted}`,
+      `${dotted}${sourcePath ? ` at ${sourcePath}` : ""} uses the retired ${JSON.stringify(node)} form; reading it as ${JSON.stringify(lifted)}. \`akm migrate apply\` rewrites config.json.`,
+    );
+    return lifted;
+  }
+  if (Array.isArray(node))
+    return node.map((child, i) => readRetiredSecretRefs(child, [...keyPath, String(i)], sourcePath));
+  if (isPlainConfigObject(node)) {
+    return Object.fromEntries(
+      Object.entries(node).map(([key, child]) => [key, readRetiredSecretRefs(child, [...keyPath, key], sourcePath)]),
+    );
+  }
+  return node;
 }
 
 /**
@@ -1041,15 +1074,15 @@ export function updateConfig(partial: Partial<AkmConfig>): AkmConfig {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-/** Looks up a `secret://<name>` reference's stored value, or `null` if it isn't there. Implemented by `resolveSecretFromStore` in `sources/snapshot-fetchers/secret-seam.ts`; passed in rather than imported here to avoid a cycle (that module's dependencies import this one). */
+/** Looks up a `${ref}` secret's stored value, or `null` if it isn't there. Implemented by `resolveSecretFromStore` in `sources/snapshot-fetchers/secret-seam.ts`; passed in rather than imported here to avoid a cycle (that module's dependencies import this one). */
 export type SecretStoreResolver = (ref: string) => string | null;
 
 /**
  * Resolve a single secret value: expand `${VAR}` / `$VAR` against
- * `process.env`, or look up `secret://<name>` via `resolveFromStore`. Use this
- * at apiKey / authorization-header consumption sites (LLM client, embedder,
- * agent SDK runner) — NOT on the load path. Non-string inputs pass through
- * unchanged.
+ * `process.env`, then substitute `${ref}` tokens (`${secrets/name}`) through
+ * `resolveFromStore`. Use this at apiKey / authorization-header consumption
+ * sites (LLM client, embedder, agent SDK runner) — NOT on the load path.
+ * Non-string inputs pass through unchanged.
  *
  * Returns the input unchanged when no substitution markers are present, so
  * literal API key strings (already-resolved secrets) are zero-cost.
@@ -1058,39 +1091,42 @@ export type SecretStoreResolver = (ref: string) => string | null;
  * preserved verbatim on read — only fields explicitly routed through this
  * helper are expanded.
  *
- * A `secret://<name>` value that fails to resolve throws `ConfigError`
- * (naming the ref, never the secret) rather than silently sending an unusable
- * credential.
+ * A `${ref}` that fails to resolve throws `ConfigError` (naming the ref, never
+ * the secret) rather than silently sending an unusable credential.
  */
 export function resolveSecret(value: string | undefined, resolveFromStore?: SecretStoreResolver): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") return value;
-  const storeRef = SECRET_STORE_REFERENCE_PATTERN.exec(value)?.[1];
-  if (storeRef !== undefined) {
-    const resolved = resolveFromStore?.(storeRef) ?? null;
-    if (resolved === null) {
-      throw new ConfigError(
-        `Secret store reference "${value}" did not resolve to a stored value.`,
-        "SECRET_REFERENCE_UNRESOLVED",
-      );
-    }
-    return resolved;
-  }
   if (!value.includes("$")) return value;
-  return value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g, (_match, braced, bare) => {
-    const name = (braced ?? bare) as string;
-    const resolved = process.env[name];
-    if (!resolved) {
-      // #953: an unset/empty $VAR used to substitute silently, so a gateway
-      // that enforces auth on inference (e.g. Bifrost) failed every call with
-      // an opaque 401 instead of a diagnosable warning naming the variable.
-      warnOnce(
-        `config:empty-env-var:${name}`,
-        `Environment variable ${name} referenced by a $VAR apiKey is unset or empty; the request will be sent without a valid credential.`,
-      );
-    }
-    return resolved ?? "";
+  // Env expansion runs first so a secret value containing `$` is never re-expanded.
+  const expanded = value.replace(
+    /\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)/g,
+    (_match, braced, bare) => {
+      const name = (braced ?? bare) as string;
+      const resolved = process.env[name];
+      if (!resolved) {
+        // #953: an unset/empty $VAR used to substitute silently, so a gateway
+        // that enforces auth on inference (e.g. Bifrost) failed every call with
+        // an opaque 401 instead of a diagnosable warning naming the variable.
+        warnOnce(
+          `config:empty-env-var:${name}`,
+          `Environment variable ${name} referenced by a $VAR apiKey is unset or empty; the request will be sent without a valid credential.`,
+        );
+      }
+      return resolved ?? "";
+    },
+  );
+  const { values, missing } = substituteRefTokens({ value: expanded }, (ref) => {
+    const stored = resolveFromStore?.(ref) ?? null;
+    return stored === null ? undefined : { kind: "secret", value: stored };
   });
+  if (missing.length > 0) {
+    throw new ConfigError(
+      `Secret store reference "\${${missing[0]}}" did not resolve to a stored value.`,
+      "SECRET_REFERENCE_UNRESOLVED",
+    );
+  }
+  return values.value;
 }
 
 // Re-export source runtime helpers — implementation lives in config-sources.ts.

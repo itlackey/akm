@@ -53,7 +53,7 @@ const envCreateCommand = defineJsonCommand({
   args: {
     name: {
       type: "positional",
-      description: "Env name (flat, e.g. prod → prod.env; use --path for a subdirectory)",
+      description: "Env ref (flat name, e.g. env/prod → prod.env; use --path for a subdirectory)",
       required: true,
     },
     path: {
@@ -303,8 +303,8 @@ const envRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${secret:NAME}` token syntax documented for users, not interpolation
-      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${secret:NAME}` tokens, replaced at run time with the sibling `${secret:NAME}` value from the same bundle. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },
