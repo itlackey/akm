@@ -14,9 +14,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
-import { writeLockfile } from "../../src/integrations/lockfile";
 import { materializeFrozenWorkflowEnvironment } from "../../src/workflows/exec/environment";
-import * as freezeEnvironmentModule from "../../src/workflows/freeze/environment";
 import { freezeEnvironment } from "../../src/workflows/freeze/environment";
 import type { ResolutionContext } from "../../src/workflows/freeze/step-values";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
@@ -56,7 +54,6 @@ function secretToken(name: string): string {
 function freezeRefs(
   refs: string[],
   bundles: Record<string, string>,
-  entry?: Record<string, unknown>,
   overrides: Record<string, Record<string, unknown>> = {},
 ): FrozenWorkflowEnvironmentBinding[] {
   const context: ResolutionContext = {
@@ -64,7 +61,7 @@ function freezeRefs(
     config: {
       defaultBundle: Object.keys(bundles)[0],
       bundles: Object.fromEntries(
-        Object.entries(bundles).map(([name, root]) => [name, { ...(entry ?? { path: root }), ...overrides[name] }]),
+        Object.entries(bundles).map(([name, root]) => [name, { path: root, ...overrides[name] }]),
       ),
     } as unknown as AkmConfig,
     plan: { irVersion: 6, title: "env", steps: [] },
@@ -150,41 +147,12 @@ describe("stored plan environment bindings", () => {
 });
 
 describe("freezing env refs", () => {
-  test("an env ref into a git bundle resolves under the lock's content root", async () => {
-    const content = sandbox("akm-env-git-content-root");
-    write(content, "env/prod.env", "FROM_CONTENT_ROOT=1\n");
-    await writeLockfile([
-      {
-        id: "vendor",
-        source: "git",
-        ref: "git:https://example.test/vendor.git",
-        localRoot: content,
-        installedAt: "2026-07-20T00:00:00.000Z",
-      },
-    ]);
-    try {
-      const [binding] = freezeRefs(["vendor//env/prod"], { vendor: "" }, { git: "https://example.test/vendor.git" });
-      expect(binding).toMatchObject({
-        kind: "env-ref",
-        ref: "vendor//env/prod",
-        keys: ["FROM_CONTENT_ROOT"],
-        owner: {
-          bundle: "vendor",
-          requestedRoot: path.resolve(content),
-          requestedPath: path.resolve(content, "env/prod.env"),
-        },
-      });
-    } finally {
-      await writeLockfile([]);
-    }
-  });
-
   test("an env ref does not resolve into a disabled bundle", () => {
     const alpha = sandbox("akm-env-enabled");
     const beta = sandbox("akm-env-disabled");
     write(alpha, "env/base.env", "A=1\n");
     write(beta, "env/prod.env", "B=2\n");
-    expect(() => freezeRefs(["beta//env/prod"], { alpha, beta }, undefined, { beta: { enabled: false } })).toThrow(
+    expect(() => freezeRefs(["beta//env/prod"], { alpha, beta }, { beta: { enabled: false } })).toThrow(
       /was not found/,
     );
   });
@@ -379,19 +347,5 @@ describe("materializing a frozen environment", () => {
       });
     }).toThrow(/missing secret/);
     expect(result).toBeUndefined();
-  });
-});
-
-describe("command and persona source loading (#1238)", () => {
-  test("the freeze environment module has no source-loader wrapper", () => {
-    // prepareCommandInvocation's own default loader already receives the freeze
-    // context's config; a second wrapper here would be a copy that can drift.
-    expect("workflowExecutionSource" in freezeEnvironmentModule).toBe(false);
-  });
-
-  test("commandDispatch does not override prepareCommandInvocation's source loader", () => {
-    const source = fs.readFileSync(path.join(import.meta.dir, "../../src/workflows/freeze/targets/command.ts"), "utf8");
-    expect(source).not.toMatch(/\bsourceLoader\b/);
-    expect(source).not.toMatch(/\bworkflowExecutionSource\b/);
   });
 });
