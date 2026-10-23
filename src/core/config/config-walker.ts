@@ -244,7 +244,7 @@ export function configSet(config: Record<string, unknown>, dotted: string, raw: 
           ? { success: true as const, data: value }
           : {
               success: false as const,
-              error: { issues: [{ path: [], message: "apiKey must be $VAR, ${VAR}, or ${ref}" }] },
+              error: { issues: [{ path: [], message: "apiKey must be $VAR, ${VAR}, or ${secrets/<name>}" }] },
             }
         : isUnknownKey
           ? { success: true as const, data: value }
