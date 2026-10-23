@@ -5,7 +5,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
-import { loadAdapterExecutionSource } from "../../commands/command/execution-source-loader";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { compareCodePoints, toPosix } from "../../core/common";
 import { parseEnvRef } from "../../core/env-secret-ref";
@@ -59,13 +58,6 @@ export function freezeEnvironment(
     );
   }
   return [...passThrough, ...envRefs];
-}
-
-/** Load a command or persona the workflow names; the loader resolves the ref through the one walk. */
-export async function workflowExecutionSource(ref: string, kind: "command" | "persona", context: ResolutionContext) {
-  return kind === "command"
-    ? loadAdapterExecutionSource(ref, "command", { config: context.config })
-    : loadAdapterExecutionSource(ref, "persona", { config: context.config });
 }
 
 /** Resolve an env ref a step names to the file that owns it, through the one walk. */

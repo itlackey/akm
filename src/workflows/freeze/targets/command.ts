@@ -13,7 +13,7 @@ import { fallbackAnnouncement } from "../../../integrations/agent/engine-fallbac
 import { buildExecution } from "../../../integrations/agent/execution";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding } from "../../plan";
-import { freezeEnvironment, workflowExecutionSource } from "../environment";
+import { freezeEnvironment } from "../environment";
 import {
   type BaseUnit,
   durableRequest,
@@ -38,7 +38,6 @@ export async function commandDispatch(
       : {}),
     inlineContentMode: "literal" as const,
     current: executionUnitValues(source.unit, context.asset.sourcePath),
-    sourceLoader: (ref, kind) => workflowExecutionSource(ref, kind, context),
   });
   return commandResult(source, baseUnit, prepared, context);
 }
