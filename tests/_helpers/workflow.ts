@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import type { AkmConfig } from "../../src/core/config/config";
@@ -19,7 +20,17 @@ import {
   defaultMapConcurrency,
   workflowMaxConcurrency,
 } from "../../src/workflows/concurrency-policy";
-import { workflowRunLockPath } from "../../src/workflows/exec/run-workflow";
+import {
+  executeStepPlan as executeStepPlanInRoot,
+  type StepExecutionContext,
+  type StepExecutionResult,
+} from "../../src/workflows/exec/native-executor";
+import {
+  type RunWorkflowOptions,
+  type RunWorkflowResult,
+  runWorkflowSteps as runWorkflowStepsInRoot,
+  workflowRunLockPath,
+} from "../../src/workflows/exec/run-workflow";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { parseWorkflow } from "../../src/workflows/parser";
 import {
@@ -57,6 +68,25 @@ const WORKFLOW_TEST_MODEL_MAP: ResolvedModelMapV1 = Object.freeze({
   version: MODEL_MAP_VERSION,
   aliases: Object.freeze(Object.create(null)) as ResolvedModelMapV1["aliases"],
 });
+
+/**
+ * The directory units and the gate judge work in for a test whose run is seeded without a bundle: its workflow ref
+ * (`workflows/demo`) resolves to nothing, so `bundleRootOverride` is the one seam that names the root.
+ */
+export const WORKFLOW_FIXTURE_ROOT = os.tmpdir();
+
+/** `runWorkflowSteps` with {@link WORKFLOW_FIXTURE_ROOT} as the bundle root unless the test names one. */
+export function runWorkflowSteps(options: RunWorkflowOptions): Promise<RunWorkflowResult> {
+  return runWorkflowStepsInRoot({ bundleRootOverride: WORKFLOW_FIXTURE_ROOT, ...options });
+}
+
+/** `executeStepPlan` with {@link WORKFLOW_FIXTURE_ROOT} as the bundle root unless the test names one. */
+export function executeStepPlan(
+  plan: Parameters<typeof executeStepPlanInRoot>[0],
+  ctx: StepExecutionContext,
+): Promise<StepExecutionResult> {
+  return executeStepPlanInRoot(plan, { bundleRootOverride: WORKFLOW_FIXTURE_ROOT, ...ctx });
+}
 
 export type WorkflowPlanFixture = WorkflowPlan;
 

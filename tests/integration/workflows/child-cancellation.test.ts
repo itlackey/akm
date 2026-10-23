@@ -41,12 +41,12 @@ import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import type { TaskInputBinding } from "../../../src/execution/input-contract";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { driveChildWorkflowUnit } from "../../../src/workflows/exec/child-workflow";
-import { runWorkflowSteps, workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
+import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { FrozenChildWorkflowTarget, FrozenWorkflowTarget, WorkflowPlan } from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
-import { freezeWorkflow } from "../../_helpers/workflow";
+import { freezeWorkflow, runWorkflowSteps, WORKFLOW_FIXTURE_ROOT } from "../../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -198,6 +198,7 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
         evidence: {},
         signal: controller.signal,
         dispatcher,
+        bundleRootOverride: WORKFLOW_FIXTURE_ROOT,
       },
       childParams: {},
       inputHash: "h".repeat(64),
@@ -235,6 +236,7 @@ describe("A-28, A-29 — a parent AbortSignal aborted mid-child-drive is observe
         evidence: {},
         signal: controller.signal,
         dispatcher,
+        bundleRootOverride: WORKFLOW_FIXTURE_ROOT,
       },
       childParams: {},
       inputHash: "h".repeat(64),

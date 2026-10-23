@@ -330,9 +330,8 @@ async function prepareStepDispatchPrerequisites(input: {
   let env: Record<string, string> | undefined;
   let sensitiveValues: readonly string[] | undefined;
   // The run's bundle is found again here, never frozen: a bundle update moves it to a new directory.
-  // An injected dispatcher (a test seam) owns its working directory; only the default one needs the root.
   let cwd = ctx.bundleRootOverride;
-  if (willDispatch && cwd === undefined && ctx.dispatcher === undefined) {
+  if (willDispatch && cwd === undefined) {
     try {
       cwd = resolveRunBundleRoot(ctx.workflowRef);
     } catch (err) {

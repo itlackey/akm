@@ -64,7 +64,7 @@ import { computeChildInvocationKey } from "../../../src/workflows/exec/child-inv
 import { driveChildWorkflowUnit } from "../../../src/workflows/exec/child-workflow";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
 import * as runWorkflowModule from "../../../src/workflows/exec/run-workflow";
-import { runWorkflowSteps, workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
+import { workflowRunLockPath } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type WorkListInput } from "../../../src/workflows/exec/step-work";
 import { canonicalJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type {
@@ -75,7 +75,7 @@ import type {
 } from "../../../src/workflows/plan";
 import { frozenStepRows } from "../../../src/workflows/runtime/run-plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
-import { freezeWorkflow, plantRunLock } from "../../_helpers/workflow";
+import { freezeWorkflow, plantRunLock, runWorkflowSteps, WORKFLOW_FIXTURE_ROOT } from "../../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -290,6 +290,7 @@ function buildDriveInput(input: {
       params: {},
       evidence: {},
       dispatcher: input.dispatcher,
+      bundleRootOverride: WORKFLOW_FIXTURE_ROOT,
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.maxConcurrency !== undefined ? { maxConcurrency: input.maxConcurrency } : {}),
       ...(input.eventSource !== undefined ? { eventSource: input.eventSource } : {}),

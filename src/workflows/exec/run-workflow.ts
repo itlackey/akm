@@ -79,6 +79,8 @@ export interface RunWorkflowOptions {
   loadPlan?: (workflowRef: string) => Promise<WorkflowPlan>;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
+  /** Test seam: the directory units and the gate judge work in, instead of the root of the run's bundle. */
+  bundleRootOverride?: string;
   /**
    * Completion-criteria judge override, threaded into `completeWorkflowStep`
    * for every engine-driven completion. `undefined` (absent) = build the
@@ -396,7 +398,7 @@ function workflowSummaryJudge(
     options.dispatcher ?? defaultUnitDispatcher,
     owner,
     options.eventSource,
-    resolveJudgeCwd(stepPlan.gate.frozenJudge, workflowRef),
+    options.bundleRootOverride ?? resolveJudgeCwd(stepPlan.gate.frozenJudge, workflowRef),
   );
 }
 
@@ -528,6 +530,7 @@ async function executeStepSubgraph(
     ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+    ...(options.bundleRootOverride !== undefined ? { bundleRootOverride: options.bundleRootOverride } : {}),
     maxConcurrency: Math.min(options.maxConcurrency ?? Number.POSITIVE_INFINITY, plan.execution?.maxConcurrency ?? 1),
   });
 }

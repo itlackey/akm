@@ -47,7 +47,7 @@ import type {
   WorkflowPlanStep,
 } from "../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
-import { freezeWorkflow, WORKFLOW_TEST_CONFIG } from "../_helpers/workflow";
+import { freezeWorkflow, WORKFLOW_FIXTURE_ROOT, WORKFLOW_TEST_CONFIG } from "../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -226,6 +226,7 @@ function driveInputFor(input: {
       params: {},
       evidence: {},
       dispatcher: input.dispatcher,
+      bundleRootOverride: WORKFLOW_FIXTURE_ROOT,
       ...(input.signal ? { signal: input.signal } : {}),
       ...(input.maxConcurrency !== undefined ? { maxConcurrency: input.maxConcurrency } : {}),
       ...(input.eventSource !== undefined ? { eventSource: input.eventSource } : {}),
