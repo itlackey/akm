@@ -43,12 +43,20 @@ const EXEC_STDERR_DIAGNOSTIC_CLIP = WORKFLOW_UNIT_DIAGNOSTIC_CLIP - 500;
 /**
  * The default environment allowlist for an exec unit's child (`exec.passEnv`
  * extends it): the agent-harness baseline plus names ordinary commands need
- * and `AKM_EVENT_SOURCE`. Credentials, cloud/CI vars, and proxies reach a
- * child only through `pass_env` or `env:`.
+ * and `AKM_EVENT_SOURCE`, plus akm's own location variables so a step that
+ * runs `akm` finds the bundle, config, data, cache and state its parent uses.
+ * Credentials, cloud/CI vars, and proxies reach a child only through
+ * `pass_env` or `env:`.
  */
 export const EXEC_DEFAULT_ENV_PASSTHROUGH: readonly string[] = [
   // PATH, HOME, USER, LANG, LC_ALL, TERM, TMPDIR, AKM_EVENT_SOURCE
   ...COMMON_SPAWN_ENV_PASSTHROUGH,
+  // akm's own location variables; not secrets, and not part of the shared baseline (it is frozen into engine snapshots)
+  "AKM_BUNDLE_DIR",
+  "AKM_CONFIG_DIR",
+  "AKM_DATA_DIR",
+  "AKM_CACHE_DIR",
+  "AKM_STATE_DIR",
   // POSIX names a raw shell command needs beyond the agent baseline
   "LOGNAME",
   "SHELL",

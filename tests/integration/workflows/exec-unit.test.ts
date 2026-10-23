@@ -409,6 +409,29 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     expect(env.PATH).toBeTruthy();
   });
 
+  test("akm's own location variables reach the child with no `pass_env`", async () => {
+    // A step that runs `akm` must find the same bundle, config, data, cache and state the parent uses.
+    const names = ["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"];
+    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
+    expect(EXEC_DEFAULT_ENV_PASSTHROUGH).toEqual(expect.arrayContaining(names));
+    seedRun(["work"]);
+    const plan = execPlan([
+      "    unit:",
+      "      exec:",
+      `        command: ${JSON.stringify(
+        bunArgv(
+          `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(names)}.map((n) => [n, process.env[n] ?? null]))))`,
+        ),
+      )}`,
+    ]);
+    storePlan(plan);
+    const result = await run(plan);
+    expect(result.ok).toBe(true);
+    expect(JSON.parse(String(result.evidence.output))).toEqual(
+      Object.fromEntries(names.map((name) => [name, process.env[name] ?? null])),
+    );
+  });
+
   test("the exported default allowlist is the single definition the child is built from", async () => {
     // Structural pin: no name reaches the child that is not on the allowlist,
     // a binding, or the AKM_* context. `_`/`PWD`-style shell additions are not
