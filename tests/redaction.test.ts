@@ -181,6 +181,13 @@ describe("redactSensitiveText", () => {
     expect(redactSensitiveText(`{"t":"${ascii}"}`, [secret])).toBe('{"t":"[REDACTED]"}');
   });
 
+  test("redacts the uppercase-hex and DEL-escaped spellings other encoders write", () => {
+    const secret = "pä\u007fss";
+    // Java-style uppercase hex, and Python's ensure_ascii escaping DEL as \u007f.
+    expect(redactSensitiveText('{"t":"p\\u00E4\\u007Fss"}', [secret])).toBe('{"t":"[REDACTED]"}');
+    expect(redactSensitiveText('{"t":"p\\u00e4\\u007fss"}', [secret])).toBe('{"t":"[REDACTED]"}');
+  });
+
   test("an escaped spelling is an ordinary needle: overlapping matches merge and the output stays bounded", () => {
     const secret = 'a"b';
     expect(redactSensitiveText('x a"b a\\"b y', [secret])).toBe("x [REDACTED] [REDACTED] y");

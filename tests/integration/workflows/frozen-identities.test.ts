@@ -426,10 +426,21 @@ describe("${ref} in an exec unit", () => {
       name: "a schema violation (validation_error)",
       script: echoJson,
       output: "{ type: object, properties: { other: { type: string } }, required: [other] }",
+      failureReason: "validation_error",
     },
-    { name: "no output schema (promoted as the step artifact)", script: echoJson, output: undefined },
-    { name: "a non-zero exit (non_zero_exit)", script: `${echoJson}; process.exitCode = 1`, output: undefined },
-  ])("an escaped argv secret in raw text is redacted: $name", async ({ script, output }) => {
+    {
+      name: "no output schema (promoted as the step artifact)",
+      script: echoJson,
+      output: undefined,
+      failureReason: null,
+    },
+    {
+      name: "a non-zero exit (non_zero_exit)",
+      script: `${echoJson}; process.exitCode = 1`,
+      output: undefined,
+      failureReason: "non_zero_exit",
+    },
+  ])("an escaped argv secret in raw text is redacted: $name", async ({ script, output, failureReason }) => {
     const a = bundle("a");
     write(a, "secrets/t", escapedSecret);
     write(
@@ -442,6 +453,9 @@ describe("${ref} in an exec unit", () => {
     const { runId, result } = await drive("a//workflows/raw-leak");
 
     const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "run"));
+    // Pin the output path each case exercises, so a fixture change cannot quietly skip it.
+    expect(units.at(-1)?.failure_reason ?? null).toBe(failureReason);
+    if (failureReason === null) expect(result.done).toBe(true);
     const status = await getWorkflowStatus(runId);
     const everything = JSON.stringify({ units, result, status });
     expect(everything).not.toContain("Zq9");

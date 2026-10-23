@@ -514,8 +514,10 @@ export function redactErrorBody(input: string): string {
  */
 function jsonEscapedSpellings(value: string): string[] {
   const json = JSON.stringify(value).slice(1, -1);
-  const ascii = json.replace(/[\u0080-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
-  return [json, ascii].filter((spelling) => spelling !== value);
+  // ASCII-only encoders (Python's ensure_ascii) also escape DEL; some (Java's) write uppercase hex.
+  const ascii = json.replace(/[\u007f-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  const upper = ascii.replace(/\\u([0-9a-f]{4})/g, (_match, hex: string) => `\\u${hex.toUpperCase()}`);
+  return [...new Set([json, ascii, upper])].filter((spelling) => spelling !== value);
 }
 
 export function redactSensitiveText(text: string, sensitiveValues: Iterable<string>): string {
