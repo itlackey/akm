@@ -14,6 +14,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
+import { writeLockfile } from "../../src/integrations/lockfile";
 import { materializeFrozenWorkflowEnvironment } from "../../src/workflows/exec/environment";
 import { freezeEnvironment } from "../../src/workflows/freeze/environment";
 import type { ResolutionContext } from "../../src/workflows/freeze/step-values";
@@ -51,11 +52,19 @@ function secretToken(name: string): string {
 }
 
 /** Freeze `refs` as one step's `unit.env`, resolving each bundle to the given root. */
-function freezeRefs(refs: string[], bundles: Record<string, string>): FrozenWorkflowEnvironmentBinding[] {
+function freezeRefs(
+  refs: string[],
+  bundles: Record<string, string>,
+  entry?: Record<string, unknown>,
+  overrides: Record<string, Record<string, unknown>> = {},
+): FrozenWorkflowEnvironmentBinding[] {
   const context: ResolutionContext = {
     asset: { ref: "alpha//workflows/env", path: "", sourcePath: "", title: "env" } as unknown as WorkflowAsset,
     config: {
-      bundles: Object.fromEntries(Object.entries(bundles).map(([name, root]) => [name, { path: root }])),
+      defaultBundle: Object.keys(bundles)[0],
+      bundles: Object.fromEntries(
+        Object.entries(bundles).map(([name, root]) => [name, { ...(entry ?? { path: root }), ...overrides[name] }]),
+      ),
     } as unknown as AkmConfig,
     plan: { irVersion: 6, title: "env", steps: [] },
     refPath: [],
@@ -140,6 +149,45 @@ describe("stored plan environment bindings", () => {
 });
 
 describe("freezing env refs", () => {
+  test("an env ref into a git bundle resolves under the lock's content root", async () => {
+    const content = sandbox("akm-env-git-content-root");
+    write(content, "env/prod.env", "FROM_CONTENT_ROOT=1\n");
+    await writeLockfile([
+      {
+        id: "vendor",
+        source: "git",
+        ref: "git:https://example.test/vendor.git",
+        localRoot: content,
+        installedAt: "2026-07-20T00:00:00.000Z",
+      },
+    ]);
+    try {
+      const [binding] = freezeRefs(["vendor//env/prod"], { vendor: "" }, { git: "https://example.test/vendor.git" });
+      expect(binding).toMatchObject({
+        kind: "env-ref",
+        ref: "vendor//env/prod",
+        keys: ["FROM_CONTENT_ROOT"],
+        owner: {
+          bundle: "vendor",
+          requestedRoot: path.resolve(content),
+          requestedPath: path.resolve(content, "env/prod.env"),
+        },
+      });
+    } finally {
+      await writeLockfile([]);
+    }
+  });
+
+  test("an env ref does not resolve into a disabled bundle", () => {
+    const alpha = sandbox("akm-env-enabled");
+    const beta = sandbox("akm-env-disabled");
+    write(alpha, "env/base.env", "A=1\n");
+    write(beta, "env/prod.env", "B=2\n");
+    expect(() => freezeRefs(["beta//env/prod"], { alpha, beta }, undefined, { beta: { enabled: false } })).toThrow(
+      /was not found/,
+    );
+  });
+
   test("records owner, exact sorted key names, token names, and precedence — never a value", () => {
     const root = sandbox("akm-env-freeze");
     const envValue = "db-password-must-never-enter-plan";
@@ -157,7 +205,7 @@ describe("freezing env refs", () => {
         ref: "alpha//env/prod",
         owner: {
           bundle: "alpha",
-          adapter: "akm",
+          adapter: "dotenv",
           requestedRoot: path.resolve(root),
           requestedPath: path.resolve(file),
           relativePath: "env/prod.env",

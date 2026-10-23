@@ -14,7 +14,6 @@ import { workflowParamContract } from "../../ir/params";
 import { canonicalJson, canonicalPlanJson } from "../../ir/plan-hash";
 import type { FrozenChildWorkflowTarget, WorkflowPlan } from "../../plan";
 import { loadWorkflowAsset } from "../../runtime/workflow-asset-loader";
-import { resolveOwnedAsset } from "../environment";
 import {
   type BaseUnit,
   declaredParamNames,
@@ -78,10 +77,9 @@ function assertNoCompositionCycle(stepId: string, childRef: string, refPath: rea
 export async function childWorkflowDispatch(input: ChildWorkflowDispatchInput): Promise<ResolvedDispatch> {
   const { source, baseUnit, childRefInput, context } = input;
 
-  // Resolution failures propagate unchanged, in code and shape — the same
-  // authority every other asset reference resolves through.
-  const owned = await resolveOwnedAsset(childRefInput, "workflow", context);
-  const childAsset = await loadWorkflowAsset(owned.ref);
+  // The loader resolves the ref through the one walk, so a missing child fails
+  // like any other missing workflow.
+  const childAsset = await loadWorkflowAsset(childRefInput);
   const childRef = childAsset.ref;
 
   // The composition cycle check, before any child compilation.

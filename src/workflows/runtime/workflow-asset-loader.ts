@@ -4,14 +4,13 @@
 
 import { createHash } from "node:crypto";
 import fs from "node:fs";
-import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
-import { deriveInstallations } from "../../indexer/installations";
-import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
 
@@ -71,72 +70,34 @@ type ResolvedWorkflowAsset = {
 function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
-  const config = loadConfig();
-  const allSources = resolveSourceEntries(undefined, config);
-  const installations = deriveInstallations(allSources);
-  const searchSources = allSources.flatMap((source, index) => {
-    const bundleId = installations[index]?.id;
-    if (!bundleId || (bundleRef.bundle !== undefined && bundleRef.bundle !== bundleId)) return [];
-    return [{ source, bundleId }];
-  });
-  if (bundleRef.bundle && searchSources.length === 0) {
-    throw new UsageError(
-      `Bundle "${bundleRef.bundle}" was not found among configured sources.`,
-      "WORKFLOW_SOURCE_INVALID",
-    );
-  }
-  let assetPath: string | undefined;
-  let sourcePath: string | undefined;
-  let sourceBundleId: string | undefined;
-  let workflowName: string | undefined;
-  let workflowAdapterId: string | undefined;
-  let rejectedSource: { source: SearchSource; bundleId: string } | undefined;
-
-  for (const candidateSource of searchSources) {
-    const { source, bundleId } = candidateSource;
-    const adapterId = source.adapterId ?? detectAdapterId(source.path);
-    const ownedSource = source.adapterId ? source : { ...source, adapterId };
-    const owner = resolveAdapterConceptOwner(source.path, adapterId, bundleRef.conceptId);
-    if (!owner) continue;
-    if (!ownsNativeWorkflowRuntime(ownedSource) || !owner.workflowSource) {
-      rejectedSource ??= { source: ownedSource, bundleId };
-      break;
-    }
-    assetPath = owner.path;
-    sourcePath = source.path;
-    sourceBundleId = bundleId;
-    workflowName = owner.workflowSource.canonicalName;
-    workflowAdapterId = adapterId;
-    break;
-  }
-
-  if (!assetPath) {
-    if (rejectedSource) {
-      const sourceName = rejectedSource.bundleId;
-      const adapterId = rejectedSource.source.adapterId ?? "unassigned";
+  const sources = resolveSourceEntries(undefined, loadConfig());
+  const match = resolveConceptOwner(bundleRef, sources);
+  if (!match) {
+    if (bundleRef.bundle && resolveSourcesForOrigin(bundleRef.bundle, sources).length === 0) {
       throw new UsageError(
-        `Bundle "${sourceName}" uses adapter "${adapterId}", which does not support native workflow execution.`,
+        `Bundle "${bundleRef.bundle}" was not found among configured sources.`,
         "WORKFLOW_SOURCE_INVALID",
       );
     }
     throw new NotFoundError(`Workflow not found for ref: ${ref}`);
   }
+  const { owner, source, bundleId, adapterId } = match;
+  if ((adapterId !== "akm" && adapterId !== "akm-workflow") || !owner.workflowSource) {
+    throw new UsageError(
+      `Bundle "${bundleId}" uses adapter "${adapterId}", which does not support native workflow execution.`,
+      "WORKFLOW_SOURCE_INVALID",
+    );
+  }
 
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.
-  const canonicalName = canonicalizeWorkflowName(workflowName as string);
+  const canonicalName = canonicalizeWorkflowName(owner.workflowSource.canonicalName);
   const fullRef =
-    workflowAdapterId === "akm-workflow"
-      ? makeBundleRef(sourceBundleId, canonicalName)
-      : canonicalWorkflowRunRef(sourceBundleId, canonicalName);
+    adapterId === "akm-workflow"
+      ? makeBundleRef(bundleId, canonicalName)
+      : canonicalWorkflowRunRef(bundleId, canonicalName);
 
-  return {
-    assetPath,
-    sourcePath: sourcePath as string,
-    adapterId: workflowAdapterId as string,
-    canonicalName,
-    fullRef,
-  };
+  return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };
 }
 
 /**
@@ -169,8 +130,4 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
     plan: result.plan,
     sourceHash: createHash("sha256").update(bytes).digest("hex"),
   };
-}
-
-function ownsNativeWorkflowRuntime(source: SearchSource): boolean {
-  return source.adapterId === "akm" || source.adapterId === "akm-workflow";
 }
