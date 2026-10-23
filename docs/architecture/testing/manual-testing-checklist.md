@@ -1213,10 +1213,10 @@ export QA_SECRET_VALUE='manual-qa-secret-not-a-credential'
 printf '%s\n' \
   'QA_PUBLIC=manual-qa-public' \
   'QA_SECOND=manual-qa-second' \
-  'QA_TOKEN=Bearer ${secret:qa-token}' \
+  'QA_TOKEN=Bearer ${secrets/qa-token}' \
   >"$AKM_SANDBOX/qa-runtime.env"
 
-akm env create qa-runtime \
+akm env create env/qa-runtime \
   --from-file "$AKM_SANDBOX/qa-runtime.env" --format json \
   >"$AKM_SANDBOX/env-create.json"
 printf '%s\n' "$QA_SECRET_VALUE" |
@@ -1300,8 +1300,9 @@ test "$secret_child_status" -eq 9
 
 - [ ] **[CORE]** Values enter only the child environment and never mutate the
       invoking shell.
-- [ ] **[CORE]** `${secret:NAME}` resolves from the env asset's own bundle,
-      including embedded/multiple tokens. Missing secret fails before spawn.
+- [ ] **[CORE]** `${secrets/NAME}` resolves by ref from any bundle, not only the env
+      asset's own, including embedded/multiple tokens. A ref no bundle owns
+      fails before spawn.
 - [ ] **[CORE]** `--only` and `--except` are mutually exclusive; filtering occurs
       before dangerous-key policy. Clean mode inherits only the documented
       minimum plus explicit names.
@@ -1321,7 +1322,7 @@ test "$secret_child_status" -eq 9
 ```sh
 printf 'QA_LITERAL=$(touch %s)\n' "$AKM_SANDBOX/export-payload-ran" \
   >"$AKM_SANDBOX/qa-export.env"
-akm env create qa-export --from-file "$AKM_SANDBOX/qa-export.env"
+akm env create env/qa-export --from-file "$AKM_SANDBOX/qa-export.env"
 akm env export env/qa-export --out "$AKM_SANDBOX/qa-export.sh" \
   --format json >"$AKM_SANDBOX/env-export.json"
 
@@ -1336,7 +1337,7 @@ akm env remove env/qa-export --yes
 
 - [ ] **[CORE]** Export requires `--out`, prints no values, writes atomically at
       `0600`, and single-quotes substitutions/backticks/dollars/quotes/globs.
-- [ ] **[CORE]** Export does not resolve `${secret:...}`. `env run` is the safe
+- [ ] **[CORE]** Export does not resolve `${ref}` tokens; it writes them verbatim. `env run` is the safe
       default for secret substitution.
 - [ ] **[CORE]** Secret stdin strips one trailing newline; file input preserves
       bytes exactly. Secret overwrite is atomic and serialized.

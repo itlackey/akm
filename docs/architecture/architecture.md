@@ -434,10 +434,10 @@ here; any other field the transport cannot carry becomes a secret-free
 `untranslated-field` notice and dispatch continues.
 
 Credentials stay symbolic (an env descriptor, an `apiKeyFile` path, or a
-`secret://` reference) in everything `resolveExecution` returns, so a request
-and runner can be journaled. `runExecution()` reads the current value at each
-dispatch and scrubs it, with every other secret-looking value the child could
-see, from the result. Workflow resume calls `buildExecutionFromWire()` on the
+`${ref}` reference such as `${secrets/openai}`) in everything
+`resolveExecution` returns, so a request and runner can be journaled.
+`runExecution()` reads the current value at each dispatch and scrubs it, with
+every other secret-looking value the child could see, from the result. Workflow resume calls `buildExecutionFromWire()` on the
 journaled `{ request, runner }` and never reads config, `models.json`, or
 credentials, so a config edit after the freeze cannot change a resumed unit.
 The prompt-free interactive `akm agent` launch resolves its engine directly.

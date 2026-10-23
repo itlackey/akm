@@ -4,7 +4,7 @@
 
 /**
  * #953 — `akm index`'s embedding requests must carry the
- * `secret://` store-resolved credential, the same way `akm improve`'s
+ * `${secrets/name}` store-resolved credential, the same way `akm improve`'s
  * consolidate path already does (see the last describe block below, the
  * known-good control).
  *

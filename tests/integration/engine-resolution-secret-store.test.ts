@@ -4,7 +4,7 @@
 
 /**
  * #953 — engine-resolution.ts's dispatch boundary (the `akm improve` / agent
- * path) now resolves a `secret://<name>` apiKey reference through the real
+ * path) now resolves a `${secrets/<name>}` apiKey reference through the real
  * akm secret store, the same way `llm/client.ts` and `embedders/remote.ts`
  * already did. Integration-classified (ORG-03/04/05/06): `setSecret` performs
  * a real atomic write under a sandboxed stash, and resolution reads it back
@@ -83,7 +83,7 @@ describe("engine-resolution secret-store credential (#953)", () => {
   // with `$HOME` pointed somewhere the akm config/stash/secrets do NOT
   // live (a service account home, a container's default `/root`, etc.),
   // while `AKM_BUNDLE_DIR`/`XDG_*_HOME` still name the real stash — exactly
-  // what `withIsolatedAkmStorage` already sets up. This proves `secret://`
+  // what `withIsolatedAkmStorage` already sets up. This proves `${secrets/name}`
   // resolution never falls back to `$HOME` for anything.
   test("secrets ref resolves and dispatches with $HOME pointed at a foreign, akm-less directory (scheduled/OpenPalm context, #953)", async () => {
     const storage = withIsolatedAkmStorage();

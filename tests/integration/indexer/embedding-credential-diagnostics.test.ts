@@ -4,7 +4,7 @@
 
 /**
  * #953 field gap: a keyless embedding request could not be reproduced in the
- * lab — every `RemoteEmbedder` path already resolves `secret://` through one
+ * lab — every `RemoteEmbedder` path already resolves `${secrets/name}` through one
  * boundary. The actionable outcome is a self-diagnosing run: one
  * default-level progress line, before the first provider request, naming
  * the endpoint, the model, and the credential SOURCE (never the value), so
