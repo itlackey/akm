@@ -78,15 +78,6 @@ describe("legacy ${secret:NAME} in an env value", () => {
       {
         kind: "env-ref",
         ref: "team//env/bot",
-        owner: {
-          bundle: "team",
-          adapter: "akm",
-          requestedRoot: team,
-          requestedPath: path.join(team, "env/bot.env"),
-          relativePath: "env/bot.env",
-        },
-        keys: ["TOKEN"],
-        secretNames: [],
         precedence: 0,
       },
     ]);
