@@ -77,7 +77,7 @@ function expectEveryRequestCarriedCredential(authHeaders: (string | null)[], exp
   }
 }
 
-describe("akm index embedding requests carry the secret:// credential (#953)", () => {
+describe("akm index embedding requests carry the secrets ref credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -213,7 +213,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
   });
 });
 
-describe("akm bundle update: the update's embedding phase carries the secret:// credential (#953)", () => {
+describe("akm bundle update: the update's embedding phase carries the secrets ref credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -311,7 +311,7 @@ describe("akm bundle update: the update's embedding phase carries the secret:// 
   });
 });
 
-describe("akm remember write path: indexWrittenAssets carries the secret:// credential (#953)", () => {
+describe("akm remember write path: indexWrittenAssets carries the secrets ref credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 

@@ -696,7 +696,7 @@ describe("describeEmbeddingCredential (#953)", () => {
     expect(describeEmbeddingCredential("")).toBe("none configured");
   });
 
-  test("a secret:// reference names the reference and its source, never a resolved value", () => {
+  test("a secrets ref reference names the reference and its source, never a resolved value", () => {
     expect(describeEmbeddingCredential("${secrets/lab-api-key}")).toBe("${secrets/lab-api-key} (store)");
   });
 

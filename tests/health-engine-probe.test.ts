@@ -479,7 +479,7 @@ describe("health engine probes", () => {
     }
   });
 
-  test("a secret:// engine reports available only when the store resolves it (#953)", async () => {
+  test("a secrets ref engine reports available only when the store resolves it (#953)", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       const config: AkmConfig = {

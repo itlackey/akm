@@ -461,7 +461,7 @@ describe("secret-store engine credential (#953)", () => {
     };
   }
 
-  test("resolves secret:// onto ResolvedLlmUse without reading it", () => {
+  test("resolves secrets ref onto ResolvedLlmUse without reading it", () => {
     const resolved = resolveLlmEngineUse(withSecretRefEngine("${secrets/953-lab-key}"), [{ engine: "secreted" }]);
     expect(resolved.apiKeySecretRef).toBe("${secrets/953-lab-key}");
     expect(resolved.credential).toBeUndefined();
@@ -477,13 +477,13 @@ describe("secret-store engine credential (#953)", () => {
     expect(resolved.credential).toBeUndefined();
   });
 
-  test("a literal (non-reference) apiKey is still rejected — only $VAR/${VAR}/secret:// are accepted here", () => {
+  test("a literal (non-reference) apiKey is still rejected — only $VAR/${VAR}/secrets ref are accepted here", () => {
     expect(() =>
       resolveLlmEngineUse(withSecretRefEngine("sk-literal-not-a-reference"), [{ engine: "secreted" }]),
     ).toThrow(/invalid symbolic apiKey reference/);
   });
 
-  test("an unresolved secret:// reference throws SECRET_REFERENCE_UNRESOLVED naming only the reference, never a value", () => {
+  test("an unresolved secrets ref reference throws SECRET_REFERENCE_UNRESOLVED naming only the reference, never a value", () => {
     // No secret store is configured in this sandboxed test HOME, so the
     // reference deterministically fails to resolve.
     const resolved = resolveLlmEngineUse(withSecretRefEngine("${secrets/953-unset-lab-key}"), [{ engine: "secreted" }]);

@@ -135,7 +135,7 @@ describe("remote embed", () => {
     }
   });
 
-  test("resolves a secret:// apiKey from the store at header-building time (#917)", async () => {
+  test("resolves a secrets ref apiKey from the store at header-building time (#917)", async () => {
     const storage = withIsolatedAkmStorage();
     let capturedAuth = "";
     const server = Bun.serve({

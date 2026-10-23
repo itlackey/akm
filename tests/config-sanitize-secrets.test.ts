@@ -88,7 +88,7 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
     expect(persisted).toContain("${OPENAI_API_KEY}");
   });
 
-  it("preserves a secret:// store reference", () => {
+  it("preserves a secrets ref store reference", () => {
     saveConfig(
       makeConfig({
         embedding: {

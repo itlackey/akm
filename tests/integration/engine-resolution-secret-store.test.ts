@@ -39,7 +39,7 @@ const config = {
 };
 
 describe("engine-resolution secret-store credential (#953)", () => {
-  test("materializeLlmConnection resolves a secret:// apiKey from the store at dispatch", () => {
+  test("materializeLlmConnection resolves a secrets ref apiKey from the store at dispatch", () => {
     const storage = withIsolatedAkmStorage();
     try {
       setSecret(path.join(storage.stashDir, "secrets", "lab-api-key"), Buffer.from("store-secret-value"));
@@ -85,7 +85,7 @@ describe("engine-resolution secret-store credential (#953)", () => {
   // while `AKM_BUNDLE_DIR`/`XDG_*_HOME` still name the real stash — exactly
   // what `withIsolatedAkmStorage` already sets up. This proves `secret://`
   // resolution never falls back to `$HOME` for anything.
-  test("secret:// resolves and dispatches with $HOME pointed at a foreign, akm-less directory (scheduled/OpenPalm context, #953)", async () => {
+  test("secrets ref resolves and dispatches with $HOME pointed at a foreign, akm-less directory (scheduled/OpenPalm context, #953)", async () => {
     const storage = withIsolatedAkmStorage();
     const foreignHome = fs.mkdtempSync(path.join(os.tmpdir(), "akm-openpalm-home-"));
     try {
