@@ -78,8 +78,7 @@ describe("migration help", () => {
     //
     // Whether that section names the version actually being shipped is a
     // property of the RELEASE, not of this renderer, and is asserted in
-    // tests/integration/workflow-release.test.ts — which is
-    // `run_step "Workflow Release Contract"` in tests/release-check.sh.
+    // tests/workflow-release.test.ts, which CI runs on every release commit.
     const result = renderMigrationHelp("latest");
     const changelog = fs.readFileSync(path.join(PROJECT_ROOT, "CHANGELOG.md"), "utf8");
     const latest = [...changelog.matchAll(/^## \[([^\]]+)\]/gm)]

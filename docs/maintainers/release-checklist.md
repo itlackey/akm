@@ -1,103 +1,64 @@
 # Release Checklist
 
-Use this checklist for every release candidate. Local release validation and
-scheduled CI are useful inputs, but neither substitutes for a successful gated
-run of the exact commit that will be published.
+`main` is the stable line (npm `latest`). The next version is developed on a
+release branch, `release/<version>` (npm `next`), which merges to `main` when
+it becomes stable. A fix for stable lands on `main` and is cherry-picked onto
+the release branch when that branch needs it.
 
-## 1. Freeze the candidate
+## 1. Cut the version
 
-1. Finish the version, changelog, migration-note, and release-PR changes.
-2. Record `git rev-parse HEAD`. This is the full 40-character release-candidate SHA.
-3. Run `bun run release:check` locally. If Docker is unavailable, run
-   `./tests/release-check.sh --skip-docker` and rely on the gated Docker job
-   below for the container matrix.
+On the branch you release from (`main` for stable, the release branch for
+next):
 
-Any commit added after this point creates a new candidate and invalidates the
-gated evidence collected for the previous SHA.
+1. Set the version: `npm pkg set version=<version>`.
+2. Cut the changelog: add `## [<version>] - <YYYY-MM-DD>` (UTC date) directly
+   under `## [Unreleased]`, so the unreleased entries become this release's
+   section. CI fails the release commit when the newest section does not name
+   the `package.json` version (`tests/workflow-release.test.ts`).
+3. Add a migration note if the release needs one (see
+   [CONTRIBUTING](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)).
+4. Commit `release: <version>`, push it to the branch, and let CI run on it.
 
-## 2. Collect exact-SHA gated evidence
-
-GitHub only offers a scheduled or manually dispatched workflow after its file
-exists on the default branch. When validating the commit that first introduces
-or changes this workflow, create a unique lightweight candidate tag at the
-recorded SHA:
+## 2. Release akm
 
 ```sh
-candidate_sha="$(git rev-parse HEAD)"
-candidate_short_sha="$(git rev-parse --short=12 HEAD)"
-candidate_version="$(node -p 'require("./package.json").version')"
-candidate_tag="gated-ci/candidate-${candidate_version}-${candidate_short_sha}"
-git tag "$candidate_tag" "$candidate_sha"
-git push origin "refs/tags/$candidate_tag"
+gh workflow run release.yml --ref <branch> -f version=<version>
 ```
 
-Verify that the tag target is the exact candidate commit recorded in step 1.
-The `gated-ci/candidate-*` trigger runs every gated suite from the workflow in
-that tagged commit. The resolver checks that the checkout equals the immutable
-event SHA, and the final evidence job records both that SHA and the tag ref.
-Never force-move or reuse a candidate tag; a changed commit needs a new tag and
-a new run.
+The Release workflow, on the pushed commit:
 
-After **Gated CI** exists on the default branch, manual dispatch is an
-equivalent exact-SHA path. From the repository's Actions page, choose **Run
-workflow** and supply:
+1. runs Gated CI: semantic search with real embeddings, the Docker install
+   matrix, and the native schedulers on Linux, macOS and Windows;
+2. requires CI to have passed on the same commit (it does not run lint, the
+   typecheck or the test suites again);
+3. runs `tests/release-check.sh --skip-docker`: the packaged artifact's bin
+   targets and migrator, package acceptance, and the upgrade rehearsal against
+   the packed tarball;
+4. builds the package and standalone binaries, publishes to npm (`latest` for
+   a stable version, `next` for a prerelease) and creates the GitHub release.
 
-- `candidate_sha`: the full 40-character SHA recorded above, never a branch or
-  tag name.
+If a job fails on a flake, rerun the failed jobs. If the fix needs a code
+change, commit it and release that commit. npm can take several minutes to show
+a new version: check `npm view akm-cli@<tag> version` before upgrading.
 
-Every suite runs; there is no suite selector.
+## 3. Release the plugins
 
-The manual request rejects abbreviated SHAs and checks out that immutable
-commit for every gate. Wait for all of these stable checks to succeed on either
-candidate path:
+```sh
+gh workflow run release.yml --repo itlackey/akm-plugins --ref <plugins branch> -f akm_version=<published akm version>
+```
 
-- `Gated / Semantic Search`
-- `Gated / Docker Install`
-- `Gated / Native Scheduler / Linux`
-- `Gated / Native Scheduler / macOS`
-- `Gated / Native Scheduler / Windows`
-- `Gated / Release Candidate Evidence`
+Plugins match akm's major.minor and keep their own patch numbers; each plugin
+release's notes name the akm version it requires. A plugin-only fix is released
+the same way, with the akm version already published. The Claude marketplace
+reads the plugins repository's `main`, so stable plugin releases come from
+`main`.
 
-The final evidence job records the requested and resolved SHA, the trigger ref,
-each suite's result, and a run link in the workflow summary. A weekly run is
-drift detection, not release evidence, because it may cover a different
-commit.
+## 4. Upgrade
 
-Manual and tagged candidate runs are cache restore-only. Only a successful
-scheduled run of the workflow on the repository's default branch may save the
-HuggingFace model cache; its key identifies both the embedding model and the
-source/lock inputs. This prevents candidate-controlled workflow code from
-publishing cache entries while still avoiding repeated model downloads.
+`akm upgrade` (stable) or `akm upgrade --next` (prerelease) updates akm and the
+installed plugins.
 
-Copy the successful run URL (for example,
-`https://github.com/itlackey/akm/actions/runs/<run-id>`) and the exact candidate
-SHA into both the release PR and its milestone/parent tracker. Do not publish
-from a candidate whose evidence link names a different SHA, whose final
-evidence job is skipped, or whose run was re-run after the candidate changed.
+## Gated CI on its own
 
-## 3. Gated CI does not run on pull requests
-
-Gated CI runs on three triggers only: the weekly schedule, an exact-SHA
-`workflow_dispatch`, and a `gated-ci/candidate-*` tag. All three run every
-suite.
-
-There used to be a `Gated / Detect Changed Paths` job that also ran these on
-PRs, selecting suites by regex-matching the diff against path lists. It was
-deleted in 0.9.8: the patterns had gone stale — they still named test files a
-reorganisation had moved or deleted, so it was silently under-selecting suites
-and nobody noticed. A build-policing job that quietly stops policing is worse
-than no job, because its green status is read as coverage.
-
-Nothing about release evidence changes. Step 2 was always the requirement, and
-it never went through the PR path.
-
-The candidate-tag trigger is reserved for release evidence and workflow
-rollout: it always runs `all`, because a tag-push workflow is the path available
-before the workflow file reaches the default branch.
-
-## 4. Publish
-
-After the exact-SHA gated run and local release check are green, trigger the
-Release workflow with the version already committed in `package.json`. Keep the
-candidate SHA and Gated CI run URL in the release record so the published
-artifact's validation can be audited later.
+Gated CI also runs weekly on `main` to catch drift, and on demand from the
+Actions tab on any ref. Only the weekly run saves the Hugging Face model cache.
