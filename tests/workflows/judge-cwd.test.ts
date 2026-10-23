@@ -3,9 +3,11 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import path from "node:path";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { resolveJudgeCwd } from "../../src/workflows/exec/frozen-judge";
-import * as workflowAssetLoader from "../../src/workflows/runtime/workflow-asset-loader";
+import { resolveRunBundleRoot } from "../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -53,7 +55,7 @@ describe("resolveJudgeCwd", () => {
     expect(thrown).toBeInstanceOf(UsageError);
     expect((thrown as UsageError).code).toBe("WORKFLOW_SOURCE_INVALID");
     expect((thrown as UsageError).message).toBe(
-      'workflow gone//workflows/demo does not resolve to a bundle (Bundle "gone" was not found among configured sources.)',
+      'workflow gone//workflows/demo does not resolve to a bundle: bundle "gone" is not configured',
     );
   });
 
@@ -66,15 +68,25 @@ describe("resolveJudgeCwd", () => {
     }
     expect(thrown).toBeInstanceOf(NotFoundError);
     const message = (thrown as NotFoundError).message;
-    expect(message.startsWith("workflow workflows/missing does not resolve to a bundle (")).toBe(true);
+    expect(message.startsWith("workflow workflows/missing does not resolve to a bundle: ")).toBe(true);
     // The message is built once: the original cause is nested, never prefixed a second time.
     expect(message.split("does not resolve to a bundle").length).toBe(2);
   });
 
-  test("the loader exports one bundle-root resolver, resolveRunBundleRoot", () => {
-    expect(Object.keys(workflowAssetLoader).filter((name) => /BundleRoot$/.test(name))).toEqual([
-      "resolveRunBundleRoot",
-    ]);
+  test("an error that is not a miss is reported as itself, not as an unresolved bundle", () => {
+    const dir = path.join(storage.stashDir, "workflows");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "dup.md"), GATED);
+    fs.writeFileSync(path.join(dir, "dup.MD"), GATED);
+    let thrown: unknown;
+    try {
+      resolveRunBundleRoot("workflows/dup");
+    } catch (err) {
+      thrown = err;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect(thrown).not.toBeInstanceOf(NotFoundError);
+    expect((thrown as Error).message).not.toContain("does not resolve to a bundle");
   });
 
   test("a step with no frozen judge needs no root", () => {

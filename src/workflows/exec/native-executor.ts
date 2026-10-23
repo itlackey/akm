@@ -337,7 +337,7 @@ async function prepareStepDispatchPrerequisites(input: {
     } catch (err) {
       return {
         ok: false,
-        result: failedStep(dispatched, `Step "${plan.stepId}" cannot run: ${message(err)}.`),
+        result: failedStep(dispatched, `Step "${plan.stepId}" cannot run: ${message(err).replace(/\.$/, "")}.`),
       };
     }
   }

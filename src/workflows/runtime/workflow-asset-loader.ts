@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
-import { AkmError, COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
+import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
@@ -112,14 +112,18 @@ export function resolveRunBundleRoot(ref: string): string {
     try {
       return resolveWorkflowAsset(ref).sourcePath;
     } catch (err) {
-      if (err instanceof AkmError) err.message = `workflow ${ref} does not resolve to a bundle (${err.message})`;
+      // Only a miss means the bundle does not resolve; any other error (an
+      // unsupported adapter, a collision) is reported as itself.
+      if (err instanceof NotFoundError) {
+        throw new NotFoundError(`workflow ${ref} does not resolve to a bundle: ${err.message}`, err.code, err.hint());
+      }
       throw err;
     }
   }
   const source = resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig()))[0];
   if (!source) {
     throw new UsageError(
-      `workflow ${ref} does not resolve to a bundle (Bundle "${bundle}" was not found among configured sources.)`,
+      `workflow ${ref} does not resolve to a bundle: bundle "${bundle}" is not configured`,
       "WORKFLOW_SOURCE_INVALID",
     );
   }
