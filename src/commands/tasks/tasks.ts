@@ -55,6 +55,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
+import { resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
 import { readTaskHistory } from "../../tasks/run/task-history";
@@ -993,12 +994,7 @@ function taskProjectionAssetResolver(
     if (bundle === bundleName) {
       return { file: await resolveAssetPath(bundleRoot, type, name), bundleRoot };
     }
-    // `bundle` is the qualifier of an asset ref in the task, not a flag.
-    const target = resolveWriteTarget(config, bundle, { requireWritable: false, flag: "The asset ref's bundle" });
-    return {
-      file: await resolveAssetPath(target.source.path, type, name),
-      bundleRoot: target.source.path,
-    };
+    return resolveBundleAsset(config, { bundle, type, name });
   };
 }
 

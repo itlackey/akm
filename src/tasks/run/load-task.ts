@@ -13,10 +13,10 @@
 import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
+import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
 import { loadConfig } from "../../core/config/config";
 import type { AkmConfig } from "../../core/config/config-types";
-import { NotFoundError } from "../../core/errors";
-import { resolveWriteTarget } from "../../core/write-source";
+import { NotFoundError, UsageError } from "../../core/errors";
 import {
   applyInputDefaults,
   type InputContract,
@@ -25,7 +25,9 @@ import {
   validateInputs,
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject } from "../../execution/json";
-import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import type { TaskInvocation } from "../model/invocation";
 import { prepareTaskV3Execution } from "../prepare/prepare";
@@ -49,6 +51,28 @@ const CONFIG_FREE_TASK_RUNTIME: AkmConfig = Object.freeze({
   configVersion: "0.9.0",
   semanticSearchMode: "off",
 });
+
+/**
+ * Resolve an asset a task names in another bundle (`uses:`) through the one
+ * ref-to-file walk. Reading needs no write target, so a bundle of any kind
+ * (git, npm, website) resolves.
+ */
+export function resolveBundleAsset(
+  config: AkmConfig,
+  { bundle, type, name }: { bundle: string; type: string; name: string },
+): { file: string; bundleRoot: string } {
+  const conceptId = conceptIdFromTypeName(type, name);
+  const sources = resolveSourceEntries(undefined, config);
+  const match = resolveConceptOwner({ bundle, conceptId }, sources);
+  if (match) return { file: match.owner.realPath, bundleRoot: match.source.path };
+  if (resolveSourcesForOrigin(bundle, sources).length === 0) {
+    throw new UsageError(
+      `Bundle ${JSON.stringify(bundle)} is not configured. Run \`akm bundle list\` to see available bundles.`,
+      "INVALID_FLAG_VALUE",
+    );
+  }
+  throw new NotFoundError(`Task asset ${makeBundleRef(bundle, conceptId)} was not found.`, "ASSET_NOT_FOUND");
+}
 
 /** Resolve, parse, and project one task-v3 asset into a frozen, executable projection. */
 export async function loadPreparedTask(id: string, options: RunTaskOptions): Promise<PreparedTaskV3Execution> {
@@ -126,16 +150,7 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
       if (bundle === bundleName) {
         return { file: await resolveAssetPath(bundleDir, type, name), bundleRoot: bundleDir };
       }
-      const resolutionConfig = requiresCommandConfig ? config : loadConfig();
-      // `bundle` is the qualifier of an asset ref in the task, not a flag.
-      const resolvedBundle = resolveWriteTarget(resolutionConfig, bundle, {
-        requireWritable: false,
-        flag: "The asset ref's bundle",
-      });
-      return {
-        file: await resolveAssetPath(resolvedBundle.source.path, type, name),
-        bundleRoot: resolvedBundle.source.path,
-      };
+      return resolveBundleAsset(requiresCommandConfig ? config : loadConfig(), { bundle, type, name });
     },
   });
 }
