@@ -930,9 +930,9 @@ export function renameWorkflowRunRefs(db: Database, oldBundleId: string, newBund
   return Number(
     db
       .prepare(
-        `UPDATE workflow_runs SET workflow_ref = ? || substr(workflow_ref, ?) WHERE workflow_ref LIKE ? ESCAPE '\\'`,
+        `UPDATE workflow_runs SET workflow_ref = ? || substr(workflow_ref, length(?) + 1) WHERE workflow_ref LIKE ? ESCAPE '\\'`,
       )
-      .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+      .run(newBundleId, oldBundleId, `${prefix}%`).changes,
   );
 }
 

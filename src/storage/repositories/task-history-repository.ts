@@ -327,7 +327,9 @@ export function renameTaskHistoryTargetRefs(db: Database, oldBundleId: string, n
   const prefix = `${escapeLikePattern(oldBundleId)}//`;
   return Number(
     db
-      .prepare(`UPDATE task_history SET target_ref = ? || substr(target_ref, ?) WHERE target_ref LIKE ? ESCAPE '\\'`)
-      .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+      .prepare(
+        `UPDATE task_history SET target_ref = ? || substr(target_ref, length(?) + 1) WHERE target_ref LIKE ? ESCAPE '\\'`,
+      )
+      .run(newBundleId, oldBundleId, `${prefix}%`).changes,
   );
 }

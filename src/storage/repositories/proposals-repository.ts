@@ -622,8 +622,8 @@ export function renameProposalsBundleRef(
   return db.transaction(() => {
     const refs = Number(
       db
-        .prepare(`UPDATE proposals SET ref = ? || substr(ref, ?) WHERE ref LIKE ? ESCAPE '\\'`)
-        .run(newBundleId, oldBundleId.length + 1, `${prefix}%`).changes,
+        .prepare(`UPDATE proposals SET ref = ? || substr(ref, length(?) + 1) WHERE ref LIKE ? ESCAPE '\\'`)
+        .run(newBundleId, oldBundleId, `${prefix}%`).changes,
     );
     const targets = Number(
       db

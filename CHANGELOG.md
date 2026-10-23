@@ -29,6 +29,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   or to a file with no extension, used to fail with "no closed runtime
   interpreter" because the link's target decided the interpreter. This holds
   for a script in the task's bundle and in another bundle.
+- `akm bundle rename` now rewrites the refs of a bundle whose id contains an
+  emoji or other character outside the Basic Multilingual Plane correctly
+  (#1239). It used to cut into the `//` separator, storing `team/workflows/x`
+  for `💼//workflows/x` and stranding the bundle's workflow runs, task history
+  and proposals.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a
