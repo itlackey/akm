@@ -2968,10 +2968,10 @@ bun run release:check
 ./tests/release-check.sh --skip-docker
 ```
 
-- [ ] **[RELEASE]** Full script runs workflow syntax/contract, verify-only lint,
-      typecheck, build/bin/migration checks, package acceptance, setup/install
-      regression, explicit legacy-task migration, Linux standalone scheduler,
-      unit, integration, then Docker.
+- [ ] **[RELEASE]** Full script runs workflow syntax, build/bin/migration
+      checks, package acceptance, the upgrade rehearsal against the packed
+      tarball, then Docker. Lint, typecheck, unit and integration are
+      `bun run check`.
 - [ ] **[RELEASE]** Every gated file reports executed tests. Skip-docker is
       partial unless a separate exact-commit matrix transcript exists.
 - [ ] **[RELEASE]** Cut the changelog BEFORE triggering the workflow: bump
@@ -2982,9 +2982,9 @@ bun run release:check
       skipping the `Unreleased` heading, so shipping an un-renamed section makes
       the released binary's `akm help migrate latest` report the PREVIOUS
       release's notes. Enforced by `tests/integration/workflow-release.test.ts`
-      ("the changelog is cut…"), which `tests/release-check.sh` runs as
-      `run_step "Workflow Release Contract"` — so a missed cut fails the release
-      gate rather than depending on this checklist being read.
+      ("the changelog is cut…"), which CI runs on the release commit; the
+      Release workflow refuses to publish until that CI passed, so a missed cut
+      fails the release rather than depending on this checklist being read.
 - [ ] **[RELEASE]** Official workflow input version equals committed package
       version and targets the tested SHA. Stable uses npm `latest`; prerelease
       uses `next` and GitHub prerelease.

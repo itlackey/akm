@@ -264,17 +264,15 @@ For a local release gate without Docker, use:
 ./tests/release-check.sh --skip-docker
 ```
 
-That script now runs a dedicated install/setup regression suite before the full
-test run so first-run, installer, and wizard failures surface early.
+That script checks the packaged artifact: bin targets, the migrator, package
+acceptance, and the upgrade rehearsal against the packed tarball. Lint, the
+typecheck and the test suites are `bun run check`.
 
-The local script is only one half of release validation. Follow the
-[maintainer release checklist](../../maintainers/release-checklist.md) to
-run **Gated CI** from a `gated-ci/candidate-*` tag targeting the exact candidate
-commit, or manually dispatch it with the full candidate
-SHA after the workflow reaches the default branch. Its real-embedding, Docker,
-and Linux/macOS/Windows scheduler jobs must all succeed, and the release PR
-must link the resulting Actions run. The weekly scheduled run detects
-default-branch drift; it cannot attest a different release-candidate commit.
+The Release workflow runs Gated CI (real embeddings, Docker, and the
+Linux/macOS/Windows schedulers) on the commit it publishes and requires CI to
+have passed on that commit; see the
+[maintainer release checklist](../../maintainers/release-checklist.md). The
+weekly scheduled run of Gated CI detects default-branch drift.
 
 ## Manual QA Authority
 

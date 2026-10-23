@@ -1,135 +1,82 @@
 # Release Checklist
 
-Use this checklist for every release candidate. Local release validation and
-scheduled CI are useful inputs, but neither substitutes for a successful gated
-run of the exact commit that will be published.
+`main` is the stable line (npm `latest`). The next version is developed on a
+release branch, `release/<version>` (npm `next`), which merges to `main` when
+it becomes stable. A fix for stable lands on `main` and is cherry-picked onto
+the release branch when that branch needs it.
 
-## 1. Freeze the candidate
+## 1. Cut the version
 
-1. Finish the version, changelog, migration-note, and release-PR changes. From
-   0.10 the version is a monthly release number, `0.10.YYMMNN` (see step 4):
-   `bun scripts/release-version.ts next` prints the next free one for this
-   month (UTC). Every release, whatever its stage, takes the next number.
-   Commit it in `package.json` and cut the CHANGELOG as
-   `## [0.10.YYMMNN] - YYYY-MM-DD`. A prerelease stage is not committed: it is
-   chosen when the Release workflow runs, and the release's CHANGELOG section
-   covers it.
-2. Record `git rev-parse HEAD`. This is the full 40-character release-candidate SHA.
-3. Run `bun run release:check` locally. If Docker is unavailable, run
-   `./tests/release-check.sh --skip-docker` and rely on the gated Docker job
-   below for the container matrix.
+On the branch you release from (`main` for stable, the release branch for
+next):
 
-Any commit added after this point creates a new candidate and invalidates the
-gated evidence collected for the previous SHA.
+1. Set the version: `npm pkg set version=<version>`. From 0.10,
+   `bun scripts/release-version.ts next` prints the next free one (see
+   [Versions](#versions)).
+2. Cut the changelog: add `## [<version>] - <YYYY-MM-DD>` (UTC date) directly
+   under `## [Unreleased]`, so the unreleased entries become this release's
+   section. CI fails the release commit when the newest section does not name
+   the `package.json` version (`tests/workflow-release.test.ts`).
+3. Add a migration note if the release needs one (see
+   [CONTRIBUTING](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)).
+4. Commit `release: <version>`, push it to the branch, and let CI run on it.
 
-## 2. Collect exact-SHA gated evidence
-
-GitHub only offers a scheduled or manually dispatched workflow after its file
-exists on the default branch. When validating the commit that first introduces
-or changes this workflow, create a unique lightweight candidate tag at the
-recorded SHA:
+## 2. Release akm
 
 ```sh
-candidate_sha="$(git rev-parse HEAD)"
-candidate_short_sha="$(git rev-parse --short=12 HEAD)"
-candidate_version="$(node -p 'require("./package.json").version')"
-candidate_tag="gated-ci/candidate-${candidate_version}-${candidate_short_sha}"
-git tag "$candidate_tag" "$candidate_sha"
-git push origin "refs/tags/$candidate_tag"
+gh workflow run release.yml --ref <branch> -f version=<version> [-f stage=alpha|beta|rc]
 ```
 
-Verify that the tag target is the exact candidate commit recorded in step 1.
-The `gated-ci/candidate-*` trigger runs every gated suite from the workflow in
-that tagged commit. The resolver checks that the checkout equals the immutable
-event SHA, and the final evidence job records both that SHA and the tag ref.
-Never force-move or reuse a candidate tag; a changed commit needs a new tag and
-a new run.
+The Release workflow, on the pushed commit:
 
-After **Gated CI** exists on the default branch, manual dispatch is an
-equivalent exact-SHA path. From the repository's Actions page, choose **Run
-workflow** and supply:
+1. runs Gated CI: semantic search with real embeddings, the Docker install
+   matrix, and the native schedulers on Linux, macOS and Windows;
+2. requires CI to have passed on the same commit (it does not run lint, the
+   typecheck or the test suites again);
+3. runs `tests/release-check.sh --skip-docker`: the packaged artifact's bin
+   targets and migrator, package acceptance, and the upgrade rehearsal against
+   the packed tarball;
+4. builds the package and standalone binaries, publishes to npm (`latest` for
+   a stable version, `next` for a prerelease) and creates the GitHub release.
 
-- `candidate_sha`: the full 40-character SHA recorded above, never a branch or
-  tag name.
+If a job fails on a flake, rerun the failed jobs. If the fix needs a code
+change, commit it and release that commit. npm can take several minutes to show
+a new version: check `npm view akm-cli@<tag> version` before upgrading.
 
-Every suite runs; there is no suite selector.
+## 3. Release the plugins
 
-The manual request rejects abbreviated SHAs and checks out that immutable
-commit for every gate. Wait for all of these stable checks to succeed on either
-candidate path:
+```sh
+gh workflow run release.yml --repo itlackey/akm-plugins --ref <plugins branch> -f akm_version=<published akm version>
+```
 
-- `Gated / Semantic Search`
-- `Gated / Docker Install`
-- `Gated / Native Scheduler / Linux`
-- `Gated / Native Scheduler / macOS`
-- `Gated / Native Scheduler / Windows`
-- `Gated / Release Candidate Evidence`
+Plugins match akm's major.minor and keep their own patch numbers; each plugin
+release's notes name the akm version it requires. A plugin-only fix is released
+the same way, with the akm version already published. The Claude marketplace
+reads the plugins repository's `main`, so stable plugin releases come from
+`main`.
 
-The final evidence job records the requested and resolved SHA, the trigger ref,
-each suite's result, and a run link in the workflow summary. A weekly run is
-drift detection, not release evidence, because it may cover a different
-commit.
+## 4. Upgrade
 
-Manual and tagged candidate runs are cache restore-only. Only a successful
-scheduled run of the workflow on the repository's default branch may save the
-HuggingFace model cache; its key identifies both the embedding model and the
-source/lock inputs. This prevents candidate-controlled workflow code from
-publishing cache entries while still avoiding repeated model downloads.
+`akm upgrade` (stable) or `akm upgrade --next` (prerelease) updates akm and the
+installed plugins.
 
-Copy the successful run URL (for example,
-`https://github.com/itlackey/akm/actions/runs/<run-id>`) and the exact candidate
-SHA into both the release PR and its milestone/parent tracker. Do not publish
-from a candidate whose evidence link names a different SHA, whose final
-evidence job is skipped, or whose run was re-run after the candidate changed.
+## Gated CI on its own
 
-## 3. Gated CI does not run on pull requests
+Gated CI also runs weekly on `main` to catch drift, and on demand from the
+Actions tab on any ref. Only the weekly run saves the Hugging Face model cache.
 
-Gated CI runs on three triggers only: the weekly schedule, an exact-SHA
-`workflow_dispatch`, and a `gated-ci/candidate-*` tag. All three run every
-suite.
-
-There used to be a `Gated / Detect Changed Paths` job that also ran these on
-PRs, selecting suites by regex-matching the diff against path lists. It was
-deleted in 0.9.8: the patterns had gone stale — they still named test files a
-reorganisation had moved or deleted, so it was silently under-selecting suites
-and nobody noticed. A build-policing job that quietly stops policing is worse
-than no job, because its green status is read as coverage.
-
-Nothing about release evidence changes. Step 2 was always the requirement, and
-it never went through the PR path.
-
-The candidate-tag trigger is reserved for release evidence and workflow
-rollout: it always runs `all`, because a tag-push workflow is the path available
-before the workflow file reaches the default branch.
-
-## 4. Publish
-
-After the exact-SHA gated run and local release check are green, trigger the
-Release workflow with the version already committed in `package.json`. Keep the
-candidate SHA and Gated CI run URL in the release record so the published
-artifact's validation can be audited later.
+## Versions
 
 0.10 and later use monthly release numbers, `0.10.YYMMNN`: `YY` the UTC year,
 `MM` the month and `NN` the release in that month (`01` to `99`), two digits
-each (see [`STABILITY.md`](../../STABILITY.md)). The first release of 2026-10 is
-`0.10.261001`. `bun scripts/release-version.ts next` takes `NN` as one above the
-highest release already on npm for this UTC month, with or without a stage
-(`npm view akm-cli versions`), so numbering follows what was published, not
-what was committed. The retired 8-digit daily builds (`0.10.26101001-alpha` to
-`0.10.26101202-alpha`) are not counted.
+each (see [`STABILITY.md`](../../STABILITY.md)). `bun scripts/release-version.ts
+next` takes `NN` as one above the highest release already on npm for this UTC
+month, with or without a stage, and `bun scripts/release-version.ts validate
+<version>` checks one by hand. The retired 8-digit daily builds
+(`0.10.26101001-alpha` to `0.10.26101202-alpha`) are not counted. 0.9 and older
+use `X.Y.Z`.
 
-The workflow has two inputs:
-
-- `version`: the version committed in `package.json`, as before. The workflow
-  rejects a malformed one (`scripts/release-version.ts`, tested in
-  `tests/release-version.test.ts`): two digits each for `YY`, `MM`, `NN`, a
-  month 01 to 12, `NN` 01 to 99; the old 8-digit daily form is rejected. For
-  0.9 and older it is the `X.Y.Z` as before.
-- `stage`: `none` publishes `<version>` to the npm `latest` tag and as a GitHub
-  release. `alpha`, `beta` or `rc` publishes `<version>-<stage>` to `next` as a
-  GitHub prerelease (no `.N`: every release has its own number). There is no
-  promoting one build through stages: the next release, at any stage, commits
-  the next number (`0.10.261001-alpha`, then `0.10.261002-beta`, then
-  `0.10.261003`).
-
-`bun scripts/release-version.ts validate <version>` checks a version by hand.
+The `stage` input is not committed: `none` (the default) publishes `<version>`
+to `latest`; `alpha`, `beta` or `rc` publishes `<version>-<stage>` to `next` as
+a GitHub prerelease. Every release, at any stage, takes the next number; a
+build is not promoted through stages.
