@@ -81,7 +81,8 @@ output and from the search index entirely; the value remains usable via
 `run`.
 
 An env file or secret may be a symlink to a file anywhere else, such as a
-container's `/run/secrets/<name>`: reads follow it. A name still cannot climb
+container's `/run/secrets/<name>`: `akm env`, `akm secret`, `${secret:NAME}`
+substitution and a workflow `env:` binding follow it. A name still cannot climb
 out of `env/` or `secrets/` with `..` or an absolute path. Writes never follow
 a symlink out of the bundle.
 

@@ -7,7 +7,7 @@ import path from "node:path";
 import dotenv from "dotenv";
 import { loadAdapterExecutionSource } from "../../commands/command/execution-source-loader";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { compareCodePoints, isWithin, toPosix } from "../../core/common";
+import { compareCodePoints, isContainedResolvedPath, toPosix } from "../../core/common";
 import type { AkmConfig } from "../../core/config/config-types";
 import { parseEnvRef } from "../../core/env-secret-ref";
 import { UsageError } from "../../core/errors";
@@ -101,7 +101,7 @@ function resolveOwnedAssetCore(
       for (const extension of assetExtensions(type)) {
         const file = path.resolve(directory, `${name}${extension}`);
         if (fs.existsSync(file) && fs.statSync(file).isFile()) {
-          if (!isWithin(file, candidate.root)) {
+          if (!isContainedResolvedPath(file, path.resolve(candidate.root))) {
             throw new UsageError(`${file} resolves outside its owning root.`, "PATH_ESCAPE_VIOLATION");
           }
           return { ...candidate, ref: makeBundleRef(candidate.bundle, conceptId), file };

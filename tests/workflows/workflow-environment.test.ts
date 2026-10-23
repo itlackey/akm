@@ -173,19 +173,48 @@ describe("freezing env refs", () => {
     expect(serialized).not.toContain(sha256(fs.readFileSync(file)));
   });
 
-  test("refuses an env file that resolves outside its bundle, at freeze and at dispatch", () => {
+  test("follows a symlinked env file and secret that point outside the bundle, at freeze and at dispatch", () => {
+    const outer = sandbox("akm-env-symlink");
+    const root = path.join(outer, "bundle");
+    const outsideEnv = write(outer, "outside.env", `TOKEN=${secretToken("deploy-token")}\n`);
+    const outsideSecret = write(outer, "run-secrets/deploy-token", "from-run-secrets");
+    fs.mkdirSync(path.join(root, "env"), { recursive: true });
+    fs.mkdirSync(path.join(root, "secrets"), { recursive: true });
+    fs.symlinkSync(outsideEnv, path.join(root, "env/linked.env"));
+    fs.symlinkSync(outsideSecret, path.join(root, "secrets/deploy-token"));
+
+    const descriptors = freezeRefs(["alpha//env/linked"], { alpha: root });
+    const materialized = materializeFrozenWorkflowEnvironment(descriptors);
+    expect(materialized.values).toEqual({ TOKEN: "from-run-secrets" });
+  });
+
+  test("still refuses a `..` env path or secret name at dispatch", () => {
     const outer = sandbox("akm-env-containment");
     const root = path.join(outer, "bundle");
-    const outside = write(outer, "outside.env", "LEAK=yes\n");
+    write(outer, "outside.env", "LEAK=yes\n");
+    write(outer, "secret-outside", "leaked");
     fs.mkdirSync(path.join(root, "env"), { recursive: true });
-    fs.symlinkSync(outside, path.join(root, "env/escape.env"));
-    expect(() => freezeRefs(["alpha//env/escape"], { alpha: root })).toThrow(/outside its owning root/);
-
-    const file = write(root, "env/prod.env", "LEAK=no\n");
-    const descriptors = freezeRefs(["alpha//env/prod"], { alpha: root });
-    fs.rmSync(file);
-    fs.symlinkSync(outside, file);
-    expect(() => materializeFrozenWorkflowEnvironment(descriptors)).toThrow(/escapes its bundle/);
+    const ref = (requestedPath: string, secretNames: string[]): FrozenWorkflowEnvironmentBinding => ({
+      kind: "env-ref",
+      ref: "alpha//env/prod",
+      owner: {
+        bundle: "alpha",
+        adapter: "akm",
+        requestedRoot: root,
+        requestedPath,
+        relativePath: "env/prod.env",
+      },
+      keys: ["LEAK"],
+      secretNames,
+      precedence: 0,
+    });
+    expect(() => materializeFrozenWorkflowEnvironment([ref(path.join(root, "../outside.env"), [])])).toThrow(
+      /escapes its bundle/,
+    );
+    write(root, "env/prod.env", `LEAK=${secretToken("../../secret-outside")}\n`);
+    expect(() =>
+      materializeFrozenWorkflowEnvironment([ref(path.join(root, "env/prod.env"), ["../../secret-outside"])]),
+    ).toThrow(/escapes its bundle/);
   });
 
   test("keeps authored ref order as precedence and drops a repeated ref", () => {

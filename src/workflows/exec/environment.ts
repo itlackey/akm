@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { assetPathForName } from "../../core/asset/asset-placement";
-import { compareCodePoints, isWithin } from "../../core/common";
+import { compareCodePoints, isContainedResolvedPath } from "../../core/common";
 import { NotFoundError, UsageError } from "../../core/errors";
 import type { FrozenWorkflowEnvironmentBinding, FrozenWorkflowEnvironmentOwner } from "../plan";
 
@@ -92,14 +92,16 @@ export function materializeFrozenWorkflowEnvironment(
 }
 
 function readEnvFile(owner: FrozenWorkflowEnvironmentOwner): Uint8Array {
-  if (!isWithin(owner.requestedPath, owner.requestedRoot)) invalid(`env file ${owner.relativePath} escapes its bundle`);
+  if (!isContainedResolvedPath(path.resolve(owner.requestedPath), path.resolve(owner.requestedRoot)))
+    invalid(`env file ${owner.relativePath} escapes its bundle`);
   return fs.readFileSync(owner.requestedPath);
 }
 
 function readSecret(owner: FrozenWorkflowEnvironmentOwner, name: string): Uint8Array | undefined {
   const secretsRoot = path.join(owner.requestedRoot, "secrets");
   const secretPath = assetPathForName("secret", secretsRoot, name);
-  if (!isWithin(secretPath, secretsRoot)) invalid(`secret name ${name} escapes its bundle`);
+  if (!isContainedResolvedPath(path.resolve(secretPath), path.resolve(secretsRoot)))
+    invalid(`secret name ${name} escapes its bundle`);
   try {
     return fs.readFileSync(secretPath);
   } catch (cause) {
