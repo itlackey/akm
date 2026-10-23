@@ -19,7 +19,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { assetPathForName } from "../../core/asset/asset-placement";
-import { isWithin } from "../../core/common";
+import { isContainedResolvedPath } from "../../core/common";
 import { makeEnvRef, makeSecretRef, resolveEnvPath } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -82,8 +82,9 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const secretsRoot = path.join(source.path, "secrets");
   const resolveSecret = (secretName: string): string | undefined => {
     const secretPath = assetPathForName("secret", secretsRoot, secretName);
-    // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
-    if (!isWithin(secretPath, secretsRoot)) {
+    // Name grammar: the token's name must not climb out of secrets/. Lexical
+    // only, so a secret that is a symlink to a file elsewhere is read.
+    if (!isContainedResolvedPath(path.resolve(secretPath), path.resolve(secretsRoot))) {
       throw new UsageError(`Secret name "${secretName}" escapes the secrets directory.`);
     }
     if (!fs.existsSync(secretPath)) return undefined;

@@ -21,7 +21,7 @@ import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "
 import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
 import type { AssetRef } from "./asset/resolve-ref";
 import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
-import { isWithin } from "./common";
+import { isContainedResolvedPath, isWithin } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
@@ -140,11 +140,10 @@ export function resolveEnvPath(ref: string): {
 
   const envRoot = path.join(source.path, "env");
   const envPath = assetPathForName("env", envRoot, parsed.name);
-  // Defense-in-depth: ensure the resolved path stays inside the env directory.
-  // validateName already rejects traversal patterns like "../../foo", but an
-  // absolute-path override or symlink-based attack could still escape without
-  // this second check.
-  if (!isWithin(envPath, envRoot)) {
+  // Name grammar: the name must not climb out of env/ (`..` or an absolute
+  // name). Lexical only: an env file that is a symlink to a file elsewhere
+  // resolves, because installing a bundle is the trust decision.
+  if (!isContainedResolvedPath(path.resolve(envPath), path.resolve(envRoot))) {
     throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
   }
 
@@ -191,8 +190,8 @@ export function resolveSecretPath(
   const source = findEnvSource(parsed.origin, "secret", parsed.name);
   const typeRoot = path.join(source.path, "secrets");
   const absPath = assetPathForName("secret", typeRoot, parsed.name);
-  // Defense-in-depth: ensure the resolved path stays inside the secrets dir.
-  if (!isWithin(absPath, typeRoot)) {
+  // Name grammar only (see resolveEnvPath): a symlinked secret resolves.
+  if (!isContainedResolvedPath(path.resolve(absPath), path.resolve(typeRoot))) {
     throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
   }
   return { name: parsed.name, absPath, source };

@@ -80,6 +80,11 @@ secret can carry a sibling `.sensitive` marker that excludes it from `list`
 output and from the search index entirely; the value remains usable via
 `run`.
 
+An env file or secret may be a symlink to a file anywhere else, such as a
+container's `/run/secrets/<name>`: reads follow it. A name still cannot climb
+out of `env/` or `secrets/` with `..` or an absolute path. Writes never follow
+a symlink out of the bundle.
+
 ## Write-target resolution
 
 Env/secret **mutations** (`env create`, `env remove`, `secret set`) choose

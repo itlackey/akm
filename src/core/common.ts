@@ -435,8 +435,12 @@ export async function isWithinAsync(candidate: string, root: string): Promise<bo
   return isContainedResolvedPath(await safeRealpathAsync(candidate), await safeRealpathAsync(root));
 }
 
-/** The containment comparison shared by {@link isWithin} and {@link isWithinAsync}. */
-function isContainedResolvedPath(resolvedCandidate: string, resolvedRoot: string): boolean {
+/**
+ * The containment comparison shared by {@link isWithin} and {@link isWithinAsync}.
+ * Called directly with `path.resolve`d arguments it is a lexical check: it
+ * refuses `..` and absolute names without following symlinks.
+ */
+export function isContainedResolvedPath(resolvedCandidate: string, resolvedRoot: string): boolean {
   const rel = path.relative(
     normalizeFsPathForComparison(resolvedRoot),
     normalizeFsPathForComparison(resolvedCandidate),

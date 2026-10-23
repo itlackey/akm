@@ -8,9 +8,10 @@
  *   Fix A — validateName (asset-ref.ts): rejects traversal patterns such as
  *            "../../foo", "foo/../../bar", and ".." during ref parsing.
  *
- *   Fix B — isWithin guard in resolveEnvironmentPath (cli.ts): even if the name
- *            somehow survived validateName, the resolved absolute path is
- *            asserted to stay inside <stash>/env/ before any read/write.
+ *   Fix B — the lexical name check in resolveEnvPath (core/env-secret-ref.ts):
+ *            even if the name somehow survived validateName, the resolved
+ *            path must stay inside <stash>/env/. It does not follow symlinks:
+ *            an env file that is a symlink elsewhere is a legitimate setup.
  *
  * The traversal-rejection cases throw before any I/O, so they run in-process.
  */

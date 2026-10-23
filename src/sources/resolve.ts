@@ -12,7 +12,7 @@ import {
   stashDirFor,
 } from "../core/asset/asset-placement";
 import { conceptIdFromTypeName } from "../core/asset/resolve-ref";
-import { hasErrnoCode, isWithin } from "../core/common";
+import { hasErrnoCode, isContainedResolvedPath } from "../core/common";
 import { NotFoundError, UsageError } from "../core/errors";
 import { walkStashFlat } from "../indexer/walk/walker";
 
@@ -38,18 +38,18 @@ export async function resolveAssetPath(stashDir: string, type: string, name: str
 function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name: string): string {
   const root = path.join(stashDir, typeDir);
   const target = assetPathForName(type, root, name);
-  const resolvedRoot = resolveAndValidateTypeRoot(root, type, name);
+  resolveAndValidateTypeRoot(root, type, name);
   const resolvedTarget = path.resolve(target);
-  if (!isWithin(resolvedTarget, resolvedRoot)) {
+  // Name grammar: the name must not climb out of the type directory (`..` or
+  // an absolute name). Lexical only: an asset that is a symlink to a file
+  // elsewhere resolves, because installing a bundle is the trust decision.
+  if (!isContainedResolvedPath(resolvedTarget, path.resolve(root))) {
     throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
   }
   if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isFile()) {
     throw new NotFoundError(`Stash asset not found for ref: ${conceptIdFromTypeName(type, name)}`, "ASSET_NOT_FOUND");
   }
   const realTarget = fs.realpathSync(resolvedTarget);
-  if (!isWithin(realTarget, resolvedRoot)) {
-    throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
-  }
   if (!isRelevantAssetFile(type, path.basename(resolvedTarget))) {
     if (type === "script") {
       throw new NotFoundError(
@@ -61,7 +61,7 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
   return realTarget;
 }
 
-function resolveAndValidateTypeRoot(root: string, type: string, name: string): string {
+function resolveAndValidateTypeRoot(root: string, type: string, name: string): void {
   const rootStat = readTypeRootStat(root, type, name);
   if (!rootStat.isDirectory()) {
     throw new NotFoundError(
@@ -71,7 +71,6 @@ function resolveAndValidateTypeRoot(root: string, type: string, name: string): s
       "Run `akm bundle list` to see your configured sources and verify the source path exists.",
     );
   }
-  return fs.realpathSync(root);
 }
 
 function readTypeRootStat(root: string, type: string, name: string): fs.Stats {
@@ -99,12 +98,7 @@ async function resolveByCanonicalName(stashDir: string, type: string, name: stri
     const canonicalName = deriveCanonicalAssetNameFromStashRoot(type, stashDir, ctx.absPath);
     if (canonicalName !== normalizedName) continue;
 
-    const realTarget = fs.realpathSync(ctx.absPath);
-    const resolvedRoot = fs.realpathSync(stashDir);
-    if (!isWithin(realTarget, resolvedRoot)) {
-      throw new UsageError("Ref resolves outside the stash root.", "PATH_ESCAPE_VIOLATION");
-    }
-    return realTarget;
+    return fs.realpathSync(ctx.absPath);
   }
 
   return undefined;

@@ -20,6 +20,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `--allow-dangerous-env-keys` on `bundle add`, `bundle update` and `env run` is
   now a deprecated no-op, accepted through 0.10 so existing scripts keep working.
   It is an unknown flag from 0.11.
+- Reads follow symlinks (#1237). An env file, a secret or another asset that is
+  a symlink to a file outside its bundle directory now resolves instead of
+  failing with "escapes the secrets directory" or "Ref resolves outside the
+  stash root", so a secret can point at a container's `/run/secrets/<name>`.
+  Names with `..` segments or absolute names are still refused, and writes still
+  never follow a symlink out of the bundle.
 
 ### Removed
 
