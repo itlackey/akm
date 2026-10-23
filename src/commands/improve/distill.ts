@@ -1346,8 +1346,6 @@ async function defaultLookup(ref: string, stashDir: string): Promise<string | nu
   return resolveAssetPath(ref, {
     stashDir,
     mode: "disk-only",
-    directoryIndexNames: ["SKILL.md"],
-    preserveDirectNameFallback: true,
     honorOrigin: false,
   });
 }
