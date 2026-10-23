@@ -1062,7 +1062,11 @@ When given a workflow ref, resolves to the most-recently-updated run for that
 ref on this host. `--all-scopes` is a deprecated no-op. `--units` adds per-unit rows
 (unit id, status, failure reason, and any result/error diagnostic text) from
 the run journal — diagnostics only; step evidence stays deterministic and is
-unaffected.
+unaffected. A failed unit's row also carries an `orchestration` object (in
+text, `argv:`, `cwd:`, `env:` and `ref:` lines): the step's argv, cwd and env
+refs from the frozen plan, and the bundle-qualified ref each `${ref}` token,
+env ref and child workflow resolves to right now (`not found` when no bundle
+owns it).
 
 #### workflow plan
 
@@ -1084,8 +1088,7 @@ a run, or to inspect a workflow's shape without side effects.
 
 Two output modes:
 
-- **No `--format`** (the default for this command only — every other verb
-  defaults to JSON): a human-readable text summary.
+- **`--format text`**: a human-readable text summary.
 - **`--format json`**: the full envelope — `ok`, `ref`, `title`,
   `sourceFormat`, `sourcePath`, `irVersion`, `planHash`, `published` (always
   `false`, so a consumer can never mistake this for a run envelope),
@@ -1116,6 +1119,15 @@ read set:
   commands/notify.md
   workflows/release-checklist.md
 ```
+
+Each step also lists what it will run and what that names, from the same
+projection `akm show` prints: `argv:` (JSON, so word boundaries survive),
+`cwd:`, `env:` and one `ref:` line per `${ref}` token in the argv or cwd, per
+`env:` entry and per child `workflow:`, in the form `ref: ${team//scripts/x.ts}
+-> team//scripts/x.ts (argv)`. In JSON this is each step's `orchestration`
+object, with `refs[]` (`ref`, `resolved`, `in`). A ref no bundle owns fails the
+plan with an error that names it. The resolved ref is a name, never a value or
+a path.
 
 **Secret-free by construction.** Neither mode ever prints a resolved
 reference value (references resolve at pre-attempt, not here), request

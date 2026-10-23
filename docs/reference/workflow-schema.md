@@ -846,6 +846,7 @@ environment is simply absent from the child):
 | Windows essentials | `SystemRoot`, `SystemDrive`, `WINDIR`, `COMSPEC`, `PATHEXT` | Windows **process creation itself** fails with an empty environment; `PATHEXT` is what makes `bun.exe`/`bun.cmd` resolvable at all |
 | Windows home/config | `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles` | the Windows analogues of `HOME` and the machine-wide install roots toolchain shims resolve against |
 | akm provenance | `AKM_EVENT_SOURCE` | a command that calls `akm` records machine traffic, not user demand |
+| akm locations | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | a step that runs `akm` finds the same bundle, config, data, cache and state as the akm that started it, with no `pass_env:` |
 
 `PATH` is additionally supplemented with well-known user binary directories
 when akm is running in a scheduler context (cron/launchd/Task Scheduler) that
