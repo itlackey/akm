@@ -418,7 +418,7 @@ describe("env parity", () => {
     // create via Bun (in-process)
     const bunCreate = await boundedWithEnv(
       { AKM_BUNDLE_DIR: stashDir, ...nodeEnv, AKM_OUTPUT: "json", NO_COLOR: "1" },
-      () => runCliCapture(["env", "create", "node-compat-parity"]),
+      () => runCliCapture(["env", "create", "env/node-compat-parity"]),
     );
     expect(bunCreate.code).toBe(0);
 
@@ -429,7 +429,7 @@ describe("env parity", () => {
     expect(nodeList.stdout).toContain("node-compat-parity");
 
     // remove via Node
-    const nodeRemove = nodeRun(["env", "remove", "node-compat-parity", "--yes"], nodeEnv);
+    const nodeRemove = nodeRun(["env", "remove", "env/node-compat-parity", "--yes"], nodeEnv);
     assertNoBoundaryLeak(nodeRemove, "env remove");
     expect(nodeRemove.status).toBe(0);
 
