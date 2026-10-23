@@ -133,9 +133,18 @@ export function resolveRefOwner(ref: string): { absPath: string; type: string | 
   );
 }
 
-/** Is `bundle` the id of an installed bundle in the active source set? The predicate `${ref}` substitution uses to tell a qualified ref from shell text. */
+/**
+ * Is `bundle` the id of an installed bundle in the active source set? The predicate `${ref}` substitution uses to
+ * tell a qualified ref from shell text. A source set that cannot be read (for example `AKM_BUNDLE_DIR` naming a
+ * disabled bundle) answers "not installed", so shell text never raises a config error; a real ref then fails where
+ * it is resolved, with that error.
+ */
 export function isInstalledBundle(bundle: string): boolean {
-  return resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig())).length > 0;
+  try {
+    return resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig())).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
