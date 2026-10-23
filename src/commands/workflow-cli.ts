@@ -3,8 +3,9 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 /**
- * `akm workflow` command family. `run` is the canonical start/resume/execute
- * surface; the former public `start`, `next`, and `complete` lifecycle is gone.
+ * `akm workflow` command family. `run` is the canonical start/execute surface
+ * (a ref starts a new run, a run id drives that run) and `resume` reopens a
+ * run; the former public `start`, `next`, and `complete` lifecycle is gone.
  * `create --print` emits Markdown, the only workflow source format. Validate
  * with `akm lint --type workflows`.
  */
@@ -15,7 +16,6 @@ import { armAbortDeadline } from "../core/abort-deadline";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "../core/asset/asset-create";
 import { NotFoundError, TransientError, type TransientErrorCode, UsageError } from "../core/errors";
 import { warn } from "../core/warn";
-import { akmIndex } from "../indexer/indexer";
 import { assertWorkflowMarkdownName, createWorkflowAsset, getWorkflowTemplate } from "../workflows/authoring/authoring";
 import type { WorkflowParameterFlag } from "../workflows/ir/params";
 import { WORKFLOW_MAX_TIMEOUT_MS } from "../workflows/resource-limits";
@@ -31,7 +31,7 @@ import { akmWorkflowPlan } from "./workflow/plan";
 const workflowStatusCommand = defineJsonCommand({
   meta: {
     name: "status",
-    description: "Show full workflow run state for review or resume; workflow refs resolve within the current scope",
+    description: "Show full workflow run state for review or resume; a workflow ref shows its most recent run",
   },
   args: {
     target: { type: "positional", description: "Workflow run id or workflow ref (workflows/<name>)", required: true },
@@ -42,17 +42,18 @@ const workflowStatusCommand = defineJsonCommand({
         "diagnostic text). Diagnostics only — step evidence stays deterministic and is unaffected.",
       default: false,
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
     "all-scopes": {
       type: "boolean",
       description:
-        "When resolving a workflow ref (not a run id), search every scope instead of only the current one (#942).",
+        "Deprecated, no effect: runs are host-wide, not scoped to a directory. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
   async run({ args }) {
     const target = args.target;
     const includeUnits = args.units === true;
-    const allScopes = args["all-scopes"] === true;
     const resolvedRunId = await resolveWorkflowRunTarget(target);
     if (resolvedRunId !== undefined) {
       const result = await getWorkflowStatus(resolvedRunId, { includeUnits });
@@ -60,9 +61,8 @@ const workflowStatusCommand = defineJsonCommand({
       return;
     }
     let runs: Awaited<ReturnType<typeof listWorkflowRuns>>["runs"];
-    let scopeKey: Awaited<ReturnType<typeof listWorkflowRuns>>["scopeKey"];
     try {
-      ({ runs, scopeKey } = await listWorkflowRuns({ workflowRef: target, allScopes }));
+      ({ runs } = await listWorkflowRuns({ workflowRef: target }));
     } catch (error) {
       if (!target.includes(":") && !target.includes("/")) {
         throw new NotFoundError(`Workflow run "${target}" not found.`, "WORKFLOW_NOT_FOUND");
@@ -71,18 +71,6 @@ const workflowStatusCommand = defineJsonCommand({
     }
     const mostRecent = runs[0];
     if (!mostRecent) {
-      // #942: name the scope actually searched and point at `--all-scopes`
-      // rather than a bare "not found" — the ref-fallthrough lookup is
-      // scope-local by default, so "no runs" here means "none in THIS
-      // scope", not "none anywhere". Already searching every scope (or no
-      // real scope was filtered on) has nothing more specific to suggest.
-      if (!allScopes && scopeKey !== null) {
-        throw new NotFoundError(
-          `No workflow runs found for ${target} in scope ${scopeKey}.`,
-          "WORKFLOW_NOT_FOUND",
-          `Run 'akm workflow status ${target} --all-scopes' to search every scope.`,
-        );
-      }
       throw new NotFoundError(`No workflow runs found for ${target}`, "WORKFLOW_NOT_FOUND");
     }
     const result = await getWorkflowStatus(mostRecent.id, { includeUnits });
@@ -93,10 +81,7 @@ const workflowStatusCommand = defineJsonCommand({
 const workflowListCommand = defineJsonCommand({
   meta: {
     name: "list",
-    description:
-      "List workflow runs in the current working scope. A scheduled task runs from the scheduler's cwd, so its runs " +
-      "sit in another scope: get the run id from `akm task history <task-id> --limit 1` (detail.runId) and pass it " +
-      "to `akm workflow status <run-id>`, which works from any directory, or pass --all-scopes.",
+    description: "List workflow runs on this host, most recently updated first",
   },
   args: {
     ref: { type: "string", description: "Filter to one workflow ref" },
@@ -106,12 +91,12 @@ const workflowListCommand = defineJsonCommand({
       description: "Also include child workflow runs (hidden by default, P3b)",
       default: false,
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Runs are no longer scoped to a directory.
     "all-scopes": {
       type: "boolean",
       description:
-        "Search every scope instead of only the current one (#942). The envelope's top-level `scopeKey` is " +
-        "`null` with this flag, otherwise the scope that was searched — so an empty `runs: []` is never " +
-        'indistinguishable from "nothing anywhere".',
+        "Deprecated, no effect: runs are host-wide, not scoped to a directory. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
@@ -120,7 +105,6 @@ const workflowListCommand = defineJsonCommand({
       workflowRef: args.ref,
       activeOnly: args.active,
       includeChildren: args.children,
-      allScopes: args["all-scopes"],
     });
     output("workflow-list", result);
   },
@@ -182,12 +166,6 @@ const workflowCreateCommand = defineJsonCommand({
       from: args.from,
       force: args.force,
     });
-    // Index the newly-written workflow so `akm workflow run` can resolve
-    // a workflowEntryId without requiring an explicit `akm index` call
-    // first. Uses the same incremental index path that `akm add` uses.
-    // `result.bundleDir` — the indexer's own `IndexOptions.stashDir` field
-    // name is unchanged (indexer vocabulary is out of scope, P4 row B-50).
-    await akmIndex({ stashDir: result.bundleDir });
     output("workflow-create", { ok: true, ...result });
   },
 });
@@ -211,31 +189,36 @@ const workflowRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      "Start or resume a workflow and execute it through completion, failure, a verification gate, or an explicit limit",
+      "Start a new run of a workflow ref, or drive an existing run by id, through completion, failure, a verification gate, or an explicit limit",
   },
   args: {
-    target: { type: "positional", description: "Workflow run id or workflow ref (auto-starts a run)", required: true },
+    target: {
+      type: "positional",
+      description: "Workflow ref (starts a new run) or workflow run id (drives that run)",
+      required: true,
+    },
     "max-steps": { type: "string", description: "Stop after executing this many steps" },
     "max-retries": { type: "string", description: "Retry a failed workflow step this many additional times" },
     timeout: { type: "string", description: "Whole-run timeout: N, Nms, Ns, or Nm (bare N is milliseconds)" },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. A workflow ref always starts a new run now.
     new: {
       type: "boolean",
       description:
-        "Start a fresh run even if one is already active for this ref, leaving the existing run untouched " +
-        "(never abandons it). A workflow ref only — passing a run id with --new is a usage error.",
+        "Deprecated, no effect: a workflow ref always starts a new run. Accepted through 0.10 for existing scripts.",
       default: false,
     },
     "skip-if-locked": {
       type: "boolean",
       description:
-        "If another akm process is already driving this run, or state.db is busy with another " +
-        "writer, skip gracefully (exit 0) instead of failing (exit 75). Use for high-frequency scheduled runs " +
-        "so they don't pile up failures while a longer-running invocation is in progress.",
+        "If another akm process is already driving this run (or, for a workflow ref, an active run of it), or " +
+        "state.db is busy with another writer, skip gracefully (exit 0) instead of failing (exit 75). Use for " +
+        "high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress.",
       default: false,
     },
   },
   async run({ args, rawArgs }) {
-    const { runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
+    const { findLiveLockedRunOfRef, runWorkflowSteps } = await import("../workflows/exec/run-workflow.js");
     const parameterFlags = parseWorkflowParameterFlags(rawArgs, args.target);
     const maxSteps = parseIntegerFlag(getStringArg(args, "max-steps"), "--max-steps", 1);
     const maxRetries = parseIntegerFlag(getStringArg(args, "max-retries"), "--max-retries", 0);
@@ -257,15 +240,28 @@ const workflowRunCommand = defineJsonCommand({
       timeoutMs,
       reason: `Workflow run timed out after ${timeoutMs}ms.`,
     });
+    const skip = (reason: "lock-held" | "state-db-contended", message: string) => {
+      warn(`[workflow] ${message} skipping (--skip-if-locked)`);
+      output("workflow-run", { ok: true, target: args.target, skipped: { reason, message } });
+    };
     try {
       let result: Awaited<ReturnType<typeof runWorkflowSteps>>;
       try {
+        // #1239: a ref start never conflicts with another run of the ref, so
+        // the one extra condition is an active run of it a live process is driving.
+        const held = skipIfLocked ? await findLiveLockedRunOfRef(args.target) : undefined;
+        if (held) {
+          skip(
+            "lock-held",
+            `Workflow run ${held.runId} of ${args.target} is already being driven by another akm process (pid ${held.holder}).`,
+          );
+          return;
+        }
         result = await runWorkflowSteps({
           target: args.target,
           parameterFlags,
           ...(maxSteps !== undefined ? { maxSteps } : {}),
           ...(maxRetries !== undefined ? { maxRetries } : {}),
-          newRun: args.new,
           signal: controller.signal,
         });
       } catch (err) {
@@ -275,9 +271,7 @@ const workflowRunCommand = defineJsonCommand({
         // off UsageError) — a bad flag or malformed input still fails loudly
         // even with the flag set.
         if (skipIfLocked && err instanceof TransientError && WORKFLOW_RUN_SKIP_REASONS[err.code]) {
-          const reason = WORKFLOW_RUN_SKIP_REASONS[err.code];
-          warn(`[workflow] ${err.message} skipping (--skip-if-locked)`);
-          output("workflow-run", { ok: true, target: args.target, skipped: { reason, message: err.message } });
+          skip(WORKFLOW_RUN_SKIP_REASONS[err.code] as "lock-held" | "state-db-contended", err.message);
           return;
         }
         throw err;

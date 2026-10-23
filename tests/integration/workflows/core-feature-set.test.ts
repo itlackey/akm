@@ -453,14 +453,14 @@ describe("core feature set: a scheduled task that shells out to `akm workflow ru
     expect(result.stderr).not.toContain("UNKNOWN_COMMAND");
     expect(result.code).toBe(0);
 
-    // The task runs in its own working directory, so its run lives in another scope.
-    const { runs } = await listWorkflowRuns({ allScopes: true });
+    // The task runs in its own working directory; runs are host-wide, so this process sees it.
+    const { runs } = await listWorkflowRuns();
     const exec = runs.filter((run) => run.workflowRef.includes("exec-core"));
     expect(exec).toHaveLength(1);
     expect(exec[0]?.status).toBe("completed");
     expect(exec[0]?.params).toMatchObject({ topic: "gadgets", limit: 4 });
 
-    const status = await runCliCapture(["workflow", "status", exec[0]?.id ?? "", "--all-scopes"]);
+    const status = await runCliCapture(["workflow", "status", exec[0]?.id ?? ""]);
     expect(status.stdout).toContain("gadgets:4");
   }, 120_000);
 

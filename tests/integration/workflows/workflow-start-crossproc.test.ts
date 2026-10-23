@@ -7,7 +7,6 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { getCurrentWorkflowScopeKey } from "../../../src/workflows/authoring/scope-key";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
 import { bunAvailable, pollUntil } from "../_helpers/workflow-crossproc";
 
@@ -31,10 +30,7 @@ function writeWorkflow(name: string): void {
   );
 }
 
-async function runPair(
-  name: string,
-  force: boolean,
-): Promise<Array<{ ok: boolean; runId?: string; error?: string; code?: string }>> {
+async function runPair(name: string): Promise<Array<{ ok: boolean; runId?: string; error?: string; code?: string }>> {
   await withWorkflowRunsRepo(() => undefined);
   const markerDir = path.join(storage.root, `start-${name}`);
   fs.mkdirSync(markerDir, { recursive: true });
@@ -49,7 +45,6 @@ async function runPair(
         WORKFLOW_START_RELEASE: release,
         WORKFLOW_START_RESULT: result,
         WORKFLOW_START_TARGET: `workflows/${name}`,
-        WORKFLOW_START_FORCE: force ? "1" : "0",
         WORKFLOW_START_STASH_DIR: storage.stashDir,
         WORKFLOW_START_CONFIG_HOME: storage.configDir,
         WORKFLOW_START_DATA_HOME: storage.dataDir,
@@ -90,27 +85,13 @@ async function runPair(
   return children.map(({ result }) => JSON.parse(fs.readFileSync(result, "utf8")));
 }
 
-describe.skipIf(!BUN)("cross-process workflow start admission", () => {
-  test("one non-force start wins atomically, while force allows both", async () => {
-    writeWorkflow("non-force-race");
-    const nonForce = await runPair("non-force-race", false);
-    expect(nonForce.filter((result) => result.ok)).toHaveLength(1);
-    expect(nonForce.filter((result) => !result.ok)).toEqual([
-      expect.objectContaining({ ok: false, code: "RESOURCE_ALREADY_EXISTS" }),
-    ]);
+describe.skipIf(!BUN)("cross-process workflow start", () => {
+  test("two concurrent starts of one ref both succeed and leave two runs", async () => {
+    writeWorkflow("concurrent-start");
+    const results = await runPair("concurrent-start");
+    expect(results.filter((result) => result.ok)).toHaveLength(2);
     expect(
-      await withWorkflowRunsRepo((repo) =>
-        repo.listRuns({ scopeKey: getCurrentWorkflowScopeKey(), workflowRef: "stash//workflows/non-force-race" }),
-      ),
-    ).toHaveLength(1);
-
-    writeWorkflow("force-race");
-    const forced = await runPair("force-race", true);
-    expect(forced.filter((result) => result.ok)).toHaveLength(2);
-    expect(
-      await withWorkflowRunsRepo((repo) =>
-        repo.listRuns({ scopeKey: getCurrentWorkflowScopeKey(), workflowRef: "stash//workflows/force-race" }),
-      ),
+      await withWorkflowRunsRepo((repo) => repo.listRuns({ workflowRef: "stash//workflows/concurrent-start" })),
     ).toHaveLength(2);
   }, 30_000);
 });

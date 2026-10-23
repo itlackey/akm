@@ -217,7 +217,6 @@ function gatedChildPlan(): WorkflowPlan {
 interface SeededParent {
   runId: string;
   stepId: string;
-  scopeKey: string;
   agentHarness: string | null;
   agentSessionId: string | null;
 }
@@ -227,7 +226,6 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
   const parent: SeededParent = {
     runId: overrides.runId ?? randomUUID(),
     stepId: overrides.stepId ?? "compose",
-    scopeKey: overrides.scopeKey ?? "dir:v1:parent",
     agentHarness: overrides.agentHarness ?? "claude-code",
     agentSessionId: overrides.agentSessionId ?? "session-123",
   };
@@ -236,8 +234,6 @@ async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<See
     repo.insertRun({
       id: parent.runId,
       workflowRef: "workflows/parent",
-      scopeKey: parent.scopeKey,
-      workflowEntryId: null,
       workflowTitle: "Parent",
       paramsJson: "{}",
       currentStepId: parent.stepId,
@@ -379,7 +375,6 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
 
   test("A-08: the published child row's identity fields match the spec's exact table", async () => {
     const parent = await seedParentRun({
-      scopeKey: "dir:v1:distinctive-scope",
       agentHarness: "claude-code",
       agentSessionId: "session-xyz",
     });
@@ -392,7 +387,7 @@ describe("A-07, A-08, A-09 — first publication of a child run", () => {
     expect(child).toBeDefined();
     expect(child?.parent_run_id).toBe(parent.runId);
     expect(child?.parent_unit_id).toBe(parentUnitId(parent.stepId));
-    expect(child?.scope_key).toBe(parent.scopeKey);
+    expect(child?.scope_key).toBeNull();
     expect(child?.plan_ir_version).toBe(6);
     // B-N14: a child run's workflow_entry_id is NULL — the index lookup
     // publishChildWorkflowRun has no access to.
@@ -848,8 +843,6 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parent.scopeKey,
-          workflowEntryId: null,
           workflowTitle: childPlan.title,
           paramsJson: "{}",
           currentStepId: childPlan.steps[0]?.stepId ?? null,
@@ -899,8 +892,6 @@ describe("A-22, A-23 — a child already blocked/failed from a previous attempt 
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parent.scopeKey,
-          workflowEntryId: null,
           workflowTitle: childPlan.title,
           paramsJson: "{}",
           currentStepId: childPlan.steps[0]?.stepId ?? null,
@@ -945,8 +936,6 @@ describe("A-27 — a child whose run lock is already held busies the parent unit
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parent.scopeKey,
-          workflowEntryId: null,
           workflowTitle: childPlan.title,
           paramsJson: "{}",
           currentStepId: childPlan.steps[0]?.stepId ?? null,

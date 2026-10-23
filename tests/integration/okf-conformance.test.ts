@@ -713,7 +713,7 @@ describe("OKF first-class conformance", () => {
     const started = await getNextWorkflowStep(created.ref);
     expect(started.run.workflowRef).toBe("native//authored");
     expect((await listWorkflowRuns({ workflowRef: created.ref })).runs).toHaveLength(1);
-    await expect(getNextWorkflowStep("native//authored")).resolves.toMatchObject({
+    await expect(getNextWorkflowStep(started.run.id)).resolves.toMatchObject({
       run: { id: started.run.id, workflowRef: "native//authored" },
     });
     expect(
@@ -748,7 +748,7 @@ describe("OKF first-class conformance", () => {
       bundles: { local: { path: storage.stashDir, writable: true } },
     });
     resetConfigCache();
-    expect((await getNextWorkflowStep("native//authored")).run.workflowRef).toBe("native//authored");
+    // The bundle is gone from config: its recorded runs stay listable by their stored ref.
     expect((await listWorkflowRuns({ workflowRef: "native//authored" })).runs).toHaveLength(1);
     // Ref -> run-id resolution, asserted through the surviving surface: the
     // CLI resolves the ref itself and must land on the run we started.

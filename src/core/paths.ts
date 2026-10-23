@@ -360,12 +360,7 @@ export function getStateDir(env: NodeJS.ProcessEnv = process.env, platform = pro
  * its `stash_dir` column — so two stashes on one machine never collide.
  *
  * Reuses {@link shortHash} (bundle-id.ts) rather than growing a second
- * sha256-truncated-hex helper. (The other existing option,
- * `getCurrentWorkflowScopeKey`'s `dir:v1:<sha256>` in
- * `src/workflows/authoring/scope-key.ts`, is a state.db column value for a
- * different subsystem — full untruncated hex plus a `dir:v1:` prefix, which
- * is neither filesystem-safe as a directory segment on Windows (`:`) nor
- * short, so it is not a fit here.) `shortHash` trims to 8 hex chars (32
+ * sha256-truncated-hex helper. `shortHash` trims to 8 hex chars (32
  * bits) — fine at its original call site because a collision only ever
  * shortens a batch-unique slug suffix that a retry loop immediately
  * re-disambiguates. Here there is no such retry loop, but a machine

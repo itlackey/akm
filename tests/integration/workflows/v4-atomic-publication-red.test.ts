@@ -120,12 +120,9 @@ function publicationInput(plan: WorkflowPlan): PublishWorkflowRunV4Input {
     sequenceIndex: step.sequenceIndex,
   }));
   return {
-    workflowRefs: ["fixture//workflows/atomic-publication"],
     run: {
       id: RUN_ID,
       workflowRef: "fixture//workflows/atomic-publication",
-      scopeKey: "dir:v1:atomic-publication",
-      workflowEntryId: null,
       workflowTitle: "atomic publication",
       paramsJson: "{}",
       currentStepId: "prepare",

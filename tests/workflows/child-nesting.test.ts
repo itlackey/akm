@@ -161,22 +161,18 @@ function fanOutChildPlan(ownMaxConcurrency: number): WorkflowPlan {
 interface SeededParent {
   runId: string;
   stepId: string;
-  scopeKey: string;
 }
 
 async function seedParentRun(overrides: Partial<SeededParent> = {}): Promise<SeededParent> {
   const parent: SeededParent = {
     runId: overrides.runId ?? randomUUID(),
     stepId: overrides.stepId ?? "compose",
-    scopeKey: overrides.scopeKey ?? "dir:v1:parent",
   };
   const now = new Date().toISOString();
   await withWorkflowRunsRepo(async (repo) => {
     repo.insertRun({
       id: parent.runId,
       workflowRef: "workflows/parent",
-      scopeKey: parent.scopeKey,
-      workflowEntryId: null,
       workflowTitle: "Parent",
       paramsJson: "{}",
       currentStepId: parent.stepId,

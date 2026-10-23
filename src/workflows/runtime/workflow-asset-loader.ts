@@ -8,12 +8,10 @@ import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { type BundleRef, makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { loadConfig } from "../../core/config/config";
 import { COMPOSITION_INVALID_MULTI_JOB_HINT, NotFoundError, UsageError } from "../../core/errors";
-import { getDbPath } from "../../core/paths";
 import { canonicalizeWorkflowName } from "../../core/recognition-util";
 import { deriveInstallations } from "../../indexer/installations";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
-import { withIndexDb } from "../../storage/repositories/index-db";
 import { compileWorkflowSource } from "../compile";
 import type { WorkflowPlan } from "../plan";
 
@@ -56,15 +54,21 @@ export function parseWorkflowRefInput(ref: string): BundleRef {
   return parsed;
 }
 
-/** Resolve input sugar to the workflow's canonical run identity. */
+/** Resolve input sugar to the workflow's canonical run identity, without compiling it. */
 export async function canonicalizeWorkflowRefInput(ref: string): Promise<string> {
-  return (await loadWorkflowAsset(ref)).ref;
+  return resolveWorkflowAsset(ref).fullRef;
 }
 
-/**
- * Resolve a workflow ref and compile its authored bytes into a plan.
- */
-export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
+type ResolvedWorkflowAsset = {
+  assetPath: string;
+  sourcePath: string;
+  adapterId: string;
+  canonicalName: string;
+  fullRef: string;
+};
+
+/** Resolve a workflow ref to its authored file and canonical run ref. */
+function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   const bundleRef = parseWorkflowRefInput(ref);
 
   const config = loadConfig();
@@ -118,7 +122,6 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
     throw new NotFoundError(`Workflow not found for ref: ${ref}`);
   }
 
-  const resolvedSourcePath = sourcePath as string;
   // Canonicalize the stored ref: `workflows/foo.md` and `workflows/foo` resolve
   // to the same file, so they MUST share one run identity.
   const canonicalName = canonicalizeWorkflowName(workflowName as string);
@@ -127,11 +130,25 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
       ? makeBundleRef(sourceBundleId, canonicalName)
       : canonicalWorkflowRunRef(sourceBundleId, canonicalName);
 
+  return {
+    assetPath,
+    sourcePath: sourcePath as string,
+    adapterId: workflowAdapterId as string,
+    canonicalName,
+    fullRef,
+  };
+}
+
+/**
+ * Resolve a workflow ref and compile its authored bytes into a plan.
+ */
+export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
+  const { assetPath, sourcePath, adapterId, canonicalName, fullRef } = resolveWorkflowAsset(ref);
   const title = canonicalName.split("/").pop() || canonicalName;
   const bytes = fs.readFileSync(assetPath);
   const result = compileWorkflowSource(bytes.toString("utf8"), {
     path: assetPath,
-    workspaceRoot: resolvedSourcePath,
+    workspaceRoot: sourcePath,
     title,
   });
   if (!result.ok) {
@@ -146,8 +163,8 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
   return {
     ref: fullRef,
     path: assetPath,
-    sourcePath: resolvedSourcePath,
-    adapterId: workflowAdapterId as string,
+    sourcePath,
+    adapterId,
     title,
     plan: result.plan,
     sourceHash: createHash("sha256").update(bytes).digest("hex"),
@@ -156,29 +173,4 @@ export async function loadWorkflowAsset(ref: string): Promise<WorkflowAsset> {
 
 function ownsNativeWorkflowRuntime(source: SearchSource): boolean {
   return source.adapterId === "akm" || source.adapterId === "akm-workflow";
-}
-
-/**
- * Resolve the `entries.id` for an indexed workflow, or null when the index
- * database does not yet exist or has no matching entry.
- */
-export function resolveWorkflowEntryId(_sourcePath: string, ref: string, adapterId?: string): number | null {
-  if (!fs.existsSync(getDbPath())) return null;
-
-  const parsed = parseBundleRef(ref);
-  if (!parsed.bundle) throw new UsageError(`Expected a bundle-qualified workflow ref, got "${ref}".`);
-  const itemRef = makeBundleRef(parsed.bundle, parsed.conceptId);
-  return withIndexDb((db) => {
-    const row = db
-      .prepare(
-        `SELECT id
-         FROM entries
-         WHERE type = 'workflow'
-           AND item_ref = ?
-           ${adapterId ? "AND adapter_id = ?" : ""}
-          LIMIT 1`,
-      )
-      .get(itemRef, ...(adapterId ? [adapterId] : [])) as { id: number } | undefined;
-    return row?.id ?? null;
-  });
 }

@@ -30,6 +30,7 @@ import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { seedWorkflowRun } from "../_helpers/workflow";
 
 /** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/tasks-sync.test.ts. */
 function memoryExec(initial = ""): CronExec & { current: () => string } {
@@ -250,6 +251,39 @@ describe("akm bundle rename — applied", () => {
         target_ref: string;
       };
       expect(taskRow.target_ref).toBe("renamed//workflows/foo");
+    } finally {
+      closeDatabase(readDb);
+    }
+  });
+
+  test("rewrites workflow_runs.workflow_ref and lists the active runs it affected (#1239)", async () => {
+    await seedBundleWithOneEntry();
+    const stateDb = openStateDatabase();
+    try {
+      seedWorkflowRun(stateDb, { runId: "run-active", steps: ["a"], workflowRef: "original//workflows/foo" });
+      seedWorkflowRun(stateDb, { runId: "run-done", steps: ["a"], workflowRef: "original//workflows/foo" });
+      seedWorkflowRun(stateDb, { runId: "run-other", steps: ["a"], workflowRef: "other//workflows/foo" });
+      stateDb.prepare("UPDATE workflow_runs SET status = 'completed' WHERE id = 'run-done'").run();
+    } finally {
+      closeDatabase(stateDb);
+    }
+
+    const result = await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    expect(result.state.workflowRunRefs).toBe(2);
+    expect(result.activeWorkflowRuns).toEqual([{ id: "run-active", workflowRef: "original//workflows/foo" }]);
+
+    const readDb = openStateDatabase();
+    try {
+      const rows = readDb.prepare("SELECT id, workflow_ref FROM workflow_runs ORDER BY id").all() as Array<{
+        id: string;
+        workflow_ref: string;
+      }>;
+      expect(rows).toEqual([
+        { id: "run-active", workflow_ref: "renamed//workflows/foo" },
+        { id: "run-done", workflow_ref: "renamed//workflows/foo" },
+        { id: "run-other", workflow_ref: "other//workflows/foo" },
+      ]);
     } finally {
       closeDatabase(readDb);
     }

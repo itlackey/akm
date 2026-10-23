@@ -219,7 +219,7 @@ describe("workflow CLI", () => {
     expect(rendered.timedOut).toBeUndefined();
   });
 
-  test("run rejects aliases, retired JSON params, and params on an active run", async () => {
+  test("run rejects aliases and retired JSON params, and accepts params on every ref start", async () => {
     await createWorkflow("strict", TYPED_WORKFLOW);
 
     const alias = await runCliCapture([
@@ -261,8 +261,9 @@ describe("workflow CLI", () => {
       "--include_processes=false",
       "--max-steps=1",
     ]);
-    expect(activeWithParams.code).toBe(2);
-    expect(errorEnvelope(activeWithParams.stderr).error).toContain("only be set on a new run");
+    // A ref always starts a new run (#1239), so params are fine while another run is active.
+    expect(activeWithParams.code).toBe(0);
+    expect(activeWithParams.stderr).toContain("already has 1 active run(s)");
   });
 
   test("removed manual lifecycle commands are unknown commands", async () => {

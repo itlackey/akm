@@ -167,8 +167,6 @@ async function publishChildRun(
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parentRow.scope_key,
-          workflowEntryId: null,
           workflowTitle: target.frozenPlan.title,
           paramsJson: JSON.stringify(childParams),
           currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,

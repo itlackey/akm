@@ -143,8 +143,6 @@ async function seedParentRun(input: { runId: string; stepId: string }): Promise<
     repo.insertRun({
       id: input.runId,
       workflowRef: "workflows/parent",
-      scopeKey: "dir:v1:parent",
-      workflowEntryId: null,
       workflowTitle: "Parent",
       paramsJson: "{}",
       currentStepId: input.stepId,

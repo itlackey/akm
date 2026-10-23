@@ -51,50 +51,35 @@ export function appendShowDirectives(lines: string[], r: Record<string, unknown>
   }
 
   if (assetType === "skill" || assetType === "knowledge") {
-    const activeRun = r.activeRun as { runId: string; stepId: string | null; workflowRef: string } | null | undefined;
-    if (activeRun) {
-      lines.unshift(
-        "Read this reference, follow the active unit's instructions, and return the result to the workflow runner. Step completion is automatic.",
-      );
-      lines.unshift(`WORKFLOW ACTIVE — schema shown as reference (run: ${activeRun.runId})`);
-      lines.unshift("---");
-      lines.unshift("");
-      // Still show feedback line at the end but skip the APPLY directive
-      lines.push("");
+    // Show the APPLY directive. Branch on whether this
+    // skill primarily teaches CLI commands (shell output) vs YAML schema.
+    const preApplyLines = [...lines];
+    lines.push("");
+    lines.push("---");
+    if (isCommandOutputSkill(preApplyLines)) {
+      lines.push("APPLY (only if no workflow step is required for this task):");
+      lines.push("  1. Identify the output file from README.md (typically commands.txt).");
       lines.push(
-        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` if the step succeeds, or \`--negative\` if this schema did not help.`,
+        "  2. Write the exact command syntax from the code blocks above — replace every placeholder (`<name>`, `<value>`) with a real, concrete value from your task context. Do not write placeholder text.",
+      );
+      lines.push(
+        "  3. Each command should be on a single line (no backslash line continuation unless the verifier expects it).",
+      );
+      lines.push(
+        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if this reference did not contain the needed command syntax.`,
       );
     } else {
-      // No active workflow: show the APPLY directive. Branch on whether this
-      // skill primarily teaches CLI commands (shell output) vs YAML schema.
-      const preApplyLines = [...lines];
-      lines.push("");
-      lines.push("---");
-      if (isCommandOutputSkill(preApplyLines)) {
-        lines.push("APPLY (only if no workflow step is required for this task):");
-        lines.push("  1. Identify the output file from README.md (typically commands.txt).");
-        lines.push(
-          "  2. Write the exact command syntax from the code blocks above — replace every placeholder (`<name>`, `<value>`) with a real, concrete value from your task context. Do not write placeholder text.",
-        );
-        lines.push(
-          "  3. Each command should be on a single line (no backslash line continuation unless the verifier expects it).",
-        );
-        lines.push(
-          `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if this reference did not contain the needed command syntax.`,
-        );
-      } else {
-        lines.push("APPLY (only if no workflow step is required for this task):");
-        lines.push(
-          "  1. Identify the target file from README.md — write or edit it. If the file does not yet exist, CREATE it with the full structure from this schema.",
-        );
-        lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
-        lines.push(
-          "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Replace every placeholder value with a real, concrete value from your task context. Do not leave any field as null, empty, or a placeholder.",
-        );
-        lines.push(
-          `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if the task fails after following this guidance.`,
-        );
-      }
+      lines.push("APPLY (only if no workflow step is required for this task):");
+      lines.push(
+        "  1. Identify the target file from README.md — write or edit it. If the file does not yet exist, CREATE it with the full structure from this schema.",
+      );
+      lines.push("  2. Add/edit the fields shown above using the exact field names from this schema.");
+      lines.push(
+        "  3. COPY the exact YAML structure and field names from the code blocks above — do not substitute synonyms or invent nesting. Replace every placeholder value with a real, concrete value from your task context. Do not leave any field as null, empty, or a placeholder.",
+      );
+      lines.push(
+        `Run \`akm feedback ${assetRef ? `'${assetRef}'` : "<ref>"} --positive\` after the task succeeds, or \`--negative\` if the task fails after following this guidance.`,
+      );
     }
   } else if (assetType === "workflow") {
     const workflowName = typeof r.name === "string" ? r.name : null;

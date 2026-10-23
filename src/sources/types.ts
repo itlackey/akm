@@ -199,7 +199,6 @@ export interface WorkflowRunStepState extends WorkflowStepDefinition {
 export interface WorkflowRunSummary {
   id: string;
   workflowRef: string;
-  scopeKey?: string | null;
   workflowEntryId?: number | null;
   workflowTitle: string;
   status: WorkflowRunStatus;
@@ -462,11 +461,6 @@ export interface ShowResponse extends FragmentProvenance {
   path: string;
   /** Canonical indexed ref for a materialized local asset. */
   ref?: string;
-  activeRun?: {
-    runId: string;
-    stepId: string | null;
-    workflowRef: string;
-  };
   content?: string;
   template?: string;
   prompt?: string;

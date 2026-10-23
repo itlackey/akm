@@ -131,7 +131,6 @@ function childPublication(repo: WorkflowRunsRepository): ChildWorkflowRunsReposi
 const NOW = "2026-08-26T12:00:00.000Z";
 const PARENT_RUN_ID = "11111111-1111-4111-8111-111111111111";
 const PARENT_WORKFLOW_REF = "workflows/parent";
-const PARENT_SCOPE_KEY = "dir:v1:parent";
 const SPAWNING_UNIT_ID = "spawn.unit";
 
 /** A structurally-arbitrary "frozen child plan" — publishChildWorkflowRun stores it opaquely (C-11). */
@@ -146,7 +145,6 @@ function publicationInput(options: {
   invocationKey: string;
   runId: string;
   workflowRef?: string;
-  scopeKey?: string;
   planMarker?: string;
   createdAt?: string;
 }): PublishChildWorkflowRunInputContract {
@@ -156,8 +154,6 @@ function publicationInput(options: {
   const run: InsertRunInput = {
     id: options.runId,
     workflowRef,
-    scopeKey: options.scopeKey ?? PARENT_SCOPE_KEY,
-    workflowEntryId: null,
     workflowTitle: "child",
     paramsJson: "{}",
     currentStepId: "spawn",
@@ -204,15 +200,13 @@ function publicationInput(options: {
 function rawInsertChildRun(db: Database, input: PublishChildWorkflowRunInputContract): void {
   db.prepare(
     `INSERT INTO workflow_runs (
-      id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status, params_json, current_step_id,
+      id, workflow_ref, workflow_title, status, params_json, current_step_id,
       created_at, updated_at, agent_harness, agent_session_id,
       plan_json, plan_hash, plan_ir_version, parent_run_id, parent_unit_id, invocation_key
-    ) VALUES (?, ?, ?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
+    ) VALUES (?, ?, ?, 'active', ?, ?, ?, ?, ?, ?, ?, ?, 5, ?, ?, ?)`,
   ).run(
     input.run.id,
     input.run.workflowRef,
-    input.run.scopeKey,
-    input.run.workflowEntryId,
     input.run.workflowTitle,
     input.run.paramsJson,
     input.run.currentStepId,
@@ -232,7 +226,6 @@ function seedParentRun(db: Database, runId = PARENT_RUN_ID): void {
   seedWorkflowRun(db, {
     runId,
     workflowRef: PARENT_WORKFLOW_REF,
-    scopeKey: PARENT_SCOPE_KEY,
     steps: ["spawn"],
   });
 }
@@ -658,46 +651,6 @@ describe("publishChildWorkflowRun — no child source access (C-11)", () => {
         expect(target.startsWith(storage.stashDir)).toBe(false);
       }
       expect(fs.existsSync(path.join(storage.stashDir, "workflows"))).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-// ── C-10: top-level scope-conflict rules do not apply ───────────────────────
-
-describe("publishChildWorkflowRun — top-level scope-conflict rules do not apply (C-10)", () => {
-  test("succeeds even when an active top-level run occupies the same (workflow_ref, scope_key) publishWorkflowRunV4 would reject", () => {
-    const db = openStateDatabase(getStateDbPath());
-    try {
-      seedParentRun(db);
-      const repo = new WorkflowRunsRepository(db);
-
-      // An unrelated, already-active top-level run for the EXACT (workflow_ref,
-      // scope_key) the child below publishes under. publishWorkflowRunV4 would
-      // reject this with RESOURCE_ALREADY_EXISTS via findActiveRunForScope;
-      // publishChildWorkflowRun must never consult that guard.
-      seedWorkflowRun(db, {
-        runId: "occupying-run",
-        workflowRef: "workflows/child",
-        scopeKey: PARENT_SCOPE_KEY,
-        steps: ["work"],
-      });
-      expect(repo.findActiveRunForScope(["workflows/child"], PARENT_SCOPE_KEY)?.id).toBe("occupying-run");
-
-      const input = publicationInput({
-        parentRunId: PARENT_RUN_ID,
-        invocationKey: "key-scope-irrelevant",
-        runId: "99999999-9999-4999-8999-999999999999",
-        workflowRef: "workflows/child",
-        scopeKey: PARENT_SCOPE_KEY,
-      });
-
-      const row = childPublication(repo).publishChildWorkflowRun(input);
-
-      expect(row.id).toBe("99999999-9999-4999-8999-999999999999");
-      // The occupying run is unaffected — no conflict was raised against it.
-      expect(repo.getRunById("occupying-run")?.status).toBe("active");
     } finally {
       db.close();
     }

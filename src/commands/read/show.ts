@@ -81,9 +81,7 @@ import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryById, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
 import { readEntryLinks } from "../../storage/repositories/index-links-repository";
-import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
-import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
 
 /**
  * Unified show: queries the local FTS5 index, then reads that row's file path.
@@ -526,11 +524,6 @@ export async function showLocal(input: {
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
     ...showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true),
   };
-
-  const activeRun = input.readOnly ? null : await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
-  if (activeRun) {
-    (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
-  }
 
   if (input.detail === "brief") {
     return buildBriefResponse(fullResponse, assetPath);

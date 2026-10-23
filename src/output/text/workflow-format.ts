@@ -14,7 +14,7 @@
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
   const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
   if (runs.length === 0) {
-    return "No workflow runs in the current working scope. Start one with `akm workflow run workflows/<name>` or author one with `akm workflow create <name>`.";
+    return "No workflow runs. Start one with `akm workflow run workflows/<name>` or author one with `akm workflow create <name>`.";
   }
 
   return runs
@@ -159,14 +159,6 @@ export function formatWorkflowRunPlain(result: Record<string, unknown>): string 
   if (!run) return null;
 
   const lines: string[] = [];
-  // #919: `workflow run <ref>` silently resuming an existing active run (the
-  // #485 concurrency guard) is now announced up front, with the escape hatch.
-  if (result.resumed === true) {
-    lines.push(
-      `resuming existing run ${String(run.id ?? "unknown")} for ${String(run.workflowRef ?? "this ref")}; ` +
-        `pass --new to start a fresh run`,
-    );
-  }
   lines.push(`run: ${String(run.id ?? "unknown")}`, `status: ${String(run.status ?? "unknown")}`);
   // Creation-time notices (e.g. the implicit engine fallback) must survive the
   // text renderer: JSON/YAML pass them through, and dropping them here would

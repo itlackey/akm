@@ -402,8 +402,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
       run: {
         id: childRunId,
         workflowRef: target.ref,
-        scopeKey: parentRow?.scope_key ?? null,
-        workflowEntryId: null,
         workflowTitle: target.frozenPlan.title,
         paramsJson: "{}",
         currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,
@@ -553,8 +551,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parentRow?.scope_key ?? null,
-          workflowEntryId: null,
           workflowTitle: target.frozenPlan.title,
           paramsJson: "{}",
           currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,

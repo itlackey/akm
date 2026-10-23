@@ -33,14 +33,8 @@ import { resetConfigCache } from "../../../src/core/config/config";
 import { getStateDbPath, openStateDatabase } from "../../../src/core/state-db";
 import { formatWorkflowStatusPlain } from "../../../src/output/text/workflow-format";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
-import { getCurrentWorkflowScopeKey } from "../../../src/workflows/authoring/scope-key";
 import { canonicalPlanJson, computePlanHash } from "../../../src/workflows/ir/plan-hash";
-import {
-  getActiveWorkflowRun,
-  getWorkflowStatus,
-  listWorkflowRuns,
-  startWorkflowRun,
-} from "../../../src/workflows/runtime/runs";
+import { getWorkflowStatus, listWorkflowRuns, startWorkflowRun } from "../../../src/workflows/runtime/runs";
 import { loadWorkflowAsset } from "../../../src/workflows/runtime/workflow-asset-loader";
 import { runCliCapture } from "../../_helpers/cli";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../../_helpers/sandbox";
@@ -76,14 +70,12 @@ const CHILD_MD = ["---", "type: workflow", "steps:", "  - id: work", "---", "", 
 const PARENT_PLAN = freezeWorkflow(PARENT_MD, "workflows/status-tree-parent.md");
 const CHILD_PLAN = freezeWorkflow(CHILD_MD, "workflows/status-tree-child.md");
 
-function seedParentRun(runId: string, ref = "test//workflows/status-tree-parent", scopeKey?: string): string {
-  const key = scopeKey ?? getCurrentWorkflowScopeKey();
+function seedParentRun(runId: string, ref = "test//workflows/status-tree-parent"): void {
   const db = openStateDatabase(getStateDbPath());
   try {
     seedWorkflowRun(db, {
       runId,
       workflowRef: ref,
-      scopeKey: key,
       steps: [{ stepId: "spawn", stepTitle: "Spawn child" }],
       currentStepId: "spawn",
     });
@@ -91,7 +83,6 @@ function seedParentRun(runId: string, ref = "test//workflows/status-tree-parent"
   } finally {
     db.close();
   }
-  return key;
 }
 
 async function reserveParentUnit(runId: string, stepId: string, unitId: string): Promise<void> {
@@ -117,7 +108,6 @@ interface PublishChildOptions {
   invocationKey: string;
   childRunId: string;
   workflowRef?: string;
-  scopeKey: string;
   createdAt?: string;
 }
 
@@ -131,8 +121,6 @@ async function publishChild(opts: PublishChildOptions): Promise<void> {
       run: {
         id: opts.childRunId,
         workflowRef: opts.workflowRef ?? "test//workflows/status-tree-child",
-        scopeKey: opts.scopeKey,
-        workflowEntryId: null,
         workflowTitle: "Child",
         paramsJson: "{}",
         currentStepId: "work",
@@ -250,7 +238,7 @@ function childrenOf(detail: unknown): readonly ChildNodeView[] | undefined {
 describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
   test("a parent with one child gains children: [...] carrying the documented shape, ordered by created_at then id", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
     const childId = randomUUID();
     await publishChild({
@@ -258,7 +246,6 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-1",
       childRunId: childId,
-      scopeKey,
     });
 
     const detail = await getWorkflowStatus(parentId);
@@ -280,7 +267,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
 
   test("B-36: stepId is null when the spawning unit row is gone", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     // Deliberately no reserveParentUnit call: spawnedByUnitId names a unit
     // row that was never (or is no longer) journaled.
     const childId = randomUUID();
@@ -289,7 +276,6 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
       spawnedByUnitId: "spawn:ghost",
       invocationKey: "key-ghost",
       childRunId: childId,
-      scopeKey,
     });
 
     const detail = await getWorkflowStatus(parentId);
@@ -300,7 +286,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
 
   test("multiple children are ordered by created_at, id (P3a's childRunsOf order)", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
 
     const firstChild = randomUUID();
@@ -310,7 +296,6 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-a",
       childRunId: firstChild,
-      scopeKey,
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     await publishChild({
@@ -318,7 +303,6 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-b",
       childRunId: secondChild,
-      scopeKey,
       createdAt: "2026-01-01T00:00:01.000Z",
     });
 
@@ -329,7 +313,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
 
   test("B-35: a blocked child carries a resume {command, then}", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
     const childId = randomUUID();
     await publishChild({
@@ -337,7 +321,6 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-blocked",
       childRunId: childId,
-      scopeKey,
     });
     await setRunStatus(childId, "blocked", "work");
 
@@ -355,7 +338,7 @@ describe("the parent-child tree — JSON envelope (B-34…B-36)", () => {
 describe("a 3-level composition tree (B-37)", () => {
   test("children nest recursively — depth of the rendered tree equals composition depth", async () => {
     const rootId = randomUUID();
-    const scopeKey = seedParentRun(rootId, "test//workflows/status-tree-root");
+    seedParentRun(rootId, "test//workflows/status-tree-root");
     await reserveParentUnit(rootId, "spawn", "spawn:root");
     const midId = randomUUID();
     await publishChild({
@@ -364,7 +347,6 @@ describe("a 3-level composition tree (B-37)", () => {
       invocationKey: "key-mid",
       childRunId: midId,
       workflowRef: "test//workflows/status-tree-mid",
-      scopeKey,
     });
     // The mid run gets its OWN step ("work", from CHILD_PLAN) to spawn a
     // grandchild from.
@@ -376,7 +358,6 @@ describe("a 3-level composition tree (B-37)", () => {
       invocationKey: "key-leaf",
       childRunId: leafId,
       workflowRef: "test//workflows/status-tree-leaf",
-      scopeKey,
     });
 
     const detail = await getWorkflowStatus(rootId);
@@ -464,7 +445,7 @@ describe("akm workflow status — text rendering of the children: block (B-38, B
 describe("child runs are invisible to the three scope queries (B-40, B-42, B-43, B-N10)", () => {
   test("B-40: akm workflow list excludes a child run sharing the parent's scope and workflow_ref", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
     const childId = randomUUID();
     await publishChild({
@@ -472,7 +453,6 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-list",
       childRunId: childId,
-      scopeKey,
     });
 
     const { runs } = await listWorkflowRuns();
@@ -480,42 +460,13 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
     expect(runs.map((r) => r.id)).not.toContain(childId);
   });
 
-  test("B-42: getActiveRunRowForScope (the scope-attach lookup akm workflow run <ref> uses) does not resolve a childless-looking scope to the child", async () => {
+  test("B-42: akm workflow run workflows/<childRef> starts a NEW top-level run end to end, beside the parent-driven child", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
-    await reserveParentUnit(parentId, "spawn", "spawn:1");
-    const childRef = "test//workflows/status-tree-child";
-    const childId = randomUUID();
-    await publishChild({
-      parentRunId: parentId,
-      spawnedByUnitId: "spawn:1",
-      invocationKey: "key-attach",
-      childRunId: childId,
-      workflowRef: childRef,
-      scopeKey,
-    });
-
-    // Only the CHILD (not any top-level run) matches childRef+scopeKey — so
-    // the scope-attach lookup `akm workflow run workflows/<childRef>` uses
-    // must find NOTHING to attach to, which is what makes it start a new
-    // top-level run instead of ATTACHING to the parent-driven child.
-    const attach = await withWorkflowRunsRepo((repo) => repo.getActiveRunRowForScope([childRef], scopeKey));
-    expect(attach).toBeUndefined();
-  });
-
-  test("B-42 (fourth site, code-review round 4 finding 2 / Review log R2): akm workflow run workflows/<childRef> starts a NEW top-level run end to end, never refusing in favor of the parent-driven child", async () => {
-    const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
 
-    // A REAL, on-disk, freshly-indexable workflow file — unlike this
-    // describe block's other tests, this one drives the real
-    // `startWorkflowRun` (via `loadWorkflowAsset` + `startWorkflowRun`, the
-    // exact pair `akm workflow run <ref>` itself calls, runs.ts:263,268),
-    // not just the repository's scope-query method directly. That is what
-    // exercises `publishWorkflowRunV4`'s own scope-conflict guard
-    // (`findActiveRunForScope`, B-N10's FOURTH site) rather than only the
-    // ALREADY-filtered `getActiveRunRowForScope` the test above covers.
+    // A REAL, on-disk workflow file, driven through the real
+    // `startWorkflowRun` that `akm workflow run <ref>` itself calls.
     const childFileName = "status-tree-child-e2e";
     fs.mkdirSync(path.join(storage.stashDir, "workflows"), { recursive: true });
     fs.writeFileSync(path.join(storage.stashDir, "workflows", `${childFileName}.md`), CHILD_MD, "utf8");
@@ -528,36 +479,14 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
       invocationKey: "key-attach-e2e",
       childRunId: childId,
       workflowRef: childRef,
-      scopeKey,
     });
 
-    // Before the fix, `findActiveRunForScope` had no `parent_run_id IS NULL`
-    // predicate, so this resolved to the CHILD row and `startWorkflowRun`
-    // failed with `RESOURCE_ALREADY_EXISTS` naming the CHILD's own run id —
-    // telling the operator to `akm workflow abandon` a child a parent is
-    // actively driving. It must instead start cleanly with a brand-new id.
+    // A ref start never attaches to a run, so it starts a brand-new top-level
+    // run beside the parent-driven child.
     const started = await startWorkflowRun(`workflows/${childFileName}`, {});
     expect(started.run.workflowRef).toBe(childRef);
     expect(started.run.id).not.toBe(childId);
     expect(started.run.id).not.toBe(parentId);
-  });
-
-  test("B-43: akm show's active-run guard (getActiveWorkflowRun) reports the PARENT run, never the child", async () => {
-    const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
-    await reserveParentUnit(parentId, "spawn", "spawn:1");
-    const childId = randomUUID();
-    await publishChild({
-      parentRunId: parentId,
-      spawnedByUnitId: "spawn:1",
-      invocationKey: "key-show",
-      childRunId: childId,
-      scopeKey,
-    });
-
-    const active = await getActiveWorkflowRun(scopeKey);
-    expect(active?.runId).toBe(parentId);
-    expect(active?.runId).not.toBe(childId);
   });
 });
 
@@ -566,7 +495,7 @@ describe("child runs are invisible to the three scope queries (B-40, B-42, B-43,
 describe("akm workflow list --children (B-41)", () => {
   test("includes child rows, each carrying parentRunId, when the flag is passed", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
     const childId = randomUUID();
     await publishChild({
@@ -574,7 +503,6 @@ describe("akm workflow list --children (B-41)", () => {
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-flag",
       childRunId: childId,
-      scopeKey,
     });
 
     const withoutFlag = await runCliCapture(["workflow", "list", "--format", "json"]);
@@ -603,7 +531,7 @@ interface RunSummaryParentageView {
 describe("akm workflow status <childRunId> (B-44)", () => {
   test("works directly on a child run id; the envelope gains run.parentRunId and run.spawnedByUnitId", async () => {
     const parentId = randomUUID();
-    const scopeKey = seedParentRun(parentId);
+    seedParentRun(parentId);
     await reserveParentUnit(parentId, "spawn", "spawn:1");
     const childId = randomUUID();
     await publishChild({
@@ -611,7 +539,6 @@ describe("akm workflow status <childRunId> (B-44)", () => {
       spawnedByUnitId: "spawn:1",
       invocationKey: "key-child-status",
       childRunId: childId,
-      scopeKey,
     });
 
     const detail = await getWorkflowStatus(childId);

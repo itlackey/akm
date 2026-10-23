@@ -284,8 +284,6 @@ export function seedWorkflowRun(
     steps: Array<string | SeedWorkflowRunStep>;
     /** Defaults to `"workflows/demo"`. */
     workflowRef?: string;
-    /** Defaults to `dir:v1:<workflowRef basename>`. */
-    scopeKey?: string;
     /** Defaults to `"Demo"`. */
     workflowTitle?: string;
     /** Defaults to `{}`. */
@@ -296,17 +294,15 @@ export function seedWorkflowRun(
 ): void {
   const now = new Date().toISOString();
   const workflowRef = options.workflowRef ?? "workflows/demo";
-  const scopeKey = options.scopeKey ?? `dir:v1:${workflowRef.split("/").pop()}`;
   const steps = options.steps.map((step) => (typeof step === "string" ? { stepId: step } : step));
   db.prepare(
     `INSERT INTO workflow_runs
-       (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
+       (id, workflow_ref, workflow_title, status,
         params_json, current_step_id, created_at, updated_at)
-     VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`,
   ).run(
     options.runId,
     workflowRef,
-    scopeKey,
     options.workflowTitle ?? "Demo",
     JSON.stringify(options.params ?? {}),
     options.currentStepId ?? steps[0]!.stepId,
