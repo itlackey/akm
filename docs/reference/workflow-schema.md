@@ -828,8 +828,8 @@ an explicit error is the smaller, more predictable surface.
 An exec unit's command does **not** inherit akm's environment. The child starts
 from an **empty** environment and is built in three layers, in this order:
 
-1. the **default allowlist** below, copied through from akm's own environment
-   (plus any names the unit adds with `pass_env:`);
+1. akm's own directories and the **default allowlist** below, copied through
+   from akm's own environment (plus any names the unit adds with `pass_env:`);
 2. the unit's resolved **`env:` bindings**;
 3. the engine-authored **`AKM_*` context** — last, so a binding can never
    shadow it.
@@ -848,11 +848,18 @@ environment is simply absent from the child):
 | Windows essentials | `SystemRoot`, `SystemDrive`, `WINDIR`, `COMSPEC`, `PATHEXT` | Windows **process creation itself** fails with an empty environment; `PATHEXT` is what makes `bun.exe`/`bun.cmd` resolvable at all |
 | Windows home/config | `USERPROFILE`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles` | the Windows analogues of `HOME` and the machine-wide install roots toolchain shims resolve against |
 | akm provenance | `AKM_EVENT_SOURCE` | a command that calls `akm` records machine traffic, not user demand |
-| akm locations | `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR`, `AKM_STATE_DIR` | a step that runs `akm` finds the same bundle, config, data, cache and state as the akm that started it, with no `pass_env:` |
 
 `PATH` is additionally supplemented with well-known user binary directories
 when akm is running in a scheduler context (cron/launchd/Task Scheduler) that
 stripped it — the same treatment an agent-harness child gets.
+
+The child also gets akm's own directories, whatever the parent found them
+through: `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` are
+set to the directories the akm that started it resolved (from `AKM_*_DIR`,
+`XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` is passed when that
+akm had one. A step that runs `akm` therefore uses the same bundle, config, data,
+cache and state, with no `pass_env:`. Naming one of these in `pass_env:` or
+binding it in `env:` overrides it.
 
 Deliberately **not** on the list: credentials of any kind, cloud/CI variables,
 and the proxy family (`HTTP_PROXY` and friends — proxy URLs routinely embed

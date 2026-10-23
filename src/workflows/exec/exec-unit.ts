@@ -13,6 +13,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../core/paths";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv, WIN32_SPAWN_ENV_FLOOR } from "../../core/spawn-env";
 import {
   type ManagedSubprocessResult,
@@ -43,20 +44,13 @@ const EXEC_STDERR_DIAGNOSTIC_CLIP = WORKFLOW_UNIT_DIAGNOSTIC_CLIP - 500;
 /**
  * The default environment allowlist for an exec unit's child (`exec.passEnv`
  * extends it): the agent-harness baseline plus names ordinary commands need
- * and `AKM_EVENT_SOURCE`, plus akm's own location variables so a step that
- * runs `akm` finds the bundle, config, data, cache and state its parent uses.
- * Credentials, cloud/CI vars, and proxies reach a child only through
+ * and `AKM_EVENT_SOURCE`. akm's own directories are not listed: {@link childEnv}
+ * sets them from the parent's effective locations. Credentials, cloud/CI vars, and proxies reach a child only through
  * `pass_env` or `env:`.
  */
 export const EXEC_DEFAULT_ENV_PASSTHROUGH: readonly string[] = [
   // PATH, HOME, USER, LANG, LC_ALL, TERM, TMPDIR, AKM_EVENT_SOURCE
   ...COMMON_SPAWN_ENV_PASSTHROUGH,
-  // akm's own location variables; not secrets, and not part of the shared baseline (it is frozen into engine snapshots)
-  "AKM_BUNDLE_DIR",
-  "AKM_CONFIG_DIR",
-  "AKM_DATA_DIR",
-  "AKM_CACHE_DIR",
-  "AKM_STATE_DIR",
   // POSIX names a raw shell command needs beyond the agent baseline
   "LOGNAME",
   "SHELL",
@@ -344,9 +338,9 @@ async function isExistingDirectory(candidate: string): Promise<boolean> {
 }
 
 /**
- * The child's environment, in precedence order: the allowlist plus
- * `exec.passEnv`; the resolved `env:` bindings; then the engine's `AKM_*`
- * context, last so a binding cannot shadow it.
+ * The child's environment, in precedence order: the parent's effective akm
+ * directories; the allowlist plus `exec.passEnv`; the resolved `env:` bindings;
+ * then the engine's `AKM_*` context, last so a binding cannot shadow it.
  */
 function childEnv(
   exec: WorkflowExecSpec,
@@ -354,7 +348,7 @@ function childEnv(
   context: Record<string, string> | undefined,
   eventSource: string | undefined,
 ): Record<string, string> {
-  const env = collectAllowlistedEnv(execAllowlist(exec));
+  const env = { ...akmLocations(), ...collectAllowlistedEnv(execAllowlist(exec)) };
   // Only when absent from the base, and before the overlays, so ambient and authored values win.
   if (eventSource !== undefined && env.AKM_EVENT_SOURCE === undefined) {
     env.AKM_EVENT_SOURCE = eventSource;
@@ -362,6 +356,23 @@ function childEnv(
   for (const [name, value] of Object.entries(bindings ?? {})) env[name] = value;
   for (const [name, value] of Object.entries(context ?? {})) env[name] = value;
   return env;
+}
+
+/**
+ * The directories this akm resolved, as the `AKM_*` variables that name them, so
+ * a step that runs `akm` uses the same installation even when the parent found
+ * them through `XDG_*_HOME`. `AKM_BUNDLE_DIR` is passed only when the parent set one.
+ */
+function akmLocations(): Record<string, string> {
+  const locations: Record<string, string> = {
+    AKM_CONFIG_DIR: getConfigDir(),
+    AKM_DATA_DIR: getDataDir(),
+    AKM_CACHE_DIR: getCacheDir(),
+    AKM_STATE_DIR: getStateDir(),
+  };
+  const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
+  if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
+  return locations;
 }
 
 /** The unit's effective allowlist: the shared default plus its own `passEnv` names. */

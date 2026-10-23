@@ -18,6 +18,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { readStream } from "../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
@@ -410,11 +411,9 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     expect(env.PATH).toBeTruthy();
   });
 
-  test("akm's own location variables reach the child with no `pass_env`", async () => {
-    // A step that runs `akm` must find the same bundle, config, data, cache and state the parent uses.
+  /** Run a child that reports the AKM location variables it sees. */
+  async function reportLocations(unitLines: string[] = []): Promise<Record<string, string | null>> {
     const names = ["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"];
-    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
-    expect(EXEC_DEFAULT_ENV_PASSTHROUGH).toEqual(expect.arrayContaining(names));
     seedRun(["work"]);
     const plan = execPlan([
       "    unit:",
@@ -424,13 +423,45 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
           `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(names)}.map((n) => [n, process.env[n] ?? null]))))`,
         ),
       )}`,
+      ...unitLines,
     ]);
     storePlan(plan);
     const result = await run(plan);
     expect(result.ok).toBe(true);
-    expect(JSON.parse(String(result.evidence.output))).toEqual(
-      Object.fromEntries(names.map((name) => [name, process.env[name] ?? null])),
-    );
+    return JSON.parse(String(result.evidence.output)) as Record<string, string | null>;
+  }
+
+  test("the child sees the parent's EFFECTIVE akm directories, including ones that come from XDG_*_HOME", async () => {
+    // The sandbox sets XDG_*_HOME and no AKM_{CONFIG,DATA,CACHE,STATE}_DIR, as an operator using XDG does.
+    expect(process.env.AKM_CONFIG_DIR).toBeUndefined();
+    expect(process.env.XDG_CONFIG_HOME).toBeTruthy();
+    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
+    expect(await reportLocations()).toEqual({
+      AKM_BUNDLE_DIR: process.env.AKM_BUNDLE_DIR as string,
+      AKM_CONFIG_DIR: getConfigDir(),
+      AKM_DATA_DIR: getDataDir(),
+      AKM_CACHE_DIR: getCacheDir(),
+      AKM_STATE_DIR: getStateDir(),
+    });
+  });
+
+  test("a bundle dir the parent never set is not invented for the child", async () => {
+    const prior = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      expect((await reportLocations()).AKM_BUNDLE_DIR).toBeNull();
+    } finally {
+      if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
+    }
+  });
+
+  test("an explicit `pass_env` of a location variable wins over the resolved directory", async () => {
+    process.env.AKM_CONFIG_DIR = "/explicit/config";
+    try {
+      expect((await reportLocations(["        pass_env: [AKM_CONFIG_DIR]"])).AKM_CONFIG_DIR).toBe("/explicit/config");
+    } finally {
+      delete process.env.AKM_CONFIG_DIR;
+    }
   });
 
   test("the exported default allowlist is the single definition the child is built from", async () => {
@@ -449,6 +480,11 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
       .filter(Boolean);
     const allowed = new Set<string>([
       ...EXEC_DEFAULT_ENV_PASSTHROUGH,
+      "AKM_BUNDLE_DIR",
+      "AKM_CONFIG_DIR",
+      "AKM_DATA_DIR",
+      "AKM_CACHE_DIR",
+      "AKM_STATE_DIR",
       "AKM_RUN_ID",
       "AKM_STEP_ID",
       "AKM_UNIT_ID",

@@ -66,9 +66,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   workflow it runs, fails the plan and names it.
   `akm workflow status <id> --units` shows the same argv, cwd and resolved refs
   for a failed unit (#1238).
-- A workflow exec step's command now receives `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
-  `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` from the akm that started
-  it, so a step that runs `akm` uses the same bundle and state without
+- A workflow exec step's command now receives `AKM_CONFIG_DIR`, `AKM_DATA_DIR`,
+  `AKM_CACHE_DIR` and `AKM_STATE_DIR` set to the directories the akm that started
+  it resolved, including ones it found through `XDG_*_HOME`, and `AKM_BUNDLE_DIR`
+  when it had one. A step that runs `akm` uses the same bundle and state without
   `pass_env` (#1238).
 - `akm env`, `akm secret`, workflow `env:` bindings and child workflows, task
   `uses:` assets, and `improve`/`distill`/schema-repair file lookups now find an
