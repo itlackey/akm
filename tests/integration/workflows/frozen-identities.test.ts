@@ -416,6 +416,21 @@ describe("${ref} in an exec unit", () => {
     expect(JSON.stringify(status)).not.toContain(secret);
   });
 
+  test("shell ${var//a/b} in argv is text, not a ref: the command runs and prints a_b", async () => {
+    const a = bundle("a");
+    write(
+      a,
+      "workflows/bash-subst.md",
+      workflowSource([execStep("run", ["bash", "-c", "v=a-b; echo ${v//-/_} > seen.txt"])]),
+    );
+    configureBundles({ a });
+
+    const { result } = await drive("a//workflows/bash-subst");
+
+    expect(result.done).toBe(true);
+    expect(fs.readFileSync(path.join(a, "seen.txt"), "utf8").trim()).toBe("a_b");
+  });
+
   test("a token in exec.cwd resolves to the asset's path", async () => {
     const [a, b] = ["a", "b"].map(bundle) as [string, string];
     write(b, "scripts/lab/run.sh", "#!/bin/sh\n");

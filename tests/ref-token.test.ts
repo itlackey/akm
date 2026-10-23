@@ -58,6 +58,7 @@ describe("substituteRefTokens", () => {
         PLAIN: "$VAR",
         SLASHES: "${x/a/b}",
         BASH: "${PATH//:/ }",
+        BUNDLE_ONLY: "${a//b}",
         FRAGMENT: "${secrets/x#frag}",
         LITERAL: "no tokens here",
       },
@@ -70,13 +71,15 @@ describe("substituteRefTokens", () => {
       PLAIN: "$VAR",
       SLASHES: "${x/a/b}",
       BASH: "${PATH//:/ }",
+      BUNDLE_ONLY: "${a//b}",
       FRAGMENT: "${secrets/x#frag}",
       LITERAL: "no tokens here",
     });
     expect(missing).toEqual([]);
   });
 
-  test("a bundle-qualified ref follows the core ref grammar even when its first segment is not a native type directory", () => {
+  test("a qualified opaque body is a ref only when its bundle is installed", () => {
+    const installed = new Set(["docs", "team", "unresolved"]);
     const seen: string[] = [];
     const { values, missing } = substituteRefTokens(
       { A: "${docs//tables/customers}", B: "x ${team//release} y", C: "${unresolved//tables/x}" },
@@ -85,12 +88,42 @@ describe("substituteRefTokens", () => {
         if (ref === "unresolved//tables/x") return undefined;
         return { kind: "path", path: `/p/${ref.replace("//", "/")}` };
       },
+      (bundle) => installed.has(bundle),
     );
     expect(seen).toEqual(["docs//tables/customers", "team//release", "unresolved//tables/x"]);
     expect(values.A).toBe("/p/docs/tables/customers");
     expect(values.B).toBe("x /p/team/release y");
     expect(values.C).toBe("${unresolved//tables/x}");
     expect(missing).toEqual(["unresolved//tables/x"]);
+  });
+
+  test("a native-type-led body is a ref whether or not its bundle is installed", () => {
+    const { missing } = substituteRefTokens(
+      { A: "${typo//secrets/x}", B: "${secrets/y}" },
+      () => undefined,
+      () => false,
+    );
+    expect(missing).toEqual(["typo//secrets/x", "secrets/y"]);
+  });
+
+  test("bash pattern substitution stays text when no bundle of that name is installed", () => {
+    const bash = {
+      BUNDLE_ONLY: "${a//b}",
+      DASH: "${name//-/_}",
+      UPPER: "${FOO//a/b}",
+      WORD: "${s//old/new}",
+      PATH_FORM: "${PATH//:/_}",
+      EXT: "${file//.txt/.md}",
+    };
+    const { values, missing } = substituteRefTokens(
+      bash,
+      () => {
+        throw new Error("resolver must not be called for shell text");
+      },
+      () => false,
+    );
+    expect(values).toEqual(bash);
+    expect(missing).toEqual([]);
   });
 
   test("an unqualified body with no native type prefix stays text", () => {
@@ -131,7 +164,8 @@ describe("isRefToken", () => {
   test("accepts exactly one whole-string ref token", () => {
     expect(isRefToken("${secrets/openai}")).toBe(true);
     expect(isRefToken("${team//secrets/openai}")).toBe(true);
-    expect(isRefToken("${docs//tables/customers}")).toBe(true);
+    expect(isRefToken("${docs//tables/customers}")).toBe(false);
+    expect(isRefToken("${v//-/_}")).toBe(false);
     expect(isRefToken("${OPENAI_KEY}")).toBe(false);
     expect(isRefToken("$OPENAI_KEY")).toBe(false);
     expect(isRefToken("prefix-${secrets/openai}")).toBe(false);

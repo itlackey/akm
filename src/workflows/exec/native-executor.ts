@@ -26,6 +26,7 @@
  */
 
 import { resolveRefToken } from "../../commands/env/env-binding";
+import { isInstalledBundle } from "../../core/env-secret-ref";
 import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
 import { substituteRefTokens } from "../../core/ref-token";
@@ -999,7 +1000,7 @@ function substituteExecRefs(
 ): { exec: WorkflowExecSpec; secretValues: string[] } {
   const slots: Record<string, string> = Object.fromEntries(exec.command.entries());
   if (exec.cwd !== undefined) slots.cwd = exec.cwd;
-  const { values, missing, secretValues } = substituteRefTokens(slots, resolveRefToken);
+  const { values, missing, secretValues } = substituteRefTokens(slots, resolveRefToken, isInstalledBundle);
   if (missing.length > 0) {
     throw new NotFoundError(
       `exec unit "${unitId}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was run.`,

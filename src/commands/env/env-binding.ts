@@ -17,7 +17,7 @@
  *   - Resolved values must never be written to stdout or logs by callers.
  */
 
-import { makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
+import { isInstalledBundle, makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secret-ref";
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
@@ -115,7 +115,11 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   }
 
   // Substitute `${ref}` tokens. A missing ref is a hard error — inject NOTHING.
-  const { values: substituted, missing, secretValues } = substituteRefTokens(envValues, resolveRefToken);
+  const {
+    values: substituted,
+    missing,
+    secretValues,
+  } = substituteRefTokens(envValues, resolveRefToken, isInstalledBundle);
   if (missing.length > 0) {
     throw new NotFoundError(
       `Env "${envRef}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was injected.`,

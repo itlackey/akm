@@ -11,7 +11,7 @@
  */
 
 import { displayRef } from "../core/asset/resolve-ref";
-import { resolveRefOwner } from "../core/env-secret-ref";
+import { isInstalledBundle, resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
 import { substituteRefTokens } from "../core/ref-token";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
@@ -168,13 +168,17 @@ export function resolveOrchestrationRefs(summary: WorkflowStepOrchestrationSumma
   };
   const tokens = (values: string[], where: "argv" | "cwd"): void => {
     const seen = new Set<string>();
-    substituteRefTokens(Object.fromEntries(values.map((value, index) => [String(index), value])), (ref) => {
-      if (!seen.has(ref)) {
-        seen.add(ref);
-        note(ref, where);
-      }
-      return { kind: "path", path: "" };
-    });
+    substituteRefTokens(
+      Object.fromEntries(values.map((value, index) => [String(index), value])),
+      (ref) => {
+        if (!seen.has(ref)) {
+          seen.add(ref);
+          note(ref, where);
+        }
+        return { kind: "path", path: "" };
+      },
+      isInstalledBundle,
+    );
   };
   if (summary.exec) {
     tokens(summary.exec.command, "argv");

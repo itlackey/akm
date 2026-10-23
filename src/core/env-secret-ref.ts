@@ -18,6 +18,7 @@ import path from "node:path";
 import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
 import { isFileOrFileSymlink } from "../indexer/walk/walker";
+import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
@@ -130,6 +131,11 @@ export function resolveRefOwner(ref: string): { absPath: string; type: string | 
       ref: makeBundleRef(match.bundleId, conceptId),
     }
   );
+}
+
+/** Is `bundle` the id of an installed bundle in the active source set? The predicate `${ref}` substitution uses to tell a qualified ref from shell text. */
+export function isInstalledBundle(bundle: string): boolean {
+  return resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig())).length > 0;
 }
 
 /**
