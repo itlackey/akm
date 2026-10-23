@@ -236,7 +236,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     let overwritten: boolean;
     let operationPaths: string[];
     if (isSkill) {
-      const sourceSkillDir = path.dirname(sourcePath);
+      // sourcePath is the authored path; a symlinked skill directory must be
+      // copied by content, never as the link.
+      const sourceSkillDir = fs.realpathSync(path.dirname(sourcePath));
       const destSkillDir = path.join(destRoot, typeDir, destName);
       assertNoDestinationSymlinkParent(destRoot, destSkillDir);
       const existing = lstatIfExists(destSkillDir);

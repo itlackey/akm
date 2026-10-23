@@ -765,6 +765,26 @@ describe("akmClone opaque refs and provenance", () => {
     expect(fs.readFileSync(script.destination.path, "utf8")).toBe("#!/bin/bash\necho deploy\n");
   });
 
+  test("a skill whose directory is a symlink is cloned as a real directory and the link target is not written", async () => {
+    const externalDir = path.join(createStashDir("akm-clone-skill-link-target-"), "ext");
+    const externalSkill = path.join(externalDir, "SKILL.md");
+    writeFile(externalSkill, "---\ndescription: ext skill\n---\n# Ext\n");
+    writeFile(path.join(externalDir, "helper.md"), "# Helper\n");
+    fs.symlinkSync(externalDir, path.join(searchPathDir, "skills", "foo"), "dir");
+    const before = fs.readFileSync(externalSkill);
+
+    const result = await akmClone({ sourceRef: "searchpath//skills/foo" });
+
+    const destination = path.join(stashDir, "skills", "foo");
+    expect(result.destination.path).toBe(path.join(destination, "SKILL.md"));
+    expect(fs.lstatSync(destination).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toContain(
+      "sources:\n  - searchpath//skills/foo\n",
+    );
+    expect(fs.readFileSync(path.join(destination, "helper.md"), "utf8")).toBe("# Helper\n");
+    expect(fs.readFileSync(externalSkill).equals(before)).toBe(true);
+  });
+
   test("a knowledge ref named without its extension clones to <name>.md", async () => {
     writeFile(path.join(searchPathDir, "knowledge", "retry-policy.md"), "# Retry policy\n");
 
