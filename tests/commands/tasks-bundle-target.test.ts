@@ -333,4 +333,21 @@ describe("bundle-targeted tasks via --bundle", () => {
     });
     expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
   });
+
+  test("a disabled bundle selector is reported as disabled, not as unconfigured", () => {
+    saveConfig({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      defaultBundle: "stash",
+      bundles: {
+        stash: { path: iso.stashDir, writable: true },
+        off: { path: readonlyDir.dir, enabled: false },
+      },
+    });
+    resetConfigCache();
+
+    expect(() => resolveTaskReadBundle(undefined, "off")).toThrow('Bundle "off" is disabled.');
+    expect(() => resolveTaskReadBundle("off", undefined)).toThrow('Bundle "off" is disabled.');
+    expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
+  });
 });

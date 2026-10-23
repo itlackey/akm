@@ -19,6 +19,7 @@ import { loadConfig } from "../../core/config/config";
 import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
+import { assertBundleNotDisabled } from "../../core/write-source";
 import {
   applyInputDefaults,
   type InputContract,
@@ -85,6 +86,7 @@ export function resolveBundleAsset(
   const match = resolveConceptOwner({ bundle, conceptId }, sources);
   if (match) return { file: match.owner.realPath, bundleRoot: match.source.path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
+    assertBundleNotDisabled(config, bundle);
     throw new UsageError(
       `Bundle ${JSON.stringify(bundle)} is not configured. Run \`akm bundle list\` to see available bundles.`,
       "INVALID_FLAG_VALUE",

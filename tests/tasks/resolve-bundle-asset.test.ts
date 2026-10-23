@@ -88,4 +88,20 @@ describe("resolveBundleAsset", () => {
 
     expect(resolved).toEqual({ file: fs.realpathSync(path.join(shared, "scripts", "deploy.sh")), bundleRoot: shared });
   });
+
+  test("a disabled bundle is reported as disabled, an unknown one as not configured", () => {
+    const work = bundleRoot("akm-task-work", { "scripts/local.sh": "echo local\n" });
+    const off = bundleRoot("akm-task-off", { "scripts/x.sh": "echo x\n" });
+    const config = {
+      defaultBundle: "work",
+      bundles: { work: { path: work }, off: { path: off, enabled: false } },
+    } as unknown as AkmConfig;
+
+    expect(() => resolveBundleAsset(config, { bundle: "off", type: "script", name: "x.sh" })).toThrow(
+      'Bundle "off" is disabled.',
+    );
+    expect(() => resolveBundleAsset(config, { bundle: "ghost", type: "script", name: "x.sh" })).toThrow(
+      /is not configured/,
+    );
+  });
 });

@@ -32,6 +32,7 @@ import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
+  assertBundleNotDisabled,
   commitWriteTargetBoundary,
   isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
@@ -1009,6 +1010,7 @@ export function resolveTaskReadBundle(
     const sources = activeTaskSources(config);
     const source = resolveSourcesForOrigin(selector, sources)[0];
     if (!source) {
+      assertBundleNotDisabled(config, selector);
       throw new UsageError(
         `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
         "INVALID_FLAG_VALUE",
