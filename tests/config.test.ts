@@ -931,6 +931,34 @@ describe("0.9 config shape parsing", () => {
     });
     expect(warnings.some((w) => w.includes("engines.<name>.apiKey"))).toBe(true);
   });
+
+  test("loads a secrets/ ref as an engine apiKey, bundle-qualified or not", () => {
+    writeCurrentConfig({
+      engines: {
+        cloud: {
+          kind: "llm",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o",
+          apiKey: "${team//secrets/openai}",
+        },
+      },
+    });
+    expect(loadConfig().engines?.cloud?.apiKey).toBe("${team//secrets/openai}");
+  });
+
+  test("rejects a non-secrets asset ref as an engine apiKey at load", () => {
+    writeCurrentConfig({
+      engines: {
+        cloud: {
+          kind: "llm",
+          endpoint: "https://api.openai.com/v1/chat/completions",
+          model: "gpt-4o",
+          apiKey: "${scripts/key.sh}",
+        },
+      },
+    });
+    expect(() => loadConfig()).toThrow(/accepts only a \$\{secrets\/<name>\} ref/);
+  });
 });
 
 // ── `extends` inheritance (#945) ────────────────────────────────────────────

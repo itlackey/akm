@@ -77,14 +77,21 @@ provider, the token is `${[bundle//]conceptId}`:
 - a config credential (`engines.<name>.apiKey`, `embedding.apiKey`, a git
   bundle's `credential`): `"${secrets/openai}"`.
 
-A `secrets/...` ref stands for the secret's value; any other asset ref (for
-example `${scripts/lab/fetch.sh}`) stands for the asset's absolute path. The
-ref is resolved with the one ref walk, so it may name any bundle. `akm env run`
-and a workflow unit's `env:` binding replace the tokens in an env file's
+Where the token may appear decides what it may name:
+
+- **In an env value**, any asset ref substitutes. A `secrets/...` ref stands for
+  the secret's value; any other asset ref (for example
+  `${scripts/lab/fetch.sh}`) stands for the asset's absolute path.
+- **In a config credential**, only a `secrets/...` ref is accepted. A `${...}`
+  naming any other kind of asset is rejected when the config loads.
+
+The ref is resolved with the one ref walk, so it may name any bundle. `akm env
+run` and a workflow unit's `env:` binding replace the tokens in an env file's
 values; `env export` writes them verbatim. A `${...}` body that is not an akm
-ref (`${HOME}`, `${PATH//:/ }`) is plain text and is left untouched. A ref no
-bundle owns is an error and nothing is injected. Each read records an
-`env_access` event. See
+ref (`${HOME}`, `${PATH//:/ }`) is plain text: it is left untouched in an env
+value, and in a config credential a `${NAME}` that is a valid variable name is
+expanded from the process environment. A ref no bundle owns is an error and
+nothing is injected. Each read records an `env_access` event. See
 [Workflow Schema: Binding a secret to a unit](workflow-schema.md#binding-a-secret-to-a-unit).
 
 A secret's value is its file content with surrounding whitespace trimmed. That

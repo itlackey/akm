@@ -9,7 +9,7 @@
  */
 import { z } from "zod";
 import { validateExtraParams } from "../../extra-params";
-import { isRefToken } from "../../ref-token";
+import { isRefToken, isSecretRefToken } from "../../ref-token";
 import { warnOnce } from "../../warn";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../engine-semantics";
 
@@ -43,14 +43,21 @@ export const engineName = z
   .max(63)
   .regex(ENGINE_NAME_PATTERN, "names must be lowercase kebab-case and must not begin with reserved akm-");
 
-/** The two symbolic apiKey forms akm accepts: an env-var reference (`$VAR`, `${VAR}`) or an akm ref (`${secrets/name}`). Never matches a literal key. */
+/** The two symbolic credential forms akm accepts in config: an env-var reference (`$VAR`, `${VAR}`) or a `secrets/` ref (`${secrets/name}`). Never matches a literal key. */
 export function isApiKeyReference(value: string): boolean {
-  return ENV_REFERENCE_PATTERN.test(value) || isRefToken(value);
+  return ENV_REFERENCE_PATTERN.test(value) || isSecretRefToken(value);
 }
 
 export function symbolicOrWarnApiKey(label: string) {
-  return z.string().superRefine((value) => {
+  return z.string().superRefine((value, ctx) => {
     if (isApiKeyReference(value)) return;
+    if (isRefToken(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `a ${label} accepts only a \${secrets/<name>} ref (or a $VAR reference); "${value}" names another kind of asset`,
+      });
+      return;
+    }
     warnOnce(
       `config:literal-api-key:${label}`,
       `A ${label} in config.json is a literal API key, not a $VAR/\${VAR}/\${ref} reference; using it as configured. Prefer \`akm config set ...apiKey '$VAR'\` (with the corresponding env var set) or \`'\${secrets/<name>}'\` (with \`akm secret set secrets/<name> ...\`) — see docs/reference/data-and-telemetry.md.`,

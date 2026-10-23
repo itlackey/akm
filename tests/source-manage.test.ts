@@ -215,6 +215,17 @@ describe("addStash", () => {
     ).toThrow(/credential must be a \$VAR/);
   });
 
+  test("rejects a non-secrets asset ref as a git credential", () => {
+    expect(() =>
+      addStash({
+        target: "https://git.example.com/private/repo.git",
+        providerType: "git",
+        name: "script-ref",
+        credential: "${scripts/token.sh}",
+      }),
+    ).toThrow(/credential must be a \$VAR, \$\{VAR\} or \$\{secrets\//);
+  });
+
   test("rejects literal and non-git credentials before writing config (#977)", () => {
     expect(() =>
       addStash({

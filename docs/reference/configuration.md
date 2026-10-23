@@ -1095,7 +1095,8 @@ health`'s engine probes all resolve `${ref}` the same way direct LLM and
 embedding calls have since 0.9.13 (#917); resolution order for a single
 `apiKey` field is: an env reference (`$VAR`/`${VAR}`) first, then
 `apiKeyFile`, then `${ref}` — though in practice a config sets only one of the
-three per engine. The secret is read trimmed of surrounding whitespace.
+three per engine. The secret is read trimmed of surrounding whitespace. The ref must name a `secrets/` asset;
+a `${...}` naming any other kind of asset is rejected when the config loads.
 
 `secret://<name>` was the previous spelling of the `${ref}` form and is
 retired. A config that still holds it loads as if it said `${secrets/<name>}`

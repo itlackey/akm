@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isRefToken, substituteRefTokens } from "../src/core/ref-token";
+import { isRefToken, isSecretRefToken, substituteRefTokens } from "../src/core/ref-token";
 
 // ── substituteRefTokens: the one `${ref}` token ─────────────────────────────
 //
@@ -112,5 +112,15 @@ describe("isRefToken", () => {
     expect(isRefToken("$OPENAI_KEY")).toBe(false);
     expect(isRefToken("prefix-${secrets/openai}")).toBe(false);
     expect(isRefToken("secret://openai")).toBe(false);
+  });
+});
+
+describe("isSecretRefToken", () => {
+  test("accepts only a token whose ref names a secrets/ asset", () => {
+    expect(isSecretRefToken("${secrets/openai}")).toBe(true);
+    expect(isSecretRefToken("${team//secrets/openai}")).toBe(true);
+    expect(isSecretRefToken("${scripts/run.sh}")).toBe(false);
+    expect(isSecretRefToken("${OPENAI_KEY}")).toBe(false);
+    expect(isSecretRefToken("prefix-${secrets/openai}")).toBe(false);
   });
 });

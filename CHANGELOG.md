@@ -36,26 +36,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - The warning for a credential-shaped task `env:` value no longer tells you to
   use an `env:` binding, which tasks do not have. It now points to
   `akm secret run` or `akm env run` in the task's `run:` (#1237).
-- A `bundle update` while a workflow is running no longer fails the run (#1238,
-  #1235). A running workflow used to remember the directory it was started in, so
-  once the update moved the bundle to a new revision directory, the next step
-  failed with `PATH_ESCAPE_VIOLATION` and the only remedy was `abandon`. The
-  run now finds its bundle again at each step and carries on from the new
-  directory.
-- `exec.cwd` is applied once (#1238). `cwd: sub` used to run in `<bundle>/sub/sub`.
-  It now runs in `<bundle>/sub`.
 
 ### Changed
 
-- `akm workflow plan --format text` now shows each step's argv, cwd and env refs,
-  and the bundle-qualified ref that every `${ref}` token, `env:` entry and child
-  `workflow:` resolves to; a ref no bundle owns fails the plan and names it.
-  `akm workflow status <id> --units` shows the same argv, cwd and resolved refs
-  for a failed unit (#1238).
-- A workflow exec step's command now receives `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,
-  `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` from the akm that started
-  it, so a step that runs `akm` uses the same bundle and state without
-  `pass_env` (#1238).
+- A config credential (`engines.<name>.apiKey`, `embedding.apiKey`,
+  `search.curateRerank.apiKey`, a git bundle's `credential`) now accepts only a
+  `${secrets/<name>}` ref or a `$VAR` reference (#1238). A `${...}` naming
+  another kind of asset, such as `${scripts/x}`, used to load and then fail the
+  first time the credential was used. It is now rejected when the config loads.
 - `akm env`, `akm secret`, workflow `env:` bindings and child workflows, task
   `uses:` assets, and `improve`/`distill`/schema-repair file lookups now find an
   asset with the same lookup `akm show` uses, instead of each keeping its own
@@ -144,34 +132,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm workflow create` no longer indexes the new workflow, and a new run no longer
   records an index entry id (#1239).
 
-- A workflow plan records the refs it uses and no locations (#1238). New runs
-  freeze plan `irVersion` 7, which holds no bundle directory, no directory
-  identity and, for each `env:` ref, only its bundle-qualified ref: the env
-  file, its keys and the secrets it names are read at each step. Runs frozen
-  by earlier releases (`irVersion` 5 and 6) carry those fields, which are now
-  ignored, and continue the same way. `akm workflow plan` lists an env ref
-  without its `keys` and `secretNames`.
-- A workflow's exec units and agents work in the root of the bundle that holds
-  the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
-  `exec.cwd` may now be absolute, and it is no longer required to stay inside the
-  bundle: a command can reach any directory anyway. A step whose workflow no
-  longer resolves to a bundle fails naming the workflow instead of running in
-  akm's own working directory.
-
-- An exec step's argv and `exec.cwd` can name an asset in any bundle with the same
-  `${ref}` token env assets use (#1238): `["bun", "${homelab//scripts/lab-status/fetch.ts}"]`.
-  A `secrets/` ref is replaced by the secret's value, which is then redacted from
-  the journal; any other asset ref by its absolute path. A ref no bundle owns
-  fails the unit, naming it, before anything is spawned. Prompts are not
-  substituted. A workflow in bundle A can now run a script from bundle B with an
-  env asset from bundle C that names a secret in bundle D.
-
-- A task no longer captures its working directory's identity when it is prepared
-  and re-checks it before it runs (#1238). A `run:` task runs in
-  `<bundle>/<working-directory>`, and a `uses: scripts/<file>` target that is a
-  symlink to a file outside the bundle works: the task freezes that file's
-  bytes.
-
 ### Deprecated
 
 - `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A
@@ -192,12 +152,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bundle installation (#1237).
 - `akm show` no longer reports an `activeRun` field. Run state is under
   `akm workflow` (#1239).
-- The "indexed root no longer matches the bundle source" warnings when a command
-  or persona is dispatched (#1238). A bundle at a different location than the
-  index recorded is no longer reported as drift.
-- The `exec_cwd_escape` failure reason and the checks behind it: the parser, the
-  compiler and the exec runner no longer reject an `exec.cwd` that leaves the
-  workflow's bundle (#1238).
 
 ## [0.10.261012] - 2026-10-22
 

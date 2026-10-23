@@ -70,7 +70,7 @@ export const SourceConfigEntrySchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["credential"],
-        message: "git credential must be a $VAR, ${VAR} or ${ref} reference",
+        message: "git credential must be a $VAR, ${VAR} or ${secrets/<name>} reference",
       });
     }
   });
@@ -188,7 +188,7 @@ export const BundleConfigEntrySchema = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["credential"],
-        message: "git credential must be a $VAR, ${VAR} or ${ref} reference",
+        message: "git credential must be a $VAR, ${VAR} or ${secrets/<name>} reference",
       });
     }
     const componentEntries = entry.components ? Object.entries(entry.components) : [];

@@ -34,6 +34,14 @@ export function isRefToken(value: string): boolean {
   return body !== undefined && isRefBody(body);
 }
 
+/** Is the whole string exactly one `${ref}` token whose ref names a `secrets/` asset? */
+export function isSecretRefToken(value: string): boolean {
+  const body = /^\$\{([^}\s]+)\}$/.exec(value)?.[1];
+  return (
+    body !== undefined && isRefBody(body) && typeNameFromConceptId(parseBundleRef(body).conceptId)?.type === "secret"
+  );
+}
+
 export interface RefTokenResolution {
   values: Record<string, string>;
   /** Refs no bundle owns, de-duplicated in first-seen order. Callers treat a non-empty list as a hard error and inject nothing. */
