@@ -154,7 +154,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   that holds the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
   `exec.cwd` may now be absolute, and it is no longer required to stay inside the
   bundle: a command can reach any directory anyway. A step whose workflow no
-  longer resolves to a bundle fails naming the workflow instead of running in
+  longer resolves to a bundle fails naming the workflow (a step with a gate is
+  blocked by its judge first, for `akm workflow resume`) instead of running in
   akm's own working directory.
 - An exec step's argv and `exec.cwd` can name an asset in any bundle with the same
   `${ref}` token env assets use (#1238): `["bun", "${homelab//scripts/lab-status/fetch.ts}"]`.

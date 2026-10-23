@@ -618,7 +618,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `curate` | `akm curate` | `query`, `itemCount`, `itemRefs[]` |
 | `show` | `akm show` | `type`, `name` |
 | `select` | `akm show`, when a search within the last 60s returned the ref | `query`, `searchTs`, `rankPosition` |
-| `env_access` | `akm env run`, and a workflow step's frozen environment | `keys`; `secretNames` from a workflow step (names only, never values) |
+| `env_access` | `akm env run`, and a workflow step's frozen environment | `keys` (names only, never values) |
 | `secret_access` | `akm secret run` | `var` (the variable name, never the value) |
 | `promoted` | `akm proposal accept`, and drain/triage promotion | `proposalId`, `source`, `sourceRun`, `assetPath`, `eligibilitySource`; `retired: true` for a retire proposal |
 | `rejected` | `akm proposal reject` | `proposalId`, `source`, `sourceRun`, `reason` |

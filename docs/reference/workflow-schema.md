@@ -565,8 +565,10 @@ between two steps of a running workflow is harmless: the next step runs from
 the new directory. `cwd` is joined onto that root **once**: `cwd: sub` runs in
 `<bundle>/sub`, and an absolute `cwd` replaces the root. Agent and SDK units
 get the same directory as their workspace, and so does a step's gate judge. If the workflow's bundle no longer
-resolves, the step fails with a message naming the ref; akm never falls back to
-its own working directory.
+resolves, the step fails with a message naming the ref; a step with a gate is
+blocked by its judge first, for `akm workflow resume`, because the judge is built
+before anything is dispatched. akm never falls back to its own working
+directory.
 
 ### The exec contract
 
