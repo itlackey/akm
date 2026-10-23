@@ -982,19 +982,6 @@ function taskProjectionAssetResolver(
   };
 }
 
-/** The working stash (`AKM_BUNDLE_DIR` or the default bundle) when it is the bundle `selector` names. */
-function workingStashTargetNamed(config: AkmConfig, selector: string): ResolvedWriteTarget | undefined {
-  try {
-    const working = resolveWorkingStashTarget(config, { requireWritable: false });
-    return working.source.name === selector ? working : undefined;
-  } catch (cause) {
-    // No working stash, a disabled one, or one of a kind that takes no writes:
-    // the walk over the active set answers instead.
-    if (cause instanceof ConfigError) return undefined;
-    throw cause;
-  }
-}
-
 /**
  * Exported for `src/commands/tasks/explain.ts` (P2b Lane B, spec
  * docs/plans/specs/p2b-input-bindings.md §4.5, B-N4): `akm task explain`
@@ -1018,28 +1005,23 @@ export function resolveTaskReadBundle(
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    const working = workingStashTargetNamed(config, selector);
-    if (working) {
-      resolved = working;
-    } else {
-      // Reading needs no write target: any bundle of the active set resolves.
-      const sources = activeTaskSources(config);
-      const source = resolveSourcesForOrigin(selector, sources)[0];
-      if (!source) {
-        throw new UsageError(
-          `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
-          "INVALID_FLAG_VALUE",
-        );
-      }
-      resolved = {
-        source: {
-          kind: source.type ?? "filesystem",
-          name: selector,
-          path: source.path,
-          adapterId: source.adapterId ?? detectAdapterId(source.path),
-        },
-      };
+    // Reading needs no write target: any bundle of the active set resolves.
+    const sources = activeTaskSources(config);
+    const source = resolveSourcesForOrigin(selector, sources)[0];
+    if (!source) {
+      throw new UsageError(
+        `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
+        "INVALID_FLAG_VALUE",
+      );
     }
+    resolved = {
+      source: {
+        kind: source.type ?? "filesystem",
+        name: selector,
+        path: source.path,
+        adapterId: source.adapterId ?? detectAdapterId(source.path),
+      },
+    };
   }
   if (refBundle && resolved.source.name !== refBundle) {
     throw new UsageError(
