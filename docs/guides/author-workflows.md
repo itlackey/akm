@@ -225,8 +225,12 @@ Widen it only by naming what the unit needs:
 
 `pass_env:` is for a **per-machine** variable an `env:` binding cannot express
 (an env asset stores a committed value; `CARGO_HOME` differs per build agent).
-Secrets and fixed values belong in exact named `env:` bindings: those values
-are redacted out of everything journaled, and `pass_env:` values are not.
+Fixed values belong in exact named `env:` bindings, and they reach the journal
+as they are. A credential belongs in `secrets/`, bound by a `${secrets/name}`
+token inside the env asset; only values substituted from such a ref are redacted
+out of everything journaled (see [Binding a secret to a
+unit](../reference/workflow-schema.md#binding-a-secret-to-a-unit)). `pass_env:`
+values are not redacted.
 
 Workflow starts freeze the durable plan v4 family's current executable format
 (`irVersion: 5`), which rejects `inherit_env` instead of persisting an
@@ -249,9 +253,10 @@ Full list of allowlisted names:
 - **No interpolation.** The argv is frozen. A `map` step's item reaches the
   command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
   read them from the environment, do not try to splice them into `command:`.
-- **Secrets go in `env:`, never in `command:`.** `command:` is stored verbatim in
-  the frozen plan; `env:` bindings are carried by name and their values are
-  redacted out of everything journaled.
+- **Secrets go in `secrets/`, bound through `env:`, never in `command:`.**
+  `command:` is stored verbatim in the frozen plan; `env:` bindings are carried
+  by name, and values substituted from a `${secrets/name}` ref are redacted out
+  of everything journaled.
 - **Long commands need a `timeout:`.** An exec unit defaults to 10 minutes. Use
   `timeout: "30m"` for a slow suite, or `timeout: "none"` only when you really
   mean unbounded.

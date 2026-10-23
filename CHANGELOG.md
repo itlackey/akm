@@ -8,11 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- The architecture notes and the manual testing checklist now describe credentials
-  and env values as `${ref}` tokens (`${secrets/name}`, resolved by ref from any
-  bundle) instead of `secret://` and `${secret:NAME}`, give the current
-  `akm config set` apiKey error text, and use full refs such as `env/qa-runtime`
-  in the `akm env create` steps (#1238).
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a
