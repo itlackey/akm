@@ -115,13 +115,20 @@ function findEnvSecretOwner(origin: string | undefined, conceptId: string): Conc
 }
 
 /**
- * The file that owns any asset ref right now (and the asset type its conceptId
- * names), or undefined when no bundle owns it. The lookup behind `${ref}` tokens.
+ * The file that owns any asset ref right now (the asset type its conceptId
+ * names, and the bundle-qualified spelling of the ref), or undefined when no
+ * bundle owns it. The lookup behind `${ref}` tokens.
  */
-export function resolveRefOwner(ref: string): { absPath: string; type: string | undefined } | undefined {
+export function resolveRefOwner(ref: string): { absPath: string; type: string | undefined; ref: string } | undefined {
   const { bundle, conceptId } = parseBundleRef(ref);
   const match = findEnvSecretOwner(bundle, conceptId);
-  return match && { absPath: match.owner.path, type: typeNameFromConceptId(conceptId)?.type };
+  return (
+    match && {
+      absPath: match.owner.path,
+      type: typeNameFromConceptId(conceptId)?.type,
+      ref: makeBundleRef(match.bundleId, conceptId),
+    }
+  );
 }
 
 /**

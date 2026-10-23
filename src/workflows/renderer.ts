@@ -11,16 +11,19 @@
  */
 
 import { displayRef } from "../core/asset/resolve-ref";
+import { resolveRefOwner } from "../core/env-secret-ref";
 import { UsageError } from "../core/errors";
+import { substituteRefTokens } from "../core/ref-token";
 import type { AssetRenderer, RenderContext } from "../indexer/walk/file-context";
 import type {
   ShowResponse,
   WorkflowParameter,
   WorkflowStepDefinition,
   WorkflowStepOrchestrationSummary,
+  WorkflowStepRef,
 } from "../sources/types";
 import { compileWorkflowSource, workflowStepInstructions } from "./compile";
-import type { WorkflowPlan, WorkflowPlanStep } from "./plan";
+import type { WorkflowExec, WorkflowPlan, WorkflowPlanStep } from "./plan";
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
@@ -83,13 +86,17 @@ function projectParameters(plan: WorkflowPlan): WorkflowParameter[] | undefined 
  * It is far smaller than the step `instructions` this same projection
  * already carries whole.
  */
-function summarizeStepOrchestration(
+export function summarizeStepOrchestration(
   step: WorkflowPlanStep,
   defaults: WorkflowPlan["defaults"],
 ): WorkflowStepOrchestrationSummary | undefined {
   const spec = step.spec;
   const unit = spec?.unit;
-  const exec = spec?.exec;
+  // A stored plan carries no authored spec: read the same fields off its frozen dispatch.
+  const frozen = spec ? undefined : frozenDispatch(step);
+  const exec = spec ? spec.exec : frozen?.exec;
+  const env = unit?.env ?? frozen?.env;
+  const workflow = spec ? spec.workflow : frozen?.workflow;
   const engine = exec ? undefined : (unit?.engine ?? defaults?.engine);
   const model = exec ? undefined : (unit?.model ?? defaults?.model);
   const timeoutMs = unit?.timeoutMs !== undefined ? unit.timeoutMs : defaults?.timeoutMs;
@@ -110,10 +117,72 @@ function summarizeStepOrchestration(
         }
       : {}),
     ...(unit?.output !== undefined || step.outputSchema !== undefined ? { hasSchema: true } : {}),
-    ...(unit?.env !== undefined ? { env: [...unit.env] } : {}),
+    ...(env !== undefined ? { env: [...env] } : {}),
+    ...(workflow !== undefined ? { workflow } : {}),
   };
 
   return Object.keys(summary).length > 0 ? summary : undefined;
+}
+
+/** The exec argv, env refs and child workflow a frozen step dispatches. */
+function frozenDispatch(step: WorkflowPlanStep): { exec?: WorkflowExec; env?: string[]; workflow?: string } {
+  const root = step.root;
+  const unit = root?.kind === "map" ? root.template : root;
+  if (!unit) return {};
+  const target = unit.frozenTarget;
+  const env = unit.environment.flatMap((binding) => (binding.kind === "env-ref" ? [binding.ref] : []));
+  return {
+    ...(target.kind === "shell"
+      ? {
+          exec: {
+            command: [...target.exec.command],
+            ...(target.exec.cwd !== undefined ? { cwd: target.exec.cwd } : {}),
+            ...(target.exec.passEnv ? { passEnv: [...target.exec.passEnv] } : {}),
+          },
+        }
+      : {}),
+    ...(env.length > 0 ? { env } : {}),
+    ...(target.kind === "child-workflow" ? { workflow: target.ref } : {}),
+  };
+}
+
+/**
+ * Add the bundle-qualified ref every `${ref}` token in the argv or cwd, every
+ * `env:` entry and the child `workflow:` resolves to right now, through the
+ * one owner walk (`resolveRefOwner`). A ref no bundle owns lands in
+ * `unresolved` instead; callers decide whether that is an error. No secret
+ * is read and no path is returned.
+ */
+export function resolveOrchestrationRefs(summary: WorkflowStepOrchestrationSummary): WorkflowStepOrchestrationSummary {
+  const refs: WorkflowStepRef[] = [];
+  const unresolved: Array<Pick<WorkflowStepRef, "ref" | "in">> = [];
+  const note = (ref: string, where: WorkflowStepRef["in"]): void => {
+    let owner: ReturnType<typeof resolveRefOwner>;
+    try {
+      owner = resolveRefOwner(ref);
+    } catch {
+      owner = undefined;
+    }
+    if (owner) refs.push({ ref, resolved: owner.ref, in: where });
+    else unresolved.push({ ref, in: where });
+  };
+  const tokens = (values: string[], where: "argv" | "cwd"): void => {
+    const seen = new Set<string>();
+    substituteRefTokens(Object.fromEntries(values.map((value, index) => [String(index), value])), (ref) => {
+      if (!seen.has(ref)) {
+        seen.add(ref);
+        note(ref, where);
+      }
+      return { kind: "path", path: "" };
+    });
+  };
+  if (summary.exec) {
+    tokens(summary.exec.command, "argv");
+    if (summary.exec.cwd !== undefined) tokens([summary.exec.cwd], "cwd");
+  }
+  for (const ref of summary.env ?? []) note(ref, "env");
+  if (summary.workflow !== undefined) note(summary.workflow, "workflow");
+  return { ...summary, refs, ...(unresolved.length > 0 ? { unresolved } : {}) };
 }
 
 function projectStepDefinitions(plan: WorkflowPlan): WorkflowStepDefinition[] {

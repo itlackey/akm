@@ -172,6 +172,24 @@ export interface WorkflowStepOrchestrationSummary {
   fanOut?: { over: string; concurrency?: number; reducer?: string };
   hasSchema?: boolean;
   env?: string[];
+  /** The child workflow ref a composing step runs, as authored. */
+  workflow?: string;
+  /**
+   * Set by `resolveOrchestrationRefs`: the bundle-qualified ref each `${ref}`
+   * token in the argv or cwd, each `env:` entry and the child `workflow:`
+   * resolves to right now. Never a value or a path.
+   */
+  refs?: WorkflowStepRef[];
+  /** The refs above that no bundle owns. */
+  unresolved?: Array<Pick<WorkflowStepRef, "ref" | "in">>;
+}
+
+export interface WorkflowStepRef {
+  /** The ref as written (the body of a `${…}` token, an `env:` entry, a `workflow:` value). */
+  ref: string;
+  /** The same ref qualified by the bundle that owns it. */
+  resolved: string;
+  in: "argv" | "cwd" | "env" | "workflow";
 }
 
 export interface WorkflowStepDefinition {

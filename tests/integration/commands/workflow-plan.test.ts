@@ -39,6 +39,7 @@ import { akmIndex } from "../../../src/indexer/indexer";
 import { runCliCapture } from "../../_helpers/cli";
 import {
   type IsolatedAkmStorage,
+  makeSandboxDir,
   withIsolatedAkmStorage,
   writeSandboxConfig,
   writeWorkflowTestConfig,
@@ -708,5 +709,85 @@ describe("akm workflow plan — no ref / an unknown ref (B-58)", () => {
     expect(result.code).toBe(1);
     const envelope = JSON.parse(result.stderr.trim()) as { ok: boolean };
     expect(envelope.ok).toBe(false);
+  });
+});
+
+describe("akm workflow plan <ref> — resolved refs (#1238)", () => {
+  let teamDir = "";
+  let teamCleanup: () => void = () => {};
+
+  beforeEach(() => {
+    const team = makeSandboxDir("akm-plan-team");
+    teamDir = team.dir;
+    teamCleanup = team.cleanup;
+    writeSandboxConfig({
+      semanticSearchMode: "off",
+      bundles: { stash: { path: storage.stashDir }, team: { path: teamDir } },
+      defaultBundle: "stash",
+    });
+    fs.mkdirSync(path.join(storage.stashDir, "sub"), { recursive: true });
+    fs.mkdirSync(path.join(teamDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(teamDir, "scripts", "x.ts"), "// x\n", "utf8");
+    fs.mkdirSync(path.join(teamDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(teamDir, "env", "prod.env"), "MODE=prod\n", "utf8");
+    fs.mkdirSync(path.join(teamDir, "workflows"), { recursive: true });
+    fs.writeFileSync(
+      path.join(teamDir, "workflows", "child.md"),
+      ["---", "type: workflow", "steps:", "  - id: only", "---", "", "## only", "", "Do it.", ""].join("\n"),
+      "utf8",
+    );
+    resetConfigCache();
+  });
+
+  afterEach(() => teamCleanup());
+
+  function writeExecWorkflow(argvRef: string): void {
+    write(
+      "workflows/two-bundle.md",
+      [
+        "---",
+        "type: workflow",
+        "steps:",
+        "  - id: build",
+        "    unit:",
+        `      env: [team//env/prod]`,
+        "      exec:",
+        `        command: ["bun", "${argvRef}"]`,
+        "        cwd: sub",
+        "  - id: delegate",
+        "    unit:",
+        "      workflow: team//workflows/child",
+        "---",
+        "",
+        "## build",
+        "",
+        "Build.",
+        "",
+        "## delegate",
+        "",
+        "Delegate.",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  test("text mode shows each step's argv, cwd and the bundle-qualified ref every token resolves to", async () => {
+    writeExecWorkflow("${team//scripts/x.ts}");
+
+    const result = await runCliCapture(["workflow", "plan", "workflows/two-bundle", "--format", "text"]);
+    expect(result.code).toBe(0);
+    expect(result.stdout).toContain('argv: ["bun","${team//scripts/x.ts}"]');
+    expect(result.stdout).toContain("cwd: sub");
+    expect(result.stdout).toContain("${team//scripts/x.ts} -> team//scripts/x.ts (argv)");
+    expect(result.stdout).toContain("team//env/prod -> team//env/prod (env)");
+    expect(result.stdout).toContain("team//workflows/child -> team//workflows/child (workflow)");
+  });
+
+  test("a ${ref} in argv that no bundle owns fails the plan and names it", async () => {
+    writeExecWorkflow("${team//scripts/missing.ts}");
+
+    const result = await runCliCapture(["workflow", "plan", "workflows/two-bundle", "--format", "text"]);
+    expect(result.code).not.toBe(0);
+    expect(result.stderr).toContain("team//scripts/missing.ts");
   });
 });

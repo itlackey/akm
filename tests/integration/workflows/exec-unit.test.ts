@@ -21,6 +21,7 @@ import path from "node:path";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { readStream } from "../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { formatWorkflowStatusPlain } from "../../../src/output/text/workflow-format";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { EXEC_DEFAULT_ENV_PASSTHROUGH, runExecUnit } from "../../../src/workflows/exec/exec-unit";
 import {
@@ -1090,6 +1091,30 @@ describe("exec unit — a stderr-only diagnosis survives to the journal (finding
     const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
     expect(unit?.failureReason).toBe("non_zero_exit");
     expect(unit?.diagnostic ?? "").toContain(CAUSE);
+  }, 30_000);
+
+  test("`status --units` shows a failed exec unit's argv, cwd and the refs its tokens resolve to", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "scripts", "probe.ts"), "// probe\n", "utf8");
+    seedRun(["work"]);
+    const argv = [...bunArgv("process.exit(7)"), "${scripts/probe.ts}"];
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(argv)}`, "        cwd: ."]);
+    storePlan(plan);
+    expect((await run(plan)).ok).toBe(false);
+
+    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.orchestration?.exec?.command).toEqual(argv);
+    expect(unit?.orchestration?.exec?.cwd).toBe(".");
+    expect(unit?.orchestration?.refs).toEqual([
+      { ref: "scripts/probe.ts", resolved: expect.stringMatching(/\/\/scripts\/probe\.ts$/), in: "argv" },
+    ]);
+
+    const text = formatWorkflowStatusPlain({ ...detail } as unknown as Record<string, unknown>) ?? "";
+    expect(text).toContain(`argv: ${JSON.stringify(argv)}`);
+    expect(text).toContain("cwd: .");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ref token as printed
+    expect(text).toContain("${scripts/probe.ts} -> stash//scripts/probe.ts (argv)");
   }, 30_000);
 
   test("a SUCCESSFUL unit's journaled result is unchanged (the artifact, not a diagnostic)", async () => {

@@ -13,6 +13,7 @@ import type {
   WorkflowRunStepState,
   WorkflowRunStepStatus,
   WorkflowRunSummary,
+  WorkflowStepOrchestrationSummary,
 } from "../../sources/types";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -34,6 +35,7 @@ import {
 } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import type { WorkflowPlan, WorkflowRuntimeKind } from "../plan";
+import { resolveOrchestrationRefs, summarizeStepOrchestration } from "../renderer";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
@@ -112,6 +114,12 @@ export interface WorkflowUnitDiagnostic {
   startedAt: string | null;
   finishedAt: string | null;
   engine: string | null;
+  /**
+   * Present on a failed unit whose step the frozen plan still describes: the
+   * step's argv, cwd and env names (the `show` projection) plus the refs its
+   * tokens resolve to right now.
+   */
+  orchestration?: WorkflowStepOrchestrationSummary;
   /** Journaled resolved runtime kind for a frozen-engine unit. */
   runtimeKind: WorkflowRuntimeKind | null;
   platform: string | null;
@@ -333,7 +341,16 @@ export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: b
       // The honest diagnostic surface (#22): read the unit journal straight and
       // project each row, INCLUDING failures whose diagnostic text the
       // deterministic evidence graph drops. Read-only; never mutates the run.
-      detail.units = repo.getUnitsForRun(run.id).map(toUnitDiagnostic);
+      const planRead = readRunPlan(run);
+      detail.units = repo.getUnitsForRun(run.id).map((row) => {
+        const unit = toUnitDiagnostic(row);
+        const step =
+          row.status === "failed" && planRead.ok
+            ? planRead.plan.steps.find((candidate) => candidate.stepId === row.step_id)
+            : undefined;
+        const summary = step ? summarizeStepOrchestration(step, undefined) : undefined;
+        return summary ? { ...unit, orchestration: resolveOrchestrationRefs(summary) } : unit;
+      });
     }
     return detail;
   });

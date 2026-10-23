@@ -9,8 +9,10 @@
  * (`loadWorkflowAsset`, `freezeWorkflow`) and NOTHING else — never
  * `publishWorkflowRunV4`, `startWorkflowRun`, `appendEvent`, or `akmIndex`.
  *
- * SECRET-FREE, by construction (§4.6's closed print list): a resolved
- * reference VALUE is never printed (references resolve at pre-attempt, not
+ * SECRET-FREE, by construction (§4.6's closed print list): a step's
+ * `orchestration` is the authored argv, cwd and env names plus the
+ * bundle-qualified refs they resolve to (the projection `akm show` prints,
+ * never a value or a path); a resolved reference VALUE is never printed (references resolve at pre-attempt, not
  * here); a `literal` **environment** binding's value is never printed (only
  * `environment[].kind`/`.name`, and an `env-ref`'s `.ref` — all NAMES);
  * `request.command.content`,
@@ -19,9 +21,11 @@
  */
 
 import { loadConfig } from "../../core/config/config";
+import { NotFoundError } from "../../core/errors";
 import type { TaskInputBinding } from "../../execution/input-contract";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { buildExecutionFromWire } from "../../integrations/agent/execution";
+import type { WorkflowStepOrchestrationSummary } from "../../sources/types";
 import { freezeWorkflow } from "../../workflows/freeze/freeze";
 import { computePlanHash } from "../../workflows/ir/plan-hash";
 import type {
@@ -33,6 +37,7 @@ import type {
   WorkflowPlanStep,
   WorkflowUnitNode,
 } from "../../workflows/plan";
+import { resolveOrchestrationRefs, summarizeStepOrchestration } from "../../workflows/renderer";
 import { loadWorkflowAsset } from "../../workflows/runtime/workflow-asset-loader";
 
 /** The step's dispatch unit — the map template for a fan-out, else the root unit. Undefined for a step not yet frozen. */
@@ -62,7 +67,9 @@ function childExpansion(target: FrozenChildWorkflowTarget): Record<string, unkno
     via: "child",
     childRef: target.ref,
     childPlanHash: target.planHash,
-    steps: target.frozenPlan.steps.map((step, index) => projectStep(step, index)),
+    steps: target.frozenPlan.steps.map((step, index) =>
+      projectStep(step, index, stepOrchestration(step, target.frozenPlan)),
+    ),
   };
 }
 
@@ -71,7 +78,24 @@ function stepExpansion(frozenTarget: FrozenWorkflowTarget | undefined): Record<s
   return frozenTarget?.kind === "child-workflow" ? childExpansion(frozenTarget) : { via: "direct" };
 }
 
-function projectStep(step: WorkflowPlanStep, sequenceIndex: number): Record<string, unknown> {
+/**
+ * The step's `show` orchestration projection plus the refs it resolves to.
+ * `authored` is the compiled step (it keeps the spelling the author wrote);
+ * a child plan's steps have only their frozen form.
+ */
+function stepOrchestration(
+  step: WorkflowPlanStep,
+  plan: Pick<WorkflowPlan, "defaults">,
+): WorkflowStepOrchestrationSummary | undefined {
+  const summary = summarizeStepOrchestration(step, plan.defaults);
+  return summary && resolveOrchestrationRefs(summary);
+}
+
+function projectStep(
+  step: WorkflowPlanStep,
+  sequenceIndex: number,
+  orchestration?: WorkflowStepOrchestrationSummary,
+): Record<string, unknown> {
   const unit = stepUnit(step);
   const frozenTarget = unit?.frozenTarget;
   const kind = step.root?.kind === "map" ? "map" : "unit";
@@ -83,6 +107,7 @@ function projectStep(step: WorkflowPlanStep, sequenceIndex: number): Record<stri
     targetKind: frozenTarget?.kind ?? null,
     ...(step.root?.kind === "map" ? { concurrency: step.root.concurrency } : {}),
     inputs: unit?.inputs ?? [],
+    ...(orchestration ? { orchestration } : {}),
     environment: (unit?.environment ?? []).map(projectEnvironmentBinding),
     ...(inputBindings && inputBindings.length > 0 ? { inputBindings: inputBindings.map(projectInputBinding) } : {}),
     gate: {
@@ -126,6 +151,19 @@ function collectLoweringNotices(plan: WorkflowPlan, config: ReturnType<typeof lo
  */
 export async function akmWorkflowPlan(ref: string): Promise<Record<string, unknown>> {
   const asset = await loadWorkflowAsset(ref);
+  // Resolve what the authored steps name before freezing: a `${ref}`, env ref or child workflow no bundle owns fails the plan.
+  const orchestrations = asset.plan.steps.map((step) => stepOrchestration(step, asset.plan));
+  const unresolved = orchestrations.flatMap((orchestration, index) =>
+    (orchestration?.unresolved ?? []).map(
+      (missing) => `${missing.ref} (${missing.in} of step "${asset.plan.steps[index]?.stepId}")`,
+    ),
+  );
+  if (unresolved.length > 0) {
+    throw new NotFoundError(
+      `Workflow ${asset.ref} names asset(s) that no bundle owns: ${unresolved.join(", ")}.`,
+      "FILE_NOT_FOUND",
+    );
+  }
   const config = loadConfig();
   const frozen = await freezeWorkflow(asset, config);
   const plan = frozen.plan;
@@ -142,7 +180,7 @@ export async function akmWorkflowPlan(ref: string): Promise<Record<string, unkno
     execution: plan.execution,
     ...(plan.budget ? { budget: plan.budget } : {}),
     ...(plan.params ? { params: plan.params } : {}),
-    steps: plan.steps.map((step, index) => projectStep(step, index)),
+    steps: plan.steps.map((step, index) => projectStep(step, index, orchestrations[index])),
     notices: collectLoweringNotices(plan, config),
     warnings: frozen.warnings.map((warning) => warning.message),
   };
