@@ -24,6 +24,7 @@ import {
   akmTasksEnable,
   akmTasksRun,
   akmTasksSync,
+  resolveTaskReadBundle,
 } from "../../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
@@ -314,5 +315,22 @@ describe("bundle-targeted tasks via --bundle", () => {
     await expect(akmTasksRun("implicit-owner", { target: "other" })).rejects.toMatchObject({
       code: "INVALID_FLAG_VALUE",
     });
+  });
+
+  test("a read selector resolves the working stash, another bundle and an environment-only stash through the active set", () => {
+    expect(resolveTaskReadBundle("stash", undefined).source).toMatchObject({ name: "stash", path: iso.stashDir });
+    expect(resolveTaskReadBundle(undefined, "work").source).toMatchObject({ name: "work", path: work.dir });
+    expect(resolveTaskReadBundle("readonly", "readonly").source).toMatchObject({
+      name: "readonly",
+      path: readonlyDir.dir,
+    });
+
+    fs.rmSync(path.join(iso.configDir, "akm", "config.json"));
+    resetConfigCache();
+    expect(resolveTaskReadBundle(undefined, "stash").source).toMatchObject({
+      name: "stash",
+      path: path.resolve(iso.stashDir),
+    });
+    expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
   });
 });
