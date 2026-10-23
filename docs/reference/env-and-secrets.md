@@ -85,7 +85,10 @@ Where the token may appear decides what it may name:
 - **In a config credential**, only a `secrets/...` ref is accepted. A `${...}`
   naming any other kind of asset is rejected when the config loads.
 
-The ref is resolved with the one ref walk, so it may name any bundle. `akm env
+The ref is resolved with the one ref walk, so it may name any bundle and any
+asset its owner holds: a bundle-qualified body such as `${docs//tables/customers}`
+is a ref whatever adapter owns it, while an unqualified body is a ref only when
+it leads with a native type directory (`${secrets/x}`, `${scripts/run.sh}`). `akm env
 run` and a workflow unit's `env:` binding replace the tokens in an env file's
 values; `env export` writes them verbatim. A `${...}` body that is not an akm
 ref (`${HOME}`, `${PATH//:/ }`) is plain text: it is left untouched in an env

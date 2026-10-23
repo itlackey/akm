@@ -15,6 +15,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   promoted artifact once the child echoed it as JSON, and a numeric secret echoed
   as a JSON number turned valid output into a `parse_error`. A number that is
   exactly a secret is now redacted too.
+- A bundle-qualified `${ref}` token now follows the same ref grammar and owner
+  walk as every other ref (#1238). `${docs//tables/customers}` (an OKF bundle)
+  or `${team//release}` (a workflow bundle) used to be left as literal text with
+  nothing reported missing, because only refs led by a native type directory
+  were recognised. They now resolve, and an unresolved one is an error. An
+  unqualified body that is not led by a native type (`${HOME}`) is still text.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a

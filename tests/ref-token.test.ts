@@ -58,7 +58,6 @@ describe("substituteRefTokens", () => {
         PLAIN: "$VAR",
         SLASHES: "${x/a/b}",
         BASH: "${PATH//:/ }",
-        BUNDLE_ONLY: "${a//b}",
         FRAGMENT: "${secrets/x#frag}",
         LITERAL: "no tokens here",
       },
@@ -71,10 +70,34 @@ describe("substituteRefTokens", () => {
       PLAIN: "$VAR",
       SLASHES: "${x/a/b}",
       BASH: "${PATH//:/ }",
-      BUNDLE_ONLY: "${a//b}",
       FRAGMENT: "${secrets/x#frag}",
       LITERAL: "no tokens here",
     });
+    expect(missing).toEqual([]);
+  });
+
+  test("a bundle-qualified ref follows the core ref grammar even when its first segment is not a native type directory", () => {
+    const seen: string[] = [];
+    const { values, missing } = substituteRefTokens(
+      { A: "${docs//tables/customers}", B: "x ${team//release} y", C: "${unresolved//tables/x}" },
+      (ref) => {
+        seen.push(ref);
+        if (ref === "unresolved//tables/x") return undefined;
+        return { kind: "path", path: `/p/${ref.replace("//", "/")}` };
+      },
+    );
+    expect(seen).toEqual(["docs//tables/customers", "team//release", "unresolved//tables/x"]);
+    expect(values.A).toBe("/p/docs/tables/customers");
+    expect(values.B).toBe("x /p/team/release y");
+    expect(values.C).toBe("${unresolved//tables/x}");
+    expect(missing).toEqual(["unresolved//tables/x"]);
+  });
+
+  test("an unqualified body with no native type prefix stays text", () => {
+    const { values, missing } = substituteRefTokens({ A: "${tables/customers}", B: "${release}" }, () => {
+      throw new Error("resolver must not be called for an unqualified opaque body");
+    });
+    expect(values).toEqual({ A: "${tables/customers}", B: "${release}" });
     expect(missing).toEqual([]);
   });
 
@@ -108,6 +131,7 @@ describe("isRefToken", () => {
   test("accepts exactly one whole-string ref token", () => {
     expect(isRefToken("${secrets/openai}")).toBe(true);
     expect(isRefToken("${team//secrets/openai}")).toBe(true);
+    expect(isRefToken("${docs//tables/customers}")).toBe(true);
     expect(isRefToken("${OPENAI_KEY}")).toBe(false);
     expect(isRefToken("$OPENAI_KEY")).toBe(false);
     expect(isRefToken("prefix-${secrets/openai}")).toBe(false);

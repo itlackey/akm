@@ -7,7 +7,8 @@
  * where `ref` is an akm ref (`[bundle//]conceptId`). A `secrets/…` ref stands
  * for the secret's value; any other asset ref stands for the asset's absolute
  * path. A `${…}` body that is not an akm ref (`${HOME}`, `${PATH//:/ }`,
- * `${x/a/b}`) is plain text and is left alone.
+ * `${x/a/b}`: unqualified and not led by a native type) is plain text and is
+ * left alone.
  *
  * Kept free of the commands layer so config credentials and env values share
  * this one function.
@@ -18,11 +19,18 @@ import { typeNameFromConceptId } from "./asset/resolve-ref";
 
 export const REF_TOKEN_RE = /\$\{([^}\s]+)\}/g;
 
-/** Does a `${…}` body parse as an akm ref (no export fragment) whose conceptId leads with a known asset type? */
+/**
+ * Does a `${…}` body parse as an akm ref (no export fragment) that is either
+ * bundle-qualified or leads with a native asset type? An unqualified opaque
+ * body stays text so shell syntax is never read as a ref; a qualified one
+ * follows the core ref grammar and the owner walk, whatever adapter owns it.
+ */
 function isRefBody(body: string): boolean {
   try {
     const ref = parseBundleRef(body);
-    return ref.fragment === undefined && typeNameFromConceptId(ref.conceptId) !== undefined;
+    return (
+      ref.fragment === undefined && (ref.bundle !== undefined || typeNameFromConceptId(ref.conceptId) !== undefined)
+    );
   } catch {
     return false;
   }
