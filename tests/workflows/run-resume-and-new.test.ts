@@ -92,7 +92,7 @@ describe("workflow run <ref> always starts a new run", () => {
 
     expect(warnings).toHaveLength(1);
     expect(warnings[0]).toContain(first.run.id);
-    expect(warnings[0]).toContain(`akm workflow resume ${first.run.id}`);
+    expect(warnings[0]).toContain(`akm workflow run ${first.run.id}`);
     expect(warnings[0]).toContain(`akm workflow abandon ${first.run.id}`);
   });
 
