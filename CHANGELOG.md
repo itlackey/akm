@@ -17,6 +17,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   the materialized worktree; that audit was removed with the dangerous-env
   gates. It now describes what the update does: fetch into a staged copy, then
   fast-forward the live checkout to exactly that commit (#1237).
+- The warning for a credential-shaped task `env:` value no longer tells you to
+  use an `env:` binding, which tasks do not have. It now points to
+  `akm secret run` or `akm env run` in the task's `run:` (#1237).
 
 ### Changed
 
