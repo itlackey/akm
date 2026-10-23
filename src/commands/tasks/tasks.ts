@@ -25,11 +25,7 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
-import {
-  bundleKeyForContentRoot,
-  resolveActiveConfiguredSources,
-  resolveConfiguredSources,
-} from "../../core/config/config-sources";
+import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
@@ -46,8 +42,9 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
+import { resolveSourceEntries } from "../../indexer/search/search-source";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
@@ -55,7 +52,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
-import { resolveBundleAsset } from "../../tasks/run/load-task";
+import { activeTaskSources, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
 import { readTaskHistory } from "../../tasks/run/task-history";
@@ -572,24 +569,11 @@ async function buildSchedulerSyncPlan(
   }
 
   // The one active-bundle set search, show and workflows walk, working stash included.
-  let ids: string[];
-  let kinds: Array<string | undefined>;
-  try {
-    const sources = resolveSourceEntries(undefined, config);
-    ids = deriveInstallations(sources).map((installation) => installation.id);
-    kinds = sources.map((source) => source.type);
-  } catch (cause) {
-    // The working stash is a configured bundle that is disabled, so the active
-    // set cannot include it: an unscoped sync still removes that bundle's rows
-    // (below) and syncs the other configured bundles.
-    const working = bundleKeyForContentRoot(config, resolveStashDir());
-    if (bundleTarget || !(cause instanceof ConfigError) || !working || config.bundles?.[working]?.enabled !== false) {
-      throw cause;
-    }
-    const active = resolveActiveConfiguredSources(config);
-    ids = active.map((source) => source.name);
-    kinds = active.map((source) => source.type);
-  }
+  // A working stash that is a disabled configured bundle is left out: an
+  // unscoped sync still removes that bundle's rows (below) and syncs the others.
+  const sources = bundleTarget ? resolveSourceEntries(undefined, config) : activeTaskSources(config);
+  const ids = deriveInstallations(sources).map((installation) => installation.id);
+  const kinds = sources.map((source) => source.type);
   const configuredSources = resolveConfiguredSources(config);
   if (bundleTarget) {
     // Only filesystem and git bundles can carry scheduler state.
@@ -1012,23 +996,6 @@ function workingStashTargetNamed(config: AkmConfig, selector: string): ResolvedW
 }
 
 /**
- * The active source set a task read walks. A working stash that is a disabled
- * configured bundle makes that set throw; it is simply not in the set, so the
- * other bundles still resolve.
- */
-function activeTaskSources(config: AkmConfig): SearchSource[] {
-  try {
-    return resolveSourceEntries(undefined, config);
-  } catch (cause) {
-    const working = bundleKeyForContentRoot(config, resolveStashDir());
-    const entry = working ? config.bundles?.[working] : undefined;
-    if (!(cause instanceof ConfigError) || !working || !entry || entry.enabled !== false) throw cause;
-    const enabled = { ...config, bundles: { ...config.bundles, [working]: { ...entry, enabled: true } } };
-    return resolveSourceEntries(undefined, enabled).filter((source) => source.registryId !== working);
-  }
-}
-
-/**
  * Exported for `src/commands/tasks/explain.ts` (P2b Lane B, spec
  * docs/plans/specs/p2b-input-bindings.md §4.5, B-N4): `akm task explain`
  * resolves its `--bundle` axis identically to every other read-only task
@@ -1057,7 +1024,7 @@ export function resolveTaskReadBundle(
     } else {
       // Reading needs no write target: any bundle of the active set resolves.
       const sources = activeTaskSources(config);
-      const source = sources[deriveInstallations(sources).findIndex((installation) => installation.id === selector)];
+      const source = resolveSourcesForOrigin(selector, sources)[0];
       if (!source) {
         throw new UsageError(
           `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,

@@ -11,7 +11,7 @@ import type { AkmConfig } from "../../src/core/config/config";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { writeLockfile } from "../../src/integrations/lockfile";
 import { resolveBundleAsset } from "../../src/tasks/run/load-task";
-import { makeSandboxDir, type SandboxedDir } from "../_helpers/sandbox";
+import { makeSandboxDir, type SandboxedDir, withEnvSync } from "../_helpers/sandbox";
 
 const sandboxes: SandboxedDir[] = [];
 
@@ -72,5 +72,20 @@ describe("resolveBundleAsset", () => {
     expect(() => resolveBundleAsset(config, { bundle: "work", type: "script", name: "missing.sh" })).toThrow(
       NotFoundError,
     );
+  });
+
+  test("resolves an asset in another bundle while AKM_BUNDLE_DIR names a disabled configured bundle", () => {
+    const mine = bundleRoot("akm-task-mine", { "scripts/local.sh": "echo local\n" });
+    const shared = bundleRoot("akm-task-shared", { "scripts/deploy.sh": "echo deploy\n" });
+    const config = {
+      defaultBundle: "shared",
+      bundles: { mine: { path: mine, enabled: false }, shared: { path: shared, writable: false } },
+    } as unknown as AkmConfig;
+
+    const resolved = withEnvSync({ AKM_BUNDLE_DIR: mine }, () =>
+      resolveBundleAsset(config, { bundle: "shared", type: "script", name: "deploy.sh" }),
+    );
+
+    expect(resolved).toEqual({ file: fs.realpathSync(path.join(shared, "scripts", "deploy.sh")), bundleRoot: shared });
   });
 });

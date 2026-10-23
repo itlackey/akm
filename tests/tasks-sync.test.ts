@@ -601,9 +601,16 @@ describe("akmTasksSync — env-only working stash beside a configured bundle", (
 describe("akmTasksSync — working stash is a disabled configured bundle", () => {
   test("unscoped sync removes the disabled bundle's rows and installs the other bundles' tasks", async () => {
     const other = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sync-other-"));
+    const tools = fs.mkdtempSync(path.join(os.tmpdir(), "akm-sync-tools-"));
     try {
       fs.mkdirSync(path.join(other, "tasks"), { recursive: true });
-      fs.writeFileSync(path.join(other, "tasks", "gamma.yml"), 'version: 4\nrun: echo gamma\nschedule: "0 6 * * *"\n');
+      fs.mkdirSync(path.join(tools, "scripts"), { recursive: true });
+      fs.writeFileSync(path.join(tools, "scripts", "ok.sh"), "#!/bin/sh\necho ok\n", { mode: 0o755 });
+      // gamma names an asset in a third bundle, so syncing it reads across bundles.
+      fs.writeFileSync(
+        path.join(other, "tasks", "gamma.yml"),
+        'version: 4\nuses: tools//scripts/ok.sh\nschedule: "0 6 * * *"\n',
+      );
       const exec = memoryExec();
       const backend = CRON_BACKEND({
         exec,
@@ -613,7 +620,11 @@ describe("akmTasksSync — working stash is a disabled configured bundle", () =>
         envPath: false,
       });
       writeSandboxConfig({
-        bundles: { mine: { path: stashDir, writable: true }, other: { path: other, writable: true } },
+        bundles: {
+          mine: { path: stashDir, writable: true },
+          other: { path: other, writable: true },
+          tools: { path: tools, writable: false },
+        },
         defaultBundle: "other",
       });
       resetConfigCache();
@@ -628,7 +639,11 @@ describe("akmTasksSync — working stash is a disabled configured bundle", () =>
       ).toEqual(["alpha", "gamma"]);
 
       writeSandboxConfig({
-        bundles: { mine: { path: stashDir, enabled: false }, other: { path: other, writable: true } },
+        bundles: {
+          mine: { path: stashDir, enabled: false },
+          other: { path: other, writable: true },
+          tools: { path: tools, writable: false },
+        },
         defaultBundle: "other",
       });
       resetConfigCache();
@@ -637,6 +652,7 @@ describe("akmTasksSync — working stash is a disabled configured bundle", () =>
       expect(listBlocks(exec.current()).map((block) => block.id)).toEqual(["gamma"]);
     } finally {
       fs.rmSync(other, { recursive: true, force: true });
+      fs.rmSync(tools, { recursive: true, force: true });
     }
   });
 });

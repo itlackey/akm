@@ -14,9 +14,11 @@ import fs from "node:fs";
 import { detectAdapterId } from "../../core/adapter/detect-adapter";
 import { makeBundleRef } from "../../core/asset/asset-ref";
 import { conceptIdFromTypeName } from "../../core/asset/resolve-ref";
+import { resolveStashDir } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
+import { bundleKeyForContentRoot } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
-import { NotFoundError, UsageError } from "../../core/errors";
+import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import {
   applyInputDefaults,
   type InputContract,
@@ -26,7 +28,7 @@ import {
 } from "../../execution/input-contract";
 import type { ExecutionJsonObject } from "../../execution/json";
 import { resolveAdapterConceptOwner, resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import type { TaskInvocation } from "../model/invocation";
@@ -53,6 +55,23 @@ const CONFIG_FREE_TASK_RUNTIME: AkmConfig = Object.freeze({
 });
 
 /**
+ * The active source set a task read walks. A working stash that is a disabled
+ * configured bundle makes that set throw; it is simply not in the set, so the
+ * other bundles still resolve.
+ */
+export function activeTaskSources(config: AkmConfig): SearchSource[] {
+  try {
+    return resolveSourceEntries(undefined, config);
+  } catch (cause) {
+    const working = bundleKeyForContentRoot(config, resolveStashDir());
+    const entry = working ? config.bundles?.[working] : undefined;
+    if (!(cause instanceof ConfigError) || !working || !entry || entry.enabled !== false) throw cause;
+    const enabled = { ...config, bundles: { ...config.bundles, [working]: { ...entry, enabled: true } } };
+    return resolveSourceEntries(undefined, enabled).filter((source) => source.registryId !== working);
+  }
+}
+
+/**
  * Resolve an asset a task names in another bundle (`uses:`) through the one
  * ref-to-file walk. Reading needs no write target, so a bundle of any kind
  * (git, npm, website) resolves.
@@ -62,7 +81,7 @@ export function resolveBundleAsset(
   { bundle, type, name }: { bundle: string; type: string; name: string },
 ): { file: string; bundleRoot: string } {
   const conceptId = conceptIdFromTypeName(type, name);
-  const sources = resolveSourceEntries(undefined, config);
+  const sources = activeTaskSources(config);
   const match = resolveConceptOwner({ bundle, conceptId }, sources);
   if (match) return { file: match.owner.realPath, bundleRoot: match.source.path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
