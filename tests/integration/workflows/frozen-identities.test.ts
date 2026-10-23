@@ -229,6 +229,35 @@ describe("${ref} in an exec unit", () => {
     expect(fs.readFileSync(path.join(a, "seen.txt"), "utf8")).toBe("token-ok:east");
   });
 
+  test("a ${secrets/...} token in argv joins the redaction set: the value reaches the child but never the journal", async () => {
+    const a = bundle("a");
+    const secret = "sk-argv-secret-8f3a1c";
+    write(a, "secrets/t", `${secret}\n`);
+    write(
+      a,
+      "workflows/leak.md",
+      workflowSource([
+        execStep("run", [
+          BUN,
+          "-e",
+          "const v = process.argv[process.argv.length - 1]; process.stdout.write(`out:${v}`); process.stderr.write(`err:${v}`)",
+          "${a//secrets/t}",
+        ]),
+      ]),
+    );
+    configureBundles({ a });
+
+    const { runId, result } = await drive("a//workflows/leak");
+
+    expect(result.done).toBe(true);
+    const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "run"));
+    expect(units.length).toBeGreaterThan(0);
+    const journaled = JSON.stringify(units);
+    expect(journaled).toContain("out:");
+    expect(journaled).not.toContain(secret);
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
   test("a token in exec.cwd resolves to the asset's path", async () => {
     const [a, b] = ["a", "b"].map(bundle) as [string, string];
     write(b, "scripts/lab/run.sh", "#!/bin/sh\n");
