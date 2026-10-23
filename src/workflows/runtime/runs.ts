@@ -39,7 +39,7 @@ import { resolveOrchestrationRefs, summarizeStepOrchestration } from "../rendere
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
-import { frozenStepRows, readRunPlan } from "./run-plan";
+import { decodeWorkflowPlan, frozenStepRows, readRunPlan } from "./run-plan";
 import { canonicalizeWorkflowRefInput, loadWorkflowAsset } from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
@@ -332,6 +332,15 @@ export async function startWorkflowRun(
   });
 }
 
+function decodeStatusPlan(planJson: string | null | undefined): WorkflowPlan | undefined {
+  if (!planJson) return undefined;
+  try {
+    return decodeWorkflowPlan(JSON.parse(planJson));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: boolean }): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
@@ -341,13 +350,15 @@ export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: b
       // The honest diagnostic surface (#22): read the unit journal straight and
       // project each row, INCLUDING failures whose diagnostic text the
       // deterministic evidence graph drops. Read-only; never mutates the run.
-      const planRead = readRunPlan(run);
-      detail.units = repo.getUnitsForRun(run.id).map((row) => {
+      const rows = repo.getUnitsForRun(run.id);
+      // The plan is decoded only to describe a failed unit, read-only: no run
+      // warning (`readRunPlan` says it is "running" an older plan) and no
+      // orchestration when the plan cannot be decoded.
+      const plan = rows.some((row) => row.status === "failed") ? decodeStatusPlan(run.plan_json) : undefined;
+      detail.units = rows.map((row) => {
         const unit = toUnitDiagnostic(row);
         const step =
-          row.status === "failed" && planRead.ok
-            ? planRead.plan.steps.find((candidate) => candidate.stepId === row.step_id)
-            : undefined;
+          row.status === "failed" ? plan?.steps.find((candidate) => candidate.stepId === row.step_id) : undefined;
         const summary = step ? summarizeStepOrchestration(step, undefined) : undefined;
         return summary ? { ...unit, orchestration: resolveOrchestrationRefs(summary) } : unit;
       });

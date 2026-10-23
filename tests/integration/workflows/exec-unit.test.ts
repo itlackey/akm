@@ -1117,6 +1117,35 @@ describe("exec unit — a stderr-only diagnosis survives to the journal (finding
     expect(text).toContain("${scripts/probe.ts} -> stash//scripts/probe.ts (argv)");
   }, 30_000);
 
+  test("`status --units` on a run frozen as irVersion 6 still describes a failed unit and does not say it is running the run", async () => {
+    seedRun(["work"]);
+    const argv = bunArgv("process.exit(7)");
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(argv)}`]);
+    storePlan(plan);
+    expect((await run(plan)).ok).toBe(false);
+    const db = openStateDatabase();
+    try {
+      db.prepare("UPDATE workflow_runs SET plan_ir_version = 6 WHERE id = ?").run(RUN_ID);
+    } finally {
+      db.close();
+    }
+
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    let detail: Awaited<ReturnType<typeof getWorkflowStatus>>;
+    try {
+      detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.orchestration?.exec?.command).toEqual(argv);
+    expect(warnings.join("\n")).not.toContain("running it with the current engine");
+  }, 30_000);
+
   test("a SUCCESSFUL unit's journaled result is unchanged (the artifact, not a diagnostic)", async () => {
     seedRun(["work"]);
     const plan = execPlan([
