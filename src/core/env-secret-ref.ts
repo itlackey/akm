@@ -15,13 +15,14 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
-import { resolveSourcesForOrigin } from "../registry/origin-resolve";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
+import { makeBundleRef } from "./asset/asset-ref";
 import type { AssetRef } from "./asset/resolve-ref";
-import { displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
-import { isContainedResolvedPath, isWithin } from "./common";
+import { conceptIdFromTypeName, displayRef, isFullRefInput, parseRefInput } from "./asset/resolve-ref";
+import { isWithin } from "./common";
 import { type AkmConfig, loadConfig } from "./config/config";
 import { NotFoundError, UsageError } from "./errors";
 import { resolveMutationTarget } from "./mutation-target";
@@ -84,27 +85,11 @@ export function parseEnvRef(ref: string): AssetRef {
   return parseRefInput(isFullRefInput(ref) ? ref : `env/${ref}`);
 }
 
-export function findEnvSource(origin: string | undefined, type: "env" | "secret", name: string): IndexSearchSource {
-  const sources = resolveSourceEntries(undefined, loadConfig());
-  if (sources.length === 0) {
-    throw new UsageError("No bundles configured. Run `akm bundle create` to create your working bundle.");
-  }
-  const candidates = origin ? resolveSourcesForOrigin(origin, sources) : sources;
-  const typeDir = type === "env" ? "env" : "secrets";
-  const member = candidates.find((source) =>
-    fs.existsSync(assetPathForName(type, path.join(source.path, typeDir), name)),
-  );
-  if (member) return member;
-  if (!origin) {
-    const fallback = candidates[0];
-    if (fallback) return fallback;
-    throw new UsageError("No bundles configured. Run `akm bundle create` to create your working bundle.");
-  }
-  const named = candidates[0];
-  if (!named) {
-    throw new NotFoundError(`Source not found for origin: ${origin}`);
-  }
-  return named;
+/** The bundle and file that own an env or secret ref right now, or undefined. Sensitive files resolve too. */
+function findEnvSecretOwner(origin: string | undefined, conceptId: string): ConceptOwnerMatch | undefined {
+  return resolveConceptOwner({ bundle: origin, conceptId }, resolveSourceEntries(undefined, loadConfig()), {
+    includeSensitive: true,
+  });
 }
 
 /**
@@ -121,9 +106,10 @@ export function makeEnvRef(name: string, source?: IndexSearchSource, config: Akm
 }
 
 /**
- * Resolve an env ref to an absolute `.env` path. Accepts the `env/<name>`
- * conceptId (or a bare name, auto-qualified into it). The path is returned
- * even when the file does not yet exist (so `create` writes under `env/`).
+ * Resolve an env ref to the absolute `.env` path that owns it right now.
+ * Accepts the `env/<name>` conceptId (or a bare name, auto-qualified into it).
+ * Throws `NotFoundError` when no bundle owns it; creating one goes through
+ * {@link resolveEnvWriteTarget}.
  */
 export function resolveEnvPath(ref: string): {
   name: string;
@@ -136,18 +122,10 @@ export function resolveEnvPath(ref: string): {
   if (parsed.type !== "env") {
     throw new UsageError(`Expected an env ref (env/<name>); got "${ref}".`);
   }
-  const source = findEnvSource(parsed.origin, "env", parsed.name);
-
-  const envRoot = path.join(source.path, "env");
-  const envPath = assetPathForName("env", envRoot, parsed.name);
-  // Name grammar: the name must not climb out of env/ (`..` or an absolute
-  // name). Lexical only: an env file that is a symlink to a file elsewhere
-  // resolves, because installing a bundle is the trust decision.
-  if (!isContainedResolvedPath(path.resolve(envPath), path.resolve(envRoot))) {
-    throw new UsageError(`Env name "${parsed.name}" escapes the env directory.`);
-  }
-
-  return { name: parsed.name, absPath: envPath, source, parsedRef: parsed, dir: "env" };
+  const conceptId = conceptIdFromTypeName("env", parsed.name);
+  const match = findEnvSecretOwner(parsed.origin, conceptId);
+  if (!match) throw new NotFoundError(`Env not found: ${makeBundleRef(parsed.origin, conceptId)}`);
+  return { name: parsed.name, absPath: match.owner.path, source: match.source, parsedRef: parsed, dir: "env" };
 }
 
 export function parseSecretRef(ref: string): AssetRef {
@@ -168,12 +146,7 @@ function displayDefaultBundle(source?: IndexSearchSource, config: AkmConfig = lo
   return primary && path.resolve(primary.path) === path.resolve(source.path) ? source.registryId : undefined;
 }
 
-export function resolveSecretPath(
-  ref: string,
-  // Create-only (`secret set`): enforce a flat ref name and apply `--path` as
-  // the subdirectory. Lookup callers omit this so nested refs keep resolving.
-  create?: { subPath?: string },
-): {
+export function resolveSecretPath(ref: string): {
   name: string;
   absPath: string;
   source: IndexSearchSource;
@@ -182,30 +155,21 @@ export function resolveSecretPath(
   if (parsed.type !== "secret") {
     throw new UsageError(`Expected a secret ref (secrets/<name>); got "${ref}".`);
   }
-  if (create) {
-    assertFlatAssetName(parsed.name);
-    parsed.name = combineCreatePath(normalizeCreateSubPath(create.subPath), parsed.name);
-  }
-  // Source resolution is identical for every asset type; reuse the env helper.
-  const source = findEnvSource(parsed.origin, "secret", parsed.name);
-  const typeRoot = path.join(source.path, "secrets");
-  const absPath = assetPathForName("secret", typeRoot, parsed.name);
-  // Name grammar only (see resolveEnvPath): a symlinked secret resolves.
-  if (!isContainedResolvedPath(path.resolve(absPath), path.resolve(typeRoot))) {
-    throw new UsageError(`Secret name "${parsed.name}" escapes the secrets directory.`);
-  }
-  return { name: parsed.name, absPath, source };
+  const conceptId = conceptIdFromTypeName("secret", parsed.name);
+  const match = findEnvSecretOwner(parsed.origin, conceptId);
+  if (!match) throw new NotFoundError(`Secret not found: ${makeBundleRef(parsed.origin, conceptId)}`);
+  return { name: parsed.name, absPath: match.owner.path, source: match.source };
 }
 
 // ── Write-target resolution (env/secret mutations) ───────────────────────────
 //
-// READS (`env run`/`show`/`list`/`path`, `secret run`/`list`) keep the
-// origin-aware, all-sources `findEnvSource` resolution above. (`secret path`
-// used this same read-side resolver too, until it was REMOVED from the CLI in
-// 0.9.0 alongside `secret remove` — R-027 / D-49 — because `remove` resolved
-// through the WRITE-target path below instead, so the two spellings could
-// silently name different files for the same ref; `resolveSecretPath` below
-// still exists and is still exercised by `secret run`.) WRITES route
+// READS (`env run`/`show`/`path`, `secret run`) ask the one ref-to-file walk
+// (`resolveConceptOwner`) above. (`secret path` used this same read-side
+// resolver too, until it was REMOVED from the CLI in 0.9.0 alongside `secret
+// remove` — R-027 / D-49 — because `remove` resolved through the WRITE-target
+// path below instead, so the two spellings could silently name different files
+// for the same ref; `resolveSecretPath` above still exists and is still
+// exercised by `secret run`.) WRITES route
 // through the canonical `resolveWriteTarget` selection every other write command
 // (remember/import/tasks/knowledge) shares: explicit `--bundle` wins, else
 // `defaultWriteTarget`, else the working stash, and the chosen source must be
@@ -224,7 +188,7 @@ export interface EnvWriteResolution {
 /**
  * Resolve the destination for an env mutation. Mirrors {@link resolveEnvPath}
  * but selects the source via {@link resolveWriteTarget} (writability-checked)
- * instead of the read-side {@link findEnvSource}. `create` enforces a flat ref
+ * instead of the read-side {@link resolveEnvPath}. `create` enforces a flat ref
  * name and applies `--path` as the subdirectory (matching `env create`).
  */
 export function resolveEnvWriteTarget(
@@ -261,7 +225,7 @@ export interface SecretWriteResolution {
  * Resolve the destination for a secret mutation. Mirrors
  * {@link resolveSecretPath} but selects the source via
  * {@link resolveWriteTarget} (writability-checked) instead of the read-side
- * {@link findEnvSource}.
+ * {@link resolveSecretPath}.
  */
 export function resolveSecretWriteTarget(
   ref: string,

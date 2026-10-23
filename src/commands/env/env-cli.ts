@@ -6,8 +6,7 @@
  * `akm env` command family. Extracted verbatim from src/cli.ts (WS6) so the God
  * Module shrinks; the `main.subCommands.env` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseEnvRef / findEnvSource / makeEnvRef / resolveEnvPath + the env-path
- * traversal guard) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm env` manages whole `.env` files under each stash's env/ directory.
@@ -215,8 +214,10 @@ async function runEnvInjected(
     throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
   }
 
-  const { name, absPath, source } = resolveEnvPath(target);
-  if (!fs.existsSync(absPath)) {
+  try {
+    resolveEnvPath(target);
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
     // Help users who reach for the removed single-key `ref/KEY` form.
     const slash = target.lastIndexOf("/");
     if (slash > 0) {
@@ -224,7 +225,8 @@ async function runEnvInjected(
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(maybeKey)) {
         let baseExists = false;
         try {
-          baseExists = fs.existsSync(resolveEnvPath(target.slice(0, slash)).absPath);
+          resolveEnvPath(target.slice(0, slash));
+          baseExists = true;
         } catch {
           baseExists = false;
         }
@@ -237,7 +239,7 @@ async function runEnvInjected(
         }
       }
     }
-    throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+    throw error;
   }
 
   // Load → filter → secret-substitute → keys-only

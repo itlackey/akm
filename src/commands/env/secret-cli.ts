@@ -6,8 +6,7 @@
  * `akm secret` command family. Extracted verbatim from src/cli.ts (WS6) so the
  * God Module shrinks; the `main.subCommands.secret` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseSecretRef / makeSecretRef / resolveSecretPath, plus the shared
- * findEnvSource) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseSecretRef / makeSecretRef / resolveSecretPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm secret` manages whole-file secrets under each stash's secrets/ directory.
