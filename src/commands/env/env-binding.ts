@@ -21,9 +21,9 @@ import { makeEnvRef, resolveEnvPath, resolveRefOwner } from "../../core/env-secr
 import { NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { substituteRefTokens } from "../../core/ref-token";
+import { readValue } from "../../core/secret-value";
 import { warnOnce } from "../../core/warn";
 import { loadEnv } from "./env";
-import { readValue } from "./secret";
 
 /** The retired `${secret:NAME}` env-value token (see `resolveEnvBinding`). */
 const LEGACY_SECRET_TOKEN_RE = /\$\{secret:([^}\s]+)\}/g;

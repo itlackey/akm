@@ -2,8 +2,8 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { readValue } from "../../commands/env/secret";
 import { resolveSecretPath } from "../../core/env-secret-ref";
+import { readValue } from "../../core/secret-value";
 import type { SecretResolver } from "../provider";
 
 /**

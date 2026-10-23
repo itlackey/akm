@@ -14,7 +14,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readValue, secretLockPath, setSecret, withSecretLock } from "../src/commands/env/secret";
+import { secretLockPath, setSecret, withSecretLock } from "../src/commands/env/secret";
+import { readValue } from "../src/core/secret-value";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";

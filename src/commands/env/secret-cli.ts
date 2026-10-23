@@ -196,7 +196,7 @@ const secretRunCommand = defineJsonCommand({
 
     const { name, absPath, source } = resolveSecretPath(args.ref);
 
-    const { readValue } = await import("./secret.js");
+    const { readValue } = await import("../../core/secret-value.js");
 
     const mergedEnv = buildChildEnv(process.env, {
       clean: args.clean === true,
