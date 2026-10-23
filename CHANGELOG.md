@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A task's `uses:` script or workflow in an npm, website or read-only bundle now
+  resolves (#1238). It used to fail with "unsupported kind for writes", because
+  the lookup went through the write-target resolver. An unknown bundle in such a
+  ref is reported as not configured, without naming a flag.
 - `akm bundle update` no longer re-clones a git or npm bundle whose upstream
   revision has not changed. Re-cloning replaced the bundle's directory under any
   running task or workflow, and left an empty revision directory behind after
@@ -29,6 +33,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- `akm env`, `akm secret`, workflow `env:` bindings and child workflows, task
+  `uses:` assets, and `improve`/`distill`/schema-repair file lookups now find an
+  asset with the same lookup `akm show` uses, instead of each keeping its own
+  copy of it (#1238). The visible differences: a missing child workflow fails
+  with the ordinary "Workflow not found" error, an env ref in a workflow does
+  not resolve into a disabled bundle, and `improve` finds a concept in a
+  bundle whose adapter names the file (such as an OKF table) from disk as well
+  as from the index.
 - Installing a bundle is now the trust decision (#1237). A bundle whose `env/`
   files set a key such as `PATH` installs, updates unattended, and works in
   `akm env run`, `akm secret run` and workflow `env:` bindings with no flag, no
