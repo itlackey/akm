@@ -13,6 +13,14 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { readEvents } from "../../../src/core/events";
+import { buildExecution, resolveExecution } from "../../../src/integrations/agent/execution";
+import type { AgentProfile } from "../../../src/integrations/agent/profiles";
+import { getBuiltinAgentProfile } from "../../../src/integrations/agent/profiles";
+import { runExecution } from "../../../src/integrations/agent/runner-dispatch";
+import {
+  collectWorkflowDispatchSensitiveValues,
+  redactUnitOutcome,
+} from "../../../src/workflows/exec/dispatch-redaction";
 import { materializeFrozenWorkflowEnvironment } from "../../../src/workflows/exec/environment";
 import type { FrozenWorkflowEnvironmentBinding } from "../../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "../../_helpers/sandbox";
@@ -63,6 +71,38 @@ describe("materializing a frozen environment at dispatch", () => {
 
     expect(materialized.values).toEqual({ URL: "https://hooks.example.test/1", TOKEN: "Bearer tok-123" });
     expect(materialized.sensitiveValues).toEqual(["tok-123"]);
+  });
+
+  test("an agent unit keeps the URL its env asset binds and loses only the ${secrets/…} value it echoes", async () => {
+    write(
+      storage.stashDir,
+      "env/hook.env",
+      "HOOK_URL=https://hooks.example.test/inbox/7\nHOOK_TOKEN=${secrets/hook-token}\n",
+    );
+    write(storage.stashDir, "secrets/hook-token", "tok-123\n");
+    const materialized = materializeFrozenWorkflowEnvironment([envRef("env/hook")]);
+    const runner = {
+      kind: "agent" as const,
+      engine: "agent",
+      profile: { ...(getBuiltinAgentProfile("opencode") as AgentProfile), envPassthrough: [] },
+    };
+    const resolved = resolveExecution({
+      content: "post it",
+      runner,
+      current: { environment: materialized.values },
+    });
+    const echoed = `posted to ${materialized.values.HOOK_URL} with ${materialized.values.HOOK_TOKEN}`;
+
+    const result = await runExecution(buildExecution(resolved.request, resolved.runner), {
+      runAgent: async () => ({ ok: true, exitCode: 0, stdout: echoed, stderr: "", durationMs: 1 }),
+    });
+    const outcome = redactUnitOutcome<{ text: string; failureReason?: string }>(
+      { text: result.stdout },
+      collectWorkflowDispatchSensitiveValues({ runner, sensitiveValues: materialized.sensitiveValues }),
+    );
+
+    expect(result.stdout).toContain("https://hooks.example.test/inbox/7");
+    expect(outcome.text).toBe("posted to https://hooks.example.test/inbox/7 with [REDACTED]");
   });
 
   test("a ${bundle//secrets/…} token resolves in another bundle, and a script ref yields its path", () => {

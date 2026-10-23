@@ -31,8 +31,9 @@ export interface UnitDispatchRequest {
    * the run params, a map unit's item + index, and the step's declared
    * `inputs:` artifacts, all as canonical JSON. Applied ON TOP of {@link env}
    * so an engine-authored context variable cannot be shadowed by a binding.
-   * Kept separate from `env` on purpose: `env` values are the resolved SECRETS
-   * that must be redacted out of the journal, and these plainly are not.
+   * Kept separate from `env` on purpose: `env` carries configuration plus
+   * resolved secret values, and only {@link sensitiveValues} is redacted out of
+   * the journal; these plainly are not secrets.
    */
   execContext?: Record<string, string>;
   timeoutMs: number | null;

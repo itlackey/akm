@@ -73,7 +73,10 @@ const OPERATIONAL_OPTIONS = [
   "onEvent",
 ] as const;
 
-/** Every value that can reach one dispatch and must never be echoed back: credentials and secret-looking env. */
+/**
+ * Every value that can reach one dispatch and must never be echoed back: credentials and unsafe passthrough env.
+ * `opts.env` is configuration; a caller's secret values are redacted through its own sensitive set.
+ */
 export function collectDispatchSensitiveValues(
   runner: RunnerSpec,
   opts: RunAgentOptions,
@@ -100,9 +103,6 @@ export function collectDispatchSensitiveValues(
     for (const name of runner.profile.envPassthrough) {
       if (!isEnvPassthroughValueSafeToExpose(name, envSource[name])) values.push(envSource[name]);
     }
-  }
-  for (const [name, value] of Object.entries(opts.env ?? {})) {
-    if (!isEnvPassthroughValueSafeToExpose(name, value)) values.push(value);
   }
   return collectSensitiveValues(values);
 }

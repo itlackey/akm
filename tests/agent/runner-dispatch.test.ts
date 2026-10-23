@@ -9,7 +9,11 @@ import type { AgentRunResult } from "../../src/integrations/agent";
 import { type BuiltExecution, buildExecution, resolveExecution } from "../../src/integrations/agent/execution";
 import { type AgentProfile, getBuiltinAgentProfile } from "../../src/integrations/agent/profiles";
 import type { RunnerSpec } from "../../src/integrations/agent/runner";
-import { type RunExecutionOptions, runExecution } from "../../src/integrations/agent/runner-dispatch";
+import {
+  collectDispatchSensitiveValues,
+  type RunExecutionOptions,
+  runExecution,
+} from "../../src/integrations/agent/runner-dispatch";
 import { clearLlmUsageSink, type LlmUsageRecord, setLlmUsageSink } from "../../src/llm/usage-telemetry";
 import { withEnv } from "../_helpers/sandbox";
 
@@ -128,8 +132,29 @@ describe("runExecution routes each runner kind to its transport", () => {
   });
 });
 
+describe("collectDispatchSensitiveValues", () => {
+  test("an agent unit's bound env is configuration; the credential and an unsafe passthrough value still count", () => {
+    const runner: RunnerSpec = {
+      kind: "sdk",
+      engine: "sdk",
+      profile: { ...sdkProfile, envPassthrough: ["PATH", "CUSTOM_AGENT_TOKEN"] },
+      fallbackConnection: { ...llmConnection, apiKey: "ENGINE-CREDENTIAL" },
+    };
+    const values = collectDispatchSensitiveValues(
+      runner,
+      { env: { HOOK_URL: "https://hooks.example.test/inbox/7", CHANNEL_ID: "1234567890" } },
+      { PATH: "/safe/bin", CUSTOM_AGENT_TOKEN: "UNSAFE-PASSTHROUGH" },
+    );
+
+    expect(values).toContain("ENGINE-CREDENTIAL");
+    expect(values).toContain("UNSAFE-PASSTHROUGH");
+    expect(values).not.toContain("https://hooks.example.test/inbox/7");
+    expect(values).not.toContain("1234567890");
+  });
+});
+
 describe("runExecution redacts what the child could have seen", () => {
-  test("engine credentials, bound env, profile env and non-allowlisted passthrough values", async () => {
+  test("engine credentials, profile env and non-allowlisted passthrough values, but not bound env", async () => {
     const values = {
       engine: "ENGINE-ECHO-SENTINEL",
       binding: "BINDING-ECHO-SENTINEL",
@@ -187,10 +212,11 @@ describe("runExecution redacts what the child could have seen", () => {
       },
     );
 
-    for (const secret of [values.engine, values.binding, values.asset, values.passthrough]) {
+    for (const secret of [values.engine, values.asset, values.passthrough]) {
       expect(JSON.stringify(result)).not.toContain(secret);
     }
     for (const nonsecret of [
+      values.binding,
       values.safePath,
       values.safeProfile,
       values.safeRegion,
@@ -203,7 +229,7 @@ describe("runExecution redacts what the child could have seen", () => {
     ]) {
       expect(JSON.stringify(result)).toContain(nonsecret);
     }
-    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(4);
+    expect(result.stdout.match(/\[REDACTED\]/g)).toHaveLength(3);
   });
 
   // The XDG directories are paths, like HOME and TMPDIR: an opencode child that echoes the config
