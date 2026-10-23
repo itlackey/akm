@@ -18,7 +18,7 @@ next):
    section. CI fails the release commit when the newest section does not name
    the `package.json` version (`tests/workflow-release.test.ts`).
 3. Add a migration note if the release needs one (see
-   [CONTRIBUTING](../../.github/CONTRIBUTING.md#shipping-a-release--migration-notes)).
+   [CONTRIBUTING](https://github.com/itlackey/akm/blob/main/.github/CONTRIBUTING.md#shipping-a-release--migration-notes)).
 4. Commit `release: <version>`, push it to the branch, and let CI run on it.
 
 ## 2. Release akm
