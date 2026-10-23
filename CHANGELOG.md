@@ -24,6 +24,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `akm env list` and `akm secret list` now show an env or secret file that is a
   symlink to a file (#1237). They could be read and searched but were missing
   from their own list. Symlinks to directories are still not followed.
+- A task whose `uses:` script is a symlink now runs under the interpreter its
+  own name selects (#1238). A `scripts/deploy.sh` linked to `real-script.txt`,
+  or to a file with no extension, used to fail with "no closed runtime
+  interpreter" because the link's target decided the interpreter. This holds
+  for a script in the task's bundle and in another bundle.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a

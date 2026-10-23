@@ -75,7 +75,8 @@ export function activeTaskSources(config: AkmConfig): SearchSource[] {
 /**
  * Resolve an asset a task names in another bundle (`uses:`) through the one
  * ref-to-file walk. Reading needs no write target, so a bundle of any kind
- * (git, npm, website) resolves.
+ * (git, npm, website) resolves. The file is the authored path, not the symlink
+ * target, so the script interpreter follows the name the author gave it.
  */
 export function resolveBundleAsset(
   config: AkmConfig,
@@ -84,7 +85,7 @@ export function resolveBundleAsset(
   const conceptId = conceptIdFromTypeName(type, name);
   const sources = activeTaskSources(config);
   const match = resolveConceptOwner({ bundle, conceptId }, sources);
-  if (match) return { file: match.owner.realPath, bundleRoot: match.source.path };
+  if (match) return { file: match.owner.path, bundleRoot: match.source.path };
   if (resolveSourcesForOrigin(bundle, sources).length === 0) {
     assertBundleNotDisabled(config, bundle);
     throw new UsageError(

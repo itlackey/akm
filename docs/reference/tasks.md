@@ -123,7 +123,10 @@ symlink that resolves outside the bundle works. The task runs in
 `<bundle root>/<working-directory>` (or the absolute path as written): akm does
 not capture the directory's identity or re-check it when the task runs. A
 `uses: scripts/<file>` target may itself be a symlink to a file outside the
-bundle; the task freezes that file's bytes, not its location.
+bundle; the task freezes that file's bytes, not its location. The interpreter
+comes from the name the script has in the bundle, not from the file the link
+points to, so `scripts/deploy.sh` linked to `real-script.txt` runs under the
+shell.
 
 Every field that used to live under v3's `akm:` options bag is a top-level
 key in task source v4: `agent`, `engine`, `model`, `inference`, `tools`,

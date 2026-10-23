@@ -17,7 +17,10 @@ import { NotFoundError, UsageError } from "../core/errors";
 import { walkStashFlat } from "../indexer/walk/walker";
 
 /**
- * Resolve an asset path from a stash directory, type, and name.
+ * Resolve an asset path from a stash directory, type, and name. The path keeps
+ * the authored spelling, not the symlink target's: an asset that links to a
+ * file with another name (or none) is still the kind its own name says, and a
+ * read through it reaches the same bytes.
  */
 export async function resolveAssetPath(stashDir: string, type: string, name: string): Promise<string> {
   try {
@@ -49,7 +52,6 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
   if (!fs.existsSync(resolvedTarget) || !fs.statSync(resolvedTarget).isFile()) {
     throw new NotFoundError(`Stash asset not found for ref: ${conceptIdFromTypeName(type, name)}`, "ASSET_NOT_FOUND");
   }
-  const realTarget = fs.realpathSync(resolvedTarget);
   if (!isRelevantAssetFile(type, path.basename(resolvedTarget))) {
     if (type === "script") {
       throw new NotFoundError(
@@ -58,7 +60,7 @@ function resolveInTypeDir(stashDir: string, typeDir: string, type: string, name:
     }
     throw new NotFoundError(`Stash asset not found for ref: ${conceptIdFromTypeName(type, name)}`, "ASSET_NOT_FOUND");
   }
-  return realTarget;
+  return resolvedTarget;
 }
 
 function resolveAndValidateTypeRoot(root: string, type: string, name: string): void {
@@ -98,7 +100,7 @@ async function resolveByCanonicalName(stashDir: string, type: string, name: stri
     const canonicalName = deriveCanonicalAssetNameFromStashRoot(type, stashDir, ctx.absPath);
     if (canonicalName !== normalizedName) continue;
 
-    return fs.realpathSync(ctx.absPath);
+    return ctx.absPath;
   }
 
   return undefined;

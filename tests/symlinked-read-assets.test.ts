@@ -50,11 +50,11 @@ describe("reads follow symlinks that leave their directory", () => {
     expect(fs.readFileSync(resolved.absPath, "utf8")).toBe("A=1\n");
   });
 
-  test("resolveAssetPath resolves a symlinked asset to its target", async () => {
+  test("resolveAssetPath resolves a symlinked asset by its authored path", async () => {
     const { stash } = stashWithLink("scripts", "link.sh", "real.sh", "#!/bin/sh\necho linked");
     const resolved = await resolveAssetPath(stash, "script", "link.sh");
     expect(fs.readFileSync(resolved, "utf8")).toBe("#!/bin/sh\necho linked");
-    expect(path.basename(resolved)).toBe("real.sh");
+    expect(path.basename(resolved)).toBe("link.sh");
   });
 
   test("a name with a '..' segment is still refused", async () => {
