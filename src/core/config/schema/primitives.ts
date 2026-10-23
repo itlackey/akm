@@ -60,7 +60,7 @@ export function symbolicOrWarnApiKey(label: string) {
     }
     warnOnce(
       `config:literal-api-key:${label}`,
-      `A ${label} in config.json is a literal API key, not a $VAR/\${VAR}/\${ref} reference; using it as configured. Prefer \`akm config set ...apiKey '$VAR'\` (with the corresponding env var set) or \`'\${secrets/<name>}'\` (with \`akm secret set secrets/<name> ...\`) — see docs/reference/data-and-telemetry.md.`,
+      `A ${label} in config.json is a literal API key, not a $VAR/\${VAR} or \${secrets/<name>} reference; using it as configured. Prefer \`akm config set ...apiKey '$VAR'\` (with the corresponding env var set) or \`'\${secrets/<name>}'\` (with \`akm secret set secrets/<name> ...\`) — see docs/reference/data-and-telemetry.md.`,
     );
   });
 }
