@@ -116,9 +116,13 @@ Script refs use this closed table; any other extension fails before dispatch:
 `run` is one non-empty shell string. It may specify `shell` from the closed host
 shell table `bash`, `sh`, `zsh`, `pwsh`, `powershell`, or `cmd`. Shell expansion
 is runtime behavior for an explicitly authored task `run`; AKM does not infer a
-shell from `uses`. `working-directory` must be a relative, contained path under
-the task's workspace root. Absolute paths, traversal, dangling links, and
-symlink escapes fail before execution.
+shell from `uses`. `working-directory` must be a relative path under the task's
+workspace root; absolute paths, traversal, dangling links, and symlinks that
+resolve outside the root are rejected when the task source is parsed. The task
+then runs in `<bundle root>/<working-directory>`: akm does not capture the
+directory's identity or re-check it when the task runs. A `uses: scripts/<file>`
+target may itself be a symlink to a file outside the bundle; the task freezes
+that file's bytes, not its location.
 
 Every field that used to live under v3's `akm:` options bag is a top-level
 key in task source v4: `agent`, `engine`, `model`, `inference`, `tools`,

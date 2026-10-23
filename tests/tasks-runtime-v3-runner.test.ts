@@ -321,59 +321,6 @@ describe("task runner mutation boundary", () => {
     }
   });
 
-  test.skipIf(process.platform === "win32").each(["symlink", "ancestor", "bundle-root", "file"] as const)(
-    "%s cwd replacement fails before spawn and never executes outside the prepared physical directory",
-    async (replacement) => {
-      const outside = path.join(storage.root, `outside-${replacement}`);
-      fs.mkdirSync(outside, { recursive: true });
-      const work = path.join(storage.stashDir, "work");
-      const nested = path.join(work, "nested");
-      fs.mkdirSync(nested, { recursive: true });
-      const authoredCwd =
-        replacement === "ancestor" ? "work/nested" : replacement === "bundle-root" ? undefined : "work";
-      writeTask(
-        "cwd-swap",
-        [
-          "version: 4",
-          "run: printf safe",
-          ...(authoredCwd ? [`working-directory: ${authoredCwd}`] : []),
-          'schedule: "@daily"',
-          "",
-        ].join("\n"),
-      );
-      let spawned = false;
-
-      const result = await runTask("cwd-swap", {
-        bundleDir: storage.stashDir,
-        bundleName: "fixture",
-        beforeNativeDispatch: () => {
-          if (replacement === "bundle-root") {
-            const original = `${storage.stashDir}-original`;
-            fs.renameSync(storage.stashDir, original);
-            fs.symlinkSync(outside, storage.stashDir, "dir");
-            return;
-          }
-          if (replacement === "ancestor") {
-            fs.renameSync(work, `${work}-original`);
-            fs.symlinkSync(outside, work, "dir");
-            return;
-          }
-          fs.rmSync(work, { recursive: true, force: true });
-          if (replacement === "file") fs.writeFileSync(work, "not a directory");
-          else fs.symlinkSync(outside, work, "dir");
-        },
-        spawnFn: () => {
-          spawned = true;
-          return completedSpawn(0);
-        },
-      });
-
-      expect(spawned).toBe(false);
-      expect(result.status).toBe("failed");
-      expect(fs.readFileSync(result.log, "utf8")).toMatch(/working directory|physical|identity|changed/i);
-    },
-  );
-
   test.each([
     ["deleted", undefined],
     ["replaced", 'console.log("replacement")\n'],

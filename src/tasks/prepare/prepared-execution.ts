@@ -16,7 +16,6 @@ import type {
   prepareCommandInvocation,
 } from "../../commands/command/command-execution";
 import type { AkmConfig } from "../../core/config/config-types";
-import type { FrozenDirectoryIdentity } from "../../execution/directory-identity";
 import type { SCHEDULED_TASK_CONTEXT_KEYS } from "../scheduler-invocation";
 import type { TaskV3HostShell, TaskV3SourceDocument } from "../source-v3";
 
@@ -57,9 +56,6 @@ export interface TaskV3PreparedBase {
   readonly redact: readonly string[];
 }
 
-/** Physical directory identity frozen before durable task history begins. */
-export type PreparedTaskV3DirectoryIdentity = FrozenDirectoryIdentity;
-
 export interface PreparedTaskV3Command extends TaskV3PreparedBase {
   readonly kind: "command";
   readonly invocation: PreparedCommandInvocation;
@@ -78,7 +74,6 @@ export interface PreparedTaskV3Shell extends TaskV3PreparedBase {
   readonly command: string;
   readonly shell: TaskV3HostShell;
   readonly cwd: string;
-  readonly cwdIdentity: PreparedTaskV3DirectoryIdentity;
 }
 
 export interface PreparedTaskV3Script extends TaskV3PreparedBase {
@@ -91,7 +86,6 @@ export interface PreparedTaskV3Script extends TaskV3PreparedBase {
   readonly byteLength: number;
   readonly sha256: string;
   readonly cwd: string;
-  readonly cwdIdentity: PreparedTaskV3DirectoryIdentity;
 }
 
 export type PreparedTaskV3Execution =

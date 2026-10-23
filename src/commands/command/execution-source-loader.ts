@@ -78,11 +78,7 @@ function isLexicallyWithin(candidate: string, root: string): boolean {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
 }
 
-function implicitComponentForEntry(
-  entry: IndexEntry,
-  config: AkmConfig,
-  realRoot: string,
-): BundleComponent | undefined {
+function implicitComponentForEntry(entry: IndexEntry, config: AkmConfig): BundleComponent | undefined {
   const sources = resolveSourceEntries(undefined, config);
   const installations = deriveInstallations(sources);
   for (const [index, installation] of installations.entries()) {
@@ -91,12 +87,6 @@ function implicitComponentForEntry(
     const component = installation.components[0];
     if (!source || !component) continue;
     const canonicalRoot = realDirectory(component.root, `Canonical implicit source root for ${entry.bundleId}`);
-    if (canonicalRoot !== realRoot) {
-      warnOnce(
-        `execution-source-root-drift:${entry.itemRef}`,
-        `[command] Indexed root for ${JSON.stringify(entry.itemRef)} no longer matches the working bundle source; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
-      );
-    }
     if (component.adapter !== entry.adapterId) {
       warnOnce(
         `execution-source-adapter-drift:${entry.itemRef}`,
@@ -116,7 +106,7 @@ function implicitComponentForEntry(
 function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: string): BundleComponent {
   const configured = config.bundles?.[entry.bundleId];
   if (!configured) {
-    const implicit = implicitComponentForEntry(entry, config, realRoot);
+    const implicit = implicitComponentForEntry(entry, config);
     if (implicit) return implicit;
     throw new ConfigError(
       `Indexed execution source ${JSON.stringify(entry.itemRef)} belongs to unconfigured bundle ${JSON.stringify(entry.bundleId)}.`,
@@ -165,12 +155,6 @@ function componentForEntry(entry: IndexEntry, config: AkmConfig, realRoot: strin
         `Configured component root for ${JSON.stringify(entry.itemRef)} resolves outside its materialized bundle source.`,
         "INVALID_CONFIG_FILE",
         "Remove the escaping symlink or component path, then run `akm index --full`.",
-      );
-    }
-    if (configuredRoot !== realRoot) {
-      warnOnce(
-        `execution-source-root-drift:${entry.itemRef}`,
-        `[command] Indexed root for ${JSON.stringify(entry.itemRef)} no longer matches the ${JSON.stringify(configuredSource.type)} bundle source; re-resolving from live config. Run \`akm index --full\` to refresh it.`,
       );
     }
   }

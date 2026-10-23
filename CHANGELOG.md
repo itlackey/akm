@@ -151,6 +151,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   substituted. A workflow in bundle A can now run a script from bundle B with an
   env asset from bundle C that names a secret in bundle D.
 
+- A task no longer captures its working directory's identity when it is prepared
+  and re-checks it before it runs (#1238). A `run:` task runs in
+  `<bundle>/<working-directory>`, and a `uses: scripts/<file>` target that is a
+  symlink to a file outside the bundle works: the task freezes that file's
+  bytes.
+
 ### Deprecated
 
 - `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A
@@ -171,6 +177,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bundle installation (#1237).
 - `akm show` no longer reports an `activeRun` field. Run state is under
   `akm workflow` (#1239).
+- The "indexed root no longer matches the bundle source" warnings when a command
+  or persona is dispatched (#1238). A bundle at a different location than the
+  index recorded is no longer reported as drift.
 - The `exec_cwd_escape` failure reason and the checks behind it: the parser, the
   compiler and the exec runner no longer reject an `exec.cwd` that leaves the
   workflow's bundle (#1238).

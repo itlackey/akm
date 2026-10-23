@@ -11,21 +11,20 @@
  *  1. a `uses: scripts/<file>` target freezes a byte-exact sha256/bytesBase64
  *     snapshot of the script's source bytes and carries NO live resumable
  *     file path — only the immutable bytes/hash travel forward;
- *  2. a `run:` target's `working-directory:` is canonicalized through the
- *     real filesystem to its PHYSICAL path — a symlinked working directory
- *     resolves to the directory it actually points at, not its symlink
- *     spelling.
+ *  2. a `run:` target's `working-directory:` joins the bundle root: the task
+ *     carries a plain path, not a directory identity (the second invariant of
+ *     the original suite, a physical-path canonicalization, went with the
+ *     identity).
  *
- * Both invariants still hold at HEAD — the logic moved body-intact into
- * `src/tasks/prepare/script-capture.ts` (`captureScriptTarget` /
- * `captureDirectoryIdentity` -> `captureFrozenDirectoryIdentity`) behind
+ * The first invariant still holds at HEAD — the logic moved body-intact into
+ * `src/tasks/prepare/script-capture.ts` (`captureScriptTarget`) behind
  * `src/tasks/prepare/prepare.ts`'s `prepareTaskV3Execution` entry point. This
- * file ports the two invariants only — never the retired v3 document grammar
+ * file ports the invariants only — never the retired v3 document grammar
  * the original suite spoke — expressed against task source v4 (`version: 4`),
  * exercised through the CURRENT `prepare/prepare.ts` entry point:
  * `tests/tasks/prepare-split.test.ts` drives that same entry for its own
  * caller-shape-parity concern but explicitly defers `prepareTaskV3Execution`'s
- * PER-KIND behavior — this file, and specifically these two invariants — to
+ * PER-KIND behavior — this file, and specifically these invariants — to
  * "elsewhere" (that file's own header comment).
  */
 
@@ -49,7 +48,7 @@ afterEach(() => {
   for (const sandbox of sandboxes.splice(0).reverse()) sandbox.cleanup();
 });
 
-/** A real, empty directory — `bundleRoot` must physically exist for directory-identity capture. */
+/** A real, empty directory to stand in for the bundle root. */
 function sandboxRoot(): string {
   const made = makeSandboxDir("akm-prepare-script-freeze");
   sandboxes.push(made);
@@ -96,30 +95,43 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
   });
 
   test.skipIf(process.platform === "win32")(
-    "a run: target's working-directory: canonicalizes a symlinked cwd to its real physical path",
+    "a uses: scripts/<file> target that is a symlink to a file outside the bundle freezes the target's bytes",
     async () => {
       const root = sandboxRoot();
-      const physical = path.join(root, "physical-work");
-      const linked = path.join(root, "linked-work");
-      fs.mkdirSync(physical);
-      fs.symlinkSync(physical, linked, "dir");
+      const outside = sandboxRoot();
+      fs.mkdirSync(path.join(root, "scripts"), { recursive: true });
+      const bytes = Buffer.from("#!/bin/sh\nprintf from-elsewhere\n", "utf8");
+      fs.writeFileSync(path.join(outside, "shared.sh"), bytes);
+      fs.symlinkSync(path.join(outside, "shared.sh"), path.join(root, "scripts", "nightly.sh"));
 
       const parsed = parseTaskSource({
-        yaml: "version: 4\nrun: printf ok\nworking-directory: linked-work\nschedule: '@daily'\n",
+        yaml: "version: 4\nuses: scripts/nightly.sh\nschedule: '@daily'\n",
         filePath: path.join(root, "tasks", "nightly.yml"),
         workspaceRoot: root,
       });
-      const document = projectTaskSourceV4(parsed.v4);
+      const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
-      const prepared = await prepareTaskV3Execution(document, contextFor(root));
-
-      expect(prepared.kind).toBe("shell");
-      if (prepared.kind !== "shell") return;
-      const realPhysical = fs.realpathSync.native(physical);
-      expect(prepared.cwd).toBe(realPhysical);
-      expect(prepared.cwdIdentity.realCwd).toBe(realPhysical);
-      // The symlink spelling itself must not survive into the frozen cwd.
-      expect(prepared.cwd).not.toBe(linked);
+      expect(prepared.kind).toBe("script");
+      if (prepared.kind !== "script") return;
+      expect(Buffer.from(prepared.bytesBase64, "base64")).toEqual(bytes);
+      expect(prepared.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
     },
   );
+
+  test("a run: target's working-directory: joins the bundle root, and a plain run: task works from it", async () => {
+    const root = sandboxRoot();
+    fs.mkdirSync(path.join(root, "work"));
+
+    const parsed = parseTaskSource({
+      yaml: "version: 4\nrun: printf ok\nworking-directory: work\nschedule: '@daily'\n",
+      filePath: path.join(root, "tasks", "nightly.yml"),
+      workspaceRoot: root,
+    });
+    const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+
+    expect(prepared.kind).toBe("shell");
+    if (prepared.kind !== "shell") return;
+    expect(prepared.cwd).toBe(path.join(root, "work"));
+    expect(Object.hasOwn(prepared, "cwdIdentity")).toBe(false);
+  });
 });

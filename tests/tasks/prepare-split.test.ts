@@ -68,7 +68,7 @@ afterEach(() => {
   for (const sandbox of sandboxes.splice(0).reverse()) sandbox.cleanup();
 });
 
-/** A real, empty directory — `bundleRoot` must physically exist for directory-identity capture. */
+/** A real, empty directory to stand in for the bundle root. */
 function sandboxRoot(): string {
   const made = makeSandboxDir("akm-prepare-split");
   sandboxes.push(made);
