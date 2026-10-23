@@ -16,6 +16,7 @@ import path from "node:path";
 import type { AkmConfig } from "../../src/core/config/config";
 import { writeLockfile } from "../../src/integrations/lockfile";
 import { materializeFrozenWorkflowEnvironment } from "../../src/workflows/exec/environment";
+import * as freezeEnvironmentModule from "../../src/workflows/freeze/environment";
 import { freezeEnvironment } from "../../src/workflows/freeze/environment";
 import type { ResolutionContext } from "../../src/workflows/freeze/step-values";
 import { canonicalJson } from "../../src/workflows/ir/plan-hash";
@@ -378,5 +379,19 @@ describe("materializing a frozen environment", () => {
       });
     }).toThrow(/missing secret/);
     expect(result).toBeUndefined();
+  });
+});
+
+describe("command and persona source loading (#1238)", () => {
+  test("the freeze environment module has no source-loader wrapper", () => {
+    // prepareCommandInvocation's own default loader already receives the freeze
+    // context's config; a second wrapper here would be a copy that can drift.
+    expect("workflowExecutionSource" in freezeEnvironmentModule).toBe(false);
+  });
+
+  test("commandDispatch does not override prepareCommandInvocation's source loader", () => {
+    const source = fs.readFileSync(path.join(import.meta.dir, "../../src/workflows/freeze/targets/command.ts"), "utf8");
+    expect(source).not.toMatch(/\bsourceLoader\b/);
+    expect(source).not.toMatch(/\bworkflowExecutionSource\b/);
   });
 });
