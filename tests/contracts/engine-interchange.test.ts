@@ -349,7 +349,8 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
   afterEach(() => stash.cleanup());
 
   /**
-   * The permission block the injected opencode agent must carry, checked against opencode 1.18.25. Its order is part
+   * The permission block the injected opencode agent must carry, checked against opencode 1.18.25 and 2.1.4 (OpenCode 1
+   * matches the stash path without its leading slash, OpenCode 2 the absolute path). Its order is part
    * of the rule, since opencode lets the last match win, so rows compare it as JSON.
    */
   const opencodeRules = () =>
@@ -358,7 +359,7 @@ describe("C3: the model-work tool policy is confined or refused at build", () =>
       read: "allow",
       grep: "allow",
       glob: "allow",
-      edit: { "*": "allow", [`${stash.dir.slice(1)}/*`]: "deny" },
+      edit: { "*": "allow", [`${stash.dir.slice(1)}/*`]: "deny", [`${stash.dir}/*`]: "deny" },
       external_directory: { [`${stash.dir}/*`]: "allow", "~/.local/share/opencode/tool-output/*": "deny" },
       akm_search: "allow",
       akm_show: "allow",

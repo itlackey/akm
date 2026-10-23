@@ -53,7 +53,8 @@ function modelWorkPermission(stash: string | undefined) {
     read: "allow",
     grep: "allow",
     glob: "allow",
-    edit: { "*": "allow", ...(stash ? { [`${stash.slice(1)}/*`]: "deny" } : {}) },
+    // OpenCode 1 matches the path without its leading slash, OpenCode 2 the absolute path.
+    edit: { "*": "allow", ...(stash ? { [`${stash.slice(1)}/*`]: "deny", [`${stash}/*`]: "deny" } : {}) },
     external_directory: {
       ...(stash ? { [`${stash}/*`]: "allow" } : {}),
       "~/.local/share/opencode/tool-output/*": "deny",

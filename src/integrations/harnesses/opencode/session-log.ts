@@ -16,6 +16,8 @@ import { hasV1Session, listV1Sessions, readV1Session, V1_TABLES } from "./sessio
 import { listV2Sessions, readV2Session, V2_TABLES, v2SessionState } from "./session-log-v2";
 
 function getOpenCodeBaseDir(): string {
+  // OpenCode honours XDG_DATA_HOME on every platform.
+  if (process.env.XDG_DATA_HOME) return path.join(process.env.XDG_DATA_HOME, "opencode");
   if (process.platform === "darwin") {
     return path.join(os.homedir(), "Library", "Application Support", "opencode");
   }

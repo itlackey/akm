@@ -651,6 +651,19 @@ describe("OpenCodeProvider.listSessions (opencode.db)", () => {
     expect(provider.isAvailable()).toBe(true);
   });
 
+  test("reads opencode's store under XDG_DATA_HOME, as opencode itself does", () => {
+    const data = makeTempDir("akm-opencode-xdg-data-");
+    fs.mkdirSync(path.join(data, "opencode"));
+    writeOpenCodeDb(path.join(data, "opencode"), [
+      { id: "ses_xdg", title: "X", directory: "/home/user/x", created: 1, updated: 2, messages: [] },
+    ]);
+    withEnvSync({ XDG_DATA_HOME: data }, () => {
+      const provider = new OpenCodeProvider();
+      expect(provider.isAvailable()).toBe(true);
+      expect(provider.listSessions({}).map((s) => s.sessionId)).toEqual(["ses_xdg"]);
+    });
+  });
+
   test("lists sessions from the SQLite store, newest first", () => {
     const base = makeTempDir("akm-opencode-db-list-");
     writeOpenCodeDb(base, [

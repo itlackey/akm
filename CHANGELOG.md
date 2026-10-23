@@ -6,6 +6,30 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- akm is qualified against OpenCode 2.1 (#1244). It now uses `@opencode/client`
+  2.1.4 (with Effect 4.0.1), and its real-binary tests pass against OpenCode 2.1.4
+  and 2.0.26, so OpenCode 2.0 keeps working. Session history and extraction read
+  sessions written by 2.1 as before.
+
+### Fixed
+
+- On OpenCode 2.0.29 and later, a reply cut off at the output limit is the whole
+  reply again (#1244). OpenCode now continues such a reply in a new step, and akm
+  returned only the continuation. akm now joins the cut-off text and its
+  continuation. A reply still cut off after OpenCode's continuations is reported
+  as cut off at the output limit, not as a bare "OpenCode session failed".
+- `akm agent` on the OpenCode 2 CLI path no longer sends the prompt twice (#1244).
+  OpenCode 2's `run` appends whatever follows `--` to the message it already read,
+  so akm passes the prompt without `--` (unless it starts with `-`).
+- Model work on OpenCode 2 can no longer write into your stash (#1244). The
+  stash's edit-deny rule only matched OpenCode 1's path form.
+- `akm agent` on OpenCode 2 reports provider retries and stops on a usage limit
+  again (#1244). It listened for an event OpenCode 2 never sends.
+- `akm proposal extract --type opencode` and session listing find OpenCode's
+  sessions when `XDG_DATA_HOME` is set, as OpenCode itself does (#1244).
+
 ## [0.10.261013] - 2026-10-23
 
 ### Fixed

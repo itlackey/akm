@@ -4,11 +4,11 @@
 
 /**
  * OpenCode 2 wire adapter, on
- * `@opencode/client` 2.0.26 (the promise client, generated types).
+ * `@opencode/client` 2.1.4 (the promise client, generated types).
  *
  * akm owns a private `opencode serve` child (never the v2 background
- * `service`). What differs from OpenCode 1, verified against the 2.0.26
- * binary:
+ * `service`). What differs from OpenCode 1, verified against the 2.0.26 and
+ * 2.1.4 binaries:
  *
  *   - Readiness is `server listening on <url>` (no `opencode` prefix).
  *   - The server is basic-auth protected. akm chooses the password and hands it
@@ -28,7 +28,7 @@
  *     the dispatch's sessions by id.
  *
  * Config (`OPENCODE_CONFIG_CONTENT`, built by the runner) keeps the V1 shape,
- * which the 2.0.26 server translates (`model`, `provider`, `agent`, `permission`).
+ * which the OpenCode 2 server translates (`model`, `provider`, `agent`, `permission`).
  */
 
 import { randomBytes } from "node:crypto";
@@ -38,7 +38,6 @@ import { sleep } from "../../../runtime";
 import type { AgentTokenUsage } from "../../agent/spawn";
 import { parseOpencodeMajor } from "../opencode/version";
 import {
-  decodeRetryStatus,
   type OpencodeWireAdapter,
   OTHER_MAJOR_REMEDY,
   type WireEvent,
@@ -59,6 +58,8 @@ const POLL_INTERVAL_MS = 100;
 export interface V2Turn {
   readonly outcome: "succeeded" | "failed" | "interrupted";
   readonly assistants: readonly SessionMessageAssistant[];
+  /** The closing `idle` message's error; OpenCode 2.0.29+ puts an output-limit failure only here. */
+  readonly error?: SessionMessageAssistant["error"];
 }
 
 /**
@@ -71,7 +72,7 @@ export function v2Turn(messages: readonly SessionMessageInfo[], userId: string):
   const assistants: SessionMessageAssistant[] = [];
   for (const message of messages.slice(start + 1)) {
     if (message.type === "assistant") assistants.push(message);
-    else if (message.type === "idle") return { outcome: message.outcome, assistants };
+    else if (message.type === "idle") return { outcome: message.outcome, assistants, error: message.error };
   }
   return undefined;
 }
@@ -99,11 +100,17 @@ export function v2InterruptedTurn(messages: readonly SessionMessageInfo[], userI
 
 /** Decode a finished turn into the answer, the usage of every step and the failure, if any. */
 function v2PromptResult(turn: V2Turn): WirePromptResult {
-  const text =
-    turn.assistants
-      .flatMap((a) => a.content)
-      .filter((c) => c.type === "text")
-      .at(-1)?.text ?? "";
+  // OpenCode 2.0.29+ continues a reply cut off at the output limit in a new
+  // step, so the answer is the last text plus the cut-off texts right before it.
+  const lastText = (a: SessionMessageAssistant) => a.content.filter((c) => c.type === "text").at(-1)?.text;
+  const texts: string[] = [];
+  for (let i = turn.assistants.length - 1; i >= 0; i--) {
+    const assistant = turn.assistants[i] as SessionMessageAssistant;
+    const part = lastText(assistant);
+    if (texts.length > 0 && assistant.finish !== "length") break;
+    if (part !== undefined) texts.unshift(part);
+  }
+  const text = texts.join("");
   const usage: AgentTokenUsage = {};
   const add = (key: keyof AgentTokenUsage, value: number | undefined): void => {
     if (typeof value === "number" && Number.isFinite(value)) usage[key] = (usage[key] ?? 0) + value;
@@ -133,7 +140,9 @@ function v2Failure(turn: V2Turn): WireFailure | undefined {
   }
   const last = turn.assistants.at(-1);
   if (turn.outcome === "failed") {
-    const error = [...turn.assistants].reverse().find((a) => a.error)?.error;
+    const error = [...turn.assistants].reverse().find((a) => a.error)?.error ?? turn.error;
+    if (error?.type === "output-limit")
+      return { reason: "parse_error", message: `OpenCode reply was cut off at the output limit (${error.message})` };
     return {
       reason: "non_zero_exit",
       message: error ? `${error.type}: ${error.message}` : "OpenCode session failed",
@@ -253,7 +262,18 @@ export const V2_ADAPTER: OpencodeWireAdapter = {
         ...(typeof data.parentID === "string" ? { parentId: data.parentID } : {}),
       };
     }
-    if (raw.type === "session.status") return decodeRetryStatus(data.sessionID, data.status);
+    if (raw.type === "session.retry.scheduled") {
+      if (typeof data.sessionID !== "string") return undefined;
+      const error = isRecord(data.error) ? data.error : {};
+      return {
+        kind: "retry",
+        sessionId: data.sessionID,
+        ...(typeof data.attempt === "number" ? { attempt: data.attempt } : {}),
+        message: typeof error.message === "string" ? error.message : "OpenCode is retrying",
+        ...(typeof data.at === "number" ? { next: data.at } : {}),
+        accountLimit: error.type === "provider.quota" || error.type === "provider.free-limit",
+      };
+    }
     if (raw.type === "permission.asked") {
       const { id, sessionID, action, resources } = data;
       if (typeof id !== "string" || typeof sessionID !== "string") return undefined;

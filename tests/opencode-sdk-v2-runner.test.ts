@@ -377,6 +377,69 @@ describe("OpenCode 2 adapter — failures", () => {
     expect(res.stdout).toBe("partial");
   });
 
+  test("a reply OpenCode continues after the output limit is the cut-off text plus its continuation", async () => {
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          assistant("msg-a", "Let me look.", { finish: "tool-calls" }),
+          assistant("msg-b", "Hello wo", { finish: "length" }),
+          { id: "msg-syn", type: "synthetic", text: "Your last response hit the output token limit" },
+          assistant("msg-c", "rld", { finish: "stop" }),
+          IDLE_OK,
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.ok).toBe(true);
+    expect(res.stdout).toBe("Hello world");
+  });
+
+  test("a reply still cut off after OpenCode's continuations is parse_error, from the idle message's error", async () => {
+    const cut = { finish: "length" };
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          assistant("msg-a", "a", cut),
+          assistant("msg-b", "b", cut),
+          assistant("msg-c", "c", cut),
+          {
+            id: "msg-idle",
+            type: "idle",
+            outcome: "failed",
+            error: {
+              type: "output-limit",
+              message: "Response still truncated after two output token limit continuations",
+            },
+          },
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.ok).toBe(false);
+    expect(res.reason).toBe("parse_error");
+    expect(res.error).toContain("cut off at the output limit");
+    expect(res.stdout).toBe("abc");
+  });
+
+  test("a failed turn whose only error is on the idle message reports that error", async () => {
+    const fake = makeFakeV2({
+      contexts: [
+        [
+          USER,
+          { id: "msg-idle", type: "idle", outcome: "failed", error: { type: "provider.free-limit", message: "limit" } },
+        ],
+      ],
+    });
+    __setTestServer(fake.server as never);
+    const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
+    expect(res.reason).toBe("non_zero_exit");
+    expect(res.error).toBe("provider.free-limit: limit");
+  });
+
   test("a prompt rejection is non_zero_exit and keeps the session", async () => {
     const fake = makeFakeV2({
       promptImpl: async () => {
@@ -457,11 +520,16 @@ describe("OpenCode 2 adapter — permission requests and retries", () => {
     expect(res.stderr).toContain("permission requests will not be answered: event subscription failed: no stream");
   });
 
-  const retry = (extra: Msg = {}) => ({
-    type: "session.status",
+  // The event both OpenCode 2.0 and 2.1 servers publish for a retry; neither publishes `session.status`.
+  const retry = (data: Msg = {}, error: Msg = {}) => ({
+    type: "session.retry.scheduled",
     data: {
       sessionID: "sess-v2",
-      status: { type: "retry", attempt: 2, message: "Rate limited", next: Date.now() + 1_000, ...extra },
+      assistantMessageID: "msg-a",
+      attempt: 2,
+      at: Date.now() + 1_000,
+      error: { type: "provider.rate-limit", message: "Rate limited", ...error },
+      ...data,
     },
   });
 
@@ -485,7 +553,7 @@ describe("OpenCode 2 adapter — permission requests and retries", () => {
     const fake = makeFakeV2({
       feed,
       waitImpl: async () => {
-        feed.push(retry({ action: { reason: "account_rate_limit", provider: "openai" } }));
+        feed.push(retry({}, { type: "provider.quota" }));
         await new Promise(() => {});
       },
     });
@@ -493,7 +561,7 @@ describe("OpenCode 2 adapter — permission requests and retries", () => {
     const res = await runOpencodeSdk(profile, "p", { timeoutMs: null });
     expect(res.ok).toBe(false);
     expect(res.reason).toBe("llm_rate_limit");
-    expect(res.error).toContain("OpenCode provider limit stopped this run (openai): Rate limited");
+    expect(res.error).toContain("OpenCode provider limit stopped this run: Rate limited");
     expect(fake.calls.interrupt).toEqual([{ sessionID: "sess-v2" }]);
   });
 
@@ -502,7 +570,7 @@ describe("OpenCode 2 adapter — permission requests and retries", () => {
     const fake = makeFakeV2({
       feed,
       waitImpl: async () => {
-        feed.push(retry({ next: Date.now() + 60_000 }));
+        feed.push(retry({ at: Date.now() + 60_000 }));
         await new Promise(() => {});
       },
     });
@@ -559,7 +627,10 @@ describe("OpenCode 2 adapter — server selection", () => {
   test("decodeEvent ignores events the runner does not act on", () => {
     expect(V2_ADAPTER.decodeEvent({ type: "session.idle", data: { sessionID: "s" } })).toBeUndefined();
     expect(
-      V2_ADAPTER.decodeEvent({ type: "session.status", data: { sessionID: "s", status: { type: "busy" } } }),
+      V2_ADAPTER.decodeEvent({
+        type: "session.status",
+        data: { sessionID: "s", status: { type: "retry", attempt: 1 } },
+      }),
     ).toBeUndefined();
     expect(V2_ADAPTER.decodeEvent("nope")).toBeUndefined();
   });

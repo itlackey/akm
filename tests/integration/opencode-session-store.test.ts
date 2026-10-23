@@ -6,7 +6,7 @@
 // (session_v2/session_message), a natively upgraded file holding both, WAL
 // content, and unsupported/corrupt files that must be reported, not look empty.
 // Fixtures are built in-test from SQL scripts shaped like the real DDL
-// (observed from OpenCode 1.18.34 and 2.0.26).
+// (observed from OpenCode 1.18.34, 2.0.26 and 2.1.4).
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
@@ -278,8 +278,10 @@ describe("missing versus incompatible history", () => {
   });
 });
 
-// Real binaries, gated: set AKM_OPENCODE_V1_BIN / AKM_OPENCODE_V2_BIN. A prompt
-// fails without model credentials, but the session and its messages are still stored.
+// Real binaries, gated: set AKM_OPENCODE_V1_BIN / AKM_OPENCODE_V2_BIN. The prompt
+// names a model no provider serves, so it fails without reaching any model (with no
+// model named, OpenCode falls back to its hosted free model), but the session and
+// its messages are still stored.
 function realBinaryStore(bin: string | undefined, extraArgs: string[]) {
   const home = makeBase();
   const env = {
@@ -290,7 +292,11 @@ function realBinaryStore(bin: string | undefined, extraArgs: string[]) {
     XDG_CACHE_HOME: path.join(home, ".cache"),
     XDG_STATE_HOME: path.join(home, ".local", "state"),
   };
-  spawnSync(bin as string, ["run", ...extraArgs, "hello from akm"], { cwd: home, env, timeout: 90_000 });
+  spawnSync(bin as string, ["run", "--model", "no-such-provider/no-such-model", ...extraArgs, "hello from akm"], {
+    cwd: home,
+    env,
+    timeout: 90_000,
+  });
   return path.join(home, ".local", "share", "opencode");
 }
 

@@ -62,22 +62,14 @@ describe("opencode 1 adapter", () => {
 
 describe("opencode 2 adapter", () => {
   test("runs standalone, so no background service is started or left behind", () => {
-    expect(build(2, {}, { prompt: "p" }).argv).toEqual(["opencode", "run", "--standalone", "--", "p"]);
+    // OpenCode 2 appends what follows `--` to the message it already parsed, so `--` would send the prompt twice.
+    expect(build(2, {}, { prompt: "p" }).argv).toEqual(["opencode", "run", "--standalone", "p"]);
+    expect(build(2, {}, { prompt: "-p" }).argv).toEqual(["opencode", "run", "--standalone", "--", "-p"]);
   });
 
   test("the engine agent default (#1098) reaches --agent, with the model", () => {
     const { argv } = build(2, {}, { prompt: "p", agent: "akm-workflow", model: "a/b#high" });
-    expect(argv).toEqual([
-      "opencode",
-      "run",
-      "--agent",
-      "akm-workflow",
-      "--model",
-      "a/b#high",
-      "--standalone",
-      "--",
-      "p",
-    ]);
+    expect(argv).toEqual(["opencode", "run", "--agent", "akm-workflow", "--model", "a/b#high", "--standalone", "p"]);
   });
 
   test("never passes --auto: native approvals stay native", () => {
@@ -91,7 +83,6 @@ describe("opencode 2 adapter", () => {
       "opencode",
       "run",
       "--standalone",
-      "--",
       "p",
     ]);
     const argv = build(
@@ -101,7 +92,7 @@ describe("opencode 2 adapter", () => {
         prompt: "p",
       },
     ).argv;
-    expect(argv).toEqual(["opencode", "run", "--server", "http://h:1", "--", "p"]);
+    expect(argv).toEqual(["opencode", "run", "--server", "http://h:1", "p"]);
   });
 
   test("a model named by the request replaces the one in the engine's args", () => {
@@ -113,7 +104,7 @@ describe("opencode 2 adapter", () => {
         model: "a/b",
       },
     ).argv;
-    expect(argv).toEqual(["opencode", "run", "--model", "a/b", "--standalone", "--", "p"]);
+    expect(argv).toEqual(["opencode", "run", "--model", "a/b", "--standalone", "p"]);
   });
 
   test("model work: standalone, the confined agent, the engine's model, and the injected agent definition", () => {
@@ -134,7 +125,6 @@ describe("opencode 2 adapter", () => {
       MODEL_WORK_OPENCODE_AGENT,
       "--model",
       "a/b",
-      "--",
       "p",
     ]);
     const config = JSON.parse(cmd.env?.OPENCODE_CONFIG_CONTENT ?? "null");

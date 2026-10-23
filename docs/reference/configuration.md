@@ -175,7 +175,7 @@ gets asked is OpenCode's own setting:
 
 - **OpenCode 1** asks before reading or writing outside the project directory
   (`external_directory`), so akm rejects it.
-- **OpenCode 2** (2.0.26) does not ask: a read or write outside the project
+- **OpenCode 2** (2.0.26 through 2.1.4) does not ask: a read or write outside the project
   directory just runs, and akm's rejection never happens, unless your OpenCode
   config says to ask. Add a rule to the global `opencode.json`, e.g.
   `"permissions": [{"action": "external_directory", "resource": "*", "effect": "ask"}]`
@@ -215,6 +215,9 @@ inference (`temperature`, `reasoningEffort`, `enableThinking`, `maxTokens`,
 - **Model work on `opencode` and `opencode-sdk`:** an improve process's `llm`
   overlay becomes the options of the `akm-model-work` agent that runs the
   dispatch, so opencode's own title call on the same model keeps its defaults.
+  Only OpenCode 1 sends an agent's options to the model; OpenCode 2 (2.0 and
+  2.1) ignores them, so on OpenCode 2 set inference on the model in your opencode
+  config instead.
 - **An `opencode-sdk` engine's `llmEngine` fallback:** the model akm declares for
   it under `akm-custom` carries the fallback's inference and the request's.
   `maxTokens` and `contextLength` become `limit.output` and `limit.context`, and

@@ -6,11 +6,13 @@
  * The OpenCode wire adapters against REAL `opencode serve` binaries (#1049).
  *
  * Integration-scoped (ORG-03/06): spawns real server processes. Gated on
- * `AKM_OPENCODE_V2_BIN` (an OpenCode 2 binary, qualified at 2.0.26) and
+ * `AKM_OPENCODE_V2_BIN` (an OpenCode 2 binary, qualified at 2.1.4) and
  * `AKM_OPENCODE_V1_BIN` (OpenCode 1, qualified at 1.18.34); each suite skips
  * cleanly when its variable is unset, and the cross-major checks need both.
- * No model is needed: nothing here waits for a model answer. A run with no
- * credentials ends in a provider failure or in the abort the test sends, and the
+ * No model is needed: nothing here waits for a model answer. Every dispatch names
+ * a model no provider serves, so nothing reaches a model (with no model named,
+ * OpenCode falls back to its hosted free model). A run ends in a provider failure
+ * or in the abort the test sends, and the
  * assertions are on the session, the permission and abort endpoints, the
  * readiness and authentication handshake, and cleanup (no leaked child).
  *
@@ -41,6 +43,7 @@ const V2_BIN = process.env.AKM_OPENCODE_V2_BIN;
 const profileFor = (bin: string): AgentProfile => ({
   name: "opencode-sdk",
   bin,
+  model: "no-such-provider/no-such-model",
   args: [],
   stdio: "captured",
   envPassthrough: [],
@@ -338,7 +341,11 @@ describe.skipIf(!V1_BIN)("OpenCode 1 adapter on the real binary (AKM_OPENCODE_V1
     expect(res.sessionId).toMatch(/^ses_/);
     const v1Warnings = warnings.filter((w) => w.includes("OpenCode 1"));
     expect(v1Warnings).toHaveLength(1);
-    expect(v1Warnings[0]).toContain("1.18.34");
+    expect(v1Warnings[0]).toContain(
+      spawnSync(V1_BIN as string, ["--version"])
+        .stdout.toString()
+        .trim(),
+    );
     expect(v1Warnings[0]).toContain(V1_BIN as string);
     expect(v1Warnings[0]).toContain("upgrading to OpenCode 2 is recommended");
 

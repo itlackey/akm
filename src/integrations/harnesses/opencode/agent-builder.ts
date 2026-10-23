@@ -41,6 +41,15 @@ import { detectOpencodeMajor } from "./version";
  */
 const STANDALONE_FLAG = "--standalone";
 
+/**
+ * The prompt argument. OpenCode 2's `run` appends everything after `--` to the
+ * positional message it already parsed, so the prompt would reach the model
+ * twice; `--` stays only where a leading `-` needs it.
+ */
+function promptArgs(major: 1 | 2, prompt: string): string[] {
+  return major === 2 && !prompt.startsWith("-") ? [prompt] : ["--", prompt];
+}
+
 function standalone(major: 1 | 2, flags: readonly string[]): string[] {
   if (major !== 2) return [];
   const chosen = flags.some((arg) => arg === STANDALONE_FLAG || arg === "--server" || arg.startsWith("--server="));
@@ -116,8 +125,7 @@ export const opencodeBuilder: AgentCommandBuilder = {
           "--agent",
           MODEL_WORK_OPENCODE_AGENT,
           ...(model ? ["--model", model] : []),
-          "--",
-          req.prompt,
+          ...promptArgs(major, req.prompt),
         ],
         env: {
           ...modelWorkPluginEnv(),
@@ -126,6 +134,6 @@ export const opencodeBuilder: AgentCommandBuilder = {
       };
     }
     const flags = ordinaryFlags(profile, req);
-    return { argv: [profile.bin, ...flags, ...standalone(major, flags), "--", req.prompt] };
+    return { argv: [profile.bin, ...flags, ...standalone(major, flags), ...promptArgs(major, req.prompt)] };
   },
 };

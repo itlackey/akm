@@ -127,7 +127,6 @@ describe("agent engines: config engine → argv", () => {
       "opencode",
       "run",
       "--standalone",
-      "--",
       "<AKM_PERSONA>\nYou review carefully.\n</AKM_PERSONA>\n\nReview the diff.",
     ]);
   });
@@ -152,15 +151,7 @@ describe("agent engines: config engine → argv", () => {
         defaults: { engine: "oc" },
       }),
     });
-    expect(argv).toEqual([
-      "opencode",
-      "run",
-      "--model",
-      "opencode/claude-sonnet-4-6",
-      "--standalone",
-      "--",
-      "Summarise.",
-    ]);
+    expect(argv).toEqual(["opencode", "run", "--model", "opencode/claude-sonnet-4-6", "--standalone", "Summarise."]);
   });
 
   test("pi passes an exact model through untouched and composes nothing it has no channel for", async () => {
