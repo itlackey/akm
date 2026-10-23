@@ -46,7 +46,7 @@ import {
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
 import { deriveInstallations } from "../../indexer/installations";
-import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
@@ -998,6 +998,36 @@ function taskProjectionAssetResolver(
   };
 }
 
+/** The working stash (`AKM_BUNDLE_DIR` or the default bundle) when it is the bundle `selector` names. */
+function workingStashTargetNamed(config: AkmConfig, selector: string): ResolvedWriteTarget | undefined {
+  try {
+    const working = resolveWorkingStashTarget(config, { requireWritable: false });
+    return working.source.name === selector ? working : undefined;
+  } catch (cause) {
+    // No working stash, a disabled one, or one of a kind that takes no writes:
+    // the walk over the active set answers instead.
+    if (cause instanceof ConfigError) return undefined;
+    throw cause;
+  }
+}
+
+/**
+ * The active source set a task read walks. A working stash that is a disabled
+ * configured bundle makes that set throw; it is simply not in the set, so the
+ * other bundles still resolve.
+ */
+function activeTaskSources(config: AkmConfig): SearchSource[] {
+  try {
+    return resolveSourceEntries(undefined, config);
+  } catch (cause) {
+    const working = bundleKeyForContentRoot(config, resolveStashDir());
+    const entry = working ? config.bundles?.[working] : undefined;
+    if (!(cause instanceof ConfigError) || !working || !entry || entry.enabled !== false) throw cause;
+    const enabled = { ...config, bundles: { ...config.bundles, [working]: { ...entry, enabled: true } } };
+    return resolveSourceEntries(undefined, enabled).filter((source) => source.registryId !== working);
+  }
+}
+
 /**
  * Exported for `src/commands/tasks/explain.ts` (P2b Lane B, spec
  * docs/plans/specs/p2b-input-bindings.md §4.5, B-N4): `akm task explain`
@@ -1008,7 +1038,7 @@ function taskProjectionAssetResolver(
 export function resolveTaskReadBundle(
   refBundle: string | undefined,
   flagBundle: string | undefined,
-): ResolvedWriteTarget {
+): Pick<ResolvedWriteTarget, "source"> {
   if (refBundle && flagBundle && refBundle !== flagBundle) {
     throw new UsageError(
       `Task ref selects bundle ${JSON.stringify(refBundle)}, but --bundle selects ${JSON.stringify(flagBundle)}.`,
@@ -1017,32 +1047,32 @@ export function resolveTaskReadBundle(
   }
   const selector = flagBundle ?? refBundle;
   const config = loadConfig();
-  let resolved: ResolvedWriteTarget;
+  let resolved: Pick<ResolvedWriteTarget, "source">;
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    // A bundle of the active set that no config entry names is the
-    // `AKM_BUNDLE_DIR` working stash (CI, one-shot tools and fresh installs
-    // commonly use only that): a scheduled row names exactly its derived id.
-    // A configured bundle goes straight to `resolveWriteTarget`, so a disabled
-    // working stash cannot fail the lookup of another bundle.
-    const sources = config.bundles?.[selector] === undefined ? resolveSourceEntries(undefined, config) : [];
-    const source = sources[deriveInstallations(sources).findIndex((installation) => installation.id === selector)];
-    resolved = source
-      ? {
-          source: {
-            kind: "filesystem",
-            name: selector,
-            path: source.path,
-            adapterId: source.adapterId ?? detectAdapterId(source.path),
-          },
-          config: { type: "filesystem", name: selector, path: source.path, writable: true },
-        }
-      : resolveWriteTarget(config, selector, {
-          requireWritable: false,
-          // The selector is `--bundle` when given, else the task ref's own bundle qualifier.
-          flag: flagBundle !== undefined ? "--bundle" : "The task ref's bundle",
-        });
+    const working = workingStashTargetNamed(config, selector);
+    if (working) {
+      resolved = working;
+    } else {
+      // Reading needs no write target: any bundle of the active set resolves.
+      const sources = activeTaskSources(config);
+      const source = sources[deriveInstallations(sources).findIndex((installation) => installation.id === selector)];
+      if (!source) {
+        throw new UsageError(
+          `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
+          "INVALID_FLAG_VALUE",
+        );
+      }
+      resolved = {
+        source: {
+          kind: source.type ?? "filesystem",
+          name: selector,
+          path: source.path,
+          adapterId: source.adapterId ?? detectAdapterId(source.path),
+        },
+      };
+    }
   }
   if (refBundle && resolved.source.name !== refBundle) {
     throw new UsageError(
