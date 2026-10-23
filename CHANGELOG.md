@@ -8,36 +8,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- A secret substituted into an exec unit's command or `cwd` (`${secrets/...}`) is
-  now redacted after the unit's JSON output is parsed, like a secret bound through
-  an env asset (#1238). It used to be replaced in the raw text only, so a secret
-  containing a quote, backslash or newline reached the unit journal and the
-  promoted artifact once the child echoed it as JSON, and a numeric secret echoed
-  as a JSON number turned valid output into a `parse_error`. A number that is
-  exactly a secret is now redacted too.
 - A secret is now also redacted when it appears in its JSON-escaped spelling
   (#1238). Text redaction matched only the exact and URL-encoded forms, so a child
   that printed `JSON.stringify({ token })` for a secret with a quote, backslash,
   newline or non-ASCII character left it in the unit journal when the output failed
   its schema, had no schema, or came with a non-zero exit. The shared redactor now
-  also matches the `\"`, `\\`, `\n` and `\uXXXX` forms, so env-binding, engine and
-  task-output redaction gain the same coverage.
-- A bundle-qualified `${ref}` token now follows the same ref grammar and owner
-  walk as every other ref (#1238). `${docs//tables/customers}` (an OKF bundle)
-  or `${team//release}` (a workflow bundle) used to be left as literal text with
-  nothing reported missing, because only refs led by a native type directory
-  were recognised. They now resolve, and an unresolved one is an error. A
-  qualified body is a ref when its bundle is installed or it leads with a native
-  type; anything else, such as `${HOME}` or shell substitution like
-  `${v//-/_}`, stays text.
-- `akm env list` and `akm secret list` now show an env or secret file that is a
-  symlink to a file (#1237). They could be read and searched but were missing
-  from their own list. Symlinks to directories are still not followed.
-- A task whose `uses:` script is a symlink now runs under the interpreter its
-  own name selects (#1238). A `scripts/deploy.sh` linked to `real-script.txt`,
-  or to a file with no extension, used to fail with "no closed runtime
-  interpreter" because the link's target decided the interpreter. This holds
-  for a script in the task's bundle and in another bundle.
+  also matches the `\"`, `\\`, `\n` and `\uXXXX` forms (lowercase or uppercase
+  hex, DEL included), for workflow, engine and task-output redaction alike.
 - `akm bundle rename` now rewrites the refs of a bundle whose id contains an
   emoji or other character outside the Basic Multilingual Plane correctly
   (#1239). It used to cut into the `//` separator, storing `team/workflows/x`
@@ -58,17 +35,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   configured (#1236). Task sync now uses the same set of active bundles as
   search, show and workflows, so the working stash is synced the same way
   whether you sync everything or name it with `--bundle`.
-- `akm task sync --bundle <name>` (and `task enable` / `task disable`) no longer
-  fails with "working source is disabled" when `AKM_BUNDLE_DIR` names a disabled
-  bundle and you selected a different, enabled one. A disabled bundle is reported
-  only when it is the one you selected (#1236).
-- The `bundle update` reference no longer says a writable Git update re-audits
-  the materialized worktree; that audit was removed with the dangerous-env
-  gates. It now describes what the update does: fetch into a staged copy, then
-  fast-forward the live checkout to exactly that commit (#1237).
-- The warning for a credential-shaped task `env:` value no longer tells you to
-  use an `env:` binding, which tasks do not have. It now points to
-  `akm secret run` or `akm env run` in the task's `run:` (#1237).
 - A `bundle update` while a workflow is running no longer fails the run (#1238,
   #1235). A running workflow used to remember the directory it was started in, so
   once the update moved the bundle to a new revision directory, the next step
@@ -111,14 +77,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   replaced with the secret's value and any other asset ref, such as
   `${scripts/lab/fetch.sh}`, with its absolute path; the ref may name any bundle
   (`${team//secrets/discord_bot_token}`) rather than only the env file's own
-  bundle. A `${...}` body that is not an akm ref, such as `${HOME}`, is left as
-  text. `engines.*.apiKey`, `embedding.apiKey`, `search.curateRerank.apiKey` and
-  a git bundle's `credential` accept `$VAR`, `${VAR}` or `${secrets/<name>}` (in
-  any bundle, such as `${team//secrets/x}`); a `${...}` naming any other kind of
-  asset, such as `${scripts/x}`, is rejected when the config loads. An env file
-  that still holds `${secret:NAME}` keeps working: akm reads it as
-  `${<the env file's bundle>//secrets/NAME}` and warns once, naming the env ref.
-  The file is not rewritten, so write the full ref.
+  bundle. A ref into a bundle of any adapter works when it is qualified and the
+  bundle is installed (`${docs//tables/customers}` in an OKF bundle). A `${...}`
+  body that is not an akm ref, such as `${HOME}` or shell substitution like
+  `${v//-/_}`, is left as text. `engines.*.apiKey`, `embedding.apiKey`,
+  `search.curateRerank.apiKey` and a git bundle's `credential` accept `$VAR`,
+  `${VAR}` or `${secrets/<name>}` (in any bundle, such as `${team//secrets/x}`); a
+  `${...}` naming any other kind of asset, such as `${scripts/x}`, is rejected
+  when the config loads. An env file that still holds `${secret:NAME}` keeps
+  working: akm reads it as `${<the env file's bundle>//secrets/NAME}` and warns
+  once, naming the env ref. The file is not rewritten, so write the full ref.
 - A workflow unit's `env:` bindings are now read at dispatch with the same
   function `akm env run` uses, so a bundle's env asset, its `${ref}` tokens and
   the secrets they name behave the same in a workflow as on the command line
@@ -142,7 +110,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - An agent's own `tools` list is now honoured for an agent in any bundle, not
   only the primary stash. `execution.allowedTools` still caps what a run grants.
 - A task `env:` value that looks like a credential is now a warning, in the same
-  style workflow params give, instead of an error that stopped the task.
+  style workflow params give, instead of an error that stopped the task. The
+  warning points to `akm secret run` or `akm env run` in the task's `run:`.
 - `--allow-dangerous-env-keys` on `bundle add`, `bundle update` and `env run` is
   now a deprecated no-op, accepted through 0.10 so existing scripts keep working.
   It is an unknown flag from 0.11.
@@ -154,7 +123,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   a container's `/run/secrets/<name>`. A command, agent or script that is such a
   symlink also resolves when a workflow, task or `akm agent` runs it, and
   `akm index` indexes a file symlink like any other file, so `akm show` and
-  search find it; a directory symlink is still never descended. Names with `..`
+  search find it, and `akm env list` and `akm secret list` list it. A symlinked
+  script runs under the interpreter its own name selects, and cloning a skill
+  copies a symlinked file by content. A directory symlink is still never
+  descended. Names with `..`
   segments or absolute names are still refused, and writes still never follow a
   symlink out of the bundle.
 - `akm workflow run <ref>` always starts a new run, and `akm workflow run <run-id>`
@@ -204,8 +176,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   akm's own working directory.
 - An exec step's argv and `exec.cwd` can name an asset in any bundle with the same
   `${ref}` token env assets use (#1238): `["bun", "${homelab//scripts/lab-status/fetch.ts}"]`.
-  A `secrets/` ref is replaced by the secret's value, which is then redacted from
-  the journal; any other asset ref by its absolute path. A ref no bundle owns
+  A `secrets/` ref is replaced by the secret's value, which is redacted from the
+  unit's output after it is parsed, like a secret bound through an env asset; any
+  other asset ref by its absolute path. A ref no bundle owns
   fails the unit, naming it, before anything is spawned. Prompts are not
   substituted. A workflow in bundle A can now run a script from bundle B with an
   env asset from bundle C that names a secret in bundle D.
