@@ -256,7 +256,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       // final symlink is removed as an entry, never traversed.
       const stagingDir = `${destSkillDir}.tmp-${randomUUID()}`;
       try {
-        fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false });
+        // dereference: a file that is a symlink (reads follow symlinks) is copied
+        // by content, so the stamp below never writes through a link.
+        fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false, dereference: true });
         stampCloneOrigin(path.join(stagingDir, "SKILL.md"), originRef);
         if (overwritten) fs.rmSync(destSkillDir, { recursive: true, force: true });
         fs.renameSync(stagingDir, destSkillDir);
