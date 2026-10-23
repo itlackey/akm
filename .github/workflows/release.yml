@@ -9,20 +9,21 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
   id-token: write
 
 jobs:
+  # The semantic, Docker and native-scheduler gates, run on this commit.
+  gated:
+    uses: ./.github/workflows/gated-ci.yml
+
   release:
+    needs: gated
     runs-on: ubuntu-latest
-    # tests/release-check.sh replaced the old `bun run check` step with the
-    # full release-acceptance suite (build, package/install regression, the
-    # published-upgrade tests under Node and Bun, and a Linux standalone
-    # build/run) on top of everything `check` already covered, plus this
-    # job's own artifact build/publish steps after it. 20 minutes was already
-    # this job's whole budget for `check` + build + publish; give the larger
-    # gate room without being unbounded.
-    timeout-minutes: 45
+    # tests/release-check.sh proves the packaged artifact; the build and
+    # publish steps follow it.
+    timeout-minutes: 30
     environment: release
     env:
       CANDIDATE_VERSION: ${{ inputs.version }}
@@ -52,18 +53,24 @@ jobs:
             exit 1
           fi
 
-      # Publish gate: tests/release-check.sh — the same script the runbook
-      # directs operators to run locally before triggering this workflow — is
-      # the actual release-acceptance suite. It supersedes the old `bun run
-      # check` step (it runs verify-only lint, typecheck, and both the unit
-      # and integration suites itself) and additionally proves the *packaged*
-      # artifact: npm bin targets/launcher selection, the akm-migrate bundle
-      # under both Bun and Node, package/install/setup regression, and the
-      # published 0.8 -> candidate task upgrade under both runtimes. Docker is
-      # skipped here because the exact candidate's separate Gated CI run is a
-      # required, linked release-checklist artifact; duplicating its Docker and
-      # native-platform work inside the publishing job would add cost without
-      # improving candidate identity.
+      # Lint, typecheck and the unit and integration suites already ran in CI
+      # on this exact commit; require that run to have passed rather than
+      # running them again here.
+      - name: Require green CI on this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          passed="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$GITHUB_SHA" \
+            --json conclusion --jq '[.[] | select(.conclusion == "success")] | length')"
+          if [ "$passed" = "0" ]; then
+            echo "CI has not passed on $GITHUB_SHA; wait for it (or rerun it) before releasing" >&2
+            exit 1
+          fi
+
+      # tests/release-check.sh proves the packaged artifact: npm bin targets,
+      # the akm-migrate bundle under Bun and Node, package acceptance, and the
+      # published-upgrade rehearsal against the packed tarball. Docker runs in
+      # the gated job above.
       - name: Release check
         run: ./tests/release-check.sh --skip-docker
 

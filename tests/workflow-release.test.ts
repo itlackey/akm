@@ -11,9 +11,12 @@ const source = fs.readFileSync(path.resolve(import.meta.dir, "../.github/workflo
 const VERSION_INPUT = "$" + "{{ inputs.version }}";
 
 describe("release workflow", () => {
-  test("is one straightforward release job", () => {
-    const workflow = YAML.parse(source) as { jobs: Record<string, unknown> };
-    expect(Object.keys(workflow.jobs)).toEqual(["release"]);
+  test("runs the gated suites, then one straightforward release job", () => {
+    const workflow = YAML.parse(source) as { jobs: Record<string, { uses?: string; needs?: string }> };
+    expect(Object.keys(workflow.jobs)).toEqual(["gated", "release"]);
+    expect(workflow.jobs.gated?.uses).toBe("./.github/workflows/gated-ci.yml");
+    expect(workflow.jobs.release?.needs).toBe("gated");
+    expect(source).toContain("Require green CI on this commit");
     expect(source).toContain("bun install --frozen-lockfile");
     expect(source).toContain("bun run build");
     expect(source).toContain("npm publish");
@@ -38,10 +41,8 @@ describe("release workflow", () => {
     // the PREVIOUS release's notes.
     //
     // Lives here rather than beside the renderer's own tests because this is a
-    // property of the release, not of `renderMigrationHelp` — and this file is
-    // `run_step "Workflow Release Contract"`, the first gate in
-    // tests/release-check.sh, so it fails in seconds under the name a release
-    // engineer is looking at.
+    // property of the release, not of `renderMigrationHelp`. CI runs it on the
+    // release commit, and release.yml refuses to publish until that CI passed.
     const root = path.resolve(import.meta.dir, "..");
     const version = (JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8")) as { version: string })
       .version;
