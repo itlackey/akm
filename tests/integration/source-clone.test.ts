@@ -800,6 +800,47 @@ describe("akmClone opaque refs and provenance", () => {
     expect(fs.readFileSync(externalSkill).equals(before)).toBe(true);
   });
 
+  test("a skill with a nested directory link to itself clones without traversing the link", async () => {
+    writeFile(path.join(searchPathDir, "skills", "loopy", "SKILL.md"), "---\ndescription: loopy\n---\n# Loopy\n");
+    fs.symlinkSync(".", path.join(searchPathDir, "skills", "loopy", "loop"), "dir");
+
+    await akmClone({ sourceRef: "searchpath//skills/loopy" });
+
+    const destination = path.join(stashDir, "skills", "loopy");
+    expect(fs.lstatSync(path.join(destination, "loop")).isSymbolicLink()).toBe(true);
+    expect(fs.lstatSync(path.join(destination, "SKILL.md")).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(path.join(destination, "SKILL.md"), "utf8")).toContain(
+      "sources:\n  - searchpath//skills/loopy\n",
+    );
+  });
+
+  test("a skill with a directory link to an ancestor clones without traversing the link", async () => {
+    writeFile(path.join(searchPathDir, "skills", "up", "SKILL.md"), "---\ndescription: up\n---\n# Up\n");
+    writeFile(path.join(searchPathDir, "skills", "up", "refs", "note.md"), "# Note\n");
+    fs.symlinkSync("../../..", path.join(searchPathDir, "skills", "up", "refs", "root"), "dir");
+
+    await akmClone({ sourceRef: "searchpath//skills/up" });
+
+    const destination = path.join(stashDir, "skills", "up");
+    expect(fs.lstatSync(path.join(destination, "refs", "root")).isSymbolicLink()).toBe(true);
+    expect(fs.readFileSync(path.join(destination, "refs", "note.md"), "utf8")).toBe("# Note\n");
+  });
+
+  test("a file link elsewhere in a skill is cloned as a regular file with the target's content", async () => {
+    const externalNote = path.join(createStashDir("akm-clone-skill-nested-link-target-"), "note.md");
+    writeFile(externalNote, "# External note\n");
+    writeFile(path.join(searchPathDir, "skills", "nested", "SKILL.md"), "---\ndescription: nested\n---\n# Nested\n");
+    fs.mkdirSync(path.join(searchPathDir, "skills", "nested", "refs"), { recursive: true });
+    fs.symlinkSync(externalNote, path.join(searchPathDir, "skills", "nested", "refs", "note.md"));
+
+    await akmClone({ sourceRef: "searchpath//skills/nested" });
+
+    const cloned = path.join(stashDir, "skills", "nested", "refs", "note.md");
+    expect(fs.lstatSync(cloned).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(cloned, "utf8")).toBe("# External note\n");
+    expect(fs.readFileSync(externalNote, "utf8")).toBe("# External note\n");
+  });
+
   test("a knowledge ref named without its extension clones to <name>.md", async () => {
     writeFile(path.join(searchPathDir, "knowledge", "retry-policy.md"), "# Retry policy\n");
 

@@ -29,6 +29,7 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { buildFileContext } from "../../indexer/walk/file-context";
+import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -256,9 +257,11 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       // final symlink is removed as an entry, never traversed.
       const stagingDir = `${destSkillDir}.tmp-${randomUUID()}`;
       try {
-        // dereference: a file that is a symlink (reads follow symlinks) is copied
-        // by content, so the stamp below never writes through a link.
-        fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false, dereference: true });
+        // Directory links are copied as links and never descended (as the walker
+        // does); each file link is then replaced by its content, so the stamp
+        // below never writes through a link.
+        fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false });
+        materializeFileLinks(stagingDir);
         stampCloneOrigin(path.join(stagingDir, "SKILL.md"), originRef);
         if (overwritten) fs.rmSync(destSkillDir, { recursive: true, force: true });
         fs.renameSync(stagingDir, destSkillDir);
@@ -414,6 +417,21 @@ function assertNoDestinationSymlinkParent(root: string, destination: string): vo
       `Clone destination has a symbolic-link parent outside the selected target boundary: ${parentDir}.`,
       "PATH_ESCAPE_VIOLATION",
     );
+  }
+}
+
+/** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
+function materializeFileLinks(root: string): void {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      materializeFileLinks(entryPath);
+    } else if (entry.isSymbolicLink() && isFileOrFileSymlink(entryPath)) {
+      const content = fs.readFileSync(entryPath);
+      const { mode } = fs.statSync(entryPath);
+      fs.rmSync(entryPath);
+      fs.writeFileSync(entryPath, content, { mode });
+    }
   }
 }
 
