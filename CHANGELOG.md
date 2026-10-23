@@ -8,18 +8,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- A workflow run no longer fails its later steps when a bundle update renames or
-  removes the workflow file it started from (#1238). The step used to report
-  that the workflow "does not resolve to a bundle" even though the bundle was
-  installed. A run now works in the root of the bundle its ref names and
-  continues from its frozen plan; it fails only when that bundle is no longer
-  configured.
-- An env file written for 0.9 or early 0.10 that spells a secret `${secret:NAME}`
-  works again (#1238). The token meant the secret `NAME` in the env file's own
-  bundle, but it was passed to the process as literal text, so a bot token became
-  the string `${secret:NAME}` and the call failed with a 401. akm now reads it as
-  `${<bundle>//secrets/NAME}` and warns once, naming the env ref and the new
-  spelling. The env file is not rewritten.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a
@@ -47,7 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   once the update moved the bundle to a new revision directory, the next step
   failed with `PATH_ESCAPE_VIOLATION` and the only remedy was `abandon`. The
   run now finds its bundle again at each step and carries on from the new
-  directory.
+  directory. It continues from its frozen plan even if the new revision renamed
+  or removed the workflow file, and a step fails only when the run's bundle is
+  no longer configured.
 - `exec.cwd` is applied once (#1238). `cwd: sub` used to run in `<bundle>/sub/sub`.
   It now runs in `<bundle>/sub`.
 
@@ -62,11 +52,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` from the akm that started
   it, so a step that runs `akm` uses the same bundle and state without
   `pass_env` (#1238).
-- A config credential (`engines.<name>.apiKey`, `embedding.apiKey`,
-  `search.curateRerank.apiKey`, a git bundle's `credential`) now accepts only a
-  `${secrets/<name>}` ref or a `$VAR` reference (#1238). A `${...}` naming
-  another kind of asset, such as `${scripts/x}`, used to load and then fail the
-  first time the credential was used. It is now rejected when the config loads.
 - `akm env`, `akm secret`, workflow `env:` bindings and child workflows, task
   `uses:` assets, and `improve`/`distill`/schema-repair file lookups now find an
   asset with the same lookup `akm show` uses, instead of each keeping its own
@@ -85,11 +70,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   replaced with the secret's value and any other asset ref, such as
   `${scripts/lab/fetch.sh}`, with its absolute path; the ref may name any bundle
   (`${team//secrets/discord_bot_token}`) rather than only the env file's own
-  bundle. `engines.*.apiKey`, `embedding.apiKey`, `search.curateRerank.apiKey` and
-  a git bundle's `credential` accept `$VAR`, `${VAR}` or `${ref}`. A `${...}` body
-  that is not an akm ref, such as `${HOME}`, is left as text. An env file that
-  still holds `${secret:NAME}` is no longer substituted (the token is left as
-  text); rewrite it as `${secrets/NAME}`.
+  bundle. A `${...}` body that is not an akm ref, such as `${HOME}`, is left as
+  text. `engines.*.apiKey`, `embedding.apiKey`, `search.curateRerank.apiKey` and
+  a git bundle's `credential` accept `$VAR`, `${VAR}` or `${secrets/<name>}` (in
+  any bundle, such as `${team//secrets/x}`); a `${...}` naming any other kind of
+  asset, such as `${scripts/x}`, is rejected when the config loads. An env file
+  that still holds `${secret:NAME}` keeps working: akm reads it as
+  `${<the env file's bundle>//secrets/NAME}` and warns once, naming the env ref.
+  The file is not rewritten, so write the full ref.
 - A workflow unit's `env:` bindings are now read at dispatch with the same
   function `akm env run` uses, so a bundle's env asset, its `${ref}` tokens and
   the secrets they name behave the same in a workflow as on the command line
@@ -154,7 +142,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   plans keep the old refs; continue or abandon them.
 - `akm workflow create` no longer indexes the new workflow, and a new run no longer
   records an index entry id (#1239).
-
 - A workflow plan records the refs it uses and no locations (#1238). New runs
   freeze plan `irVersion` 7, which holds no bundle directory, no directory
   identity and, for each `env:` ref, only its bundle-qualified ref: the env
@@ -168,7 +155,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   bundle: a command can reach any directory anyway. A step whose workflow no
   longer resolves to a bundle fails naming the workflow instead of running in
   akm's own working directory.
-
 - An exec step's argv and `exec.cwd` can name an asset in any bundle with the same
   `${ref}` token env assets use (#1238): `["bun", "${homelab//scripts/lab-status/fetch.ts}"]`.
   A `secrets/` ref is replaced by the secret's value, which is then redacted from
@@ -176,7 +162,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   fails the unit, naming it, before anything is spawned. Prompts are not
   substituted. A workflow in bundle A can now run a script from bundle B with an
   env asset from bundle C that names a secret in bundle D.
-
 - A task no longer captures its working directory's identity when it is prepared
   and re-checks it before it runs (#1238). A `run:` task runs in
   `<bundle>/<working-directory>`, and a `uses: scripts/<file>` target that is a
