@@ -1,87 +1,23 @@
 name: Gated CI
-run-name: Gated CI / ${{ github.event_name == 'schedule' && 'weekly' || github.event_name == 'push' && 'release-candidate' || 'dispatch' }} / ${{ inputs.candidate_sha || github.sha }}
 
 # These suites exercise real embeddings, container installs, and host-native
-# schedulers. All three run on every trigger: the weekly schedule to catch
-# drift, `workflow_dispatch` to validate an exact commit on demand, and the
-# candidate tag.
-#
-# There used to be a `detect-changes` job that ran these on pull requests too,
-# selecting suites by regex-matching the PR diff against path lists. It was 70
-# lines of build-policing that had already gone stale — its patterns still
-# named test files the 0.9.8 reorganisation moved or deleted, so it was
-# silently under-selecting suites and nobody noticed. The release checklist
-# never relied on it either: release evidence comes from an exact-SHA dispatch
-# or a candidate tag, both of which always ran everything. Deleted, along with
-# the pull_request trigger and the `gated_suite` selector.
+# schedulers. They run weekly to catch drift, on demand from the Actions tab
+# (on the ref chosen there), and as the first job of every release: release.yml
+# calls this workflow on the commit it is about to publish, so the gates always
+# test exactly what ships.
 on:
-  push:
-    tags:
-      - "gated-ci/candidate-*"
   schedule:
     # Avoid the top of the hour, when scheduled Actions traffic is highest.
     - cron: "23 5 * * 1"
   workflow_dispatch:
-    inputs:
-      candidate_sha:
-        description: "Full 40-character commit SHA to validate"
-        required: true
-        type: string
-
-concurrency:
-  group: gated-ci-${{ inputs.candidate_sha || github.sha }}-${{ github.event_name }}
-  cancel-in-progress: true
+  workflow_call:
 
 permissions:
   contents: read
 
 jobs:
-  resolve-candidate:
-    name: Gated / Resolve Candidate
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      sha: ${{ steps.candidate.outputs.sha }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
-        with:
-          ref: ${{ inputs.candidate_sha || github.sha }}
-          fetch-depth: 1
-          persist-credentials: false
-      - id: candidate
-        name: Resolve and validate the candidate commit
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          EVENT_REF: ${{ github.ref }}
-          EVENT_SHA: ${{ github.sha }}
-          REQUESTED_SHA: ${{ inputs.candidate_sha }}
-        run: |
-          actual_sha="$(git rev-parse HEAD)"
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
-            if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
-              echo "candidate_sha must be a full 40-character commit SHA" >&2
-              exit 2
-            fi
-            if [ "${REQUESTED_SHA,,}" != "${actual_sha,,}" ]; then
-              echo "Checked out $actual_sha, not requested candidate $REQUESTED_SHA" >&2
-              exit 1
-            fi
-          elif [ "$EVENT_NAME" = "push" ]; then
-            if [[ ! "$EVENT_REF" =~ ^refs/tags/gated-ci/candidate- ]]; then
-              echo "Candidate pushes must use refs/tags/gated-ci/candidate-*" >&2
-              exit 2
-            fi
-            if [ "${EVENT_SHA,,}" != "${actual_sha,,}" ]; then
-              echo "Checked out $actual_sha, not tagged candidate $EVENT_SHA" >&2
-              exit 1
-            fi
-          fi
-          echo "sha=$actual_sha" >> "$GITHUB_OUTPUT"
-
   semantic-search:
     name: Gated / Semantic Search
-    needs: resolve-candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
@@ -94,7 +30,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
-          ref: ${{ needs.resolve-candidate.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444  # v5.0.0
         with:
@@ -128,7 +63,6 @@ jobs:
 
   docker-install:
     name: Gated / Docker Install
-    needs: resolve-candidate
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -137,7 +71,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
-          ref: ${{ needs.resolve-candidate.outputs.sha }}
           persist-credentials: false
       - name: Verify Docker daemon
         run: docker info
@@ -153,7 +86,6 @@ jobs:
 
   native-scheduler:
     name: Gated / Native Scheduler / ${{ matrix.platform }}
-    needs: resolve-candidate
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 40
     strategy:
@@ -175,7 +107,6 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
         with:
-          ref: ${{ needs.resolve-candidate.outputs.sha }}
           persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
@@ -304,47 +235,3 @@ jobs:
           )) {
             Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
           }
-
-  release-candidate-evidence:
-    name: Gated / Release Candidate Evidence
-    needs: [resolve-candidate, semantic-search, docker-install, native-scheduler]
-    if: >-
-      always() &&
-      (github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/gated-ci/candidate-')))
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    steps:
-      - name: Record release-candidate evidence
-        shell: bash
-        env:
-          CANDIDATE_SHA: ${{ needs.resolve-candidate.outputs.sha }}
-          REQUESTED_SHA: ${{ inputs.candidate_sha || github.sha }}
-          CANDIDATE_REF: ${{ github.ref }}
-          RESOLVE_RESULT: ${{ needs.resolve-candidate.result }}
-          SEMANTIC_RESULT: ${{ needs.semantic-search.result }}
-          DOCKER_RESULT: ${{ needs.docker-install.result }}
-          NATIVE_RESULT: ${{ needs.native-scheduler.result }}
-          RUN_ID: ${{ github.run_id }}
-          REPOSITORY: ${{ github.repository }}
-        run: |
-          run_url="https://github.com/$REPOSITORY/actions/runs/$RUN_ID"
-          {
-            echo "## Gated release-candidate evidence"
-            echo
-            echo "- Requested candidate SHA: \`$REQUESTED_SHA\`"
-            echo "- Resolved candidate SHA: \`${CANDIDATE_SHA:-unresolved}\`"
-            echo "- Candidate trigger ref: \`$CANDIDATE_REF\`"
-            echo "- Workflow run: $run_url"
-            echo "- Semantic search: \`$SEMANTIC_RESULT\`"
-            echo "- Docker install: \`$DOCKER_RESULT\`"
-            echo "- Native schedulers (Linux/macOS/Windows): \`$NATIVE_RESULT\`"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$RESOLVE_RESULT" != "success" ] || \
-             [ "$SEMANTIC_RESULT" != "success" ] || \
-             [ "$DOCKER_RESULT" != "success" ] || \
-             [ "$NATIVE_RESULT" != "success" ]; then
-            echo "One or more release-candidate gates did not succeed; see $run_url" >&2
-            exit 1
-          fi

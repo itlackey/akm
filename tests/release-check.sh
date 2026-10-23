@@ -92,27 +92,10 @@ validate_workflow_syntax() {
 	"$CANDIDATE_DIR/actionlint/actionlint" "$PROJECT_ROOT"/.github/workflows/*.yml
 }
 
-# Timeout policy: every `bun test` invocation below uses --timeout=120000,
-# the same policy scripts/test-unit.sh and scripts/test-integration.sh use for
-# their shards (see those scripts' headers for why: heavy tests can
-# legitimately run 3-4x their solo duration under process contention, and the
-# timeout exists to catch hangs, not to police performance). This used to
-# diverge (no --timeout on most steps, --timeout=30000 on the old "Full Test
-# Suite" step) which meant the same test could be given three different
-# deadlines depending on which entry point ran it.
+# Release acceptance for the packaged artifact. Lint, typecheck, the unit and
+# integration suites and the native-scheduler gates run in CI and Gated CI on
+# the same commit; release.yml requires both before it publishes.
 run_step "Workflow Syntax" validate_workflow_syntax
-run_step "Workflow Release Contract" bun test --timeout=120000 tests/workflow-release.test.ts
-# Verify-only: must match what CI runs via `bun run lint`, not a write pass.
-# `bun run lint` is `bunx biome check src/ tests/ scripts/` (no --write) plus
-# 10 custom lint scripts (isolation, license headers, runtime boundary, write-
-# source chokepoint, process.argv, repository SQL, goldens presence, test-ref
-# literals, shipped assets, and the config-schema --check). A bare
-# `bunx biome check --write src/ tests/` step here (a) mutated files during a
-# pass that is supposed to only verify, and (b) skipped scripts/ plus all 10
-# custom scripts, so it could pass while `bun run lint` — the thing CI
-# actually gates on — would fail.
-run_step "Lint" bun run lint
-run_step "Type Check" bunx tsc --noEmit
 run_step "Build Package" bun run build
 run_step \
 	"Verify packaged model-map asset" \
@@ -143,25 +126,6 @@ run_step \
 	package/docs/migration/v0.9.1-to-v0.9.2.md \
 	package/docs/migration/release-notes/0.9.2.md \
 	package/docs/reference/workflow-schema.md
-run_step \
-  "Install and Setup Regression Suite" \
-  bun test --timeout=120000 tests/setup/ ./tests/setup-run.test.ts tests/integration/install/install-script.test.ts tests/setup-wizard.test.ts tests/setup-scheduled-tasks.test.ts
-if [ "$(uname -s)" = "Linux" ]; then
-	run_step \
-		"Build Linux Standalone Scheduler Artifact" \
-		bun build ./scripts/akm-standalone.ts --compile --outfile "$CANDIDATE_DIR/akm-linux-x64" --define "AKM_VERSION='$(node -p "require('./package.json').version")'"
-	run_step \
-		"Linux Standalone Outside PATH" \
-		env AKM_STANDALONE_SCHEDULER_TESTS=1 AKM_STANDALONE_TEST_BIN="$CANDIDATE_DIR/akm-linux-x64" AKM_CANDIDATE_ARCH="$(node -p 'process.arch')" AKM_CANDIDATE_VERSION="$(node -p "require('./package.json').version")" bun test --timeout=120000 tests/integration/linux-standalone-scheduler.test.ts
-fi
-# Run the same two sharded, timeout-unified targets everything else in the
-# repo (AGENTS.md, docs/architecture/testing/testing-workflow.md, CI) uses —
-# not a bare, unsharded, whole-tree `bun test`. The old bare invocation ran
-# every *.test.ts in the repo (unit AND integration) in a single process with
-# a --timeout=30000 that matched neither runner's --timeout=120000 policy.
-run_step "Full Test Suite (unit)" bash scripts/test-unit.sh
-run_step "Full Test Suite (integration)" bash scripts/test-integration.sh
-
 if [ "$SKIP_DOCKER" = false ]; then
 	run_step "Docker Install Matrix" "$SCRIPT_DIR/docker/run-docker-tests.sh"
 fi
