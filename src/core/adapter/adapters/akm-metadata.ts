@@ -238,7 +238,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
     case "task-yaml": {
       out.tags = Array.from(new Set([...(out.tags ?? []), "task", "scheduled"]));
       try {
-        const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath, workspaceRoot: file.stashRoot });
+        const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath });
         const v4 = parsed.v4;
         const target = v4.target;
         const hints = new Set<string>();

@@ -176,7 +176,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     tags: input.tags,
   });
 
-  const parsedTask = parseTaskSource({ yaml, filePath: assetPath, workspaceRoot: stashDir });
+  const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
   const task = projectTaskSourceV4(parsedTask.v4);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
   await prepareTaskV3Execution(task, {
@@ -379,7 +379,6 @@ function resolveTaskActivation(
     const parsedSource = parseTaskSource({
       yaml: fs.readFileSync(sourcePath, "utf8"),
       filePath: sourcePath,
-      workspaceRoot: bundle.source.path,
     });
     if (parsedSource.v4.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");

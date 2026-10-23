@@ -88,7 +88,6 @@ function walkTasks(root: TaskFileRoot, tasksDir: string, out: TaskToV4FileInput[
         mode,
         writable: root.writable,
         onDiskWritable: isWritable(candidate) && isWritable(directory) && (mode & 0o222) !== 0,
-        containmentRoot: physicalRoot,
       });
     }
   };
@@ -179,7 +178,6 @@ export function applyTaskFilesPlan(
     parseTaskSourceV4({
       yaml: change.after.toString("utf8"),
       filePath: change.filePath,
-      ...(change.containmentRoot ? { workspaceRoot: change.containmentRoot } : {}),
     });
   }
   for (const change of changes) {

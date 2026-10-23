@@ -462,7 +462,6 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
         body: parsed.content,
         ext: overlay.ext,
         ctx,
-        workspaceRoot: c.root,
       })),
     );
     diagnostics.push(...(await skillDirectoryDiagnostics(change.path, seenSkillDirs, ctx)));

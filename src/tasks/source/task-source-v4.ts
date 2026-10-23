@@ -73,7 +73,6 @@ import {
   stringField,
   TASK_V3_MAX_REDACT_NAMES,
   utf8Bytes,
-  validateWorkingDirectory,
 } from "./bounded-document";
 
 // ── Closed constants (D1, D2-N3, D2-N7) ─────────────────────────────────────
@@ -183,8 +182,6 @@ export interface TaskSourceV4Document {
 
 export interface ParseTaskSourceV4DocumentOptions {
   readonly filePath: string;
-  /** Required when `working-directory` is authored so symlinks can be contained physically. */
-  readonly workspaceRoot?: string;
   /** Internal line lookup supplied by the router/YAML adapter. */
   readonly lineAt?: (fieldPath: readonly (string | number)[]) => number | undefined;
 }
@@ -199,7 +196,6 @@ function ctxFrom(options: ParseTaskSourceV4DocumentOptions): BoundedDocumentCont
   return {
     filePath: options.filePath,
     sourceLabel: SOURCE_LABEL,
-    ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
     ...(options.lineAt ? { lineAt: options.lineAt } : {}),
   };
 }
@@ -385,7 +381,6 @@ function parseTarget(input: ExecutionJsonObject, ctx: BoundedDocumentContext): T
     workingDirectory = stringField(input["working-directory"], ctx, ["working-directory"], {
       nonempty: true,
     }) as string;
-    validateWorkingDirectory(workingDirectory, ctx);
   }
   return Object.freeze({
     kind: "run",
@@ -774,7 +769,6 @@ export function parseTaskSourceV4(input: ParseTaskSourceV4Input): TaskSourceV4Do
   const { root, lineAt } = readBoundedTaskSourceYaml(input, { sourceLabel: SOURCE_LABEL });
   return parseTaskSourceV4Document(root, {
     filePath: input.filePath,
-    ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
     lineAt,
   });
 }

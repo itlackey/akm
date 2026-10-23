@@ -77,7 +77,6 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     const parsed = parseTaskSource({
       yaml: "version: 4\nuses: scripts/nightly.sh\nschedule: '@daily'\n",
       filePath: path.join(root, "tasks", "nightly.yml"),
-      workspaceRoot: root,
     });
     const document = projectTaskSourceV4(parsed.v4);
 
@@ -107,7 +106,6 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
       const parsed = parseTaskSource({
         yaml: "version: 4\nuses: scripts/nightly.sh\nschedule: '@daily'\n",
         filePath: path.join(root, "tasks", "nightly.yml"),
-        workspaceRoot: root,
       });
       const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
@@ -125,7 +123,6 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     const parsed = parseTaskSource({
       yaml: "version: 4\nrun: printf ok\nworking-directory: work\nschedule: '@daily'\n",
       filePath: path.join(root, "tasks", "nightly.yml"),
-      workspaceRoot: root,
     });
     const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
 
@@ -134,4 +131,38 @@ describe("prepareTaskV3Execution's frozen script/run-target snapshot (ported fro
     expect(prepared.cwd).toBe(path.join(root, "work"));
     expect(Object.hasOwn(prepared, "cwdIdentity")).toBe(false);
   });
+
+  test("an absolute working-directory runs there, outside the bundle", async () => {
+    const root = sandboxRoot();
+    const elsewhere = sandboxRoot();
+
+    const parsed = parseTaskSource({
+      yaml: `version: 4\nrun: printf ok\nworking-directory: ${JSON.stringify(elsewhere)}\nschedule: '@daily'\n`,
+      filePath: path.join(root, "tasks", "nightly.yml"),
+    });
+    const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+
+    expect(prepared.kind).toBe("shell");
+    if (prepared.kind !== "shell") return;
+    expect(prepared.cwd).toBe(elsewhere);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "a working-directory that is a symlink to a directory outside the bundle runs there",
+    async () => {
+      const root = sandboxRoot();
+      const outside = sandboxRoot();
+      fs.symlinkSync(outside, path.join(root, "link"), "dir");
+
+      const parsed = parseTaskSource({
+        yaml: "version: 4\nrun: printf ok\nworking-directory: link\nschedule: '@daily'\n",
+        filePath: path.join(root, "tasks", "nightly.yml"),
+      });
+      const prepared = await prepareTaskV3Execution(projectTaskSourceV4(parsed.v4), contextFor(root));
+
+      expect(prepared.kind).toBe("shell");
+      if (prepared.kind !== "shell") return;
+      expect(prepared.cwd).toBe(path.join(root, "link"));
+    },
+  );
 });

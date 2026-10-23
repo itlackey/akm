@@ -134,7 +134,6 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       bytes: Buffer.from('version: 2\nschedule: "@daily"\nprompt: adversarial//tables/customers\n', "utf8"),
       mode: 0o644,
       writable: true,
-      containmentRoot: storage.stashDir,
     });
     expect(outcome).toMatchObject({
       status: "blocked",

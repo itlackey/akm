@@ -48,8 +48,6 @@ export interface TaskToV4FileInput {
   readonly writable: boolean;
   /** False when the inspected file or its publication directory has no write bit. */
   readonly onDiskWritable?: boolean;
-  /** Physical bundle/component root recorded by the filesystem inspector. */
-  readonly containmentRoot?: string;
 }
 
 interface TaskToV4OutcomeBase {
@@ -59,7 +57,6 @@ interface TaskToV4OutcomeBase {
   readonly mode: number;
   readonly writable: boolean;
   readonly onDiskWritable?: boolean;
-  readonly containmentRoot?: string;
   readonly reason: string;
   readonly detail?: string;
 }
@@ -252,7 +249,6 @@ function base(input: TaskToV4FileInput): Omit<TaskToV4OutcomeBase, "reason"> {
     mode: input.mode,
     writable: input.writable,
     ...(input.onDiskWritable !== undefined ? { onDiskWritable: input.onDiskWritable } : {}),
-    ...(input.containmentRoot ? { containmentRoot: input.containmentRoot } : {}),
   };
 }
 
@@ -531,7 +527,6 @@ function planV3DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
     parseTaskSourceV4({
       yaml: afterYaml,
       filePath: input.filePath,
-      ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
     });
   } catch (cause) {
     return blocked(input, "generated-v4-validation-failed", causeMessage(cause));
@@ -787,7 +782,6 @@ function planV2DataToV4(input: TaskToV4FileInput, data: Record<string, unknown>)
     parseTaskV3Yaml({
       yaml: v3Yaml,
       filePath: input.filePath,
-      ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
     });
   } catch (cause) {
     return blocked(input, "generated-v3-validation-failed", causeMessage(cause));
@@ -830,7 +824,6 @@ function planV4Cleanup(input: TaskToV4FileInput, source: string): TaskToV4FileOu
       parseTaskSourceV4({
         yaml: after.toString("utf8"),
         filePath: input.filePath,
-        ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
       });
     } catch (cause) {
       return blocked(input, "generated-v4-validation-failed", causeMessage(cause));
@@ -848,7 +841,6 @@ function planV4Cleanup(input: TaskToV4FileInput, source: string): TaskToV4FileOu
     parseTaskSourceV4({
       yaml: source,
       filePath: input.filePath,
-      ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
     });
     return Object.freeze({ status: "skipped" as const, ...base(input), reason: "already-v4" as const });
   } catch (cause) {
@@ -877,7 +869,6 @@ export function planTaskToV4File(input: TaskToV4FileInput): TaskToV4FileOutcome 
       parseTaskV3Yaml({
         yaml: source,
         filePath: input.filePath,
-        ...(input.containmentRoot ? { workspaceRoot: input.containmentRoot } : {}),
       });
     } catch (cause) {
       return blocked(input, "invalid-v3-task", causeMessage(cause));
@@ -907,8 +898,6 @@ function generationFor(files: readonly TaskToV4FileOutcome[]): string {
     digest.update(file.writable ? "writable" : "read-only");
     digest.update("\0");
     digest.update(file.onDiskWritable === false ? "disk-read-only" : "disk-writable-or-unspecified");
-    digest.update("\0");
-    if (file.containmentRoot) digest.update(file.containmentRoot);
     digest.update("\0");
     digest.update(file.beforeHash);
     digest.update("\0");

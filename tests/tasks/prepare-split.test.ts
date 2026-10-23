@@ -80,7 +80,6 @@ function shellDocument(root: string) {
   const parsed = parseTaskSource({
     yaml: "version: 4\nrun: printf ok\nschedule: '@daily'\n",
     filePath: `${root}/tasks/nightly.yml`,
-    workspaceRoot: root,
   });
   return projectTaskSourceV4(parsed.v4);
 }

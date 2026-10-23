@@ -111,7 +111,7 @@ export async function loadPreparedTask(id: string, options: RunTaskOptions): Pro
   }
   const filePath = owner.path;
   const yaml = fs.readFileSync(filePath, "utf8");
-  const parsed = parseTaskSource({ yaml, filePath, workspaceRoot: bundleDir });
+  const parsed = parseTaskSource({ yaml, filePath });
   const source = projectTaskSourceV4(parsed.v4);
   const requiresCommandConfig =
     source.target.kind === "uses" &&

@@ -63,7 +63,6 @@ import {
   stringField,
   TASK_V3_MAX_REDACT_NAMES,
   TASK_V3_MAX_SCHEDULES,
-  validateWorkingDirectory,
 } from "../../../src/tasks/source/bounded-document";
 
 export const TASK_V3_SCHEMA_VERSION = 3 as const;
@@ -153,8 +152,6 @@ export interface TaskV3SourceDocument {
 
 export interface ParseTaskV3DocumentOptions {
   readonly filePath: string;
-  /** Required when `working-directory` is authored so symlinks can be contained physically. */
-  readonly workspaceRoot?: string;
   /** Internal line lookup supplied by the YAML adapter. */
   readonly lineAt?: (path: readonly (string | number)[]) => number | undefined;
 }
@@ -178,7 +175,6 @@ function ctxFrom(options: ParseTaskV3DocumentOptions): ParseContext {
   return {
     filePath: options.filePath,
     sourceLabel: SOURCE_LABEL,
-    ...(options.workspaceRoot ? { workspaceRoot: options.workspaceRoot } : {}),
     ...(options.lineAt ? { lineAt: options.lineAt } : {}),
   };
 }
@@ -524,7 +520,6 @@ export function parseTaskV3Document(value: unknown, options: ParseTaskV3Document
       workingDirectory = stringField(input["working-directory"], ctx, ["working-directory"], {
         nonempty: true,
       }) as string;
-      validateWorkingDirectory(workingDirectory, ctx);
     }
     target = Object.freeze({
       kind: "run",
@@ -555,7 +550,6 @@ export function parseTaskV3Yaml(input: ParseTaskV3YamlInput): TaskV3SourceDocume
   const { root, lineAt } = readBoundedTaskSourceYaml(input, { sourceLabel: SOURCE_LABEL });
   return parseTaskV3Document(root, {
     filePath: input.filePath,
-    ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
     lineAt,
   });
 }

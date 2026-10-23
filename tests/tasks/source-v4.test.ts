@@ -426,32 +426,35 @@ describe("parseTaskSourceV4Document — target union (uses/run exactly one, D2-N
     expect(doc.target).toEqual({ kind: "run", run: "echo 'runs-on: ${{ matrix.os }}' >> ci.yml" });
   });
 
-  test("accepts the closed run/shell/working-directory contract with real physical containment (mirrors v3)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "akm-task-source-v4-root-"));
-    fs.mkdirSync(path.join(root, "packages", "core"), { recursive: true });
-    try {
-      const doc = parseTaskSourceV4Document(
-        v4Doc({ run: "printf '%s\\n' exact", shell: "bash", "working-directory": "packages/core" }),
-        { filePath: path.join(root, "tasks", "run.yml"), workspaceRoot: root },
-      );
-      expect(doc.target).toEqual({
-        kind: "run",
-        run: "printf '%s\\n' exact",
-        shell: "bash",
-        workingDirectory: "packages/core",
-      });
-    } finally {
-      fs.rmSync(root, { recursive: true, force: true });
-    }
+  test("accepts the closed run/shell/working-directory contract (mirrors v3)", () => {
+    const doc = parseTaskSourceV4Document(
+      v4Doc({ run: "printf '%s\\n' exact", shell: "bash", "working-directory": "packages/core" }),
+      { filePath: "/bundle/tasks/run.yml" },
+    );
+    expect(doc.target).toEqual({
+      kind: "run",
+      run: "printf '%s\\n' exact",
+      shell: "bash",
+      workingDirectory: "packages/core",
+    });
   });
 
-  test("requires a workspace root whenever working-directory needs physical containment (mirrors v3)", () => {
+  test.each([
+    "/srv/work",
+    "../elsewhere",
+    "packages/../core",
+    "C:\\work",
+  ])("working-directory %p is accepted as authored: it needs no workspace root and is not contained", (workingDirectory) => {
+    const doc = parseTaskSourceV4Document(v4Doc({ run: "echo hi", "working-directory": workingDirectory }), {
+      filePath: "/bundle/tasks/run.yml",
+    });
+    expect(doc.target).toMatchObject({ kind: "run", workingDirectory });
+  });
+
+  test("working-directory must still be a non-empty string", () => {
     expectTaskSourceInvalid(
-      () =>
-        parseTaskSourceV4Document(v4Doc({ run: "echo hi", "working-directory": "packages/core" }), {
-          filePath: "/bundle/tasks/run.yml",
-        }),
-      /workspace root|physically|contain/i,
+      () => parseTaskSourceV4Document(v4Doc({ run: "echo hi", "working-directory": "" }), { filePath: "/x.yml" }),
+      /working-directory/i,
     );
   });
 });

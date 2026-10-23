@@ -91,7 +91,7 @@ export function listEmbeddedTasks(): EmbeddedTask[] {
       }
       let parsed: ReturnType<typeof parseTaskSource>;
       try {
-        parsed = parseTaskSource({ yaml, filePath, workspaceRoot: TASKS_ASSETS_DIR });
+        parsed = parseTaskSource({ yaml, filePath });
       } catch {
         continue;
       }

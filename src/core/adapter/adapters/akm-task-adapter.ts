@@ -73,7 +73,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   };
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -95,7 +95,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
       continue;
     }
     try {
-      parseTaskSource({ yaml: raw, filePath: relPath, workspaceRoot: c.root });
+      parseTaskSource({ yaml: raw, filePath: relPath });
     } catch (cause) {
       diagnostics.push({
         file: relPath,
@@ -157,7 +157,7 @@ export const akmTaskAdapter: BundleAdapter = {
         continue;
       }
       try {
-        parseTaskSource({ yaml: raw, filePath: entry.name, workspaceRoot: root });
+        parseTaskSource({ yaml: raw, filePath: entry.name });
         return true;
       } catch {
         if (isLegacyTaskDocument(raw, entry.name)) return true;

@@ -139,11 +139,6 @@ test("every published pattern is valid ECMAScript and the executable-ref pattern
   ]) {
     expect(() => classifyTaskSourceV4Uses(candidate), candidate).toThrow();
   }
-
-  const workingDirectory = new RegExp(schema.properties["working-directory"]?.pattern as string);
-  expect(workingDirectory.test("scripts/release")).toBe(true);
-  expect(workingDirectory.test("scripts/release/")).toBe(false);
-  expect(workingDirectory.test("\\absolute-on-windows")).toBe(false);
 });
 
 test("published schema declares the authoritative runtime-only resource constraints", () => {
@@ -158,7 +153,6 @@ test("published schema declares the authoritative runtime-only resource constrai
   expect(constraints.maxJsonDepth).toBe(64);
   expect(constraints.maxJsonNodes).toBe(10_000);
   expect(constraints.canonicalRefsRequireNfc).toBe(true);
-  expect(constraints.workingDirectoryRequiresWorkspaceRoot).toBe(true);
 
   const validate = new Ajv({ allErrors: true, strict: false }).compile(schema);
   const byteBounded = { version: TASK_SOURCE_V4_VERSION, name: "😀".repeat(70_000), run: "echo hi" };

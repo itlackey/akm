@@ -9,8 +9,7 @@
     "maxStringUtf8Bytes": 262144,
     "maxJsonDepth": 64,
     "maxJsonNodes": 10000,
-    "canonicalRefsRequireNfc": true,
-    "workingDirectoryRequiresWorkspaceRoot": true
+    "canonicalRefsRequireNfc": true
   },
   "type": "object",
   "required": ["version"],
@@ -55,8 +54,7 @@
     "working-directory": {
       "type": "string",
       "minLength": 1,
-      "maxLength": 262144,
-      "pattern": "^(?![\\\\/])(?![A-Za-z]:[\\\\/])(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))(?!.*[\\\\/]{2})(?!.*[\\\\/]$)[^\\u0000]+$"
+      "maxLength": 262144
     },
     "schedule": {
       "oneOf": [

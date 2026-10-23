@@ -45,8 +45,6 @@
  * declared directly in `source-v3.ts`.
  */
 
-import fs from "node:fs";
-import path from "node:path";
 import { types as utilTypes } from "node:util";
 import { isAlias, isMap, isScalar, isSeq, LineCounter, parseDocument } from "yaml";
 import { wellFormedUnicode } from "../../core/common";
@@ -68,7 +66,7 @@ export const TASK_V3_MAX_SCHEDULES = 64;
 /** Max entries in a task's `redact:` env-name list. */
 export const TASK_V3_MAX_REDACT_NAMES = 32;
 
-/** Parse context every helper in this module takes. `workspaceRoot` is used only by {@link validateWorkingDirectory}. */
+/** Parse context every helper in this module takes. */
 export interface BoundedDocumentContext {
   readonly filePath: string;
   /**
@@ -81,7 +79,6 @@ export interface BoundedDocumentContext {
    * front end runs before `root.version` is read).
    */
   readonly sourceLabel: string;
-  readonly workspaceRoot?: string;
   readonly lineAt?: (fieldPath: readonly (string | number)[]) => number | undefined;
 }
 
@@ -338,49 +335,6 @@ export function parseTools(
   }
   if (typeof value === "object") return value as ExecutionJsonObject;
   sourceError(ctx, ["akm", "tools"], "must be a string, string array, mapping, or null.");
-}
-
-/**
- * `working-directory:` is already a top-level field in both grammars —
- * reused body-intact, field path unchanged (`source-v3.ts:677-714`).
- */
-export function validateWorkingDirectory(value: string, ctx: BoundedDocumentContext): void {
-  if (
-    value.trim().length === 0 ||
-    value.includes("\0") ||
-    path.posix.isAbsolute(value.replaceAll("\\", "/")) ||
-    /^[A-Za-z]:[\\/]/.test(value) ||
-    value.startsWith("\\\\")
-  ) {
-    sourceError(ctx, ["working-directory"], "must be a non-empty relative path contained by the workspace root.");
-  }
-  const segments = value.replaceAll("\\", "/").split("/");
-  if (segments.some((segment) => segment === ".." || segment.length === 0)) {
-    sourceError(ctx, ["working-directory"], "must not contain empty or escaping path segments.");
-  }
-  if (!ctx.workspaceRoot) {
-    sourceError(ctx, ["working-directory"], "requires a workspace root so physical containment can be verified.");
-  }
-  let realRoot: string;
-  let realCandidate: string;
-  try {
-    realRoot = fs.realpathSync(ctx.workspaceRoot);
-    const candidate = path.resolve(realRoot, value);
-    const stat = fs.statSync(candidate);
-    if (!stat.isDirectory()) sourceError(ctx, ["working-directory"], "must resolve to a directory.");
-    realCandidate = fs.realpathSync(candidate);
-  } catch (cause) {
-    if (cause instanceof UsageError) throw cause;
-    sourceError(
-      ctx,
-      ["working-directory"],
-      `cannot be physically verified: ${cause instanceof Error ? cause.message : String(cause)}.`,
-    );
-  }
-  const relative = path.relative(realRoot, realCandidate);
-  if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    sourceError(ctx, ["working-directory"], "resolves outside the workspace root and is not physically contained.");
-  }
 }
 
 export function yamlProblem(message: string): string {
