@@ -14,7 +14,6 @@
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
 import { planTaskFilesMigration } from "../../scripts/akm-migrate/migrate/task-files";

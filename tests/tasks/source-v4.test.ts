@@ -83,7 +83,6 @@
 
 import { beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { UsageError } from "../../src/core/errors";
 import {
