@@ -126,7 +126,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `secret://name` in config is retired in favour of `${secrets/name}` (#1238). A
   config that still holds it loads as if it said `${secrets/name}`, with one
   warning naming the key, and `akm migrate apply` rewrites `config.json`.
-  `akm config set` and `bundle add --credential` no longer accept it.
+  `akm config set` and `bundle add --credential` no longer accept it. A workflow run
+  frozen before the upgrade keeps resolving its engine credential when it is
+  continued.
 
 ### Removed
 
