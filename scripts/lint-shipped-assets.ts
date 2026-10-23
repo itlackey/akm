@@ -47,8 +47,10 @@
  *     all outside `src/assets`.
  *
  * What is NOT the dead grammar (not flagged):
- *  1. `${type:NAME}` env/secret SUBSTITUTION tokens (`${secret:API_KEY}`) -
- *     template injection syntax, not a ref (same carve-out as the test lint).
+ *  1. The retired `${secret:NAME}` env-value token. A `${ref}` token has no
+ *     colon (`${secrets/API_KEY}`, `${team//secrets/API_KEY}`), so it never
+ *     matches; `${secret:NAME}` is the 0.9 spelling that env-file read-compat
+ *     still accepts, and text that documents it is not a dead ref.
  *  2. A known-type word immediately followed by `${…}` interpolation with NO
  *     literal characters in between (e.g. a hypothetical `` `skill:${id}` ``)
  *     is invisible to the AST scan by construction: template literals are
@@ -105,7 +107,7 @@ const RETIRED_TYPES = ["wiki"] as const;
 const TYPES: readonly string[] = [...KNOWN_TYPES, ...RETIRED_TYPES];
 
 // A dead `type:name` ref token: a known type on a word boundary, a colon, then a
-// ref-name RUN. The `(?<!\$\{)` guard drops `${type:NAME}` substitution tokens.
+// ref-name RUN. The `(?<!\$\{)` guard drops the retired `${secret:NAME}` env-value token.
 // The captured run is inspected below: a run ending in `/` is the LIVE
 // ref-prefix-search shape (kept); anything else is a dead ref (flagged). A bare
 // `type:` never matches (the run requires a leading name char).
