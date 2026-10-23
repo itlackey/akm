@@ -99,9 +99,20 @@ function resolveWorkflowAsset(ref: string): ResolvedWorkflowAsset {
   return { assetPath: owner.path, sourcePath: source.path, adapterId, canonicalName, fullRef };
 }
 
-/** The root of the bundle that owns a workflow ref right now: where the run's exec units and agents work. */
+/**
+ * The root of the bundle that owns a workflow ref right now: where the run's exec units and agents work.
+ * A bundle-qualified ref names its bundle, so the workflow file need not exist (a bundle update may have
+ * renamed or removed it; the frozen plan is the run's authority). An unqualified legacy ref finds its
+ * owner by the existing walk.
+ */
 export function resolveWorkflowBundleRoot(ref: string): string {
-  return resolveWorkflowAsset(ref).sourcePath;
+  const { bundle } = parseWorkflowRefInput(ref);
+  if (bundle === undefined) return resolveWorkflowAsset(ref).sourcePath;
+  const source = resolveSourcesForOrigin(bundle, resolveSourceEntries(undefined, loadConfig()))[0];
+  if (!source) {
+    throw new UsageError(`Bundle "${bundle}" was not found among configured sources.`, "WORKFLOW_SOURCE_INVALID");
+  }
+  return source.path;
 }
 
 /**

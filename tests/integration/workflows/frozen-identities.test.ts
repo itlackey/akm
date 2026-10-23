@@ -186,6 +186,31 @@ describe("one cwd rule", () => {
     expect(realpath(fs.readFileSync(path.join(rev2, "second.txt"), "utf8"))).toBe(realpath(rev2));
   });
 
+  test("a bundle update to a revision without the workflow: the run completes from its frozen plan in the new root", async () => {
+    const rev1 = bundle("team-rev1");
+    const rev2 = bundle("team-rev2");
+    write(
+      rev1,
+      "workflows/moving.md",
+      workflowSource([execStep("first", recordCwd("first")), execStep("second", recordCwd("second"))]),
+    );
+    write(rev2, "workflows/other.md", workflowSource([execStep("only", recordCwd("only"))]));
+    configureBundles({ team: rev1 });
+
+    const started = await startWorkflowRun("team//workflows/moving", {});
+    const first = await runWorkflowSteps({ target: started.run.id, maxSteps: 1 });
+    expect(first.executed[0]?.ok).toBe(true);
+
+    // The new revision renamed the workflow away: the file the run was frozen from no longer exists.
+    fs.rmSync(rev1, { recursive: true, force: true });
+    configureBundles({ team: rev2 });
+
+    const second = await runWorkflowSteps({ target: started.run.id });
+    expect(second.executed[0]?.summary ?? "").not.toMatch(/does not resolve to a bundle/);
+    expect(second.done).toBe(true);
+    expect(realpath(fs.readFileSync(path.join(rev2, "second.txt"), "utf8"))).toBe(realpath(rev2));
+  });
+
   test("a workflow whose bundle is gone fails the step naming the ref, never running in akm's cwd", async () => {
     const team = bundle("team");
     write(team, "workflows/gone.md", workflowSource([execStep("work", recordCwd("where"))]));

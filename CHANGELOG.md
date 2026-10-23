@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A workflow run no longer fails its later steps when a bundle update renames or
+  removes the workflow file it started from (#1238). The step used to report
+  that the workflow "does not resolve to a bundle" even though the bundle was
+  installed. A run now works in the root of the bundle its ref names and
+  continues from its frozen plan; it fails only when that bundle is no longer
+  configured.
 - An env file written for 0.9 or early 0.10 that spells a secret `${secret:NAME}`
   works again (#1238). The token meant the secret `NAME` in the env file's own
   bundle, but it was passed to the process as literal text, so a bot token became
