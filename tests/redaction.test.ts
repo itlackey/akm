@@ -163,6 +163,31 @@ describe("redactSensitiveText", () => {
     ).toBe("[REDACTED] and [REDACTED] and cost=[REDACTED]");
   });
 
+  test("redacts the JSON-escaped spelling of a value that needs escaping", () => {
+    const secret = 'sk-"q"\\b\nline';
+    const printed = JSON.stringify({ token: secret });
+    expect(printed).not.toContain(secret);
+    expect(redactSensitiveText(printed, [secret])).toBe('{"token":"[REDACTED]"}');
+    expect(redactSensitiveText(`raw ${secret} end`, [secret])).toBe("raw [REDACTED] end");
+  });
+
+  test("redacts a non-ASCII value in both the JSON.stringify and the ASCII-escaped spelling", () => {
+    const secret = "pässwörd-\u{1F511}";
+    const stringified = JSON.stringify(secret).slice(1, -1);
+    // Python's json.dumps(ensure_ascii=True) spelling, including the surrogate pair.
+    const ascii = "p\\u00e4ssw\\u00f6rd-\\ud83d\\udd11";
+    expect(stringified).toBe(secret);
+    expect(redactSensitiveText(`{"t":"${stringified}"}`, [secret])).toBe('{"t":"[REDACTED]"}');
+    expect(redactSensitiveText(`{"t":"${ascii}"}`, [secret])).toBe('{"t":"[REDACTED]"}');
+  });
+
+  test("an escaped spelling is an ordinary needle: overlapping matches merge and the output stays bounded", () => {
+    const secret = 'a"b';
+    expect(redactSensitiveText('x a"b a\\"b y', [secret])).toBe("x [REDACTED] [REDACTED] y");
+    const text = "a".repeat(50);
+    expect(redactSensitiveText(text, ["a", "E", "D", "T", "C", "R", '"']).length).toBeLessThan(text.length);
+  });
+
   test("redacts every non-empty exact value regardless of length", () => {
     expect(redactSensitiveText("a=abc ab=a", ["", "a", "ab", "abc"])).toBe(
       "[REDACTED]=[REDACTED] [REDACTED]=[REDACTED]",

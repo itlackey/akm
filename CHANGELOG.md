@@ -15,6 +15,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   promoted artifact once the child echoed it as JSON, and a numeric secret echoed
   as a JSON number turned valid output into a `parse_error`. A number that is
   exactly a secret is now redacted too.
+- A secret is now also redacted when it appears in its JSON-escaped spelling
+  (#1238). Text redaction matched only the exact and URL-encoded forms, so a child
+  that printed `JSON.stringify({ token })` for a secret with a quote, backslash,
+  newline or non-ASCII character left it in the unit journal when the output failed
+  its schema, had no schema, or came with a non-zero exit. The shared redactor now
+  also matches the `\"`, `\\`, `\n` and `\uXXXX` forms, so env-binding, engine and
+  task-output redaction gain the same coverage.
 - A bundle-qualified `${ref}` token now follows the same ref grammar and owner
   walk as every other ref (#1238). `${docs//tables/customers}` (an OKF bundle)
   or `${team//release}` (a workflow bundle) used to be left as literal text with

@@ -416,6 +416,38 @@ describe("${ref} in an exec unit", () => {
     });
   });
 
+  // The secret is JSON-escaped in the child's output (`\"`, `\\`, `\n`), so only a redactor that
+  // matches the escaped spelling keeps it out of the raw text paths. "Zq9" marks every spelling.
+  const escapedSecret = 'sk-"Zq9quoted"\\Zq9back\nZq9second';
+  const echoJson = "process.stdout.write(JSON.stringify({ token: process.argv[process.argv.length - 1] }))";
+
+  test.each([
+    {
+      name: "a schema violation (validation_error)",
+      script: echoJson,
+      output: "{ type: object, properties: { other: { type: string } }, required: [other] }",
+    },
+    { name: "no output schema (promoted as the step artifact)", script: echoJson, output: undefined },
+    { name: "a non-zero exit (non_zero_exit)", script: `${echoJson}; process.exitCode = 1`, output: undefined },
+  ])("an escaped argv secret in raw text is redacted: $name", async ({ script, output }) => {
+    const a = bundle("a");
+    write(a, "secrets/t", escapedSecret);
+    write(
+      a,
+      "workflows/raw-leak.md",
+      workflowSource([execStep("run", [BUN, "-e", script, "${a//secrets/t}"], { output })]),
+    );
+    configureBundles({ a });
+
+    const { runId, result } = await drive("a//workflows/raw-leak");
+
+    const units = await withWorkflowRunsRepo((repo) => repo.getUnitsForStep(runId, "run"));
+    const status = await getWorkflowStatus(runId);
+    const everything = JSON.stringify({ units, result, status });
+    expect(everything).not.toContain("Zq9");
+    expect(JSON.stringify(units)).toContain("[REDACTED]");
+  });
+
   test("a numeric argv secret echoed as a JSON number still parses, and is redacted after parsing", async () => {
     const a = bundle("a");
     const secret = "4242424242";

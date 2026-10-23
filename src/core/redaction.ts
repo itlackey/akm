@@ -507,10 +507,24 @@ export function redactErrorBody(input: string): string {
   return out;
 }
 
+/**
+ * The spellings a JSON encoder gives a value inside a string literal: the
+ * `JSON.stringify` form, and the ASCII-only form with non-ASCII as `\uXXXX`
+ * (what Python's `json.dumps` writes). Empty for a value that needs no escaping.
+ */
+function jsonEscapedSpellings(value: string): string[] {
+  const json = JSON.stringify(value).slice(1, -1);
+  const ascii = json.replace(/[\u0080-\uffff]/g, (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`);
+  return [json, ascii].filter((spelling) => spelling !== value);
+}
+
 export function redactSensitiveText(text: string, sensitiveValues: Iterable<string>): string {
-  const values = [...new Set(sensitiveValues)]
-    .filter((value) => value.length > 0)
-    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const exact = [...sensitiveValues].filter((value) => value.length > 0);
+  // A child that prints JSON writes a secret's escaped spelling (`\"`, `\\`, `\n`, `\uXXXX`),
+  // which the exact value never matches. Each escaped spelling is just another needle.
+  const values = [...new Set([...exact, ...exact.flatMap(jsonEscapedSpellings)])].sort(
+    (a, b) => b.length - a.length || a.localeCompare(b),
+  );
   if (values.length === 0) return text;
   const coverageDelta = new Int32Array(text.length + 1);
   if (text.includes("%") || text.includes("+")) {
