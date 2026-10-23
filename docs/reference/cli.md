@@ -898,9 +898,8 @@ Author, inspect, and execute structured workflow assets.
 akm workflow create ship-release --print
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
-akm workflow run workflows/ship-release --version 1.2.3
+akm workflow run workflows/ship-release --version 1.2.3   # always starts a new run
 akm workflow run <run-id>                  # continue an active partial run
-akm workflow run workflows/ship-release --new  # start a fresh run even if one is already active
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status 7c115132               # 8+ char run-id prefix also works
@@ -908,7 +907,6 @@ akm workflow resume <run-id>
 akm workflow abandon <run-id>
 akm workflow list --active
 akm workflow list --children               # also list child workflow runs (Experimental)
-akm workflow list --all-scopes             # include runs started from a different working directory
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
 
@@ -920,9 +918,9 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
-| `run <run-id\|ref>` | Canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
-| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
+| `run <run-id\|ref>` | Canonical start/execute command. A ref always starts a new run (other active runs of the ref produce one warning, see below); a run id continues that exact active run. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
+| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. `--all-scopes` is a deprecated no-op |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
 | `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
@@ -968,8 +966,9 @@ Schema before persisting the run:
 
 A bare boolean flag means `true`. Hyphen/underscore aliases are not inferred:
 declared `include_processes` requires `--include_processes`, not
-`--include-processes`. Parameters can be supplied only when a new run is
-created; a later invocation against an active run rejects parameter flags.
+`--include-processes`. Parameters are accepted on every ref start (a ref
+always starts a new run); passing them with a run id is rejected, because that
+run already has its parameters.
 The old `--params <json>` bag is removed.
 
 | Flag | Description |
@@ -977,15 +976,16 @@ The old `--params <json>` bag is removed.
 | `--max-steps <n>` | Stop once this many steps have finished, leaving a partial run active. Must be at least 1. |
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
 | `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
-| `--new` | Start a fresh run even when one is already active for this ref, instead of resuming it. The existing active run is left untouched — it is never abandoned automatically. A workflow ref only: passing a run id with `--new` is a usage error (exit 2). Parameter flags are allowed together with `--new`, since it is starting a new run. |
-| `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
+| `--new` | Deprecated, no effect (accepted through 0.10): a workflow ref always starts a new run. |
+| `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), when starting a ref an active run of that ref is held by a live process, or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
-**Resuming an active run is announced, not silent.** Passing a ref that
-already has an active run in the current scope resumes that run rather than
-starting a new one (unchanged since #485) — but the envelope now carries
-`resumed: true` alongside the resumed run's `run.id`, and the default text
-output leads with `resuming existing run <id> for <ref>; pass --new to start
-a fresh run`. Pass `--new` to start a second, independent run instead.
+**A ref always starts a new run.** `workflow run <ref>` never resumes: use
+`workflow run <run-id>` to continue a run and `workflow resume <run-id>` to
+reopen a blocked or failed one. When other runs of the same ref are still
+active, the start prints one warning naming their ids and the
+`akm workflow resume <id>` / `akm workflow abandon <id>` commands, and starts
+anyway. `--skip-if-locked` is the guard for scheduled callers: it skips (exit
+0) instead of starting when an active run of the ref is held by a live process.
 
 The result includes the current `run`, an `executed` step report list, a
 `stepsProcessed` count of the steps that finished, and optional `done`,
@@ -1015,17 +1015,11 @@ from the unit journal so they hold across resumes.
 non-empty `### gate` requires `workflow.judgeEngine` to name a configured LLM
 or agent engine before a new run can be frozen. Gate evaluation is fail-closed.
 
-Workflow runs are scoped to the current working context, not globally across all
-repos or directories. akm resolves that context from the nearest `.akm/config.json`
-ancestor when present, otherwise the nearest git root, otherwise the bundle root
-when the cwd is inside it, otherwise the cwd itself. In practice this means:
-
-- `workflow run workflows/<name>` resumes the active run for the current project/worktree/directory (announced with `resumed: true`), or starts one when none is active. `--new` always starts a fresh run.
-- `workflow status workflows/<name>` resolves the most-recently-updated run in the current scope only, unless `--all-scopes` is passed.
-- `workflow list` shows runs for the current scope only, unless `--all-scopes` is passed. Its envelope always carries a top-level `scopeKey` naming the scope that was searched (`null` under `--all-scopes`), so an empty `runs: []` is never indistinguishable from "nothing anywhere".
-- Direct run-id commands like `workflow status <run-id>`, `workflow resume <run-id>`, and `workflow abandon <run-id>` still work even if the run was started from another directory.
-- A scheduled task runs from the scheduler's cwd, so its runs sit in a different scope from your shell's: find the run id with `akm task history <task-id> --limit 1` (`detail.runId`), then run `akm workflow status <run-id>` from any directory, or use `workflow list --all-scopes`.
-- Starting a ref by name (`workflow run workflows/<name>`) never collides across scopes — each scope can hold its own active run of the same ref — but if an active run of that ref exists in a *different* scope, the started run's envelope carries a `warnings[]` entry naming that run's id, scope, and start time, with the `akm workflow run <id>` / `akm workflow abandon <id>` remedy, so a stray run in another scope does not go unnoticed (#942).
+Workflow runs are identified by run id, and workflows by ref; neither depends
+on the working directory. `workflow list` and `workflow status workflows/<name>`
+see every run on the host, from any directory, so the runs of a scheduled task
+(which runs from the scheduler's cwd) appear exactly as runs started from your
+shell do. `akm show` reports no run state; it belongs under `akm workflow`.
 
 #### workflow create
 
@@ -1061,14 +1055,11 @@ affect the in-flight run.
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status <run-id> --units    # also list per-unit rows from the run journal
-akm workflow status workflows/ship-release --all-scopes  # resolve across every scope, not just the current one
 ```
 
 Accepts a run id, a unique 8+ character run-id prefix, or a workflow ref.
 When given a workflow ref, resolves to the most-recently-updated run for that
-ref in the current working scope, unless `--all-scopes` is passed (only
-relevant when the target does not resolve to a run id; a run id is always
-scope-agnostic, `--all-scopes` or not, #942). `--units` adds per-unit rows
+ref on this host. `--all-scopes` is a deprecated no-op. `--units` adds per-unit rows
 (unit id, status, failure reason, and any result/error diagnostic text) from
 the run journal — diagnostics only; step evidence stays deterministic and is
 unaffected.
@@ -1382,7 +1373,10 @@ config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
 state rows that name the old bundle (`proposals.ref`, a pending proposal's
-write target, and workflow `task_history.target_ref`). Reported, never
+write target, workflow `task_history.target_ref`, and `workflow_runs.workflow_ref`). The result's
+`activeWorkflowRuns` lists the active runs of the renamed bundle: their frozen
+plans keep the old qualified refs, so finish or abandon them with `akm workflow
+resume` / `akm workflow abandon`. Reported, never
 rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
 a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
 that still spell the old `<old>//` prefix so you can fix them by hand. A real

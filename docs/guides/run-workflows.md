@@ -12,12 +12,18 @@ see [Scheduling](scheduling.md).
 
 ## Start or continue a run
 
-`akm workflow run <run-id|workflows/ref>` starts or continues a persisted run
-and executes it until completion, failure, verification rejection,
-interruption, or an explicit invocation limit. Run state is scoped to the
-current project directory (nearest `.akm/config.json`, git root, bundle root,
-or current directory), so the same workflow can run independently in separate
-projects.
+`akm workflow run <workflows/ref>` always starts a new persisted run, and
+`akm workflow run <run-id>` continues that exact run. Either way it executes
+until completion, failure, verification rejection, interruption, or an
+explicit invocation limit. A run is identified by its run id and a workflow by
+its ref; the directory you run from never matters, so `akm workflow list` and
+`akm workflow status` show the same runs from anywhere.
+
+If other runs of the same ref are still active, a start says so in one
+warning that names their ids and the `akm workflow resume <id>` /
+`akm workflow abandon <id>` commands. Starting is never refused.
+`--new` is a deprecated no-op (a ref always starts a new run), kept through
+0.10 so existing scripts keep working.
 
 Every new run/start compiles source IR v1 and freezes the durable plan v4
 family's current executable format (`irVersion: 5`) before publishing the run.
@@ -28,6 +34,9 @@ akm workflow run workflows/ship-release --version 1.2.3
 akm workflow run workflows/review --changed_files a.ts --changed_files b.ts
 akm workflow run <run-id> --max-retries 2 --timeout 10m
 ```
+
+Parameters are accepted on every ref start. They cannot be combined with a run
+id, which already has its parameters.
 
 Parameter flags must come after the target and exactly match declared
 `params` keys. Values are coerced through each parameter's JSON Schema:
@@ -58,7 +67,7 @@ and evidence — for a given run ID or workflow ref.
 ```sh
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
-# When given a ref, resolves to the most-recently-updated run in the current scope
+# When given a ref, shows the most recently updated run of that ref
 ```
 
 Use this to inspect where a run is after a context window break, or to verify
@@ -151,12 +160,13 @@ A child run id always works directly, listed or not — `akm workflow status
 <childRunId>`, `resume`, `abandon`, and `run` all operate on it exactly like
 any other run.
 
-## List runs in scope
+## List runs
 
-`akm workflow list` shows workflow runs in the current scope.
+`akm workflow list` shows every workflow run on this host, most recently
+updated first. `--all-scopes` is a deprecated no-op, kept through 0.10.
 
 ```sh
-akm workflow list              # All runs in this scope (any status)
+akm workflow list              # All runs (any status)
 akm workflow list --active     # Only status=active (executable) runs
 akm workflow list --ref workflows/ship-release  # Runs for a specific workflow
 ```
@@ -190,7 +200,7 @@ completed are skipped, not re-run (see
 A resume consumes the frozen plan and journaled attempts; it does not re-read
 configuration or the index, and reads the authored workflow only to warn once
 when it changed since the run was frozen (the run continues on the frozen
-plan; `akm workflow run <ref> --new` picks up the edit). A stored plan this akm
+plan; `akm workflow run <ref>` starts a new run that picks up the edit). A stored plan this akm
 cannot decode is abandoned with a message naming how to start a new run.
 
 ## Abandon a run

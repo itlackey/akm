@@ -34,16 +34,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   stash root", so a secret can point at a container's `/run/secrets/<name>`.
   Names with `..` segments or absolute names are still refused, and writes still
   never follow a symlink out of the bundle.
+- `akm workflow run <ref>` always starts a new run, and `akm workflow run <run-id>`
+  or `akm workflow resume <run-id>` continues one (#1239). Before, running a ref
+  silently resumed any active run of that ref started from the same directory,
+  which is why scripts passed `--new` and why a scheduled task and a shell could
+  each start their own run. Now, when other runs of the ref are still active, the
+  start prints one warning naming their ids and the `akm workflow resume <id>` /
+  `akm workflow abandon <id>` commands, and starts anyway. Parameters are accepted
+  on every ref start, and `--new` is accepted and does nothing (deprecated,
+  through 0.10).
+- Workflow runs are no longer tied to the directory you run from (#1239).
+  `akm workflow list` and `akm workflow status <ref>` show every run on the host,
+  most recently updated first, from any directory, so the runs of a scheduled
+  task are listed like any other. `--all-scopes` is accepted and does nothing
+  (deprecated, through 0.10), and the `list` result no longer carries a
+  `scopeKey`. Runs started by 0.10 are not visible to a 0.9.15 binary reading the
+  same `state.db`.
+- `akm workflow run <ref> --skip-if-locked` also skips (exit 0, nothing started)
+  when an active run of that ref is being driven by a live process (#1239). Without
+  the flag a start is never refused.
+- `akm bundle rename` rewrites the workflow ref on that bundle's workflow runs, so
+  `akm workflow list` shows the old runs under the new name, and lists the bundle's
+  active runs in its output (#1239). Their frozen plans keep the old refs; finish or
+  abandon them.
+- `akm workflow create` no longer indexes the new workflow, and a new run no longer
+  records an index entry id (#1239).
 
 ### Removed
 
 - The dangerous-key audit on `bundle add` and `bundle update`, its prompt, its
   rollback of a freshly installed bundle, and the `blocked` per-bundle status in
   `bundle update --all`. The `DANGEROUS_ENV_KEY` and `DANGEROUS_ENV_AUDIT_FAILED`
-  error codes are gone with them.
+  error codes are gone with them (#1237).
 - The first-party and third-party distinction for env and secret injection
   (`src/core/activation-policy.ts`) and the unused `trusted` field on a derived
-  bundle installation.
+  bundle installation (#1237).
+- `akm show` no longer reports an `activeRun` field. Run state is under
+  `akm workflow` (#1239).
 
 ## [0.10.261012] - 2026-10-22
 

@@ -340,8 +340,8 @@ plans are rejected rather than upgraded or replayed through another runtime.
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID v4 |
 | `workflow_ref` | TEXT NOT NULL | e.g. `workflows/review-todos` |
-| `scope_key` | TEXT | Directory hash; isolates runs per project. Gates `list`'s default filter, `akm show`'s active-run nudge, and `startWorkflowRun`'s own-scope uniqueness guard (unchanged, still per-scope) — so two DIFFERENT scopes can each hold their own active run of the same ref; starting one warns about the other rather than blocking it (#942). `akm workflow list --all-scopes` sees across scopes, and `status`/`resume`/`abandon <run-id>` already act on a run regardless of which scope started it |
-| `workflow_entry_id` | INTEGER | Optional FK into `index.db entries.id` |
+| `scope_key` | TEXT | Legacy: a directory hash written by releases before 0.10. Never written or read now (NULL on new rows); the column and its index stay so older rows load |
+| `workflow_entry_id` | INTEGER | Legacy: an `index.db entries.id` written by releases before 0.10. Never written now (NULL on new rows) |
 | `workflow_title` | TEXT NOT NULL | Human-readable title |
 | `status` | TEXT NOT NULL | `active`, `completed`, `blocked`, `failed` |
 | `params_json` | TEXT NOT NULL DEFAULT '{}' | Run parameters |

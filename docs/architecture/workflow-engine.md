@@ -204,14 +204,18 @@ A workflow that fans out is authorizing **N parallel agents**, not one — see
 [Running Workflows: workflow sources are executed code](../guides/run-workflows.md#security-workflow-sources-are-executed-code)
 for what that means for trust.
 
-## Run scope and persistence
+## Run identity and persistence
 
 Run state (`plan_json`, `plan_hash`, step statuses, and the unit journal)
-persists in the project's `state.db`; the per-run lock file sits beside it. Run state is scoped to
-the current project directory — the nearest `.akm/config.json`, git root,
-bundle root, or current directory — so the same workflow can run
-independently in separate projects, and `akm workflow list`/`status` without
-an explicit run id only ever see runs in that scope.
+persists in the host's `state.db`; the per-run lock file sits beside it. A run
+is identified by its run id and a workflow by its bundle-qualified ref. Run
+state is not scoped to a directory: `akm workflow run <ref>` always starts a
+new run, `akm workflow run <run-id>` and `akm workflow resume <run-id>` drive
+an existing one, and `akm workflow list`/`status` show every run on the host
+from any working directory. Starting a ref that already has active runs warns
+and names them; it is never refused. `akm workflow run <ref> --skip-if-locked`
+skips (exit 0) instead of starting when an active run of that ref is held by a
+live process.
 
 ## See also
 

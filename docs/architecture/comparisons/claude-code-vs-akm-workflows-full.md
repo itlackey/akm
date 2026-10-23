@@ -292,20 +292,14 @@ agent session execute units itself; it was removed in favour of the single
 native path, since native dispatch already covers ten harnesses — Claude Code
 among them — for less code than the protocol cost.
 
-### B.5 Scoping & concurrency guards (two different guards)
+### B.5 Run identity & concurrency
 
-Runs are partitioned by **`scope_key`** — a `sha256` of the nearest project
-anchor (`.akm/config.json` root → git root → bundle dir → cwd),
-`src/workflows/authoring/scope-key.ts`. Within a `(workflow_ref, scope_key)`
-pair, `startWorkflowRun` enforces a **single active run** unless `--force` is
-passed internally. The public CLI exposes no parallel-start flag: invoking
-`workflow run` by ref continues the active run in that scope. This guard is
-scope-local by design (two unrelated projects sharing one `state.db` must be
-able to run the same-named workflow independently), so two *different*
-scopes can each hold their own active run of the same ref — starting one
-warns about an active run in another scope (naming its id and scope) rather
-than blocking it, and `akm workflow list --all-scopes` / `status` / `resume`
-/ `abandon <run-id>` see and act across scopes (#942).
+A run is identified by its run id and a workflow by its bundle-qualified ref;
+runs are not partitioned by directory. `workflow run <ref>` always starts a
+new run, so several runs of one ref can be active at once. A start that finds
+other active runs of the ref warns, naming their ids and the `resume` /
+`abandon` commands, and `--skip-if-locked` skips instead of starting when an
+active run of the ref is held by a live process (#1239).
 
 Orchestrated runs add a second, unrelated guard: the **run lease**. `akm
 workflow run` takes a lease (a random holder id, 90s expiry, renewed between
