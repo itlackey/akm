@@ -276,7 +276,7 @@ function walkStashManual(stashRoot: string, options: WalkStashFlatOptions): Walk
 }
 
 /** True for a regular file, or a symlink whose target is a regular file. */
-function isFileOrFileSymlink(filePath: string): boolean {
+export function isFileOrFileSymlink(filePath: string): boolean {
   try {
     return fs.statSync(filePath).isFile();
   } catch {

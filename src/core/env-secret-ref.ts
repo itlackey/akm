@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { type ConceptOwnerMatch, resolveConceptOwner } from "../indexer/lookup/adapter-concept-owner";
 import { type SearchSource as IndexSearchSource, resolveSourceEntries } from "../indexer/search/search-source";
+import { isFileOrFileSymlink } from "../indexer/walk/walker";
 import { assertFlatAssetName, combineCreatePath, normalizeCreateSubPath } from "./asset/asset-create";
 import { assetPathForName, deriveCanonicalAssetName } from "./asset/asset-placement";
 import { makeBundleRef, parseBundleRef } from "./asset/asset-ref";
@@ -61,7 +62,7 @@ export function listEnvsRecursive(
           walk(full);
           continue;
         }
-        if (!entry.isFile()) continue;
+        if (!entry.isFile() && !(entry.isSymbolicLink() && isFileOrFileSymlink(full))) continue;
         if (entry.name !== ".env" && !entry.name.endsWith(".env")) continue;
         const canonical = deriveCanonicalAssetName("env", root, full);
         if (!canonical) continue;

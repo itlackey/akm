@@ -45,6 +45,7 @@ import {
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
+import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { readStdin } from "../../runtime";
 import { buildChildEnv } from "./child-env";
 
@@ -70,7 +71,7 @@ function listSecretsRecursive(): Array<{ ref: string; path: string }> {
           walk(full);
           continue;
         }
-        if (!entry.isFile()) continue;
+        if (!entry.isFile() && !(entry.isSymbolicLink() && isFileOrFileSymlink(full))) continue;
         if (entry.name.endsWith(".lock") || entry.name.endsWith(".sensitive")) continue;
         // A sibling `<name>.sensitive` marker suppresses listing.
         if (fs.existsSync(sensitiveMarkerPath(full, "secret"))) continue;

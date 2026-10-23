@@ -21,6 +21,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   nothing reported missing, because only refs led by a native type directory
   were recognised. They now resolve, and an unresolved one is an error. An
   unqualified body that is not led by a native type (`${HOME}`) is still text.
+- `akm env list` and `akm secret list` now show an env or secret file that is a
+  symlink to a file (#1237). They could be read and searched but were missing
+  from their own list. Symlinks to directories are still not followed.
 - A task's `uses:` script or workflow in an npm, website or read-only bundle now
   resolves (#1238). It used to fail with "unsupported kind for writes", because
   the lookup went through the write-target resolver. An unknown bundle in such a
