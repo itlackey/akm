@@ -790,4 +790,52 @@ describe("akm workflow plan <ref> — resolved refs (#1238)", () => {
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain("team//scripts/missing.ts");
   });
+
+  test("a ${ref} in a child workflow's argv or cwd that no bundle owns fails the plan and names it", async () => {
+    for (const [name, line] of [
+      ["argv", 'command: ["bun", "${team//scripts/missing.ts}"]'],
+      ["cwd", 'command: ["bun", "x.ts"]\n        cwd: "${team//scripts/missing-dir}"'],
+    ] as const) {
+      fs.writeFileSync(
+        path.join(teamDir, "workflows", "child.md"),
+        [
+          "---",
+          "type: workflow",
+          "steps:",
+          "  - id: only",
+          "    unit:",
+          "      exec:",
+          `        ${line}`,
+          "---",
+          "",
+          "## only",
+          "",
+          "Do it.",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+      write(
+        "workflows/parent.md",
+        [
+          "---",
+          "type: workflow",
+          "steps:",
+          "  - id: delegate",
+          "    unit:",
+          "      workflow: team//workflows/child",
+          "---",
+          "",
+          "## delegate",
+          "",
+          "Delegate.",
+          "",
+        ].join("\n"),
+      );
+
+      const result = await runCliCapture(["workflow", "plan", "workflows/parent", "--format", "text"]);
+      expect(result.code, name).not.toBe(0);
+      expect(result.stderr, name).toContain("team//scripts/missing");
+    }
+  });
 });

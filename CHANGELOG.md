@@ -45,7 +45,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `akm workflow plan --format text` now shows each step's argv, cwd and env refs,
   and the bundle-qualified ref that every `${ref}` token, `env:` entry and child
-  `workflow:` resolves to; a ref no bundle owns fails the plan and names it.
+  `workflow:` resolves to; a ref no bundle owns, in the workflow or in a child
+  workflow it runs, fails the plan and names it.
   `akm workflow status <id> --units` shows the same argv, cwd and resolved refs
   for a failed unit (#1238).
 - A workflow exec step's command now receives `AKM_BUNDLE_DIR`, `AKM_CONFIG_DIR`,

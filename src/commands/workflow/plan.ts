@@ -145,6 +145,40 @@ function collectLoweringNotices(plan: WorkflowPlan, config: ReturnType<typeof lo
   return notices;
 }
 
+/** Every ref the steps' orchestration names that no bundle owns, as `ref (where of step "id")`. */
+function unresolvedRefs(
+  steps: readonly WorkflowPlanStep[],
+  orchestrations: ReadonlyArray<WorkflowStepOrchestrationSummary | undefined>,
+): string[] {
+  return orchestrations.flatMap((orchestration, index) =>
+    (orchestration?.unresolved ?? []).map(
+      (missing) => `${missing.ref} (${missing.in} of step "${steps[index]?.stepId}")`,
+    ),
+  );
+}
+
+/** The unresolved refs of every embedded child plan, recursively, each prefixed with the child workflow it is in. */
+function unresolvedInChildren(plan: WorkflowPlan): string[] {
+  return plan.steps.flatMap((step) => {
+    const target = stepUnit(step)?.frozenTarget;
+    if (target?.kind !== "child-workflow") return [];
+    const child = target.frozenPlan;
+    const own = unresolvedRefs(
+      child.steps,
+      child.steps.map((childStep) => stepOrchestration(childStep, child)),
+    );
+    return [...own.map((entry) => `${entry} in child ${target.ref}`), ...unresolvedInChildren(child)];
+  });
+}
+
+function failOnUnresolved(ref: string, unresolved: readonly string[]): void {
+  if (unresolved.length === 0) return;
+  throw new NotFoundError(
+    `Workflow ${ref} names asset(s) that no bundle owns: ${unresolved.join(", ")}.`,
+    "FILE_NOT_FOUND",
+  );
+}
+
 /**
  * Compile + freeze `ref` and project the frozen plan into the read-only
  * `akm workflow plan` envelope. Never publishes, never writes, never warns.
@@ -153,20 +187,12 @@ export async function akmWorkflowPlan(ref: string): Promise<Record<string, unkno
   const asset = await loadWorkflowAsset(ref);
   // Resolve what the authored steps name before freezing: a `${ref}`, env ref or child workflow no bundle owns fails the plan.
   const orchestrations = asset.plan.steps.map((step) => stepOrchestration(step, asset.plan));
-  const unresolved = orchestrations.flatMap((orchestration, index) =>
-    (orchestration?.unresolved ?? []).map(
-      (missing) => `${missing.ref} (${missing.in} of step "${asset.plan.steps[index]?.stepId}")`,
-    ),
-  );
-  if (unresolved.length > 0) {
-    throw new NotFoundError(
-      `Workflow ${asset.ref} names asset(s) that no bundle owns: ${unresolved.join(", ")}.`,
-      "FILE_NOT_FOUND",
-    );
-  }
+  failOnUnresolved(asset.ref, unresolvedRefs(asset.plan.steps, orchestrations));
   const config = loadConfig();
   const frozen = await freezeWorkflow(asset, config);
   const plan = frozen.plan;
+  // A child workflow's steps exist only once frozen; they fail the plan exactly as the top level's do.
+  failOnUnresolved(asset.ref, unresolvedInChildren(plan));
 
   return {
     ok: true,
