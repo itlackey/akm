@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { NotFoundError, UsageError } from "../../src/core/errors";
 import { resolveJudgeCwd } from "../../src/workflows/exec/frozen-judge";
+import * as workflowAssetLoader from "../../src/workflows/runtime/workflow-asset-loader";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -51,7 +52,9 @@ describe("resolveJudgeCwd", () => {
     }
     expect(thrown).toBeInstanceOf(UsageError);
     expect((thrown as UsageError).code).toBe("WORKFLOW_SOURCE_INVALID");
-    expect((thrown as UsageError).message).toContain("workflow gone//workflows/demo does not resolve to a bundle");
+    expect((thrown as UsageError).message).toBe(
+      'workflow gone//workflows/demo does not resolve to a bundle (Bundle "gone" was not found among configured sources.)',
+    );
   });
 
   test("an unqualified ref that resolves to no asset is a NotFoundError naming the ref", () => {
@@ -62,7 +65,16 @@ describe("resolveJudgeCwd", () => {
       thrown = err;
     }
     expect(thrown).toBeInstanceOf(NotFoundError);
-    expect((thrown as NotFoundError).message).toContain("workflow workflows/missing does not resolve to a bundle");
+    const message = (thrown as NotFoundError).message;
+    expect(message.startsWith("workflow workflows/missing does not resolve to a bundle (")).toBe(true);
+    // The message is built once: the original cause is nested, never prefixed a second time.
+    expect(message.split("does not resolve to a bundle").length).toBe(2);
+  });
+
+  test("the loader exports one bundle-root resolver, resolveRunBundleRoot", () => {
+    expect(Object.keys(workflowAssetLoader).filter((name) => /BundleRoot$/.test(name))).toEqual([
+      "resolveRunBundleRoot",
+    ]);
   });
 
   test("a step with no frozen judge needs no root", () => {
