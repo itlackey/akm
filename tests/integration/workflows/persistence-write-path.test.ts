@@ -10,11 +10,10 @@ import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../../src/storage/repositories/workflow-runs-repository";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { enqueueUnitWrite } from "../../../src/workflows/exec/unit-writer";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../../_helpers/sandbox";
-import { freezeWorkflow, seedWorkflowRun, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
+import { freezeWorkflow, runWorkflowSteps, seedWorkflowRun, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
  * Persistence / write-path regressions for the workflow journal:

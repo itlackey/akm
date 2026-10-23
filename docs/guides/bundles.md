@@ -80,8 +80,8 @@ back out of `sourceAdded`/`installed`. Without `--name`, akm derives one
 a `-<hash>` suffix only on a collision — that forgiving fallback applies
 solely to a derived name, never to an explicit `--name`.
 
-Git credentials must be symbolic references: `$VAR`, `${VAR}`, or
-`secret://name`. AKM resolves the reference only at the Git subprocess boundary
+Git credentials must be symbolic references: `$VAR`, `${VAR}`, or an akm ref
+such as `${secrets/gitea_token}`. AKM resolves the reference only at the Git subprocess boundary
 and sends it as an HTTPS bearer header; it does not put the token in the remote
 URL or `config.json`.
 
@@ -136,8 +136,10 @@ Valid `--kind` values are the four bundle providers: `filesystem`, `git`,
 ## akm bundle update / akm bundle remove
 
 `akm bundle update` refreshes git, npm, and website bundles. Each candidate is
-staged outside its active root, audited for dangerous environment keys, and
-only then published and indexed. `akm bundle remove` disconnects a bundle and
+staged outside its active root and only then published and indexed. Installing
+a bundle is the trust decision: neither `add` nor `update` inspects its `env/`
+files, so a bundle that sets `PATH` in an env file installs and refreshes
+unattended with no flag. `akm bundle remove` disconnects a bundle and
 re-indexes without it.
 
 Bundle refresh is deliberately explicit: Git bundles do not poll upstream on
@@ -152,7 +154,6 @@ akm bundle update @scope/bundle          # One managed bundle
 akm bundle update --all                 # All managed bundles
 akm bundle update --all --force         # Force fresh download even if version unchanged
 akm bundle update --all --skip-if-locked # Scheduled refresh: exit 0 on DB contention
-akm bundle update @scope/bundle --allow-dangerous-env-keys  # Approve reviewed dangerous env keys
 
 # Remove
 akm bundle remove @scope/bundle          # By npm id
@@ -161,12 +162,16 @@ akm bundle remove ~/.claude/skills      # By path
 akm bundle remove my-provider           # By name
 ```
 
-Dangerous keys prompt in a terminal (default: No) and block non-interactive
-updates unless `--allow-dangerous-env-keys` is explicit. `--yes` is a deprecated
-no-op on update; it never approves security findings.
-For `--all`, blocked and failed bundles are reported separately and later
-bundles continue. A rejected or failed bundle keeps its prior bytes, lock/config
-state, and search-index generation.
+A read-only git or npm bundle whose upstream revision is unchanged is not
+fetched or replaced again (`--force` fetches it anyway), so a task or workflow
+running from it keeps its directory. When the revision does change, the
+previous revision directory is kept and older ones are removed.
+
+`--allow-dangerous-env-keys` and `--yes` are deprecated no-ops on update,
+accepted through 0.10 so existing scripts keep working.
+For `--all`, failed bundles are reported separately and later bundles continue.
+A failed bundle keeps its prior bytes, lock/config state, and search-index
+generation.
 
 Private bundles that intentionally version every file under `env/` and
 `secrets/` can place this documented marker anywhere in their root

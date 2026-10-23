@@ -13,6 +13,7 @@
 import { warn } from "../../core/warn";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import type { FrozenWorkflowCommandTarget } from "../plan";
+import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 import type { JudgeCallIdentity, SummaryJudge } from "../validate-summary";
 import { collectWorkflowDispatchSensitiveValues, withDispatchRedaction } from "./dispatch-redaction";
 import {
@@ -33,6 +34,18 @@ export function gateNodeId(stepId: string): string {
   return `${stepId}.gate`;
 }
 
+/**
+ * The root of the bundle the run's workflow lives in, found when the judge is built (a bundle update moves it).
+ * No frozen judge, no root needed. When the bundle does not resolve the judge is not built, and the error names the ref.
+ */
+export function resolveJudgeCwd(
+  target: FrozenWorkflowCommandTarget | null | undefined,
+  workflowRef: string,
+): string | undefined {
+  if (!target) return undefined;
+  return resolveRunBundleRoot(workflowRef);
+}
+
 /** Identity for one judge dispatch: the caller's row identity, else the run/step with the gate node id. */
 function dispatchIdentity(owner: JudgeOwner, identity: JudgeCallIdentity | undefined): JudgeCallIdentity {
   return identity ?? { ...owner, unitId: gateNodeId(owner.stepId) };
@@ -50,13 +63,17 @@ function warnLoweringNotices(...groups: readonly (readonly Readonly<LoweringNoti
   }
 }
 
-/** Build a gate judge from the frozen target without consulting live config; `eventSource` stamps it like a unit. */
+/**
+ * Build a gate judge from the frozen target without consulting live config; `eventSource` stamps it like a unit.
+ * `cwd` is the root of the run's bundle, where the judge works like every other agent dispatch.
+ */
 export function frozenSummaryJudge(
   target: FrozenWorkflowCommandTarget | null | undefined,
   signal: AbortSignal | undefined,
   dispatcher: UnitDispatcher | undefined,
   owner: JudgeOwner,
   eventSource?: string,
+  cwd?: string,
 ): SummaryJudge | null {
   if (!target) return null;
   const dispatch = withDispatchRedaction(dispatcher ?? dispatchWorkflowExecution);
@@ -76,6 +93,7 @@ export function frozenSummaryJudge(
     const request: UnitDispatchRequest = {
       ...commonRequest,
       frozenTarget: target,
+      ...(cwd !== undefined ? { cwd } : {}),
       timeoutMs: target.runner.timeoutMs ?? null,
       ...(eventSource !== undefined ? { eventSource } : {}),
     };
@@ -85,7 +103,7 @@ export function frozenSummaryJudge(
     const lowered = prepareWorkflowExecution(
       request as UnitDispatchRequest & { frozenTarget: FrozenWorkflowCommandTarget },
     );
-    const sensitiveValues = collectWorkflowDispatchSensitiveValues({ runner: target.runner }, undefined);
+    const sensitiveValues = collectWorkflowDispatchSensitiveValues({ runner: target.runner });
     const outcome = await dispatch({
       ...request,
       ...(sensitiveValues.length > 0 ? { sensitiveValues } : {}),

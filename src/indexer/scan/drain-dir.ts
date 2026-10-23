@@ -139,7 +139,7 @@ export function drainDirDocuments(
     const entry = indexDocumentToStashEntry(doc);
     // Workflow docs: drop-with-warning if broken; otherwise cache a lossless
     // runtime projection when the current executor can represent the source.
-    const dropWarning = handleWorkflowDoc(doc, file, component.root);
+    const dropWarning = handleWorkflowDoc(doc, file);
     if (dropWarning !== null) {
       warnings.push(dropWarning);
       if (workflowName !== undefined) invalidWorkflowOwnerNames.add(canonicalizeWorkflowName(workflowName));
@@ -181,7 +181,7 @@ export function recognizeStashEntries(stashRoot: string, files: string[]): Stash
  * `Skipped workflow …` drop warning when it is broken, or return `null` when
  * it compiles. Non-workflow docs return `null` immediately.
  */
-function handleWorkflowDoc(doc: IndexDocument, file: FileContext, workspaceRoot: string): string | null {
+function handleWorkflowDoc(doc: IndexDocument, file: FileContext): string | null {
   if (
     doc.type !== "workflow" ||
     (doc.adapterId !== "akm" && doc.adapterId !== "akm-workflow") ||
@@ -190,7 +190,7 @@ function handleWorkflowDoc(doc: IndexDocument, file: FileContext, workspaceRoot:
     return null;
   }
 
-  const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot });
+  const result = compileWorkflowSource(file.content(), { path: file.relPath });
   if (!result.ok) return workflowDropWarning(file, result.errors);
   return null;
 }

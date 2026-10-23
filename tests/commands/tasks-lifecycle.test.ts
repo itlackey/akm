@@ -460,9 +460,7 @@ describe("task commands name the flag they take when a bundle does not resolve",
       akmTasksAdd({ id: "y", schedule: "0 3 * * *", workflow: "ghost//workflows/deploy" }, { backend }),
     );
     expect(add).toBeInstanceOf(UsageError);
-    expect((add as UsageError).message).toContain(
-      `The asset ref's bundle must reference a source name from your config. No source named "ghost" is configured`,
-    );
+    expect((add as UsageError).message).toContain(`Bundle "ghost" is not configured`);
     for (const error of [run, add]) {
       expect((error as UsageError).message).not.toContain("--target");
       expect((error as UsageError).message).not.toContain("--bundle");

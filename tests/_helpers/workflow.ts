@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { stringify as stringifyYaml } from "yaml";
 import type { AkmConfig } from "../../src/core/config/config";
-import { captureFrozenDirectoryIdentity } from "../../src/execution/directory-identity";
 import type { ExecutionJsonObject } from "../../src/execution/json";
 import {
   canonicalResolvedExecutionRequest,
@@ -20,7 +20,17 @@ import {
   defaultMapConcurrency,
   workflowMaxConcurrency,
 } from "../../src/workflows/concurrency-policy";
-import { workflowRunLockPath } from "../../src/workflows/exec/run-workflow";
+import {
+  executeStepPlan as executeStepPlanInRoot,
+  type StepExecutionContext,
+  type StepExecutionResult,
+} from "../../src/workflows/exec/native-executor";
+import {
+  type RunWorkflowOptions,
+  type RunWorkflowResult,
+  runWorkflowSteps as runWorkflowStepsInRoot,
+  workflowRunLockPath,
+} from "../../src/workflows/exec/run-workflow";
 import { canonicalPlanJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
 import { parseWorkflow } from "../../src/workflows/parser";
 import {
@@ -59,6 +69,25 @@ const WORKFLOW_TEST_MODEL_MAP: ResolvedModelMapV1 = Object.freeze({
   aliases: Object.freeze(Object.create(null)) as ResolvedModelMapV1["aliases"],
 });
 
+/**
+ * The directory units and the gate judge work in for a test whose run is seeded without a bundle: its workflow ref
+ * (`workflows/demo`) resolves to nothing, so `bundleRootOverride` is the one seam that names the root.
+ */
+export const WORKFLOW_FIXTURE_ROOT = os.tmpdir();
+
+/** `runWorkflowSteps` with {@link WORKFLOW_FIXTURE_ROOT} as the bundle root unless the test names one. */
+export function runWorkflowSteps(options: RunWorkflowOptions): Promise<RunWorkflowResult> {
+  return runWorkflowStepsInRoot({ bundleRootOverride: WORKFLOW_FIXTURE_ROOT, ...options });
+}
+
+/** `executeStepPlan` with {@link WORKFLOW_FIXTURE_ROOT} as the bundle root unless the test names one. */
+export function executeStepPlan(
+  plan: Parameters<typeof executeStepPlanInRoot>[0],
+  ctx: StepExecutionContext,
+): Promise<StepExecutionResult> {
+  return executeStepPlanInRoot(plan, { bundleRootOverride: WORKFLOW_FIXTURE_ROOT, ...ctx });
+}
+
 export type WorkflowPlanFixture = WorkflowPlan;
 
 /**
@@ -74,7 +103,7 @@ export function freezeWorkflow(
   sourcePath = "workflows/demo.md",
   config: AkmConfig = WORKFLOW_TEST_CONFIG,
 ): WorkflowPlanFixture {
-  const compiled = compileWorkflowSource(markdown, { path: sourcePath, workspaceRoot: "/tmp" });
+  const compiled = compileWorkflowSource(markdown, { path: sourcePath });
   if (!compiled.ok) {
     throw new Error(compiled.errors.map((error) => `${error.line}: ${error.message}`).join(" | "));
   }
@@ -111,14 +140,13 @@ export function freezeWorkflow(
 
 type ExecutionUnitLike = Partial<Pick<WorkflowUnitSettings, "engine" | "model" | "llm" | "timeoutMs" | "output">>;
 
-function executionValues(unit: ExecutionUnitLike | undefined, workspace = "/tmp"): UnresolvedExecutionDefaults {
+function executionValues(unit: ExecutionUnitLike | undefined): UnresolvedExecutionDefaults {
   return {
     ...(unit && Object.hasOwn(unit, "engine") ? { engine: unit.engine } : {}),
     ...(unit && Object.hasOwn(unit, "model") ? { model: unit.model } : {}),
     ...(unit && Object.hasOwn(unit, "llm") ? { inference: unit.llm as ExecutionJsonObject } : {}),
     ...(unit && Object.hasOwn(unit, "timeoutMs") ? { timeout: unit.timeoutMs } : {}),
     ...(unit && Object.hasOwn(unit, "output") ? { outputSchema: unit.output as ExecutionJsonObject | null } : {}),
-    workspace,
   };
 }
 
@@ -144,7 +172,6 @@ function freezeCommandTarget(
     current,
   });
   const resolved = durableRequest(prepared.request);
-  const cwdIdentity = captureFrozenDirectoryIdentity("/tmp");
   const runner = buildExecution(resolved, prepared.runner).runner;
   const request = JSON.parse(canonicalResolvedExecutionRequest(resolved)) as ResolvedExecutionRequestV1;
   return Object.freeze({
@@ -154,7 +181,6 @@ function freezeCommandTarget(
     request,
     runner,
     ...(targetConcurrency(runner, config) ? { concurrency: targetConcurrency(runner, config) } : {}),
-    cwdIdentity,
   });
 }
 
@@ -205,15 +231,13 @@ function freezeRoot(step: WorkflowPlanStep, config: AkmConfig, defaults: Workflo
       command: spec.exec.command as [string, ...string[]],
       timeoutMs: declaredTimeout ?? null,
     };
-    const cwdIdentity = captureFrozenDirectoryIdentity("/tmp", spec.exec.cwd);
     frozenTarget = {
       kind: "shell",
       contentHash: createHash("sha256")
         .update("akm.workflow.shell.v1\0")
-        .update(canonicalPlanJson({ exec, environment, cwdIdentity }))
+        .update(canonicalPlanJson({ exec, environment }))
         .digest("hex"),
       exec,
-      cwdIdentity,
     };
   } else {
     frozenTarget = freezeCommandTarget(instructions, executionValues(unit), config, executionValues(defaults));
@@ -284,8 +308,6 @@ export function seedWorkflowRun(
     steps: Array<string | SeedWorkflowRunStep>;
     /** Defaults to `"workflows/demo"`. */
     workflowRef?: string;
-    /** Defaults to `dir:v1:<workflowRef basename>`. */
-    scopeKey?: string;
     /** Defaults to `"Demo"`. */
     workflowTitle?: string;
     /** Defaults to `{}`. */
@@ -296,17 +318,15 @@ export function seedWorkflowRun(
 ): void {
   const now = new Date().toISOString();
   const workflowRef = options.workflowRef ?? "workflows/demo";
-  const scopeKey = options.scopeKey ?? `dir:v1:${workflowRef.split("/").pop()}`;
   const steps = options.steps.map((step) => (typeof step === "string" ? { stepId: step } : step));
   db.prepare(
     `INSERT INTO workflow_runs
-       (id, workflow_ref, scope_key, workflow_entry_id, workflow_title, status,
+       (id, workflow_ref, workflow_title, status,
         params_json, current_step_id, created_at, updated_at)
-     VALUES (?, ?, ?, NULL, ?, 'active', ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, 'active', ?, ?, ?, ?)`,
   ).run(
     options.runId,
     workflowRef,
-    scopeKey,
     options.workflowTitle ?? "Demo",
     JSON.stringify(options.params ?? {}),
     options.currentStepId ?? steps[0]!.stepId,

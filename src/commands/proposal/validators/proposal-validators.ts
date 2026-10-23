@@ -101,10 +101,7 @@ const canonicalProposalValidators: Readonly<Record<string, CanonicalProposalVali
     }
 
     const sourcePath = proposal.changes[0]?.path || proposal.ref;
-    const result = compileWorkflowSource(content, {
-      path: sourcePath,
-      workspaceRoot: proposal.proposedTarget.root,
-    });
+    const result = compileWorkflowSource(content, { path: sourcePath });
     if (result.ok) return [];
 
     return result.errors.map((error) => ({

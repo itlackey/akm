@@ -22,9 +22,8 @@
  * document fails closed with `TASK_SCHEMA_VERSION_UNSUPPORTED`, naming
  * `akm migrate apply`, which converts it). That parser owns the closed key sets,
  * the executable-selector XOR, hostile YAML policy, the `akm/command`
- * builtin, bounds, and physical `working-directory` containment. The
- * adapter only translates a parser failure into the format-family
- * diagnostic shape.
+ * builtin, and bounds. The adapter only translates a parser failure into
+ * the format-family diagnostic shape.
  *
  * Conformance oracle (authored, DO NOT modify): fixture
  * `tests/fixtures/bundles/akm-task/` + goldens
@@ -73,7 +72,7 @@ function recognize(c: BundleComponent, file: FileContext): IndexDocument | null 
   };
 }
 
-async function validate(c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
+async function validate(_c: BundleComponent, changes: FileChange[], ctx: ValidateContext): Promise<Diagnostic[]> {
   const diagnostics: Diagnostic[] = [];
   for (const change of changes) {
     if (change.op === "delete") continue;
@@ -95,7 +94,7 @@ async function validate(c: BundleComponent, changes: FileChange[], ctx: Validate
       continue;
     }
     try {
-      parseTaskSource({ yaml: raw, filePath: relPath, workspaceRoot: c.root });
+      parseTaskSource({ yaml: raw, filePath: relPath });
     } catch (cause) {
       diagnostics.push({
         file: relPath,
@@ -157,7 +156,7 @@ export const akmTaskAdapter: BundleAdapter = {
         continue;
       }
       try {
-        parseTaskSource({ yaml: raw, filePath: entry.name, workspaceRoot: root });
+        parseTaskSource({ yaml: raw, filePath: entry.name });
         return true;
       } catch {
         if (isLegacyTaskDocument(raw, entry.name)) return true;

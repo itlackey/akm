@@ -515,7 +515,7 @@ steps:
     unit:
       exec:
         command: ["bun", "run", "test:unit"]
-        cwd: packages/core        # optional, relative
+        cwd: packages/core        # optional: relative to the workflow's bundle root, or absolute
       timeout: "10m"
       retry: { max: 1, on: [timeout] }
 ```
@@ -554,11 +554,66 @@ Bounds: 1–64 argv entries, each a non-empty string of at most 4096 bytes.
 
 ### `cwd`
 
-Optional and **relative**. It resolves inside the unit's working directory —
-the engine invocation's working directory. Absolute paths, Windows drive
-letters, `~`, and `..` segments are rejected by the parser *and* by the
-frozen-plan decoder, and containment is re-checked against the *resolved* base
-(symlinks included) immediately before the command is spawned.
+Optional: a non-empty string, **relative or absolute**, and free to carry
+`${ref}` tokens (see [`${ref}` in argv and `cwd`](#ref-in-argv-and-cwd)). It is
+the only static check; there is no containment.
+
+An exec unit's working directory is the **root of the bundle that owns the
+workflow**. akm finds that bundle again for each step, by the run's workflow
+ref, so a `bundle update` that moves the bundle to a new revision directory
+between two steps of a running workflow is harmless: the next step runs from
+the new directory. `cwd` is joined onto that root **once**: `cwd: sub` runs in
+`<bundle>/sub`, and an absolute `cwd` replaces the root. Agent and SDK units
+get the same directory as their workspace, and so does a step's gate judge. If the workflow's bundle no longer
+resolves, the step fails with a message naming the ref; a step with a gate is
+blocked by its judge first, for `akm workflow resume`, because the judge is built
+before anything is dispatched. akm never falls back to its own working
+directory.
+
+### The exec contract
+
+What a command can rely on, in one place. The sections below give each point in
+full.
+
+| | |
+| --- | --- |
+| **Working directory** | The owner root of the run's workflow, found at each step's dispatch. `cwd` joins it once and may be absolute. |
+| **Argv** | Spawned directly, never shell-interpreted. A `${ref}` token in an entry is replaced at dispatch. |
+| **Environment** | Starts empty: the [default allowlist](#the-childs-environment-is-an-allowlist) plus `pass_env`, then the unit's `env:` bindings, then the engine's `AKM_*` [context](#context-reaching-the-command). |
+| **`${ref}` tokens** | In argv, `cwd` and env-asset values. `${secrets/name}` becomes the secret's value, any other asset ref the asset's absolute path. A ref no bundle owns fails the unit before it spawns. Prompts are not substituted. |
+| **Redaction** | Only values substituted from `secrets/` refs, engine credentials and unsafe passthrough values are scrubbed from stdout, stderr, diagnostics and the journal. Configuration, such as a URL bound through an env asset, is not. |
+
+#### What is frozen, and what is found at dispatch
+
+The frozen plan records the identities the engine itself dereferences: the
+workflow ref, each unit's `env:` refs qualified with their bundle
+(`team//env/prod`), and child workflow refs, plus the argv, `cwd` and
+`pass_env` names as authored. It records no directory or file location. The
+bundle root, the env files, the secrets and the paths behind `${ref}` tokens are
+all looked up when the unit dispatches, through the same ref lookup `akm show`
+uses. Plans frozen by earlier releases (`irVersion` 5 and 6) also carry a frozen
+`cwdIdentity` and the env asset's owner paths; they decode, those fields are
+ignored, and such a run dispatches by ref like any other.
+
+#### `${ref}` in argv and `cwd`
+
+An argv entry or `cwd` can name an asset in any bundle with the same
+`${[bundle//]conceptId}` token env assets use:
+
+```yaml
+  - id: status
+    unit:
+      env: [team//env/discord]
+      exec:
+        command: ["bun", "${homelab//scripts/lab-status/fetch-status.ts}"]
+```
+
+A `secrets/` ref gives the secret's value, trimmed of surrounding whitespace,
+and joins the redaction set; any other asset ref gives the asset's absolute
+path. Putting a secret in argv is the author's choice (it shows up in the
+process list); prefer an `env:` binding. A `${...}` body that is not an akm ref
+(`${HOME}`) is left as text. A ref no bundle owns fails the unit, naming it,
+before anything is spawned.
 
 ### The output rule
 
@@ -623,13 +678,12 @@ failure reason.
 | non-zero exit | `non_zero_exit` | yes |
 | exceeded `timeout` | `timeout` | yes |
 | run cancelled (`Ctrl-C`, `--timeout`, budget) | `aborted` | yes |
-| binary missing / working directory unusable | `spawn_failed` | yes |
+| binary missing / working directory missing | `spawn_failed` | yes |
 | **stdout** capture never completed | `exec_capture_incomplete` | **no** (the command already ran) |
 | **stderr** capture never completed | — (unit succeeds; a warning says the stderr tail may be missing) | — |
 | stdout past the retention limit, **and** the unit declares `output:` | `exec_output_limit` | **no** (deterministic) |
 | stdout past the retention limit, no `output:` schema | — (unit succeeds; artifact marked truncated) | — |
 | `AKM_*` context too large for **this platform** to spawn | `exec_context_too_large` | **no** (an authoring/data problem) |
-| `cwd` resolved outside its base | `exec_cwd_escape` | **no** (tampering, never transient) |
 
 `non_zero_exit` in `retry.on` re-runs a command that already ran, and a
 command's exit is usually deterministic, so the retry mostly repeats the
@@ -689,9 +743,10 @@ want the whole thing, have it write to a file and print the **path**:
 
 ### Context reaching the command
 
-A frozen argv is never interpolated (this format has no substitution language),
-so data reaches an exec unit as **environment**, the argv analogue of the
-context blocks a model unit gets in its prompt:
+A frozen argv never carries run data (this format has no substitution language
+for params or step output; the only substitution is a [`${ref}` token](#ref-in-argv-and-cwd)
+naming an asset), so data reaches an exec unit as **environment**, the argv
+analogue of the context blocks a model unit gets in its prompt:
 
 | Variable | Value |
 | --- | --- |
@@ -773,8 +828,8 @@ an explicit error is the smaller, more predictable surface.
 An exec unit's command does **not** inherit akm's environment. The child starts
 from an **empty** environment and is built in three layers, in this order:
 
-1. the **default allowlist** below, copied through from akm's own environment
-   (plus any names the unit adds with `pass_env:`);
+1. akm's own directories and the **default allowlist** below, copied through
+   from akm's own environment (plus any names the unit adds with `pass_env:`);
 2. the unit's resolved **`env:` bindings**;
 3. the engine-authored **`AKM_*` context** — last, so a binding can never
    shadow it.
@@ -798,6 +853,14 @@ environment is simply absent from the child):
 when akm is running in a scheduler context (cron/launchd/Task Scheduler) that
 stripped it — the same treatment an agent-harness child gets.
 
+The child also gets akm's own directories, whatever the parent found them
+through: `AKM_CONFIG_DIR`, `AKM_DATA_DIR`, `AKM_CACHE_DIR` and `AKM_STATE_DIR` are
+set to the directories the akm that started it resolved (from `AKM_*_DIR`,
+`XDG_*_HOME` or the platform default), and `AKM_BUNDLE_DIR` is passed when that
+akm had one. A step that runs `akm` therefore uses the same bundle, config, data,
+cache and state, with no `pass_env:`. Naming one of these in `pass_env:` or
+binding it in `env:` overrides it.
+
 Deliberately **not** on the list: credentials of any kind, cloud/CI variables,
 and the proxy family (`HTTP_PROXY` and friends — proxy URLs routinely embed
 credentials). Reach a required value with an exact named `env:` binding, or
@@ -818,16 +881,16 @@ a committed *value*, so it cannot carry "whatever this build agent's
 `CARGO_HOME` happens to be".
 
 Values passed through this way are **not** redacted from the command's output
-the way `env:` binding values are, so never list a credential here.
+the way a secret bound through `env:` is, so never list a credential here.
 
 #### Binding a secret to a unit
 
 A unit's `env:` lists env assets by ref. A value inside an env asset can be a
-`${secret:<name>}` token, which akm replaces with a secret when the unit is
+`${ref}` token, which akm replaces with the secret's value when the unit is
 dispatched. Say the bundle `team` holds `env/discord.env`:
 
 ```sh
-DISCORD_BOT_TOKEN=${secret:discord_bot_token}
+DISCORD_BOT_TOKEN=${team//secrets/discord_bot_token}
 ```
 
 and the secret beside it, set with
@@ -843,33 +906,42 @@ env asset:
         command: ["node", "announce.mjs"]
 ```
 
-- `<name>` is read from the **env asset's own bundle's** `secrets/` directory.
-  It is a path there, not a ref: `bundle//name` inside the token is **not** a
-  bundle qualifier. `${secret:team//token}` reads `secrets/team/token` in the
-  env asset's bundle.
+- The token body is an akm ref, `[bundle//]conceptId`, resolved with the one
+  ref walk: `${team//secrets/discord_bot_token}` reads that secret from the
+  `team` bundle whichever bundle holds the env asset, and an unqualified
+  `${secrets/discord_bot_token}` resolves by the default bundle then
+  installation priority. A `secrets/...` ref gives the secret's value, trimmed
+  of surrounding whitespace; any other asset ref (`${scripts/x.sh}`) gives the
+  asset's absolute path. A `${...}` body that is not an akm ref (`${HOME}`) is
+  left as text.
 - It is the same token `akm env run` resolves. `akm env export` does not
   resolve it; it writes the token verbatim.
-- Freezing records the env ref, its key names and the secret names, never a
-  value. Values and secrets are read at dispatch. A missing secret fails the
-  step at dispatch ("frozen environment preflight failed") and nothing is
-  injected.
+- Freezing records the env ref, never a value. At each dispatch the unit's env
+  assets are read live with `resolveEnvBinding`, the same function `akm env run`
+  uses, so an edit to the env file, or to a secret, after the run started is
+  picked up by the next dispatch; there is no key-set check against the frozen
+  plan. A ref no bundle owns fails the step at dispatch ("frozen environment
+  preflight failed") and nothing is injected.
 - Each dispatch that reads the env asset records an `env_access` event with the
-  ref, key names and secret names, never values.
-- Every value from an env asset is treated as sensitive, secret or not, and is
-  redacted out of stdout, stderr and diagnostics before they are journaled. A
-  non-secret value such as a channel id would be redacted from the output too,
-  so pass it as a param or in `command:` instead.
+  ref and key names, never values.
+- Redaction covers secrets, not configuration. A value substituted from a
+  `secrets/` ref is treated as sensitive and redacted out of stdout, stderr and
+  diagnostics before they are journaled. The rest of an env asset, such as a URL
+  or a channel id, reaches the journal and the next step unredacted. A
+  credential typed straight into an env file is not redacted, so keep
+  credentials in `secrets/` and bind them with a `${secrets/name}` token.
 - `env:` needs a child process: it works on exec units and on agent and SDK
   engines. A unit on an `llm` engine that declares `env:` fails
   `env_unsupported`.
 
-#### Durable v4 (`irVersion: 5`) forbids `inherit_env`
+#### Durable v4 (`irVersion: 7`) forbids `inherit_env`
 
 Every new workflow start freezes the durable plan v4 family's current
-executable format, `irVersion: 5`. It rejects `inherit_env: true` and any other
-request for whole-process inheritance; use exact named environment bindings
-and `pass_env:` instead. Both mechanisms are dispatch-significant, keep the
-visible environment surface bounded, and form part of the unit's input hash.
+executable format (`irVersion: 7`; 5 and 6 still decode). It rejects
+`inherit_env: true` and any other request for whole-process inheritance; use
+exact named environment bindings and `pass_env:` instead. Both mechanisms are
+dispatch-significant, keep the visible environment surface bounded, and form
+part of the unit's input hash.
 
 The historical `inherit_env` spelling is unsupported.
 
@@ -941,8 +1013,9 @@ They do not widen it, and they do not narrow it:
   the ref names, the replay hash carries only the ref names, and the resolved
   values are collected and scrubbed out of stdout, stderr, and the failure
   diagnostic by the same redaction contract every other dispatch uses — before
-  anything is journaled. Never inline a secret into `command:`; argv is stored
-  verbatim in `plan_json`.
+  anything is journaled. Never inline a secret value into `command:`; argv is
+  stored as authored in `plan_json`. A `${secrets/name}` token in argv is
+  stored as the token and replaced only when the unit dispatches.
 - **Read a workflow before you run it.** `exec:` makes what a workflow will run
   explicit and auditable in one place, which is a real improvement over
   instructing a model to "run the tests" — but a bundle you do not trust is

@@ -89,8 +89,8 @@ describe("child binding identity — absence-when-empty is the identity-preservi
 });
 
 describe("child binding identity — the frozen hash vocabulary is unchanged", () => {
-  test('WORKFLOW_PLAN_VERSION is 6, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7', async () => {
-    expect(WORKFLOW_PLAN_VERSION).toBe(6);
+  test('WORKFLOW_PLAN_VERSION is 7, and computeUnitInputHash\'s prefix + hashVersion are exactly "akm.workflow.unit\\0v7\\0" / 7', async () => {
+    expect(WORKFLOW_PLAN_VERSION).toBe(7);
 
     write(
       "workflows/plain-command.md",

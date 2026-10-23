@@ -88,18 +88,18 @@ describe("sanitizeConfigForWrite — secret handling (#474)", () => {
     expect(persisted).toContain("${OPENAI_API_KEY}");
   });
 
-  it("preserves a secret:// store reference", () => {
+  it("preserves a secrets ref store reference", () => {
     saveConfig(
       makeConfig({
         embedding: {
           endpoint: "https://example.com",
           model: "x",
-          apiKey: "secret://embed-key",
+          apiKey: "${secrets/embed-key}",
         },
       }),
     );
     const persisted = fs.readFileSync(path.join(configDir, "config.json"), "utf8");
-    expect(persisted).toContain("secret://embed-key");
+    expect(persisted).toContain("${secrets/embed-key}");
   });
 
   it("preserves $VAR (no braces) reference", () => {

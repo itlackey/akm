@@ -479,7 +479,7 @@ describe("health engine probes", () => {
     }
   });
 
-  test("a secret:// engine reports available only when the store resolves it (#953)", async () => {
+  test("a secrets ref engine reports available only when the store resolves it (#953)", async () => {
     const storage = withIsolatedAkmStorage();
     try {
       const config: AkmConfig = {
@@ -487,7 +487,7 @@ describe("health engine probes", () => {
         semanticSearchMode: "off",
         engines: {
           agent: { kind: "agent", platform: "claude" },
-          improve: { ...llm, apiKey: "secret://953-health-probe-key" },
+          improve: { ...llm, apiKey: "${secrets/953-health-probe-key}" },
         },
         defaults: { engine: "agent", llmEngine: "improve" },
       };

@@ -10,7 +10,6 @@
 
 import { describe, expect, test } from "bun:test";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { compileWorkflowSource, workflowStepInstructions } from "../../src/workflows/compile";
 import type { WorkflowPlan, WorkflowStepSpec } from "../../src/workflows/plan";
@@ -21,8 +20,8 @@ function readFixture(relative: string): string {
   return fs.readFileSync(path.join(FIXTURES, relative), "utf8");
 }
 
-function compile(source: string, filePath: string, workspaceRoot?: string) {
-  return compileWorkflowSource(source, { path: filePath, ...(workspaceRoot ? { workspaceRoot } : {}) });
+function compile(source: string, filePath: string) {
+  return compileWorkflowSource(source, { path: filePath });
 }
 
 function plan(source: string, filePath: string): WorkflowPlan {
@@ -81,7 +80,7 @@ Run the direct command.
     expect(compiled.steps[0]?.spec?.exec?.command).toEqual([...command]);
   });
 
-  test("canonicalizes equivalent direct cwd spellings without changing argv bytes", () => {
+  test("keeps exec.cwd exactly as authored: relative, absolute, or carrying ${ref} tokens", () => {
     const markdown = (cwd: string) => `---
 type: workflow
 steps:
@@ -97,10 +96,10 @@ steps:
 
 Run the direct command.
 `;
-    for (const cwd of ["packages/./cli", "packages\\cli"]) {
+    for (const cwd of ["packages/cli", "/srv/build", "../sibling", "${tools//scripts/lab}/.."]) {
       expect(plan(markdown(cwd), "workflows/direct.md").steps[0]?.spec?.exec).toEqual({
         command: ["bash", "-lc", "a | b"],
-        cwd: "packages/cli",
+        cwd,
       });
     }
   });
@@ -132,7 +131,7 @@ steps:
       unit:
         exec:
           command: [bash, -lc, "a | b"]
-          cwd: packages/./cli
+          cwd: packages/cli
         on_error: continue
     inputs: [steps.discover.output]
     gate: { max_loops: 2 }
@@ -186,77 +185,37 @@ Repair.
   });
 });
 
-describe("working-directory physical containment", () => {
-  const markdownCwd = (cwd: string) => `---
+describe("exec source failures are located at the authored field", () => {
+  const markdownExec = (exec: string) => `---
 type: workflow
 steps:
   - id: cwd
     unit:
       exec:
-        command: [echo, ok]
-        cwd: ${cwd}
+${exec}
 ---
-# Escape
+# Failures
 
 ## cwd
 
 Run it.
 `;
 
-  test("rejects a working-directory symlink that physically escapes its workspace", () => {
-    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "akm-grammar-"));
-    const workspace = path.join(sandbox, "workspace");
-    const outside = path.join(sandbox, "outside");
-    fs.mkdirSync(workspace);
-    fs.mkdirSync(outside);
-    fs.symlinkSync(outside, path.join(workspace, "escape"), "dir");
-    try {
-      const markdown = compile(markdownCwd("escape"), "workflows/escape.md", workspace);
-      expect(markdown.ok).toBe(false);
-      if (!markdown.ok) expect(markdown.errors.some((error) => error.code === "working-directory-escape")).toBe(true);
-    } finally {
-      fs.rmSync(sandbox, { recursive: true, force: true });
-    }
-  });
-
-  test("source-locates Markdown cwd and argv failures at the authored field", () => {
-    const source = markdownCwd('"bad\\0cwd"');
-    const result = compile(source, "workflows/bad-cwd.md", process.cwd());
+  test("an empty exec.cwd is the only static cwd failure", () => {
+    const result = compile(markdownExec('        command: [echo, ok]\n        cwd: ""'), "workflows/empty-cwd.md");
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.errors).toContainEqual(
-        expect.objectContaining({ code: "working-directory-control-character", line: 8 }),
-      );
-    }
-    const invalidArgv = compile(
-      source.replace("command: [echo, ok]", 'command: ["bad\\0argv"]'),
-      "workflows/bad-argv.md",
-      process.cwd(),
-    );
-    expect(invalidArgv.ok).toBe(false);
-    if (!invalidArgv.ok) {
-      expect(invalidArgv.errors[0]).toMatchObject({ code: "invalid-markdown-workflow", line: 7 });
-      expect(invalidArgv.errors[0]?.message).toMatch(/NUL/i);
+      expect(result.errors[0]).toMatchObject({ code: "invalid-markdown-workflow", line: 8 });
+      expect(result.errors[0]?.message).toMatch(/exec\.cwd.*non-empty string/);
     }
   });
 
-  test("fails closed on dangling cwd symlinks before an outside target can appear", () => {
-    const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "akm-grammar-dangling-"));
-    const workspace = path.join(sandbox, "workspace");
-    const outside = path.join(sandbox, "outside-missing");
-    fs.mkdirSync(workspace);
-    fs.symlinkSync(outside, path.join(workspace, "escape"), "dir");
-    const compileMarkdown = () => compile(markdownCwd("escape"), "workflows/dangling.md", workspace);
-    try {
-      const before = compileMarkdown();
-      expect(before.ok).toBe(false);
-      if (!before.ok) expect(before.errors[0]).toMatchObject({ code: "working-directory-unverifiable", line: 8 });
-      fs.mkdirSync(outside);
-      const after = compileMarkdown();
-      expect(after.ok).toBe(false);
-      if (!after.ok) expect(after.errors[0]?.code).toMatch(/working-directory-(?:escape|unverifiable)/);
-    } finally {
-      fs.rmSync(sandbox, { recursive: true, force: true });
+  test("a NUL byte in argv is refused at its entry", () => {
+    const result = compile(markdownExec('        command: ["bad\\0argv"]'), "workflows/bad-argv.md");
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors[0]).toMatchObject({ code: "invalid-markdown-workflow", line: 7 });
+      expect(result.errors[0]?.message).toMatch(/NUL/i);
     }
   });
 });

@@ -108,6 +108,23 @@ describe("adapter-owned execution source loading", () => {
     }
   }
 
+  test("loads a command that is a symlink to a file outside its bundle (#1237)", async () => {
+    const fixture = installFixture("akm", "command");
+    const outside = tempRoot("outside");
+    const target = path.join(outside, "contract-review.md");
+    fs.renameSync(fixture.destination, target);
+    fs.symlinkSync(target, fixture.destination);
+    const entry = entryFor(fixture.root, fixture.destination, "akm", fixture.conceptId, "command");
+
+    const loaded = await loadAdapterExecutionSource(`fixture//${fixture.conceptId}`, "command", {
+      config: fixtureConfig(fixture.root, "akm"),
+      lookup: lookupFor(entry),
+    });
+
+    expect(loaded.kind).toBe("command");
+    expect(loaded.content).toStartWith("# Contract review");
+  });
+
   test("loads an indexed persona from the canonical implicit AKM_BUNDLE_DIR source", async () => {
     const fixture = installFixture("akm", "persona");
     const bundleId = slugForPath(fixture.root);
@@ -168,7 +185,7 @@ describe("adapter-owned execution source loading", () => {
     ).rejects.toThrow(/did not render.*command|renderer/i);
   });
 
-  test("warns and re-resolves from the indexed source on root drift, configured adapter drift, and an unresolvable configured source", async () => {
+  test("loads from a moved root silently, and warns and re-resolves on configured adapter drift and an unresolvable configured source", async () => {
     const fixture = installFixture("akm", "command");
     const config = fixtureConfig(fixture.root, "akm");
     const base = entryFor(fixture.root, fixture.destination, "akm", fixture.conceptId, "command");
@@ -184,7 +201,7 @@ describe("adapter-owned execution source loading", () => {
         lookup: lookupFor(base),
       });
       expect(rootDrifted.content).toStartWith("# Contract review");
-      expect(warnings.some((w) => /root/i.test(w) && /drift|re-resolving/i.test(w))).toBe(true);
+      expect(warnings).toEqual([]);
 
       warnings.length = 0;
       const adapterDrifted = await loadAdapterExecutionSource("fixture//commands/contract-review", "command", {

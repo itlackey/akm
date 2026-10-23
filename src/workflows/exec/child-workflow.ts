@@ -38,6 +38,7 @@ export interface DriveChildWorkflowContext {
   readonly dispatcher?: UnitDispatcher;
   readonly maxConcurrency?: number;
   readonly eventSource?: string;
+  readonly bundleRootOverride?: string;
   /** Unread here; named so an inline test `ctx` mirroring `StepExecutionContext` type-checks. */
   readonly workflowRef?: string;
   readonly params?: Record<string, unknown>;
@@ -51,6 +52,7 @@ export interface ChildWorkflowDriveOptions {
   readonly dispatcher?: UnitDispatcher;
   readonly maxConcurrency?: number;
   readonly eventSource?: string;
+  readonly bundleRootOverride?: string;
   readonly disposeDispatchResources?: () => void | Promise<void>;
 }
 
@@ -167,8 +169,6 @@ async function publishChildRun(
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parentRow.scope_key,
-          workflowEntryId: null,
           workflowTitle: target.frozenPlan.title,
           paramsJson: JSON.stringify(childParams),
           currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,
@@ -217,6 +217,7 @@ async function driveChildRun(
     ...(ctx.dispatcher ? { dispatcher: ctx.dispatcher } : {}),
     ...(ctx.maxConcurrency !== undefined ? { maxConcurrency: ctx.maxConcurrency } : {}),
     ...(ctx.eventSource !== undefined ? { eventSource: ctx.eventSource } : {}),
+    ...(ctx.bundleRootOverride !== undefined ? { bundleRootOverride: ctx.bundleRootOverride } : {}),
     // The parent's own `finally` owns the process-lifecycle drain; no maxSteps/maxRetries.
     disposeDispatchResources: () => {},
   };

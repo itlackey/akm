@@ -5,15 +5,15 @@
 /**
  * The `exec` unit runner — the one place a frozen workflow spawns a command:
  * argv-only, detached with a SIGTERM→SIGKILL ladder against the process group,
- * cwd-contained by a resolved-path recheck, bounded (timeout, output bytes,
- * context size), with an allowlisted environment ({@link childEnv}). The
+ * bounded (timeout, output bytes, context size), with an allowlisted
+ * environment ({@link childEnv}). The
  * caller redacts the outcome before anything is journaled.
  * See docs/architecture/decisions/0003-child-env-allowlist-and-provenance.md.
  */
 
 import fs from "node:fs";
 import path from "node:path";
-import { isWithinAsync } from "../../core/common";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../core/paths";
 import { COMMON_SPAWN_ENV_PASSTHROUGH, collectAllowlistedEnv, WIN32_SPAWN_ENV_FLOOR } from "../../core/spawn-env";
 import {
   type ManagedSubprocessResult,
@@ -44,8 +44,9 @@ const EXEC_STDERR_DIAGNOSTIC_CLIP = WORKFLOW_UNIT_DIAGNOSTIC_CLIP - 500;
 /**
  * The default environment allowlist for an exec unit's child (`exec.passEnv`
  * extends it): the agent-harness baseline plus names ordinary commands need
- * and `AKM_EVENT_SOURCE`. Credentials, cloud/CI vars, and proxies reach a
- * child only through `pass_env` or `env:`.
+ * and `AKM_EVENT_SOURCE`. akm's own directories are not listed: {@link childEnv}
+ * sets them from the parent's effective locations. Credentials, cloud/CI vars, and proxies reach a child only through
+ * `pass_env` or `env:`.
  */
 export const EXEC_DEFAULT_ENV_PASSTHROUGH: readonly string[] = [
   // PATH, HOME, USER, LANG, LC_ALL, TERM, TMPDIR, AKM_EVENT_SOURCE
@@ -71,8 +72,8 @@ export interface RunExecUnitInput {
   unitId: string;
   exec: WorkflowExecSpec;
   /**
-   * Base working directory the unit's `cwd` resolves inside: the engine's work
-   * dir (`ctx.workDir`, default `process.cwd()`).
+   * The directory `exec.cwd` joins onto: the owner root of the run's workflow.
+   * An absolute `exec.cwd` replaces it.
    */
   baseDir: string;
   /** Resolved `env:` binding values, merged on top of the allowlisted base environment. */
@@ -105,7 +106,7 @@ export interface RunExecUnitInput {
 /**
  * Run one exec unit and map its outcome onto the dispatch vocabulary
  * (`non_zero_exit`, `timeout`, `aborted`, `spawn_failed` — retryable). The
- * `exec_*` reasons (cwd escape, output limit, context too large, incomplete
+ * `exec_*` reasons (output limit, context too large, incomplete
  * capture) are deliberately outside `retry.on`. Output overflow fails only a
  * unit that declared an `output:` schema.
  */
@@ -313,22 +314,11 @@ function contextTooLarge(
 type ResolvedCwd = { ok: true; path: string } | { ok: false; failureReason: string; error: string };
 
 /**
- * Resolve `exec.cwd` inside `baseDir` and prove containment against the
- * resolved base (a symlinked `reports` could point at `/etc`). Async: it runs
- * per unit on the dispatch path.
+ * Join `exec.cwd` onto `baseDir` once. `exec.cwd` may be relative or absolute and is not contained:
+ * the command is arbitrary code in its own right. Async: it runs per unit on the dispatch path.
  */
 async function resolveExecCwd(input: RunExecUnitInput): Promise<ResolvedCwd> {
-  const base = path.resolve(input.baseDir);
-  const target = input.exec.cwd ? path.resolve(base, input.exec.cwd) : base;
-  if (!(await isWithinAsync(target, base))) {
-    return {
-      ok: false,
-      failureReason: "exec_cwd_escape",
-      error:
-        `exec unit "${input.unitId}" declares cwd ${JSON.stringify(input.exec.cwd ?? ".")}, which resolves to ` +
-        `${target} — outside its working directory ${base}. Refusing to run outside the unit's tree.`,
-    };
-  }
+  const target = path.resolve(input.baseDir, input.exec.cwd ?? ".");
   if (!(await isExistingDirectory(target))) {
     return {
       ok: false,
@@ -348,9 +338,9 @@ async function isExistingDirectory(candidate: string): Promise<boolean> {
 }
 
 /**
- * The child's environment, in precedence order: the allowlist plus
- * `exec.passEnv`; the resolved `env:` bindings; then the engine's `AKM_*`
- * context, last so a binding cannot shadow it.
+ * The child's environment, in precedence order: the parent's effective akm
+ * directories; the allowlist plus `exec.passEnv`; the resolved `env:` bindings;
+ * then the engine's `AKM_*` context, last so a binding cannot shadow it.
  */
 function childEnv(
   exec: WorkflowExecSpec,
@@ -358,7 +348,7 @@ function childEnv(
   context: Record<string, string> | undefined,
   eventSource: string | undefined,
 ): Record<string, string> {
-  const env = collectAllowlistedEnv(execAllowlist(exec));
+  const env = { ...akmLocations(), ...collectAllowlistedEnv(execAllowlist(exec)) };
   // Only when absent from the base, and before the overlays, so ambient and authored values win.
   if (eventSource !== undefined && env.AKM_EVENT_SOURCE === undefined) {
     env.AKM_EVENT_SOURCE = eventSource;
@@ -366,6 +356,23 @@ function childEnv(
   for (const [name, value] of Object.entries(bindings ?? {})) env[name] = value;
   for (const [name, value] of Object.entries(context ?? {})) env[name] = value;
   return env;
+}
+
+/**
+ * The directories this akm resolved, as the `AKM_*` variables that name them, so
+ * a step that runs `akm` uses the same installation even when the parent found
+ * them through `XDG_*_HOME`. `AKM_BUNDLE_DIR` is passed only when the parent set one.
+ */
+function akmLocations(): Record<string, string> {
+  const locations: Record<string, string> = {
+    AKM_CONFIG_DIR: getConfigDir(),
+    AKM_DATA_DIR: getDataDir(),
+    AKM_CACHE_DIR: getCacheDir(),
+    AKM_STATE_DIR: getStateDir(),
+  };
+  const bundleDir = process.env.AKM_BUNDLE_DIR?.trim();
+  if (bundleDir) locations.AKM_BUNDLE_DIR = bundleDir;
+  return locations;
 }
 
 /** The unit's effective allowlist: the shared default plus its own `passEnv` names. */

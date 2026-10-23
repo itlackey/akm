@@ -1044,25 +1044,16 @@ akm registry remove qa-registry --yes
 ### 9.10 Source failure atomicity and dangerous env
 
 ```sh
-before_config="$(sha256sum "$AKM_CONFIG_DIR/config.json")"
-set +e
 akm bundle add "$REPO/tests/fixtures/manual-qa/dangerous-bundle" \
   --name qa-dangerous </dev/null
-status=$?
-set -e
-test "$status" -eq 1
-test "$(sha256sum "$AKM_CONFIG_DIR/config.json")" = "$before_config"
-! akm bundle list --format json | jq -e '.sources[] | select(.name == "qa-dangerous")'
+akm bundle list --format json | jq -e '.sources[] | select(.name == "qa-dangerous")'
 ```
 
-- [ ] **[LOCAL]** Inferred noninteractive add blocks raw dangerous env, rolls
-      back config/lock/cache/index, no success event/envelope.
+- [ ] **[LOCAL]** Noninteractive add of a bundle whose `env/` sets process-hijacking
+      keys succeeds with no flag and no prompt (#1237: installing a bundle is
+      the trust decision). `akm bundle update` of it also succeeds.
 - [ ] **[LOCAL]** Allow-insecure permits reviewed fixture with warning.
-- [ ] **[LOCAL]** Non-`.env` file under env is ignored.
-- [ ] **[LOCAL]** Publisher lint suppression does not silently bypass untrusted
-      install safety; test suppression fixture separately.
-- [ ] **[LOCAL]** Declarative provider and later update receive equivalent audit.
-- [ ] **[LOCAL]** New dangerous key on update preserves previous complete source.
+- [ ] **[LOCAL]** `--allow-dangerous-env-keys` is accepted and has no effect.
 - [ ] **[LOCAL]** A held WAL index reader observes only the prior generation
       through a failed update; index/state main, WAL, and SHM inodes are not
       replaced during compensation.
@@ -1222,10 +1213,10 @@ export QA_SECRET_VALUE='manual-qa-secret-not-a-credential'
 printf '%s\n' \
   'QA_PUBLIC=manual-qa-public' \
   'QA_SECOND=manual-qa-second' \
-  'QA_TOKEN=Bearer ${secret:qa-token}' \
+  'QA_TOKEN=Bearer ${secrets/qa-token}' \
   >"$AKM_SANDBOX/qa-runtime.env"
 
-akm env create qa-runtime \
+akm env create env/qa-runtime \
   --from-file "$AKM_SANDBOX/qa-runtime.env" --format json \
   >"$AKM_SANDBOX/env-create.json"
 printf '%s\n' "$QA_SECRET_VALUE" |
@@ -1309,8 +1300,9 @@ test "$secret_child_status" -eq 9
 
 - [ ] **[CORE]** Values enter only the child environment and never mutate the
       invoking shell.
-- [ ] **[CORE]** `${secret:NAME}` resolves from the env asset's own bundle,
-      including embedded/multiple tokens. Missing secret fails before spawn.
+- [ ] **[CORE]** `${secrets/NAME}` resolves by ref from any bundle, not only the env
+      asset's own, including embedded/multiple tokens. A ref no bundle owns
+      fails before spawn.
 - [ ] **[CORE]** `--only` and `--except` are mutually exclusive; filtering occurs
       before dangerous-key policy. Clean mode inherits only the documented
       minimum plus explicit names.
@@ -1330,7 +1322,7 @@ test "$secret_child_status" -eq 9
 ```sh
 printf 'QA_LITERAL=$(touch %s)\n' "$AKM_SANDBOX/export-payload-ran" \
   >"$AKM_SANDBOX/qa-export.env"
-akm env create qa-export --from-file "$AKM_SANDBOX/qa-export.env"
+akm env create env/qa-export --from-file "$AKM_SANDBOX/qa-export.env"
 akm env export env/qa-export --out "$AKM_SANDBOX/qa-export.sh" \
   --format json >"$AKM_SANDBOX/env-export.json"
 
@@ -1345,7 +1337,7 @@ akm env remove env/qa-export --yes
 
 - [ ] **[CORE]** Export requires `--out`, prints no values, writes atomically at
       `0600`, and single-quotes substitutions/backticks/dollars/quotes/globs.
-- [ ] **[CORE]** Export does not resolve `${secret:...}`. `env run` is the safe
+- [ ] **[CORE]** Export does not resolve `${ref}` tokens; it writes them verbatim. `env run` is the safe
       default for secret substitution.
 - [ ] **[CORE]** Secret stdin strips one trailing newline; file input preserves
       bytes exactly. Secret overwrite is atomic and serialized.
@@ -1363,17 +1355,11 @@ akm env remove env/qa-export --yes
 
 ### 11.4 Dangerous keys and redaction boundary
 
-- [ ] **[CORE]** Secret run rejects dangerous target variables such as `PATH`,
-      `LD_PRELOAD`, `NODE_OPTIONS`, and `GIT_CONFIG_*` before spawn/event.
-- [ ] **[LOCAL]** First-party env activation warns and proceeds; third-party
-      activation blocks exit `2`. Excluding all dangerous keys permits the safe
-      subset.
-- [ ] **[LOCAL]** `--allow-dangerous-env-keys` can authorize reviewed installation but
-      never authorizes later dangerous activation.
-- [ ] **[LOCAL REGRESSION]** Lint suppression cannot authorize untrusted install;
-      declarative first materialization and every update receive the same audit.
-- [ ] **[LOCAL REGRESSION]** Env export applies an equivalent dangerous-key
-      warning/gate before producing sourceable output.
+- [ ] **[CORE]** Secret run and env run inject dangerous target variables such
+      as `PATH`, `LD_PRELOAD`, `NODE_OPTIONS`, and `GIT_CONFIG_*` from any
+      bundle, with no warning, block or flag (#1237).
+- [ ] **[LOCAL]** `akm lint` still reports `dangerous-env-key` findings for env
+      files, non-blocking.
 - [ ] **[LOCAL]** Search all captured AKM results, events, state/log databases,
       reports, and config for the literal dummy value. Exclude deliberate child
       passthrough evidence from the AKM-redaction claim.
@@ -1784,8 +1770,8 @@ Failure taxonomy — each reason, and whether `retry.on` may name it:
 - [ ] **LOCAL** Wall-clock expiry is `timeout`; run cancellation is `aborted`; a
       missing binary or unusable working directory is `spawn_failed`. All three
       are retryable via `retry.on`.
-- [ ] **LOCAL** `exec_output_limit`, `exec_context_too_large`, `exec_cwd_escape`
-      and `exec_capture_incomplete` are **rejected** in a `retry.on` list —
+- [ ] **LOCAL** `exec_output_limit`, `exec_context_too_large` and
+      `exec_capture_incomplete` are **rejected** in a `retry.on` list —
       each is deterministic, an authoring problem, or work that already ran.
 - [ ] **LOCAL** On timeout or cancellation the child's whole **process group**
       takes the SIGTERM→SIGKILL ladder; no orphaned grandchildren survive.
@@ -1811,7 +1797,7 @@ Environment scope and context:
       or CI variables present in akm's own environment are **absent** unless
       named. `pass_env:` widens it by name; exact named `env:` bindings provide
       fixed or secret values.
-- [ ] **CORE** A new durable-v4-family (`irVersion: 5`) start containing
+- [ ] **CORE** A new durable-v4-family (`irVersion: 7`) start containing
       `inherit_env: true` is rejected before dispatch and directs the author to
       named env bindings. A pre-`irVersion`-5 stored plan is also rejected and
       directs the user to start a new run.
@@ -1826,12 +1812,12 @@ Environment scope and context:
 
 `cwd`:
 
-- [ ] **LOCAL** `cwd` is relative and contained: absolute paths, drive letters,
-      `~`, and `..` **segments** are rejected by the parser *and* the
-      frozen-plan decoder, and containment is re-checked against the resolved
-      base (symlinks included) immediately before the spawn.
-- [ ] **LOCAL** A directory whose *name* merely begins with dots (`..data`) is a
-      legal contained `cwd` and must **not** fail `exec_cwd_escape`.
+- [ ] **LOCAL** `cwd` joins the root of the bundle that owns the workflow
+      exactly once (`cwd: sub` runs in `<bundle>/sub`) and may be absolute or
+      carry a `${ref}` token; the only static check is a non-empty string.
+- [ ] **LOCAL** After `akm bundle update` moves the workflow's bundle to a new
+      revision directory between two steps of a running workflow, the next step
+      runs from the new directory and the run completes.
 
 Gates, retry, and reuse:
 
@@ -2673,28 +2659,18 @@ test "$(wc -l <"$AKM_QA_SERVICE_LOG")" -eq "$before_requests"
 ### 20.5 Dangerous env, secrets, output, and permissions
 
 ```sh
-before_event="$(akm log --format json | jq -r '.events[-1].id // 0')"
-set +e
 akm bundle add \
   "$REPO/tests/fixtures/manual-qa/suppressed-dangerous-bundle" \
   --name qa-suppressed-dangerous \
   >"$AKM_SANDBOX/suppressed.stdout" \
   2>"$AKM_SANDBOX/suppressed.stderr" </dev/null
-suppressed_status=$?
-set -e
-
-test "$suppressed_status" -eq 1
-test "$(akm log --format json | jq -r '.events[-1].id // 0')" = "$before_event"
-! akm bundle list --format json |
+akm bundle list --format json |
   jq -e '.sources[]? | select(.name == "qa-suppressed-dangerous")'
 ```
 
-- [ ] **[LOCAL REGRESSION]** Publisher lint suppression cannot suppress
-      untrusted install security; scan read errors fail closed; inferred,
-      declarative, normal update, and force update use the same pre-publication
-      audit.
-- [ ] **[LOCAL]** Runtime blocks source-origin `LD_PRELOAD`, `DYLD_*`, `PATH`,
-      `NODE_OPTIONS`, `BASH_FUNC_*`, and `GIT_CONFIG_*`; first-party use warns.
+- [ ] **[LOCAL]** Install, update and runtime injection neither scan nor block
+      `LD_PRELOAD`, `DYLD_*`, `PATH`, `NODE_OPTIONS`, `BASH_FUNC_*`, and
+      `GIT_CONFIG_*` from any bundle (#1237).
 - [ ] **[LOCAL]** Exact dummy values and credential-shaped URL/userinfo/query/
       fragment variants are absent from AKM stdout/stderr, errors, events,
       task logs, databases, reports, proposals, workflows, backups, and config.
@@ -2751,9 +2727,8 @@ bun test --timeout=120000 \
   tests/integration/website-ssrf.test.ts \
   tests/integration/tar-utils-scan.test.ts \
   tests/integration/walker.test.ts \
-  tests/integration/vault-dangerous-key-install-gate.test.ts \
   tests/integration/vault-dangerous-key-lint.test.ts \
-  tests/integration/env-run-dangerous-key-block.test.ts \
+  tests/integration/bundle-trust-no-gates.test.ts \
   tests/integration/config-sanitize-secrets.test.ts \
   tests/integration/self-update.test.ts
 ```
@@ -2767,7 +2742,7 @@ Current known failing gates must be fixed or explicitly waived with expiry:
 | Archive expanded-resource/type/link budgets | `FAIL` until bounded |
 | Registry option/control-data rendering | `FAIL` until redacted |
 | Registry URL credential persistence and rendering | `PASS` — #811 passed independent review after seven hardening cycles |
-| Suppressible/add-only dangerous-key audit and event ordering | `FAIL` until pre-publication |
+| Dangerous-key install audit | Removed in #1237 (installing a bundle is the trust decision) |
 | Source lifecycle rollback across config/lock/root/index/events | `FAIL` until atomic/recoverable |
 | OpenCode local-listener authentication/documentation | `FAIL` until authenticated |
 | Exact-value command-target task-log redaction | `PASS` — fixed in 0.9.1 (#755) |
@@ -3212,18 +3187,11 @@ remaining gaps carry approved waivers with the expiries recorded below.
       leaves the mirror absent — `requireStashDir` callers refresh immediately,
       others recover on the next expiry or `--force`.
   - **Closed for 0.9.1** ([#758](https://github.com/itlackey/akm/issues/758)):
-    full source lifecycle rollback — the waiver's named verification test now
-    exists as `tests/integration/vault-dangerous-key-blocked-install-rollback.test.ts`.
-    It drives the real `akm bundle add` CLI end-to-end against a materialized
-    copy of `tests/fixtures/manual-qa/dangerous-bundle/` (whose
-    `env/runtime.env` carries `NODE_OPTIONS`), non-TTY and without
-    `--allow-dangerous-env-keys`, and asserts every lifecycle surface after the block:
-    **byte-level** parity of `config.json` and `akm.lock`, no surviving content
-    root, and no orphaned index row. Three workspace states are covered —
-    pristine, pre-existing operator config, and a bundle already installed —
-    the last of which pins the other direction too: a rollback that reverts
-    the FIRST bundle's records is as wrong as one that leaves the refused
-    bundle's behind.
+    full source lifecycle rollback was verified in 0.9.1 by a test that
+    drove `akm bundle add` against `tests/fixtures/manual-qa/dangerous-bundle/`
+    and rolled the install back over its `NODE_OPTIONS` key. #1237 later removed
+    the dangerous-key install gate, so that test and its rollback path are gone;
+    the fixture now serves the manual check that such a bundle installs.
     Rollback was found already correct in every case constructible here; the
     test's value is as a pin, so it was mutation-verified against five separate
     breaks (skip the rollback; drop `removeLockEntry`; delete every bundle
@@ -3265,8 +3233,8 @@ remaining gaps carry approved waivers with the expiries recorded below.
     co-resident attacker, a malicious registry/source, or a compromised
     upstream to exploit. owner: itlackey. verification test: the checklist's
     own §23 items (lines cited in the per-item notes). temporary mitigation:
-    sources/registries are operator-chosen; dangerous-env audit runs at
-    install; opencode listener binds loopback only. waiver approver:
+    sources/registries are operator-chosen (the install-time dangerous-env
+    audit was removed in #1237); opencode listener binds loopback only. waiver approver:
     itlackey — approved 2026-08-06 (0.9.0 release triage). waiver expiry:
     0.10.0 (hardening series).
 - [x] **Secrets/permissions:** exact-value task-log redaction; managed-file

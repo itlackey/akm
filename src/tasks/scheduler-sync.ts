@@ -94,7 +94,6 @@ async function compileTaskSources(
       const parsed = parseTaskSource({
         yaml: fs.readFileSync(file, "utf8"),
         filePath: file,
-        workspaceRoot: input.sourceRoot,
       });
       // A task with no `schedule:` is run by hand or by a workflow step; it
       // contributes no binding and is not sync's to validate.

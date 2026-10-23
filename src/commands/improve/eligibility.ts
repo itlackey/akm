@@ -397,8 +397,6 @@ export async function findAssetFilePath(
     stashDir,
     mode: "disk-only",
     writableBundleIds,
-    directoryIndexNames: ["SKILL.md"],
-    preserveDirectNameFallback: true,
     honorOrigin: true,
   });
 }

@@ -332,7 +332,5 @@ async function defaultFindFilePath(ref: string, stashDir?: string): Promise<stri
   return resolveAssetPath(ref, {
     stashDir,
     mode: "index-first",
-    directoryIndexNames: ["SKILL.md", "index.md", "README.md"],
-    preserveDirectNameFallback: true,
   });
 }

@@ -164,7 +164,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.code).toBe("WORKFLOW_NOT_FOUND");
   });
 
-  test("workflow status <ref>: never run in this scope → not-found envelope names the scope and suggests --all-scopes (#942)", async () => {
+  test("workflow status <ref>: never run → not-found envelope names the ref (#1239)", async () => {
     const stash = makeStashDir();
     await createReleaseFlow(stash);
     const { stderr, status } = await runCli(["workflow", "status", "workflows/release-flow"], stash);
@@ -173,8 +173,7 @@ describe("akm workflow — JSON envelope snapshot (WS6)", () => {
     expect(env.ok).toBe(false);
     expect(env.code).toBe("WORKFLOW_NOT_FOUND");
     expect(env.error).toContain("workflows/release-flow");
-    expect(env.error).toContain("scope");
-    expect(env.hint).toContain("--all-scopes");
+    expect(env.error).not.toContain("scope");
   });
 
   test("retired workflow next returns an unknown-command envelope", async () => {

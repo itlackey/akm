@@ -244,27 +244,25 @@ describe("walkStashFlat", () => {
     }
   });
 
-  test("does not dereference a tracked symlink pointing outside the stash root", () => {
-    // The git walk resolved entries with statSync, which follows symlinks, while
-    // the manual walk skipped them explicitly to prevent traversal outside
-    // stashRoot. A tracked symlink therefore pulled its target's content into
-    // the searchable index — reachable from any added bundle that is a git repo,
-    // since `akm index` runs automatically after `bundle add`.
+  test("indexes a tracked file symlink pointing outside the stash root (#1237)", () => {
+    // Installing a bundle is the trust decision: a file that is a symlink to a
+    // file elsewhere is indexed like any other file, by the git walk and the
+    // manual walk alike.
     const parent = tmpDir();
     const root = path.join(parent, "stash");
     const outside = path.join(parent, "secret.txt");
     fs.mkdirSync(root, { recursive: true });
     fs.writeFileSync(outside, "SECRET OUTSIDE STASH\n");
     writeFile(path.join(root, "knowledge", "real.md"), "# Real\n");
-    fs.symlinkSync(path.join("..", "..", "secret.txt"), path.join(root, "knowledge", "leak.md"));
+    fs.symlinkSync(path.join("..", "..", "secret.txt"), path.join(root, "knowledge", "linked.md"));
     expect(spawnSync("git", ["init"], { cwd: root }).status).toBe(0);
     expect(spawnSync("git", ["add", "-A"], { cwd: root }).status).toBe(0);
 
     const result = walkStashFlatWithStatus(root);
 
     const paths = result.files.map((file) => file.relPath).sort();
-    expect(paths).toEqual(["knowledge/real.md"]);
-    expect(result.files.some((file) => file.content().includes("SECRET OUTSIDE STASH"))).toBe(false);
+    expect(paths).toEqual(["knowledge/linked.md", "knowledge/real.md"]);
+    expect(result.files.some((file) => file.content().includes("SECRET OUTSIDE STASH"))).toBe(true);
   });
 
   test("ignores tracked files deleted from the worktree", () => {
@@ -294,9 +292,9 @@ describe("walkStashFlat", () => {
 
 // ── R4.3: symlink escape ─────────────────────────────────────────────────────
 //
-// walkStashFlat (manual fallback) must skip symlinks that point outside the
-// stash root so that malicious or accidental symlinks cannot leak files from
-// the host filesystem into search results.
+// walkStashFlat (manual fallback) indexes a file symlink like any other file
+// (installing a bundle is the trust decision) and never descends a directory
+// symlink, which would risk cycles.
 
 describe("walkStashFlat — symlink escape", () => {
   // Track extra files created outside tmpDir() so we can clean them up.
@@ -312,7 +310,7 @@ describe("walkStashFlat — symlink escape", () => {
     }
   });
 
-  test("symlink pointing outside stash root is NOT included in results", () => {
+  test("a file symlink pointing outside the stash root is included (#1237)", () => {
     // Create a stash root that is NOT inside a git repo so the manual walker
     // is used (the git walker relies on git ls-files which won't list a
     // symlink that targets an untracked file outside the repo).
@@ -336,10 +334,8 @@ describe("walkStashFlat — symlink escape", () => {
 
     const resultPaths = results.map((r) => r.absPath);
 
-    // The symlink must NOT appear in results
-    expect(resultPaths).not.toContain(symlinkPath);
-
-    // Confirm the outside target is also not reached through the symlink
+    // The symlink is indexed under its authored path, not its target's
+    expect(resultPaths).toContain(symlinkPath);
     expect(resultPaths).not.toContain(outsideFile);
 
     // The legitimate file should still be found

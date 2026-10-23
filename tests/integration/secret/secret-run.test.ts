@@ -61,4 +61,27 @@ describe("secret run", () => {
     expect(status).toBe(0);
     expect(stdout.trim()).toBe("super-secret-token");
   });
+
+  test("injects the trimmed value: a trailing newline never reaches the child", () => {
+    const stashDir = makeStash();
+    setSecret(path.join(stashDir, "secrets", "padded"), Buffer.from("tok\n\n"));
+
+    const { stdout, status } = spawnCli(
+      ["secret", "run", "secrets/padded", "TOKEN", "--", "bash", "-lc", "printf '[%s]' \"$TOKEN\""],
+      { AKM_BUNDLE_DIR: stashDir },
+    );
+    expect(status).toBe(0);
+    expect(stdout).toBe("[tok]");
+  });
+
+  test("a bare name is a usage error naming the full ref", () => {
+    const stashDir = makeStash();
+    setSecret(path.join(stashDir, "secrets", "demo"), Buffer.from("v"));
+
+    const { stderr, status } = spawnCli(["secret", "run", "demo", "TOKEN", "--", "true"], {
+      AKM_BUNDLE_DIR: stashDir,
+    });
+    expect(status).toBe(2);
+    expect(JSON.parse(stderr.trim()).error).toContain("secrets/demo");
+  });
 });

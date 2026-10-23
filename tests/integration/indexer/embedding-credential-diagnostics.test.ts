@@ -4,7 +4,7 @@
 
 /**
  * #953 field gap: a keyless embedding request could not be reproduced in the
- * lab — every `RemoteEmbedder` path already resolves `secret://` through one
+ * lab — every `RemoteEmbedder` path already resolves `${secrets/name}` through one
  * boundary. The actionable outcome is a self-diagnosing run: one
  * default-level progress line, before the first provider request, naming
  * the endpoint, the model, and the credential SOURCE (never the value), so
@@ -81,7 +81,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       mockEmbedder();
 
       const messages: string[] = [];
-      const result = await generateEmbeddingsForDb(db, configWithApiKey("secret://lab-api-key"), (e) =>
+      const result = await generateEmbeddingsForDb(db, configWithApiKey("${secrets/lab-api-key}"), (e) =>
         messages.push(e.message),
       );
       expect(result.success).toBe(true);
@@ -89,7 +89,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       const diagnosticIndex = messages.findIndex((m) => m.startsWith("[embed] endpoint "));
       expect(diagnosticIndex).toBeGreaterThanOrEqual(0);
       expect(messages[diagnosticIndex]).toBe(
-        "[embed] endpoint http://localhost:1/embeddings, model test-model; credential: secret://lab-api-key (store)",
+        "[embed] endpoint http://localhost:1/embeddings, model test-model; credential: ${secrets/lab-api-key} (store)",
       );
       // Before the first provider request — i.e. before the "Generating
       // embeddings for N ..." line that precedes the actual embedBatch call.
@@ -140,7 +140,7 @@ describe("generateEmbeddingsForDb: embedding-credential diagnostics (#953)", () 
       setVerbose(true);
 
       const messages: string[] = [];
-      await generateEmbeddingsForDb(db, configWithApiKey("secret://lab-api-key"), (e) => messages.push(e.message));
+      await generateEmbeddingsForDb(db, configWithApiKey("${secrets/lab-api-key}"), (e) => messages.push(e.message));
 
       const diagnostic = messages.find((m) => m.startsWith("[embed] endpoint "));
       expect(diagnostic).toContain(`; config: ${getConfigPath()}`);

@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 import { ConfigError } from "../../core/errors";
-import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
 import { canonicalResolvedExecutionRequest, type LoweringNotice } from "../../execution/resolved-request";
 import { type BuiltExecution, buildExecutionFromWire } from "../../integrations/agent/execution";
 import { runExecution, unwrapHarnessReply } from "../../integrations/agent/runner-dispatch";
@@ -31,8 +30,9 @@ export interface UnitDispatchRequest {
    * the run params, a map unit's item + index, and the step's declared
    * `inputs:` artifacts, all as canonical JSON. Applied ON TOP of {@link env}
    * so an engine-authored context variable cannot be shadowed by a binding.
-   * Kept separate from `env` on purpose: `env` values are the resolved SECRETS
-   * that must be redacted out of the journal, and these plainly are not.
+   * Kept separate from `env` on purpose: `env` carries configuration plus
+   * resolved secret values, and only {@link sensitiveValues} is redacted out of
+   * the journal; these plainly are not secrets.
    */
   execContext?: Record<string, string>;
   timeoutMs: number | null;
@@ -41,7 +41,7 @@ export interface UnitDispatchRequest {
   env?: Record<string, string>;
   /** Exact values that must be removed before output reaches the journal. */
   sensitiveValues?: readonly string[];
-  /** Working directory for the unit's child process or SDK session. */
+  /** Working directory for the unit's child process or SDK session: the owner root of the run's workflow. */
   cwd?: string;
   signal?: AbortSignal;
   /** The task runner's provenance event source (`AKM_EVENT_SOURCE`); an authored `env:` binding wins. */
@@ -60,6 +60,12 @@ export interface UnitDispatchResult {
   usage?: AgentTokenUsage;
   /** Safe, structured diagnostics emitted by the common execution lowerer. */
   notices?: readonly Readonly<LoweringNotice>[];
+  /**
+   * Secret values the dispatch itself resolved (an exec unit's `${secrets/…}` argv/cwd tokens). They join
+   * the request's {@link UnitDispatchRequest.sensitiveValues} in the executor's post-parse scrub, so the
+   * dispatcher leaves its output untouched and a structured parse sees exactly what the child wrote.
+   */
+  sensitiveValues?: readonly string[];
 }
 
 /** The one dispatch seam. `feedback` carries a structured-output retry prompt. */
@@ -71,16 +77,11 @@ export function prepareWorkflowExecution(
   prompt = request.prompt,
 ): BuiltExecution {
   const target = request.frozenTarget;
-  if (target.cwdIdentity) assertFrozenDirectoryContained(target.cwdIdentity);
   const wire = JSON.parse(canonicalResolvedExecutionRequest(target.request)) as Record<string, unknown>;
   const command = { ...(wire.command as Record<string, unknown>), content: prompt };
   const runtime = {
     ...(wire.runtime as Record<string, unknown>),
-    ...(request.cwd !== undefined
-      ? { workspace: request.cwd }
-      : target.cwdIdentity
-        ? { workspace: target.cwdIdentity.realCwd }
-        : {}),
+    ...(request.cwd !== undefined ? { workspace: request.cwd } : {}),
     ...(request.env !== undefined ? { environment: request.env } : {}),
   };
   wire.command = command;

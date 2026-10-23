@@ -25,11 +25,13 @@
  *    when crossed, regardless of `on_error`.
  */
 
-import { appendEvent } from "../../core/events";
+import { resolveRefToken } from "../../commands/env/env-binding";
+import { isInstalledBundle } from "../../core/env-secret-ref";
+import { NotFoundError } from "../../core/errors";
 import { validateJsonSchemaSubset } from "../../core/json-schema";
+import { substituteRefTokens } from "../../core/ref-token";
 import { runStructured } from "../../core/structured";
 import { warn } from "../../core/warn";
-import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import {
   type WorkflowRunUnitAttemptRowV4,
@@ -37,8 +39,9 @@ import {
   withWorkflowRunsConnection,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import type { WorkflowBudget, WorkflowPlanStep } from "../plan";
+import type { WorkflowBudget, WorkflowExecSpec, WorkflowPlanStep } from "../plan";
 import { WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
+import { resolveRunBundleRoot } from "../runtime/workflow-asset-loader";
 // The ONE child-workflow drive — publishes and drives a
 // `child-workflow`-targeted unit; this module's dispatch seam is its only
 // production caller.
@@ -121,11 +124,10 @@ export interface StepExecutionContext {
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
   /**
-   * The engine invocation's working directory: the base directory an `exec`
-   * unit spawns in. Defaults to `process.cwd()`; injected by tests so no chdir
-   * is needed.
+   * Test seam: the directory exec units and agents work in, instead of the
+   * owner root of `workflowRef`. Production never sets it.
    */
-  workDir?: string;
+  bundleRootOverride?: string;
 }
 
 export interface StepExecutionResult {
@@ -310,6 +312,8 @@ function openDispatchBudget(
 type StepDispatchPrerequisites =
   | {
       ok: true;
+      /** The owner root of the run's workflow: where this step's exec units and agents work. Set whenever a unit will dispatch. */
+      cwd?: string;
       env?: Record<string, string>;
       sensitiveValues?: readonly string[];
     }
@@ -318,26 +322,32 @@ type StepDispatchPrerequisites =
 /** Resolve the live-at-dispatch prerequisites once, after durable-row reuse is known. */
 async function prepareStepDispatchPrerequisites(input: {
   plan: WorkflowPlanStep;
+  ctx: StepExecutionContext;
   workUnits: readonly StepWorkUnit[];
   willDispatch: boolean;
   dispatched: number;
 }): Promise<StepDispatchPrerequisites> {
-  const { plan, workUnits, willDispatch, dispatched } = input;
+  const { plan, ctx, workUnits, willDispatch, dispatched } = input;
   let env: Record<string, string> | undefined;
   let sensitiveValues: readonly string[] | undefined;
+  // The run's bundle is found again here, never frozen: a bundle update moves it to a new directory.
+  let cwd = ctx.bundleRootOverride;
+  if (willDispatch && cwd === undefined) {
+    try {
+      cwd = resolveRunBundleRoot(ctx.workflowRef);
+    } catch (err) {
+      return {
+        ok: false,
+        result: failedStep(dispatched, `Step "${plan.stepId}" cannot run: ${message(err).replace(/\.$/, "")}.`),
+      };
+    }
+  }
   const frozenEnvironment = workUnits[0]?.environment;
   if (willDispatch && frozenEnvironment && frozenEnvironment.length > 0) {
     try {
       const materialized = materializeFrozenWorkflowEnvironment(frozenEnvironment);
       env = materialized.values;
       sensitiveValues = materialized.sensitiveValues;
-      for (const audit of materialized.audits) {
-        appendEvent({
-          eventType: audit.eventType,
-          ref: audit.ref,
-          metadata: { keys: audit.keys, secretNames: audit.secretNames },
-        });
-      }
     } catch (err) {
       return {
         ok: false,
@@ -348,6 +358,7 @@ async function prepareStepDispatchPrerequisites(input: {
 
   return {
     ok: true,
+    ...(cwd !== undefined ? { cwd } : {}),
     ...(env ? { env } : {}),
     ...(sensitiveValues ? { sensitiveValues } : {}),
   };
@@ -396,12 +407,13 @@ async function executeStepPlanInConnection(
 
   const prerequisites = await prepareStepDispatchPrerequisites({
     plan,
+    ctx,
     workUnits,
     willDispatch,
     dispatched,
   });
   if (!prerequisites.ok) return prerequisites.result;
-  const { env, sensitiveValues } = prerequisites;
+  const { cwd, env, sensitiveValues } = prerequisites;
 
   // Budget ceilings + lifetime-cap accounting, and the budget-chained abort
   // signal they trip. Extracted verbatim (behavior-identical) — see
@@ -418,6 +430,7 @@ async function executeStepPlanInConnection(
         runUnit({
           plan,
           workUnit,
+          cwd,
           env,
           sensitiveValues,
           ctx,
@@ -491,6 +504,8 @@ interface RunUnitInput {
   plan: WorkflowPlanStep;
   /** The precomputed work unit (id, resolved prompt + input hash, node metadata) from step-work. */
   workUnit: StepWorkUnit;
+  /** The step's working directory ({@link StepDispatchPrerequisites}), handed to every target kind. */
+  cwd?: string;
   env?: Record<string, string>;
   /** Current values sampled from frozen env descriptors, for terminal scrub. */
   sensitiveValues?: readonly string[];
@@ -511,7 +526,7 @@ interface RunUnitInput {
 }
 
 async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
-  const { plan, workUnit, env, sensitiveValues, ctx, dispatcher } = input;
+  const { plan, workUnit, cwd, env, sensitiveValues, ctx, dispatcher } = input;
   const unitId = workUnit.unitId;
 
   // Target validity is a WHOLE-LIST invariant, never a per-unit condition:
@@ -531,10 +546,7 @@ async function runUnit(input: RunUnitInput): Promise<UnitOutcome> {
     prompt,
     frozenTarget: workUnit.frozenTarget,
     ...(workUnit.execContext ? { execContext: workUnit.execContext } : {}),
-    // An exec unit spawns in the engine invocation's working directory. Only
-    // exec units get it: handing an agent unit a cwd it never had would change
-    // harness behavior, and the agent path already takes its cwd from its profile.
-    ...(workUnit.frozenTarget.kind !== "command" && ctx.workDir !== undefined ? { cwd: ctx.workDir } : {}),
+    ...(cwd !== undefined ? { cwd } : {}),
     timeoutMs: workUnit.timeoutMs,
     ...(workUnit.schema ? { schema: workUnit.schema } : {}),
     ...(env ? { env } : {}),
@@ -741,6 +753,7 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
 
   // A child-workflow unit goes to the child executor instead of the
   // dispatcher, after its attempt row is reserved, so it journals like any unit.
+  const resolvedSecrets = new Set<string>();
   const dispatched =
     request.frozenTarget.kind === "child-workflow"
       ? await driveChildWorkflowUnit({
@@ -751,20 +764,18 @@ async function dispatchJournaledAttempt(input: JournaledAttemptInput): Promise<U
           inputHash: input.inputHash,
           dispatcher,
         })
-      : await dispatchUnit(request, dispatcher);
+      : await dispatchUnit(request, dispatcher, resolvedSecrets);
   // Credential and passthrough values are intentionally sampled only AFTER
   // the default dispatcher has authorized/lowered the frozen request and
   // materialized credentials at its terminal dispatch boundary. Custom test
   // dispatchers receive the same post-dispatch journal scrub. Secret-shaped
   // run params join the set: they must reach the prompt in clear (the unit
-  // needs them), but nothing about them needs to reach the journal.
-  const sensitiveValues = collectWorkflowDispatchSensitiveValues(
-    {
-      ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
-      sensitiveValues: [...(request.sensitiveValues ?? []), ...secretShapedParamValues(ctx.params)],
-    },
-    request.env,
-  );
+  // needs them), but nothing about them needs to reach the journal. So do the
+  // secrets the dispatcher resolved itself (an exec unit's argv/cwd tokens).
+  const sensitiveValues = collectWorkflowDispatchSensitiveValues({
+    ...(request.frozenTarget.kind === "command" ? { runner: request.frozenTarget.runner } : {}),
+    sensitiveValues: [...(request.sensitiveValues ?? []), ...resolvedSecrets, ...secretShapedParamValues(ctx.params)],
+  });
   const outcome = redactUnitOutcome(dispatched, sensitiveValues);
 
   const finishedAt = new Date().toISOString();
@@ -838,7 +849,12 @@ class UnitTransportError extends Error {
   }
 }
 
-async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispatcher): Promise<UnitOutcome> {
+async function dispatchUnit(
+  request: UnitDispatchRequest,
+  dispatcher: UnitDispatcher,
+  /** Receives the secret values the dispatcher resolved, for the caller's journal scrub. */
+  resolvedSecrets: Set<string>,
+): Promise<UnitOutcome> {
   let tokens = 0;
   let sawUsage = false;
   let loweringNotices: UnitDispatchResult["notices"];
@@ -849,6 +865,7 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
   let sessionId: string | undefined;
   const dispatchOnce = async (feedback?: string): Promise<string> => {
     const result = await dispatcher(request, feedback);
+    for (const value of result.sensitiveValues ?? []) resolvedSecrets.add(value);
     if (result.usage) {
       sawUsage = true;
       tokens +=
@@ -950,11 +967,14 @@ async function dispatchUnit(request: UnitDispatchRequest, dispatcher: UnitDispat
 export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) => {
   const frozenTarget = request.frozenTarget;
   if (frozenTarget.kind === "shell") {
-    if (frozenTarget.cwdIdentity) assertFrozenDirectoryContained(frozenTarget.cwdIdentity);
-    return runExecUnit({
+    if (request.cwd === undefined) {
+      throw new Error(`exec unit "${request.unitId}" was dispatched with no working directory.`);
+    }
+    const { exec, secretValues } = substituteExecRefs(request.unitId, frozenTarget.exec);
+    const outcome = await runExecUnit({
       unitId: request.unitId,
-      exec: frozenTarget.exec,
-      baseDir: request.cwd ?? frozenTarget.cwdIdentity?.realCwd ?? process.cwd(),
+      exec,
+      baseDir: request.cwd,
       ...(request.env ? { env: request.env } : {}),
       ...(request.execContext ? { context: request.execContext } : {}),
       ...(request.schema ? { hasOutputSchema: true } : {}),
@@ -962,9 +982,42 @@ export const defaultUnitDispatcher: UnitDispatcher = async (request, feedback) =
       ...(request.signal ? { signal: request.signal } : {}),
       ...(request.eventSource !== undefined ? { eventSource: request.eventSource } : {}),
     });
+    // A secret substituted into argv joins the redaction set, like one bound through an env asset: the
+    // executor scrubs after the structured parse, so a quoted or numeric secret is not missed or corrupted.
+    return { ...outcome, sensitiveValues: secretValues };
   }
   return dispatchWorkflowExecution(request, feedback);
 };
+
+/**
+ * Replace the `${ref}` tokens in an exec unit's argv and `cwd` (prompts are not substituted): a
+ * `secrets/` ref with the secret's value, any other asset ref with its absolute path. A ref no
+ * bundle owns fails the unit before anything is spawned.
+ */
+function substituteExecRefs(
+  unitId: string,
+  exec: WorkflowExecSpec,
+): { exec: WorkflowExecSpec; secretValues: string[] } {
+  const slots: Record<string, string> = Object.fromEntries(exec.command.entries());
+  if (exec.cwd !== undefined) slots.cwd = exec.cwd;
+  const { values, missing, secretValues } = substituteRefTokens(slots, resolveRefToken, isInstalledBundle);
+  if (missing.length > 0) {
+    throw new NotFoundError(
+      `exec unit "${unitId}" references asset(s) that no bundle owns: ${missing.join(", ")}. Nothing was run.`,
+      "FILE_NOT_FOUND",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Write each `${ref}` as a full akm ref that exists, e.g. `${team//scripts/run.sh}`.",
+    );
+  }
+  return {
+    exec: {
+      ...exec,
+      command: exec.command.map((_, index) => values[index]) as [string, ...string[]],
+      ...(exec.cwd !== undefined ? { cwd: values.cwd } : {}),
+    },
+    secretValues,
+  };
+}
 
 // ── Small helpers ────────────────────────────────────────────────────────────
 

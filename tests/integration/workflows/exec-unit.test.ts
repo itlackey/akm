@@ -18,9 +18,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
+import { getCacheDir, getConfigDir, getDataDir, getStateDir } from "../../../src/core/paths";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { readStream } from "../../../src/core/subprocess";
 import { _setWarnSinkForTests } from "../../../src/core/warn";
+import { formatWorkflowStatusPlain } from "../../../src/output/text/workflow-format";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import { EXEC_DEFAULT_ENV_PASSTHROUGH, runExecUnit } from "../../../src/workflows/exec/exec-unit";
 import {
@@ -96,7 +98,7 @@ function run(plan: WorkflowPlan, ctx: Partial<StepExecutionContext> = {}): Promi
     workflowRef: "workflows/exec-demo",
     params: {},
     evidence: {},
-    workDir,
+    bundleRootOverride: workDir,
     ...ctx,
   });
 }
@@ -409,6 +411,59 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
     expect(env.PATH).toBeTruthy();
   });
 
+  /** Run a child that reports the AKM location variables it sees. */
+  async function reportLocations(unitLines: string[] = []): Promise<Record<string, string | null>> {
+    const names = ["AKM_BUNDLE_DIR", "AKM_CONFIG_DIR", "AKM_DATA_DIR", "AKM_CACHE_DIR", "AKM_STATE_DIR"];
+    seedRun(["work"]);
+    const plan = execPlan([
+      "    unit:",
+      "      exec:",
+      `        command: ${JSON.stringify(
+        bunArgv(
+          `process.stdout.write(JSON.stringify(Object.fromEntries(${JSON.stringify(names)}.map((n) => [n, process.env[n] ?? null]))))`,
+        ),
+      )}`,
+      ...unitLines,
+    ]);
+    storePlan(plan);
+    const result = await run(plan);
+    expect(result.ok).toBe(true);
+    return JSON.parse(String(result.evidence.output)) as Record<string, string | null>;
+  }
+
+  test("the child sees the parent's EFFECTIVE akm directories, including ones that come from XDG_*_HOME", async () => {
+    // The sandbox sets XDG_*_HOME and no AKM_{CONFIG,DATA,CACHE,STATE}_DIR, as an operator using XDG does.
+    expect(process.env.AKM_CONFIG_DIR).toBeUndefined();
+    expect(process.env.XDG_CONFIG_HOME).toBeTruthy();
+    expect(process.env.AKM_BUNDLE_DIR).toBeTruthy();
+    expect(await reportLocations()).toEqual({
+      AKM_BUNDLE_DIR: process.env.AKM_BUNDLE_DIR as string,
+      AKM_CONFIG_DIR: getConfigDir(),
+      AKM_DATA_DIR: getDataDir(),
+      AKM_CACHE_DIR: getCacheDir(),
+      AKM_STATE_DIR: getStateDir(),
+    });
+  });
+
+  test("a bundle dir the parent never set is not invented for the child", async () => {
+    const prior = process.env.AKM_BUNDLE_DIR;
+    delete process.env.AKM_BUNDLE_DIR;
+    try {
+      expect((await reportLocations()).AKM_BUNDLE_DIR).toBeNull();
+    } finally {
+      if (prior !== undefined) process.env.AKM_BUNDLE_DIR = prior;
+    }
+  });
+
+  test("an explicit `pass_env` of a location variable wins over the resolved directory", async () => {
+    process.env.AKM_CONFIG_DIR = "/explicit/config";
+    try {
+      expect((await reportLocations(["        pass_env: [AKM_CONFIG_DIR]"])).AKM_CONFIG_DIR).toBe("/explicit/config");
+    } finally {
+      delete process.env.AKM_CONFIG_DIR;
+    }
+  });
+
   test("the exported default allowlist is the single definition the child is built from", async () => {
     // Structural pin: no name reaches the child that is not on the allowlist,
     // a binding, or the AKM_* context. `_`/`PWD`-style shell additions are not
@@ -425,6 +480,11 @@ describe("exec unit — the child environment is an ALLOWLIST", () => {
       .filter(Boolean);
     const allowed = new Set<string>([
       ...EXEC_DEFAULT_ENV_PASSTHROUGH,
+      "AKM_BUNDLE_DIR",
+      "AKM_CONFIG_DIR",
+      "AKM_DATA_DIR",
+      "AKM_CACHE_DIR",
+      "AKM_STATE_DIR",
       "AKM_RUN_ID",
       "AKM_STEP_ID",
       "AKM_UNIT_ID",
@@ -1069,6 +1129,59 @@ describe("exec unit — a stderr-only diagnosis survives to the journal (finding
     expect(unit?.diagnostic ?? "").toContain(CAUSE);
   }, 30_000);
 
+  test("`status --units` shows a failed exec unit's argv, cwd and the refs its tokens resolve to", async () => {
+    fs.mkdirSync(path.join(storage.stashDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(storage.stashDir, "scripts", "probe.ts"), "// probe\n", "utf8");
+    seedRun(["work"]);
+    const argv = [...bunArgv("process.exit(7)"), "${scripts/probe.ts}"];
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(argv)}`, "        cwd: ."]);
+    storePlan(plan);
+    expect((await run(plan)).ok).toBe(false);
+
+    const detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.orchestration?.exec?.command).toEqual(argv);
+    expect(unit?.orchestration?.exec?.cwd).toBe(".");
+    expect(unit?.orchestration?.refs).toEqual([
+      { ref: "scripts/probe.ts", resolved: expect.stringMatching(/\/\/scripts\/probe\.ts$/), in: "argv" },
+    ]);
+
+    const text = formatWorkflowStatusPlain({ ...detail } as unknown as Record<string, unknown>) ?? "";
+    expect(text).toContain(`argv: ${JSON.stringify(argv)}`);
+    expect(text).toContain("cwd: .");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: literal ref token as printed
+    expect(text).toContain("${scripts/probe.ts} -> stash//scripts/probe.ts (argv)");
+  }, 30_000);
+
+  test("`status --units` on a run frozen as irVersion 6 still describes a failed unit and does not say it is running the run", async () => {
+    seedRun(["work"]);
+    const argv = bunArgv("process.exit(7)");
+    const plan = execPlan(["    unit:", "      exec:", `        command: ${JSON.stringify(argv)}`]);
+    storePlan(plan);
+    expect((await run(plan)).ok).toBe(false);
+    const db = openStateDatabase();
+    try {
+      db.prepare("UPDATE workflow_runs SET plan_ir_version = 6 WHERE id = ?").run(RUN_ID);
+    } finally {
+      db.close();
+    }
+
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    let detail: Awaited<ReturnType<typeof getWorkflowStatus>>;
+    try {
+      detail = await getWorkflowStatus(RUN_ID, { includeUnits: true });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+
+    const unit = (detail.units ?? []).find((u) => u.unitId === "work:solo");
+    expect(unit?.orchestration?.exec?.command).toEqual(argv);
+    expect(warnings.join("\n")).not.toContain("running it with the current engine");
+  }, 30_000);
+
   test("a SUCCESSFUL unit's journaled result is unchanged (the artifact, not a diagnostic)", async () => {
     seedRun(["work"]);
     const plan = execPlan([
@@ -1136,7 +1249,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
       workflowRef: "workflows/exec-demo",
       params: {},
       evidence: { produce: { output: produced } },
-      workDir,
+      bundleRootOverride: workDir,
     });
   }
 
@@ -1267,7 +1380,7 @@ describe("exec unit — the AKM_* context environment is bounded by THIS PLATFOR
       workflowRef: "workflows/exec-demo",
       params: {},
       evidence: { produce: { output: [HUGE] } },
-      workDir,
+      bundleRootOverride: workDir,
     });
     expect(result.units[0]!.failureReason).toBe("exec_context_too_large");
     expect(result.units[0]!.error).toContain("AKM_ITEM");

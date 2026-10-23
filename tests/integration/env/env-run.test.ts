@@ -17,7 +17,7 @@ import { afterAll, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { makeStashDir, type SandboxedDir } from "../../_helpers/sandbox";
+import { makeStashDir, type SandboxedDir, writeSandboxConfig } from "../../_helpers/sandbox";
 
 const disposers: SandboxedDir[] = [];
 
@@ -72,12 +72,12 @@ describe("env run", () => {
     expect(stderr.trim()).toBe("");
   });
 
-  test("substitutes ${secret:NAME} tokens with the sibling secret value", () => {
+  test("substitutes ${secrets/name} tokens with the secret value", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "secrets", "my_api_token"), "s3cr3t", "utf8");
-    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secret:my_api_token}\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=Bearer ${secrets/my_api_token}\n", "utf8");
 
     const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '%s' \"$API_KEY\""], {
       AKM_BUNDLE_DIR: stashDir,
@@ -93,7 +93,7 @@ describe("env run", () => {
     fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
     fs.writeFileSync(path.join(stashDir, "secrets", "a"), "AAA", "utf8");
     fs.writeFileSync(path.join(stashDir, "secrets", "b"), "BBB", "utf8");
-    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "PAIR=${secret:a}:${secret:b}\nKEEP=${HOME}\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "PAIR=${secrets/a}:${secrets/b}\nKEEP=${HOME}\n", "utf8");
 
     const { stdout, status } = spawnCli(
       ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$PAIR" "$KEEP"'],
@@ -105,22 +105,122 @@ describe("env run", () => {
     expect(stdout.trim()).toBe("AAA:BBB|${HOME}");
   });
 
-  test("warns but injects when a first-party env file contains a hijack var", () => {
+  test("reads a secret trimmed: a trailing newline never reaches the child", () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
-    // EDITOR is on the dangerous-key list (RCE vector when sourced from an
-    // untrusted stash) but, unlike PATH, does not break command resolution —
-    // so this exercises the warn-and-inject path for a first-party stash.
-    fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "EDITOR=/evil\nFOO=ok\n", "utf8");
+    fs.mkdirSync(path.join(stashDir, "secrets"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "secrets", "tok"), "  s3cr3t\n\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secrets/tok}\n", "utf8");
+
+    const { stdout, status } = spawnCli(["env", "run", "env/prod", "--", "bash", "-lc", "printf '[%s]' \"$API_KEY\""], {
+      AKM_BUNDLE_DIR: stashDir,
+    });
+
+    expect(status).toBe(0);
+    expect(stdout).toBe("[s3cr3t]");
+  });
+
+  test("a secrets ref qualified with another bundle resolves there, and a script ref yields its path", () => {
+    const primaryDir = makeStash();
+    const teamDir = makeStash();
+    fs.mkdirSync(path.join(primaryDir, "env"), { recursive: true });
+    fs.mkdirSync(path.join(teamDir, "secrets"), { recursive: true });
+    fs.mkdirSync(path.join(teamDir, "scripts"), { recursive: true });
+    fs.writeFileSync(path.join(teamDir, "secrets", "discord"), "from-team", "utf8");
+    fs.writeFileSync(path.join(teamDir, "scripts", "fetch.sh"), "#!/bin/sh\n", "utf8");
+    fs.writeFileSync(
+      path.join(primaryDir, "env", "prod.env"),
+      "TOKEN=${team//secrets/discord}\nTOOL=${team//scripts/fetch.sh}\n",
+      "utf8",
+    );
+    writeSandboxConfig({ bundles: { team: { path: teamDir } } });
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$TOKEN" "$TOOL"'],
+      { AKM_BUNDLE_DIR: primaryDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout).toBe(`from-team|${path.join(teamDir, "scripts", "fetch.sh")}`);
+  });
+
+  test("a qualified ref into an installed non-native bundle substitutes its path; shell ${FOO//-/_} stays text", () => {
+    const primaryDir = makeStash();
+    const teamDir = makeStash();
+    fs.mkdirSync(path.join(primaryDir, "env"), { recursive: true });
+    fs.writeFileSync(
+      path.join(teamDir, "release.md"),
+      "---\ntype: workflow\nsteps:\n  - id: go\n---\n\n## go\n\nGo.\n",
+    );
+    fs.writeFileSync(path.join(primaryDir, "env", "prod.env"), "REL=${team//release}\nSH=${FOO//-/_}\n", "utf8");
+    writeSandboxConfig({
+      bundles: { team: { path: teamDir, components: { main: { root: ".", adapter: "akm-workflow" } } } },
+    });
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env/prod", "--", "bash", "-lc", 'printf \'%s|%s\' "$REL" "$SH"'],
+      { AKM_BUNDLE_DIR: primaryDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout).toBe(`${fs.realpathSync(path.join(teamDir, "release.md"))}|\${FOO//-/_}`);
+  });
+
+  test("a bare name is a usage error naming the full ref", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "FOO=bar\n", "utf8");
+
+    const { stderr, status } = spawnCli(["env", "run", "prod", "--", "true"], { AKM_BUNDLE_DIR: stashDir });
+
+    expect(status).toBe(2);
+    expect(JSON.parse(stderr.trim()).error).toContain("env/prod");
+  });
+
+  test("injects a hijack var from the primary stash with no block or warning (#1237)", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "GIT_SSH_COMMAND=/evil\nFOO=ok\n", "utf8");
 
     const { stdout, stderr, status } = spawnCli(
-      ["env", "run", "env/danger", "--", "bash", "-lc", "printf '%s' \"$FOO\""],
+      ["env", "run", "env/danger", "--", "bash", "-lc", 'printf \'%s|%s\' "$FOO" "$GIT_SSH_COMMAND"'],
       { AKM_BUNDLE_DIR: stashDir },
     );
 
     expect(status).toBe(0);
-    expect(stdout.trim()).toBe("ok");
-    expect(stderr).toContain("EDITOR");
+    expect(stdout.trim()).toBe("ok|/evil");
+    expect(stderr).not.toContain("process-hijacking");
+  });
+
+  test("injects a hijack var from a non-primary (installed) bundle with no block and no flag (#1237)", () => {
+    const primaryDir = makeStash();
+    const vendorDir = makeStash();
+    fs.mkdirSync(path.join(vendorDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(vendorDir, "env", "danger.env"), "GIT_SSH_COMMAND=/vendor\n", "utf8");
+    writeSandboxConfig({ bundles: { vendor: { path: vendorDir } } });
+
+    const { stdout, stderr, status } = spawnCli(
+      ["env", "run", "vendor//env/danger", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
+      { AKM_BUNDLE_DIR: primaryDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("/vendor");
+    expect(stderr).not.toContain("Refusing to inject");
+  });
+
+  test("--allow-dangerous-env-keys is accepted as a deprecated no-op (#1237)", () => {
+    const stashDir = makeStash();
+    fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
+    fs.writeFileSync(path.join(stashDir, "env", "danger.env"), "GIT_SSH_COMMAND=/evil\n", "utf8");
+
+    const { stdout, status } = spawnCli(
+      ["env", "run", "env/danger", "--allow-dangerous-env-keys", "--", "bash", "-lc", 'printf "%s" "$GIT_SSH_COMMAND"'],
+      { AKM_BUNDLE_DIR: stashDir },
+    );
+
+    expect(status).toBe(0);
+    expect(stdout.trim()).toBe("/evil");
   });
 
   test("--only injects just the named keys", () => {

@@ -4,7 +4,6 @@
 
 import { createHash } from "node:crypto";
 import { type PreparedCommandInvocation, prepareCommandInvocation } from "../../../commands/command/command-execution";
-import { captureFrozenDirectoryIdentity } from "../../../execution/directory-identity";
 import {
   canonicalResolvedExecutionRequest,
   type ResolvedExecutionRequestV1,
@@ -13,7 +12,7 @@ import { fallbackAnnouncement } from "../../../integrations/agent/engine-fallbac
 import { buildExecution } from "../../../integrations/agent/execution";
 import type { RunnerSpec } from "../../../integrations/agent/runner";
 import type { FrozenWorkflowCommandTarget, FrozenWorkflowEnvironmentBinding } from "../../plan";
-import { freezeEnvironment, workflowExecutionSource } from "../environment";
+import { freezeEnvironment } from "../environment";
 import {
   type BaseUnit,
   durableRequest,
@@ -33,12 +32,9 @@ export async function commandDispatch(
   const prepared = await prepareCommandInvocation({
     action,
     config: context.config,
-    ...(context.plan.defaults
-      ? { invocationDefaults: executionUnitValues(context.plan.defaults, context.asset.sourcePath) }
-      : {}),
+    ...(context.plan.defaults ? { invocationDefaults: executionUnitValues(context.plan.defaults) } : {}),
     inlineContentMode: "literal" as const,
-    current: executionUnitValues(source.unit, context.asset.sourcePath),
-    sourceLoader: (ref, kind) => workflowExecutionSource(ref, kind, context),
+    current: executionUnitValues(source.unit),
   });
   return commandResult(source, baseUnit, prepared, context);
 }
@@ -52,7 +48,6 @@ export function commandResult(
 ): ResolvedDispatch {
   const request = durableRequest(prepared.request);
   const lowered = buildExecution(request, prepared.runner);
-  const cwdIdentity = captureFrozenDirectoryIdentity(context.asset.sourcePath);
   const runner: RunnerSpec = lowered.runner;
   const unit: BaseUnit = {
     ...baseUnit,
@@ -70,7 +65,9 @@ export function commandResult(
     request: JSON.parse(canonicalResolvedExecutionRequest(request)) as ResolvedExecutionRequestV1,
     runner,
     ...(targetConcurrency(runner, context.config) ? { concurrency: targetConcurrency(runner, context.config) } : {}),
-    cwdIdentity,
+    // Not a location. akm 0.10.0 and earlier decode a command-only plan and run it in the invoking directory,
+    // but their dispatch refuses a directory identity it cannot verify, so they stop here instead.
+    cwdIdentity: {},
   });
   const engineAnnouncement = fallbackAnnouncement(prepared.fallbackEngineName, request.engine.name);
   return {

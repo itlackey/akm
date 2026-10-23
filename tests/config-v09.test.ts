@@ -119,6 +119,70 @@ describe("0.9 config contract", () => {
     expect(loadUserConfig().engines?.fast?.apiKey).toBe(`\${FAST_API_KEY}`);
   });
 
+  test("accepts a ${ref} engine apiKey and a ${ref} git credential without the literal-key warning", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: {
+        fast: {
+          kind: "llm",
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "test",
+          apiKey: "${secrets/lab-key}",
+        },
+      },
+      bundles: { private: { git: "https://git.example.com/private/repo.git", credential: "${team//secrets/gitea}" } },
+    });
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.engines?.fast?.apiKey).toBe("${secrets/lab-key}");
+      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
+    });
+    expect(warnings).toEqual([]);
+  });
+
+  test("secret://<name> is retired: read as ${secrets/<name>} with one warning per key, rewritten only by akm migrate apply", () => {
+    writeConfig({
+      configVersion: "0.9.0",
+      engines: {
+        fast: {
+          kind: "llm",
+          endpoint: "https://example.test/v1/chat/completions",
+          model: "test",
+          apiKey: "secret://lab-key",
+        },
+      },
+      bundles: {
+        private: { git: "https://git.example.com/private/repo.git", credential: "secret://team//secrets/gitea" },
+      },
+      defaults: { llmEngine: "fast" },
+    });
+
+    const warnings = captureWarnings(() => {
+      const config = loadUserConfig();
+      expect(config.engines?.fast?.apiKey).toBe("${secrets/lab-key}");
+      expect(config.bundles?.private?.credential).toBe("${team//secrets/gitea}");
+      loadUserConfig();
+    });
+    const named = warnings.filter((w) => w.includes("secret://"));
+    expect(named).toHaveLength(2);
+    expect(named.some((w) => w.includes("engines.fast.apiKey"))).toBe(true);
+    expect(named.some((w) => w.includes("bundles.private.credential"))).toBe(true);
+
+    // Reading never rewrites the file.
+    expect(fs.readFileSync(getConfigPath(), "utf8")).toContain("secret://lab-key");
+
+    const preview = normalizeConfigFile(getConfigPath(), { apply: false });
+    expect(preview).toMatchObject({ changed: true, applied: false });
+    expect(preview.keys).toEqual(expect.arrayContaining(["engines", "bundles"]));
+
+    expect(normalizeConfigFile(getConfigPath(), { apply: true }).applied).toBe(true);
+    const onDisk = fs.readFileSync(getConfigPath(), "utf8");
+    expect(onDisk).not.toContain("secret://");
+    expect(JSON.parse(onDisk).engines.fast.apiKey).toBe("${secrets/lab-key}");
+    expect(JSON.parse(onDisk).bundles.private.credential).toBe("${team//secrets/gitea}");
+    expect(normalizeConfigFile(getConfigPath(), { apply: false }).changed).toBe(false);
+  });
+
   test("accepts first-class reasoningEffort on an LLM engine", () => {
     const config = {
       configVersion: "0.9.0" as const,

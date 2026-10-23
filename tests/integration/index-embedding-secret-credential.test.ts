@@ -4,11 +4,11 @@
 
 /**
  * #953 — `akm index`'s embedding requests must carry the
- * `secret://` store-resolved credential, the same way `akm improve`'s
+ * `${secrets/name}` store-resolved credential, the same way `akm improve`'s
  * consolidate path already does (see the last describe block below, the
  * known-good control).
  *
- * A field run with `secret://lab-api-key` on `embedding.apiKey` and
+ * A field run with `${secrets/lab-api-key}` on `embedding.apiKey` and
  * `LAB_API_KEY` deliberately absent from the environment reportedly sent
  * every embedding request with NO Authorization header at all — silently,
  * not as a resolution error. This suite reproduces the standalone `akm
@@ -77,7 +77,7 @@ function expectEveryRequestCarriedCredential(authHeaders: (string | null)[], exp
   }
 }
 
-describe("akm index embedding requests carry the secret:// credential (#953)", () => {
+describe("akm index embedding requests carry the secrets ref credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -113,7 +113,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
     });
     resetConfigCache();
 
@@ -135,7 +135,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
     });
 
     // A child process inherits nothing about the current test's in-memory
@@ -177,7 +177,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
       `${JSON.stringify(
         {
           configVersion: "0.9.0",
-          embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
+          embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
         },
         null,
         2,
@@ -213,7 +213,7 @@ describe("akm index embedding requests carry the secret:// credential (#953)", (
   });
 });
 
-describe("akm bundle update: the update's embedding phase carries the secret:// credential (#953)", () => {
+describe("akm bundle update: the update's embedding phase carries the secrets ref credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -257,7 +257,7 @@ describe("akm bundle update: the update's embedding phase carries the secret:// 
       bundles: {
         [id]: { npm: id, components: { main: { root: ".", adapter: "akm", writable: false } } },
       },
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
     });
     resetConfigCache();
     seedLockEntries([
@@ -311,7 +311,7 @@ describe("akm bundle update: the update's embedding phase carries the secret:// 
   });
 });
 
-describe("akm remember write path: indexWrittenAssets carries the secret:// credential (#953)", () => {
+describe("akm remember write path: indexWrittenAssets carries the secrets ref credential (#953)", () => {
   let storage: IsolatedAkmStorage;
   let server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -342,7 +342,7 @@ describe("akm remember write path: indexWrittenAssets carries the secret:// cred
       semanticSearchMode: "auto",
       bundles: { stash: { path: storage.stashDir, writable: true } },
       defaultBundle: "stash",
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
     });
     resetConfigCache();
 
@@ -387,7 +387,7 @@ describe("known-good control: improve consolidate's embedding path (#953)", () =
     server = capture.server;
 
     writeSandboxConfig({
-      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "secret://lab-api-key" },
+      embedding: { endpoint: capture.url, model: "mock", dimension: 8, apiKey: "${secrets/lab-api-key}" },
     });
     resetConfigCache();
 

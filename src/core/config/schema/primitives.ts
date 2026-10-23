@@ -9,6 +9,7 @@
  */
 import { z } from "zod";
 import { validateExtraParams } from "../../extra-params";
+import { isRefToken, isSecretRefToken } from "../../ref-token";
 import { warnOnce } from "../../warn";
 import { ENGINE_NAME_PATTERN_SOURCE } from "../engine-semantics";
 
@@ -36,25 +37,30 @@ export const httpUrl = z.string().refine((v) => v.startsWith("http://") || v.sta
 
 const ENGINE_NAME_PATTERN = new RegExp(ENGINE_NAME_PATTERN_SOURCE);
 export const ENV_REFERENCE_PATTERN = /^\$[A-Za-z_][A-Za-z0-9_]*$|^\$\{[A-Za-z_][A-Za-z0-9_]*\}$/;
-/** `secret://<name>` — an apiKey reference into the akm secret store, resolved via `resolveSecretFromStore`. */
-export const SECRET_STORE_REFERENCE_PATTERN = /^secret:\/\/(.+)$/;
 
 export const engineName = z
   .string()
   .max(63)
   .regex(ENGINE_NAME_PATTERN, "names must be lowercase kebab-case and must not begin with reserved akm-");
 
-/** The two symbolic apiKey forms akm accepts: an env-var reference or a secret-store reference. Never matches a literal key. */
+/** The two symbolic credential forms akm accepts in config: an env-var reference (`$VAR`, `${VAR}`) or a `secrets/` ref (`${secrets/name}`). Never matches a literal key. */
 export function isApiKeyReference(value: string): boolean {
-  return ENV_REFERENCE_PATTERN.test(value) || SECRET_STORE_REFERENCE_PATTERN.test(value);
+  return ENV_REFERENCE_PATTERN.test(value) || isSecretRefToken(value);
 }
 
 export function symbolicOrWarnApiKey(label: string) {
-  return z.string().superRefine((value) => {
+  return z.string().superRefine((value, ctx) => {
     if (isApiKeyReference(value)) return;
+    if (isRefToken(value)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `a ${label} accepts only a \${secrets/<name>} ref (or a $VAR reference); "${value}" names another kind of asset`,
+      });
+      return;
+    }
     warnOnce(
       `config:literal-api-key:${label}`,
-      `A ${label} in config.json is a literal API key, not a $VAR/\${VAR}/secret:// reference; using it as configured. Prefer \`akm config set ...apiKey '$VAR'\` (with the corresponding env var set) or \`secret://<name>\` (with \`akm secret set <name> ...\`) — see docs/reference/data-and-telemetry.md.`,
+      `A ${label} in config.json is a literal API key, not a $VAR/\${VAR} or \${secrets/<name>} reference; using it as configured. Prefer \`akm config set ...apiKey '$VAR'\` (with the corresponding env var set) or \`'\${secrets/<name>}'\` (with \`akm secret set secrets/<name> ...\`) — see docs/reference/data-and-telemetry.md.`,
     );
   });
 }

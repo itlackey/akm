@@ -77,11 +77,7 @@ import { INDEX_DB_VACUUMED_EVENT, readFreelistInfo, vacuumIfReclaimable } from "
 import { assertIndexedWorkflowSourceIdentity, WorkflowSourceIdentityError } from "../workflows/source-files";
 import { reclassifyIndexDbContention } from "./index-db-contention";
 import { deriveEntryProvenance, deriveInstallations } from "./installations";
-import {
-  type AdapterConceptOwner,
-  indexedPathMatchesOwner,
-  resolveAdapterConceptOwner,
-} from "./lookup/adapter-concept-owner";
+import { type AdapterConceptOwner, indexedPathMatchesOwner, resolveConceptOwner } from "./lookup/adapter-concept-owner";
 import { type EmbeddingGenerationResult, generateEmbeddingsForDb } from "./materialize-embeddings";
 import {
   canUseIncrementalSkip,
@@ -1026,9 +1022,6 @@ function buildSourceScanPlans(
     }
     const walked = walkStashFlatWithStatus(currentStashDir, {
       includeAllDirectories: component.adapter === "okf",
-      ...(component.adapter === "akm" || component.adapter === "akm-workflow"
-        ? { workflowSymlinkAdapter: component.adapter }
-        : {}),
     });
     const dirGroups = groupFileContextsByDir(walked.files);
     const adapter = adapterForId(component.adapter);
@@ -1652,13 +1645,8 @@ async function lookupBundleRefWithResolutionUsing(
 ): Promise<BundleRefLookupResolution> {
   const sources = await resolveLookupSources();
   if (sources.length === 0) return { entry: null };
-  const bundleBySourcePath = new Map(
-    sourceComponents(sources).map((component, index) => [path.resolve(sources[index]!.path), component.id]),
-  );
-
   const qualified = Boolean(ref.bundle);
-  const candidateSources = ref.bundle ? resolveSourcesForOrigin(ref.bundle, sources) : sources;
-  if (candidateSources.length === 0) return { entry: null };
+  if ((ref.bundle ? resolveSourcesForOrigin(ref.bundle, sources) : sources).length === 0) return { entry: null };
 
   let db: Database | undefined;
   let indexError: unknown;
@@ -1673,39 +1661,34 @@ async function lookupBundleRefWithResolutionUsing(
     ...(indexError === undefined ? {} : { indexError }),
   });
   try {
-    for (const source of candidateSources) {
-      const adapterId = source.adapterId ?? detectAdapterId(source.path);
-      const owner = resolveAdapterConceptOwner(source.path, adapterId, ref.conceptId);
-      const lookupConceptId = owner?.conceptId ?? ref.conceptId;
-      const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, lookupConceptId);
-      const sourceBundleId = bundleBySourcePath.get(path.resolve(source.path));
-      const id = db && sourceBundleId ? findEntryIdByRef(db, inputRef, sourceBundleId) : undefined;
-      if (id !== undefined && owner && db) {
-        const entry = readLookupEntry(db, id, ref.conceptId, source.path);
-        if (entry) {
-          if (owner.workflowSource) {
-            try {
-              assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
-              if (entry.adapterId !== adapterId) {
-                throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
-              }
-            } catch (error) {
-              if (!(error instanceof WorkflowSourceIdentityError)) throw error;
-              warn(`${error.message} Falling back to the physical owner.`);
-              return resolved(null, owner);
+    const match = resolveConceptOwner(ref, sources);
+    if (!match) return resolved(null);
+    const { owner, source, bundleId, adapterId } = match;
+    const inputRef = makeBundleRef(qualified ? ref.bundle : undefined, owner.conceptId);
+    const id = db ? findEntryIdByRef(db, inputRef, bundleId) : undefined;
+    if (id !== undefined && db) {
+      const entry = readLookupEntry(db, id, ref.conceptId, source.path);
+      if (entry) {
+        if (owner.workflowSource) {
+          try {
+            assertIndexedWorkflowSourceIdentity(inputRef, entry.filePath, owner.workflowSource);
+            if (entry.adapterId !== adapterId) {
+              throw new WorkflowSourceIdentityError(inputRef, entry.filePath, owner.path);
             }
-          } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
+          } catch (error) {
+            if (!(error instanceof WorkflowSourceIdentityError)) throw error;
+            warn(`${error.message} Falling back to the physical owner.`);
             return resolved(null, owner);
           }
-          return resolved(entry, owner);
+        } else if (entry.adapterId !== adapterId || !indexedPathMatchesOwner(entry.filePath, owner)) {
+          return resolved(null, owner);
         }
+        return resolved(entry, owner);
       }
-
-      // A physical owner with a missing/incomplete index row still owns this
-      // unqualified concept. Stop here so a later source cannot retarget it.
-      if (owner) return resolved(null, owner);
     }
-    return resolved(null);
+    // A physical owner with a missing/incomplete index row still owns this
+    // concept: no later source can retarget it.
+    return resolved(null, owner);
   } finally {
     if (db && !borrowed) closeDatabase(db);
   }

@@ -13,6 +13,7 @@ import type {
   WorkflowRunStepState,
   WorkflowRunStepStatus,
   WorkflowRunSummary,
+  WorkflowStepOrchestrationSummary,
 } from "../../sources/types";
 import { insertEventOnce } from "../../storage/repositories/events-repository";
 import {
@@ -23,8 +24,7 @@ import {
   type WorkflowRunUnitStatus,
   withWorkflowRunsRepo,
 } from "../../storage/repositories/workflow-runs-repository";
-import { getCurrentWorkflowScopeKey } from "../authoring/scope-key";
-import { frozenSummaryJudge } from "../exec/frozen-judge";
+import { frozenSummaryJudge, resolveJudgeCwd } from "../exec/frozen-judge";
 import { detectSecretShapedParams } from "../exec/param-secrets";
 import { freezeWorkflow } from "../freeze/freeze";
 import {
@@ -35,11 +35,12 @@ import {
 } from "../ir/params";
 import { canonicalPlanJson, computePlanHash } from "../ir/plan-hash";
 import type { WorkflowPlan, WorkflowRuntimeKind } from "../plan";
+import { resolveOrchestrationRefs, summarizeStepOrchestration } from "../renderer";
 import { clip, WORKFLOW_UNIT_DIAGNOSTIC_CLIP } from "../resource-limits";
 import { type SummaryJudge, validateStepSummary } from "../validate-summary";
 import { resolveAgentIdentity } from "./agent-identity";
-import { frozenStepRows, readRunPlan } from "./run-plan";
-import { canonicalizeWorkflowRefInput, loadWorkflowAsset, resolveWorkflowEntryId } from "./workflow-asset-loader";
+import { decodeWorkflowPlan, frozenStepRows, readRunPlan } from "./run-plan";
+import { canonicalizeWorkflowRefInput, loadWorkflowAsset } from "./workflow-asset-loader";
 
 export interface WorkflowRunDetail {
   run: WorkflowRunSummary;
@@ -113,6 +114,12 @@ export interface WorkflowUnitDiagnostic {
   startedAt: string | null;
   finishedAt: string | null;
   engine: string | null;
+  /**
+   * Present on a failed unit whose step the frozen plan still describes: the
+   * step's argv, cwd and env names (the `show` projection) plus the refs its
+   * tokens resolve to right now.
+   */
+  orchestration?: WorkflowStepOrchestrationSummary;
   /** Journaled resolved runtime kind for a frozen-engine unit. */
   runtimeKind: WorkflowRuntimeKind | null;
   platform: string | null;
@@ -175,13 +182,6 @@ export interface WorkflowNextResult {
   done?: true;
   autoStarted?: true;
   /**
-   * Present when a workflow REF (not a run id) resolved to an existing
-   * active run instead of starting a new one (#919's silent-resume report):
-   * the #485 concurrency guard's ref-to-active-run attach is unchanged, this
-   * just makes it visible. Never set together with `autoStarted`.
-   */
-  resumed?: true;
-  /**
    * Non-fatal notices produced when THIS invocation created the run (e.g. the
    * implicit engine fallback). Only present on the auto-start path — a resume
    * never re-surfaces a decision it did not make.
@@ -227,7 +227,6 @@ export async function startWorkflowRun(
   ref: string,
   params: Record<string, unknown> = {},
   options?: {
-    force?: boolean;
     agentHarness?: string | null;
     agentSessionId?: string | null;
     parameterFlags?: readonly WorkflowParameterFlag[];
@@ -272,9 +271,7 @@ export async function startWorkflowRun(
   return withWorkflowRunsRepo(async (repo) => {
     const now = new Date().toISOString();
     const runId = randomUUID();
-    const scopeKey = getCurrentWorkflowScopeKey();
     const currentStepId = plan.steps[0]?.stepId ?? null;
-    const workflowEntryId = resolveWorkflowEntryId(asset.sourcePath, asset.ref, asset.adapterId);
 
     // Capture the invoking harness/session identity for this run. Explicit options
     // win; otherwise fall back to best-effort environment detection. This is
@@ -283,31 +280,15 @@ export async function startWorkflowRun(
     const agentHarness = options?.agentHarness !== undefined ? options.agentHarness : detected.harness;
     const agentSessionId = options?.agentSessionId !== undefined ? options.agentSessionId : detected.sessionId;
 
-    // Concurrency guard (#485): if an active run already exists in this
-    // (workflow_ref, scope_key) pair, refuse to create a parallel run unless
-    // `force: true` is set. Previously every call inserted unconditionally,
-    // so two terminals starting the same workflow could leave two runs racing.
-    // The active-alias query and all inserts share one immediate transaction.
-
-    // #942: an active run of this ref in a different scope (e.g. a scheduled
-    // task's cwd vs. a shell) is warned about once; the uniqueness guard stays
-    // scope-local. The query excludes the caller's own scope in SQL.
-    const crossScopeActive = repo.findActiveRunOutsideScope(workflowRefs, scopeKey);
-    const crossScopeWarning = crossScopeActive
-      ? `Workflow ${asset.ref} already has an active run in another scope ` +
-        `(id ${crossScopeActive.id}, started ${crossScopeActive.created_at}, scope ${crossScopeActive.scope_key ?? "unknown"}); ` +
-        `starting a separate run here. Resume it from anywhere with "akm workflow run ${crossScopeActive.id}" ` +
-        `or free it with "akm workflow abandon ${crossScopeActive.id}".`
-      : undefined;
+    // Starting a ref always starts a run. Other active runs of the same ref
+    // are not an error: name them once, after the start succeeds, so the
+    // operator can continue or abandon the ones they no longer want.
+    const otherActive = repo.listRuns({ workflowRefs, activeOnly: true });
 
     repo.publishWorkflowRunV4({
-      workflowRefs,
-      ...(options?.force ? { force: true } : {}),
       run: {
         id: runId,
         workflowRef: asset.ref,
-        scopeKey,
-        workflowEntryId,
         workflowTitle: asset.title,
         paramsJson: JSON.stringify(effectiveParams),
         currentStepId,
@@ -328,8 +309,15 @@ export async function startWorkflowRun(
       planHash,
     });
 
+    if (otherActive.length > 0) {
+      const ids = otherActive.map((run) => run.id);
+      warn(
+        `Workflow ${asset.ref} already has ${ids.length} active run(s) (${ids.join(", ")}); started another. ` +
+          `Continue one with "akm workflow run ${ids[0]}" or give up on it with "akm workflow abandon ${ids[0]}".`,
+      );
+    }
+
     const result = await getWorkflowStatus(runId);
-    if (crossScopeWarning) result.warnings = [...(result.warnings ?? []), crossScopeWarning];
     // Params reach every unit prompt in clear (only the journal scrubs them).
     // Surface a loud, best-effort warning when a param LOOKS like a credential
     // so the author moves it to an env binding. Advisory only — never blocks
@@ -344,6 +332,15 @@ export async function startWorkflowRun(
   });
 }
 
+function decodeStatusPlan(planJson: string | null | undefined): WorkflowPlan | undefined {
+  if (!planJson) return undefined;
+  try {
+    return decodeWorkflowPlan(JSON.parse(planJson));
+  } catch {
+    return undefined;
+  }
+}
+
 export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: boolean }): Promise<WorkflowRunDetail> {
   return withWorkflowRunsRepo((repo) => {
     const run = readWorkflowRun(repo, runId);
@@ -353,7 +350,18 @@ export async function getWorkflowStatus(runId: string, opts?: { includeUnits?: b
       // The honest diagnostic surface (#22): read the unit journal straight and
       // project each row, INCLUDING failures whose diagnostic text the
       // deterministic evidence graph drops. Read-only; never mutates the run.
-      detail.units = repo.getUnitsForRun(run.id).map(toUnitDiagnostic);
+      const rows = repo.getUnitsForRun(run.id);
+      // The plan is decoded only to describe a failed unit, read-only: no run
+      // warning (`readRunPlan` says it is "running" an older plan) and no
+      // orchestration when the plan cannot be decoded.
+      const plan = rows.some((row) => row.status === "failed") ? decodeStatusPlan(run.plan_json) : undefined;
+      detail.units = rows.map((row) => {
+        const unit = toUnitDiagnostic(row);
+        const step =
+          row.status === "failed" ? plan?.steps.find((candidate) => candidate.stepId === row.step_id) : undefined;
+        const summary = step ? summarizeStepOrchestration(step, undefined) : undefined;
+        return summary ? { ...unit, orchestration: resolveOrchestrationRefs(summary) } : unit;
+      });
     }
     return detail;
   });
@@ -364,34 +372,17 @@ export async function listWorkflowRuns(input?: {
   activeOnly?: boolean;
   /** Include child workflow runs. Default `false`. */
   includeChildren?: boolean;
-  /**
-   * Search every scope instead of only the caller's current one (#942,
-   * `akm workflow list/status --all-scopes`). Default `false`: byte-identical
-   * to pre-#942 behavior.
-   */
-  allScopes?: boolean;
-}): Promise<{
-  runs: WorkflowRunSummary[];
-  /**
-   * The scope this call filtered on, or `null` when `allScopes` was passed
-   * (#942). Lets an empty `runs: []` be told apart from "nothing anywhere" —
-   * the operator confusion the underlying incident hit.
-   */
-  scopeKey: string | null;
-}> {
-  const scopeKey = input?.allScopes === true ? null : getCurrentWorkflowScopeKey();
+}): Promise<{ runs: WorkflowRunSummary[] }> {
   const activeOnly = input?.activeOnly === true;
   const includeChildren = input?.includeChildren === true;
   if (input?.workflowRef === undefined) {
     return withWorkflowRunsRepo((repo) => ({
       runs: repo
         .listRuns({
-          scopeKey,
           ...(activeOnly ? { activeOnly: true } : {}),
           ...(includeChildren ? { includeChildren: true } : {}),
         })
         .map(toWorkflowRunSummary),
-      scopeKey,
     }));
   }
 
@@ -410,12 +401,11 @@ export async function listWorkflowRuns(input?: {
   } catch (error) {
     if (parsedExactRef.bundle !== undefined) {
       const exactRows = await withWorkflowRunsRepo((repo) =>
-        repo.listRuns({ scopeKey, workflowRef: exactRef, ...(includeChildren ? { includeChildren: true } : {}) }),
+        repo.listRuns({ workflowRef: exactRef, ...(includeChildren ? { includeChildren: true } : {}) }),
       );
       if (exactRows.length === 0) throw error;
       return {
         runs: exactRows.filter((row) => !activeOnly || row.status === "active").map(toWorkflowRunSummary),
-        scopeKey,
       };
     }
     if (!(error instanceof NotFoundError)) throw error;
@@ -423,34 +413,30 @@ export async function listWorkflowRuns(input?: {
   return withWorkflowRunsRepo((repo) => ({
     runs: repo
       .listRuns({
-        scopeKey,
         workflowRefs,
         ...(activeOnly ? { activeOnly: true } : {}),
         ...(includeChildren ? { includeChildren: true } : {}),
       })
       .map(toWorkflowRunSummary),
-    scopeKey,
   }));
 }
 
 export async function getNextWorkflowStep(
   specifier: string,
   params?: Record<string, unknown>,
-  options?: { parameterFlags?: readonly WorkflowParameterFlag[]; newRun?: boolean },
+  options?: { parameterFlags?: readonly WorkflowParameterFlag[] },
 ): Promise<WorkflowNextResult> {
   return withWorkflowRunsRepo(async (repo) => {
-    const { run, autoStarted, resumed, startWarnings } = await resolveRunSpecifier(
+    const { run, autoStarted, startWarnings } = await resolveRunSpecifier(
       repo,
       specifier,
       params,
       options?.parameterFlags,
-      options?.newRun,
     );
     const steps = readWorkflowRunSteps(repo, run.id);
     return {
       ...projectNextResult(run, steps),
       ...(autoStarted ? { autoStarted: true as const } : {}),
-      ...(resumed ? { resumed: true as const } : {}),
       ...(startWarnings?.length ? { startWarnings } : {}),
     };
   });
@@ -563,7 +549,7 @@ export async function completeWorkflowStep(
     }
     const stepPlan = storedPlan.steps.find((step) => step.stepId === input.stepId);
     if (!stepPlan) throw new NotFoundError(`Step "${input.stepId}" was not found in workflow run ${run.id}.`);
-    return { existing, plan: storedPlan, stepPlan };
+    return { existing, plan: storedPlan, stepPlan, workflowRef: run.workflow_ref };
   });
 
   const summary = input.summary?.trim();
@@ -586,10 +572,14 @@ export async function completeWorkflowStep(
         ? // Manual completion journals no gate row, so there is no `<stepId>.gate:l<loop>`
           // identity to agree with — but the dispatch still names the REAL run and
           // step (frozen-judge falls back to the gate node id for the unit id).
-          frozenSummaryJudge(preflight.stepPlan.gate.frozenJudge, input.signal, undefined, {
-            runId: input.runId,
-            stepId: input.stepId,
-          })
+          frozenSummaryJudge(
+            preflight.stepPlan.gate.frozenJudge,
+            input.signal,
+            undefined,
+            { runId: input.runId, stepId: input.stepId },
+            undefined,
+            resolveJudgeCwd(preflight.stepPlan.gate.frozenJudge, preflight.workflowRef),
+          )
         : input.summaryJudge;
     if (criteria.length > 0 && !judge) {
       throw new ConfigError(
@@ -698,20 +688,10 @@ async function resolveRunSpecifier(
   specifier: string,
   params?: Record<string, unknown>,
   parameterFlags?: readonly WorkflowParameterFlag[],
-  forceNew?: boolean,
-): Promise<{ run: WorkflowRunRow; autoStarted: boolean; resumed?: true; startWarnings?: string[] }> {
-  const hasParameters = (params && Object.keys(params).length > 0) || (parameterFlags?.length ?? 0) > 0;
+): Promise<{ run: WorkflowRunRow; autoStarted: boolean; startWarnings?: string[] }> {
   const explicitRun = findRunByIdOrPrefix(repo, specifier);
   if (explicitRun) {
-    // `--new` starts a fresh run FROM A REF; it never makes sense against a
-    // run id (or an id prefix), which already names the run to act on (#919).
-    if (forceNew) {
-      throw new UsageError(
-        `--new starts a fresh run from a workflow ref; "${specifier}" already names a run id.`,
-        "INVALID_FLAG_VALUE",
-      );
-    }
-    if (hasParameters) {
+    if ((params && Object.keys(params).length > 0) || (parameterFlags?.length ?? 0) > 0) {
       throw new UsageError(
         `Workflow parameter flags can only be used when starting a new run, not with existing run id "${specifier}".`,
       );
@@ -719,52 +699,18 @@ async function resolveRunSpecifier(
     return { run: explicitRun, autoStarted: false };
   }
 
-  const scopeKey = getCurrentWorkflowScopeKey();
-  const exactRef = specifier.trim();
-  const parsedExact = parseBundleRef(exactRef);
-  const qualifiedExact = parsedExact.bundle !== undefined && parsedExact.fragment === undefined;
-  const detached = qualifiedExact && !forceNew ? repo.getActiveRunRowForScope(exactRef, scopeKey) : undefined;
-
+  // A workflow ref always starts a new run; only a run id drives an existing one.
   let ref: string;
   try {
     ref = await canonicalizeWorkflowSpecifier(specifier);
   } catch (error) {
-    if (detached) {
-      if (hasParameters) {
-        throw new UsageError(
-          `Workflow parameter flags can only be set on a new run; ${specifier} is already active ` +
-            `(id ${detached.id}, scope ${scopeKey}).`,
-          "INVALID_FLAG_VALUE",
-          `Pass --new to start a separate run, or run "akm workflow abandon ${detached.id}" to free up ${specifier} first.`,
-        );
-      }
-      return { run: detached, autoStarted: false, resumed: true };
-    }
     if (error instanceof NotFoundError && !specifier.includes(":") && !specifier.includes("/")) {
       throw new NotFoundError(`Workflow run or workflow "${specifier}" not found.`, "WORKFLOW_NOT_FOUND");
     }
     throw error;
   }
-  const active = forceNew ? undefined : repo.getActiveRunRowForScope(await workflowRunRefSet(ref, exactRef), scopeKey);
-  if (active) {
-    if (hasParameters) {
-      throw new UsageError(
-        `Workflow parameter flags can only be set on a new run; ${ref} is already active ` +
-          `(id ${active.id}, scope ${scopeKey}).`,
-        "INVALID_FLAG_VALUE",
-        `Pass --new to start a separate run, or run "akm workflow abandon ${active.id}" to free up ${ref} first.`,
-      );
-    }
-    return { run: active, autoStarted: false, resumed: true };
-  }
-
-  // `force` (#485's own escape hatch) is what lets `--new` create a second
-  // active run for this (ref, scope) pair instead of the concurrency guard
-  // refusing it — the caller explicitly asked for a fresh run, so the guard
-  // that exists to catch an ACCIDENTAL second run does not apply (#919).
   const started = await startWorkflowRun(ref, params ?? {}, {
     ...(parameterFlags !== undefined ? { parameterFlags } : {}),
-    ...(forceNew ? { force: true } : {}),
   });
   return {
     run: readWorkflowRun(repo, started.run.id),
@@ -922,7 +868,6 @@ function toWorkflowRunSummary(run: WorkflowRunRow): WorkflowRunSummary {
   return {
     id: run.id,
     workflowRef: run.workflow_ref,
-    scopeKey: run.scope_key,
     workflowEntryId: run.workflow_entry_id,
     workflowTitle: run.workflow_title,
     status: run.status,
@@ -1013,14 +958,4 @@ function parseJsonArray(value: string | null): string[] | undefined {
     /* ignore corrupt data */
   }
   return undefined;
-}
-
-export async function getActiveWorkflowRun(
-  scopeKey = getCurrentWorkflowScopeKey(),
-): Promise<{ runId: string; stepId: string | null; workflowRef: string } | null> {
-  return withWorkflowRunsRepo((repo) => {
-    const row = repo.findActiveOrBlockedRunForScope(scopeKey);
-    if (!row) return null;
-    return { runId: row.id, stepId: row.current_step_id, workflowRef: row.workflow_ref };
-  }).catch(() => null); // fail-open: never crash show output due to DB error
 }

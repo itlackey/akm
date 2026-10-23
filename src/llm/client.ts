@@ -516,7 +516,7 @@ async function chatCompletionAttemptOnce(
     if (issue) throw new Error(formatExtraParamsIssue("LLM extraParams", issue));
   }
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  // Resolve ONLY a whole-string reference ($VAR/${VAR} or secret://<name>).
+  // Resolve ONLY a whole-string reference ($VAR/${VAR} or ${ref}).
   // The execution boundary normally hands us a materialized credential after
   // resolving the reference upstream, so re-running the substitution over a
   // literal key mangled any credential containing `$` — `sk-live$ecret` lost

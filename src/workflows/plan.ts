@@ -18,14 +18,17 @@
  * a stored plan back into this type, from this release or an earlier one.
  */
 
-import type { FrozenDirectoryIdentity } from "../execution/directory-identity";
 import type { TaskInputBinding } from "../execution/input-contract";
 import type { ResolvedExecutionRequestV1 } from "../execution/resolved-request";
 import type { LlmInvocationOverrides } from "../integrations/agent/engine-resolution";
 import type { RunnerSpec } from "../integrations/agent/runner";
 
-/** Stored plans record this; 0.9.15 and 0.9.16 wrote 5, which still decodes (the 0.9.15 floor, #1091). */
-export const WORKFLOW_PLAN_VERSION = 6 as const;
+/**
+ * Stored plans record this; 0.9.15 and 0.9.16 wrote 5 and early 0.10 wrote 6,
+ * which still decode (the 0.9.15 floor, #1091). 7 stopped freezing locations:
+ * the plan names the refs the engine dereferences, never a directory or file.
+ */
+export const WORKFLOW_PLAN_VERSION = 7 as const;
 
 /** A 1-indexed inclusive line span in a workflow source file. */
 export interface SourceRef {
@@ -106,30 +109,25 @@ export interface WorkflowExecSpec {
   timeoutMs: number | null;
 }
 
-export type FrozenWorkflowDirectoryIdentity = FrozenDirectoryIdentity;
-
-/** Where a frozen env ref is read from at dispatch. Older plans carry extra physical-identity fields. */
-export interface FrozenWorkflowEnvironmentOwner {
-  readonly bundle: string;
-  readonly adapter: string;
-  readonly requestedRoot: string;
-  readonly requestedPath: string;
-  readonly relativePath: string;
-  readonly realRoot?: string;
-  readonly realPath?: string;
-  readonly rootPhysicalIdentity?: string;
-}
+/**
+ * A location a plan before irVersion 7 froze (a directory identity, an env file's owner, its key and secret
+ * names). A stored plan keeps it exactly as stored, because the unit `input_hash` and the child invocation key
+ * are derived from the whole target; dispatch never reads it.
+ */
+export type FrozenLegacyField = Readonly<Record<string, unknown>>;
 
 export type FrozenWorkflowEnvironmentBinding =
   | { readonly kind: "literal"; readonly name: string; readonly value: string }
   | { readonly kind: "pass-through"; readonly name: string }
+  // The bundle-qualified env ref. Its file, keys and secrets are read live at dispatch.
   | {
       readonly kind: "env-ref";
       readonly ref: string;
-      readonly owner: FrozenWorkflowEnvironmentOwner;
-      readonly keys: readonly string[];
-      readonly secretNames: readonly string[];
       readonly precedence: number;
+      /** Before irVersion 7 only: carried as stored, never read. */
+      readonly owner?: FrozenLegacyField;
+      readonly keys?: readonly string[];
+      readonly secretNames?: readonly string[];
     };
 
 export interface FrozenWorkflowCommandTarget {
@@ -140,7 +138,12 @@ export interface FrozenWorkflowCommandTarget {
   readonly runner: RunnerSpec;
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
-  readonly cwdIdentity?: FrozenWorkflowDirectoryIdentity;
+  /**
+   * Before irVersion 7 a frozen directory, carried as stored and never read. A v7 command target freezes `{}`:
+   * akm 0.10.0 and earlier decode a v7 command-only plan and would run it in the invoking directory, but their
+   * dispatch refuses a directory identity it cannot verify.
+   */
+  readonly cwdIdentity?: FrozenLegacyField;
   /** A composing step's frozen `with:` bindings. Absent, never `[]`, when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
 }
@@ -149,7 +152,8 @@ export interface FrozenWorkflowShellTarget {
   readonly kind: "shell";
   readonly contentHash: string;
   readonly exec: WorkflowExecSpec;
-  readonly cwdIdentity: FrozenWorkflowDirectoryIdentity;
+  /** Before irVersion 7 only: carried as stored, never read. */
+  readonly cwdIdentity?: FrozenLegacyField;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 

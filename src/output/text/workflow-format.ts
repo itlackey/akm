@@ -14,7 +14,7 @@
 export function formatWorkflowListPlain(result: Record<string, unknown>): string {
   const runs = Array.isArray(result.runs) ? (result.runs as Array<Record<string, unknown>>) : [];
   if (runs.length === 0) {
-    return "No workflow runs in the current working scope. Start one with `akm workflow run workflows/<name>` or author one with `akm workflow create <name>`.";
+    return "No workflow runs. Start one with `akm workflow run workflows/<name>` or author one with `akm workflow create <name>`.";
   }
 
   return runs
@@ -60,6 +60,38 @@ function renderChildNode(child: Record<string, unknown>, depth: number, lines: s
   }
   const nested = Array.isArray(child.children) ? (child.children as Array<Record<string, unknown>>) : [];
   for (const grandchild of nested) renderChildNode(grandchild, depth + 1, lines);
+}
+
+/**
+ * The `show` orchestration projection as text lines: the exec argv (JSON, so
+ * word boundaries survive), cwd, env refs and the bundle-qualified ref each
+ * token resolved to. Shared by `workflow plan` steps and `status --units`.
+ */
+function renderOrchestrationLines(value: unknown, prefix: string): string[] {
+  if (typeof value !== "object" || value === null) return [];
+  const orchestration = value as Record<string, unknown>;
+  const lines: string[] = [];
+  const exec =
+    typeof orchestration.exec === "object" && orchestration.exec !== null
+      ? (orchestration.exec as Record<string, unknown>)
+      : undefined;
+  if (exec) {
+    if (Array.isArray(exec.command)) lines.push(`${prefix}argv: ${JSON.stringify(exec.command)}`);
+    if (typeof exec.cwd === "string") lines.push(`${prefix}cwd: ${exec.cwd}`);
+  }
+  if (Array.isArray(orchestration.env) && orchestration.env.length > 0) {
+    lines.push(`${prefix}env: ${orchestration.env.join(", ")}`);
+  }
+  const refs = Array.isArray(orchestration.refs) ? (orchestration.refs as Array<Record<string, unknown>>) : [];
+  for (const ref of refs) {
+    const written = ref.in === "argv" || ref.in === "cwd" ? `\${${String(ref.ref)}}` : String(ref.ref);
+    lines.push(`${prefix}ref: ${written} -> ${String(ref.resolved)} (${String(ref.in)})`);
+  }
+  const unresolved = Array.isArray(orchestration.unresolved)
+    ? (orchestration.unresolved as Array<Record<string, unknown>>)
+    : [];
+  for (const ref of unresolved) lines.push(`${prefix}ref: ${String(ref.ref)} -> not found (${String(ref.in)})`);
+  return lines;
 }
 
 export function formatWorkflowStatusPlain(result: Record<string, unknown>): string | null {
@@ -120,6 +152,7 @@ export function formatWorkflowStatusPlain(result: Record<string, unknown>): stri
       if (typeof unit.failureReason === "string" && unit.failureReason.trim()) {
         lines.push(`    failure_reason: ${unit.failureReason}`);
       }
+      lines.push(...renderOrchestrationLines(unit.orchestration, "    "));
       if (typeof unit.diagnostic === "string" && unit.diagnostic.trim()) {
         const diagLines = unit.diagnostic.split("\n");
         lines.push(`    diagnostic: ${diagLines[0]}`);
@@ -159,14 +192,6 @@ export function formatWorkflowRunPlain(result: Record<string, unknown>): string 
   if (!run) return null;
 
   const lines: string[] = [];
-  // #919: `workflow run <ref>` silently resuming an existing active run (the
-  // #485 concurrency guard) is now announced up front, with the escape hatch.
-  if (result.resumed === true) {
-    lines.push(
-      `resuming existing run ${String(run.id ?? "unknown")} for ${String(run.workflowRef ?? "this ref")}; ` +
-        `pass --new to start a fresh run`,
-    );
-  }
   lines.push(`run: ${String(run.id ?? "unknown")}`, `status: ${String(run.status ?? "unknown")}`);
   // Creation-time notices (e.g. the implicit engine fallback) must survive the
   // text renderer: JSON/YAML pass them through, and dropping them here would
@@ -272,6 +297,7 @@ function renderPlanStepLines(step: Record<string, unknown>, ordinal: number, lin
   if (inputBindings.length > 0) {
     lines.push(`${detailPrefix}with: ${formatInputBindingsList(inputBindings)}`);
   }
+  lines.push(...renderOrchestrationLines(step.orchestration, detailPrefix));
   if (via === "child") {
     const childSteps = Array.isArray(expansion.steps) ? (expansion.steps as Array<Record<string, unknown>>) : [];
     for (const [index, childStep] of childSteps.entries()) {

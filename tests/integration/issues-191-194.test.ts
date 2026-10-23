@@ -14,12 +14,8 @@
  *   underlying gap (no `PRAGMA busy_timeout`) is real. Test asserts the
  *   pragma is set after fix.
  *
- * Issue 194 — `workflowEntryId: null` after `workflow create --from`
- *   Status at re-run: REPRODUCED. Test asserts the field is non-null on
- *   first start after a fresh import.
- *
  * Migrated from per-test spawnSync("bun", [CLI, ...]) to the in-process
- * harness (tests/_helpers/cli.ts). The CLI-driving tests (#191, #192, #194)
+ * harness (tests/_helpers/cli.ts). The CLI-driving tests (#191, #192)
  * allocate fresh isolated HOME/XDG/stash dirs per test and run the CLI
  * in-process; each runCli call re-pins that env + resets the config/embedder
  * caches so back-to-back invocations re-read the test's tempdirs,
@@ -31,10 +27,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resetConfigCache } from "../../src/core/config/config";
-import { __setTestServer } from "../../src/integrations/harnesses/opencode-sdk/sdk-runner";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../../src/llm/embedder";
 import { runCliCapture } from "../_helpers/cli";
-import { WORKFLOW_TEST_CONFIG } from "../_helpers/workflow";
 
 const tempDirs: string[] = [];
 
@@ -99,43 +93,10 @@ async function runCli(
 }
 
 afterEach(() => {
-  __setTestServer(null);
   for (const dir of tempDirs.splice(0)) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
-
-// Unified-format fixture (frontmatter graph + `## <id>` body — spec §2.2).
-const ACA_WORKFLOW = `---
-type: workflow
-description: Test workflow imported via workflow create --from
-tags:
-  - test
-params:
-  app_name: { type: string, description: name of the app }
-steps:
-  - id: first-step
-  - id: second-step
----
-
-# Imported Test Workflow
-
-## first-step
-
-Do thing one.
-
-### gate
-
-- Done
-
-## second-step
-
-Do thing two.
-
-### gate
-
-- Done
-`;
 
 describe("issue #191 — memory search misses freshly-added memory", () => {
   test("exact-phrase search returns the memory as the top hit", async () => {
@@ -198,44 +159,5 @@ describe("issue #193 — database is locked under contention", () => {
     } finally {
       closeDatabase(db);
     }
-  });
-});
-
-describe("issue #194 — workflow create --from then start has non-null workflowEntryId", () => {
-  test("imported workflow run carries a real numeric workflowEntryId", async () => {
-    const env = makeEnv();
-    expect((await runCli(["bundle", "create"], env)).status).toBe(0);
-
-    const configPath = path.join(env.XDG_CONFIG_HOME as string, "akm", "config.json");
-    const config = JSON.parse(fs.readFileSync(configPath, "utf8")) as Record<string, unknown>;
-    fs.writeFileSync(configPath, `${JSON.stringify({ ...config, ...WORKFLOW_TEST_CONFIG }, null, 2)}\n`, "utf8");
-
-    const sourceDir = makeTempDir("akm-issue-194-src-");
-    const sourcePath = path.join(sourceDir, "imported.md");
-    fs.writeFileSync(sourcePath, ACA_WORKFLOW, "utf8");
-
-    const created = await runCli(["workflow", "create", "imported", "--from", sourcePath], env);
-    expect(created.status).toBe(0);
-
-    // No explicit `akm index` — `workflow create --from` should leave the
-    // FTS index in a state that lets canonical `workflow run` resolve a
-    // workflowEntryId. A 1ms cooperative timeout stops before external work;
-    // the fake server keeps the dispatch it races from spawning a real
-    // `opencode serve` on machines that have the binary.
-    __setTestServer({
-      client: { session: { create: () => new Promise(() => {}) } },
-      server: { close() {} },
-    } as never);
-    const started = await runCli(
-      ["workflow", "run", "workflows/imported", "--app_name=sandbox-app", "--timeout=1ms"],
-      env,
-    );
-    expect(started.status).toBe(1);
-    const startJson = JSON.parse(started.stdout) as {
-      run: { id: string; workflowEntryId: number | null };
-    };
-    expect(startJson.run.id).toBeTruthy();
-    expect(startJson.run.workflowEntryId).not.toBeNull();
-    expect(typeof startJson.run.workflowEntryId).toBe("number");
   });
 });

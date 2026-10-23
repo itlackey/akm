@@ -914,10 +914,10 @@ akm workflow resume <run-id> --format json
 - No corrupt-spine error is emitted. A subsequent `run <run-id>` re-enters
   the current step normally.
 
-**Note on `run <ref>` semantics:** `akm workflow run workflows/<name>` does
-not always start a brand-new run — if an **active** run already exists for
-that ref in the current scope, it resumes that run instead, consistent with
-`run --help` ("Start **or resume** a workflow...") but easy to miss.
+**Note on `run <ref>` semantics:** `akm workflow run workflows/<name>` always
+starts a brand-new run, even when an **active** run of that ref exists; it
+warns, naming the other run, instead. Only `run <run-id>` continues an
+existing run (`resume` only re-activates a blocked or failed one).
 
 **Cleanup:** `rm -rf "$AKM_SANDBOX"`.
 
@@ -950,19 +950,13 @@ akm workflow resume <run-id> --format json
 - `resume` succeeds, exit **`0`**, `.run.status` becomes `"active"` again,
   `.workflow.steps[1].status` stays `"pending"`. No corrupt-spine error.
 
-### WF-8 — Scope semantics: `list` is cwd-scoped by default; `--all-scopes`
-and the cross-scope start warning (#942)
+### WF-8 — Runs are host-wide: `list` and `status` do not depend on the cwd (#1239)
 
-**Why it matters:** `list`/`status --help` say refs/runs "resolve within
-the current scope" — easy to read past. A user who runs a workflow from one
-directory, `cd`s elsewhere, then runs `akm workflow list` and sees
-`{"runs": []}` could plausibly conclude the run vanished — this is exactly
-what happened in production: a scheduled task's cwd (`$HOME`) and a human
-shell's cwd hashed to different scope keys, each `akm workflow run`
-independently believed no run was active, and each started one. Scope is
-still the **working directory**, hashed into `scopeKey` — not the bundle,
-not the config dir — but the envelope now says which scope it searched, and
-`--all-scopes` can search every scope.
+**Why it matters:** a scheduled task's cwd (`$HOME`) and a human shell's cwd
+used to hash to different scope keys, so each `akm workflow run` believed no
+run was active, and `akm workflow list` from the wrong directory showed
+`{"runs": []}`. A run is now identified by its run id and a workflow by its
+ref; the directory never matters.
 
 **Setup:** fresh sandbox at `$AKM_SANDBOX`, plus `mkdir -p
 "$AKM_SANDBOX-elsewhere"`. Use `demo.md` from WF-1.
@@ -970,38 +964,26 @@ not the config dir — but the envelope now says which scope it searched, and
 **Commands:**
 ```sh
 cd "$AKM_SANDBOX"
-akm workflow run workflows/demo --format json     # note RUNID
+akm workflow run workflows/demo --max-steps 1 --format json     # note RUNID
 akm workflow list --format json                   # from $AKM_SANDBOX
 
 cd "$AKM_SANDBOX-elsewhere"
 akm workflow list --format json                   # same env vars, different cwd
-akm workflow list --all-scopes --format json       # same env vars, different cwd
 akm workflow status "$RUNID" --format json         # by id, from elsewhere
-akm workflow run workflows/demo --format json      # same ref, from elsewhere
+akm workflow run workflows/demo --max-steps 1 --format json   # same ref, from elsewhere
 ```
 
-**Expected result (verified live):**
-- `list` from `$AKM_SANDBOX` returns `.runs` length **1** and a top-level
-  `.scopeKey` starting `"dir:v1:..."` — the scope it searched, which every
-  returned run's own `.scopeKey` also matches.
-- `list` from the elsewhere directory (identical `AKM_*` env vars, only
-  `cwd` differs) returns **`{"runs": [], "scopeKey": "dir:v1:..."}`**
-  (a *different* hash than the first call), exit `0` — not an error, and no
-  longer indistinguishable from "nothing anywhere": the envelope names the
-  scope that came up empty.
-- `list --all-scopes` from the elsewhere directory returns `.runs` length
-  **1** (the run started in `$AKM_SANDBOX`) and a top-level `.scopeKey` of
-  **`null`** — "every scope" — while the run's own `.scopeKey` field still
-  names where it actually started.
-- `status $RUNID` from elsewhere **still succeeds** and returns the full
-  run — status-by-id is not scope-filtered the way `list` is.
+**Expected result:**
+- `list` from both directories returns the run started in `$AKM_SANDBOX`, and
+  the envelope has no `scopeKey`.
+- `status $RUNID` from elsewhere returns the full run.
 - `run workflows/demo` from elsewhere **starts a second, independent run**
-  (the scope-local concurrency guard is unchanged — a deliberate
-  per-project partition, see `storage-locations.md`) but its envelope now
-  carries a `warnings[]` entry naming `$RUNID` and `$AKM_SANDBOX`'s scope
-  key, with the same `akm workflow run <id>` / `akm workflow abandon <id>`
-  remedy the same-scope guard already gives — so the operator sees the
-  other run instead of two runs silently drifting.
+  (a ref always starts a new run) and prints one warning on stderr naming
+  `$RUNID` with the `akm workflow run <id>` / `akm workflow abandon <id>`
+  commands.
+- `akm workflow run workflows/demo --skip-if-locked` while another process is
+  driving a run of the ref exits `0` with a `skipped` envelope and starts
+  nothing.
 
 ### WF-9 — Migration: a pre-`irVersion`-5 stored plan is retired
 

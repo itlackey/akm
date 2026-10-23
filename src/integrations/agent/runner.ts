@@ -8,7 +8,7 @@ import type { AgentProfile } from "./profiles";
 
 /**
  * The resolved engine. Credentials are symbolic (an env descriptor, a file
- * path, or a `secret://` reference) so this shape can be journaled; values are
+ * path, or a `${ref}` reference) so this shape can be journaled; values are
  * read only at dispatch.
  */
 export type RunnerSpec =
@@ -89,6 +89,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Read a journaled runner back. Tolerant: unknown keys are kept and missing
  * profile defaults are filled in; only a shape nothing could dispatch is refused.
+ * Credentials stay as stored (a 0.9.x plan's `secret://<name>` included) because the
+ * unit input hash covers them; they are read as `${ref}` where they are resolved.
  */
 export function decodeFrozenRunnerSpec(value: unknown): RunnerSpec {
   if (!isRecord(value) || typeof value.engine !== "string") {

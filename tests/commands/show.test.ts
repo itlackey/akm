@@ -252,9 +252,9 @@ describe("akmShow sensitive fragments", () => {
   });
 });
 
-// ── Agent toolPolicy provenance ceiling (07 P1-D) ─────────────────────────────
+// ── Agent toolPolicy is honoured for every bundle (#1237) ────────────────────
 
-describe("akmShow agent toolPolicy provenance ceiling", () => {
+describe("akmShow agent toolPolicy", () => {
   const AGENT_MD = [
     "---",
     "name: helper",
@@ -273,7 +273,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("registry-installed third-party agent's self-declared tools are dropped", async () => {
+  test("registry-installed bundle agent keeps its self-declared tools", async () => {
     const installedStashRoot = createTmpDir("akm-show-tp-agent-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
@@ -292,15 +292,12 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
     expect(result.origin).toBe("pack");
-    // Provenance ceiling: only the primary stash may self-grant; an installed
-    // pack is not the primary stash.
-    expect(result.toolPolicy).toBeUndefined();
+    // Installing a bundle is the trust decision; `execution.allowedTools` caps
+    // what dispatch will actually grant.
+    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("a --writable installed pack STILL drops toolPolicy (writable ≠ trusted to self-grant)", async () => {
-    // Regression: `akm add <ref> --writable` (opt-in to push edits upstream) marks
-    // a third-party pack writable. Writability must NOT be read as trust — the
-    // ceiling keys off primary-stash identity, not `source.writable`.
+  test("a --writable installed pack keeps its toolPolicy", async () => {
     const installedStashRoot = createTmpDir("akm-show-writable-pack-");
     writeFile(path.join(installedStashRoot, "tools", "agents", "helper.md"), AGENT_MD);
     saveConfig({
@@ -318,7 +315,7 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     ]);
     const result = await akmShow({ ref: "pack//agents/tools/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toBeUndefined();
+    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
   test("a read against a cold git bundle (no cache, no lock) skips it fast with a warning — never clones (spec §14.3)", async () => {
@@ -352,10 +349,9 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
     }
   }, 5000);
 
-  test("a configured secondary source (nameless git/filesystem) drops toolPolicy", async () => {
-    // Regression for the original bypass: a source added WITHOUT a name has no
-    // registryId, so a registryId-based ceiling missed it. The primary-stash
-    // check catches it — a configured secondary source is not the primary stash.
+  test("a configured secondary source keeps its toolPolicy", async () => {
+    // Location is not a trust signal: a configured secondary source honours
+    // its agent's `tools` like any other bundle.
     const thirdPartyDir = createTmpDir("akm-show-secondary-src-");
     writeFile(path.join(thirdPartyDir, "agents", "helper.md"), AGENT_MD);
     // No `name` — the setup-wizard "add a source and leave the name blank" shape.
@@ -363,24 +359,18 @@ describe("akmShow agent toolPolicy provenance ceiling", () => {
 
     const result = await akmShow({ ref: "agents/helper" });
     expect(result.type).toBe("agent");
-    // Reads back as `editable: true` (not under an installed cacheDir) — proving
-    // neither `editable` nor `writable` is the trust signal; primary-stash is.
     expect(result.editable).toBe(true);
-    expect(result.toolPolicy).toBeUndefined();
+    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 
-  test("a source NESTED inside the primary stash still drops toolPolicy (longest-prefix attribution)", async () => {
-    // Regression: `akm add ./vendor` where ./vendor lives under the primary stash.
-    // findSourceForPath must attribute the nested asset to the nested (more
-    // specific) source, not the enclosing primary — else its self-declared tools
-    // would be wrongly honoured.
+  test("a source NESTED inside the primary stash keeps its toolPolicy", async () => {
     const nestedDir = path.join(stashDir, "vendor");
     writeFile(path.join(nestedDir, "agents", "helper.md"), AGENT_MD);
     saveConfig({ semanticSearchMode: "off", bundles: { vendor: { path: nestedDir } } });
 
     const result = await akmShow({ ref: "agents/vendor/agents/helper" });
     expect(result.type).toBe("agent");
-    expect(result.toolPolicy).toBeUndefined();
+    expect(result.toolPolicy).toEqual(["Read", "Write", "Bash"]);
   });
 });
 

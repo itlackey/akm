@@ -144,7 +144,6 @@ function frozenRoot(
               canonicalJson({
                 exec: resolved.target.exec,
                 environment: resolved.environment,
-                cwdIdentity: resolved.target.cwdIdentity,
               }),
             )
             .digest("hex"),

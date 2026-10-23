@@ -25,17 +25,14 @@ import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
 import { type AssetRef, conceptIdFromTypeName, isFullRefInput } from "../../core/asset/resolve-ref";
 import { isWithin, resolveStashDir } from "../../core/common";
 import { loadConfig, mutateConfig, resetConfigCache } from "../../core/config/config";
-import {
-  bundleKeyForContentRoot,
-  resolveActiveConfiguredSources,
-  resolveConfiguredSources,
-} from "../../core/config/config-sources";
+import { bundleKeyForContentRoot, resolveConfiguredSources } from "../../core/config/config-sources";
 import type { AkmConfig } from "../../core/config/config-types";
 import { IMPROVE_AUTONOMY_CONFIG_KEY, isImproveAutonomyEnabled } from "../../core/config/experimental";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { getTaskHistoryDir, getTaskLogDir } from "../../core/paths";
 import { warn } from "../../core/warn";
 import {
+  assertBundleNotDisabled,
   commitWriteTargetBoundary,
   isWriteCapableSourceKind,
   prepareWriteTargetForMutation,
@@ -45,7 +42,9 @@ import {
   writeAssetToSource,
 } from "../../core/write-source";
 import type { InputFlag } from "../../execution/input-contract";
+import { deriveInstallations } from "../../indexer/installations";
 import { withEngineFallback } from "../../integrations/agent/engine-fallback";
+import { resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { resolveAssetPath } from "../../sources/resolve";
 import { enabledRefsFromInstalled, schedulerEnabledRefs, setSchedulerRefEnabled } from "../../tasks/activation-config";
 import { backendNameForPlatform, selectBackend } from "../../tasks/backends";
@@ -53,6 +52,7 @@ import type { InstalledSchedulerBinding, SchedulerBackend, SchedulerInstallOptio
 import { prepareTaskV3Execution } from "../../tasks/prepare/prepare";
 import type { PrepareTaskV3ExecutionContext } from "../../tasks/prepare/prepared-execution";
 import { isCheckoutInvocation, type ResolvedAkmInvocation, resolveAkmInvocation } from "../../tasks/resolve-akm-bin";
+import { activeTaskSources, resolveBundleAsset } from "../../tasks/run/load-task";
 import { createExecutionProvenanceContext } from "../../tasks/run/provenance";
 import { runTask } from "../../tasks/run/run-task";
 import { readTaskHistory } from "../../tasks/run/task-history";
@@ -175,7 +175,7 @@ export async function akmTasksAdd(input: TasksAddInput, deps: TaskMutationDeps =
     tags: input.tags,
   });
 
-  const parsedTask = parseTaskSource({ yaml, filePath: assetPath, workspaceRoot: stashDir });
+  const parsedTask = parseTaskSource({ yaml, filePath: assetPath });
   const task = projectTaskSourceV4(parsedTask.v4);
   const qualifiedRef = makeBundleRef(bundle.bundleName, `tasks/${id}`);
   await prepareTaskV3Execution(task, {
@@ -378,7 +378,6 @@ function resolveTaskActivation(
     const parsedSource = parseTaskSource({
       yaml: fs.readFileSync(sourcePath, "utf8"),
       filePath: sourcePath,
-      workspaceRoot: bundle.source.path,
     });
     if (parsedSource.v4.schedule.length === 0) {
       throw new UsageError(`Task ${JSON.stringify(ref)} has no schedule to enable.`, "INVALID_FLAG_VALUE");
@@ -568,27 +567,29 @@ async function buildSchedulerSyncPlan(
     if (options.dryRun !== true) config = loadConfig();
   }
 
-  const activeSources = resolveActiveConfiguredSources(config);
+  // The one active-bundle set search, show and workflows walk, working stash included.
+  // A working stash that is a disabled configured bundle is left out: an
+  // unscoped sync still removes that bundle's rows (below) and syncs the others,
+  // and a scoped sync reports it as disabled only when it is the selected one.
+  const sources = activeTaskSources(config);
+  const ids = deriveInstallations(sources).map((installation) => installation.id);
+  const kinds = sources.map((source) => source.type);
+  const configuredSources = resolveConfiguredSources(config);
   if (bundleTarget) {
     // Only filesystem and git bundles can carry scheduler state.
-    const targetSource = activeSources.find((source) => source.name === bundleTarget);
-    if (targetSource && !isWriteCapableSourceKind(targetSource.type)) {
+    const targetType = kinds[ids.indexOf(bundleTarget)];
+    if (targetType !== undefined && !isWriteCapableSourceKind(targetType)) {
       throw new UsageError(
-        `Bundle "${bundleTarget}" has kind "${targetSource.type}"; task scheduling is only supported for filesystem and git bundles.`,
+        `Bundle "${bundleTarget}" has kind "${targetType}"; task scheduling is only supported for filesystem and git bundles.`,
         "INVALID_FLAG_VALUE",
       );
     }
   }
-  const configuredSources = resolveConfiguredSources(config);
-  const schedulable = activeSources
-    .filter((source) => isWriteCapableSourceKind(source.type))
-    .map((source) => source.name);
-  // No configured bundle at all: the working stash (e.g. `AKM_BUNDLE_DIR`).
-  const selected: Array<string | undefined> = bundleTarget
-    ? [bundleTarget]
-    : schedulable.length > 0 || configuredSources.length > 0
-      ? schedulable
-      : [undefined];
+  const schedulable = ids.filter((_, index) => {
+    const type = kinds[index];
+    return type !== undefined && isWriteCapableSourceKind(type);
+  });
+  const selected: string[] = bundleTarget ? [bundleTarget] : schedulable;
 
   const enabledRefSet = new Set(enabledRefs);
   const desired: SchedulerBinding[] = [];
@@ -977,12 +978,7 @@ function taskProjectionAssetResolver(
     if (bundle === bundleName) {
       return { file: await resolveAssetPath(bundleRoot, type, name), bundleRoot };
     }
-    // `bundle` is the qualifier of an asset ref in the task, not a flag.
-    const target = resolveWriteTarget(config, bundle, { requireWritable: false, flag: "The asset ref's bundle" });
-    return {
-      file: await resolveAssetPath(target.source.path, type, name),
-      bundleRoot: target.source.path,
-    };
+    return resolveBundleAsset(config, { bundle, type, name });
   };
 }
 
@@ -996,7 +992,7 @@ function taskProjectionAssetResolver(
 export function resolveTaskReadBundle(
   refBundle: string | undefined,
   flagBundle: string | undefined,
-): ResolvedWriteTarget {
+): Pick<ResolvedWriteTarget, "source"> {
   if (refBundle && flagBundle && refBundle !== flagBundle) {
     throw new UsageError(
       `Task ref selects bundle ${JSON.stringify(refBundle)}, but --bundle selects ${JSON.stringify(flagBundle)}.`,
@@ -1005,19 +1001,28 @@ export function resolveTaskReadBundle(
   }
   const selector = flagBundle ?? refBundle;
   const config = loadConfig();
-  let resolved: ResolvedWriteTarget;
+  let resolved: Pick<ResolvedWriteTarget, "source">;
   if (!selector) {
     resolved = resolveWorkingStashTarget(config, { requireWritable: false });
   } else {
-    const configured = resolveActiveConfiguredSources(config).some((source) => source.name === selector);
-    const implicit = configured ? undefined : resolveImplicitScheduledBundleTarget(config, selector);
-    resolved =
-      implicit ??
-      resolveWriteTarget(config, selector, {
-        requireWritable: false,
-        // The selector is `--bundle` when given, else the task ref's own bundle qualifier.
-        flag: flagBundle !== undefined ? "--bundle" : "The task ref's bundle",
-      });
+    // Reading needs no write target: any bundle of the active set resolves.
+    const sources = activeTaskSources(config);
+    const source = resolveSourcesForOrigin(selector, sources)[0];
+    if (!source) {
+      assertBundleNotDisabled(config, selector);
+      throw new UsageError(
+        `${flagBundle !== undefined ? "--bundle" : "The task ref's bundle"} must reference a source name from your config. No source named "${selector}" is configured. Run \`akm bundle list\` to see available sources.`,
+        "INVALID_FLAG_VALUE",
+      );
+    }
+    resolved = {
+      source: {
+        kind: source.type ?? "filesystem",
+        name: selector,
+        path: source.path,
+        adapterId: source.adapterId ?? detectAdapterId(source.path),
+      },
+    };
   }
   if (refBundle && resolved.source.name !== refBundle) {
     throw new UsageError(
@@ -1026,28 +1031,6 @@ export function resolveTaskReadBundle(
     );
   }
   return resolved;
-}
-
-/**
- * New scheduler bindings always carry a canonical `--bundle <owner>` token,
- * including an env-selected working stash. That stash need not be persisted in
- * config (CI, one-shot tools, and fresh installs commonly use only
- * AKM_BUNDLE_DIR), so its scheduled child — every row sets AKM_BUNDLE_DIR to
- * the working stash it was synced from — must accept precisely its derived
- * owner name.
- *
- * This is intentionally narrower than an unknown-bundle fallback: a configured
- * source always wins, and an unconfigured selector is accepted only when it is
- * exactly the current env-selected working stash identity.
- */
-function resolveImplicitScheduledBundleTarget(config: AkmConfig, selector: string): ResolvedWriteTarget | undefined {
-  if (!process.env.AKM_BUNDLE_DIR?.trim()) return undefined;
-  try {
-    const working = resolveWorkingStashTarget(config, { requireWritable: false });
-    return working.source.name === selector ? working : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** True when `candidate` resolves to the same directory as the primary stash. */

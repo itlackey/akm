@@ -103,7 +103,7 @@ describe("qualified mutation targets", () => {
     configure(team, "team");
     const value = seed(storage.root, "value.txt", "secret-value");
 
-    const result = await runCliCapture(["env", "create", "prod", "--from-file", value]);
+    const result = await runCliCapture(["env", "create", "env/prod", "--from-file", value]);
 
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout).ref).toBe("team//env/prod");
@@ -147,7 +147,7 @@ describe("qualified mutation targets", () => {
     configure(team);
     const teamEnv = seed(team, "env/team-only.env", "TEAM_ONLY=true\n");
 
-    const result = await runCliCapture(["env", "path", "team-only", "--quiet"]);
+    const result = await runCliCapture(["env", "path", "env/team-only", "--quiet"]);
 
     expect(result.code).toBe(0);
     expect(result.stdout.trim()).toBe(teamEnv);

@@ -21,21 +21,20 @@ import type { UnitDispatcher } from "./unit-dispatch";
 /** The engine pair a dispatch may draw credentials from. `StepWorkUnit` satisfies it structurally. */
 export interface DispatchSecretSources {
   runner?: RunnerSpec;
-  /** Values sampled by the frozen-environment materializer. */
+  /** Secret values substituted by the frozen-environment materializer. */
   sensitiveValues?: readonly string[];
 }
 
 /**
  * Every exact value that must never reach the journal from one dispatch: the
- * resolved `env` bindings, the engine's (and SDK fallback's) credential from
- * env, file, or secret store, and unsafe passthrough values. Read at call time,
- * so collect no earlier than the dispatch being scrubbed.
+ * secrets substituted into the unit's env bindings (`dispatch.sensitiveValues`;
+ * the rest of an env asset is configuration and reaches the journal as is), the
+ * engine's (and SDK fallback's) credential from env, file, or secret store, and
+ * unsafe passthrough values. Read at call time, so collect no earlier than the
+ * dispatch being scrubbed.
  */
-export function collectWorkflowDispatchSensitiveValues(
-  dispatch: DispatchSecretSources,
-  env: Record<string, string> | undefined,
-): string[] {
-  const values = new Set<string>([...Object.values(env ?? {}), ...(dispatch.sensitiveValues ?? [])]);
+export function collectWorkflowDispatchSensitiveValues(dispatch: DispatchSecretSources): string[] {
+  const values = new Set<string>(dispatch.sensitiveValues ?? []);
   const addCredential = (runner: RunnerSpec | undefined): void => {
     if (!runner) return;
     if (runner.kind === "llm") {
@@ -80,6 +79,22 @@ export function collectWorkflowDispatchSensitiveValues(
 }
 
 /**
+ * Turn a number leaf that is exactly a sensitive value into its text, so the string scrub redacts it (a
+ * numeric secret echoed as a JSON number). Only the unit's parsed `result` takes this path: a number
+ * elsewhere in an outcome (`tokens`) stays a number.
+ */
+function stringifySensitiveNumbers(value: unknown, sensitiveValues: readonly string[]): unknown {
+  if (typeof value === "number") return sensitiveValues.includes(String(value)) ? String(value) : value;
+  if (Array.isArray(value)) return value.map((entry) => stringifySensitiveNumbers(entry, sensitiveValues));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, child]) => [key, stringifySensitiveNumbers(child, sensitiveValues)]),
+    );
+  }
+  return value;
+}
+
+/**
  * Scrub a dispatch outcome before anything about it is journaled. A
  * `failureReason` the scrub altered carried a secret, so it is downgraded.
  */
@@ -87,7 +102,9 @@ export function redactUnitOutcome<T extends { failureReason?: string }>(
   outcome: T,
   sensitiveValues: readonly string[],
 ): T {
-  const redacted = redactSensitiveValue(outcome, sensitiveValues);
+  const prepared =
+    "result" in outcome ? { ...outcome, result: stringifySensitiveNumbers(outcome.result, sensitiveValues) } : outcome;
+  const redacted = redactSensitiveValue(prepared, sensitiveValues);
   if (outcome.failureReason !== undefined && redacted.failureReason !== outcome.failureReason) {
     redacted.failureReason = "reported_failure";
   }

@@ -37,7 +37,7 @@ import { LineCounter, parseDocument } from "yaml";
 import { bundleRefToString, parseBundleRef } from "../core/asset/asset-ref";
 import { parseFrontmatterBlock } from "../core/asset/frontmatter";
 import { parseMarkdownToc } from "../core/asset/markdown";
-import { isContainedRelativePath, isRecord } from "../core/common";
+import { isRecord } from "../core/common";
 import { formatExtraParamsIssue, validateExtraParams } from "../core/extra-params";
 import { checkJsonSchemaDefinition, JSON_SCHEMA_SUBSET_SUPPORTED_KEYWORDS } from "../core/json-schema";
 import { INPUT_NAME_PATTERN } from "../execution/input-contract";
@@ -189,7 +189,6 @@ interface RangedNode {
 interface Ctx {
   readonly filePath: string;
   readonly errors: WorkflowError[];
-  readonly validateExecCwd?: WorkflowParseOptions["validateExecCwd"];
   lineAt(path: Path): number;
   lineAtOffset(offset: number): number;
   refAt(path: Path): SourceRef;
@@ -198,16 +197,10 @@ interface Ctx {
   errAtLine(line: number, message: string): void;
 }
 
-export type WorkflowExecCwdValidationResult =
-  | { ok: true; value: string }
-  | { ok: false; code: string; message: string };
-
 export interface WorkflowParseOptions {
   path: string;
   /** Plan title; defaults to the file's basename. */
   title?: string;
-  /** Optional physical-containment check for `exec.cwd` (see `compile.ts`). */
-  validateExecCwd?: (value: string) => WorkflowExecCwdValidationResult;
 }
 
 export function parseWorkflow(markdown: string, source: WorkflowParseOptions): WorkflowParseResult {
@@ -282,7 +275,6 @@ export function parseWorkflow(markdown: string, source: WorkflowParseOptions): W
   const ctx: Ctx = {
     filePath: path,
     errors,
-    ...(source.validateExecCwd ? { validateExecCwd: source.validateExecCwd } : {}),
     lineAt,
     lineAtOffset: (offset) => Math.max(1, lineCounter.linePos(offset).line + lineOffset),
     nodeAt: (p) => (p.length === 0 ? doc.contents : doc.getIn(p, true)),
@@ -1016,38 +1008,17 @@ function parseExecCommand(ctx: Ctx, raw: unknown, path: Path, stepLabel: string)
 }
 
 /**
- * The optional relative `cwd:`. Rejected here (statically) for absolute paths
- * and `..` segments; containment against the resolved base directory is
- * re-checked at dispatch, so a symlinked subdirectory cannot escape either.
+ * The optional `cwd:`: a non-empty string, relative to the workflow's bundle root or absolute, and
+ * free to carry `${ref}` tokens. Nothing else is checked here; the unit's working directory is
+ * resolved at dispatch.
  */
 function parseExecCwd(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): string | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw !== "string" || raw.trim() === "") {
-    ctx.err(path, `${stepLabel} "exec.cwd" must be a non-empty relative path inside the unit's working directory.`);
+    ctx.err(path, `${stepLabel} "exec.cwd" must be a non-empty string.`);
     return undefined;
   }
-  const value = raw.trim();
-  if (!isContainedRelativePath(value)) {
-    ctx.err(
-      path,
-      `${stepLabel} "exec.cwd" (${JSON.stringify(value)}) must be a RELATIVE path inside the unit's working ` +
-        `directory — absolute paths, Windows drive letters, "~", and ".." segments are rejected.`,
-    );
-    return undefined;
-  }
-  if (ctx.validateExecCwd) {
-    const semantic = ctx.validateExecCwd(value);
-    if (!semantic.ok) {
-      ctx.errors.push({
-        code: semantic.code,
-        line: ctx.lineAt(path),
-        message: semantic.message,
-      });
-      return undefined;
-    }
-    return semantic.value;
-  }
-  return value;
+  return raw.trim();
 }
 
 function parseMap(ctx: Ctx, raw: unknown, path: Path, stepLabel: string): ProgramMap | undefined {

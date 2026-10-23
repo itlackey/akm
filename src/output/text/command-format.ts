@@ -182,7 +182,7 @@ export function formatEnvListPlain(r: Record<string, unknown>): string {
   // Multi-env listing: { envs: [{ ref, path, keys }, ...] }
   const envs = Array.isArray(r.envs) ? (r.envs as Array<Record<string, unknown>>) : [];
   if (envs.length === 0) {
-    return "No env files. Create one with `akm env create <name>`, then edit the .env file directly.";
+    return "No env files. Create one with `akm env create env/<name>`, then edit the .env file directly.";
   }
   const lines: string[] = [];
   for (const v of envs) {
@@ -577,6 +577,10 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   const proposalRefs = Number(state.proposalRefs ?? 0);
   const proposalTargets = Number(state.proposalTargets ?? 0);
   const taskHistoryRefs = Number(state.taskHistoryRefs ?? 0);
+  const workflowRunRefs = Number(state.workflowRunRefs ?? 0);
+  const activeWorkflowRuns = Array.isArray(r.activeWorkflowRuns)
+    ? (r.activeWorkflowRuns as Array<{ id: string; workflowRef: string; status: string }>)
+    : [];
   const entries = Number(index.entries ?? 0);
   const contentRefs = Array.isArray(r.contentRefs) ? r.contentRefs : [];
   const nativeSchedulerRows = Array.isArray(r.nativeSchedulerRows) ? r.nativeSchedulerRows : [];
@@ -584,8 +588,15 @@ export function formatBundleRenamePlain(r: Record<string, unknown>): string {
   const verb = applied ? "Renamed" : "Would rename";
   const lines = [
     `${verb} bundle "${oldId}" to "${newId}" (${entries} index entries, ${schedulerRefs} scheduler ref(s), ` +
-      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s)).`,
+      `${proposalRefs + proposalTargets} proposal reference(s), ${taskHistoryRefs} task-history row(s), ` +
+      `${workflowRunRefs} workflow run(s)).`,
   ];
+  if (activeWorkflowRuns.length > 0) {
+    lines.push(
+      "Active and blocked workflow runs keep the old bundle name in their frozen plan; continue them (`akm workflow run <id>`, after `akm workflow resume <id>` for a blocked one) or abandon them (`akm workflow abandon <id>`):",
+    );
+    for (const run of activeWorkflowRuns) lines.push(`  - ${run.id} (${run.workflowRef}, ${run.status})`);
+  }
   if (!applied) {
     lines.push("Re-run without --dry-run to apply. It also re-syncs native scheduler bindings under the new name.");
     if (nativeSchedulerRows.length > 0) {

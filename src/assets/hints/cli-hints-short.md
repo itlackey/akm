@@ -15,9 +15,8 @@ For workflow tasks:
 2. `akm workflow run workflows/<name> --param_name=value` — execute every step and verification gate
 3. `akm workflow status <run-id> --units` — inspect a stopped or failed run
 
-Workflow runs are scoped to your current project/worktree/directory. Ref-based
-commands like `workflow run workflows/<name>`, `workflow status workflows/<name>`,
-and `workflow list` operate within the current scope only.
+A workflow ref (`workflows/<name>`) starts a new run; a run id drives that exact
+run. `workflow list` and `workflow status` see every run on this host.
 
 ## Quick Reference
 
@@ -29,7 +28,7 @@ akm search "memories/projectA/"               # List a subtree (conceptId prefix
 akm search "<query>" --from all               # Also search registries
 akm show <ref>                                # View asset details
 akm help <command>                            # Show a command's options and subcommands
-akm workflow run <ref>                        # Start or resume and execute a workflow
+akm workflow run <ref>                        # Start a new run and execute it
 akm remember "Deployment needs VPN access"    # Record a memory in your bundle
 akm remember "note" --bundle my-bundle         # Route write to a named writable bundle source
 akm remember "note" --xref knowledge/auth-flow # Cite provenance in frontmatter xrefs (repeatable)

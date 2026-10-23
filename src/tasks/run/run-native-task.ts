@@ -23,7 +23,6 @@ import path from "node:path";
 import { assertNever } from "../../core/assert";
 import type { TaskLogLineInput } from "../../core/logs-db";
 import { runManagedSubprocess, type SpawnFn, streamCaptureFailure } from "../../core/subprocess";
-import { assertFrozenDirectoryContained } from "../../execution/directory-identity";
 import { cleanupFrozenScript, frozenScriptCommand, materializeFrozenScript } from "../frozen-script";
 import type { ExecutionProvenanceContext } from "../model/invocation";
 import type { PreparedTaskV3Script, PreparedTaskV3Shell } from "../prepare/prepared-execution";
@@ -197,13 +196,6 @@ export async function runNativeTask(input: {
   process.once("SIGINT", onSigint);
 
   try {
-    // Re-resolve the authored root/cwd immediately before spawn so a
-    // symlink, ancestor, bundle-root, or directory/file swap cannot redirect
-    // execution outside that physical workspace. This is a live containment
-    // check, not an identity comparison — it does not care whether the
-    // underlying device/inode changed (e.g. a remount), only whether the
-    // resolved cwd still lives inside its root.
-    assertFrozenDirectoryContained(task.cwdIdentity);
     if (task.kind === "script") {
       materialized = materializeFrozenScript(task);
       cmd = frozenScriptCommand(task, materialized.file);

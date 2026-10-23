@@ -302,11 +302,15 @@ describe("conformance — read candidates and recognition are two-way canonical 
       fs.writeFileSync(reserved, "# reserved");
       expect(genericFilesAdapter.recognize(genericComponent, buildFileContext(genericRoot, reserved))).toBeNull();
 
+      // Installing a bundle is the trust decision: an asset that is a symlink to
+      // a file outside the bundle is owned like any other file (#1237).
       const outside = path.join(sandbox.dir, "outside.md");
       fs.writeFileSync(outside, "outside");
-      const escaping = path.join(genericRoot, "escape.md");
-      fs.symlinkSync(outside, escaping);
-      expect(resolveAdapterConceptOwner(genericRoot, "generic-files", "escape")).toBeUndefined();
+      const linked = path.join(genericRoot, "linked.md");
+      fs.symlinkSync(outside, linked);
+      const linkedOwner = resolveAdapterConceptOwner(genericRoot, "generic-files", "linked");
+      expect(linkedOwner?.path).toBe(linked);
+      expect(linkedOwner?.realPath).toBe(fs.realpathSync(outside));
 
       const dotenvComponent = component("dotenv", "dotenv", dotenvRoot);
       const defaultEnv = path.join(dotenvRoot, "env", ".env");

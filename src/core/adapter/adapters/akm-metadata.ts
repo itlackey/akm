@@ -238,7 +238,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
     case "task-yaml": {
       out.tags = Array.from(new Set([...(out.tags ?? []), "task", "scheduled"]));
       try {
-        const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath, workspaceRoot: file.stashRoot });
+        const parsed = parseTaskSource({ yaml: file.content(), filePath: file.absPath });
         const v4 = parsed.v4;
         const target = v4.target;
         const hints = new Set<string>();
@@ -317,7 +317,7 @@ export function foldRecognizedMetadata(rendererName: string, file: FileContext):
     // ── workflow-document-metadata (historical renderer id `workflow-md`, peer sources) ──
     case "workflow-md": {
       try {
-        const result = compileWorkflowSource(file.content(), { path: file.relPath, workspaceRoot: file.stashRoot });
+        const result = compileWorkflowSource(file.content(), { path: file.relPath });
         if (!result.ok) return out;
         const plan = result.plan;
         const hints = new Set<string>();

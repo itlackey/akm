@@ -13,7 +13,7 @@ import { isBundleSlug } from "../../core/asset/asset-ref";
 import { serializeFrontmatter } from "../../core/asset/asset-serialize";
 import { parseFrontmatter, replaceFrontmatterBlocks } from "../../core/asset/frontmatter";
 import { conceptIdFromTypeName, displayRef, parseQualifiedRefInput } from "../../core/asset/resolve-ref";
-import { isWithin } from "../../core/common";
+import { isWithin, safeRealpath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { ConfigError, NotFoundError, UsageError } from "../../core/errors";
 import { defaultBundleForTarget } from "../../core/mutation-target";
@@ -29,6 +29,7 @@ import { indexWrittenAssets } from "../../indexer/index-written-assets";
 import { resolveAdapterConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { findSourceForPath, resolveSourceEntries, type SearchSource } from "../../indexer/search/search-source";
 import { buildFileContext } from "../../indexer/walk/file-context";
+import { isFileOrFileSymlink } from "../../indexer/walk/walker";
 import { isRemoteOrigin, resolveSourcesForLocator, resolveSourcesForOrigin } from "../../registry/origin-resolve";
 import { syncFromRef } from "../../sources/providers/sync-from-ref";
 import { resolveAssetPath } from "../../sources/resolve";
@@ -215,17 +216,19 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       ? `in target "${writeTarget.selector}"`
       : "in working stash";
 
-  // Guard against self-clone
+  // Guard against self-clone. Compare physical paths: sourcePath is the
+  // authored path, and a source that is a symlink to the destination is the
+  // same file (or skill) even though the authored paths differ.
   if (isSkill) {
-    const sourceSkillDir = path.resolve(path.dirname(sourcePath));
-    const destSkillDir = path.resolve(path.join(destRoot, typeDir, destName));
+    const sourceSkillDir = safeRealpath(path.dirname(sourcePath));
+    const destSkillDir = safeRealpath(path.join(destRoot, typeDir, destName));
     if (sourceSkillDir === destSkillDir) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }
   } else {
-    const resolvedSource = path.resolve(sourcePath);
+    const resolvedSource = safeRealpath(sourcePath);
     const effectiveDestName = !path.extname(destFileName) && sourceExt ? destFileName + sourceExt : destFileName;
-    const resolvedDest = path.resolve(path.join(destRoot, typeDir, effectiveDestName));
+    const resolvedDest = safeRealpath(path.join(destRoot, typeDir, effectiveDestName));
     if (resolvedSource === resolvedDest) {
       throw new Error(`Source and destination are the same path. Use --name to provide a new name for the clone.`);
     }
@@ -236,7 +239,9 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
     let overwritten: boolean;
     let operationPaths: string[];
     if (isSkill) {
-      const sourceSkillDir = path.dirname(sourcePath);
+      // sourcePath is the authored path; a symlinked skill directory must be
+      // copied by content, never as the link.
+      const sourceSkillDir = fs.realpathSync(path.dirname(sourcePath));
       const destSkillDir = path.join(destRoot, typeDir, destName);
       assertNoDestinationSymlinkParent(destRoot, destSkillDir);
       const existing = lstatIfExists(destSkillDir);
@@ -254,7 +259,11 @@ export async function akmClone(options: CloneOptions): Promise<CloneResponse> {
       // final symlink is removed as an entry, never traversed.
       const stagingDir = `${destSkillDir}.tmp-${randomUUID()}`;
       try {
+        // Directory links are copied as links and never descended (as the walker
+        // does); each file link is then replaced by its content, so the stamp
+        // below never writes through a link.
         fs.cpSync(sourceSkillDir, stagingDir, { recursive: true, errorOnExist: true, force: false });
+        materializeFileLinks(stagingDir);
         stampCloneOrigin(path.join(stagingDir, "SKILL.md"), originRef);
         if (overwritten) fs.rmSync(destSkillDir, { recursive: true, force: true });
         fs.renameSync(stagingDir, destSkillDir);
@@ -410,6 +419,21 @@ function assertNoDestinationSymlinkParent(root: string, destination: string): vo
       `Clone destination has a symbolic-link parent outside the selected target boundary: ${parentDir}.`,
       "PATH_ESCAPE_VIOLATION",
     );
+  }
+}
+
+/** Replace each file symlink under `root` with a regular file holding its target's bytes. Directory links are left as links. */
+function materializeFileLinks(root: string): void {
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    const entryPath = path.join(root, entry.name);
+    if (entry.isDirectory()) {
+      materializeFileLinks(entryPath);
+    } else if (entry.isSymbolicLink() && isFileOrFileSymlink(entryPath)) {
+      const content = fs.readFileSync(entryPath);
+      const { mode } = fs.statSync(entryPath);
+      fs.rmSync(entryPath);
+      fs.writeFileSync(entryPath, content, { mode });
+    }
   }
 }
 

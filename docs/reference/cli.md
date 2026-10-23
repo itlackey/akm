@@ -898,17 +898,15 @@ Author, inspect, and execute structured workflow assets.
 akm workflow create ship-release --print
 akm workflow create ship-release
 akm workflow create ship-release --from ./ship-release.md
-akm workflow run workflows/ship-release --version 1.2.3
+akm workflow run workflows/ship-release --version 1.2.3   # always starts a new run
 akm workflow run <run-id>                  # continue an active partial run
-akm workflow run workflows/ship-release --new  # start a fresh run even if one is already active
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status 7c115132               # 8+ char run-id prefix also works
-akm workflow resume <run-id>
+akm workflow resume <run-id>               # re-activate a blocked or failed run, then run <run-id>
 akm workflow abandon <run-id>
 akm workflow list --active
 akm workflow list --children               # also list child workflow runs (Experimental)
-akm workflow list --all-scopes             # include runs started from a different working directory
 akm workflow plan workflows/ship-release    # compile+freeze preview, zero writes
 ```
 
@@ -920,10 +918,10 @@ Subcommands:
 | Subcommand | Description |
 | --- | --- |
 | `create <name>` | Validate and write a Markdown workflow under `workflows/`. `--path <dir>` places it in a subdirectory; `--from <file>` imports content; `--force` overwrites; `--print` prints the template that would be written instead of writing it |
-| `run <run-id\|ref>` | Canonical start/resume/execute command. A ref starts a run or resumes the active run in the current scope (announced as `resumed: true`, see below); a run id continues that exact active run. `--new` starts a fresh run even when one is already active. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
-| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. `--all-scopes` widens the ref-fallthrough lookup (only reached when the target does not resolve to a run id) to every scope instead of just the current one |
-| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. `--all-scopes` searches every scope instead of only the current one (#942) |
-| `resume <run-id>` | Flip a `blocked` or `failed` run back to `active`. Completed runs cannot be resumed |
+| `run <run-id\|ref>` | Canonical start/execute command. A ref always starts a new run (other active runs of the ref produce one warning, see below); a run id continues that exact active run. Executes until completion, failure, verification rejection, interruption, or an explicit limit |
+| `status <run-id\|ref>` | Show the full run state, including all step statuses. `--units` also lists per-unit rows from the run journal (diagnostics only). Renders a `children:` tree when the run composes child workflows. A ref shows its most recently updated run. `--all-scopes` is a deprecated no-op |
+| `list` | List workflow runs (optionally filtered by `--ref`; `--active` shows only `status=active` runs, excluding `blocked`/`failed`/`completed`). Child workflow runs (the Experimental `unit: { workflow: … }` step) are excluded unless `--children` is passed. Lists every run on the host, most recently updated first, from any working directory. `--all-scopes` is a deprecated no-op |
+| `resume <run-id>` | Flip a `blocked` or `failed` run back to `active` so `run <run-id>` can continue it; it executes nothing. Completed runs cannot be resumed |
 | `abandon <run-id>` | Mark a run failed so it stops counting as active (`resume` can reopen it) |
 | `plan <ref>` | **Evolving.** Compile and freeze a workflow WITHOUT publishing a run: the canonical step graph, per-step frozen target kinds, task/child expansion, input bindings, source read set, and lowering notices — zero durable writes. Returns the full JSON envelope by default, like every other command; pass `--format text` for a human-readable summary |
 
@@ -968,8 +966,9 @@ Schema before persisting the run:
 
 A bare boolean flag means `true`. Hyphen/underscore aliases are not inferred:
 declared `include_processes` requires `--include_processes`, not
-`--include-processes`. Parameters can be supplied only when a new run is
-created; a later invocation against an active run rejects parameter flags.
+`--include-processes`. Parameters are accepted on every ref start (a ref
+always starts a new run); passing them with a run id is rejected, because that
+run already has its parameters.
 The old `--params <json>` bag is removed.
 
 | Flag | Description |
@@ -977,15 +976,16 @@ The old `--params <json>` bag is removed.
 | `--max-steps <n>` | Stop once this many steps have finished, leaving a partial run active. Must be at least 1. |
 | `--max-retries <n>` | When a step fails, reopen the same run and retry the failed step up to this many additional times. Range: 0 through 100; default 0. Gate rejection and interruption are not retried. |
 | `--timeout <duration>` | Abort the whole invocation after `N`, `Nms`, `Ns`, or `Nm`; bare `N` is milliseconds. The active step remains resumable. |
-| `--new` | Start a fresh run even when one is already active for this ref, instead of resuming it. The existing active run is left untouched — it is never abandoned automatically. A workflow ref only: passing a run id with `--new` is a usage error (exit 2). Parameter flags are allowed together with `--new`, since it is starting a new run. |
-| `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
+| `--new` | Deprecated, no effect (accepted through 0.10): a workflow ref always starts a new run. |
+| `--skip-if-locked` | If another akm process is already driving this run (it holds the run's lock file: `RUN_LEASE_HELD`), when starting a ref an active run of that ref is held by a live process, or `state.db` is busy with another writer (`STATE_DB_CONTENDED`), skip gracefully (exit 0) instead of failing (exit 75, `TransientError`). The envelope reports `{ skipped: { reason: "lock-held" \| "state-db-contended", message } }`. Every other failure (a bad flag, an unresolvable target) still fails loudly regardless of this flag. Use for high-frequency scheduled runs so they don't pile up failures while a longer-running invocation is in progress — same family as `improve --skip-if-locked`. |
 
-**Resuming an active run is announced, not silent.** Passing a ref that
-already has an active run in the current scope resumes that run rather than
-starting a new one (unchanged since #485) — but the envelope now carries
-`resumed: true` alongside the resumed run's `run.id`, and the default text
-output leads with `resuming existing run <id> for <ref>; pass --new to start
-a fresh run`. Pass `--new` to start a second, independent run instead.
+**A ref always starts a new run.** `workflow run <ref>` never resumes: use
+`workflow run <run-id>` to continue a run and `workflow resume <run-id>` to
+reopen a blocked or failed one so `run <run-id>` can continue it. When other
+runs of the same ref are still active, the start prints one warning naming
+their ids and the `akm workflow run <id>` / `akm workflow abandon <id>`
+commands, and starts anyway. `--skip-if-locked` is the guard for scheduled callers: it skips (exit
+0) instead of starting when an active run of the ref is held by a live process.
 
 The result includes the current `run`, an `executed` step report list, a
 `stepsProcessed` count of the steps that finished, and optional `done`,
@@ -1015,17 +1015,11 @@ from the unit journal so they hold across resumes.
 non-empty `### gate` requires `workflow.judgeEngine` to name a configured LLM
 or agent engine before a new run can be frozen. Gate evaluation is fail-closed.
 
-Workflow runs are scoped to the current working context, not globally across all
-repos or directories. akm resolves that context from the nearest `.akm/config.json`
-ancestor when present, otherwise the nearest git root, otherwise the bundle root
-when the cwd is inside it, otherwise the cwd itself. In practice this means:
-
-- `workflow run workflows/<name>` resumes the active run for the current project/worktree/directory (announced with `resumed: true`), or starts one when none is active. `--new` always starts a fresh run.
-- `workflow status workflows/<name>` resolves the most-recently-updated run in the current scope only, unless `--all-scopes` is passed.
-- `workflow list` shows runs for the current scope only, unless `--all-scopes` is passed. Its envelope always carries a top-level `scopeKey` naming the scope that was searched (`null` under `--all-scopes`), so an empty `runs: []` is never indistinguishable from "nothing anywhere".
-- Direct run-id commands like `workflow status <run-id>`, `workflow resume <run-id>`, and `workflow abandon <run-id>` still work even if the run was started from another directory.
-- A scheduled task runs from the scheduler's cwd, so its runs sit in a different scope from your shell's: find the run id with `akm task history <task-id> --limit 1` (`detail.runId`), then run `akm workflow status <run-id>` from any directory, or use `workflow list --all-scopes`.
-- Starting a ref by name (`workflow run workflows/<name>`) never collides across scopes — each scope can hold its own active run of the same ref — but if an active run of that ref exists in a *different* scope, the started run's envelope carries a `warnings[]` entry naming that run's id, scope, and start time, with the `akm workflow run <id>` / `akm workflow abandon <id>` remedy, so a stray run in another scope does not go unnoticed (#942).
+Workflow runs are identified by run id, and workflows by ref; neither depends
+on the working directory. `workflow list` and `workflow status workflows/<name>`
+see every run on the host, from any directory, so the runs of a scheduled task
+(which runs from the scheduler's cwd) appear exactly as runs started from your
+shell do. `akm show` reports no run state; it belongs under `akm workflow`.
 
 #### workflow create
 
@@ -1061,17 +1055,18 @@ affect the in-flight run.
 akm workflow status <run-id>
 akm workflow status workflows/ship-release
 akm workflow status <run-id> --units    # also list per-unit rows from the run journal
-akm workflow status workflows/ship-release --all-scopes  # resolve across every scope, not just the current one
 ```
 
 Accepts a run id, a unique 8+ character run-id prefix, or a workflow ref.
 When given a workflow ref, resolves to the most-recently-updated run for that
-ref in the current working scope, unless `--all-scopes` is passed (only
-relevant when the target does not resolve to a run id; a run id is always
-scope-agnostic, `--all-scopes` or not, #942). `--units` adds per-unit rows
+ref on this host. `--all-scopes` is a deprecated no-op. `--units` adds per-unit rows
 (unit id, status, failure reason, and any result/error diagnostic text) from
 the run journal — diagnostics only; step evidence stays deterministic and is
-unaffected.
+unaffected. A failed unit's row also carries an `orchestration` object (in
+text, `argv:`, `cwd:`, `env:` and `ref:` lines): the step's argv, cwd and env
+refs from the frozen plan, and the bundle-qualified ref each `${ref}` token,
+env ref and child workflow resolves to right now (`not found` when no bundle
+owns it).
 
 #### workflow plan
 
@@ -1093,8 +1088,7 @@ a run, or to inspect a workflow's shape without side effects.
 
 Two output modes:
 
-- **No `--format`** (the default for this command only — every other verb
-  defaults to JSON): a human-readable text summary.
+- **`--format text`**: a human-readable text summary.
 - **`--format json`**: the full envelope — `ok`, `ref`, `title`,
   `sourceFormat`, `sourcePath`, `irVersion`, `planHash`, `published` (always
   `false`, so a consumer can never mistake this for a run envelope),
@@ -1110,7 +1104,7 @@ Text-mode example:
 ```
 workflow: team//workflows/release (markdown)
 source:   workflows/release.md
-plan:     irVersion 5, hash 4f2ba91c3d0e… (not published)
+plan:     irVersion 7, hash 4f2ba91c3d0e… (not published)
 limits:   maxConcurrency 4; budget max_units 50, max_tokens 100000
 params:   channel, version
 steps:
@@ -1126,13 +1120,22 @@ read set:
   workflows/release-checklist.md
 ```
 
+Each step also lists what it will run and what that names, from the same
+projection `akm show` prints: `argv:` (JSON, so word boundaries survive),
+`cwd:`, `env:` and one `ref:` line per `${ref}` token in the argv or cwd, per
+`env:` entry and per child `workflow:`, in the form `ref: ${team//scripts/x.ts}
+-> team//scripts/x.ts (argv)`. In JSON this is each step's `orchestration`
+object, with `refs[]` (`ref`, `resolved`, `in`). A ref no bundle owns fails the
+plan with an error that names it. The resolved ref is a name, never a value or
+a path.
+
 **Secret-free by construction.** Neither mode ever prints a resolved
 reference value (references resolve at pre-attempt, not here), request
 content (`request.command.content`, `request.persona`, `request.conversation`,
 `request.runtime.environment`), a script's `bytesBase64`, or any credential —
 only binding *shapes* (`inputBindings[].name`/`.kind`, a literal's `.value`,
 a reference's `.from`), environment binding *names* (`environment[].kind`/
-`.name`, an `env-ref`'s `.ref`/`.keys`/`.secretNames`), and engine *names*
+`.name`, an `env-ref`'s `.ref`), and engine *names*
 (`gate.judgeEngine`).
 
 #### workflow resume
@@ -1141,8 +1144,9 @@ a reference's `.from`), environment binding *names* (`environment[].kind`/
 akm workflow resume <run-id>
 ```
 
-Flips a `blocked` or `failed` run back to `active`. Completed runs cannot be
-resumed. Use `workflow list` to find runs by status.
+Flips a `blocked` or `failed` run back to `active`; it does not execute
+anything. Run `akm workflow run <run-id>` afterwards to continue it. Completed
+runs cannot be resumed. Use `workflow list` to find runs by status.
 
 Workflow markdown contract:
 
@@ -1198,9 +1202,10 @@ akm bundle add https://docs.example.com --max-pages 100 --max-depth 5
 | `--writable` | Mark a git source as writable so `akm sync` also pushes (default: false) |
 | `--options` | Provider options as JSON (e.g. `'{"ref":"main"}'`) |
 | `--allow-insecure-transport` | Allow a plain-HTTP source URL after explicitly accepting transport substitution risk |
-| `--allow-dangerous-env-keys` | Allow reviewed process-hijacking env keys in the installed bundle; does not permit plain HTTP |
+| `--allow-dangerous-env-keys` | Deprecated, no effect. `bundle add` no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
 | `--max-pages` | Maximum pages to crawl for website sources (default: 50) |
 | `--max-depth` | Maximum crawl depth for website sources (default: 3) |
+| `--credential` | Git HTTPS bearer credential, stored as a reference and never a literal token: `$VAR`, `${VAR}`, or an akm ref such as `${secrets/gitea_token}` (`${team//secrets/gitea_token}` for a secret in another bundle). Resolved only when git runs |
 
 To index only a subdirectory of a git bundle, set the component `root` after
 adding it:
@@ -1214,16 +1219,18 @@ akm bundle update <name>
 `root` is relative to the detected stash root of the checkout, not always the
 repo root, and takes effect on the next `bundle update` or `akm index`.
 
-#### Dangerous env key audit
+#### Env files and process-hijacking keys
 
-When `akm bundle add` installs a bundle that contains env files, it recursively scans
-every `.env`-suffixed file under `env/` (the same "real env file" test used
-everywhere else — a bare `.env` or any name ending `.env`, at any depth) for
-environment variable names that can be used for process-execution hijacking. A
-non-`.env` file under `env/` (e.g. `env/notes.txt`) is never scanned — such a
-file is never sourced as environment variables by any akm codepath, so a
-dangerous key sitting in its contents cannot hijack anything. The flagged key
-set is 41 literal names plus 2 regex pattern families (`src/commands/lint/env-key-rules.ts`):
+Installing a bundle is the trust decision. `akm bundle add` and `akm bundle
+update` do not scan a bundle's `env/` files, never prompt, and never roll an
+install back over the keys an env file sets, so a bundle whose `env/*.env` sets
+`PATH` installs and refreshes unattended with no flag. `akm env run`, `akm
+secret run` and workflow `env:` bindings inject what the bundle defines.
+
+`akm lint` still reports env keys that can hijack a process
+(`dangerous-env-key`, non-blocking), for bundle authors who want to review their
+own files. The flagged key set is 41 literal names plus 2 regex pattern families
+(`src/commands/lint/env-key-rules.ts`):
 `LD_PRELOAD`, `LD_LIBRARY_PATH`, `LD_AUDIT`, `LD_DEBUG`, `LD_BIND_NOW`,
 `LD_PROFILE`, `LD_ASSUME_KERNEL`, `LD_TRACE_LOADED_OBJECTS`,
 `DYLD_INSERT_LIBRARIES`, `DYLD_LIBRARY_PATH`, `DYLD_FRAMEWORK_PATH`, `PATH`,
@@ -1233,21 +1240,7 @@ set is 41 literal names plus 2 regex pattern families (`src/commands/lint/env-ke
 `RUBYOPT`, `PERL5LIB`, `PERL5OPT`, `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
 `_JAVA_OPTIONS`, `GIT_SSH_COMMAND`, `GIT_EXTERNAL_DIFF`, `GIT_PAGER`,
 `GIT_EDITOR`, `EDITOR`, `VISUAL`, and `PAGER` (41 literals), plus any key
-matching `^BASH_FUNC_` (Shellshock-class injection) or `^GIT_CONFIG_` (git
-config override injection).
-
-When dangerous keys are found, `akm bundle add` pauses and prompts for
-confirmation (default: No). In non-interactive mode (CI, scripts) the
-install fails with **exit 1** unless `--allow-dangerous-env-keys` is passed, and the
-freshly-installed bundle is rolled back before the process exits.
-
-```sh
-# Interactive: prompts before continuing
-akm bundle add github:owner/repo-with-sensitive-env
-
-# Non-interactive: fails unless bypassed
-akm bundle add github:owner/repo-with-sensitive-env --allow-dangerous-env-keys
-```
+matching `^BASH_FUNC_` or `^GIT_CONFIG_`.
 
 Bundle publishers: see the [Author Bundles guide](https://github.com/itlackey/akm/blob/main/docs/guides/author-bundles.md#env-security)
 for guidance on env files that legitimately need these keys.
@@ -1314,7 +1307,7 @@ akm bundle remove my-provider --yes        # Skip the confirmation prompt
 ### bundle update
 
 Update one bundle, or refresh every configured bundle with `--all`. Git, npm,
-and website candidates are staged and audited before they replace the active
+and website candidates are staged before they replace the active
 generation. Filesystem bundles require no hydration; update reconciles their
 current files into the index immediately.
 
@@ -1322,32 +1315,34 @@ current files into the index immediately.
 akm bundle update npm:@scope/pkg
 akm bundle update --all
 akm bundle update --all --force   # Force fresh download even if version is unchanged
-akm bundle update npm:@scope/pkg --allow-dangerous-env-keys  # Explicitly approve reviewed dangerous env keys
 ```
 
 | Flag | Description |
 | --- | --- |
 | `--all` | Update all managed sources |
-| `--force` | Delete cached extraction before re-downloading |
-| `--allow-dangerous-env-keys` | Permit a staged update containing dangerous environment keys after warning. Without it, an interactive terminal prompts with a default of No; non-interactive use fails closed. |
-| `-y`, `--yes` | Deprecated, no effect. An update no longer asks before deleting the previous install directory of a read-only bundle whose content moved; that directory is a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
+| `--force` | Fetch again even when the upstream revision is unchanged |
+| `--allow-dangerous-env-keys` | Deprecated, no effect. An update no longer scans env files for process-hijacking keys. Accepted through 0.10 so existing scripts keep working. |
+| `-y`, `--yes` | Deprecated, no effect. An update never asks before pruning old install directories of a read-only bundle; they are a re-fetchable cache. Accepted through 0.10 so existing scripts keep working. |
 
-The audit examines key names in `.env`-suffixed files under the staged
-component root. Publisher lint suppressions do not bypass it. Rejection or an
-audit/publication/index failure preserves the prior active bytes, lock/config
+A read-only git or npm bundle whose upstream revision still matches its lock
+is left exactly as it is: nothing is fetched or replaced, and the update
+reports it as unchanged. A real revision change installs the new revision
+beside the old one, keeps the immediately previous revision directory (a task
+or workflow may still be running from it) and removes older ones. A revision
+directory another bundle still references is kept.
+
+A publication or index failure preserves the prior active bytes, lock/config
 generation, and searchable index for that bundle.
 
-Writable Git updates resolve configured roots to their physical checkout,
-reject component symlinks that escape it, and re-audit the exact materialized
-worktree before activation. AKM holds its source/index writer lease through
-that check and commit, and rechecks after the index pass at the final database
-commit boundary. All AKM writers cooperate with this lease. A non-cooperating
-local process can still edit ordinary files because POSIX/Windows filesystems
-provide no mandatory recursive directory lock: writes observed by either
-generation check make the update fail and restore the pre-update checkout, but
-a write racing after the final filesystem read cannot be guaranteed detectable
-and a write during compensation can be overwritten. Do not edit a writable
-checkout from another process while its update is running.
+A writable Git update is fetched into a staged copy of the checkout beside the
+live one, so a failed fetch leaves the live checkout, the lock and the index
+untouched. The live checkout is then fast-forwarded to exactly the staged
+commit (`git merge --ff-only`), which refuses, and changes nothing, when local
+commits have diverged or the merge would overwrite local work. AKM holds its
+source/index writer lease through that fast-forward and the index pass; all AKM
+writers cooperate with this lease, but a non-cooperating local process is not
+excluded. Do not edit a writable checkout from another process while its update
+is running.
 
 The index and its update-owned state maintenance share one deferred SQLite
 transaction. WAL readers continue to see the last committed generation while a
@@ -1371,9 +1366,9 @@ durable usage state.
 
 Reports per-entry change flags: `changed.version`, `changed.revision`, and
 `changed.any`. With `--all`, each bundle is isolated: successful entries appear
-in `processed`/`plainSynced`; rejected entries report `status: "blocked"` and a
-security code; provider or transaction errors report `status: "failed"`. The
-command continues with later bundles without half-publishing a blocked one.
+in `processed`/`plainSynced`; provider or transaction errors report
+`status: "failed"` and a code. The command continues with later bundles without
+half-publishing a failed one.
 
 ### bundle rename
 
@@ -1397,7 +1392,11 @@ config `bundles` key; `defaultBundle`/`defaultWriteTarget` when they name the
 old id; every `scheduler.enabled[].ref` with the old `<old>//` prefix; the
 lockfile entry id; every indexed entry's `bundle_id`/ref; and this tool's own
 state rows that name the old bundle (`proposals.ref`, a pending proposal's
-write target, and workflow `task_history.target_ref`). Reported, never
+write target, workflow `task_history.target_ref`, and `workflow_runs.workflow_ref`). The result's
+`activeWorkflowRuns` lists the active and blocked runs of the renamed bundle,
+each with its `status`: their frozen plans keep the old qualified refs, so
+continue them with `akm workflow run <id>` (after `akm workflow resume <id>` for
+a blocked one) or give up with `akm workflow abandon <id>`. Reported, never
 rewritten: refs inside the bundle's own CONTENT (cross-references, `uses:` in
 a task, `supersededBy`) — the result's `contentRefs` lists the indexed files
 that still spell the old `<old>//` prefix so you can fix them by hand. A real
@@ -2276,9 +2275,9 @@ names only; `run` and `export` are the supported value-use paths.
 
 ```sh
 akm env list
-akm env create prod                          # creates env/prod.env (mode 0600)
-akm env create prod --from-file ./.env        # ingest an existing .env
-akm env create prod --path staging            # creates env/staging/prod.env
+akm env create env/prod                      # creates env/prod.env (mode 0600)
+akm env create env/prod --from-file ./.env    # ingest an existing .env
+akm env create env/prod --path staging        # creates env/staging/prod.env
 $EDITOR "$(akm env path env/prod --quiet)"    # edit the file directly
 akm env run env/prod -- npm test              # run a command with the whole file injected
 akm env run env/prod -- $SHELL                # interactive shell with the env loaded
@@ -2288,6 +2287,14 @@ akm env remove env/prod --yes                 # remove the whole env file
 
 akm does not manage individual keys — edit the `.env` file directly (`$EDITOR
 "$(akm env path <ref>)"`). `env remove <ref>` removes the whole file.
+
+Every `<ref>` is a full akm ref, `[bundle//]env/<name>`; there is no bare-name
+form (`akm env run prod` is a usage error naming `env/<name>`). A value in the
+file can embed a `${ref}` token: `${secrets/name}` (or `${bundle//secrets/name}`)
+is replaced with the secret's value when the env is injected, and any other
+asset ref with its absolute path. A `${...}` body that is not an akm ref, such
+as `${HOME}`, is left as text. A ref no bundle owns fails the run and nothing
+is injected. See [Environment & Secrets](env-and-secrets.md#the-ref-token).
 
 Env mutations (`create`, `remove`) pick their write destination the same way
 every other write command does: an explicit `--bundle <source>` wins, else
@@ -2305,7 +2312,7 @@ Subcommands:
 | --- | --- |
 | `list` | List all env files across all bundles with key names only |
 | `run <ref> -- <command>` | Run a command with the env injected. `--only` / `--except` filter which keys are injected; `--clean` starts from a minimal inherited environment |
-| `create <name>` | Create an env file. Empty by default; seed with `--from-file <path>` or `--from-stdin` |
+| `create <ref>` | Create an env file (a full ref such as `env/prod`). Empty by default; seed with `--from-file <path>` or `--from-stdin` |
 | `path <ref>` | Print the absolute env file path (Docker `_FILE` / `--env-file` / direct editing). `--quiet` suppresses the warning |
 | `export <ref> --out <file>` | Write a safe sourceable `export` script to a file (never to stdout) |
 | `remove <ref>` | Delete an env file (and its `.sensitive` marker) |
@@ -2322,7 +2329,7 @@ akm env run env/prod --only A,B -- cmd  # inject only A and B
 akm env run env/prod --except DEBUG -- cmd
 akm env run env/prod --clean -- cmd
 akm env run env/prod --clean --inherit SSH_AUTH_SOCK -- cmd
-akm env run third-party//env/prod --allow-dangerous-env-keys -- cmd
+akm env run team//env/prod -- cmd       # an env in an installed bundle
 ```
 
 Runs the command with the env file's values injected **directly into the child
@@ -2333,10 +2340,10 @@ environment, those values will appear in your terminal or agent transcript.
 which env-file keys are injected. `--clean` starts from a minimal inherited
 environment (PATH/HOME/locale/terminal basics) instead of inheriting the full
 parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
-through in clean mode. Before spawning, the injected key names are scanned for
-known process-hijacking variables (`LD_PRELOAD`, `PATH`, `GIT_CONFIG_*`, ...):
-a first-party bundle warns and proceeds; a third-party-sourced bundle is refused
-unless the reviewed run explicitly passes `--allow-dangerous-env-keys`.
+through in clean mode. Installing a bundle is the trust decision, so `env run`
+injects what the env file defines whichever bundle it comes from, including keys
+such as `PATH` or `LD_PRELOAD`; it does not warn or block. `--allow-dangerous-env-keys`
+is a deprecated no-op, accepted through 0.10 so existing scripts keep working.
 
 > The single-key `run <ref>/KEY` form was removed. To inject one value, store it
 > as a [secret](#secret) and use `akm secret run secrets/<name> <VAR> -- …`, or
@@ -2351,12 +2358,12 @@ unless the reviewed run explicitly passes `--allow-dangerous-env-keys`.
 #### env create
 
 ```sh
-akm env create prod                       # empty
-akm env create prod --from-file ./.env    # seed from an existing .env (byte-for-byte)
-printf 'A=1\nB=2\n' | akm env create prod --from-stdin
-akm env create prod --path staging        # creates env/staging/prod.env
-akm env create prod --sensitive           # hidden from `env list` and the search index
-akm env create prod --bundle team         # write to the `team` source
+akm env create env/prod                   # empty
+akm env create env/prod --from-file ./.env  # seed from an existing .env (byte-for-byte)
+printf 'A=1\nB=2\n' | akm env create env/prod --from-stdin
+akm env create env/prod --path staging    # creates env/staging/prod.env
+akm env create env/prod --sensitive       # hidden from `env list` and the search index
+akm env create env/prod --bundle team     # write to the `team` source
 ```
 
 | Flag | Description |
@@ -2445,6 +2452,10 @@ AKM_VALUE="$TOKEN" akm secret set secrets/api --from-env AKM_VALUE
 akm secret run secrets/deploy-token GITHUB_TOKEN -- gh release create v1.0.0
 ```
 
+Every `<ref>` is a full akm ref, `[bundle//]secrets/<name>`; a bare name
+(`akm secret run deploy-token ...`) is a usage error naming `secrets/<name>`. The
+value is read with surrounding whitespace trimmed.
+
 Subcommands:
 
 | Subcommand | Description |
@@ -2496,8 +2507,9 @@ akm secret run secrets/deploy-token GITHUB_TOKEN --clean -- gh auth status
 
 Runs one subprocess with the secret's value set as `$VAR` in the child's
 environment. **The value never appears in akm's structured output** — it is
-passed directly to the child process. The target variable name is validated and
-known process-hijacking names (`LD_PRELOAD`, `PATH`, etc.) are rejected.
+passed directly to the child process. The target variable name is validated as
+an environment variable name; process-hijacking names such as `LD_PRELOAD` or
+`PATH` are injected like any other.
 `--clean` starts from a minimal inherited environment instead of inheriting the
 full parent environment; use `--inherit KEY1,KEY2` to pass specific parent vars
 through in clean mode.
@@ -2713,9 +2725,9 @@ stale paths, and broken refs — in body text and in
 `refs`/`xrefs`/`supersededBy`/`contradictedBy` frontmatter. A belief edge
 pointing at a memory that `akm improve` pruned resolves through the archive
 tombstone under `.akm/memory-cleanup/archive/` and is not reported (#884). Also reports
-`dangerous-env-key` findings for env files (the same key set `akm bundle add`
-enforces — see [Dangerous env key audit](#dangerous-env-key-audit) — but
-non-blocking here; `lint` only warns). `--type workflows` structurally parses
+`dangerous-env-key` findings for env files (the key set described under
+[Env files and process-hijacking keys](#env-files-and-process-hijacking-keys);
+`lint` only warns). `--type workflows` structurally parses
 and compiles Markdown workflows; errors surface as
 `invalid-workflow-structure` findings (0.9.0: this is the only
 structural-validation surface now that `akm workflow validate` is gone).
@@ -2888,7 +2900,7 @@ itself. `ok` and the exit code are unchanged either way, matching `extract`'s
 `skipReasons` contract: consumers that need to know branch on
 `skippedProcesses` (or pass `--require-engines` to abort instead of
 degrading). `reason` names which engine and which credential reference (an env
-var, `apiKeyFile` path, or `secret://` reference — never its value) is
+var, `apiKeyFile` path, or `${ref}` reference — never its value) is
 missing. A `--dry-run` preview never dispatches, so it never aborts
 on an unavailable credential either — even a strategy left with every process
 disabled this way still returns its plan, with the affected processes in
@@ -3626,7 +3638,7 @@ different bundle is a hard error.
 document (`version: 4`). In the file, exactly one of `uses` or `run` is
 allowed. `uses` accepts command, workflow, and script refs plus `akm/command`;
 agents and task refs are not executable. `run` accepts a shell string with the
-closed shell and contained working-directory contract. Task source v4 has no
+closed shell and working-directory contract. Task source v4 has no
 `akm:` options bag or `on:` trigger block — scheduling, resolver overrides,
 `timeout`, `maxSteps`, `maxRetries`, and redaction names are all top-level
 keys on the document itself. Normal execution rejects v2 and v3 and points to
@@ -3678,7 +3690,7 @@ unattended run, so without one a single wedged unit hangs the task forever. An
 explicit `timeout` always wins, and `timeout: null` opts out entirely. On
 expiry the runner aborts the run's signal, which the engine treats as a
 graceful break at the next step boundary — the journal is kept and the run
-stays resumable with `akm workflow resume <run-id>` (the run id is in the task
+stays active, and `akm workflow run <run-id>` continues it (the run id is in the task
 run's `detail.error` and log). The attempt itself is recorded as `failed`, so
 the OS scheduler sees a non-zero exit.
 

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import path from "node:path";
 import { loadConfig, resetConfigCache } from "../../src/core/config/config";
-import { UsageError } from "../../src/core/errors";
+import { NotFoundError, UsageError } from "../../src/core/errors";
 import type { TaskInputBinding } from "../../src/execution/input-contract";
 import { akmIndex } from "../../src/indexer/indexer";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
@@ -176,7 +176,7 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     const fields = childWorkflowFields(target);
     expect(fields.ref).toMatch(/\/\/workflows\/child$/);
     expect(fields.planHash).toBe(expectedChildPlanHash);
-    expect(fields.frozenPlanIrVersion).toBe(6);
+    expect(fields.frozenPlanIrVersion).toBe(7);
   });
 
   test("B-08: with: on the direct step naming a declared child param freezes as an inputBindings entry", async () => {
@@ -214,14 +214,14 @@ describe("direct child workflows — uses: workflows/<ref> (rows B-04…B-11)", 
     await expectNoRunRowWritten();
   });
 
-  test("B-11: workflows/<ref> that does not resolve fails the existing asset-resolution failure, unchanged in code and shape", async () => {
+  test("B-11: workflows/<ref> that does not resolve fails the ordinary workflow not-found error", async () => {
     writeParent("direct-missing", [{ id: "dispatch", workflow: "workflows/does-not-exist" }]);
     await akmIndex({ stashDir: storage.stashDir, full: true });
 
     const error = await captureRejection("workflows/direct-missing");
-    expect(error).toBeInstanceOf(UsageError);
-    if (!(error instanceof UsageError)) throw new Error("unreachable");
-    expect(error.code).toBe("INVALID_FLAG_VALUE");
+    expect(error).toBeInstanceOf(NotFoundError);
+    if (!(error instanceof NotFoundError)) throw new Error("unreachable");
+    expect(error.code).toBe("ASSET_NOT_FOUND");
     expect(error.message).toContain("workflows/does-not-exist");
   });
 });

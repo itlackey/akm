@@ -7,7 +7,7 @@
  * bundle's key. A bundle id is a mass identity prefix: every durable ref this
  * tool minted (`entries.item_ref`/`bundle_id`, `proposals.ref`, a pending
  * proposal's `proposedTarget.source`, a workflow task_history row's
- * `target_ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
+ * `target_ref`, a `workflow_runs.workflow_ref`, `scheduler.enabled[].ref`) carries it, and a hand-edited
  * `bundles` key strands all of it (see `src/indexer/bundle-identity-guard.ts`
  * §11.5). This module is the rekey transaction that guard's docstring points
  * to.
@@ -42,6 +42,7 @@ import {
   countTaskHistoryTargetRefs,
   renameTaskHistoryTargetRefs,
 } from "../storage/repositories/task-history-repository";
+import { countWorkflowRunRefsForRename, renameWorkflowRunRefs } from "../storage/repositories/workflow-runs-repository";
 import { selectBackend } from "../tasks/backends";
 import type { InstalledSchedulerBinding, SchedulerBackend } from "../tasks/backends/types";
 import { bundleRefToString, parseBundleRef } from "./asset/asset-ref";
@@ -63,7 +64,13 @@ export interface BundleRenamePlan {
   };
   lock: { present: boolean };
   index: { entries: number };
-  state: { proposalRefs: number; proposalTargets: number; taskHistoryRefs: number };
+  state: { proposalRefs: number; proposalTargets: number; taskHistoryRefs: number; workflowRunRefs: number };
+  /**
+   * Active and blocked workflow runs of the renamed bundle. Their `workflow_ref` is
+   * rewritten, but each run's frozen plan keeps the old qualified refs, so the
+   * operator finishes or abandons them.
+   */
+  activeWorkflowRuns: Array<{ id: string; workflowRef: string; status: string }>;
   /** Indexed files under the bundle whose content still spells `<old>//` — reported, not rewritten. */
   contentRefs: string[];
   /**
@@ -215,12 +222,17 @@ async function buildPlan(
   let proposalRefs = 0;
   let proposalTargets = 0;
   let taskHistoryRefs = 0;
+  let workflowRunRefs = 0;
+  let activeWorkflowRuns: BundleRenamePlan["activeWorkflowRuns"] = [];
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       const counts = countProposalsForBundleRename(db, oldId);
       proposalRefs = counts.refs;
       proposalTargets = counts.targets;
       taskHistoryRefs = countTaskHistoryTargetRefs(db, oldId);
+      const runs = countWorkflowRunRefsForRename(db, oldId);
+      workflowRunRefs = runs.refs;
+      activeWorkflowRuns = runs.active;
     });
   }
 
@@ -234,7 +246,8 @@ async function buildPlan(
     },
     lock: { present: lockPresent },
     index: { entries: indexEntries },
-    state: { proposalRefs, proposalTargets, taskHistoryRefs },
+    state: { proposalRefs, proposalTargets, taskHistoryRefs, workflowRunRefs },
+    activeWorkflowRuns,
     contentRefs,
     nativeSchedulerRows,
   };
@@ -328,12 +341,13 @@ export async function renameBundle(
     }
   }
 
-  // State: proposals.ref, a pending proposal's proposedTarget.source, and
-  // workflow task_history.target_ref.
+  // State: proposals.ref, a pending proposal's proposedTarget.source,
+  // workflow task_history.target_ref, and workflow_runs.workflow_ref.
   if (fs.existsSync(getStateDbPath())) {
     withStateDb((db) => {
       renameProposalsBundleRef(db, oldId, newId);
       renameTaskHistoryTargetRefs(db, oldId, newId);
+      renameWorkflowRunRefs(db, oldId, newId);
     });
   }
 

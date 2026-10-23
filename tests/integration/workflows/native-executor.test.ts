@@ -8,19 +8,23 @@ import { openStateDatabase } from "../../../src/core/state-db";
 import { _setWarnSinkForTests, type WarnSinkForTests } from "../../../src/core/warn";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import {
-  executeStepPlan as executeFrozenStepPlan,
+  executeStepPlan as executeStepPlanWithoutFixtureRoot,
   type StepExecutionContext,
   type StepExecutionResult,
   type UnitDispatchRequest,
   type UnitDispatchResult,
 } from "../../../src/workflows/exec/native-executor";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computePlanHash } from "../../../src/workflows/ir/plan-hash";
 import type { WorkflowPlan, WorkflowPlanStep } from "../../../src/workflows/plan";
 import { completeWorkflowStep, getWorkflowStatus } from "../../../src/workflows/runtime/runs";
 import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
 import { withSeam } from "../../_helpers/seams";
-import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
+import {
+  executeStepPlan as executeFrozenStepPlan,
+  freezeWorkflow,
+  runWorkflowSteps,
+  storeFrozenWorkflowPlan,
+} from "../../_helpers/workflow";
 
 /**
  * Native executor over the sole frozen workflow plan: fan-out through the scheduler,
@@ -153,6 +157,63 @@ steps:
 
 Review the assigned item carefully.
 `;
+
+describe("executeStepPlan — the bundle root", () => {
+  const SOLO_WF = `---
+type: workflow
+steps:
+  - id: work
+---
+
+## work
+
+Do the work.
+`;
+
+  test("an agent unit's dispatch request carries the run's bundle root as its cwd", async () => {
+    seedRun({ steps: [{ id: "work", title: "Work" }] });
+    const requests: UnitDispatchRequest[] = [];
+
+    const result = await executeStepPlan(plan(SOLO_WF).steps[0]!, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      bundleRootOverride: tmpDir,
+      dispatcher: async (req) => {
+        requests.push(req);
+        return { ok: true, text: "done" };
+      },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.frozenTarget.kind).toBe("command");
+    expect(requests[0]?.cwd).toBe(tmpDir);
+  });
+
+  test("an injected dispatcher does not skip the bundle lookup: a workflow whose bundle does not resolve fails the step before any dispatch", async () => {
+    seedRun({ steps: [{ id: "work", title: "Work" }] });
+    let dispatched = 0;
+
+    const result = await executeStepPlanWithoutFixtureRoot(plan(SOLO_WF).steps[0]!, {
+      runId: RUN_ID,
+      workflowRef: "workflows/demo",
+      params: {},
+      evidence: {},
+      dispatcher: async () => {
+        dispatched++;
+        return { ok: true, text: "done" };
+      },
+    });
+
+    // No bundle is configured here, so the cause is reported as itself.
+    expect(result.ok).toBe(false);
+    expect(result.summary).toContain('Step "work" cannot run: No bundle directory found');
+    expect(result.summary).not.toContain("..");
+    expect(dispatched).toBe(0);
+  });
+});
 
 describe("executeStepPlan — fan-out", () => {
   test("caps SDK fan-out by the frozen fallback LLM engine concurrency", async () => {

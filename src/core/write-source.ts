@@ -88,6 +88,16 @@ export function resolveWritable(entry: Pick<SourceConfigEntry, "type" | "writabl
   return entry.type === "filesystem";
 }
 
+/**
+ * Whether a resolved source is write-activated. Only the primary stash and
+ * sources explicitly marked `writable: true` are writable; registry-cached
+ * (installed, read-only) sources are never written in place because
+ * `akm update` overwrites them.
+ */
+export function isSourceWriteActivated(source: { writable?: boolean }): boolean {
+  return source.writable === true;
+}
+
 /** The two kinds writes are defined for; scheduler state binds only to these. */
 export function isWriteCapableSourceKind(kind: string): kind is "filesystem" | "git" {
   return kind === "filesystem" || kind === "git";
@@ -105,6 +115,17 @@ export interface WriteTargetOptions {
 }
 
 /**
+ * Throw when `name` is a configured bundle that is disabled. Callers run it
+ * after a name failed to resolve against the active set, so a disabled bundle
+ * is reported as disabled rather than as not configured.
+ */
+export function assertBundleNotDisabled(akmConfig: AkmConfig, name: string): void {
+  if (resolveConfiguredSources(akmConfig).some((source) => source.name === name)) {
+    throw new UsageError(`Bundle "${name}" is disabled.`, "INVALID_FLAG_VALUE");
+  }
+}
+
+/**
  * Resolve the destination for a write: explicit `--bundle`, then
  * `defaultWriteTarget`, then the working stash (`defaultBundle`). There is no
  * fallback to the first writable source.
@@ -114,7 +135,6 @@ export function resolveWriteTarget(
   explicitTarget?: string,
   options: WriteTargetOptions = {},
 ): ResolvedWriteTarget {
-  const allConfiguredSources = resolveConfiguredSources(akmConfig);
   const configuredSources = resolveActiveConfiguredSources(akmConfig);
   const requireWritable = options.requireWritable !== false;
   const flag = options.flag ?? "--bundle";
@@ -122,9 +142,7 @@ export function resolveWriteTarget(
   if (explicitTarget) {
     const match = configuredSources.find((s) => s.name === explicitTarget);
     if (!match) {
-      if (allConfiguredSources.some((source) => source.name === explicitTarget)) {
-        throw new UsageError(`Bundle "${explicitTarget}" is disabled.`, "INVALID_FLAG_VALUE");
-      }
+      assertBundleNotDisabled(akmConfig, explicitTarget);
       throw new UsageError(
         `${flag} must reference a source name from your config. No source named "${explicitTarget}" is configured. Run \`akm bundle list\` to see available sources.`,
         "INVALID_FLAG_VALUE",

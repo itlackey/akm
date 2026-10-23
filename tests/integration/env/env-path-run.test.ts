@@ -146,7 +146,7 @@ describe("env run", () => {
   test("exits non-zero and injects nothing when a referenced secret is missing", async () => {
     const stashDir = makeStash();
     fs.mkdirSync(path.join(stashDir, "env"), { recursive: true });
-    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secret:absent}\n", "utf8");
+    fs.writeFileSync(path.join(stashDir, "env", "prod.env"), "API_KEY=${secrets/absent}\n", "utf8");
 
     const { stdout, stderr, status } = await runCli(["env", "run", "env/prod", "--", "true"], {
       AKM_BUNDLE_DIR: stashDir,

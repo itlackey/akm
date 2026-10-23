@@ -434,10 +434,10 @@ here; any other field the transport cannot carry becomes a secret-free
 `untranslated-field` notice and dispatch continues.
 
 Credentials stay symbolic (an env descriptor, an `apiKeyFile` path, or a
-`secret://` reference) in everything `resolveExecution` returns, so a request
-and runner can be journaled. `runExecution()` reads the current value at each
-dispatch and scrubs it, with every other secret-looking value the child could
-see, from the result. Workflow resume calls `buildExecutionFromWire()` on the
+`${ref}` reference such as `${secrets/openai}`) in everything
+`resolveExecution` returns, so a request and runner can be journaled.
+`runExecution()` reads the current value at each dispatch and scrubs it, with
+every other secret-looking value the child could see, from the result. Workflow resume calls `buildExecutionFromWire()` on the
 journaled `{ request, runner }` and never reads config, `models.json`, or
 credentials, so a config edit after the freeze cannot change a resumed unit.
 The prompt-free interactive `akm agent` launch resolves its engine directly.
@@ -446,7 +446,7 @@ through to another configured engine.
 
 Task-v3 execution and durable workflow-v4 dispatch use this runtime boundary.
 Markdown workflows compile through source IR v1; new starts freeze
-v4-family `irVersion: 5`. A stored plan that decodes runs whatever release
+v4-family `irVersion: 7` (plans frozen at `irVersion` 5 and 6 still decode). A stored plan that decodes runs whatever release
 froze it; one that does not is marked abandoned and `akm workflow run <ref>`
 starts afresh. Only a plan a newer akm froze is refused, naming the upgrade.
 AKM does not support full GitHub Actions semantics or arbitrary remote action
@@ -556,7 +556,7 @@ activity registry around them; `state.db` writers serialize on SQLite's own
 | `src/commands/agent/` | contribute/agent command surface |
 | `src/registry/providers/` | registry provider implementations (static-index, skills-sh) |
 | `src/output/shapes/`, `src/output/text/` | JSON-envelope and text-output registries per command (#490) — a parallel concern to `src/output/renderers.ts`'s per-asset-type `show` renderers, which is still live and self-registering, not replaced |
-| `src/workflows/authoring/` | workflow authoring + scope-key helpers |
+| `src/workflows/authoring/` | workflow authoring |
 | `src/workflows/runtime/runs.ts` | workflow run persistence (raw SQL lives in `src/storage/repositories/workflow-runs-repository.ts`) |
 | `src/workflows/runtime/` | run lifecycle: runs, checkin, agent-identity |
 | `src/llm/client.ts` | OpenAI-compatible chat completions client (stateless, single request/response) |

@@ -6,8 +6,7 @@
  * `akm env` command family. Extracted verbatim from src/cli.ts (WS6) so the God
  * Module shrinks; the `main.subCommands.env` key and every subcommand's
  * args/output shape are byte-identical. The ref-resolution helpers
- * (parseEnvRef / findEnvSource / makeEnvRef / resolveEnvPath + the env-path
- * traversal guard) live in src/core/env-secret-ref.ts so env + secret share one
+ * (parseEnvRef / makeEnvRef / resolveEnvPath) live in src/core/env-secret-ref.ts so env + secret share one
  * copy.
  *
  * `akm env` manages whole `.env` files under each stash's env/ directory.
@@ -54,7 +53,7 @@ const envCreateCommand = defineJsonCommand({
   args: {
     name: {
       type: "positional",
-      description: "Env name (flat, e.g. prod → prod.env; use --path for a subdirectory)",
+      description: "Env ref (flat name, e.g. env/prod → prod.env; use --path for a subdirectory)",
       required: true,
     },
     path: {
@@ -138,10 +137,7 @@ const envPathCommand = defineJsonCommand({
     quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
   async run({ args }) {
-    const { name, absPath, source } = resolveEnvPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-    }
+    const { absPath } = resolveEnvPath(args.ref);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
@@ -192,9 +188,6 @@ const envExportCommand = defineJsonCommand({
       );
     }
     const { name, absPath, source } = resolveEnvPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-    }
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
     writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
@@ -204,20 +197,21 @@ const envExportCommand = defineJsonCommand({
 
 /**
  * Shared implementation for `env run`. Injects an entire env file's values into
- * the child process env — never via a shell — after scanning the injected keys
- * for process-hijacking variables.
+ * the child process env — never via a shell.
  */
 async function runEnvInjected(
   target: string,
-  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[]; allowDangerousEnvKeys?: boolean },
+  opts: { only?: string[]; except?: string[]; clean?: boolean; inherit?: string[] },
 ): Promise<void> {
   const command = getParsedInvocation().passthroughArgs();
   if (command.length === 0) {
     throw new UsageError("Missing command. Usage: akm env run <ref> -- <command>");
   }
 
-  const { name, absPath, source } = resolveEnvPath(target);
-  if (!fs.existsSync(absPath)) {
+  try {
+    resolveEnvPath(target);
+  } catch (error) {
+    if (!(error instanceof NotFoundError)) throw error;
     // Help users who reach for the removed single-key `ref/KEY` form.
     const slash = target.lastIndexOf("/");
     if (slash > 0) {
@@ -225,7 +219,8 @@ async function runEnvInjected(
       if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(maybeKey)) {
         let baseExists = false;
         try {
-          baseExists = fs.existsSync(resolveEnvPath(target.slice(0, slash)).absPath);
+          resolveEnvPath(target.slice(0, slash));
+          baseExists = true;
         } catch {
           baseExists = false;
         }
@@ -238,17 +233,16 @@ async function runEnvInjected(
         }
       }
     }
-    throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
+    throw error;
   }
 
-  // Load → filter → secret-substitute → dangerous-key policy → keys-only
+  // Load → filter → secret-substitute → keys-only
   // audit event. Shared with the workflow engine's per-unit env bindings —
   // see env-binding.ts for the extracted core and its safety invariants.
   const { resolveEnvBinding } = await import("./env-binding.js");
   const { values: envValues } = resolveEnvBinding(target, {
     only: opts.only,
     except: opts.except,
-    allowDangerousEnvKeys: opts.allowDangerousEnvKeys,
   });
 
   const mergedEnv = buildChildEnv(process.env, {
@@ -309,8 +303,8 @@ const envRunCommand = defineJsonCommand({
   meta: {
     name: "run",
     description:
-      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${secret:NAME}` token syntax documented for users, not interpolation
-      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${secret:NAME}` tokens, replaced at run time with the sibling `${secret:NAME}` value from the same bundle. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: literal `${ref}` token syntax documented for users, not interpolation
+      "Run a command with the env file injected into its environment: `akm env run <ref> -- <command>`. Use `-- $SHELL` for an interactive session. Restrict which variables are injected with --only / --except. Values may embed `${ref}` tokens, replaced at run time: a `${secrets/NAME}` (or `${bundle//secrets/NAME}`) token with the secret's value, any other asset ref with its absolute path. Pass --clean to start the child with a minimal inherited environment instead of the full parent environment.",
   },
   args: {
     target: { type: "positional", description: "Env ref", required: true },
@@ -330,10 +324,13 @@ const envRunCommand = defineJsonCommand({
       description:
         "When used with --clean, also inherit these parent env vars (comma-separated). Ignored without --clean.",
     },
+    // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
+    // fail with UNKNOWN_FLAG. Installing a bundle is the trust decision: env
+    // run no longer blocks process-hijacking keys.
     "allow-dangerous-env-keys": {
       type: "boolean",
       description:
-        "Allow injecting a process-hijacking variable (e.g. LD_PRELOAD, GIT_SSH_COMMAND) from a third-party stash, which otherwise blocks. Use only after explicitly reviewing the env file.",
+        "Deprecated, no effect: env run no longer blocks process-hijacking variables. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
@@ -343,7 +340,6 @@ const envRunCommand = defineJsonCommand({
       except: parseKeyListFlag(args.except),
       clean: args.clean === true,
       inherit: parseKeyListFlag(args.inherit) ?? [],
-      allowDangerousEnvKeys: args["allow-dangerous-env-keys"] === true,
     });
   },
 });

@@ -135,7 +135,7 @@ describe("remote embed", () => {
     }
   });
 
-  test("resolves a secret:// apiKey from the store at header-building time (#917)", async () => {
+  test("resolves a secrets ref apiKey from the store at header-building time (#917)", async () => {
     const storage = withIsolatedAkmStorage();
     let capturedAuth = "";
     const server = Bun.serve({
@@ -158,7 +158,7 @@ describe("remote embed", () => {
       const config: EmbeddingConnectionConfig = {
         endpoint: `http://localhost:${server.port}`,
         model: "test-model",
-        apiKey: "secret://embed-key",
+        apiKey: "${secrets/embed-key}",
       };
       await embed("secret store apiKey header test", config);
       expect(capturedAuth).toBe("Bearer store-secret-value");

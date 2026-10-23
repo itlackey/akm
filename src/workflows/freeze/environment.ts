@@ -2,26 +2,18 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import fs from "node:fs";
-import path from "node:path";
-import dotenv from "dotenv";
-import { loadAdapterExecutionSource } from "../../commands/command/execution-source-loader";
 import { makeBundleRef, parseBundleRef } from "../../core/asset/asset-ref";
-import { compareCodePoints, isWithin, toPosix } from "../../core/common";
-import type { AkmConfig } from "../../core/config/config-types";
 import { parseEnvRef } from "../../core/env-secret-ref";
 import { UsageError } from "../../core/errors";
-import { deriveInstallations } from "../../indexer/installations";
+import { resolveConceptOwner } from "../../indexer/lookup/adapter-concept-owner";
 import { resolveSourceEntries } from "../../indexer/search/search-source";
-import { resolveAssetPath } from "../../sources/resolve";
-import { SECRET_TOKEN_RE } from "../exec/environment";
 import type { FrozenWorkflowEnvironmentBinding, WorkflowExec } from "../plan";
-import type { FreezeStep, OwnedAsset, ResolutionContext } from "./step-values";
+import type { FreezeStep, ResolutionContext } from "./step-values";
 
 /**
- * A step's frozen environment: `pass_env` names, then
- * one value-free descriptor per `unit.env` ref (owner, key set, secret-token
- * names). Values are read at dispatch (`exec/environment.ts`), never frozen.
+ * A step's frozen environment: `pass_env` names, then one bundle-qualified
+ * ref per `unit.env` entry. The env file, its keys and the secrets it names
+ * are read at dispatch (`exec/environment.ts`), never frozen.
  */
 export function freezeEnvironment(
   source: FreezeStep,
@@ -32,134 +24,23 @@ export function freezeEnvironment(
   const seen = new Set<string>();
   const envRefs: FrozenWorkflowEnvironmentBinding[] = [];
   for (const [precedence, ref] of (source.unit?.env ?? []).entries()) {
-    if (parseEnvRef(ref).type !== "env") {
-      throw new UsageError(`Expected an env ref; got ${ref}.`, "WORKFLOW_SOURCE_INVALID");
-    }
-    const owned = resolveOwnedAssetSync(ref, "env", context);
-    if (seen.has(owned.ref)) continue;
-    seen.add(owned.ref);
-    const parsed = dotenv.parse(fs.readFileSync(owned.file));
-    const secretNames = new Set<string>();
-    for (const value of Object.values(parsed)) {
-      for (const match of value.matchAll(SECRET_TOKEN_RE)) if (match[1]) secretNames.add(match[1]);
-    }
-    envRefs.push(
-      Object.freeze({
-        kind: "env-ref" as const,
-        ref: owned.ref,
-        owner: Object.freeze({
-          bundle: owned.bundle,
-          adapter: owned.adapter,
-          requestedRoot: owned.root,
-          requestedPath: owned.file,
-          relativePath: toPosix(path.relative(owned.root, owned.file)),
-        }),
-        keys: Object.keys(parsed).sort(compareCodePoints),
-        secretNames: [...secretNames].sort(compareCodePoints),
-        precedence,
-      }),
-    );
+    parseEnvRef(ref);
+    const qualified = qualifyEnvRef(ref, context);
+    if (seen.has(qualified)) continue;
+    seen.add(qualified);
+    envRefs.push(Object.freeze({ kind: "env-ref" as const, ref: qualified, precedence }));
   }
   return [...passThrough, ...envRefs];
 }
 
-/** Load a command or persona the workflow names, resolved through the workflow's own bundles. */
-export async function workflowExecutionSource(ref: string, kind: "command" | "persona", context: ResolutionContext) {
-  const owned = await resolveOwnedAsset(ref, kind === "command" ? "command" : "agent", context);
-  return kind === "command"
-    ? loadAdapterExecutionSource(owned.ref, "command", { config: context.config })
-    : loadAdapterExecutionSource(owned.ref, "persona", { config: context.config });
-}
-
-export async function resolveOwnedAsset(
-  ref: string,
-  type: "command" | "agent" | "workflow" | "env",
-  context: ResolutionContext,
-): Promise<OwnedAsset> {
-  return resolveOwnedAssetCore(ref, type, context, false) as Promise<OwnedAsset>;
-}
-
-export function resolveOwnedAssetSync(ref: string, type: "env", context: ResolutionContext): OwnedAsset {
-  return resolveOwnedAssetCore(ref, type, context, true) as OwnedAsset;
-}
-
-function resolveOwnedAssetCore(
-  refInput: string,
-  type: "command" | "agent" | "workflow" | "env",
-  context: ResolutionContext,
-  sync: boolean,
-): OwnedAsset | Promise<OwnedAsset> {
+/** Qualify an env ref a step names with the bundle that owns it right now, through the one walk. */
+function qualifyEnvRef(refInput: string, context: ResolutionContext): string {
   const parsed = parseBundleRef(refInput);
-  const plural = type === "env" ? "env" : `${type}s`;
-  const conceptId = parsed.conceptId.startsWith(`${plural}/`) ? parsed.conceptId : `${plural}/${parsed.conceptId}`;
-  const name = conceptId.slice(plural.length + 1);
-  const direct = parsed.bundle ? configuredOwner(parsed.bundle, context.config) : undefined;
-  const candidates = direct ? [direct] : installedOwners(parsed.bundle, context.config);
-  const findSync = (): OwnedAsset => {
-    for (const candidate of candidates) {
-      const directory = path.join(candidate.root, plural);
-      for (const extension of assetExtensions(type)) {
-        const file = path.resolve(directory, `${name}${extension}`);
-        if (fs.existsSync(file) && fs.statSync(file).isFile()) {
-          if (!isWithin(file, candidate.root)) {
-            throw new UsageError(`${file} resolves outside its owning root.`, "PATH_ESCAPE_VIOLATION");
-          }
-          return { ...candidate, ref: makeBundleRef(candidate.bundle, conceptId), file };
-        }
-      }
-    }
-    throw new UsageError(`Workflow source target ${refInput} was not found.`, "INVALID_FLAG_VALUE");
-  };
-  if (sync) return findSync();
-  return (async () => {
-    for (const candidate of candidates) {
-      try {
-        const file = await resolveAssetPath(candidate.root, type, name);
-        return { ...candidate, ref: makeBundleRef(candidate.bundle, conceptId), file };
-      } catch {
-        // Continue in installation priority order.
-      }
-    }
-    return findSync();
-  })();
-}
-
-/** Every installed bundle root (or just `bundle`'s), in installation priority order. */
-function installedOwners(
-  bundle: string | undefined,
-  config: AkmConfig,
-): Array<{ bundle: string; root: string; adapter: string }> {
-  const sources = resolveSourceEntries(undefined, config);
-  const installations = deriveInstallations(sources);
-  return sources.flatMap((source, index) => {
-    const installation = installations[index];
-    if (!installation || (bundle && installation.id !== bundle)) return [];
-    return [
-      {
-        bundle: installation.id,
-        root: source.path,
-        adapter: source.adapterId ?? installation.components[0]?.adapter ?? "akm",
-      },
-    ];
-  });
-}
-
-function configuredOwner(
-  bundle: string,
-  config: AkmConfig,
-): { bundle: string; root: string; adapter: string } | undefined {
-  const entry = config.bundles?.[bundle];
-  if (!entry || typeof entry.path !== "string") return undefined;
-  const components = entry.components ? Object.values(entry.components) : [];
-  const component = components[0];
-  return {
-    bundle,
-    root: path.resolve(entry.path, component?.root ?? "."),
-    adapter: component?.adapter ?? "akm",
-  };
-}
-
-function assetExtensions(type: string): readonly string[] {
-  if (type === "env") return ["", ".env"];
-  return ["", ".md"];
+  const match = resolveConceptOwner(
+    { bundle: parsed.bundle, conceptId: parsed.conceptId },
+    resolveSourceEntries(undefined, context.config),
+    { includeSensitive: true },
+  );
+  if (!match) throw new UsageError(`Workflow source target ${refInput} was not found.`, "INVALID_FLAG_VALUE");
+  return makeBundleRef(match.bundleId, parsed.conceptId);
 }

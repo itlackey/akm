@@ -32,7 +32,7 @@ import {
 } from "../../core/asset/markdown-fragments";
 import { displayRef, displayRefForConceptId, typeNameFromConceptId } from "../../core/asset/resolve-ref";
 import { META_DIR, type MetaRef, parseMetaRef, readMetaFile } from "../../core/asset/stash-meta";
-import { asNonEmptyString, isWithin } from "../../core/common";
+import { asNonEmptyString, isContainedResolvedPath } from "../../core/common";
 import { loadConfig } from "../../core/config/config";
 import { NotFoundError, rethrowIfDataDirUnreadable, rethrowIfTestIsolationError, UsageError } from "../../core/errors";
 import { appendEvent } from "../../core/events";
@@ -81,9 +81,7 @@ import { withIndexDb } from "../../storage/repositories/index-db";
 import { getEntryById, getEntryIdByFilePath } from "../../storage/repositories/index-entries-repository";
 import { getIndexedMarkdownFragment } from "../../storage/repositories/index-fts-repository";
 import { readEntryLinks } from "../../storage/repositories/index-links-repository";
-import { getCurrentWorkflowScopeKey } from "../../workflows/authoring/scope-key";
 import { buildWorkflowAction } from "../../workflows/renderer";
-import { getActiveWorkflowRun } from "../../workflows/runtime/runs";
 
 /**
  * Unified show: queries the local FTS5 index, then reads that row's file path.
@@ -500,20 +498,6 @@ export async function showLocal(input: {
     throw new NotFoundError(`Indexed-safe fragment context is unavailable for ${input.ref}.`);
   }
   if (response.type === "workflow") response.action = buildWorkflowAction(canonicalRef);
-  // 07 P1-D: provenance-aware toolPolicy CEILING. An agent's self-declared
-  // `tools` frontmatter is honoured ONLY for the operator's own PRIMARY stash —
-  // the assets they authored. Every other source is content pulled from
-  // elsewhere and must not name its own tool grant: registry-installed packs, a
-  // configured secondary source, and even a git source the operator marked
-  // `--writable` to contribute edits upstream (writability is "can I push", not
-  // "do I trust this content to grant itself tools"). Drop the policy so dispatch
-  // falls back to the parent/default grant. Keys off primary-stash identity —
-  // `allSources[0]` is always the primary (search-source.ts) — not a
-  // name-derived registryId or the orthogonal `writable` bit. `source` undefined
-  // (unresolved path) also fails closed.
-  if (response.toolPolicy !== undefined && !isPrimaryStash) {
-    delete (response as { toolPolicy?: unknown }).toolPolicy;
-  }
   const editable = isEditable(assetPath, config, allSources);
   // Evidence must describe the same revision as the rendered claim: ordinary
   // Markdown show is source-live, while indexed fragment show is a snapshot.
@@ -540,11 +524,6 @@ export async function showLocal(input: {
     ...(!editable ? { editHint: buildEditHint(canonicalRef) } : {}),
     ...showLinks(indexedEntry.itemRef, displayDefaultBundle, input.readOnly === true),
   };
-
-  const activeRun = input.readOnly ? null : await getActiveWorkflowRun(getCurrentWorkflowScopeKey());
-  if (activeRun) {
-    (fullResponse as unknown as Record<string, unknown>).activeRun = activeRun;
-  }
 
   if (input.detail === "brief") {
     return buildBriefResponse(fullResponse, assetPath);
@@ -651,13 +630,12 @@ function findUnrecognizedScriptSource(
       if ((source.adapterId ?? detectAdapterId(source.path)) !== "akm") continue;
       const sourceRoot = path.resolve(source.path);
       const candidate = path.resolve(assetPathForName("script", path.join(sourceRoot, scriptDir), assetParts.name));
-      if (!isWithin(candidate, sourceRoot)) continue;
+      if (!isContainedResolvedPath(candidate, sourceRoot)) continue;
       const authoredStat = fs.lstatSync(candidate);
       if (!authoredStat.isFile() && !authoredStat.isSymbolicLink()) continue;
-      const realRoot = fs.realpathSync(sourceRoot);
       const realCandidate = fs.realpathSync(candidate);
-      if (!isWithin(realCandidate, realRoot) || !fs.statSync(realCandidate).isFile()) continue;
-      return { extension, path: realCandidate, sourceRoot: realRoot };
+      if (!fs.statSync(realCandidate).isFile()) continue;
+      return { extension, path: realCandidate, sourceRoot: fs.realpathSync(sourceRoot) };
     } catch {
       // Missing, unreadable, dangling, or otherwise unsafe paths remain normal
       // not-found misses; this diagnostic never widens physical ownership.

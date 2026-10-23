@@ -24,12 +24,14 @@ import { openStateDatabase } from "../../src/core/state-db";
 import { akmIndex } from "../../src/indexer/indexer";
 import { readLockfile, upsertLockEntry } from "../../src/integrations/lockfile";
 import { closeDatabase } from "../../src/storage/repositories/index-connection";
-import { upsertProposal } from "../../src/storage/repositories/proposals-repository";
-import { upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
+import { renameProposalsBundleRef, upsertProposal } from "../../src/storage/repositories/proposals-repository";
+import { renameTaskHistoryTargetRefs, upsertTaskHistory } from "../../src/storage/repositories/task-history-repository";
+import { renameWorkflowRunRefs } from "../../src/storage/repositories/workflow-runs-repository";
 import { setSchedulerRefEnabled } from "../../src/tasks/activation-config";
 import { CRON_BACKEND, type CronExec, type CronExecResult } from "../../src/tasks/backends/cron";
 import type { SchedulerBackend } from "../../src/tasks/backends/types";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage } from "../_helpers/sandbox";
+import { seedWorkflowRun } from "../_helpers/workflow";
 
 /** In-memory `crontab -l`/`crontab -` stand-in, same shape as tests/tasks-sync.test.ts. */
 function memoryExec(initial = ""): CronExec & { current: () => string } {
@@ -252,6 +254,85 @@ describe("akm bundle rename — applied", () => {
       expect(taskRow.target_ref).toBe("renamed//workflows/foo");
     } finally {
       closeDatabase(readDb);
+    }
+  });
+
+  test("rewrites workflow_runs.workflow_ref and lists the active runs it affected (#1239)", async () => {
+    await seedBundleWithOneEntry();
+    const stateDb = openStateDatabase();
+    try {
+      seedWorkflowRun(stateDb, { runId: "run-active", steps: ["a"], workflowRef: "original//workflows/foo" });
+      seedWorkflowRun(stateDb, { runId: "run-done", steps: ["a"], workflowRef: "original//workflows/foo" });
+      seedWorkflowRun(stateDb, { runId: "run-blocked", steps: ["a"], workflowRef: "original//workflows/foo" });
+      seedWorkflowRun(stateDb, { runId: "run-other", steps: ["a"], workflowRef: "other//workflows/foo" });
+      stateDb.prepare("UPDATE workflow_runs SET status = 'completed' WHERE id = 'run-done'").run();
+      stateDb.prepare("UPDATE workflow_runs SET status = 'blocked' WHERE id = 'run-blocked'").run();
+    } finally {
+      closeDatabase(stateDb);
+    }
+
+    const result = await renameBundle("original", "renamed", {}, renameDeps(fakeCronBackend(memoryExec())));
+
+    expect(result.state.workflowRunRefs).toBe(3);
+    // A blocked run keeps the old refs in its frozen plan too, so it is listed with its status.
+    expect([...result.activeWorkflowRuns].sort((a, b) => a.id.localeCompare(b.id))).toEqual([
+      { id: "run-active", workflowRef: "original//workflows/foo", status: "active" },
+      { id: "run-blocked", workflowRef: "original//workflows/foo", status: "blocked" },
+    ]);
+
+    const readDb = openStateDatabase();
+    try {
+      const rows = readDb.prepare("SELECT id, workflow_ref FROM workflow_runs ORDER BY id").all() as Array<{
+        id: string;
+        workflow_ref: string;
+      }>;
+      expect(rows).toEqual([
+        { id: "run-active", workflow_ref: "renamed//workflows/foo" },
+        { id: "run-blocked", workflow_ref: "renamed//workflows/foo" },
+        { id: "run-done", workflow_ref: "renamed//workflows/foo" },
+        { id: "run-other", workflow_ref: "other//workflows/foo" },
+      ]);
+    } finally {
+      closeDatabase(readDb);
+    }
+  });
+
+  test("rewrites refs of a bundle id with an astral character without eating the separator (#1239)", () => {
+    // JS `.length` counts UTF-16 code units, SQLite `substr` counts characters:
+    // "💼" is length 2 in JS but one character in SQL.
+    const oldId = "💼";
+    const stateDb = openStateDatabase();
+    try {
+      seedWorkflowRun(stateDb, { runId: "run-astral", steps: ["a"], workflowRef: `${oldId}//workflows/x` });
+      upsertTaskHistory(stateDb, {
+        task_id: "wf-astral",
+        status: "completed",
+        started_at: "2026-01-01T00:00:00.000Z",
+        completed_at: "2026-01-01T00:01:00.000Z",
+        failed_at: null,
+        log_path: null,
+        target_kind: "workflow",
+        target_ref: `${oldId}//workflows/x`,
+        metadata_json: JSON.stringify({ metadataVersion: 2, durationMs: 60_000, detail: null }),
+      });
+      upsertProposal(stateDb, makeProposal("p-astral", `${oldId}//knowledge/x`, oldId), storage.stashDir);
+
+      expect(renameWorkflowRunRefs(stateDb, oldId, "team")).toBe(1);
+      expect(renameTaskHistoryTargetRefs(stateDb, oldId, "team")).toBe(1);
+      expect(renameProposalsBundleRef(stateDb, oldId, "team").refs).toBe(1);
+
+      const run = stateDb.prepare("SELECT workflow_ref FROM workflow_runs WHERE id = 'run-astral'").get() as {
+        workflow_ref: string;
+      };
+      const task = stateDb.prepare("SELECT target_ref FROM task_history WHERE task_id = 'wf-astral'").get() as {
+        target_ref: string;
+      };
+      const proposal = stateDb.prepare("SELECT ref FROM proposals WHERE id = 'p-astral'").get() as { ref: string };
+      expect(run.workflow_ref).toBe("team//workflows/x");
+      expect(task.target_ref).toBe("team//workflows/x");
+      expect(proposal.ref).toBe("team//knowledge/x");
+    } finally {
+      closeDatabase(stateDb);
     }
   });
 

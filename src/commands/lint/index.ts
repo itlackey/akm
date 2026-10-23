@@ -564,7 +564,7 @@ export function lintAssetFile(ctx: LintContext, subdir: string): LintIssue[] {
       issues.push(...(factDiagnostics(ctx.relPath, ctx.data) as LintIssue[]));
       break;
     case "tasks":
-      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw, ctx.stashRoot) as LintIssue[]));
+      issues.push(...(taskDiagnostics(ctx.relPath, ctx.raw) as LintIssue[]));
       break;
     case "memories":
       appendMemoryStubIssue(ctx, issues);

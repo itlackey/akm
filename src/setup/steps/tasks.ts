@@ -132,7 +132,6 @@ export function listSetupTaskDefinitions(): SetupTaskDefinition[] {
       const parsed = parseTaskSource({
         yaml: fs.readFileSync(filePath, "utf8"),
         filePath,
-        workspaceRoot: target.source.path,
       });
       const document = parsed.v4;
       if (document.schedule.length === 0) continue;
@@ -187,7 +186,7 @@ export async function prepareSetupTaskDefinitions(
       yaml = yamlStringify(document);
     }
 
-    const parsed = parseTaskSource({ yaml, filePath, workspaceRoot: target.source.path });
+    const parsed = parseTaskSource({ yaml, filePath });
     for (const schedule of parsed.v4.schedule) {
       parseSchedule(schedule.cron, backendNameForPlatform());
     }

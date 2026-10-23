@@ -92,7 +92,7 @@ akm import https://example.com/docs/auth       # Fetch one URL and import it as 
 akm import ./doc.md --bundle my-other-bundle    # Route import to a named writable bundle source
 akm workflow create ship-release               # Create a workflow asset in the bundle
 akm lint --type workflows                      # Parse and compile every workflow source; list every error
-akm workflow run workflows/ship-release        # Start or resume and execute the workflow
+akm workflow run workflows/ship-release        # Start a new run and execute it
 akm feedback skills/code-review --positive     # Record that an asset helped (ranks it higher; no rewrite)
 akm feedback agents/reviewer --negative --reason "says to run jest; the suite runs on vitest" # Content wrong or stale: lowers its ranking; improve may repair its frontmatter
 akm feedback knowledge/opencode-server --negative --reason "the default port is 4096, not 8000" --replace "port 8000" --with "port 4096" --source "https://opencode.ai/docs/server/" # Apply an exact fix
@@ -150,8 +150,8 @@ the index (comments can contain commented-out credentials). akm does not edit
 entries — you edit the file with your own editor and akm loads it.
 
 ```sh
-akm env create prod                           # Create an empty env file
-akm env create prod --from-file ./.env        # Ingest an existing .env
+akm env create env/prod                           # Create an empty env file
+akm env create env/prod --from-file ./.env        # Ingest an existing .env
 akm env list                                  # List all env files across bundles with key names
 akm show env/prod                             # Inspect key names (never values or comments)
 akm env run env/prod -- ./deploy.sh           # Run a command with the whole .env injected (the safe path)
@@ -186,10 +186,10 @@ workflow. Direct run-id commands still target the exact run.
 akm workflow create ship-release --print     # Print a starter workflow template, without writing
 akm workflow create ship-release             # Scaffold a new workflow asset
 akm workflow run workflows/ship-release --version=1.2.3  # Start and execute with exact-name parameter flags
-akm workflow run <run-id> --max-retries 2 --timeout 10m  # Resume with invocation-wide controls
+akm workflow run <run-id> --max-retries 2 --timeout 10m  # Continue a run with invocation-wide controls
 akm workflow status <run-id>                 # Show the exact run by id
-akm workflow resume <run-id>                 # Resume a blocked or failed run
-akm workflow list                            # List workflow runs in the current scope
+akm workflow resume <run-id>                 # Re-activate a blocked or failed run, then `run <run-id>`
+akm workflow list                            # List workflow runs on this host
 ```
 
 ## Clone
@@ -282,7 +282,6 @@ akm bundle list --kind git                           # Filter by provider (files
 akm bundle remove <target>                           # Remove by id, ref, path, or name
 akm bundle update --all                              # Update all managed sources
 akm bundle update <target> --force                   # Force re-download
-akm bundle update <target> --allow-dangerous-env-keys # Approve reviewed dangerous env keys
 akm bundle update --all --skip-if-locked             # Scheduled refresh; exit 0 on DB contention
 ```
 

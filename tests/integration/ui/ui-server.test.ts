@@ -1455,7 +1455,7 @@ describe("workspace actions", () => {
     expect(fs.existsSync(file)).toBe(false);
   });
 
-  test("a symlinked document or directory pointing outside the bundle is neither read nor written", async () => {
+  test("a symlinked document outside the bundle is read but never written through; a symlinked directory is not followed", async () => {
     await seed();
     const outside = path.join(storage.root, "outside-bundle");
     fs.mkdirSync(outside, { recursive: true });
@@ -1464,8 +1464,20 @@ describe("workspace actions", () => {
     fs.symlinkSync(outside, path.join(storage.stashDir, "knowledge", "linkdir"));
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const s = await start();
-    for (const ref of ["knowledge/linked", "knowledge/linkdir/target"]) {
-      // The indexer does not follow the links, so neither route resolves the target.
+    // A file symlink is read like any other file (#1237), but a write never
+    // follows a symlink out of the bundle.
+    const linkedRead = await api(s, `/api/asset/source?${new URLSearchParams({ ref: "knowledge/linked" })}`);
+    expect(linkedRead.status).toBe(200);
+    expect(((await linkedRead.json()) as { data: { content: string } }).data.content).toBe(NOTES);
+    const linkedSave = await write(s, "/api/asset/save", {
+      ref: "knowledge/linked",
+      revision: sha256(NOTES),
+      content: "# Replaced\n",
+    });
+    expect(linkedSave.status).toBe(400);
+    expect(String(linkedSave.body.error)).toContain("escapes the stash");
+    // A directory symlink is never descended, so nothing under it resolves.
+    for (const ref of ["knowledge/linkdir/target"]) {
       const read = await api(s, `/api/asset/source?${new URLSearchParams({ ref })}`);
       expect({ ref, status: read.status, code: ((await read.json()) as Json).code }).toEqual({
         ref,

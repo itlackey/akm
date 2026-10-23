@@ -35,6 +35,7 @@ import type { FileContext } from "../../../indexer/walk/file-context";
 import { assetPathCandidatesForName, typeForStashDir } from "../../asset/asset-placement";
 import { scanEnvKeyNames, toPosix } from "../../common";
 import type { FileChange } from "../../file-change";
+import { sensitiveMarkerPath } from "../../sensitive-marker-path";
 import type { BundleAdapter } from "../bundle-adapter";
 import type { BundleComponent, Diagnostic, IndexDocument, ValidateContext } from "../types";
 import { dangerousEnvKeyDiagnostics } from "./akm-lint";
@@ -83,7 +84,7 @@ function classify(relPath: string): DotenvType | null {
  * disagreed about a documented promise.
  */
 function hasSensitiveMarker(absPath: string, type: DotenvType): boolean {
-  const marker = type === "env" ? absPath.replace(/\.env$/i, ".sensitive") : `${absPath}.sensitive`;
+  const marker = sensitiveMarkerPath(absPath, type === "env" ? "env" : "secret");
   return marker !== absPath && fs.existsSync(marker);
 }
 
@@ -177,8 +178,8 @@ export const dotenvAdapter: BundleAdapter = {
     const primaries = assetPathCandidatesForName(type, path.join(c.root, head), rest);
     const expanded = primaries.flatMap((primary) =>
       type === "env"
-        ? [primary, primary.replace(/\.env$/i, ".sensitive")]
-        : [primary, `${primary}.sensitive`, `${primary}.lock`],
+        ? [primary, sensitiveMarkerPath(primary, "env")]
+        : [primary, sensitiveMarkerPath(primary, "secret"), `${primary}.lock`],
     );
     return expanded.map((candidatePath) => ({ path: candidatePath, conceptId: posix }));
   },

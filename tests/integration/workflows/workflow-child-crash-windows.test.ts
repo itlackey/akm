@@ -170,7 +170,7 @@ describe.skipIf(!BUN)("multi-process crash windows around a composing child (C-0
     writeProgram(storage.stashDir, "cw1-leaf", CHILD_LEAF_WF);
     writeComposingParent(storage.stashDir, "cw1-parent", "workflows/cw1-leaf");
     const started = await startWorkflowRun("workflows/cw1-parent", {});
-    expect(started.run.planIrVersion).toBe(6);
+    expect(started.run.planIrVersion).toBe(7);
     const parentRunId = started.run.id;
 
     // Held on the child's own unit so the crasher can never race past this
@@ -402,8 +402,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
       run: {
         id: childRunId,
         workflowRef: target.ref,
-        scopeKey: parentRow?.scope_key ?? null,
-        workflowEntryId: null,
         workflowTitle: target.frozenPlan.title,
         paramsJson: "{}",
         currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,
@@ -553,8 +551,6 @@ describe("two-parent-process contention on one child (C-04)", () => {
         run: {
           id: childRunId,
           workflowRef: target.ref,
-          scopeKey: parentRow?.scope_key ?? null,
-          workflowEntryId: null,
           workflowTitle: target.frozenPlan.title,
           paramsJson: "{}",
           currentStepId: target.frozenPlan.steps[0]?.stepId ?? null,

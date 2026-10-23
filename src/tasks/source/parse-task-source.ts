@@ -39,7 +39,6 @@ export type ParsedTaskSource = Readonly<{ version: 4; v4: TaskSourceV4Document }
 export interface ParseTaskSourceInput {
   readonly yaml: string;
   readonly filePath: string;
-  readonly workspaceRoot?: string;
 }
 
 /** Read the root `version` field without over-accepting non-number values (e.g. the string `"4"`). */
@@ -102,7 +101,6 @@ export function parseTaskSource(input: ParseTaskSourceInput): ParsedTaskSource {
   }
   const documentOptions = {
     filePath: input.filePath,
-    ...(input.workspaceRoot ? { workspaceRoot: input.workspaceRoot } : {}),
     lineAt,
   };
   return Object.freeze({ version: 4 as const, v4: parseTaskSourceV4Document(root, documentOptions) });

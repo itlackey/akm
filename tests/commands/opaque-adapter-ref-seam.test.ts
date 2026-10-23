@@ -78,17 +78,17 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
 
   afterEach(() => storage.cleanup());
 
-  test("indexer walk resolves opaque conceptIds from the index without guessing a disk serialization", async () => {
+  test("indexer walk resolves opaque conceptIds from the index, and from disk through the adapter", async () => {
     await akmIndex({ stashDir: storage.stashDir, full: true });
     const indexed = await resolveAssetPath("adversarial//tables/customers", { honorOrigin: true });
     expect(indexed).toBe(conceptPath);
 
-    // Core cannot assume an opaque adapter serializes a concept as `<id>.md`.
+    // Core does not guess a serialization; the bundle's own adapter names the file.
     const diskOnly = await resolveAssetPath("adversarial//tables/customers", {
       mode: "disk-only",
       honorOrigin: true,
     });
-    expect(diskOnly).toBeNull();
+    expect(diskOnly).toBe(conceptPath);
   });
 
   test("improve: `--scope` recognizes an opaque conceptId as a REF, not a bogus type filter", async () => {
@@ -134,7 +134,6 @@ describe("Q-07 / D11 — opaque adapter conceptIds at the ref-consuming commands
       bytes: Buffer.from('version: 2\nschedule: "@daily"\nprompt: adversarial//tables/customers\n', "utf8"),
       mode: 0o644,
       writable: true,
-      containmentRoot: storage.stashDir,
     });
     expect(outcome).toMatchObject({
       status: "blocked",

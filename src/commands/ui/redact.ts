@@ -8,9 +8,11 @@
  * anything secret-like by key name, because the UI shows config the CLI's
  * `config list` never had to defend against a browser leaking.
  *
- * Symbolic references (`$VAR`, `${VAR}`, `secret://name`) are kept: they say
+ * Symbolic references (`$VAR`, `${VAR}`, `${secrets/name}`) are kept: they say
  * where a credential comes from without being one.
  */
+
+import { isApiKeyReference } from "../../core/config/schema/primitives";
 
 const REDACTED = "[redacted]";
 
@@ -19,8 +21,6 @@ const SECRET_KEY = /(api[-_]?key|token|password|passwd|secret|credential|authori
 
 /** A whole subtree of values (`env`, `secrets`) that is data, not settings. */
 const SECRET_BAG_KEY = /^(env|secrets?)$/i;
-
-const SYMBOLIC_REFERENCE = /^(\$[A-Za-z_][A-Za-z0-9_]*|\$\{[A-Za-z_][A-Za-z0-9_]*\}|secret:\/\/.+)$/;
 
 /** Query parameters that carry a credential in a URL. */
 const SECRET_QUERY_PARAM = /^(api[-_]?key|key|token|access[-_]?token|auth|password|secret|sig|signature)$/i;
@@ -69,13 +69,13 @@ export function scrubUrlCredentials(value: unknown): unknown {
 export function redactForUi(value: unknown, inSecretBag = false): unknown {
   if (Array.isArray(value)) return value.map((child) => redactForUi(child, inSecretBag));
   if (typeof value === "string") {
-    if (SYMBOLIC_REFERENCE.test(value)) return value;
+    if (isApiKeyReference(value)) return value;
     return inSecretBag ? REDACTED : redactUrlCredentials(value);
   }
   if (!value || typeof value !== "object") return inSecretBag && value !== null ? REDACTED : value;
   const result: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-    if (typeof child === "string" && SECRET_KEY.test(key) && !SYMBOLIC_REFERENCE.test(child)) {
+    if (typeof child === "string" && SECRET_KEY.test(key) && !isApiKeyReference(child)) {
       result[key] = REDACTED;
     } else {
       result[key] = redactForUi(child, inSecretBag || SECRET_BAG_KEY.test(key));

@@ -18,7 +18,7 @@
  * The supported value-use path is:
  *
  *   - `akm secret run <ref> <VAR> -- <cmd>` — value injected into the child
- *     process env as `VAR=<value>` (see `readValue`).
+ *     process env as `VAR=<value>` (see `readValue` in `core/secret-value.ts`).
  *
  * `akm secret path <ref>` (print the file path for the Docker `/run/secrets` +
  * `_FILE` convention) was removed in 0.9.0 alongside `akm secret remove` — an
@@ -26,8 +26,8 @@
  * and could silently target different files. A ref's file still lives at
  * `<stash>/secrets/<name>`; locate or delete it there directly.
  *
- * Values are stored as raw bytes (no quoting, multi-line allowed) so they
- * round-trip byte-exact, unlike env values which forbid literal newlines.
+ * Values are stored as raw bytes (no quoting, multi-line allowed), unlike env
+ * values which forbid literal newlines; they are read back trimmed (`core/secret-value.ts`).
  */
 
 import { createHash } from "node:crypto";
@@ -98,14 +98,6 @@ function ensureParentDir(filePath: string): void {
 }
 
 // ── Public API ──────────────────────────────────────────────────────────────
-
-/**
- * Read a secret's raw bytes. Internal use only (for `secret run`). Callers
- * MUST NOT write the returned value to stdout or any log.
- */
-export function readValue(secretPath: string): Buffer {
-  return fs.readFileSync(secretPath);
-}
 
 /**
  * Write (create or overwrite) a secret with the given raw bytes, atomically at

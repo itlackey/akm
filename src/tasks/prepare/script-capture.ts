@@ -8,16 +8,15 @@
  * script arm (the moved prepareTaskV3Execution) and
  * prepare-script-target.ts's typed prepareScriptTarget() call
  * captureScriptTarget() below, so the two never drift into two copies of the
- * same capture logic. scriptInterpreter() and captureDirectoryIdentity() are
- * moved body-intact out of the pre-P1b src/tasks/runtime-v3.ts.
+ * same capture logic. scriptInterpreter() is moved body-intact out of the
+ * pre-P1b src/tasks/runtime-v3.ts.
  */
 
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { UsageError } from "../../core/errors";
-import { captureFrozenDirectoryIdentity } from "../../execution/directory-identity";
 import { isBunStandaloneMain } from "../resolve-akm-bin";
-import type { PreparedTaskV3DirectoryIdentity, TaskV3ScriptInterpreter } from "./prepared-execution";
+import type { TaskV3ScriptInterpreter } from "./prepared-execution";
 
 const SCRIPT_INTERPRETERS: Readonly<Record<string, TaskV3ScriptInterpreter>> = Object.freeze({
   ".sh": "sh",
@@ -88,21 +87,6 @@ export function scriptInterpreter(extension: string, ref: string, bytes?: Uint8A
   );
 }
 
-export function captureDirectoryIdentity(
-  bundleRoot: string,
-  workingDirectory?: string,
-): PreparedTaskV3DirectoryIdentity {
-  try {
-    return captureFrozenDirectoryIdentity(bundleRoot, workingDirectory);
-  } catch (cause) {
-    if (cause instanceof UsageError) throw cause;
-    throw new UsageError(
-      `Task working directory ${JSON.stringify(workingDirectory ?? ".")} cannot be physically verified: ${cause instanceof Error ? cause.message : String(cause)}`,
-      "TASK_SOURCE_INVALID",
-    );
-  }
-}
-
 /** The fields both script-projection call sites (prepare.ts, prepare-script-target.ts) freeze identically. */
 export interface CapturedScriptTarget {
   readonly interpreter: TaskV3ScriptInterpreter;
@@ -112,16 +96,14 @@ export interface CapturedScriptTarget {
   readonly byteLength: number;
   readonly sha256: string;
   readonly cwd: string;
-  readonly cwdIdentity: PreparedTaskV3DirectoryIdentity;
 }
 
 /**
- * Read a script's bytes off disk (or the caller's own read seam) and freeze
- * the interpreter/digest/directory-identity shape every script dispatch
- * needs. `ref` is used only for interpreter-selection error messages — it is
- * the script's own qualified ref, never a synthetic task ref. `bundleRoot` is
- * where directory identity is captured from (one level above the script file
- * itself, matching prepareTaskV3Execution's historical behavior).
+ * Read a script's bytes off disk (or the caller's own read seam, following a
+ * symlink to wherever it points) and freeze the interpreter/digest shape every
+ * script dispatch needs. `ref` is used only for interpreter-selection error
+ * messages — it is the script's own qualified ref, never a synthetic task ref.
+ * `bundleRoot` is the script's working directory.
  */
 export function captureScriptTarget(
   ref: string,
@@ -132,14 +114,12 @@ export function captureScriptTarget(
   const extension = path.extname(file).toLowerCase();
   const raw = readFile(file, bundleRoot);
   const bytes = Uint8Array.from(raw);
-  const cwdIdentity = captureDirectoryIdentity(bundleRoot);
   return Object.freeze({
     interpreter: scriptInterpreter(extension, ref, bytes),
     extension,
     bytesBase64: Buffer.from(bytes).toString("base64"),
     byteLength: bytes.byteLength,
     sha256: createHash("sha256").update(bytes).digest("hex"),
-    cwd: cwdIdentity.realCwd,
-    cwdIdentity,
+    cwd: path.resolve(bundleRoot),
   });
 }

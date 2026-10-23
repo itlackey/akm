@@ -11,13 +11,12 @@ import path from "node:path";
 import { openStateDatabase } from "../../../src/core/state-db";
 import { withWorkflowRunsRepo } from "../../../src/storage/repositories/workflow-runs-repository";
 import type { UnitDispatchRequest, UnitDispatchResult } from "../../../src/workflows/exec/native-executor";
-import { runWorkflowSteps } from "../../../src/workflows/exec/run-workflow";
 import { computeStepWorkList, type GateFeedback } from "../../../src/workflows/exec/step-work";
 import type { WorkflowPlan as WorkflowPlanGraph } from "../../../src/workflows/plan";
 import { getWorkflowStatus, resumeWorkflowRun } from "../../../src/workflows/runtime/runs";
 import type { SummaryJudge } from "../../../src/workflows/validate-summary";
 import { type Cleanup, sandboxEnvDir } from "../../_helpers/sandbox";
-import { freezeWorkflow, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
+import { freezeWorkflow, runWorkflowSteps, storeFrozenWorkflowPlan } from "../../_helpers/workflow";
 
 /**
  * R2: typed artifacts + artifact-judging gates + bounded gate loops.
@@ -388,6 +387,7 @@ describe("artifact-judging gates — the judge receives the artifact, not machin
     expect(result.gateRejection).toBeUndefined();
     expect(result.judgeFailure?.stepId).toBe("extract");
     expect(result.judgeFailure?.message).toContain(`akm workflow resume ${RUN_ID}`);
+    expect(result.judgeFailure?.message).toContain(`akm workflow run ${RUN_ID}`);
     const status = await getWorkflowStatus(RUN_ID);
     expect(status.run.status).toBe("blocked");
     expect(status.workflow.steps[0]?.status).toBe("blocked");
@@ -1128,6 +1128,7 @@ describe("judge outage — infrastructure failure blocks for resume instead of b
     expect(failed.judgeFailure?.stepId).toBe("work");
     expect(failed.judgeFailure?.message).toContain(expectedCause);
     expect(failed.judgeFailure?.message).toContain(`akm workflow resume ${RUN_ID}`);
+    expect(failed.judgeFailure?.message).toContain(`akm workflow run ${RUN_ID}`);
     expect(failed.run.status).toBe("blocked");
     const blocked = await getWorkflowStatus(RUN_ID);
     expect(blocked.workflow.steps[0]!.status).toBe("blocked");

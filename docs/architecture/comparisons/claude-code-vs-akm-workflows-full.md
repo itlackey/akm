@@ -11,7 +11,7 @@ The short version: they are not competitors. An akm workflow is a durable
 workflow asset authored in either of two peer source formats, Markdown `.md`
 or GitHub-shaped YAML `.yml`, and executed by the Stable
 `akm workflow run` command. Both adapters compile through source IR version 1.
-Every new start freezes the durable plan v4 family's executable `irVersion: 5`
+Every new start freezes the durable plan v4 family's executable `irVersion: 7`
 before execution. The native engine
 fans work out to concurrent runner units, retries, gates on typed artifacts,
 and enforces budget ceilings. Execution is native: akm dispatches each unit to
@@ -254,7 +254,7 @@ run lease), `008`/`009` (unit attempts / claim columns).
 
 `akm workflow run` is the one stable native execution surface. Peer source formats use the same source IR v1 before durable freezing: Markdown `.md` and YAML `.yml`.
 A new start by ref compiles source
-IR v1 and freezes the resulting durable-v4-family `irVersion: 5` plan on the
+IR v1 and freezes the resulting durable-v4-family `irVersion: 7` plan on the
 run row (`plan_json`/`plan_hash`); edits to the source file need a new run.
 Pre-`irVersion`-5
 stored plans are rejected rather than keeping a parallel runtime. The
@@ -292,20 +292,14 @@ agent session execute units itself; it was removed in favour of the single
 native path, since native dispatch already covers ten harnesses — Claude Code
 among them — for less code than the protocol cost.
 
-### B.5 Scoping & concurrency guards (two different guards)
+### B.5 Run identity & concurrency
 
-Runs are partitioned by **`scope_key`** — a `sha256` of the nearest project
-anchor (`.akm/config.json` root → git root → bundle dir → cwd),
-`src/workflows/authoring/scope-key.ts`. Within a `(workflow_ref, scope_key)`
-pair, `startWorkflowRun` enforces a **single active run** unless `--force` is
-passed internally. The public CLI exposes no parallel-start flag: invoking
-`workflow run` by ref continues the active run in that scope. This guard is
-scope-local by design (two unrelated projects sharing one `state.db` must be
-able to run the same-named workflow independently), so two *different*
-scopes can each hold their own active run of the same ref — starting one
-warns about an active run in another scope (naming its id and scope) rather
-than blocking it, and `akm workflow list --all-scopes` / `status` / `resume`
-/ `abandon <run-id>` see and act across scopes (#942).
+A run is identified by its run id and a workflow by its bundle-qualified ref;
+runs are not partitioned by directory. `workflow run <ref>` always starts a
+new run, so several runs of one ref can be active at once. A start that finds
+other active runs of the ref warns, naming their ids and the `resume` /
+`abandon` commands, and `--skip-if-locked` skips instead of starting when an
+active run of the ref is held by a live process (#1239).
 
 Orchestrated runs add a second, unrelated guard: the **run lease**. `akm
 workflow run` takes a lease (a random holder id, 90s expiry, renewed between
@@ -383,14 +377,14 @@ orchestration surface.
 
 | Dimension | Claude Code workflow | akm workflow |
 |---|---|---|
-| **Artifact** | Imperative JS program (`script`) | Declarative workflow asset (`.md` or `.yml`), compiled through source IR v1 to durable-v4-family `irVersion: 5` |
+| **Artifact** | Imperative JS program (`script`) | Declarative workflow asset (`.md` or `.yml`), compiled through source IR v1 to durable-v4-family `irVersion: 7` |
 | **Authored by** | The agent, inline, per-task, ephemeral | Human or agent, saved as a reusable bundle asset |
 | **Who executes work** | The harness runs the script; subagents do the work | The native engine, dispatching to a configured harness |
 | **Unit of work** | `agent()` — a fresh LLM subagent context | One dispatch or one `map` item under the engine |
 | **Concurrency** | Massively parallel (≤16 concurrent, ≤1000 total, `pipeline`/`parallel`) | Bounded map concurrency, frozen into the plan |
 | **Control flow** | Full JS: loops, conditionals, fan-out, budget-scaled | `unit`/`map`/`route`, bare reference strings, and bounded gate retries; no backward routes |
 | **State store** | Transcript dir (`journal.jsonl`, `agent-*.jsonl`) | SQLite `state.db`; native-engine runs add unit rows and a frozen `plan_json`/`plan_hash` |
-| **Scope / lifetime** | One session, one turn-shaped fan-out | Cross-session, per-project `scope_key`, resumable indefinitely |
+| **Scope / lifetime** | One session, one turn-shaped fan-out | Cross-session, host-wide (a run is identified by its id), resumable indefinitely |
 | **Progress model** | Push: live `/workflows` tree + `task-notification` | Pull via `status`, with near-live NDJSON event polling via `akm log` |
 | **Resume** | Prefix-cache replay keyed on `runId` (needs determinism) | Durable row resume; native-engine units add journaled replay keyed on content-derived identity |
 | **Quality gates** | Agent-authored (adversarial verify, judge panels, schemas) | Fail-closed LLM or agent verification of typed artifacts; `gate.max_loops` bounds retries |

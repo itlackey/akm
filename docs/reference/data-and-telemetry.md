@@ -170,7 +170,7 @@ the set of types the code actually emits at HEAD (verified against every
 | `index_db_vacuumed` | `akm index` VACUUMed index.db, after an index layout migration or because more than half its pages were free | `pagesBefore`, `pagesAfter`, `freelistRatioBefore` |
 | `index_completed` | `akm index`, once when a run finishes | `mode`, `totalMs`, `walkMs`, `llmMs`, `embedMs`, `ftsMs`, `finalizeMs` (phase timings in milliseconds) |
 | `stash_synced` | `akm improve`'s internal sync passes (the `sync.push` feature), before the run and at its end, **distinct from** the `akm sync` command above | `phase` (`pre-run` or `end-of-run`), `committed`, `pushed`, `skipped`, `reason`, `attributed` (paths the run wrote and staged), `unattributed` (in-scope paths that went dirty during the run without the run writing them — left for their author) |
-| `env_access` | `akm env run <name> -- <command>` (audit trail: key **names** only, values never recorded) | `ref`, `keys` |
+| `env_access` | `akm env run <ref> -- <command>`, and a workflow unit's `env:` binding at each dispatch (audit trail: key **names** only, values never recorded) | `ref`, `keys` |
 | `secret_access` | `akm secret run <ref> <VAR> -- <command>` (audit trail: var **name** only, value never recorded) | `ref`, `var` |
 
 *Proposals*

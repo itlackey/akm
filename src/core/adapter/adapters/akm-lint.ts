@@ -232,8 +232,6 @@ export interface PerTypeCheckArgs {
   /** File extension incl. dot, lower-cased (`.md`, `.yaml`, …). */
   ext: string;
   ctx: ValidateContext;
-  /** Materialized component root used for physical working-directory containment. */
-  workspaceRoot?: string;
 }
 
 /**
@@ -242,7 +240,7 @@ export interface PerTypeCheckArgs {
  * routes through `ctx`.
  */
 export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Diagnostic[]> {
-  const { type, relPath, raw, data, frontmatter, body, ext, ctx, workspaceRoot } = args;
+  const { type, relPath, raw, data, frontmatter, body, ext, ctx } = args;
   switch (type) {
     case "command":
       return nameOrTypeDiagnostics(relPath, data, frontmatter, ["command"]);
@@ -251,7 +249,7 @@ export async function perTypeValidateChecks(args: PerTypeCheckArgs): Promise<Dia
     case "fact":
       return factDiagnostics(relPath, data);
     case "task":
-      return taskDiagnostics(relPath, raw, workspaceRoot);
+      return taskDiagnostics(relPath, raw);
     case "workflow":
       return ext === ".md" ? workflowDiagnostics(relPath, raw, body) : [];
     case "memory":
@@ -303,12 +301,11 @@ export function factDiagnostics(relPath: string, data: Record<string, unknown>):
  * contract; the cron suits the local scheduler backend), so `akm lint --type
  * tasks` never reports clean a task that sync would refuse.
  */
-export function taskDiagnostics(relPath: string, raw: string, workspaceRoot?: string): Diagnostic[] {
+export function taskDiagnostics(relPath: string, raw: string): Diagnostic[] {
   try {
     const parsed = parseTaskSource({
       filePath: relPath,
       yaml: raw,
-      ...(workspaceRoot ? { workspaceRoot } : {}),
     });
     assertTaskScheduleInputsSatisfyContract(parsed.v4, relPath);
     assertTaskScheduleCronValid(parsed.v4, backendNameForPlatform());

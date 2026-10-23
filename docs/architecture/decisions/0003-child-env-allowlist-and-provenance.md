@@ -29,10 +29,9 @@ Moved verbatim from `exec-unit.ts`'s module header:
 > - NO LEAKED CHILDREN. `runManagedSubprocess` spawns DETACHED and runs a
 >   SIGTERM→SIGKILL ladder against the whole process group, so `--timeout`
 >   and Ctrl-C really do stop a running command and its descendants.
-> - CONTAINMENT. `exec.cwd` is relative and `..`-free by construction
->   (parser and frozen-plan decoder), which is necessary but not sufficient:
->   a subdirectory can be a symlink. The RESOLVED path is therefore
->   re-checked against the RESOLVED base immediately before spawning.
+> - NO CONTAINMENT. `exec.cwd` is relative to the run's bundle root or
+>   absolute, and nothing checks where it leads: a command can reach any
+>   directory anyway, so a directory is not a security boundary.
 > - BOUNDED SPEND. A command is arbitrary code with no resource discipline
 >   of its own, so each resource it spends on akm's behalf has a ceiling in
 >   `workflows/resource-limits.ts`: wall clock (`DEFAULT_EXEC_TIMEOUT_MS` or
@@ -52,8 +51,7 @@ Moved verbatim from `exec-unit.ts`'s module header:
 > which is why this module may return raw stdout/stderr diagnostics without
 > knowing anything about redaction.
 >
-> Layering: a LEAF. Node built-ins, `core/common` (for `isWithinAsync`, the
-> CONTAINMENT recheck above), `core/spawn-env`, `core/subprocess`,
+> Layering: a LEAF. Node built-ins, `core/spawn-env`, `core/subprocess`,
 > `core/warn` and the import-free `workflows/resource-limits` (plus erased
 > types) only, so the executor can consume it without opening an import
 > cycle.
@@ -127,8 +125,8 @@ Moved verbatim from `runExecUnit`'s doc comment:
 > `timeout`, cancellation → `aborted`, a child that never started →
 > `spawn_failed`. All four are pre-existing `AgentFailureReason` members, so
 > `retry.on` keeps working unchanged. The out-of-taxonomy
-> `exec_cwd_escape`, `exec_output_limit`, `exec_context_too_large` and
-> `exec_capture_incomplete` are deliberate: each is tampering, a runaway, an
+> `exec_output_limit`, `exec_context_too_large` and
+> `exec_capture_incomplete` are deliberate: each is a runaway, an
 > authoring bug, or work that ALREADY RAN — never a transient — so no
 > `retry.on` value can ever re-dispatch one.
 >

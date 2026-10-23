@@ -332,7 +332,7 @@ explicit retention policy removes them.
 
 #### Table: `workflow_runs`
 
-New starts persist durable-v4-family plan `irVersion: 5`, the sole executable
+New starts persist durable-v4-family plan `irVersion: 7`, the sole executable
 plan format. Pre-`irVersion`-5 stored
 plans are rejected rather than upgraded or replayed through another runtime.
 
@@ -340,8 +340,8 @@ plans are rejected rather than upgraded or replayed through another runtime.
 |---|---|---|
 | `id` | TEXT PRIMARY KEY | UUID v4 |
 | `workflow_ref` | TEXT NOT NULL | e.g. `workflows/review-todos` |
-| `scope_key` | TEXT | Directory hash; isolates runs per project. Gates `list`'s default filter, `akm show`'s active-run nudge, and `startWorkflowRun`'s own-scope uniqueness guard (unchanged, still per-scope) — so two DIFFERENT scopes can each hold their own active run of the same ref; starting one warns about the other rather than blocking it (#942). `akm workflow list --all-scopes` sees across scopes, and `status`/`resume`/`abandon <run-id>` already act on a run regardless of which scope started it |
-| `workflow_entry_id` | INTEGER | Optional FK into `index.db entries.id` |
+| `scope_key` | TEXT | Legacy: a directory hash written by releases before 0.10. Never written or read now (NULL on new rows); the column and its index stay so older rows load |
+| `workflow_entry_id` | INTEGER | Legacy: an `index.db entries.id` written by releases before 0.10. Never written now (NULL on new rows) |
 | `workflow_title` | TEXT NOT NULL | Human-readable title |
 | `status` | TEXT NOT NULL | `active`, `completed`, `blocked`, `failed` |
 | `params_json` | TEXT NOT NULL DEFAULT '{}' | Run parameters |
@@ -618,7 +618,7 @@ The JSONL file at `$CACHE/events.jsonl` is no longer read or written by akm.
 | `curate` | `akm curate` | `query`, `itemCount`, `itemRefs[]` |
 | `show` | `akm show` | `type`, `name` |
 | `select` | `akm show`, when a search within the last 60s returned the ref | `query`, `searchTs`, `rankPosition` |
-| `env_access` | `akm env run`, and a workflow step's frozen environment | `keys`; `secretNames` from a workflow step (names only, never values) |
+| `env_access` | `akm env run`, and a workflow step's `env:` bindings (read at each step) | `keys` (names only, never values) |
 | `secret_access` | `akm secret run` | `var` (the variable name, never the value) |
 | `promoted` | `akm proposal accept`, and drain/triage promotion | `proposalId`, `source`, `sourceRun`, `assetPath`, `eligibilitySource`; `retired: true` for a retire proposal |
 | `rejected` | `akm proposal reject` | `proposalId`, `source`, `sourceRun`, `reason` |

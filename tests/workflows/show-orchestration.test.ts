@@ -17,7 +17,7 @@
  * The call shape below is exactly `showLocal`'s (`src/commands/read/show.ts`):
  * `buildFileContext` -> `recognizeMatch` -> `getRenderer` ->
  * `buildRenderContext` -> `buildShowResponse`. `showLocal`'s post-processing
- * (related/editable/activeRun/…) never touches `steps`, so what this suite
+ * (related/editable/…) never touches `steps`, so what this suite
  * asserts is byte-for-byte what the CLI emits.
  */
 

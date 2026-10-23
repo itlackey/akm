@@ -14,7 +14,8 @@ import { afterAll, afterEach, beforeEach, describe, expect, test } from "bun:tes
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readValue, secretLockPath, setSecret, withSecretLock } from "../src/commands/env/secret";
+import { secretLockPath, setSecret, withSecretLock } from "../src/commands/env/secret";
+import { readValue } from "../src/core/secret-value";
 import { clearEmbeddingCache, resetLocalEmbedder } from "../src/llm/embedder";
 import { runCliCapture } from "./_helpers/cli";
 import { makeStashDir, type SandboxedDir, withEnv } from "./_helpers/sandbox";
@@ -68,33 +69,40 @@ async function runCli(
 // ── Core module ──────────────────────────────────────────────────────────────
 
 describe("secret core module", () => {
-  test("setSecret writes the file at mode 0600 and readValue returns the bytes", () => {
+  test("setSecret writes the file at mode 0600 and readValue returns the value", () => {
     const root = tmpDir();
     const fp = path.join(root, "secrets", "token");
     setSecret(fp, Buffer.from("opaque-value"));
     expect(fs.existsSync(fp)).toBe(true);
     expect(fs.statSync(fp).mode & 0o777).toBe(0o600);
-    expect(readValue(fp).toString("utf8")).toBe("opaque-value");
+    expect(readValue(fp)).toBe("opaque-value");
   });
 
-  test("multi-line / binary values round-trip byte-exact", () => {
+  test("multi-line / binary values are stored byte-exact; readValue trims the surrounding whitespace", () => {
     const root = tmpDir();
     const fp = path.join(root, "secrets", "key");
     const pem = Buffer.from("-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----\n");
     setSecret(fp, pem);
-    expect(readValue(fp).equals(pem)).toBe(true);
+    expect(fs.readFileSync(fp).equals(pem)).toBe(true);
+    expect(readValue(fp)).toBe("-----BEGIN KEY-----\nabc\ndef\n-----END KEY-----");
 
     const binary = Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x0a, 0x00]);
     const bp = path.join(root, "secrets", "blob");
     setSecret(bp, binary);
-    expect(readValue(bp).equals(binary)).toBe(true);
+    expect(fs.readFileSync(bp).equals(binary)).toBe(true);
+  });
+
+  test("a hand-written value's surrounding whitespace is never part of the secret", () => {
+    const fp = path.join(tmpDir(), "secrets", "padded");
+    setSecret(fp, Buffer.from("  token-value \r\n\n"));
+    expect(readValue(fp)).toBe("token-value");
   });
 
   test("setSecret leaves no lock or mutex state inside the bundle", () => {
     const root = tmpDir();
     const fp = path.join(root, "secrets", "locked");
     setSecret(fp, Buffer.from("recovered"));
-    expect(readValue(fp).toString("utf8")).toBe("recovered");
+    expect(readValue(fp)).toBe("recovered");
     expect(fs.readdirSync(path.dirname(fp))).toEqual(["locked"]);
   });
 
@@ -105,7 +113,7 @@ describe("secret core module", () => {
     fs.mkdirSync(path.dirname(lock), { recursive: true });
     fs.writeFileSync(lock, "999999999");
     setSecret(fp, Buffer.from("recovered"));
-    expect(readValue(fp).toString("utf8")).toBe("recovered");
+    expect(readValue(fp)).toBe("recovered");
     expect(fs.existsSync(lock)).toBe(false);
   });
 

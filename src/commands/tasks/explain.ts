@@ -328,7 +328,7 @@ export async function akmTaskExplain(ref: string, options: TaskExplainOptions = 
   }
   const sourcePath = owner.path;
   const yaml = fs.readFileSync(sourcePath, "utf8");
-  const parsed = parseTaskSource({ yaml, filePath: sourcePath, workspaceRoot: bundle.source.path });
+  const parsed = parseTaskSource({ yaml, filePath: sourcePath });
 
   const inputContract: InputContract = parsed.v4.inputs ?? {};
   // Code-review finding (explain.ts:299, B-N4): `akm task run`'s

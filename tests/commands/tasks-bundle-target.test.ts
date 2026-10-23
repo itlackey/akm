@@ -24,6 +24,7 @@ import {
   akmTasksEnable,
   akmTasksRun,
   akmTasksSync,
+  resolveTaskReadBundle,
 } from "../../src/commands/tasks/tasks";
 import { loadConfig, resetConfigCache, saveConfig } from "../../src/core/config/config";
 import { schedulerEnabledRefs, setSchedulerRefEnabled } from "../../src/tasks/activation-config";
@@ -212,6 +213,22 @@ describe("bundle-targeted tasks via --bundle", () => {
     expect(cronBody(exec.current(), "secondary")).toBeUndefined();
   });
 
+  test("scoped sync uses the active set while AKM_BUNDLE_DIR names a disabled bundle", async () => {
+    writeTaskFile(work.dir, "foo", taskYaml());
+    const current = loadConfig();
+    saveConfig({
+      ...current,
+      defaultBundle: "work",
+      bundles: { ...current.bundles, stash: { ...current.bundles?.stash, path: iso.stashDir, enabled: false } },
+    });
+
+    const synced = await akmTasksSync({ backend: cron() }, "work");
+    expect(synced.installed).toEqual(["foo"]);
+    expect(cronBody(exec.current(), "foo")).toContain("--bundle work");
+
+    await expect(akmTasksSync({ backend: cron() }, "stash")).rejects.toThrow('Bundle "stash" is disabled.');
+  });
+
   test("plain sync reports two bundles claiming one native id and installs neither", async () => {
     writeTaskFile(iso.stashDir, "same", taskYaml());
     writeTaskFile(work.dir, "same", taskYaml());
@@ -314,5 +331,39 @@ describe("bundle-targeted tasks via --bundle", () => {
     await expect(akmTasksRun("implicit-owner", { target: "other" })).rejects.toMatchObject({
       code: "INVALID_FLAG_VALUE",
     });
+  });
+
+  test("a read selector resolves the working stash, another bundle and an environment-only stash through the active set", () => {
+    expect(resolveTaskReadBundle("stash", undefined).source).toMatchObject({ name: "stash", path: iso.stashDir });
+    expect(resolveTaskReadBundle(undefined, "work").source).toMatchObject({ name: "work", path: work.dir });
+    expect(resolveTaskReadBundle("readonly", "readonly").source).toMatchObject({
+      name: "readonly",
+      path: readonlyDir.dir,
+    });
+
+    fs.rmSync(path.join(iso.configDir, "akm", "config.json"));
+    resetConfigCache();
+    expect(resolveTaskReadBundle(undefined, "stash").source).toMatchObject({
+      name: "stash",
+      path: path.resolve(iso.stashDir),
+    });
+    expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
+  });
+
+  test("a disabled bundle selector is reported as disabled, not as unconfigured", () => {
+    saveConfig({
+      configVersion: "0.9.0",
+      semanticSearchMode: "off",
+      defaultBundle: "stash",
+      bundles: {
+        stash: { path: iso.stashDir, writable: true },
+        off: { path: readonlyDir.dir, enabled: false },
+      },
+    });
+    resetConfigCache();
+
+    expect(() => resolveTaskReadBundle(undefined, "off")).toThrow('Bundle "off" is disabled.');
+    expect(() => resolveTaskReadBundle("off", undefined)).toThrow('Bundle "off" is disabled.');
+    expect(() => resolveTaskReadBundle(undefined, "other")).toThrow(/No source named "other"/);
   });
 });

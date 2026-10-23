@@ -67,29 +67,6 @@ describe("resolveAssetPath", () => {
     );
   });
 
-  test("throws for symlink escape", async () => {
-    const stashDir = createTmpDir();
-    const scriptsDir = path.join(stashDir, "scripts");
-    fs.mkdirSync(scriptsDir, { recursive: true });
-
-    // Create a file outside the stash entirely
-    const outsideDir = createTmpDir("akm-outside-");
-    const outsideFile = path.join(outsideDir, "escaped.sh");
-    writeFile(outsideFile, "#!/bin/sh\necho escaped");
-
-    const symlinkPath = path.join(scriptsDir, "link.sh");
-    try {
-      fs.symlinkSync(outsideFile, symlinkPath);
-    } catch {
-      // Symlinks may not be supported on all environments; skip gracefully
-      return;
-    }
-
-    await expect(resolveAssetPath(stashDir, "script", "link.sh")).rejects.toThrow(
-      "Ref resolves outside the stash root.",
-    );
-  });
-
   test("validates script extension", async () => {
     const stashDir = createTmpDir();
     const badFile = path.join(stashDir, "scripts", "readme.txt");

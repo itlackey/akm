@@ -73,7 +73,7 @@ Deploy the artifact.
 describe("compiled plan — structural golden", () => {
   test("compiles to the golden plan", () => {
     expect(compileOk(LINEAR_MD, "Ship it")).toEqual({
-      irVersion: 6,
+      irVersion: 7,
       title: "Ship it",
       steps: [
         {

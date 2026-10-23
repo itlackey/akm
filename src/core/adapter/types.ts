@@ -67,8 +67,6 @@ export interface BundleInstallation {
   /** Transport locator, kept OUT of identity (normative §11.2). */
   source?: string;
   components: BundleComponent[];
-  /** Explicit trust; installation grants nothing (History D8). */
-  trusted: boolean;
 }
 
 export interface BundleComponent {

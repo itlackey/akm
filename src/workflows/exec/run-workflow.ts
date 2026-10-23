@@ -16,7 +16,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { TransientError, UsageError } from "../../core/errors";
-import { type LockOwnership, releaseLock } from "../../core/file-lock";
+import { type LockOwnership, probeLock, releaseLock } from "../../core/file-lock";
 import { formatLockHolderPid, tryAcquireRunLock } from "../../core/run-lock";
 import type { LoweringNotice } from "../../execution/resolved-request";
 import { disposeDispatchResources } from "../../integrations/agent/runner-dispatch";
@@ -27,10 +27,17 @@ import type { WorkflowParameterFlag } from "../ir/params";
 import { computePlanHash } from "../ir/plan-hash";
 import type { WorkflowPlan, WorkflowPlanStep } from "../plan";
 import { decodeWorkflowPlan, readRunPlan } from "../runtime/run-plan";
-import { abandonWorkflowRun, getNextWorkflowStep, resumeWorkflowRun, type WorkflowNextResult } from "../runtime/runs";
+import {
+  abandonWorkflowRun,
+  getNextWorkflowStep,
+  listWorkflowRuns,
+  resolveWorkflowRunTarget,
+  resumeWorkflowRun,
+  type WorkflowNextResult,
+} from "../runtime/runs";
 import { loadWorkflowAsset } from "../runtime/workflow-asset-loader";
 import type { SummaryJudge } from "../validate-summary";
-import { frozenSummaryJudge } from "./frozen-judge";
+import { frozenSummaryJudge, resolveJudgeCwd } from "./frozen-judge";
 import { mergeLoweringNotices } from "./lowering-notices";
 import {
   defaultUnitDispatcher,
@@ -52,19 +59,12 @@ import {
 } from "./step-work";
 
 export interface RunWorkflowOptions {
-  /** Workflow run id or workflow ref (auto-starts a run). */
+  /** Workflow run id (drives that run) or workflow ref (starts a new run). */
   target: string;
   /** Params for an auto-started run. */
   params?: Record<string, unknown>;
   /** Raw exact-name parameter flags, materialized against the plan at start. */
   parameterFlags?: readonly WorkflowParameterFlag[];
-  /**
-   * Start a fresh run even when `target` (a workflow ref) already has an
-   * active run in scope, instead of silently resuming it (#919's `--new`).
-   * Leaves the existing active run untouched. A usage error when `target`
-   * is a run id rather than a ref — there is nothing to be "new" about.
-   */
-  newRun?: boolean;
   /** Stop after this many steps (default: run to completion/gate/failure). */
   maxSteps?: number;
   /** Retry a failed step this many additional times. */
@@ -79,6 +79,8 @@ export interface RunWorkflowOptions {
   loadPlan?: (workflowRef: string) => Promise<WorkflowPlan>;
   /** Test seam for the engine concurrency cap. */
   maxConcurrency?: number;
+  /** Test seam: the directory units and the gate judge work in, instead of the root of the run's bundle. */
+  bundleRootOverride?: string;
   /**
    * Completion-criteria judge override, threaded into `completeWorkflowStep`
    * for every engine-driven completion. `undefined` (absent) = build the
@@ -128,7 +130,8 @@ export interface RunWorkflowResult {
    * Present when the verification judge FAILED (missing/unresolvable judge,
    * thrown judge call, or malformed verdict) — infrastructure, not a verdict.
    * No gate loop was consumed; the step and run are left `blocked`, and
-   * `akm workflow resume` retries the gate over the journaled units.
+   * `akm workflow resume` then `akm workflow run` retries the gate over the
+   * journaled units.
    */
   judgeFailure?: { stepId: string; message: string };
   /**
@@ -139,13 +142,6 @@ export interface RunWorkflowResult {
   childBlocked?: { stepId: string; childRunId: string; childRef: string; resume: string; resumeParentCommand: string };
   /** Present when cooperative cancellation stopped before advancing the step. */
   aborted?: true;
-  /**
-   * Present when `target` (a workflow ref) resolved to an existing active
-   * run instead of starting a new one (#919) — the #485 concurrency guard's
-   * silent-resume behaviour, now visible. Absent when the run was freshly
-   * started (including via `newRun`) or `target` was already a run id.
-   */
-  resumed?: true;
   /** Deduped safe diagnostics from work lowered during this invocation only. */
   notices?: readonly Readonly<LoweringNotice>[];
   /**
@@ -162,10 +158,6 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
   let target = options.target;
   let params = options.params;
   let parameterFlags = options.parameterFlags;
-  // `--new` only applies to the FIRST resolution of `target` (a ref); every
-  // retry re-targets the run id `startWorkflowRun` already created, so it is
-  // cleared alongside `params`/`parameterFlags` below (#919).
-  let newRun = options.newRun;
   let remainingRetries = options.maxRetries ?? 0;
   let remainingSteps = options.maxSteps;
   const executed: ExecutedStepReport[] = [];
@@ -183,7 +175,6 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
         target,
         ...(params !== undefined ? { params } : { params: undefined }),
         ...(parameterFlags !== undefined ? { parameterFlags } : { parameterFlags: undefined }),
-        newRun,
         ...(remainingSteps !== undefined ? { maxSteps: remainingSteps } : { maxSteps: undefined }),
       },
       liveEvidence,
@@ -214,7 +205,6 @@ export async function runWorkflowSteps(options: RunWorkflowOptions): Promise<Run
     target = result.run.id;
     params = undefined;
     parameterFlags = undefined;
-    newRun = undefined;
     remainingRetries -= 1;
   }
 }
@@ -225,7 +215,6 @@ async function runWorkflowAttempt(
 ): Promise<RunWorkflowResult> {
   const next: WorkflowNextResult = await getNextWorkflowStep(options.target, options.params, {
     parameterFlags: options.parameterFlags,
-    newRun: options.newRun,
   });
 
   // Refuse non-active runs BEFORE any dispatch — completeWorkflowStep would
@@ -264,7 +253,6 @@ async function runWorkflowAttempt(
           executed: [],
           stepsProcessed: 0,
           warnings: [...warnings, message],
-          ...(next.resumed ? { resumed: true as const } : {}),
         };
       }
       plan = read.plan;
@@ -279,11 +267,10 @@ async function runWorkflowAttempt(
     // Creation/resume-time notices reach the caller only here: the run row
     // has no warnings column, and a later invocation of the same run must
     // stay silent about a decision it did not make. `driveRun` never sets
-    // `warnings` or `resumed` — both are properties of THIS resolution of
-    // `target`, not of the run row (#919).
+    // `warnings` — it is a property of THIS resolution of `target`, not of
+    // the run row.
     return {
       ...result,
-      ...(next.resumed ? { resumed: true as const } : {}),
       ...(warnings.length > 0 ? { warnings } : {}),
     };
   } finally {
@@ -306,6 +293,27 @@ async function runWorkflowAttempt(
 /** The per-run lock file: `<data dir>/workflow-run-locks/<run id>.lock`, next to `state.db`. */
 export function workflowRunLockPath(runId: string): string {
   return path.join(path.dirname(resolveStorageLocations().stateDb), "workflow-run-locks", `${runId}.lock`);
+}
+
+/**
+ * `--skip-if-locked` for a workflow REF (#1239): an active run of `ref` whose
+ * lock a live process holds, or `undefined`. A run id (which drives that one
+ * run, and fails with `RUN_LEASE_HELD` if it is held) is never a ref. Read-only:
+ * `probeLock` reports a dead holder as stale without reclaiming it.
+ */
+export async function findLiveLockedRunOfRef(target: string): Promise<{ runId: string; holder: string } | undefined> {
+  if ((await resolveWorkflowRunTarget(target)) !== undefined) return undefined;
+  const { runs } = await listWorkflowRuns({ workflowRef: target, activeOnly: true });
+  for (const run of runs) {
+    const probe = probeLock(workflowRunLockPath(run.id));
+    if (probe.state === "held") {
+      return {
+        runId: run.id,
+        holder: formatLockHolderPid({ pid: probe.holderPid, launcherPid: probe.launcherPid ?? null }),
+      };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -357,7 +365,7 @@ async function workflowSourceDriftWarning(
   if (current === plan.sourceHash) return undefined;
   return (
     `Workflow run ${runId}: ${workflowRef} (${sourcePath}) has changed since this run was frozen; ` +
-    `continuing with the frozen plan. Start a new run with 'akm workflow run ${workflowRef} --new' to pick up the edit.`
+    `continuing with the frozen plan. Start a new run with 'akm workflow run ${workflowRef}' to pick up the edit.`
   );
 }
 
@@ -380,6 +388,7 @@ function workflowSummaryJudge(
   stepPlan: WorkflowPlanStep,
   signal: AbortSignal | undefined,
   owner: { runId: string; stepId: string },
+  workflowRef: string,
 ): SummaryJudge | null {
   if (options.summaryJudge !== undefined) return options.summaryJudge;
   // The judge dispatches under the real run/step identity and the same event source as units.
@@ -389,6 +398,7 @@ function workflowSummaryJudge(
     options.dispatcher ?? defaultUnitDispatcher,
     owner,
     options.eventSource,
+    options.bundleRootOverride ?? resolveJudgeCwd(stepPlan.gate.frozenJudge, workflowRef),
   );
 }
 
@@ -520,6 +530,7 @@ async function executeStepSubgraph(
     ...(options.eventSource !== undefined ? { eventSource: options.eventSource } : {}),
     ...(options.signal ? { signal: options.signal } : {}),
     ...(options.dispatcher ? { dispatcher: options.dispatcher } : {}),
+    ...(options.bundleRootOverride !== undefined ? { bundleRootOverride: options.bundleRootOverride } : {}),
     maxConcurrency: Math.min(options.maxConcurrency ?? Number.POSITIVE_INFINITY, plan.execution?.maxConcurrency ?? 1),
   });
 }
@@ -724,10 +735,16 @@ async function driveRun(
     // verify. No gate loop is consumed and nothing is dispatched.
     let summaryJudge: SummaryJudge | null;
     try {
-      summaryJudge = workflowSummaryJudge(options, stepPlan, options.signal, {
-        runId: next.run.id,
-        stepId: step.id,
-      });
+      summaryJudge = workflowSummaryJudge(
+        options,
+        stepPlan,
+        options.signal,
+        {
+          runId: next.run.id,
+          stepId: step.id,
+        },
+        next.run.workflowRef,
+      );
     } catch (error) {
       const detail = error instanceof Error && error.message ? ` (${error.message})` : "";
       // Nothing was dispatched, so there is no evidence to preserve — the same

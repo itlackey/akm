@@ -28,7 +28,7 @@ if (mode === "direct") {
   }
 } else if (mode === "repository") {
   await withWorkflowRunsRepo((repo) => {
-    repo.listRuns({ scopeKey: "restore-open-handle" });
+    repo.listRuns();
     waitForRelease();
   });
 } else {

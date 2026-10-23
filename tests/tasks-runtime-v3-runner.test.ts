@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { openLogsDatabase, queryTaskLogs } from "../src/core/logs-db";
 import type { SpawnFn } from "../src/core/subprocess";
+import { _setWarnSinkForTests } from "../src/core/warn";
 import { runTask } from "../src/tasks/run/run-task";
 import { readTaskHistory } from "../src/tasks/run/task-history";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeSandboxConfig } from "./_helpers/sandbox";
@@ -96,11 +97,6 @@ describe("task runner mutation boundary", () => {
       "with is legal only with",
     ],
     [
-      "secret-shaped literal env",
-      'version: 4\nrun: printf no\nenv:\n  API_TOKEN: github_pat_012345678901234567890123456789\nschedule: "@daily"\n',
-      "secret-shaped literal env",
-    ],
-    [
       "unresolved engine",
       'version: 4\nuses: akm/command\nwith:\n  content: Review\nengine: missing\nschedule: "@daily"\n',
       "missing",
@@ -137,6 +133,30 @@ describe("task runner mutation boundary", () => {
     expect(result).toMatchObject({ status: "failed", target: { kind: "shell" }, detail: { exitCode: 7 } });
     expect(readTaskHistory({ id: "fails" })).toHaveLength(1);
     expect(logFiles().some((file) => file.endsWith(".log"))).toBe(true);
+  });
+
+  test("a secret-shaped literal task env: value warns and the task still runs (#1237)", async () => {
+    writeTask(
+      "secret-env",
+      'version: 4\nrun: exit 0\nshell: sh\nenv:\n  API_TOKEN: github_pat_012345678901234567890123456789\nschedule: "@daily"\n',
+    );
+    const warnings: string[] = [];
+    _setWarnSinkForTests((level, args) => {
+      if (level === "warn") warnings.push(args.map(String).join(" "));
+    });
+    try {
+      const result = await runTask("secret-env", {
+        bundleDir: storage.stashDir,
+        bundleName: "fixture",
+        scheduled: true,
+      });
+      expect(result).toMatchObject({ status: "completed" });
+    } finally {
+      _setWarnSinkForTests(undefined);
+    }
+    expect(warnings.some((message) => message.includes("env.API_TOKEN looks like a credential"))).toBe(true);
+    expect(warnings.some((message) => message.includes("akm secret run"))).toBe(true);
+    expect(warnings.join("\n")).not.toContain("github_pat_");
   });
 
   test("workflow task env: is dropped (with a warning) and the workflow still dispatches", async () => {
@@ -300,59 +320,6 @@ describe("task runner mutation boundary", () => {
       db.close();
     }
   });
-
-  test.skipIf(process.platform === "win32").each(["symlink", "ancestor", "bundle-root", "file"] as const)(
-    "%s cwd replacement fails before spawn and never executes outside the prepared physical directory",
-    async (replacement) => {
-      const outside = path.join(storage.root, `outside-${replacement}`);
-      fs.mkdirSync(outside, { recursive: true });
-      const work = path.join(storage.stashDir, "work");
-      const nested = path.join(work, "nested");
-      fs.mkdirSync(nested, { recursive: true });
-      const authoredCwd =
-        replacement === "ancestor" ? "work/nested" : replacement === "bundle-root" ? undefined : "work";
-      writeTask(
-        "cwd-swap",
-        [
-          "version: 4",
-          "run: printf safe",
-          ...(authoredCwd ? [`working-directory: ${authoredCwd}`] : []),
-          'schedule: "@daily"',
-          "",
-        ].join("\n"),
-      );
-      let spawned = false;
-
-      const result = await runTask("cwd-swap", {
-        bundleDir: storage.stashDir,
-        bundleName: "fixture",
-        beforeNativeDispatch: () => {
-          if (replacement === "bundle-root") {
-            const original = `${storage.stashDir}-original`;
-            fs.renameSync(storage.stashDir, original);
-            fs.symlinkSync(outside, storage.stashDir, "dir");
-            return;
-          }
-          if (replacement === "ancestor") {
-            fs.renameSync(work, `${work}-original`);
-            fs.symlinkSync(outside, work, "dir");
-            return;
-          }
-          fs.rmSync(work, { recursive: true, force: true });
-          if (replacement === "file") fs.writeFileSync(work, "not a directory");
-          else fs.symlinkSync(outside, work, "dir");
-        },
-        spawnFn: () => {
-          spawned = true;
-          return completedSpawn(0);
-        },
-      });
-
-      expect(spawned).toBe(false);
-      expect(result.status).toBe("failed");
-      expect(fs.readFileSync(result.log, "utf8")).toMatch(/working directory|physical|identity|changed/i);
-    },
-  );
 
   test.each([
     ["deleted", undefined],

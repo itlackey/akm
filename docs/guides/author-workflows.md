@@ -225,11 +225,15 @@ Widen it only by naming what the unit needs:
 
 `pass_env:` is for a **per-machine** variable an `env:` binding cannot express
 (an env asset stores a committed value; `CARGO_HOME` differs per build agent).
-Secrets and fixed values belong in exact named `env:` bindings: those values
-are redacted out of everything journaled, and `pass_env:` values are not.
+Fixed values belong in exact named `env:` bindings, and they reach the journal
+as they are. A credential belongs in `secrets/`, bound by a `${secrets/name}`
+token inside the env asset; only values substituted from such a ref are redacted
+out of everything journaled (see [Binding a secret to a
+unit](../reference/workflow-schema.md#binding-a-secret-to-a-unit)). `pass_env:`
+values are not redacted.
 
 Workflow starts freeze the durable plan v4 family's current executable format
-(`irVersion: 5`), which rejects `inherit_env` instead of persisting an
+(`irVersion: 7`), which rejects `inherit_env` instead of persisting an
 unbounded ambient environment. Pre-`irVersion`-5 stored plans do not execute;
 start a new run after updating the source.
 
@@ -240,25 +244,55 @@ scope.
 Full list of allowlisted names:
 [Workflow Schema: The child's environment is an allowlist](../reference/workflow-schema.md#the-childs-environment-is-an-allowlist).
 
+### Using scripts, env and secrets from other bundles
+
+A workflow in one bundle can run a script from a second bundle, with an env
+asset from a third that names a secret in a fourth. Each is addressed by its akm
+ref, `[bundle//]conceptId`, inside a `${...}` token:
+
+```yaml
+  - id: status
+    unit:
+      env: [ci//env/status]                       # env/status.env in bundle ci
+      exec:
+        command: ["bun", "${tools//scripts/lab-status/fetch.ts}"]
+```
+
+```sh
+# env/status.env in bundle ci
+REGION=east
+TOKEN=${vault//secrets/status_token}
+```
+
+`${tools//scripts/...}` becomes the script's absolute path when the unit
+dispatches, `${vault//secrets/status_token}` becomes the secret's value, and
+`REGION` reaches the child as it is. Nothing in the plan records where any of
+them lives, so updating a bundle in the middle of a run is harmless. The unit
+runs in the root of the bundle that holds the workflow (`cwd:` is relative to
+it, or absolute). See [Workflow Schema: The exec
+contract](../reference/workflow-schema.md#the-exec-contract).
+
 ### Things to get right
 
 - **`command:` is an argv array, not a shell string.** `["bun", "run", "test"]`,
   never `"bun run test"`. Nothing is shell-parsed, which is what makes it safe;
   if you truly need a pipeline, write `["bash", "-lc", "a | b"]` and own that
   choice explicitly.
-- **No interpolation.** The argv is frozen. A `map` step's item reaches the
-  command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
+- **No interpolation of run data.** The argv is frozen as authored; the only
+  substitution is a `${ref}` token naming an asset. A `map` step's item reaches
+  the command as `AKM_ITEM` (canonical JSON) and the run params as `AKM_PARAMS` —
   read them from the environment, do not try to splice them into `command:`.
-- **Secrets go in `env:`, never in `command:`.** `command:` is stored verbatim in
-  the frozen plan; `env:` bindings are carried by name and their values are
-  redacted out of everything journaled.
+- **Secrets go in `secrets/`, bound through `env:`, never as literals in
+  `command:`.** `command:` is stored as authored in the frozen plan; `env:` bindings are carried
+  by name, and values substituted from a `${secrets/name}` ref are redacted out
+  of everything journaled.
 - **Long commands need a `timeout:`.** An exec unit defaults to 10 minutes. Use
   `timeout: "30m"` for a slow suite, or `timeout: "none"` only when you really
   mean unbounded.
 - **Don't assume your shell's environment.** The child gets an allowlist, not
   an inheritance. If a command fails with "not found" or reads a missing
   toolchain variable, name it in `pass_env:`; use a named `env:` binding for a
-  fixed or secret value. The durable v4 family (`irVersion: 5`) deliberately
+  fixed or secret value. The durable v4 family (`irVersion: 7`) deliberately
   has no whole-process fallback.
 - **A very chatty command still passes; its artifact just says so.** akm retains
   8 MiB of stdout and 8 MiB of stderr. Past that it keeps draining and discards,

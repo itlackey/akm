@@ -15,7 +15,7 @@
  * here; this module imports nothing from ../source-v3.
  */
 
-import type { PreparedTaskV3DirectoryIdentity, TaskV3ScriptInterpreter } from "./prepared-execution";
+import type { TaskV3ScriptInterpreter } from "./prepared-execution";
 import { captureScriptTarget } from "./script-capture";
 
 export interface PreparedScriptTarget {
@@ -27,7 +27,6 @@ export interface PreparedScriptTarget {
   readonly byteLength: number;
   readonly sha256: string;
   readonly cwd: string;
-  readonly cwdIdentity: PreparedTaskV3DirectoryIdentity;
 }
 
 export interface PrepareScriptTargetInput {

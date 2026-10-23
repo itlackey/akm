@@ -30,11 +30,12 @@ beforeEach(() => fakeOpencodeMajor(1));
 
 let tmpDir = "";
 let cleanup: Cleanup;
+let bundleDir = "";
 
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
 // Unified format: the gate CONTROL fields (none needed here)
 // live in frontmatter; the rubric lives in the body under "### gate" (spec §2.4).
-const PLAN = freezeWorkflow(`---
+const PLAN_SOURCE = `---
 type: workflow
 steps:
   - id: step-1
@@ -47,7 +48,8 @@ instructions
 ### gate
 
 Thing is done, Tests pass
-`);
+`;
+const PLAN = freezeWorkflow(PLAN_SOURCE);
 
 function seedRun(dbPath: string): void {
   const db = openStateDatabase(dbPath);
@@ -102,8 +104,13 @@ Thing is done, Tests pass
 
 beforeEach(() => {
   const sandboxed = sandboxEnvDir("akm-complete-summary-", "AKM_DATA_DIR");
+  // The judge works in the root of the bundle that holds the run's workflow, found when it is built.
+  const bundle = sandboxEnvDir("akm-complete-summary-bundle-", "AKM_BUNDLE_DIR", sandboxed.cleanup);
+  bundleDir = bundle.dir;
+  fs.mkdirSync(path.join(bundleDir, "workflows"), { recursive: true });
+  fs.writeFileSync(path.join(bundleDir, "workflows", "demo.md"), PLAN_SOURCE, "utf8");
   tmpDir = sandboxed.dir;
-  cleanup = sandboxed.cleanup;
+  cleanup = bundle.cleanup;
   seedRun(path.join(tmpDir, "state.db"));
 });
 
@@ -115,12 +122,14 @@ afterEach(() => {
 describe("completeWorkflowStep summary + validation gate (#506)", () => {
   test("manual completion dispatches a frozen CLI judge with its exact model and never reads live config", async () => {
     const argvPath = path.join(tmpDir, "judge-argv.bin");
+    const cwdPath = path.join(tmpDir, "judge-cwd.txt");
     const judgeBin = path.join(tmpDir, "frozen-codex-judge");
     fs.writeFileSync(
       judgeBin,
       [
         "#!/bin/sh",
         `printf '%s\\0' "$@" > '${argvPath}'`,
+        `pwd -P > '${cwdPath}'`,
         `printf '%s\\n' '{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"{\\"complete\\":true,\\"missing\\":[]}"}}'`,
       ].join("\n"),
       "utf8",
@@ -140,9 +149,13 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
 
     const config = sandboxXdgConfigHome();
     try {
-      // Any live-config lookup would fail before dispatch. The frozen plan is
-      // the sole manual-completion authority.
-      fs.writeFileSync(path.join(config.dir, "akm", "config.json"), "{ definitely invalid json", "utf8");
+      // The live config names no engine, so any live engine lookup would fail
+      // before dispatch. The frozen plan is the sole authority for the judge.
+      fs.writeFileSync(
+        path.join(config.dir, "akm", "config.json"),
+        JSON.stringify({ configVersion: "0.9.0", semanticSearchMode: "off" }),
+        "utf8",
+      );
       const result = await completeWorkflowStep({
         runId: RUN_ID,
         stepId: "step-1",
@@ -152,6 +165,8 @@ describe("completeWorkflowStep summary + validation gate (#506)", () => {
       expect("run" in result).toBe(true);
       const argv = fs.readFileSync(argvPath).toString("utf8").split("\0").filter(Boolean);
       expect(argv[argv.indexOf("--model") + 1]).toBe("frozen/exact-judge-model");
+      // The judge works in the root of the run's bundle, like every other agent dispatch.
+      expect(fs.readFileSync(cwdPath, "utf8").trim()).toBe(fs.realpathSync(bundleDir));
     } finally {
       config.cleanup();
     }

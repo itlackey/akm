@@ -42,11 +42,10 @@ import fs from "node:fs";
 import path from "node:path";
 import type { TaskInputBinding } from "../../src/execution/input-contract";
 import { withWorkflowRunsRepo } from "../../src/storage/repositories/workflow-runs-repository";
-import {
-  executeStepPlan,
-  type StepExecutionContext,
-  type UnitDispatchRequest,
-  type UnitDispatchResult,
+import type {
+  StepExecutionContext,
+  UnitDispatchRequest,
+  UnitDispatchResult,
 } from "../../src/workflows/exec/native-executor";
 import { computeStepWorkList, type WorkListInput } from "../../src/workflows/exec/step-work";
 import { canonicalJson, computePlanHash } from "../../src/workflows/ir/plan-hash";
@@ -57,7 +56,7 @@ import type {
   WorkflowPlanStep,
 } from "../../src/workflows/plan";
 import { type IsolatedAkmStorage, withIsolatedAkmStorage, writeWorkflowTestConfig } from "../_helpers/sandbox";
-import { freezeWorkflow } from "../_helpers/workflow";
+import { executeStepPlan, freezeWorkflow } from "../_helpers/workflow";
 
 let storage: IsolatedAkmStorage;
 
@@ -143,8 +142,6 @@ async function seedParentRun(input: { runId: string; stepId: string }): Promise<
     repo.insertRun({
       id: input.runId,
       workflowRef: "workflows/parent",
-      scopeKey: "dir:v1:parent",
-      workflowEntryId: null,
       workflowTitle: "Parent",
       paramsJson: "{}",
       currentStepId: input.stepId,

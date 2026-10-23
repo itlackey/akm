@@ -12,18 +12,19 @@
  *
  * Enforcement scope:
  *   - `akm lint` reports findings as `dangerous-env-key` (non-blocking warn).
- *   - `akm bundle add` BLOCKS install unless `--allow-dangerous-env-keys` is set (or, on TTY,
- *     the user explicitly confirms at the prompt).
+ *   - Nothing else consults this list. Installing a bundle is the trust
+ *     decision, so `akm bundle add` and `akm bundle update` do not scan env
+ *     files, and `akm env run` does not refuse a key. The
+ *     `--allow-dangerous-env-keys` flag is a deprecated no-op.
  *   - Local env writes do NOT consult this list — by design, the operator may
- *     legitimately store any key locally. The gate exists only for third-party
- *     stash installation.
+ *     legitimately store any key locally.
  *
  * False-positive tradeoff:
  *   A handful of keys (EDITOR, VISUAL, PAGER) are included because they are
  *   invoked by many interactive tools and are a documented RCE vector when
  *   sourced from untrusted environments. They will also flag on benign files
- *   where the operator legitimately wants to set their editor — accept the
- *   FP and bypass with `--allow-dangerous-env-keys` after review.
+ *   where the operator legitimately wants to set their editor — the warning is
+ *   advisory, so ignore it after review.
  */
 
 import fs from "node:fs";
