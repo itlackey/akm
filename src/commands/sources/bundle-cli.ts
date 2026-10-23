@@ -9,9 +9,7 @@
  * group, hard break, no alias kept at the top level:
  *   - `create` (= old top-level `init`, src/commands/sources/init.ts)
  *   - `add`    (= old top-level `add`, src/commands/sources/add-cli.ts — the
- *     command definition moved here; `add-cli.ts` keeps its exported helpers,
- *     including `auditInstalledStashForDangerousKeys`, which a test imports
- *     directly)
+ *     command definition moved here; `add-cli.ts` keeps its exported helpers)
  *   - `list`   (= old top-level `list`)
  *   - `remove` (= old top-level `remove`)
  *   - `update` (= old top-level `update`)
