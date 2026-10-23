@@ -18,6 +18,7 @@ import path from "node:path";
 import { setSecret } from "../../src/commands/env/secret";
 import {
   collectEngineCredentialValues,
+  lookupApiKeySecretRefValue,
   materializeLlmConnection,
   resolveEngine,
   resolveLlmEngineUse,
@@ -89,6 +90,8 @@ describe("engine-resolution secret-store credential (#953)", () => {
       });
       if (runner.kind !== "llm") throw new Error("fixture must decode to llm");
       expect(materializeLlmRunnerConnection(runner).apiKey).toBe("frozen-store-secret");
+      // The redaction and health lookups read the stored form the same way.
+      expect(lookupApiKeySecretRefValue("secret://lab-api-key")).toBe("frozen-store-secret");
     } finally {
       storage.cleanup();
     }

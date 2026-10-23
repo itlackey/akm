@@ -109,11 +109,26 @@ export interface WorkflowExecSpec {
   timeoutMs: number | null;
 }
 
+/**
+ * A location a plan before irVersion 7 froze (a directory identity, an env file's owner, its key and secret
+ * names). A stored plan keeps it exactly as stored, because the unit `input_hash` and the child invocation key
+ * are derived from the whole target; dispatch never reads it.
+ */
+export type FrozenLegacyField = Readonly<Record<string, unknown>>;
+
 export type FrozenWorkflowEnvironmentBinding =
   | { readonly kind: "literal"; readonly name: string; readonly value: string }
   | { readonly kind: "pass-through"; readonly name: string }
   // The bundle-qualified env ref. Its file, keys and secrets are read live at dispatch.
-  | { readonly kind: "env-ref"; readonly ref: string; readonly precedence: number };
+  | {
+      readonly kind: "env-ref";
+      readonly ref: string;
+      readonly precedence: number;
+      /** Before irVersion 7 only: carried as stored, never read. */
+      readonly owner?: FrozenLegacyField;
+      readonly keys?: readonly string[];
+      readonly secretNames?: readonly string[];
+    };
 
 export interface FrozenWorkflowCommandTarget {
   readonly kind: "command";
@@ -123,6 +138,8 @@ export interface FrozenWorkflowCommandTarget {
   readonly runner: RunnerSpec;
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
+  /** Before irVersion 7 only: carried as stored, never read. */
+  readonly cwdIdentity?: FrozenLegacyField;
   /** A composing step's frozen `with:` bindings. Absent, never `[]`, when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
 }
@@ -131,6 +148,8 @@ export interface FrozenWorkflowShellTarget {
   readonly kind: "shell";
   readonly contentHash: string;
   readonly exec: WorkflowExecSpec;
+  /** Before irVersion 7 only: carried as stored, never read. */
+  readonly cwdIdentity?: FrozenLegacyField;
   readonly inputBindings?: readonly TaskInputBinding[];
 }
 

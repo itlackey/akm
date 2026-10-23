@@ -11,7 +11,9 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { computeStepWorkList } from "../../src/workflows/exec/step-work";
 import { canonicalPlanJson } from "../../src/workflows/ir/plan-hash";
+import type { WorkflowPlanStep } from "../../src/workflows/plan";
 import { readRunPlan } from "../../src/workflows/runtime/run-plan";
 import { freezeWorkflow } from "../_helpers/workflow";
 
@@ -138,14 +140,40 @@ describe("readRunPlan — an older plan runs", () => {
   });
 });
 
-describe("readRunPlan — frozen identities, never locations", () => {
-  test("an irVersion 6 plan decodes and its frozen locations are ignored", () => {
-    const read = readRunPlan({ id: "v6-run", plan_json: JSON.stringify(irVersion6ExecPlan()), plan_ir_version: 6 });
+/** The unit input hash of a step's only unit, as `computeStepWorkList` derives it. */
+function unitInputHash(step: WorkflowPlanStep): string {
+  const work = computeStepWorkList(step, { runId: "run", params: {}, stepOutputs: {} });
+  if (!work.ok) throw new Error(work.error);
+  return work.list.units[0]!.inputHash;
+}
+
+describe("readRunPlan — a stored plan keeps its stored targets", () => {
+  test("an irVersion 6 plan decodes with its frozen locations carried unread, so its hashes survive the upgrade", () => {
+    const raw = irVersion6ExecPlan();
+    const read = readRunPlan({ id: "v6-run", plan_json: JSON.stringify(raw), plan_ir_version: 6 });
     if (!read.ok) throw new Error(read.problem);
     const unit = read.plan.steps[0]?.root;
     if (!unit || unit.kind !== "unit") throw new Error("expected a unit");
-    expect(Object.hasOwn(unit.frozenTarget, "cwdIdentity")).toBe(false);
-    expect(unit.environment).toEqual([{ kind: "env-ref", ref: "team//env/prod", precedence: 0 }]);
+    const stored = raw.steps[0]!.root;
+    expect(unit.frozenTarget).toEqual(stored.frozenTarget as never);
+    expect(unit.environment).toEqual(stored.environment as never);
+    expect(unitInputHash(read.plan.steps[0]!)).toBe(unitInputHash(raw.steps[0] as unknown as WorkflowPlanStep));
+  });
+
+  test("an irVersion 6 command target keeps its cwdIdentity and its retired secret:// credential as stored", () => {
+    const raw = JSON.parse(canonicalPlanJson(plan)) as ExecPlanJson;
+    const target = raw.steps[0]!.root.frozenTarget as { cwdIdentity?: unknown; runner: Record<string, unknown> };
+    target.cwdIdentity = { requestedRoot: "/gone/rev1", realRoot: "/gone/rev1", requestedCwd: "/gone/rev1" };
+    target.runner.fallbackApiKeySecretRef = "secret://openai";
+    const read = readRunPlan({ id: "v6-cmd", plan_json: JSON.stringify({ ...raw, irVersion: 6 }), plan_ir_version: 6 });
+    if (!read.ok) throw new Error(read.problem);
+    const unit = read.plan.steps[0]?.root;
+    if (!unit || unit.kind !== "unit" || unit.frozenTarget.kind !== "command") throw new Error("expected a command");
+    expect(unit.frozenTarget.cwdIdentity).toEqual(target.cwdIdentity as never);
+    expect((unit.frozenTarget.runner as unknown as Record<string, unknown>).fallbackApiKeySecretRef).toBe(
+      "secret://openai",
+    );
+    expect(unitInputHash(read.plan.steps[0]!)).toBe(unitInputHash(raw.steps[0] as unknown as WorkflowPlanStep));
   });
 
   test("a plan that never recorded a location decodes", () => {
@@ -156,6 +184,7 @@ describe("readRunPlan — frozen identities, never locations", () => {
     const read = readRunPlan({ id: "v7-run", plan_json: JSON.stringify({ ...raw, irVersion: 7 }), plan_ir_version: 7 });
     if (!read.ok) throw new Error(read.problem);
     expect(read.plan.irVersion).toBe(7);
+    expect(read.plan.steps[0]?.root).toMatchObject({ environment: [{ kind: "env-ref", precedence: 0 }] });
   });
 });
 

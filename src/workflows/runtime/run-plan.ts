@@ -9,12 +9,16 @@
  * {@link decodeWorkflowPlan} accepts every plan shape a release at or above
  * the 0.9.15 floor has stored — irVersion 5 (with its `sourceReadSet` and
  * host-identity fields, which 0.9.15 and 0.9.16 wrote) and irVersion 6 (with
- * its frozen `cwdIdentity` and env owner paths, which are read and dropped:
- * dispatch finds the bundle and the env asset by ref) as well as the current
- * one — and keeps keys it does not know rather than refusing them. It rejects only a plan it cannot run: no steps, a unit with
- * no frozen target, a request that does not decode. `plan_ir_version` and
- * `plan_hash` are informational columns: neither gates execution. A plan that
- * cannot be decoded comes back from {@link readRunPlan} as a `problem`
+ * its frozen `cwdIdentity` and env owner paths) as well as the current one —
+ * and keeps keys it does not know rather than refusing them. A stored target
+ * is kept exactly as stored, location fields included: the unit `input_hash`
+ * and the child invocation key derive from the whole target, so dropping them
+ * would make an interrupted run publish a second child after an upgrade.
+ * Dispatch finds the bundle and the env asset by ref and never reads them. It
+ * rejects only a plan it cannot run: no steps, a unit with no frozen target, a
+ * request that does not decode. `plan_ir_version` and `plan_hash` are
+ * informational columns: neither gates execution. A plan
+ * that cannot be decoded comes back from {@link readRunPlan} as a `problem`
  * sentence and the caller decides the remedy (the engine abandons such a run
  * instead of throwing) — except for a plan a NEWER akm froze, which is `newer`
  * and whose problem names upgrading akm as the remedy.
@@ -27,6 +31,7 @@ import { decodeResolvedExecutionRequest, type ResolvedExecutionRequestV1 } from 
 import { decodeFrozenRunnerSpec, type RunnerSpec } from "../../integrations/agent/runner";
 import type { WorkflowRunRow } from "../../storage/repositories/workflow-runs-repository";
 import {
+  type FrozenLegacyField,
   type FrozenWorkflowCommandTarget,
   type FrozenWorkflowEnvironmentBinding,
   type FrozenWorkflowTarget,
@@ -208,6 +213,7 @@ function decodeTarget(value: unknown, label: string): FrozenWorkflowTarget {
         kind: "shell",
         contentHash: string(target.contentHash, `${label} contentHash`),
         exec: decodeExec(target.exec, label),
+        ...legacyField(target, "cwdIdentity"),
         ...optional,
       };
     case "child-workflow":
@@ -244,8 +250,15 @@ function decodeCommandTarget(target: Record<string, unknown>, label: string): Fr
     request,
     runner,
     ...(concurrency !== undefined ? { concurrency } : {}),
+    ...legacyField(target, "cwdIdentity"),
     ...(inputBindings ? { inputBindings } : {}),
   };
+}
+
+/** A location field a stored target carries, kept as stored (see the module doc). */
+function legacyField(source: Record<string, unknown>, key: string): { [key: string]: FrozenLegacyField } {
+  const value = source[key];
+  return value && typeof value === "object" ? { [key]: value as FrozenLegacyField } : {};
 }
 
 function decodeExec(value: unknown, label: string): WorkflowExecSpec {
@@ -283,12 +296,21 @@ function decodeEnvironmentBinding(value: unknown, label: string): FrozenWorkflow
   }
   if (binding.kind === "pass-through") return { kind: "pass-through", name: string(binding.name, label) };
   if (binding.kind !== "env-ref") fail(`${label} has an unsupported kind`);
-  // Plans before irVersion 7 also carry the env file's owner, key names and secret names. Dispatch
-  // reads the env asset by ref, so they are not decoded.
+  // Plans before irVersion 7 also carry the env file's owner, key names and secret names: kept as stored,
+  // never read (dispatch reads the env asset by ref).
+  const strings = (items: unknown): string[] =>
+    Array.isArray(items) ? items.filter((item): item is string => typeof item === "string") : [];
   return {
     kind: "env-ref",
     ref: string(binding.ref, `${label} ref`),
     precedence: typeof binding.precedence === "number" ? binding.precedence : 0,
+    ...(binding.owner && typeof binding.owner === "object"
+      ? {
+          owner: binding.owner as FrozenLegacyField,
+          keys: strings(binding.keys),
+          secretNames: strings(binding.secretNames),
+        }
+      : {}),
   };
 }
 

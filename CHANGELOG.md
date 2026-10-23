@@ -147,9 +147,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   freeze plan `irVersion` 7, which holds no bundle directory, no directory
   identity and, for each `env:` ref, only its bundle-qualified ref: the env
   file, its keys and the secrets it names are read at each step. Runs frozen
-  by earlier releases (`irVersion` 5 and 6) carry those fields, which are now
-  ignored, and continue the same way. `akm workflow plan` lists an env ref
-  without its `keys` and `secretNames`.
+  by earlier releases (`irVersion` 5 and 6) carry those fields, which are never
+  read but are kept as stored, so a run interrupted before the upgrade finds the
+  child workflow run it had already started instead of starting a second one, and
+  continues the same way. `akm workflow plan` lists an env ref without its `keys` and `secretNames`.
 - A workflow's exec units, agents and gate judges work in the root of the bundle
   that holds the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
   `exec.cwd` may now be absolute, and it is no longer required to stay inside the
@@ -182,7 +183,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   warning naming the key, and `akm migrate apply` rewrites `config.json`.
   `akm config set` and `bundle add --credential` no longer accept it. A workflow run
   frozen before the upgrade keeps resolving its engine credential when it is
-  continued.
+  continued, and keeps the `secret://` text it stored.
 
 ### Removed
 

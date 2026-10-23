@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-import { type LlmConnectionConfig, liftRetiredSecretRef } from "../../core/config/config";
+import type { LlmConnectionConfig } from "../../core/config/config";
 import { type CredentialDescriptor, materializeLlmConnection, type ResolvedLlmUse } from "./engine-resolution";
 import type { AgentProfile } from "./profiles";
 
@@ -89,6 +89,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Read a journaled runner back. Tolerant: unknown keys are kept and missing
  * profile defaults are filled in; only a shape nothing could dispatch is refused.
+ * Credentials stay as stored (a 0.9.x plan's `secret://<name>` included) because the
+ * unit input hash covers them; they are read as `${ref}` where they are resolved.
  */
 export function decodeFrozenRunnerSpec(value: unknown): RunnerSpec {
   if (!isRecord(value) || typeof value.engine !== "string") {
@@ -98,7 +100,7 @@ export function decodeFrozenRunnerSpec(value: unknown): RunnerSpec {
     if (!isRecord(value.connection) || typeof value.connection.endpoint !== "string") {
       throw new TypeError("a frozen llm runner must carry connection.endpoint");
     }
-    return liftFrozenSecretRef(value, "apiKeySecretRef") as unknown as RunnerSpec;
+    return value as unknown as RunnerSpec;
   }
   if (value.kind !== "agent" && value.kind !== "sdk") {
     throw new TypeError("a frozen runner's kind must be llm, agent, or sdk");
@@ -108,16 +110,9 @@ export function decodeFrozenRunnerSpec(value: unknown): RunnerSpec {
     throw new TypeError("a frozen agent runner must carry profile.name and profile.bin");
   }
   return {
-    ...(value.kind === "sdk" ? liftFrozenSecretRef(value, "fallbackApiKeySecretRef") : value),
+    ...value,
     profile: { args: [], envPassthrough: [], stdio: "captured", parseOutput: "text", ...profile },
   } as unknown as RunnerSpec;
-}
-
-/** A plan frozen by 0.9.x may hold the retired `secret://<name>` credential; read it as its `${ref}`. */
-function liftFrozenSecretRef(runner: Record<string, unknown>, key: string): Record<string, unknown> {
-  const stored = runner[key];
-  const lifted = typeof stored === "string" ? liftRetiredSecretRef(stored) : undefined;
-  return lifted === undefined ? runner : { ...runner, [key]: lifted };
 }
 
 export function runnerIsLlm(runner: RunnerSpec): runner is LlmRunner {

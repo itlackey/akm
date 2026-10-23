@@ -4,8 +4,11 @@
 
 /**
  * #1238 — a workflow plan frozen by 0.9.x journals the runner's credential as
- * `secret://<name>`. `decodeFrozenRunnerSpec` reads it as the `${ref}` that
- * replaced it, so a resumed run does not send the literal as its bearer token.
+ * `secret://<name>`. `decodeFrozenRunnerSpec` keeps it as stored (the unit input
+ * hash and the child invocation key cover the runner, so a resumed run must hash
+ * as it did before the upgrade); the credential is read as the `${ref}` that
+ * replaced it where it is resolved
+ * (`tests/integration/engine-resolution-secret-store.test.ts`).
  * Pure in-memory logic (no db/network/spawn).
  */
 
@@ -21,16 +24,13 @@ function llmRef(ref: string) {
   return runner.apiKeySecretRef;
 }
 
-describe("decodeFrozenRunnerSpec reads the retired secret:// credential (#1238)", () => {
-  test("an llm runner's bare name becomes a secrets ref", () => {
-    expect(llmRef("secret://openai")).toBe("${secrets/openai}");
+describe("decodeFrozenRunnerSpec keeps the retired secret:// credential as stored (#1238)", () => {
+  test("an llm runner's secret:// credential is not rewritten", () => {
+    expect(llmRef("secret://openai")).toBe("secret://openai");
+    expect(llmRef("secret://team//secrets/openai")).toBe("secret://team//secrets/openai");
   });
 
-  test("an llm runner's full-ref form keeps its ref", () => {
-    expect(llmRef("secret://team//secrets/openai")).toBe("${team//secrets/openai}");
-  });
-
-  test("an sdk runner's fallback credential is lifted the same way", () => {
+  test("an sdk runner's fallback credential is not rewritten either", () => {
     const runner = decodeFrozenRunnerSpec({
       kind: "sdk",
       engine: "e",
@@ -39,7 +39,7 @@ describe("decodeFrozenRunnerSpec reads the retired secret:// credential (#1238)"
       fallbackApiKeySecretRef: "secret://openai",
     });
     if (runner.kind !== "sdk") throw new Error("expected sdk");
-    expect(runner.fallbackApiKeySecretRef).toBe("${secrets/openai}");
+    expect(runner.fallbackApiKeySecretRef).toBe("secret://openai");
   });
 
   test("a runner already holding a ${ref} is unchanged", () => {

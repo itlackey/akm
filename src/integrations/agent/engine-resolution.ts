@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { resolveSecret } from "../../core/config/config";
+import { liftRetiredSecretRef, resolveSecret } from "../../core/config/config";
 import type { LlmConnectionConfig } from "../../core/config/config-types";
 import { deepMergeConfig } from "../../core/config/deep-merge";
 import { ConfigError } from "../../core/errors";
@@ -152,7 +152,7 @@ export function lookupApiKeyFileValue(filePath: string): string | undefined {
 /** Best-effort, non-throwing read of a secret-store credential for redaction and health. */
 export function lookupApiKeySecretRefValue(ref: string): string | undefined {
   try {
-    return resolveSecret(ref, resolveSecretFromStore);
+    return resolveSecret(liftRetiredSecretRef(ref) ?? ref, resolveSecretFromStore);
   } catch {
     return undefined;
   }
@@ -238,7 +238,9 @@ export function resolveLlmCredentialValue(
   const envValue = resolveCredentialFromEnv(credential, envSource);
   if (envValue !== undefined) return envValue;
   if (apiKeyFile !== undefined) return readApiKeyFile(engine, apiKeyFile);
-  return apiKeySecretRef !== undefined ? resolveSecret(apiKeySecretRef, resolveSecretFromStore) : undefined;
+  return apiKeySecretRef !== undefined
+    ? resolveSecret(liftRetiredSecretRef(apiKeySecretRef) ?? apiKeySecretRef, resolveSecretFromStore)
+    : undefined;
 }
 
 /** Non-throwing credential-presence result: available, or unavailable with the unresolved reference named. */
