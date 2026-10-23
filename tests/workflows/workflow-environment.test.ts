@@ -156,6 +156,12 @@ describe("freezing env refs", () => {
     );
   });
 
+  test("a unit that says env: [prod] fails at freeze naming env/prod", () => {
+    const root = sandbox("akm-env-bare");
+    write(root, "env/prod.env", "A=1\n");
+    expect(() => freezeRefs(["prod"], { alpha: root })).toThrow(/Did you mean "env\/prod"\?/);
+  });
+
   test("records owner, exact sorted key names, token names, and precedence — never a value", () => {
     const root = sandbox("akm-env-freeze");
     const envValue = "db-password-must-never-enter-plan";

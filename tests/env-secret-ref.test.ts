@@ -17,12 +17,15 @@ describe("env and secret refs are full akm refs", () => {
   test("a bare name is a usage error that names the full form", () => {
     expect(() => parseEnvRef("prod")).toThrow(UsageError);
     expect(() => parseEnvRef("prod")).toThrow(/env\/<name>/);
+    expect(() => parseEnvRef("prod")).toThrow(/Did you mean "env\/prod"\?/);
     expect(() => parseSecretRef("gitea_token")).toThrow(UsageError);
     expect(() => parseSecretRef("gitea_token")).toThrow(/secrets\/<name>/);
+    expect(() => parseSecretRef("gitea_token")).toThrow(/Did you mean "secrets\/gitea_token"\?/);
   });
 
   test("a qualified bare name and a ref of the other type are usage errors too", () => {
     expect(() => parseEnvRef("team//prod")).toThrow(UsageError);
+    expect(() => parseEnvRef("team//prod")).toThrow(/Did you mean "team\/\/env\/prod"\?/);
     expect(() => parseEnvRef("secrets/x")).toThrow(UsageError);
     expect(() => parseSecretRef("env/x")).toThrow(UsageError);
   });

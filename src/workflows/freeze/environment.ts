@@ -30,9 +30,7 @@ export function freezeEnvironment(
   const seen = new Set<string>();
   const envRefs: FrozenWorkflowEnvironmentBinding[] = [];
   for (const [precedence, ref] of (source.unit?.env ?? []).entries()) {
-    if (parseEnvRef(ref).type !== "env") {
-      throw new UsageError(`Expected an env ref; got ${ref}.`, "WORKFLOW_SOURCE_INVALID");
-    }
+    parseEnvRef(ref);
     const owned = resolveOwnedAssetSync(ref, context);
     if (seen.has(owned.ref)) continue;
     seen.add(owned.ref);
@@ -68,15 +66,14 @@ export function freezeEnvironment(
 /** Resolve an env ref a step names to the file that owns it, through the one walk. */
 export function resolveOwnedAssetSync(refInput: string, context: ResolutionContext): OwnedAsset {
   const parsed = parseBundleRef(refInput);
-  const conceptId = parsed.conceptId.startsWith("env/") ? parsed.conceptId : `env/${parsed.conceptId}`;
   const match = resolveConceptOwner(
-    { bundle: parsed.bundle, conceptId },
+    { bundle: parsed.bundle, conceptId: parsed.conceptId },
     resolveSourceEntries(undefined, context.config),
     { includeSensitive: true },
   );
   if (!match) throw new UsageError(`Workflow source target ${refInput} was not found.`, "INVALID_FLAG_VALUE");
   return {
-    ref: makeBundleRef(match.bundleId, conceptId),
+    ref: makeBundleRef(match.bundleId, parsed.conceptId),
     bundle: match.bundleId,
     adapter: match.adapterId,
     root: match.source.path,

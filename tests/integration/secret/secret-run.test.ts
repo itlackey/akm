@@ -82,6 +82,6 @@ describe("secret run", () => {
       AKM_BUNDLE_DIR: stashDir,
     });
     expect(status).toBe(2);
-    expect(JSON.parse(stderr.trim()).error).toContain("secrets/<name>");
+    expect(JSON.parse(stderr.trim()).error).toContain("secrets/demo");
   });
 });

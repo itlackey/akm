@@ -152,7 +152,7 @@ describe("env run", () => {
     const { stderr, status } = spawnCli(["env", "run", "prod", "--", "true"], { AKM_BUNDLE_DIR: stashDir });
 
     expect(status).toBe(2);
-    expect(JSON.parse(stderr.trim()).error).toContain("env/<name>");
+    expect(JSON.parse(stderr.trim()).error).toContain("env/prod");
   });
 
   test("injects a hijack var from the primary stash with no block or warning (#1237)", () => {

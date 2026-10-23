@@ -83,7 +83,8 @@ export function parseEnvRef(ref: string): AssetRef {
 
 /**
  * Parse `ref` as a `[bundle//]conceptId` of the given asset type. There is no
- * bare-name form: `prod` is a usage error naming `env/prod`, never an alias.
+ * bare-name form: `prod` is a usage error that also names the ref it probably
+ * meant (`env/prod`), as text only — the suggestion is never resolved or accepted.
  */
 function parseTypedRef(ref: string, type: "env" | "secret", form: string): AssetRef {
   let parsed: AssetRef | undefined;
@@ -93,8 +94,13 @@ function parseTypedRef(ref: string, type: "env" | "secret", form: string): Asset
     if (!(error instanceof NotFoundError)) throw error;
   }
   if (parsed?.type !== type) {
+    const bare = parseBundleRef(ref);
+    const hint =
+      typeNameFromConceptId(bare.conceptId) === undefined
+        ? ` Did you mean "${makeBundleRef(bare.bundle, conceptIdFromTypeName(type, bare.conceptId))}"?`
+        : "";
     throw new UsageError(
-      `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.`,
+      `Expected ${type === "env" ? "an" : "a"} ${type} ref (${form} or <bundle>//${form}); got "${ref}". Write the full ref.${hint}`,
       "INVALID_FLAG_VALUE",
     );
   }
