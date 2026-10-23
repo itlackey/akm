@@ -82,7 +82,7 @@ function irVersion6ExecPlan(): ExecPlanJson {
 
 describe("readRunPlan — an older plan runs", () => {
   test("a decodable plan is read whatever irVersion the row and the plan itself record", () => {
-    for (const version of [null, 3, 4, 5, 111]) {
+    for (const version of [null, 3, 4, 5, 7]) {
       const planJson = JSON.stringify({ ...JSON.parse(canonicalPlanJson(plan)), irVersion: version ?? 5 });
       const read = readRunPlan({ id: `run-${version}`, plan_json: planJson, plan_ir_version: version });
       if (!read.ok) throw new Error(read.problem);
@@ -185,6 +185,28 @@ describe("readRunPlan — a stored plan keeps its stored targets", () => {
     if (!read.ok) throw new Error(read.problem);
     expect(read.plan.irVersion).toBe(7);
     expect(read.plan.steps[0]?.root).toMatchObject({ environment: [{ kind: "env-ref", precedence: 0 }] });
+  });
+});
+
+describe("readRunPlan — a newer akm's plan is refused", () => {
+  test("a plan a newer akm froze is refused even when it decodes, naming the upgrade", () => {
+    const planJson = JSON.stringify({ ...JSON.parse(canonicalPlanJson(plan)), irVersion: 8 });
+    const read = readRunPlan({ id: "future-ok", plan_json: planJson, plan_ir_version: 8 });
+    expect(read.ok).toBe(false);
+    if (read.ok) return;
+    expect(read.newer).toBe(true);
+    expect(read.problem).toContain("future-ok");
+    expect(read.problem).toContain("frozen by a newer akm (plan irVersion 8)");
+    expect(read.problem).toContain("Upgrade akm");
+  });
+
+  test("a v7 command target's cwdIdentity of {} decodes and is carried, unread", () => {
+    // Freeze writes it so 0.10.0 and earlier, which decode a command-only v7 plan, refuse it at dispatch.
+    const raw = JSON.parse(canonicalPlanJson(plan)) as ExecPlanJson;
+    raw.steps[0]!.root.frozenTarget.cwdIdentity = {};
+    const read = readRunPlan({ id: "v7-cmd", plan_json: JSON.stringify(raw), plan_ir_version: 7 });
+    if (!read.ok) throw new Error(read.problem);
+    expect(JSON.parse(canonicalPlanJson(read.plan))).toEqual(raw as never);
   });
 });
 

@@ -65,6 +65,9 @@ export function commandResult(
     request: JSON.parse(canonicalResolvedExecutionRequest(request)) as ResolvedExecutionRequestV1,
     runner,
     ...(targetConcurrency(runner, context.config) ? { concurrency: targetConcurrency(runner, context.config) } : {}),
+    // Not a location. akm 0.10.0 and earlier decode a command-only plan and run it in the invoking directory,
+    // but their dispatch refuses a directory identity it cannot verify, so they stop here instead.
+    cwdIdentity: {},
   });
   const engineAnnouncement = fallbackAnnouncement(prepared.fallbackEngineName, request.engine.name);
   return {

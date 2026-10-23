@@ -16,12 +16,12 @@
  * would make an interrupted run publish a second child after an upgrade.
  * Dispatch finds the bundle and the env asset by ref and never reads them. It
  * rejects only a plan it cannot run: no steps, a unit with no frozen target, a
- * request that does not decode. `plan_ir_version` and `plan_hash` are
- * informational columns: neither gates execution. A plan
+ * request that does not decode. `plan_hash` is an informational column. A plan
  * that cannot be decoded comes back from {@link readRunPlan} as a `problem`
  * sentence and the caller decides the remedy (the engine abandons such a run
- * instead of throwing) — except for a plan a NEWER akm froze, which is `newer`
- * and whose problem names upgrading akm as the remedy.
+ * instead of throwing) — except for a plan a NEWER akm froze (`plan_ir_version`
+ * above this release's), which is refused unread as `newer` with a problem that
+ * names upgrading akm as the remedy.
  */
 
 import { UsageError } from "../../core/errors";
@@ -53,6 +53,15 @@ export function readRunPlan(
   if (!row.plan_json)
     return { ok: false, newer: false, problem: `Workflow run ${row.id} has no frozen workflow plan.` };
   const version = row.plan_ir_version ?? null;
+  if (version !== null && version > WORKFLOW_PLAN_VERSION) {
+    return {
+      ok: false,
+      newer: true,
+      problem:
+        `Workflow run ${row.id} was frozen by a newer akm (plan irVersion ${version}) and this akm ` +
+        `(irVersion ${WORKFLOW_PLAN_VERSION}) will not run it. Upgrade akm to continue this run.`,
+    };
+  }
   try {
     const plan = decodeWorkflowPlan(JSON.parse(row.plan_json), {
       ...(row.workflow_ref ? { workflowRef: row.workflow_ref } : {}),
@@ -67,15 +76,6 @@ export function readRunPlan(
     return { ok: true, plan };
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    if (version !== null && version > WORKFLOW_PLAN_VERSION) {
-      return {
-        ok: false,
-        newer: true,
-        problem:
-          `Workflow run ${row.id} was frozen by a newer akm (plan irVersion ${version}) and this akm cannot decode it: ` +
-          `${detail}. Upgrade akm to continue this run.`,
-      };
-    }
     const frozenAs = version === null ? "" : ` (frozen as plan irVersion ${version})`;
     return {
       ok: false,

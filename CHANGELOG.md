@@ -150,7 +150,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   by earlier releases (`irVersion` 5 and 6) carry those fields, which are never
   read but are kept as stored, so a run interrupted before the upgrade finds the
   child workflow run it had already started instead of starting a second one, and
-  continues the same way. `akm workflow plan` lists an env ref without its `keys` and `secretNames`.
+  continues the same way. A plan frozen by a newer akm is refused with a message
+  that says to upgrade akm, whether or not this akm could decode it. A plan with an
+  agent step records an empty directory identity, so a 0.10 pre-release that finds
+  the run stops at that step instead of running the agent in the wrong directory.
+  `akm workflow plan` lists an env ref without its `keys` and `secretNames`.
 - A workflow's exec units, agents and gate judges work in the root of the bundle
   that holds the workflow, found at each step, and `exec.cwd` is joined onto it (#1238).
   `exec.cwd` may now be absolute, and it is no longer required to stay inside the

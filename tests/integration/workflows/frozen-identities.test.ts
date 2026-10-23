@@ -101,7 +101,7 @@ function realpath(file: string): string {
 }
 
 describe("a frozen plan carries no location", () => {
-  test("irVersion 7: no cwdIdentity, no frozen workspace, and an env ref that is a bundle-qualified ref only", async () => {
+  test("irVersion 7: no frozen directory, no frozen workspace, and an env ref that is a bundle-qualified ref only", async () => {
     const team = bundle("team");
     write(team, "env/prod.env", "REGION=east\nTOKEN=${secrets/t}\n");
     write(
@@ -121,9 +121,10 @@ describe("a frozen plan carries no location", () => {
     expect(run.root.environment).toEqual([{ kind: "env-ref", ref: "team//env/prod", precedence: 0 }]);
     expect(run.root.frozenTarget.cwdIdentity).toBeUndefined();
     expect(ask.root.frozenTarget.kind).toBe("command");
-    expect(ask.root.frozenTarget.cwdIdentity).toBeUndefined();
+    // A command target freezes an empty cwdIdentity: not a location, but akm 0.10.0 and earlier refuse it at dispatch.
+    expect(ask.root.frozenTarget.cwdIdentity).toEqual({});
     expect(ask.root.frozenTarget.request.runtime.workspace).toBeUndefined();
-    expect(row?.plan_json).not.toMatch(/cwdIdentity|requestedRoot|realCwd|workspace|secretNames/);
+    expect(row?.plan_json).not.toMatch(/requestedRoot|realCwd|workspace|secretNames/);
   });
 });
 

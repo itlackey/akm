@@ -138,7 +138,11 @@ export interface FrozenWorkflowCommandTarget {
   readonly runner: RunnerSpec;
   /** Frozen provider concurrency cap for this resolved target, when applicable. */
   readonly concurrency?: number;
-  /** Before irVersion 7 only: carried as stored, never read. */
+  /**
+   * Before irVersion 7 a frozen directory, carried as stored and never read. A v7 command target freezes `{}`:
+   * akm 0.10.0 and earlier decode a v7 command-only plan and would run it in the invoking directory, but their
+   * dispatch refuses a directory identity it cannot verify.
+   */
   readonly cwdIdentity?: FrozenLegacyField;
   /** A composing step's frozen `with:` bindings. Absent, never `[]`, when empty. */
   readonly inputBindings?: readonly TaskInputBinding[];
