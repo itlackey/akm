@@ -916,8 +916,8 @@ akm workflow resume <run-id> --format json
 
 **Note on `run <ref>` semantics:** `akm workflow run workflows/<name>` always
 starts a brand-new run, even when an **active** run of that ref exists; it
-warns, naming the other run, instead. Only `run <run-id>` and `resume <run-id>`
-continue an existing run.
+warns, naming the other run, instead. Only `run <run-id>` continues an
+existing run (`resume` only re-activates a blocked or failed one).
 
 **Cleanup:** `rm -rf "$AKM_SANDBOX"`.
 
@@ -979,7 +979,7 @@ akm workflow run workflows/demo --max-steps 1 --format json   # same ref, from e
 - `status $RUNID` from elsewhere returns the full run.
 - `run workflows/demo` from elsewhere **starts a second, independent run**
   (a ref always starts a new run) and prints one warning on stderr naming
-  `$RUNID` with the `akm workflow resume <id>` / `akm workflow abandon <id>`
+  `$RUNID` with the `akm workflow run <id>` / `akm workflow abandon <id>`
   commands.
 - `akm workflow run workflows/demo --skip-if-locked` while another process is
   driving a run of the ref exits `0` with a `skipped` envelope and starts

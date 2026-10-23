@@ -210,9 +210,10 @@ Run state (`plan_json`, `plan_hash`, step statuses, and the unit journal)
 persists in the host's `state.db`; the per-run lock file sits beside it. A run
 is identified by its run id and a workflow by its bundle-qualified ref. Run
 state is not scoped to a directory: `akm workflow run <ref>` always starts a
-new run, `akm workflow run <run-id>` and `akm workflow resume <run-id>` drive
-an existing one, and `akm workflow list`/`status` show every run on the host
-from any working directory. Starting a ref that already has active runs warns
+new run, `akm workflow run <run-id>` drives an existing one,
+`akm workflow resume <run-id>` re-activates a blocked or failed one, and
+`akm workflow list`/`status` show every run on the host from any working
+directory. Starting a ref that already has active runs warns
 and names them; it is never refused. `akm workflow run <ref> --skip-if-locked`
 skips (exit 0) instead of starting when an active run of that ref is held by a
 live process.
