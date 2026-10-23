@@ -6,7 +6,7 @@ subagents, runs them concurrently, and reports back before the session ends.
 AKM workflows are a different thing: a portable procedure that any supported
 agent harness can run, with durable state, retries, gates, and resume built
 in. A workflow source is Markdown `.md`, lowered to source IR version 1. Every run freezes the durable plan
-v4 family's executable `irVersion: 5` before execution; pre-`irVersion`-5
+v4 family's executable `irVersion: 7` before execution; pre-`irVersion`-5
 stored plans are rejected.
 Neither replaces the other — they solve different problems, and the right
 choice depends on whether the work is a one-off inside a session or a

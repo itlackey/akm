@@ -446,7 +446,7 @@ through to another configured engine.
 
 Task-v3 execution and durable workflow-v4 dispatch use this runtime boundary.
 Markdown workflows compile through source IR v1; new starts freeze
-v4-family `irVersion: 5`. A stored plan that decodes runs whatever release
+v4-family `irVersion: 7` (plans frozen at `irVersion` 5 and 6 still decode). A stored plan that decodes runs whatever release
 froze it; one that does not is marked abandoned and `akm workflow run <ref>`
 starts afresh. Only a plan a newer akm froze is refused, naming the upgrade.
 AKM does not support full GitHub Actions semantics or arbitrary remote action

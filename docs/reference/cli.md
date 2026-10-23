@@ -1104,7 +1104,7 @@ Text-mode example:
 ```
 workflow: team//workflows/release (markdown)
 source:   workflows/release.md
-plan:     irVersion 5, hash 4f2ba91c3d0e… (not published)
+plan:     irVersion 7, hash 4f2ba91c3d0e… (not published)
 limits:   maxConcurrency 4; budget max_units 50, max_tokens 100000
 params:   channel, version
 steps:

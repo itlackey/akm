@@ -383,7 +383,7 @@ layers still win. The resulting request carries the exact model ID and merged
 inference object. Engine lowerers consume that exact selection and never run
 alias resolution again. New workflow starts persist the exact request and
 symbolic runner selection in the durable plan v4 family's executable
-`irVersion: 5`; resume consumes that frozen material without resolving aliases
+`irVersion: 7`; resume consumes that frozen material without resolving aliases
 again.
 
 Copy the complete installed starter into the user configuration directory when
