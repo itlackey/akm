@@ -24,7 +24,6 @@ import type { SecretResolver } from "../provider";
 export function resolveSecretFromStore(ref: string): string | null {
   try {
     const { absPath } = resolveSecretPath(ref);
-    if (!fs.existsSync(absPath)) return null;
     return fs.readFileSync(absPath, "utf8").trim() || null;
   } catch {
     return null;

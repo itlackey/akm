@@ -195,9 +195,6 @@ const secretRunCommand = defineJsonCommand({
     }
 
     const { name, absPath, source } = resolveSecretPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Secret not found: ${makeSecretRef(name, source)}`);
-    }
 
     const { readValue } = await import("./secret.js");
 

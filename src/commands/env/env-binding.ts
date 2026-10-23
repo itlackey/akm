@@ -54,9 +54,6 @@ export function resolveEnvBinding(target: string, options: ResolveEnvBindingOpti
   const warn = options.warn ?? ((message: string) => process.stderr.write(`warning: ${message}\n`));
   const { name, absPath, source } = resolveEnvPath(target);
   const envRef = makeEnvRef(name, source);
-  if (!fs.existsSync(absPath)) {
-    throw new NotFoundError(`Env not found: ${envRef}`);
-  }
 
   const allValues = loadEnv(absPath);
 

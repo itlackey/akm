@@ -137,10 +137,7 @@ const envPathCommand = defineJsonCommand({
     quiet: { type: "boolean", alias: "q", description: "Suppress the unsafe-source warning", default: false },
   },
   async run({ args }) {
-    const { name, absPath, source } = resolveEnvPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-    }
+    const { absPath } = resolveEnvPath(args.ref);
     // The raw `.env` may contain `X=$(cmd)`, which executes if `source`d.
     // Warning goes to stderr (never contaminates the path on stdout) and is
     // suppressed with --quiet for the legitimate `_FILE` / `--env-file` use.
@@ -191,9 +188,6 @@ const envExportCommand = defineJsonCommand({
       );
     }
     const { name, absPath, source } = resolveEnvPath(args.ref);
-    if (!fs.existsSync(absPath)) {
-      throw new NotFoundError(`Env not found: ${makeEnvRef(name, source)}`);
-    }
     const { buildShellExportScript } = await import("./env.js");
     const resolvedOut = path.resolve(outPath);
     writeFileAtomic(resolvedOut, buildShellExportScript(absPath), 0o600);
