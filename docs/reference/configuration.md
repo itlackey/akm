@@ -199,6 +199,12 @@ explicit allow-all. The default is an empty list. Asset frontmatter cannot set
 `workspace`, `environment`, or opaque `runtime` values; those belong to local
 engine configuration or workflow environment bindings.
 
+Tool names reach the harness as written, so use the harness's own names. On
+`opencode-sdk` with OpenCode 2 that means OpenCode 2's names: `shell` (not
+`bash`), `edit` (not `write` or `patch`) and `subagent` (not `task`). A name
+OpenCode 2 does not have matches nothing, so `tools: { bash: false }` leaves
+`shell` allowed.
+
 `platform: "opencode-sdk"` needs the **`opencode` binary** on PATH (or a `bin`
 pointing at it). akm bundles `@opencode-ai/sdk`, but that package is an HTTP
 client with no dependencies — it spawns `opencode serve` and talks to it — so
