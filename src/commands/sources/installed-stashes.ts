@@ -764,11 +764,12 @@ function managedInstallViewOfPlainNpm(config: AkmConfig, npmSource: ConfiguredSo
  * Sync a single registry-managed install and return the processed record:
  * fetch into staging, publish, write its lock entry, reindex.
  *
- * Read-only installs are keyed by resolved revision, so every upstream change
- * resolves a new content directory, and the previous one is deleted once the
- * new one is published. That directory is a re-fetchable cache: local and
- * writable installs never take this path, and a directory another bundle or
- * lock entry still references is kept. So deleting it never asks for confirmation.
+ * Read-only installs are keyed by resolved revision. An unchanged revision
+ * returns early: nothing is fetched or published. After a real change the new
+ * <rev> directory is published, the previous <rev> directory is kept, and older
+ * ones are pruned, unless another bundle or lock entry still references them.
+ * Those directories are a re-fetchable cache (local and writable installs never
+ * take this path), so none of this prompts.
  */
 async function updateManagedInstall(
   managed: ManagedInstall,

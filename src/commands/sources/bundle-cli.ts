@@ -153,13 +153,13 @@ const updateCommand = defineJsonCommand({
       default: false,
     },
     // Deprecated no-op, accepted through 0.10 so scripts that pass it do not
-    // fail with UNKNOWN_FLAG. Deleting the previous directory of a read-only
-    // install whose content moved no longer asks: it is a re-fetchable cache.
+    // fail with UNKNOWN_FLAG. Pruning old install directories of a read-only
+    // bundle no longer asks: they are a re-fetchable cache.
     yes: {
       type: "boolean",
       alias: "y",
       description:
-        "Deprecated, no effect: update no longer asks before deleting a moved read-only install directory. Accepted through 0.10 for existing scripts.",
+        "Deprecated, no effect: update no longer asks before pruning old install directories of a read-only bundle. Accepted through 0.10 for existing scripts.",
       default: false,
     },
   },
